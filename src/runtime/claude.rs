@@ -13,11 +13,15 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use super::{Runtime, SessionError, SessionSpec, Turn};
+use crate::store::github::TOKEN_VARIABLES;
 
 pub struct ClaudeCode {
     pub program: String,
     /// `None` uses the runtime's default model.
     pub model: Option<String>,
+    /// The GitHub token sessions get, as `gh` reads it. `None` gives them
+    /// none, whatever Linewright's own environment holds.
+    pub github_token: Option<String>,
 }
 
 /// The stream's last line: <https://code.claude.com/docs/en/headless#get-structured-output>.
@@ -76,16 +80,22 @@ impl ClaudeCode {
             ])
             .args(session_args)
             .current_dir(&spec.dir)
-            // Agents read through the brief and write through the result:
-            // the store's credentials stay with the manager.
-            .env_remove("GITHUB_TOKEN")
-            .env_remove("GH_TOKEN")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         if let Some(model) = &self.model {
             command.args(["--model", model]);
+        }
+        // A session's GitHub token is the one it was built with, never one
+        // inherited: production sessions read GitHub and write to it only
+        // through their result, a rule the brief keeps, and replay sessions
+        // get none (`docs/specs/product.md`, "Replay").
+        for variable in TOKEN_VARIABLES {
+            match &self.github_token {
+                Some(token) => command.env(variable, token),
+                None => command.env_remove(variable),
+            };
         }
         let mut child = command
             .spawn()

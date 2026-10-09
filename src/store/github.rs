@@ -26,6 +26,10 @@ use crate::git;
 
 const API: &str = "https://api.github.com";
 
+/// The environment variables `gh` reads a token from, in its order
+/// (<https://cli.github.com/manual/gh_help_environment>).
+pub const TOKEN_VARIABLES: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
+
 pub struct GitHub {
     http: reqwest::Client,
     token: String,

@@ -135,3 +135,33 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     }
     assert!(out.join("sessions/issue-3").is_dir());
 }
+
+#[test]
+fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    spec_change_case(dir.path());
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    fake_claude(&bin, r#"{"tickets": [], "comment": "Nothing to build."}"#);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_linewright"))
+        .args(["replay", "case", "--out", "out"])
+        .current_dir(dir.path())
+        .env("PATH", path)
+        .env("CLAUDE_CONFIG_DIR", dir.path())
+        .env("GH_TOKEN", "operator-token")
+        .env("GITHUB_TOKEN", "operator-token")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(bin.join("tokens.log")).unwrap(),
+        "GH_TOKEN= GITHUB_TOKEN=\n"
+    );
+}

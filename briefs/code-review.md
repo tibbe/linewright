@@ -26,8 +26,7 @@ first if your work is uncommitted.
 ### 2. The spec source
 
 The ticket in your task (its body and comments) and the spec files it relates
-to. Paste the ticket into the Spec sub-agent's prompt: the sub-agent cannot
-reach the issue tracker either.
+to. Paste the ticket into the Spec sub-agent's prompt.
 
 ### 3. The standards sources
 
@@ -71,6 +70,7 @@ Skip anything tooling already enforces.
 
 Issue both sub-agent calls together. Each prompt is self-contained and tells
 the sub-agent to **invoke no skills**: everything it needs is in the prompt.
+Each also tells it that it may read GitHub but must not write to it.
 
 **Standards sub-agent prompt:**
 

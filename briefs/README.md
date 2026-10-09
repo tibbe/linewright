@@ -8,8 +8,9 @@ Linewright:
 
 - each decision the original puts to a person is made by the agent or handed
   back as an outcome;
-- tracker access is replaced by the brief (the task Linewright appends) and
-  the result (the JSON the session ends with);
+- the agent may read the tracker, but writes to it only through the result
+  (the JSON the session ends with), and what it needs from the tracker comes
+  in the brief (the task Linewright appends);
 - the review's sub-agents invoke no skills.
 
 | brief | forked from | used by |

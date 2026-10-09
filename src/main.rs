@@ -14,7 +14,7 @@ use linewright::reconcile::Policy;
 use linewright::runtime::claude::ClaudeCode;
 use linewright::status;
 use linewright::store::Store;
-use linewright::store::github::GitHub;
+use linewright::store::github::{GitHub, TOKEN_VARIABLES};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
 
@@ -108,7 +108,7 @@ async fn run(command: Command, config: Config) -> Result<()> {
             Ok(())
         }
         Command::Status => {
-            let github = connect(&config).await?;
+            let github = connect(&config, token()?).await?;
             let clock = SystemClock;
             let now = clock.now();
             let snapshot = github.snapshot(now - config.spec_lookback).await?;
@@ -144,7 +144,7 @@ async fn run(command: Command, config: Config) -> Result<()> {
             case::replay(
                 &case_dir,
                 &out,
-                Arc::new(runtime(&config)),
+                Arc::new(runtime(&config, None)),
                 Arc::new(SystemClock),
                 factory_config,
             )
@@ -157,15 +157,15 @@ async fn run(command: Command, config: Config) -> Result<()> {
 
 /// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.
 fn token() -> Result<String> {
-    ["GH_TOKEN", "GITHUB_TOKEN"]
+    TOKEN_VARIABLES
         .into_iter()
         .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()))
         .context("set GH_TOKEN or GITHUB_TOKEN to the machine user's token")
 }
 
-async fn connect(config: &Config) -> Result<GitHub> {
+async fn connect(config: &Config, token: String) -> Result<GitHub> {
     let repo = config.repo.as_deref().context("set `repo` (owner/name)")?;
-    GitHub::connect(repo, token()?).await
+    GitHub::connect(repo, token).await
 }
 
 fn policy(config: &Config, github: &GitHub) -> Policy {
@@ -180,10 +180,13 @@ fn policy(config: &Config, github: &GitHub) -> Policy {
     }
 }
 
-fn runtime(config: &Config) -> ClaudeCode {
+/// The agent runtime, its sessions given `github_token`: the machine user's
+/// in production, none in replay (`docs/specs/product.md`, "Replay").
+fn runtime(config: &Config, github_token: Option<String>) -> ClaudeCode {
     ClaudeCode {
         program: RUNTIME.into(),
         model: config.model.clone(),
+        github_token,
     }
 }
 
@@ -211,12 +214,13 @@ fn factory_config(config: &Config, work_dir: std::path::PathBuf) -> Result<Facto
 async fn start(config: &Config) -> Result<Factory> {
     require_tool("git").await?;
     require_tool(RUNTIME).await?;
-    let github = connect(config).await?;
+    let token = token()?;
+    let github = connect(config, token.clone()).await?;
     let work_dir = config.work_dir.join(github.full_name());
     let factory_config = factory_config(config, work_dir)?;
     Factory::start(
         Arc::new(github),
-        Arc::new(runtime(config)),
+        Arc::new(runtime(config, Some(token))),
         Arc::new(SystemClock),
         factory_config,
     )

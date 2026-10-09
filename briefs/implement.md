@@ -4,9 +4,9 @@
 
 Implement the work your task describes, on the branch that is checked out.
 The ticket, its comments (a triage brief, earlier handbacks) and, for work on
-an open pull request, the feedback to address are in your task below. You
-cannot reach the issue tracker or push: Linewright pushes your commits, opens
-or updates the pull request and posts what your result says.
+an open pull request, the feedback to address are in your task below. You may
+read GitHub but must not write to it or push: Linewright pushes your commits,
+opens or updates the pull request and posts what your result says.
 
 1. Read the ticket and its comments. Read `GLOSSARY.md` if present, and the
    spec (the files matching the spec glob in your task).

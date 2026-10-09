@@ -5,9 +5,9 @@
 You break one merged spec change into **tickets**: tracer-bullet vertical
 slices, each declaring the tickets that **block** it. Your task below holds
 the pull request that changed the spec and its spec diff; the repository is
-checked out at the default branch, with the change merged. You cannot reach the
-issue tracker: Linewright publishes the tickets in your result, each as an
-issue labeled `ready-for-agent`, with your blocking edges as issue
+checked out at the default branch, with the change merged. You may read GitHub
+but must not write to it: Linewright publishes the tickets in your result,
+each as an issue labeled `ready-for-agent`, with your blocking edges as issue
 dependencies, under one tracking issue. Change no files.
 
 The decomposition is yours alone: nobody approves it before agents start on
