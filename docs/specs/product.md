@@ -9,11 +9,13 @@ finished software, delivered as pull requests.
 A software factory: people write the specification and file the bugs, and the
 factory produces the finished software. Agents plan, implement, review and
 verify each other's work, with enough of them and enough automation that the
-result needs little or no human review.
+result needs little or no human review: most changes merge on their own, and
+people review only the critical ones.
 
 This spec describes the first version: from a merged spec change or an issue
-to a pull request that agents have reviewed and that passes CI. A person
-merges it, or sends it back with comments the factory addresses.
+to a pull request that agents have reviewed and that passes CI. It is merged,
+by Linewright or by a person, or sent back with comments the factory
+addresses.
 
 ## Problem Statement
 
@@ -71,6 +73,7 @@ flowchart LR
     draft --> review[Ready for review]
     review -- person comments --> impl
     review -- person merges --> done[Issue closed]
+    draft -- auto-merge --> done
 ```
 
 ## Repository
@@ -90,10 +93,12 @@ it: labels start and stop work, and pull requests show it.
 - Requirements:
   - A GitHub repository.
   - A **machine user**: a GitHub user account for Linewright, with a token
-    that lets it push branches, open pull requests, and read and write
-    issues and labels. Everything Linewright does on GitHub carries that
-    identity, so the maintainer can review its PRs and see its claims as
-    assignments.
+    that lets it push branches, open pull requests, and read and write issues
+    and labels. Everything Linewright does on GitHub carries that identity, so
+    the maintainer can review its PRs and see its claims as assignments. With
+    `--auto-merge`, the machine user must not be able to bypass the default
+    branch's rules (no admin rights, not on a ruleset's bypass list), or the
+    reviews they require are skipped.
   - Spec files: tracked Markdown matching the spec glob (default
     `docs/**/*.md`).
 - Used when present: the files the agents' briefs rely on, `CODING_STANDARDS.md`
@@ -121,7 +126,8 @@ it: labels start and stop work, and pull requests show it.
 - Machine state is derived from GitHub, never labeled. An issue is
   **claimed** when the machine user is among its assignees, and **in review**
   when an open pull request by the machine user closes it.
-- Startup checks: the token can push to the repository; otherwise Linewright
+- Startup checks: the token can push to the repository and, with
+  `--auto-merge`, the repository allows the merge method; otherwise Linewright
   exits with an error.
 - One Linewright per repository.
 
@@ -284,6 +290,7 @@ stateDiagram-v2
 4. As an operator, I want branches kept up to date with the default branch the way my repository does it, so that merging is a click.
 5. As an operator, I want to merge myself, so that nothing lands without me.
 6. As an operator, I want closing a PR to mean rejection, so that the factory does not redo what I refused.
+7. As an operator, I want to let Linewright merge its own green PRs, except those my repository requires a person to review, so that only the changes I have reserved for myself wait for me.
 
 ### Decisions
 
@@ -297,6 +304,20 @@ stateDiagram-v2
   `ready-for-human` naming the failing check.
 - Green: the PR is marked ready for review, and review is requested from the
   ticket's human assignees.
+- **Auto-merge**: with `--auto-merge`, Linewright merges each green PR the
+  machine user opened instead of requesting review, with the `merge-method`
+  setting: by default a rebase where the repository requires linear history
+  and a merge otherwise. This is Linewright merging, not GitHub's auto-merge
+  feature.
+  - It merges only when GitHub allows it. A PR GitHub blocks is marked ready
+    for review with a comment naming what GitHub requires, and is merged once
+    GitHub allows it.
+  - A PR a person has commented on or reviewed is merged only once that
+    person's latest review approves it. Bots' comments don't hold a merge.
+  - A merge that fails is retried once on the next poll, then the ticket goes
+    to `ready-for-human` with GitHub's reason.
+  - It covers every open PR the machine user opened, including those opened
+    while Linewright ran without it.
 - **Rework**: a comment or review from anyone other than the machine user,
   posted after Linewright's last push, starts a rework run; a review that
   only approves starts nothing. The run brings the
@@ -307,12 +328,11 @@ stateDiagram-v2
   and leaves people's threads for them to resolve. Feedback posted while a run
   works goes to its session before the run pushes.
 - **Keeping up to date**: every run first brings the branch up to date with
-  the default branch, and a PR GitHub reports behind or unmergeable gets a
-  run for that alone, mechanical unless there is a conflict. Whether that is
-  a rebase or a merge of the default branch into the branch follows the
-  repository's settings (rebase where it requires linear history), and can
-  be set explicitly. Merging the PR is the maintainer's, with whatever method
-  the repository allows.
+  the default branch, and a PR GitHub reports behind or unmergeable gets a run
+  for that alone, which needs an agent only for a conflict. It updates with
+  the `update-branch` setting: by default a rebase where the repository
+  requires linear history and a merge otherwise. Without auto-merge, the
+  maintainer merges the PR with whatever method the repository allows.
 - Commits a person pushes to the branch are kept: every run starts from the
   branch as it is.
 - A run that changes a PR so its description no longer fits rewrites the
@@ -360,6 +380,8 @@ stateDiagram-v2
   | `ci-timeout` | 6h |
   | `ci-attempts` | 2 |
   | `update-branch` (`rebase`, `merge`) | from the repository's settings |
+  | `auto-merge` | off |
+  | `merge-method` (`merge`, `squash`, `rebase`) | from the repository's settings |
   | `log-format` (`text`, `json`) | `text` on a terminal, `json` otherwise |
 
 - Linewright runs wherever `git`, the agent runtime and the project's
@@ -394,8 +416,11 @@ briefs, reads the results and the traces, and iterates.
 - `linewright replay CASE --out DIR` runs the pipeline end to end against a
   **local store** seeded from the case: the same reconcile loop as `serve`,
   run until nothing is left to do rather than on a timer, ending when every
-  pull request is ready for review or every issue is handed back. The
-  implementer's own run of the repository's checks stands in for CI.
+  pull request is ready for review (with `--auto-merge`, merged) or every
+  issue is handed back. The local store has no branch rules, so with
+  `--auto-merge` every green pull request merges and the tickets it blocked
+  run in turn. The implementer's own run of the repository's checks stands in
+  for CI.
 - The output directory holds the store's final state as files (issues with
   their labels and comments, pull requests with their diffs and comments) and
   each session's brief, result and full trace, in plain formats (JSON,
@@ -424,8 +449,8 @@ briefs, reads the results and the traces, and iterates.
   the tracking issue and the spec PR), a ticket handed back and why, a PR
   made ready, a rework done. Every comment opens with the marker line
   `> *Linewright, <stage>*` so people and the manager can tell its comments
-  from others. Claims and PRs need no comment: the assignee and the PR are
-  the record.
+  from others. Claims, PRs and merges need no comment: the assignee, the PR
+  and the merge are the record.
 - Comments contain only what belongs to the repository: no run ids, hosts or
   links to the factory.
 - The server logs each decision and action, readable for a person tailing it
@@ -436,7 +461,6 @@ briefs, reads the results and the traces, and iterates.
 Direction, not the first version:
 
 - Webhooks instead of polling.
-- Merging on its own once CI passes; today a person merges.
 - One session for a whole spec change. Tickets exist to keep each session in
   its smart zone; as that zone grows, a spec change may need no cutting.
 - One container per run, instead of agents as processes beside the manager.
