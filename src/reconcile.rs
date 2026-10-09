@@ -104,6 +104,14 @@ pub struct LiveRun {
     pub kind: WorkKind,
 }
 
+/// A merge of `pr` the store refused, for `reason`. The manager remembers
+/// it between polls, oldest first, and never in the store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FailedMerge {
+    pub pr: Number,
+    pub reason: String,
+}
+
 /// The workflows on the default branch and their runs: what the due rule
 /// reads.
 #[derive(Clone, Debug, Default)]
@@ -141,6 +149,11 @@ pub enum Action {
     MarkReady {
         pr: Number,
         reviewers: Vec<Login>,
+    },
+    /// Forget the pull request's failed merges, so that its ticket, given
+    /// back and labeled again, retries the merge afresh.
+    ForgetFailedMerges {
+        pr: Number,
     },
     /// Merge the pull request with the merge method, if its head is still
     /// `head`. A draft is marked ready for review first: GitHub merges no
@@ -183,6 +196,7 @@ pub enum Action {
 pub fn reconcile(
     snapshot: &Snapshot,
     live: &[LiveRun],
+    failed_merges: &[FailedMerge],
     workflows: &Workflows,
     now: Timestamp,
     policy: &Policy,
@@ -257,7 +271,8 @@ pub fn reconcile(
                 });
             }
         } else if issue.has_label(label::READY_FOR_AGENT) && !issue.has_label(label::NEEDS_TRIAGE) {
-            implementation(issue, snapshot, is_live(subject), policy, &mut plan);
+            let running = is_live(subject);
+            implementation(issue, snapshot, running, failed_merges, policy, &mut plan);
         }
     }
 
@@ -425,6 +440,7 @@ fn implementation(
     issue: &Issue,
     snapshot: &Snapshot,
     live: bool,
+    failed_merges: &[FailedMerge],
     policy: &Policy,
     plan: &mut Plan,
 ) {
@@ -446,7 +462,7 @@ fn implementation(
                 issue: issue.number,
             });
         }
-        return in_review(issue, pr, policy, plan);
+        return in_review(issue, pr, failed_merges, policy, plan);
     }
     // GitHub closes the issue shortly after the merge; until then, or after a
     // reopen, only applying the label again asks for more work.
@@ -499,7 +515,13 @@ fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) 
 /// An open pull request for the issue: address feedback, keep it up to date
 /// and get CI green, in that order, then mark it ready for review or, with
 /// auto-merge, merge it once no person holds it.
-fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
+fn in_review(
+    issue: &Issue,
+    pr: &Pull,
+    failed_merges: &[FailedMerge],
+    policy: &Policy,
+    plan: &mut Plan,
+) {
     let (issue_number, pr_number) = (issue.number, pr.number);
     let machine = &policy.machine_user;
     if !new_feedback(pr, machine).is_empty() {
@@ -607,11 +629,24 @@ fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
     }
     // Behind and conflicting were brought up to date above.
     match &pr.mergeability {
-        Mergeability::Clean => plan.act(Action::Merge {
-            pr: pr_number,
-            head: pr.head_sha.clone(),
-            draft,
-        }),
+        Mergeability::Clean => match merge_failed_twice(pr, failed_merges) {
+            Some(failed) => {
+                plan.act(Action::ForgetFailedMerges { pr: pr_number });
+                plan.act(Action::HandBack {
+                    issue: issue_number,
+                    stage: Stage::Review,
+                    reason: format!(
+                        "Merging {pr_number} failed twice. GitHub's reason: {}",
+                        failed.reason
+                    ),
+                });
+            }
+            None => plan.act(Action::Merge {
+                pr: pr_number,
+                head: pr.head_sha.clone(),
+                draft,
+            }),
+        },
         // Held for review again only when what GitHub requires changes.
         Mergeability::Blocked { requires } if draft || !hold_noted(pr, requires, machine) => plan
             .act(Action::HoldForReview {
@@ -626,6 +661,13 @@ fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
         // A merge state not computed yet waits for the next poll.
         _ => {}
     }
+}
+
+/// The pull request's last failed merge, if its merge has failed twice: a
+/// failure is retried once.
+fn merge_failed_twice<'a>(pr: &Pull, failed_merges: &'a [FailedMerge]) -> Option<&'a FailedMerge> {
+    let failed: Vec<&FailedMerge> = failed_merges.iter().filter(|f| f.pr == pr.number).collect();
+    failed.last().copied().filter(|_| failed.len() >= 2)
 }
 
 /// The comment on a pull request held for review: what GitHub requires

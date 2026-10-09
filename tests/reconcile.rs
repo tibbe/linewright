@@ -63,7 +63,7 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
 }
 
 fn decide(snapshot: &Snapshot) -> Vec<Action> {
-    reconcile(snapshot, &[], &Workflows::default(), t(10), &policy())
+    reconcile(snapshot, &[], &[], &Workflows::default(), t(10), &policy())
 }
 
 #[test]
@@ -268,7 +268,14 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
         }]
     );
     assert_eq!(
-        reconcile(&world, &cutting, &Workflows::default(), t(10), &policy()),
+        reconcile(
+            &world,
+            &cutting,
+            &[],
+            &Workflows::default(),
+            t(10),
+            &policy()
+        ),
         vec![]
     );
 }
@@ -331,7 +338,7 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
     }];
 
     assert_eq!(
-        reconcile(&world, &live, &Workflows::default(), t(10), &policy()),
+        reconcile(&world, &live, &[], &Workflows::default(), t(10), &policy()),
         vec![]
     );
 }
@@ -414,7 +421,7 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
     let busy = [live(9, WorkKind::Implement)];
 
     assert_eq!(
-        reconcile(&world, &busy, &Workflows::default(), t(10), &policy()),
+        reconcile(&world, &busy, &[], &Workflows::default(), t(10), &policy()),
         vec![
             Action::Start(Work::Triage { issue: Number(3) }),
             Action::Start(Work::Tickets { pr: Number(5) }),
@@ -442,13 +449,14 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
         live(6, WorkKind::Implement),
     ];
 
-    let cancelled: Vec<Subject> = reconcile(&world, &runs, &Workflows::default(), t(10), &policy())
-        .into_iter()
-        .filter_map(|a| match a {
-            Action::Cancel { subject, .. } => Some(subject),
-            _ => None,
-        })
-        .collect();
+    let cancelled: Vec<Subject> =
+        reconcile(&world, &runs, &[], &Workflows::default(), t(10), &policy())
+            .into_iter()
+            .filter_map(|a| match a {
+                Action::Cancel { subject, .. } => Some(subject),
+                _ => None,
+            })
+            .collect();
 
     assert_eq!(
         cancelled,
@@ -468,7 +476,7 @@ fn a_tickets_run_is_cancelled_when_its_spec_change_is_marked_processed() {
     }];
 
     assert!(matches!(
-        reconcile(&world, &runs, &Workflows::default(), t(10), &policy()).as_slice(),
+        reconcile(&world, &runs, &[], &Workflows::default(), t(10), &policy()).as_slice(),
         [Action::Cancel {
             subject: Subject::SpecChange(Number(5)),
             ..
@@ -516,7 +524,7 @@ fn in_review(pr: Pull) -> Snapshot {
 }
 
 fn at(world: &Snapshot, minute: i64) -> Vec<Action> {
-    reconcile(world, &[], &Workflows::default(), t(minute), &policy())
+    reconcile(world, &[], &[], &Workflows::default(), t(minute), &policy())
 }
 
 #[test]
@@ -703,11 +711,7 @@ fn a_pull_request_behind_or_in_conflict_with_the_default_branch_is_brought_up_to
 }
 
 fn auto_merging(world: &Snapshot, minute: i64) -> Vec<Action> {
-    let policy = Policy {
-        auto_merge: true,
-        ..policy()
-    };
-    reconcile(world, &[], &Workflows::default(), t(minute), &policy)
+    auto_merging_after(world, &[], minute)
 }
 
 fn merge(pr: u64, draft: bool) -> Action {
@@ -1027,6 +1031,100 @@ fn with_auto_merge_comments_and_reviews_from_bots_do_not_hold_the_merge() {
     assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
 }
 
+fn failed_merge(pr: u64, reason: &str) -> FailedMerge {
+    FailedMerge {
+        pr: Number(pr),
+        reason: reason.into(),
+    }
+}
+
+fn auto_merging_after(world: &Snapshot, failed: &[FailedMerge], minute: i64) -> Vec<Action> {
+    let policy = Policy {
+        auto_merge: true,
+        ..policy()
+    };
+    reconcile(
+        world,
+        &[],
+        failed,
+        &Workflows::default(),
+        t(minute),
+        &policy,
+    )
+}
+
+#[test]
+fn with_auto_merge_a_green_pull_request_whose_merge_failed_once_is_merged_again() {
+    let world = in_review(ready(pull(20, 2)));
+    let failed = [failed_merge(20, "Head branch was modified.")];
+
+    assert_eq!(
+        auto_merging_after(&world, &failed, 10),
+        vec![merge(20, false)]
+    );
+}
+
+#[test]
+fn with_auto_merge_a_green_pull_request_whose_merge_failed_twice_hands_its_ticket_back_with_githubs_reason()
+ {
+    let world = in_review(ready(pull(20, 2)));
+    let failed = [
+        failed_merge(20, "Head branch was modified."),
+        failed_merge(20, "Pull Request is not mergeable"),
+    ];
+
+    assert_eq!(
+        auto_merging_after(&world, &failed, 11),
+        vec![
+            Action::ForgetFailedMerges { pr: Number(20) },
+            Action::HandBack {
+                issue: Number(2),
+                stage: Stage::Review,
+                reason: "Merging #20 failed twice. GitHub's reason: Pull Request is not mergeable"
+                    .into(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn with_auto_merge_failed_merges_of_another_pull_request_do_not_count() {
+    let world = in_review(ready(pull(20, 2)));
+    let failed = [
+        failed_merge(21, "Pull Request is not mergeable"),
+        failed_merge(21, "Pull Request is not mergeable"),
+    ];
+
+    assert_eq!(
+        auto_merging_after(&world, &failed, 11),
+        vec![merge(20, false)]
+    );
+}
+
+#[test]
+fn with_auto_merge_relabeling_a_ticket_handed_back_for_failed_merges_tries_the_merge_again() {
+    let mut world = in_review(ready(pull(20, 2)));
+    let ticket = &mut world.issues[0];
+    ticket.assignees.retain(|a| a.as_str() != MACHINE);
+    ticket.comments = vec![comment(
+        MACHINE,
+        12,
+        &marked(
+            Stage::Review,
+            "Merging #20 failed twice. GitHub's reason: Pull Request is not mergeable",
+        ),
+    )];
+    ticket.events = vec![IssueEvent::Labeled {
+        label: label::READY_FOR_AGENT.into(),
+        at: t(15),
+    }];
+
+    assert_eq!(
+        auto_merging(&world, 20),
+        vec![Action::Claim { issue: Number(2) }, merge(20, false)]
+    );
+}
+
 #[test]
 fn a_pull_request_closed_without_merging_hands_the_ticket_back_once() {
     let mut pr = pull(20, 2);
@@ -1128,7 +1226,7 @@ fn workflows(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Work
 
 /// The decisions at `minute` past 12:00, when ticks fall on the hour.
 fn scheduled(workflows: &Workflows, minute: i64) -> Vec<Action> {
-    reconcile(&snapshot(vec![]), &[], workflows, t(minute), &policy())
+    reconcile(&snapshot(vec![]), &[], &[], workflows, t(minute), &policy())
 }
 
 #[test]
@@ -1205,11 +1303,11 @@ fn workflow_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves(
     let quieter = snapshot(vec![claimed(ticket(8)), claimed(ticket(9))]);
 
     assert_eq!(
-        reconcile(&world, &busy, &due, t(70), &policy()),
+        reconcile(&world, &busy, &[], &due, t(70), &policy()),
         vec![implement(1)]
     );
     assert_eq!(
-        reconcile(&quieter, &busy, &due, t(70), &policy()),
+        reconcile(&quieter, &busy, &[], &due, t(70), &policy()),
         vec![
             Action::RunWorkflow(Box::new(hourly("b"))),
             Action::RecordLastRuns(last_runs(&[("a", 30), ("b", 70), ("c", 30)])),
@@ -1224,7 +1322,7 @@ fn a_workflow_seen_for_the_first_time_is_recorded_even_with_no_room() {
     let world = workflows(&["hourly"], &[], &[]);
 
     assert_eq!(
-        reconcile(&tickets, &busy, &world, t(70), &policy()),
+        reconcile(&tickets, &busy, &[], &world, t(70), &policy()),
         vec![Action::RecordLastRuns(last_runs(&[("hourly", 70)]))]
     );
 }

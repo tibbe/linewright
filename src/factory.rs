@@ -16,7 +16,7 @@ use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::domain::{Login, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, label};
 use crate::marker::{Stage, marked};
-use crate::reconcile::{Action, LiveRun, Policy, Workflows, hold_note, reconcile};
+use crate::reconcile::{Action, FailedMerge, LiveRun, Policy, Workflows, hold_note, reconcile};
 use crate::run::{self, Shell};
 use crate::runtime::Runtime;
 use crate::spec_glob::SpecGlob;
@@ -66,6 +66,8 @@ pub struct Factory {
     stopping: CancellationToken,
     schedule_workflows: bool,
     last_runs: LastRuns,
+    /// The merges the store refused, of pull requests still open.
+    failed_merges: Vec<FailedMerge>,
 }
 
 impl Factory {
@@ -146,6 +148,7 @@ impl Factory {
             stopping: CancellationToken::new(),
             schedule_workflows: config.schedule_workflows,
             last_runs,
+            failed_merges: vec![],
         })
     }
 
@@ -183,7 +186,16 @@ impl Factory {
             last_runs: self.last_runs.clone(),
             in_flight,
         };
-        let actions = reconcile(&snapshot, &live, &workflows, now, &self.shell.policy);
+        self.failed_merges
+            .retain(|f| snapshot.pull(f.pr).is_some_and(|p| p.is_open()));
+        let actions = reconcile(
+            &snapshot,
+            &live,
+            &self.failed_merges,
+            &workflows,
+            now,
+            &self.shell.policy,
+        );
         for action in &actions {
             if self.stopping.is_cancelled() {
                 break;
@@ -353,7 +365,14 @@ impl Factory {
                 if *draft {
                     store.mark_ready(*pr).await?;
                 }
-                store.merge(*pr, head, method).await?;
+                if let Err(e) = store.merge(*pr, head, method).await {
+                    let reason = format!("{e:#}");
+                    warn!(pr = pr.0, reason, "merge failed");
+                    self.failed_merges.push(FailedMerge { pr: *pr, reason });
+                }
+            }
+            Action::ForgetFailedMerges { pr } => {
+                self.failed_merges.retain(|f| f.pr != *pr);
             }
             Action::MarkReadyForMergeState { pr } => {
                 info!(pr = pr.0, "marking ready for its merge state");

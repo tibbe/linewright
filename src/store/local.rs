@@ -85,6 +85,9 @@ struct PullRecord {
     /// What branch rules would require before the pull request merges, if
     /// they block it: the local store has no rules of its own.
     blocked: Option<Vec<Requirement>>,
+    /// Why merges of the pull request fail, if they do, though nothing
+    /// blocks them.
+    refused: Option<String>,
     /// Checks by head commit: a push starts the head's checks afresh.
     checks: BTreeMap<String, Vec<CheckRecord>>,
     /// For a merged pull request: the default branch before and after.
@@ -467,6 +470,21 @@ impl LocalStore {
         }
     }
 
+    /// Makes every merge of the pull request fail with `reason`, as GitHub
+    /// refusing at the last moment would, until [`LocalStore::accept_merges`].
+    pub fn refuse_merges(&self, pr: Number, reason: &str) {
+        if let Ok(record) = self.state().pull_mut(pr) {
+            record.refused = Some(reason.to_string());
+        }
+    }
+
+    /// Lifts [`LocalStore::refuse_merges`].
+    pub fn accept_merges(&self, pr: Number) {
+        if let Ok(record) = self.state().pull_mut(pr) {
+            record.refused = None;
+        }
+    }
+
     pub fn close_pull_as(&self, pr: Number) -> Result<()> {
         let now = self.now();
         self.state().pull_mut(pr)?.state = PullState::Closed { at: now };
@@ -829,6 +847,7 @@ impl PullRecord {
             threads: vec![],
             requested_reviewers: vec![],
             blocked: None,
+            refused: None,
             checks: BTreeMap::new(),
             merge: None,
             files: vec![],
@@ -1115,17 +1134,21 @@ impl Store for LocalStore {
     }
 
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
-        let (state, head_ref, blocked) = {
+        let (state, head_ref, blocked, refused) = {
             let mut state = self.state();
             let record = state.pull_mut(pr)?;
             (
                 record.state,
                 record.head_ref.clone(),
                 record.blocked.is_some(),
+                record.refused.clone(),
             )
         };
         if blocked {
             bail!("the branch rules block merging {pr}");
+        }
+        if let Some(reason) = refused {
+            bail!("{reason}");
         }
         match state {
             PullState::Open { draft: false } => {}

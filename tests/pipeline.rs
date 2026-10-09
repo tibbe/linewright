@@ -859,3 +859,90 @@ async fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_a
     ));
     assert!(!world.issue(ticket).open);
 }
+
+#[tokio::test]
+async fn with_auto_merge_a_merge_that_fails_twice_hands_the_ticket_back_and_relabeling_merges_it() {
+    use linewright::domain::PullState;
+
+    let (log, _guard) = Log::capture();
+    let mut world = World::with(|config| config.auto_merge = true).await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.store.refuse_merges(
+        pr,
+        "Head branch was modified. Review and try the merge again.",
+    );
+
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+
+    let failed: Vec<String> = log
+        .lines("WARN")
+        .into_iter()
+        .filter(|line| line.contains("merge failed"))
+        .collect();
+    assert_eq!(failed.len(), 1, "the first failure is logged: {failed:?}");
+    assert!(world.issue(ticket).has_label("ready-for-agent"));
+
+    world.poll().await;
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert!(!issue.is_assigned(&Login::new(MACHINE)));
+    assert_eq!(
+        last_comment(&issue),
+        format!(
+            "> *Linewright, review*\n\nMerging {pr} failed twice. GitHub's reason: \
+             Head branch was modified. Review and try the merge again."
+        )
+    );
+    assert_eq!(
+        world.store.snapshot_pull(pr).await.state,
+        PullState::Open { draft: false }
+    );
+
+    world.store.unlabel_as(ticket, "ready-for-human").unwrap();
+    world.store.label_as(ticket, "ready-for-agent").unwrap();
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert!(issue.is_assigned(&Login::new(MACHINE)), "reclaimed");
+    assert_eq!(
+        labels(&issue),
+        ["ready-for-agent"],
+        "a failure after the relabel is retried, not handed back"
+    );
+
+    world.store.accept_merges(pr);
+    world.poll().await;
+
+    assert!(matches!(
+        world.store.snapshot_pull(pr).await.state,
+        PullState::Merged { .. }
+    ));
+    assert!(!world.issue(ticket).open);
+}
+
+#[tokio::test]
+async fn with_auto_merge_a_merge_that_succeeds_on_the_retry_leaves_no_handback_or_comment() {
+    use linewright::domain::PullState;
+
+    let mut world = World::with(|config| config.auto_merge = true).await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .refuse_merges(pr, "Pull Request is not mergeable");
+    let comments_before = world.issue(ticket).comments.len();
+
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+    world.store.accept_merges(pr);
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert!(matches!(view.state, PullState::Merged { .. }));
+    assert_eq!(view.comments, []);
+    let issue = world.issue(ticket);
+    assert_eq!(issue.comments.len(), comments_before);
+    assert!(!issue.has_label("ready-for-human"));
+}

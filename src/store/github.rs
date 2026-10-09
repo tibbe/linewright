@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::SystemTime;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use base64::Engine;
 use reqwest::{Method, StatusCode};
@@ -37,6 +37,37 @@ pub struct GitHub {
     name: String,
     viewer: Viewer,
 }
+
+/// A request GitHub answered with an error.
+#[derive(Debug)]
+struct ErrorResponse {
+    request: String,
+    status: StatusCode,
+    body: String,
+}
+
+impl ErrorResponse {
+    /// What GitHub says went wrong: the `message` of its error body
+    /// (<https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api>),
+    /// or the status and body when it has none.
+    fn message(&self) -> String {
+        #[derive(Deserialize)]
+        struct Body {
+            message: String,
+        }
+        serde_json::from_str::<Body>(&self.body)
+            .map(|b| b.message)
+            .unwrap_or_else(|_| format!("{}: {}", self.status, self.body))
+    }
+}
+
+impl std::fmt::Display for ErrorResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}: {}", self.request, self.status, self.body)
+    }
+}
+
+impl std::error::Error for ErrorResponse {}
 
 #[derive(Clone, Deserialize)]
 struct Viewer {
@@ -139,7 +170,12 @@ impl GitHub {
                 continue;
             }
             if !status.is_success() || wait.is_some() {
-                bail!("{method} {path}: {status}: {text}");
+                return Err(ErrorResponse {
+                    request: format!("{method} {path}"),
+                    status,
+                    body: text,
+                }
+                .into());
             }
             break text;
         };
@@ -1619,6 +1655,10 @@ impl Store for GitHub {
             Some(json!({"sha": head, "merge_method": method})),
         )
         .await
+        .map_err(|e| match e.downcast::<ErrorResponse>() {
+            Ok(refused) => anyhow!(refused.message()),
+            Err(e) => e,
+        })
     }
 
     async fn reply_in_thread(&self, _pr: Number, thread: &str, body: &str) -> Result<()> {
