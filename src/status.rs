@@ -1,10 +1,53 @@
-//! `linewright status`: the work in flight, derived from a snapshot the way
-//! the reconcile step derives it.
+//! `linewright status`: the work in flight and the workflows, derived from a
+//! snapshot, the workflow files and their last runs the way the reconcile
+//! step derives them.
 
 use crate::domain::{CheckState, Filed, PullState, Snapshot, Timestamp, label};
-use crate::reconcile::{Policy, pending_spec_changes};
+use crate::reconcile::{NextRun, Policy, next_run, pending_spec_changes};
+use crate::workflow::{LastRuns, WorkflowFiles};
 
-pub fn report(snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> Vec<String> {
+/// The report's lines: the work in flight, then each workflow by name with
+/// its last and next run, then each workflow file that does not parse.
+pub fn report(
+    snapshot: &Snapshot,
+    workflows: &WorkflowFiles,
+    last_runs: &LastRuns,
+    now: Timestamp,
+    policy: &Policy,
+) -> Vec<String> {
+    let mut lines = work_in_flight(snapshot, now, policy);
+    let mut parsed: Vec<_> = workflows.parsed.iter().collect();
+    parsed.sort_by(|a, b| a.name.cmp(&b.name));
+    for workflow in parsed {
+        let runs = match last_runs.get(&workflow.name) {
+            None => "not run yet, its schedule starts when a poll first sees it".into(),
+            Some(last) => {
+                let next = match next_run(workflow, last, now) {
+                    NextRun::Due => "next run due now".into(),
+                    NextRun::At(tick) => format!("next run {}", utc(tick)),
+                    NextRun::Never => "no next run, its schedule ticks no more".into(),
+                };
+                format!("last run {}, {next}", utc(last))
+            }
+        };
+        lines.push(format!("workflow {}: {runs}", workflow.name));
+    }
+    let mut unparsed: Vec<_> = workflows.unparsed.iter().collect();
+    unparsed.sort_by(|a, b| a.path.cmp(&b.path));
+    for file in unparsed {
+        lines.push(format!("{}: does not parse: {}", file.path, file.reason));
+    }
+    if lines.is_empty() {
+        lines.push("Nothing in flight.".into());
+    }
+    lines
+}
+
+fn utc(time: Timestamp) -> String {
+    time.format("%Y-%m-%d %H:%M UTC").to_string()
+}
+
+fn work_in_flight(snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> Vec<String> {
     let machine = &policy.machine_user;
     let mut lines = vec![];
     for pr in pending_spec_changes(snapshot, now, policy) {

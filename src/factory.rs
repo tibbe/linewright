@@ -3,7 +3,7 @@
 //! runs in flight between polls (`docs/specs/architecture.md`).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -92,7 +92,7 @@ impl Factory {
             "started"
         );
         let last_runs = if config.schedule_workflows {
-            load_last_runs(&last_runs_path(&config.work_dir))
+            LastRuns::load(&config.work_dir)
         } else {
             LastRuns::default()
         };
@@ -198,38 +198,23 @@ impl Factory {
         if !self.schedule_workflows {
             return vec![];
         }
-        let store = &self.shell.store;
         let branch = &self.shell.settings.default_branch;
-        let files = match store.list_files(branch, workflow::DIR).await {
-            Ok(files) => files,
+        match workflow::read(self.shell.store.as_ref(), branch).await {
+            Ok(files) => {
+                for file in files.unparsed {
+                    warn!(
+                        path = file.path,
+                        error = file.reason,
+                        "skipping a workflow file"
+                    );
+                }
+                files.parsed
+            }
             Err(e) => {
                 error!(error = format!("{e:#}"), "listing the workflows failed");
-                return vec![];
-            }
-        };
-        let mut workflows = vec![];
-        for file in files {
-            let Some(name) = file.strip_suffix(".md") else {
-                continue;
-            };
-            let parsed = async {
-                let name: WorkflowName = name.parse().map_err(anyhow::Error::msg)?;
-                let text = store
-                    .read_file(branch, &name.path())
-                    .await?
-                    .context("the file is gone")?;
-                workflow::parse(&name, &text)
-            };
-            match parsed.await {
-                Ok(workflow) => workflows.push(workflow),
-                Err(e) => warn!(
-                    path = format!("{}/{file}", workflow::DIR),
-                    error = format!("{e:#}"),
-                    "skipping a workflow file"
-                ),
+                vec![]
             }
         }
-        workflows
     }
 
     pub fn is_idle(&self) -> bool {
@@ -366,7 +351,7 @@ impl Factory {
             }
             Action::RecordLastRuns(last_runs) => {
                 self.last_runs = last_runs.clone();
-                save_last_runs(&last_runs_path(&self.shell.work_dir), last_runs)?;
+                last_runs.save(&self.shell.work_dir)?;
             }
             Action::RunWorkflow(workflow) => {
                 let cancel = CancellationToken::new();
@@ -406,39 +391,4 @@ async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationTok
             Err(e)
         }
     }
-}
-
-/// Where the workflows' last runs are kept, so they survive a restart.
-fn last_runs_path(work_dir: &Path) -> PathBuf {
-    work_dir.join("workflow-runs.json")
-}
-
-/// The workflows' last runs as recorded at `path`. None are recorded when
-/// the record is missing, and when it is unreadable, which is logged: every
-/// workflow then counts as seen for the first time.
-fn load_last_runs(path: &Path) -> LastRuns {
-    let read = || -> Result<LastRuns> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => Ok(serde_json::from_str(&text)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LastRuns::default()),
-            Err(e) => Err(e.into()),
-        }
-    };
-    read().unwrap_or_else(|e| {
-        warn!(path = %path.display(), error = format!("{e:#}"), "ignoring the workflows' last runs");
-        LastRuns::default()
-    })
-}
-
-/// Writes `last_runs` to `path` whole: to a file beside it, then renamed
-/// over it, so a crash leaves the old record or the new one.
-fn save_last_runs(path: &Path, last_runs: &LastRuns) -> Result<()> {
-    let dir = path.parent().context("the record has a directory")?;
-    std::fs::create_dir_all(dir).context("creating the work directory")?;
-    let mut file =
-        tempfile::NamedTempFile::new_in(dir).context("writing the workflows' last runs")?;
-    serde_json::to_writer_pretty(&mut file, last_runs)?;
-    file.persist(path)
-        .context("writing the workflows' last runs")?;
-    Ok(())
 }

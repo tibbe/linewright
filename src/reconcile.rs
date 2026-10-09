@@ -246,11 +246,32 @@ pub fn reconcile(
     actions
 }
 
+/// When a workflow runs next, by the due rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NextRun {
+    /// A tick of its schedule has passed since its last run.
+    Due,
+    /// Its next tick, after its last run.
+    At(Timestamp),
+    /// Its schedule ticks no more.
+    Never,
+}
+
+/// When `workflow`, last run at `last`, runs next as of `now`. A workflow is
+/// due when a tick of its schedule has passed since its last run, so ticks
+/// missed meanwhile collapse into one run.
+pub fn next_run(workflow: &Workflow, last: Timestamp, now: Timestamp) -> NextRun {
+    match workflow.schedule.next_after(last) {
+        Some(tick) if tick <= now => NextRun::Due,
+        Some(tick) => NextRun::At(tick),
+        None => NextRun::Never,
+    }
+}
+
 /// The workflows to run in the `room` the pipeline's runs left, and their
-/// last runs recorded. A workflow is due when a tick of its schedule has
-/// passed since its last run and it has no run in flight, so ticks missed
-/// meanwhile collapse into one run. A workflow seen for the first time
-/// counts as run now, so adding one does not start it at once.
+/// last runs recorded. A workflow runs when it is due and has no run in
+/// flight. A workflow seen for the first time counts as run now, so adding
+/// one does not start it at once.
 fn schedule(workflows: &Workflows, now: Timestamp, room: usize) -> Vec<Action> {
     let mut last_runs = workflows.last_runs.clone();
     let mut due = vec![];
@@ -259,11 +280,8 @@ fn schedule(workflows: &Workflows, now: Timestamp, room: usize) -> Vec<Action> {
             last_runs.record(&workflow.name, now);
             continue;
         };
-        let ticked = workflow
-            .schedule
-            .next_after(last)
-            .is_some_and(|tick| tick <= now);
-        if ticked && !workflows.in_flight.contains(&workflow.name) {
+        let running = workflows.in_flight.contains(&workflow.name);
+        if next_run(workflow, last, now) == NextRun::Due && !running {
             due.push(workflow);
         }
     }

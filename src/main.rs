@@ -15,6 +15,7 @@ use linewright::runtime::claude::ClaudeCode;
 use linewright::status;
 use linewright::store::Store;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
+use linewright::workflow::{self, LastRuns, WorkflowFiles};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
 
@@ -112,12 +113,17 @@ async fn run(command: Command, config: Config) -> Result<()> {
             let clock = SystemClock;
             let now = clock.now();
             let snapshot = github.snapshot(now - config.spec_lookback).await?;
+            // As a poll does, list the work in flight even when the
+            // workflows cannot be listed.
+            let workflows = workflow::read(&github, &snapshot.default_branch)
+                .await
+                .unwrap_or_else(|e| {
+                    error!(error = format!("{e:#}"), "listing the workflows failed");
+                    WorkflowFiles::default()
+                });
+            let last_runs = LastRuns::load(&work_dir(&config, &github));
             let policy = policy(&config, &github);
-            let lines = status::report(&snapshot, now, &policy);
-            if lines.is_empty() {
-                println!("Nothing in flight.");
-            }
-            for line in lines {
+            for line in status::report(&snapshot, &workflows, &last_runs, now, &policy) {
                 println!("{line}");
             }
             Ok(())
@@ -171,6 +177,12 @@ async fn connect(config: &Config, token: String) -> Result<GitHub> {
     GitHub::connect(repo, token).await
 }
 
+/// The repository's work directory: its clones, session records and the
+/// workflows' last runs.
+fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
+    config.work_dir.join(github.full_name())
+}
+
 fn policy(config: &Config, github: &GitHub) -> Policy {
     Policy {
         machine_user: github.machine_user(),
@@ -220,8 +232,7 @@ async fn start(config: &Config) -> Result<Factory> {
     require_tool(RUNTIME).await?;
     let token = token()?;
     let github = connect(config, token.clone()).await?;
-    let work_dir = config.work_dir.join(github.full_name());
-    let factory_config = factory_config(config, work_dir)?;
+    let factory_config = factory_config(config, work_dir(config, &github))?;
     Factory::start(
         Arc::new(github),
         Arc::new(runtime(config, Some(token))),

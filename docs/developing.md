@@ -22,7 +22,8 @@ cargo test
 
 Tests sit where [`CODING_STANDARDS.md`](../CODING_STANDARDS.md) puts them:
 `tests/reconcile.rs` drives the decision function, the workflows' due rule
-included, `tests/workflow_file.rs` the workflow-file parser, and
+included, `tests/status.rs` the `status` report, `tests/workflow_file.rs` the
+workflow-file parser, and
 `tests/pipeline.rs`, `tests/workflow_run.rs`, `tests/workflow_schedule.rs`,
 `tests/replay.rs` and `tests/config.rs` drive the system as a user would,
 against a local store standing in for GitHub and a scripted agent runtime.

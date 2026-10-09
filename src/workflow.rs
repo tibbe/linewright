@@ -1,10 +1,12 @@
 //! Workflows: Markdown files in `.linewright/workflows/` on the default
 //! branch, each an agent's instructions under YAML front matter that says
 //! when they run (`docs/specs/product.md`, "Workflows"). A file is parsed once,
-//! here, into a [`Workflow`].
+//! here, into a [`Workflow`]. The files are read from the store here too, and
+//! the workflows' last runs kept under the work directory.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -12,8 +14,10 @@ use anyhow::{Context, Result, anyhow};
 use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::domain::Timestamp;
+use crate::store::Store;
 
 /// Where the workflows live on the default branch.
 pub const DIR: &str = ".linewright/workflows";
@@ -115,12 +119,95 @@ impl LastRuns {
     pub fn record(&mut self, name: &WorkflowName, at: Timestamp) {
         self.0.insert(name.clone(), at);
     }
+
+    /// The last runs recorded under `work_dir`. None are recorded when the
+    /// record is missing, and when it is unreadable, which is logged: every
+    /// workflow then counts as seen for the first time.
+    pub fn load(work_dir: &Path) -> LastRuns {
+        let path = last_runs_path(work_dir);
+        let read = || -> Result<LastRuns> {
+            match std::fs::read_to_string(&path) {
+                Ok(text) => Ok(serde_json::from_str(&text)?),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LastRuns::default()),
+                Err(e) => Err(e.into()),
+            }
+        };
+        read().unwrap_or_else(|e| {
+            warn!(path = %path.display(), error = format!("{e:#}"), "ignoring the workflows' last runs");
+            LastRuns::default()
+        })
+    }
+
+    /// Records these last runs under `work_dir`, whole: to a file beside the
+    /// record, then renamed over it, so a crash leaves the old record or the
+    /// new one.
+    pub fn save(&self, work_dir: &Path) -> Result<()> {
+        let path = last_runs_path(work_dir);
+        let dir = path.parent().context("the record has a directory")?;
+        std::fs::create_dir_all(dir).context("creating the work directory")?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(dir).context("writing the workflows' last runs")?;
+        serde_json::to_writer_pretty(&mut file, self)?;
+        file.persist(path)
+            .context("writing the workflows' last runs")?;
+        Ok(())
+    }
+}
+
+/// Where the workflows' last runs are kept, so they survive a restart.
+fn last_runs_path(work_dir: &Path) -> PathBuf {
+    work_dir.join("workflow-runs.json")
 }
 
 impl FromIterator<(WorkflowName, Timestamp)> for LastRuns {
     fn from_iter<I: IntoIterator<Item = (WorkflowName, Timestamp)>>(runs: I) -> LastRuns {
         LastRuns(runs.into_iter().collect())
     }
+}
+
+/// The files in [`DIR`] on a branch: the workflows whose files parse, and
+/// the files that do not.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkflowFiles {
+    pub parsed: Vec<Workflow>,
+    pub unparsed: Vec<Unparsed>,
+}
+
+/// A file in [`DIR`] that does not parse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unparsed {
+    /// Its path in the repository.
+    pub path: String,
+    /// Why it does not parse.
+    pub reason: String,
+}
+
+/// Reads and parses the Markdown files in [`DIR`] at the head of `branch`.
+/// Fails only when the directory cannot be listed: a file that cannot be
+/// read is one that does not parse.
+pub async fn read(store: &dyn Store, branch: &str) -> Result<WorkflowFiles> {
+    let mut files = WorkflowFiles::default();
+    for file in store.list_files(branch, DIR).await? {
+        let Some(name) = file.strip_suffix(".md") else {
+            continue;
+        };
+        let parsed = async {
+            let name: WorkflowName = name.parse().map_err(anyhow::Error::msg)?;
+            let text = store
+                .read_file(branch, &name.path())
+                .await?
+                .context("the file is gone")?;
+            parse(&name, &text)
+        };
+        match parsed.await {
+            Ok(workflow) => files.parsed.push(workflow),
+            Err(e) => files.unparsed.push(Unparsed {
+                path: format!("{DIR}/{file}"),
+                reason: format!("{e:#}"),
+            }),
+        }
+    }
+    Ok(files)
 }
 
 #[derive(Deserialize)]
