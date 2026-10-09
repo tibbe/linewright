@@ -1256,6 +1256,100 @@ fn with_auto_merge_a_person_whose_latest_review_does_not_approve_holds_the_merge
 }
 
 #[test]
+fn with_auto_merge_a_person_who_comments_after_approving_holds_the_merge_until_they_approve_again()
+{
+    let mut pr = reworked(pull(20, 2));
+    pr.checks = vec![check("test", CheckState::Passed)];
+    pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 2)];
+    pr.comments = vec![comment("reviewer", 3, "Also change `bar`.")];
+    let commented = in_review(pr.clone());
+    pr.state = PullState::Open { draft: false };
+    pr.reviews
+        .push(review("reviewer", ReviewState::Approved, "", 6));
+    let approved_again = in_review(pr);
+
+    assert_eq!(
+        auto_merging(&commented, 10),
+        vec![Action::MarkReady {
+            pr: Number(20),
+            reviewers: vec![Login::new("maintainer")],
+        }]
+    );
+    assert_eq!(auto_merging(&approved_again, 10), vec![merge(20, false)]);
+}
+
+#[test]
+fn with_auto_merge_a_person_who_replies_in_a_thread_after_approving_holds_the_merge_until_they_approve_again()
+ {
+    let mut pr = reworked(ready(pull(20, 2)));
+    pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 2)];
+    pr.threads = vec![Thread {
+        id: "T1".into(),
+        path: "src/lib.rs".into(),
+        resolved: false,
+        comments: vec![
+            comment("maintainer", 1, "Why `foo`?"),
+            comment("reviewer", 3, "Agreed, rename it."),
+        ],
+    }];
+    pr.reviews
+        .push(review("maintainer", ReviewState::Approved, "", 4));
+    let replied = in_review(pr.clone());
+    pr.reviews
+        .push(review("reviewer", ReviewState::Approved, "", 6));
+    let approved_again = in_review(pr);
+
+    assert_eq!(auto_merging(&replied, 10), vec![]);
+    assert_eq!(auto_merging(&approved_again, 10), vec![merge(20, false)]);
+}
+
+#[test]
+fn with_auto_merge_an_approval_with_inline_comments_does_not_hold_the_merge() {
+    let mut pr = reworked(ready(pull(20, 2)));
+    pr.threads = vec![Thread {
+        id: "T1".into(),
+        path: "src/lib.rs".into(),
+        resolved: false,
+        comments: vec![comment("reviewer", 3, "Nit: typo.")],
+    }];
+    pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 3)];
+
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+}
+
+#[test]
+fn with_auto_merge_a_pull_request_merges_once_each_persons_newest_comment_or_review_approves() {
+    let mut pr = reworked(ready(pull(20, 2)));
+    pr.reviews = vec![
+        review("reviewer", ReviewState::Approved, "", 2),
+        review("maintainer", ReviewState::Approved, "", 2),
+    ];
+    pr.comments = vec![comment("maintainer", 3, "Also change `bar`.")];
+    let one_commented = in_review(pr.clone());
+    pr.comments
+        .push(comment("reviewer", 4, "And `baz` while at it."));
+    pr.reviews
+        .push(review("maintainer", ReviewState::Approved, "", 6));
+    let other_commented = in_review(pr.clone());
+    pr.reviews
+        .push(review("reviewer", ReviewState::Approved, "", 7));
+    let both_approved = in_review(pr);
+
+    assert_eq!(auto_merging(&one_commented, 10), vec![]);
+    assert_eq!(auto_merging(&other_commented, 10), vec![]);
+    assert_eq!(auto_merging(&both_approved, 10), vec![merge(20, false)]);
+}
+
+#[test]
+fn with_auto_merge_comments_from_the_machine_user_after_an_approval_do_not_hold_the_merge() {
+    let mut pr = reworked(ready(pull(20, 2)));
+    pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 2)];
+    pr.comments = vec![comment(MACHINE, 3, "Renamed `foo`.")];
+
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+}
+
+#[test]
 fn with_auto_merge_a_pull_request_two_people_commented_on_merges_once_both_approve() {
     let mut pr = reworked(ready(pull(20, 2)));
     pr.comments = vec![

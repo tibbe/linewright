@@ -822,25 +822,34 @@ fn hold_noted(pr: &Pull, requires: &[Requirement], machine: &Login) -> bool {
 }
 
 /// Whether a person who commented on or reviewed the pull request holds its
-/// merge: their latest review does not approve it. Bots and the machine user
-/// hold nothing.
+/// merge: they have no approving review newer than every comment they made
+/// on it, as a PR comment, in a review thread or as another review. The
+/// inline comments submitted with an approval are made no later than it, so
+/// they don't hold the merge. Bots and the machine user hold nothing.
 fn is_held(pr: &Pull, machine: &Login) -> bool {
-    let commenters = pr
+    let comments = pr
         .comments
         .iter()
         .chain(pr.threads.iter().flat_map(|t| &t.comments))
-        .map(|c| &c.author);
-    let reviewers = pr.reviews.iter().map(|r| &r.author);
-    commenters
-        .chain(reviewers)
-        .filter(|author| author.is_person_besides(machine))
-        .any(|person| {
-            pr.reviews
+        .map(|c| (&c.author, c.created_at));
+    let reviews = pr.reviews.iter().map(|r| (&r.author, r.submitted_at));
+    let activity: Vec<_> = comments
+        .chain(reviews)
+        .filter(|(author, _)| author.is_person_besides(machine))
+        .collect();
+    activity.iter().any(|(person, _)| {
+        let approved = pr
+            .reviews
+            .iter()
+            .filter(|r| &r.author == *person && r.state == ReviewState::Approved)
+            .map(|r| r.submitted_at)
+            .max();
+        approved.is_none_or(|approved| {
+            activity
                 .iter()
-                .filter(|r| &r.author == person)
-                .max_by_key(|r| r.submitted_at)
-                .is_none_or(|latest| latest.state != ReviewState::Approved)
+                .any(|(author, at)| author == person && *at > approved)
         })
+    })
 }
 
 /// Feedback on a pull request that Linewright has not answered yet.
