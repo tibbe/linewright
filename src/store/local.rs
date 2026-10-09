@@ -30,6 +30,7 @@ pub struct Seed {
     pub issue_types: Option<Vec<String>>,
     /// Whether the default branch requires linear history.
     pub linear_history: bool,
+    /// The merge methods the repository allows.
     pub allowed_merge_methods: MergeMethods,
 }
 
@@ -1134,6 +1135,9 @@ impl Store for LocalStore {
         }
         if self.rev(&head_ref).await? != head {
             bail!("the head of {pr} is no longer {head}");
+        }
+        if !self.state().allowed_merge_methods.contains(method) {
+            bail!("the repository doesn't allow the merge method `{method}`");
         }
         let machine = self.state().machine_user.clone();
         self.merge_as(pr, machine.as_str(), method).await

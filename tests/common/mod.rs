@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::briefs::Briefs;
 use linewright::clock::Clock;
-use linewright::domain::{Issue, Login, MergeMethods, Number, Timestamp};
+use linewright::domain::{Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
@@ -253,6 +253,16 @@ pub struct Repository {
     pub allowed_merge_methods: MergeMethods,
 }
 
+impl Repository {
+    /// A repository allowing only `methods`, without linear history.
+    pub fn allowing(methods: impl IntoIterator<Item = MergeMethod>) -> Repository {
+        Repository {
+            allowed_merge_methods: methods.into_iter().collect(),
+            ..Repository::default()
+        }
+    }
+}
+
 impl Default for Repository {
     fn default() -> Repository {
         Repository {
@@ -287,18 +297,14 @@ impl World {
     }
 
     pub async fn with(adjust: impl FnOnce(&mut FactoryConfig)) -> World {
-        World::with_repository(false, adjust).await
+        World::with_repository(Repository::default(), adjust).await
     }
 
-    /// A world whose default branch requires linear history, or not.
+    /// A world on `repository`.
     pub async fn with_repository(
-        linear_history: bool,
+        repository: Repository,
         adjust: impl FnOnce(&mut FactoryConfig),
     ) -> World {
-        let repository = Repository {
-            linear_history,
-            ..Repository::default()
-        };
         World::start(repository, adjust).await.unwrap()
     }
 

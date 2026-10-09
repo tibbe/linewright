@@ -9,7 +9,7 @@ pub mod rate_limit;
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
@@ -51,14 +51,17 @@ pub struct RepoSettings {
     pub default_branch: String,
     pub update_method: UpdateMethod,
     pub merge_method: MergeMethod,
+    /// The merge methods the repository allows.
     pub allowed_merge_methods: MergeMethods,
     pub categories: Categories,
 }
 
 impl RepoSettings {
     /// The settings of a repository whose default branch requires linear
-    /// history, or not: branches are updated and merged by rebasing where it
-    /// does and by merging where it doesn't.
+    /// history, or not, and that allows `allowed_merge_methods`: branches
+    /// are updated and merged by rebasing where it requires linear history,
+    /// and otherwise updated by merging and merged with the first method it
+    /// allows (`docs/specs/product.md`, "Auto-merge").
     pub fn new(
         default_branch: String,
         linear_history: bool,
@@ -68,7 +71,15 @@ impl RepoSettings {
         let (update_method, merge_method) = if linear_history {
             (UpdateMethod::Rebase, MergeMethod::Rebase)
         } else {
-            (UpdateMethod::Merge, MergeMethod::Merge)
+            let first_allowed = MergeMethod::ALL
+                .into_iter()
+                .find(|&method| allowed_merge_methods.contains(method));
+            // A repository allows at least one method
+            // (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>).
+            (
+                UpdateMethod::Merge,
+                first_allowed.unwrap_or(MergeMethod::Merge),
+            )
         };
         RepoSettings {
             default_branch,
@@ -77,6 +88,29 @@ impl RepoSettings {
             allowed_merge_methods,
             categories,
         }
+    }
+
+    /// Fails unless auto-merge can merge with the merge method: the
+    /// repository allows it, and `update_branch`, the `update-branch`
+    /// setting, keeps branches mergeable with it (`docs/specs/product.md`,
+    /// "Repository").
+    pub fn check_auto_merge(&self, update_branch: Option<UpdateMethod>) -> Result<()> {
+        let method = self.merge_method;
+        let allowed = &self.allowed_merge_methods;
+        if !allowed.contains(method) {
+            bail!(
+                "the repository doesn't allow the merge method `{method}`: it allows {allowed}; \
+                 set `merge-method` to a method it allows"
+            );
+        }
+        if method == MergeMethod::Rebase && update_branch == Some(UpdateMethod::Merge) {
+            bail!(
+                "`update-branch` `merge` cannot keep branches rebase-mergeable, and the merge \
+                 method is `rebase`: set `update-branch` to `rebase`, or `merge-method` to \
+                 another method the repository allows (it allows {allowed})"
+            );
+        }
+        Ok(())
     }
 }
 

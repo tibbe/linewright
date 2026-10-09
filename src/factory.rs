@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use chrono::TimeDelta;
 use tokio::task::{Id, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -70,8 +70,9 @@ pub struct Factory {
 
 impl Factory {
     /// Checks the store can be worked (the token can push and, with
-    /// auto-merge, the repository allows the merge method), reads the
-    /// repository's settings and creates missing labels.
+    /// auto-merge, the repository allows the merge method and `update-branch`
+    /// keeps branches mergeable with it), reads the repository's settings
+    /// and creates missing labels.
     pub async fn start(
         store: Arc<dyn Store>,
         runtime: Arc<dyn Runtime>,
@@ -89,17 +90,8 @@ impl Factory {
         if let Some(method) = config.merge_method {
             settings.merge_method = method;
         }
-        if config.auto_merge
-            && !settings
-                .allowed_merge_methods
-                .contains(settings.merge_method)
-        {
-            bail!(
-                "the repository doesn't allow the merge method `{}`: it allows {}; \
-                 set `merge-method` to a method it allows",
-                settings.merge_method,
-                settings.allowed_merge_methods
-            );
+        if config.auto_merge {
+            settings.check_auto_merge(config.update_method)?;
         }
         store
             .ensure_labels(&label::ALL)

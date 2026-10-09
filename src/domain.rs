@@ -369,11 +369,14 @@ pub enum MergeMethod {
 }
 
 impl MergeMethod {
+    /// Every merge method, in the order Linewright prefers them
+    /// (`docs/specs/product.md`, "Auto-merge").
     pub const ALL: [MergeMethod; 3] =
         [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase];
 }
 
 impl fmt::Display for MergeMethod {
+    /// As the `merge-method` setting names it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             MergeMethod::Merge => "merge",
@@ -395,7 +398,7 @@ impl std::str::FromStr for MergeMethod {
 }
 
 /// The merge methods a repository allows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeMethods(Vec<MergeMethod>);
 
 impl MergeMethods {

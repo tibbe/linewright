@@ -34,6 +34,10 @@ pub struct Case {
     pub machine_user: Login,
     pub issue_types: Option<Vec<String>>,
     pub update_method: UpdateMethod,
+    /// The merge methods the repository allows; every method in cases
+    /// captured before they were recorded.
+    #[serde(default = "MergeMethods::all")]
+    pub allowed_merge_methods: MergeMethods,
     /// The commit the event starts from.
     pub base: String,
     pub event: Event,
@@ -174,6 +178,7 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
             Categories::Labels => None,
         },
         update_method: settings.update_method,
+        allowed_merge_methods: settings.allowed_merge_methods,
         base,
         event,
     };
@@ -265,7 +270,7 @@ pub async fn replay(
                 // The repository's update method is a rebase exactly where
                 // its default branch requires linear history.
                 linear_history: case.update_method == UpdateMethod::Rebase,
-                allowed_merge_methods: MergeMethods::all(),
+                allowed_merge_methods: case.allowed_merge_methods.clone(),
             },
             clock.clone(),
         )

@@ -758,10 +758,17 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     assert_eq!(world.store.snapshot_pull(next).await.closes, [second]);
 }
 
-/// Runs a ticket to a green pull request with auto-merge on and the merge
-/// method left to the repository.
-async fn auto_merged_by_default(linear_history: bool) -> World {
-    let mut world = World::with_repository(linear_history, |config| config.auto_merge = true).await;
+/// Runs a ticket to a green pull request with auto-merge on and the
+/// `merge-method` setting, if any.
+async fn auto_merged(
+    repository: Repository,
+    merge_method: Option<linewright::domain::MergeMethod>,
+) -> World {
+    let mut world = World::with_repository(repository, |config| {
+        config.auto_merge = true;
+        config.merge_method = merge_method;
+    })
+    .await;
     world.ticket_in_review().await;
     world.clock.advance(chrono::TimeDelta::minutes(6));
     world.poll().await;
@@ -770,11 +777,47 @@ async fn auto_merged_by_default(linear_history: bool) -> World {
 
 #[tokio::test]
 async fn with_auto_merge_and_no_merge_method_set_the_repository_decides_it() {
-    let rebased = auto_merged_by_default(true).await;
-    let merged = auto_merged_by_default(false).await;
+    let rebased = auto_merged(
+        Repository {
+            linear_history: true,
+            ..Repository::default()
+        },
+        None,
+    )
+    .await;
+    let merged = auto_merged(Repository::default(), None).await;
 
     assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
     assert_eq!(history(&merged)[0].1, 2, "a merge commit");
+}
+
+#[tokio::test]
+async fn with_auto_merge_and_no_merge_method_set_the_first_method_the_repository_allows_is_used() {
+    use linewright::domain::MergeMethod;
+
+    let rebased = auto_merged(Repository::allowing([MergeMethod::Rebase]), None).await;
+    let squashed = auto_merged(
+        Repository::allowing([MergeMethod::Squash, MergeMethod::Rebase]),
+        None,
+    )
+    .await;
+
+    assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
+    let pr = *squashed.store.pulls().last().unwrap();
+    assert_eq!(history(&squashed)[0], (format!("Do it ({pr})"), 1));
+}
+
+#[tokio::test]
+async fn with_auto_merge_a_merge_method_set_wins_over_the_one_the_repository_allows_first() {
+    use linewright::domain::MergeMethod;
+
+    let rebased = auto_merged(
+        Repository::allowing([MergeMethod::Squash, MergeMethod::Rebase]),
+        Some(MergeMethod::Rebase),
+    )
+    .await;
+
+    assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
 }
 
 #[tokio::test]

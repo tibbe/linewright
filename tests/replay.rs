@@ -10,7 +10,7 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 use common::*;
 use linewright::case::{Case, Event, replay};
-use linewright::domain::{Login, Number, UpdateMethod};
+use linewright::domain::{Login, MergeMethod, Number, UpdateMethod};
 use linewright::reconcile::WorkKind;
 use serde_json::json;
 
@@ -31,6 +31,15 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// A case for a spec change: a repository at its base commit, holding
 /// `files` beside the spec, and the merge that changed the spec.
 fn spec_change_case(dir: &Path, files: &[(&str, &str)]) {
+    spec_change_case_allowing(dir, files, &MergeMethod::ALL);
+}
+
+/// A spec change case in a repository that allows `allowed_merge_methods`.
+fn spec_change_case_allowing(
+    dir: &Path,
+    files: &[(&str, &str)],
+    allowed_merge_methods: &[MergeMethod],
+) {
     let repo = dir.join("source");
     std::fs::create_dir_all(repo.join("docs")).unwrap();
     git(&repo, &["init", "--quiet", "-b", "main"]);
@@ -73,6 +82,7 @@ fn spec_change_case(dir: &Path, files: &[(&str, &str)]) {
         machine_user: Login::new(MACHINE),
         issue_types: None,
         update_method: UpdateMethod::Merge,
+        allowed_merge_methods: allowed_merge_methods.iter().copied().collect(),
         base,
         event: Event::SpecChange {
             number: Number(41),
@@ -256,4 +266,26 @@ async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_
     for issue in ["issues/2.md", "issues/3.md", "issues/4.md"] {
         assert!(read(issue).contains("- State: closed"), "{issue}");
     }
+}
+
+#[tokio::test]
+async fn a_replay_with_auto_merge_refuses_a_merge_method_the_case_repository_does_not_allow() {
+    let dir = tempfile::tempdir().unwrap();
+    spec_change_case_allowing(dir.path(), &[], &[MergeMethod::Rebase]);
+    let out = dir.path().join("out");
+    let mut config = config(&out);
+    config.auto_merge = true;
+    config.merge_method = Some(MergeMethod::Merge);
+
+    let error = replay(
+        &dir.path().join("case"),
+        &out,
+        Arc::new(ScriptedRuntime::default()),
+        Arc::new(FakeClock::new()),
+        config,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("only `rebase`"), "{error:#}");
 }
