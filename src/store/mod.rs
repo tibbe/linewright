@@ -13,7 +13,8 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, Login, MergeMethod, MergeMethods, Number, Pull, Snapshot, Timestamp, UpdateMethod,
+    CheckFailure, Login, MergeMethod, MergeMethods, Number, Pull, Snapshot, Timestamp,
+    UpdateMethod, UpdateRule,
 };
 
 /// Who Linewright acts as.
@@ -49,7 +50,7 @@ impl Categories {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepoSettings {
     pub default_branch: String,
-    pub update_method: UpdateMethod,
+    pub update_rule: UpdateRule,
     pub merge_method: MergeMethod,
     /// The merge methods the repository allows.
     pub allowed_merge_methods: MergeMethods,
@@ -60,30 +61,36 @@ impl RepoSettings {
     /// The settings of a repository whose default branch requires linear
     /// history, or not, and that allows `allowed_merge_methods`: branches
     /// are updated and merged by rebasing where it requires linear history,
-    /// and otherwise updated by merging and merged with the first method it
-    /// allows (`docs/specs/product.md`, "Auto-merge").
+    /// and otherwise updated by merging, or by rebasing on a conflict where
+    /// it allows rebase merging, and merged with the first method it allows
+    /// (`docs/specs/product.md`, "Keeping up to date" and "Auto-merge").
     pub fn new(
         default_branch: String,
         linear_history: bool,
         allowed_merge_methods: MergeMethods,
         categories: Categories,
     ) -> Self {
-        let (update_method, merge_method) = if linear_history {
-            (UpdateMethod::Rebase, MergeMethod::Rebase)
+        let (update_rule, merge_method) = if linear_history {
+            (
+                UpdateRule::Always(UpdateMethod::Rebase),
+                MergeMethod::Rebase,
+            )
         } else {
+            let update_rule = if allowed_merge_methods.contains(MergeMethod::Rebase) {
+                UpdateRule::RebaseOnConflict
+            } else {
+                UpdateRule::Always(UpdateMethod::Merge)
+            };
             let first_allowed = MergeMethod::ALL
                 .into_iter()
                 .find(|&method| allowed_merge_methods.contains(method));
             // A repository allows at least one method
             // (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>).
-            (
-                UpdateMethod::Merge,
-                first_allowed.unwrap_or(MergeMethod::Merge),
-            )
+            (update_rule, first_allowed.unwrap_or(MergeMethod::Merge))
         };
         RepoSettings {
             default_branch,
-            update_method,
+            update_rule,
             merge_method,
             allowed_merge_methods,
             categories,

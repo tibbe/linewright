@@ -7,6 +7,7 @@ use std::fmt::Write;
 
 use crate::briefs::Briefs;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Pull, UpdateMethod};
+use crate::git::Conflict;
 use crate::reconcile::Feedback;
 use crate::workflow::Workflow;
 
@@ -21,13 +22,6 @@ pub struct Repo<'a> {
 pub struct Ticket<'a> {
     pub issue: &'a Issue,
     pub filed_gaps: Vec<&'a Issue>,
-}
-
-/// A rebase or merge of the default branch that stopped on conflicts and is
-/// left in progress for the session to finish.
-pub struct Conflict {
-    pub method: UpdateMethod,
-    pub files: Vec<String>,
 }
 
 /// What a run on an open pull request is for.
@@ -139,7 +133,10 @@ pub fn pull_work(
     );
     if let Some(conflict) = conflict {
         let (verb, finish) = match conflict.method {
-            UpdateMethod::Rebase => ("A rebase onto", "`git rebase --continue`"),
+            UpdateMethod::Rebase => (
+                "A rebase onto",
+                "`GIT_EDITOR=true git rebase --continue`, resolving any later commit it stops on the same way",
+            ),
             UpdateMethod::Merge => ("A merge of", "`git commit`"),
         };
         let _ = writeln!(

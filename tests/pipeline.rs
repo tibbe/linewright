@@ -663,6 +663,7 @@ async fn a_pull_request_closed_without_merging_hands_its_ticket_back() {
 async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
+    let before = world.store.snapshot_pull(pr).await.head_sha;
     world
         .store
         .merge_change(
@@ -686,6 +687,229 @@ async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date() {
         "other\n"
     );
     assert_eq!(view.mergeability, linewright::domain::Mergeability::Clean);
+    assert_eq!(
+        (
+            contains(&world, &view.head_ref, &before),
+            merges(&world, &view.head_ref)
+        ),
+        (true, 1),
+        "merged in, the branch's commits kept"
+    );
+}
+
+/// A world on `repository` with the `update-branch` setting, if any, and a
+/// ticket in review whose pull request the default branch has moved past, in
+/// the file the pull request changes if `conflicting`. Its sessions on the
+/// pull request resolve conflicts as an agent would.
+async fn moved_past(
+    repository: Repository,
+    update_branch: Option<linewright::domain::UpdateMethod>,
+    conflicting: bool,
+) -> (World, linewright::domain::Number) {
+    let mut world =
+        World::with_repository(repository, |config| config.update_method = update_branch).await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    let file = if conflicting {
+        format!("src/issue-{}.txt", ticket.0)
+    } else {
+        "src/other.txt".into()
+    };
+    world
+        .store
+        .merge_change("maintainer", "Other work", "", &[(&file, "other\n")])
+        .await
+        .unwrap();
+    for kind in [WorkKind::Update, WorkKind::Rework] {
+        let file = file.clone();
+        world.runtime.on(kind, move |call| {
+            resolve_in(&call.spec.dir, &[(&file, "done\nother\n")]);
+            json(json!({"outcome": "done", "comment": "Resolved the conflict."}))
+        });
+    }
+    (world, pr)
+}
+
+/// Writes `files` in the session's clone and finishes the rebase or merge
+/// in progress, as an agent resolving a conflict would.
+fn resolve_in(dir: &std::path::Path, files: &[(&str, &str)]) {
+    for (path, contents) in files {
+        std::fs::write(dir.join(path), contents).unwrap();
+    }
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_EDITOR", "true")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["add", "--all"]);
+    let rebasing = dir.join(git(&["rev-parse", "--git-path", "rebase-merge"]).trim());
+    if rebasing.exists() {
+        git(&["rebase", "--continue"]);
+    } else {
+        git(&["commit", "--quiet", "--no-edit"]);
+    }
+}
+
+/// Runs `git` in the store's repository.
+fn store_git(world: &World, args: &[&str]) -> std::process::Output {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(world.store.repository())
+        .output()
+        .unwrap()
+}
+
+/// How many merge commits `branch` has that the default branch doesn't.
+fn merges(world: &World, branch: &str) -> usize {
+    let output = store_git(
+        world,
+        &[
+            "rev-list",
+            "--merges",
+            "--count",
+            &format!("main..{branch}"),
+        ],
+    );
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+/// Whether `branch` still contains `commit`: its history wasn't rewritten.
+fn contains(world: &World, branch: &str, commit: &str) -> bool {
+    store_git(world, &["merge-base", "--is-ancestor", commit, branch])
+        .status
+        .success()
+}
+
+/// The conflict instructions the sessions of `kind` were given.
+fn told_to_finish(world: &World, kind: WorkKind) -> Vec<&'static str> {
+    world
+        .runtime
+        .prompts(kind)
+        .iter()
+        .filter_map(|prompt| {
+            if prompt.contains("A rebase onto `origin/main` stopped on conflicts in")
+                && prompt.contains("finish with `GIT_EDITOR=true git rebase --continue`")
+            {
+                Some("rebase")
+            } else if prompt.contains("A merge of `origin/main` stopped on conflicts in")
+                && prompt.contains("finish with `git commit`")
+            {
+                Some("merge")
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn by_default_a_conflict_is_resolved_in_a_rebase_where_the_repository_allows_rebase_merging()
+{
+    let (mut world, pr) = moved_past(Repository::default(), None, true).await;
+
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(told_to_finish(&world, WorkKind::Update), ["rebase"]);
+    assert_eq!(merges(&world, &view.head_ref), 0);
+    assert_eq!(view.mergeability, linewright::domain::Mergeability::Clean);
+}
+
+#[tokio::test]
+async fn by_default_a_conflict_is_resolved_in_a_merge_where_the_repository_disallows_rebase_merging()
+ {
+    use linewright::domain::MergeMethod;
+
+    let (mut world, pr) = moved_past(
+        Repository::allowing([MergeMethod::Merge, MergeMethod::Squash]),
+        None,
+        true,
+    )
+    .await;
+
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(told_to_finish(&world, WorkKind::Update), ["merge"]);
+    assert_eq!(merges(&world, &view.head_ref), 1);
+    assert_eq!(view.mergeability, linewright::domain::Mergeability::Clean);
+}
+
+#[tokio::test]
+async fn by_default_a_branch_is_always_rebased_where_the_repository_requires_linear_history() {
+    let linear = || Repository {
+        linear_history: true,
+        ..Repository::default()
+    };
+    let (mut clean, clean_pr) = moved_past(linear(), None, false).await;
+    let before = clean.store.snapshot_pull(clean_pr).await.head_sha;
+    let (mut conflicting, conflicting_pr) = moved_past(linear(), None, true).await;
+
+    clean.poll().await;
+    conflicting.poll().await;
+
+    let head_ref = clean.store.snapshot_pull(clean_pr).await.head_ref;
+    assert!(!contains(&clean, &head_ref, &before), "rebased");
+    assert_eq!(merges(&clean, &head_ref), 0);
+    assert_eq!(told_to_finish(&conflicting, WorkKind::Update), ["rebase"]);
+    let head_ref = conflicting
+        .store
+        .snapshot_pull(conflicting_pr)
+        .await
+        .head_ref;
+    assert_eq!(merges(&conflicting, &head_ref), 0);
+}
+
+#[tokio::test]
+async fn update_branch_merge_merges_even_on_a_conflict_and_rebase_always_rebases() {
+    use linewright::domain::UpdateMethod;
+
+    let (mut merging, merging_pr) =
+        moved_past(Repository::default(), Some(UpdateMethod::Merge), true).await;
+    let (mut rebasing, rebasing_pr) =
+        moved_past(Repository::default(), Some(UpdateMethod::Rebase), false).await;
+    let before = rebasing.store.snapshot_pull(rebasing_pr).await.head_sha;
+
+    merging.poll().await;
+    rebasing.poll().await;
+
+    assert_eq!(told_to_finish(&merging, WorkKind::Update), ["merge"]);
+    let head_ref = merging.store.snapshot_pull(merging_pr).await.head_ref;
+    assert_eq!(merges(&merging, &head_ref), 1);
+    let head_ref = rebasing.store.snapshot_pull(rebasing_pr).await.head_ref;
+    assert!(!contains(&rebasing, &head_ref, &before), "rebased");
+    assert_eq!(merges(&rebasing, &head_ref), 0);
+}
+
+#[tokio::test]
+async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
+    let (mut world, pr) = moved_past(Repository::default(), None, true).await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Tidy up.")
+        .unwrap();
+
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(told_to_finish(&world, WorkKind::Rework), ["rebase"]);
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Update),
+        Vec::<String>::new()
+    );
+    assert_eq!(merges(&world, &view.head_ref), 0);
 }
 
 /// The subject and parent count of each commit on the store's default

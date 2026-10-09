@@ -14,7 +14,9 @@ use tracing::{error, info, warn};
 
 use crate::briefs::Briefs;
 use crate::clock::Clock;
-use crate::domain::{Login, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, label};
+use crate::domain::{
+    Login, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
+};
 use crate::marker::{Stage, marked};
 use crate::reconcile::{Action, FailedMerge, LiveRun, Policy, Workflows, hold_note, reconcile};
 use crate::run::{self, Shell};
@@ -87,7 +89,7 @@ impl Factory {
             .await
             .context("reading the repository's settings")?;
         if let Some(method) = config.update_method {
-            settings.update_method = method;
+            settings.update_rule = UpdateRule::Always(method);
         }
         if let Some(method) = config.merge_method {
             settings.merge_method = method;
@@ -102,7 +104,7 @@ impl Factory {
         info!(
             machine_user = %identity.login,
             default_branch = %settings.default_branch,
-            update_method = ?settings.update_method,
+            update_rule = ?settings.update_rule,
             auto_merge = config.auto_merge,
             merge_method = %settings.merge_method,
             "started"

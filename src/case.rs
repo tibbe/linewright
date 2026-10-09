@@ -16,7 +16,7 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::clock::Clock;
-use crate::domain::{Login, MergeMethods, Number, UpdateMethod, label};
+use crate::domain::{Login, MergeMethods, Number, UpdateMethod, UpdateRule, label};
 use crate::factory::{Factory, FactoryConfig};
 use crate::git;
 use crate::reconcile::Subject;
@@ -33,6 +33,7 @@ pub struct Case {
     pub default_branch: String,
     pub machine_user: Login,
     pub issue_types: Option<Vec<String>>,
+    /// `rebase` exactly where the default branch requires linear history.
     pub update_method: UpdateMethod,
     /// The merge methods the repository allows; every method in cases
     /// captured before they were recorded.
@@ -177,7 +178,12 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
             Categories::IssueTypes(types) => Some(types),
             Categories::Labels => None,
         },
-        update_method: settings.update_method,
+        update_method: match settings.update_rule {
+            UpdateRule::Always(UpdateMethod::Rebase) => UpdateMethod::Rebase,
+            UpdateRule::Always(UpdateMethod::Merge) | UpdateRule::RebaseOnConflict => {
+                UpdateMethod::Merge
+            }
+        },
         allowed_merge_methods: settings.allowed_merge_methods,
         base,
         event,
@@ -267,8 +273,6 @@ pub async fn replay(
                 default_branch: case.default_branch.clone(),
                 machine_user: case.machine_user.clone(),
                 issue_types: case.issue_types.clone(),
-                // The repository's update method is a rebase exactly where
-                // its default branch requires linear history.
                 linear_history: case.update_method == UpdateMethod::Rebase,
                 allowed_merge_methods: case.allowed_merge_methods.clone(),
             },

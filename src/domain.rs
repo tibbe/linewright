@@ -357,6 +357,17 @@ pub enum UpdateMethod {
     Merge,
 }
 
+/// Which method brings a branch up to date with the default branch
+/// (`docs/specs/product.md`, "Keeping up to date").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateRule {
+    Always(UpdateMethod),
+    /// Merge, but rebase where the merge has a conflict to resolve: a
+    /// conflict resolved in a merge commit leaves the branch impossible to
+    /// rebase-merge.
+    RebaseOnConflict,
+}
+
 /// How a pull request is merged into the default branch, as GitHub's merge
 /// methods are named
 /// (<https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request>).

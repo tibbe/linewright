@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
 
-use crate::domain::UpdateMethod;
+use crate::domain::{UpdateMethod, UpdateRule};
 
 /// Environment for git commands that reach the remote, such as credentials.
 pub type GitEnv = [(String, String)];
@@ -73,13 +73,19 @@ pub async fn create_branch(dir: &Path, branch: &str) -> Result<()> {
 pub enum Updated {
     UpToDate,
     Updated,
-    /// Stopped on conflicts in these files, left in progress.
-    Conflict(Vec<String>),
+    Conflict(Conflict),
+}
+
+/// A rebase or merge of the default branch that stopped on conflicts in
+/// `files` and is left in progress.
+pub struct Conflict {
+    pub method: UpdateMethod,
+    pub files: Vec<String>,
 }
 
 /// Brings the checked-out branch up to date with `origin/<default_branch>`,
-/// as fresh as the clone.
-pub async fn update(dir: &Path, default_branch: &str, method: UpdateMethod) -> Result<Updated> {
+/// as fresh as the clone, with the method `rule` picks.
+pub async fn update(dir: &Path, default_branch: &str, rule: UpdateRule) -> Result<Updated> {
     let upstream = format!("origin/{default_branch}");
     if git(dir, &["merge-base", "--is-ancestor", &upstream, "HEAD"])
         .await
@@ -87,22 +93,37 @@ pub async fn update(dir: &Path, default_branch: &str, method: UpdateMethod) -> R
     {
         return Ok(Updated::UpToDate);
     }
+    match rule {
+        UpdateRule::Always(method) => update_with(dir, &upstream, method).await,
+        UpdateRule::RebaseOnConflict => {
+            match update_with(dir, &upstream, UpdateMethod::Merge).await? {
+                Updated::Conflict(_) => {
+                    git(dir, &["merge", "--abort"]).await?;
+                    update_with(dir, &upstream, UpdateMethod::Rebase).await
+                }
+                updated => Ok(updated),
+            }
+        }
+    }
+}
+
+async fn update_with(dir: &Path, upstream: &str, method: UpdateMethod) -> Result<Updated> {
     let attempt = match method {
-        UpdateMethod::Rebase => git(dir, &["rebase", "--quiet", &upstream]).await,
-        UpdateMethod::Merge => git(dir, &["merge", "--quiet", "--no-edit", &upstream]).await,
+        UpdateMethod::Rebase => git(dir, &["rebase", "--quiet", upstream]).await,
+        UpdateMethod::Merge => git(dir, &["merge", "--quiet", "--no-edit", upstream]).await,
     };
     match attempt {
         Ok(_) => Ok(Updated::Updated),
         Err(error) => {
-            let conflicted: Vec<String> = git(dir, &["diff", "--name-only", "--diff-filter=U"])
+            let files: Vec<String> = git(dir, &["diff", "--name-only", "--diff-filter=U"])
                 .await?
                 .lines()
                 .map(str::to_string)
                 .collect();
-            if conflicted.is_empty() {
+            if files.is_empty() {
                 Err(error)
             } else {
-                Ok(Updated::Conflict(conflicted))
+                Ok(Updated::Conflict(Conflict { method, files }))
             }
         }
     }
