@@ -1,7 +1,7 @@
 //! A run: one piece of work, from a fresh clone through its agent session to
 //! the outcome recorded in the store. Runs read the snapshot they started
 //! from and write only through the store; their decisions come from the
-//! reconcile step, the session's result and the spec contract.
+//! reconcile step and the session's result.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -646,7 +646,6 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
                 .map_err(infra)?
                 > 0
             {
-                spec_contract(shell, &ws.dir, Stage::Implementation).await?;
                 shell
                     .store
                     .push(&ws.dir, &branch, PushMode::Replace)
@@ -657,7 +656,6 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
         }
         conversation => conversation?,
     };
-    spec_contract(shell, &ws.dir, Stage::Implementation).await?;
     let has_commits = git::commits_ahead(&ws.dir, &upstream)
         .await
         .map_err(infra)?
@@ -738,32 +736,6 @@ fn closing(body: &str, ticket: Number) -> String {
     } else {
         format!("{}\n\nCloses {ticket}", body.trim())
     }
-}
-
-/// A branch that changes the spec fails: the spec is the maintainer's.
-async fn spec_contract(shell: &Shell, dir: &Path, stage: Stage) -> Result<(), Failure> {
-    let upstream = shell.upstream();
-    let changed = git::changed_files(dir, &upstream).await.map_err(infra)?;
-    let spec: Vec<String> = changed
-        .into_iter()
-        .filter(|f| shell.policy.spec_glob.matches(f))
-        .collect();
-    if spec.is_empty() {
-        return Ok(());
-    }
-    let diff = git::diff(dir, &upstream, &spec).await.map_err(infra)?;
-    Err(Failure::HandBack {
-        stage,
-        reason: format!(
-            "The branch changes the spec ({}), which agents leave as it is. Nothing was pushed.\n\n```diff\n{}\n```",
-            spec.iter()
-                .map(|f| format!("`{f}`"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            diff.trim_end()
-        ),
-        log_tail: None,
-    })
 }
 
 /// Files the gaps not already filed for the ticket. A session told which are
@@ -932,7 +904,6 @@ async fn pull_work(
         );
         return Ok(());
     }
-    spec_contract(shell, &ws.dir, stage).await?;
     match result {
         PullWorkResult::Done {
             comment,

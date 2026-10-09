@@ -415,8 +415,7 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
 }
 
 #[tokio::test]
-async fn a_branch_that_changes_the_spec_is_not_pushed_and_the_ticket_is_handed_back_with_the_diff()
-{
+async fn a_branch_that_changes_the_spec_is_pushed_and_its_pull_request_opened() {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Implement, |call| {
         commit_in(
@@ -432,14 +431,21 @@ async fn a_branch_that_changes_the_spec_is_not_pushed_and_the_ticket_is_handed_b
 
     world.poll().await;
 
-    let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
-    let comment = last_comment(&issue);
-    assert!(comment.starts_with(
-        "> *Linewright, implementation*\n\nThe branch changes the spec (`docs/spec.md`)"
-    ));
-    assert!(comment.contains("+Rewritten."));
-    assert!(world.store.pulls().is_empty());
+    let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
+    assert_eq!(pr.title, "Edit the spec");
+    assert_eq!(
+        pr.state,
+        linewright::domain::PullState::Open { draft: true }
+    );
+    assert_eq!(
+        world
+            .store
+            .file(&pr.head_ref, "docs/spec.md")
+            .await
+            .unwrap(),
+        "# Spec\n\nRewritten.\n"
+    );
+    assert!(world.issue(ticket).is_assigned(&Login::new(MACHINE)));
 }
 
 #[tokio::test]

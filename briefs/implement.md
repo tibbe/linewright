@@ -24,8 +24,8 @@ or updates the pull request and posts what your result says.
 
 ## The spec is the maintainer's
 
-Never change a file matching the spec glob: a branch that changes the spec
-fails, whatever else it does. When the spec cannot decide something:
+Never change a file matching the spec glob, even to fill a gap; report the
+gap instead. When the spec cannot decide something:
 
 - If the gap **blocks** the ticket, stop and answer with the `blocked` outcome
   and the question the maintainer must answer. Commit what you have first.

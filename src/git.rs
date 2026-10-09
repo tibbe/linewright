@@ -119,13 +119,6 @@ pub async fn changed_files(dir: &Path, base: &str) -> Result<Vec<String>> {
     )
 }
 
-pub async fn diff(dir: &Path, base: &str, paths: &[String]) -> Result<String> {
-    let range = format!("{base}...HEAD");
-    let mut args = vec!["diff", range.as_str(), "--"];
-    args.extend(paths.iter().map(String::as_str));
-    git(dir, &args).await
-}
-
 pub async fn commits_ahead(dir: &Path, base: &str) -> Result<usize> {
     Ok(git(dir, &["rev-list", "--count", &format!("{base}..HEAD")])
         .await?
