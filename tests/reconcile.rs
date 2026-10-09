@@ -631,19 +631,20 @@ fn auto_merging(world: &Snapshot, minute: i64) -> Vec<Action> {
     reconcile(world, &[], &Workflows::default(), t(minute), &policy)
 }
 
+fn merge(pr: u64, draft: bool) -> Action {
+    Action::Merge {
+        pr: Number(pr),
+        head: "abc123".into(),
+        draft,
+    }
+}
+
 #[test]
 fn with_auto_merge_a_green_draft_is_merged_instead_of_marked_ready() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
 
-    assert_eq!(
-        auto_merging(&in_review(pr), 10),
-        vec![Action::Merge {
-            pr: Number(20),
-            head: "abc123".into(),
-            draft: true,
-        }]
-    );
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, true)]);
 }
 
 #[test]
@@ -661,14 +662,7 @@ fn with_auto_merge_a_draft_with_no_ci_by_the_end_of_the_grace_period_is_merged()
 fn with_auto_merge_a_green_pull_request_already_ready_for_review_is_merged() {
     let pr = ready(pull(20, 2));
 
-    assert_eq!(
-        auto_merging(&in_review(pr), 10),
-        vec![Action::Merge {
-            pr: Number(20),
-            head: "abc123".into(),
-            draft: false,
-        }]
-    );
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
 }
 
 #[test]
@@ -708,6 +702,100 @@ fn with_auto_merge_a_pull_request_whose_mergeability_is_not_known_yet_waits() {
     pr.mergeability = Mergeability::Unknown;
 
     assert_eq!(auto_merging(&in_review(pr), 10), vec![]);
+}
+
+/// The pull request with a push by Linewright at minute 5, which answers the
+/// feedback before it.
+fn reworked(mut pr: Pull) -> Pull {
+    pr.pushes.push(Push {
+        by: Login::new(MACHINE),
+        at: t(5),
+    });
+    pr
+}
+
+#[test]
+fn with_auto_merge_a_green_pull_request_a_person_commented_on_waits_for_their_approval() {
+    let mut pr = reworked(pull(20, 2));
+    pr.checks = vec![check("test", CheckState::Passed)];
+    pr.comments = vec![comment("reviewer", 3, "Please rename `foo`.")];
+    let draft = in_review(pr.clone());
+    let ready = in_review(ready(pr));
+
+    assert_eq!(
+        auto_merging(&draft, 10),
+        vec![Action::MarkReady {
+            pr: Number(20),
+            reviewers: vec![Login::new("maintainer")],
+        }]
+    );
+    assert_eq!(auto_merging(&ready, 10), vec![]);
+}
+
+#[test]
+fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_approve() {
+    let mut pr = reworked(ready(pull(20, 2)));
+    pr.threads = vec![Thread {
+        id: "T1".into(),
+        path: "src/lib.rs".into(),
+        resolved: false,
+        comments: vec![comment("reviewer", 3, "Nit: typo.")],
+    }];
+    pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 6)];
+
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+}
+
+#[test]
+fn with_auto_merge_a_person_whose_latest_review_does_not_approve_holds_the_merge() {
+    let approved_then = |state| {
+        let mut pr = reworked(ready(pull(20, 2)));
+        pr.reviews = vec![
+            review("reviewer", ReviewState::Approved, "", 2),
+            review("reviewer", state, "", 3),
+        ];
+        in_review(pr)
+    };
+
+    assert_eq!(
+        auto_merging(&approved_then(ReviewState::ChangesRequested), 10),
+        vec![]
+    );
+    assert_eq!(
+        auto_merging(&approved_then(ReviewState::Dismissed), 10),
+        vec![]
+    );
+}
+
+#[test]
+fn with_auto_merge_a_pull_request_two_people_commented_on_merges_once_both_approve() {
+    let mut pr = reworked(ready(pull(20, 2)));
+    pr.comments = vec![
+        comment("reviewer", 2, "Please rename `foo`."),
+        comment("maintainer", 3, "And `bar`."),
+    ];
+    pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 6)];
+    let one_approved = in_review(pr.clone());
+    pr.reviews
+        .push(review("maintainer", ReviewState::Approved, "", 7));
+    let both_approved = in_review(pr);
+
+    assert_eq!(auto_merging(&one_approved, 10), vec![]);
+    assert_eq!(auto_merging(&both_approved, 10), vec![merge(20, false)]);
+}
+
+#[test]
+fn with_auto_merge_comments_and_reviews_from_bots_do_not_hold_the_merge() {
+    let mut pr = reworked(ready(pull(20, 2)));
+    pr.comments = vec![comment("coverage[bot]", 2, "Coverage dropped 0.1%.")];
+    pr.reviews = vec![review(
+        "linter[bot]",
+        ReviewState::ChangesRequested,
+        "Style issues.",
+        3,
+    )];
+
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
 }
 
 #[test]

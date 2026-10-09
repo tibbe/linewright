@@ -739,3 +739,46 @@ async fn with_auto_merge_and_no_merge_method_set_the_repository_decides_it() {
     assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
     assert_eq!(history(&merged)[0].1, 2, "a merge commit");
 }
+
+#[tokio::test]
+async fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_approve() {
+    use linewright::domain::PullState;
+
+    let mut world = World::with(|config| config.auto_merge = true).await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Rename it.")
+        .unwrap();
+    world.runtime.on(WorkKind::Rework, |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("src/renamed.txt", "renamed\n")],
+            "Rename",
+        );
+        json(json!({"outcome": "done", "comment": "Renamed as asked."}))
+    });
+
+    world.poll().await;
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+    assert_eq!(
+        world.store.snapshot_pull(pr).await.state,
+        PullState::Open { draft: false },
+        "held, and ready for the maintainer to approve"
+    );
+
+    world
+        .store
+        .review_as("maintainer", pr, ReviewState::Approved, "", &[])
+        .unwrap();
+    world.poll().await;
+
+    assert!(matches!(
+        world.store.snapshot_pull(pr).await.state,
+        PullState::Merged { .. }
+    ));
+    assert!(!world.issue(ticket).open);
+}

@@ -484,7 +484,7 @@ fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) 
 
 /// An open pull request for the issue: address feedback, keep it up to date
 /// and get CI green, in that order, then mark it ready for review or, with
-/// auto-merge, merge it.
+/// auto-merge, merge it once no person holds it.
 fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
     let (issue_number, pr_number) = (issue.number, pr.number);
     let machine = &policy.machine_user;
@@ -572,7 +572,9 @@ fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
         return;
     }
     let draft = pr.state == (PullState::Open { draft: true });
-    if policy.auto_merge {
+    // A held pull request is marked ready as it is without auto-merge, so
+    // the people holding it can approve it.
+    if policy.auto_merge && !is_held(pr, machine) {
         // Behind and conflicting were brought up to date above; a
         // mergeability not computed yet waits for the next poll.
         if pr.mergeability == Mergeability::Clean {
@@ -593,6 +595,28 @@ fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
                 .collect(),
         });
     }
+}
+
+/// Whether a person who commented on or reviewed the pull request holds its
+/// merge: their latest review does not approve it. Bots and the machine user
+/// hold nothing.
+fn is_held(pr: &Pull, machine: &Login) -> bool {
+    let commenters = pr
+        .comments
+        .iter()
+        .chain(pr.threads.iter().flat_map(|t| &t.comments))
+        .map(|c| &c.author);
+    let reviewers = pr.reviews.iter().map(|r| &r.author);
+    commenters
+        .chain(reviewers)
+        .filter(|author| author.is_person_besides(machine))
+        .any(|person| {
+            pr.reviews
+                .iter()
+                .filter(|r| &r.author == person)
+                .max_by_key(|r| r.submitted_at)
+                .is_none_or(|latest| latest.state != ReviewState::Approved)
+        })
 }
 
 /// Feedback on a pull request that Linewright has not answered yet.
