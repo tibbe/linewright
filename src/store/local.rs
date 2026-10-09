@@ -917,6 +917,27 @@ impl Store for LocalStore {
         git::git(&repository, &["show", &object]).await.map(Some)
     }
 
+    async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {
+        let object = format!("{branch}:{dir}");
+        let repository = self.repository();
+        if git::git(&repository, &["cat-file", "-e", &object])
+            .await
+            .is_err()
+        {
+            return Ok(vec![]);
+        }
+        // Each entry is `<mode> <type> <object>\t<name>`
+        // (<https://git-scm.com/docs/git-ls-tree#_output_format>).
+        let listing = git::git(&repository, &["ls-tree", "-z", &object]).await?;
+        Ok(listing
+            .split('\0')
+            .filter_map(|entry| {
+                let (meta, name) = entry.split_once('\t')?;
+                (meta.split(' ').nth(1) == Some("blob")).then(|| name.to_string())
+            })
+            .collect())
+    }
+
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()> {
         git::clone(&self.url(), dir, branch, &[]).await
     }

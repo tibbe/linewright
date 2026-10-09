@@ -306,6 +306,8 @@ pub async fn replay(
     }
     // The implementer's own run of the repository's checks stands in for CI.
     config.ci_grace = chrono::TimeDelta::zero();
+    // Workflows, whose agents read GitHub, are not captured or replayed.
+    config.schedule_workflows = false;
     config.work_dir = out.canonicalize()?;
     let mut factory = Factory::start(store.clone(), runtime, clock, config).await?;
     for cycle in 1..=500 {

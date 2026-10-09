@@ -3,6 +3,7 @@
 //! when they run (`docs/specs/product.md`, "Workflows"). A file is parsed once,
 //! here, into a [`Workflow`].
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 use std::time::Duration;
@@ -10,7 +11,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::Timestamp;
 
@@ -20,7 +21,7 @@ pub const DIR: &str = ".linewright/workflows";
 /// The issues one run files when the workflow sets no `max-issues`.
 const DEFAULT_MAX_ISSUES: u32 = 3;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Workflow {
     pub name: WorkflowName,
     /// The trigger, `on.schedule`.
@@ -35,7 +36,7 @@ pub struct Workflow {
 }
 
 /// A cron expression's five fields, in UTC.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Schedule(Cron);
 
 impl Schedule {
@@ -56,7 +57,8 @@ impl Schedule {
 }
 
 /// A workflow's name: the name of its file in [`DIR`], without `.md`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct WorkflowName(String);
 
 impl WorkflowName {
@@ -79,9 +81,45 @@ impl FromStr for WorkflowName {
     }
 }
 
+impl TryFrom<String> for WorkflowName {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<WorkflowName, String> {
+        name.parse()
+    }
+}
+
+impl From<WorkflowName> for String {
+    fn from(name: WorkflowName) -> String {
+        name.0
+    }
+}
+
 impl fmt::Display for WorkflowName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// When each workflow last ran, by its name: bookkeeping Linewright keeps
+/// under the work directory and no person reads.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct LastRuns(BTreeMap<WorkflowName, Timestamp>);
+
+impl LastRuns {
+    pub fn get(&self, name: &WorkflowName) -> Option<Timestamp> {
+        self.0.get(name).copied()
+    }
+
+    pub fn record(&mut self, name: &WorkflowName, at: Timestamp) {
+        self.0.insert(name.clone(), at);
+    }
+}
+
+impl FromIterator<(WorkflowName, Timestamp)> for LastRuns {
+    fn from_iter<I: IntoIterator<Item = (WorkflowName, Timestamp)>>(runs: I) -> LastRuns {
+        LastRuns(runs.into_iter().collect())
     }
 }
 

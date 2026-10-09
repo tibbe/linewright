@@ -1224,6 +1224,38 @@ impl Store for GitHub {
             .with_context(|| format!("{path} on {branch} is not UTF-8"))
     }
 
+    async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {
+        #[derive(Deserialize)]
+        struct Entry {
+            name: String,
+            #[serde(rename = "type")]
+            kind: String,
+        }
+        // <https://docs.github.com/en/rest/repos/contents#get-repository-content>
+        let dir_segments: Vec<String> = dir.split('/').map(percent_encode).collect();
+        let resource = self.repo_path(&format!(
+            "/contents/{}?ref={}",
+            dir_segments.join("/"),
+            percent_encode(branch)
+        ));
+        let response = self.send(Method::GET, &resource, None).await?;
+        let status = response.status();
+        if status == StatusCode::NOT_FOUND {
+            return Ok(vec![]);
+        }
+        let text = response.text().await?;
+        if !status.is_success() {
+            bail!("listing {dir} on {branch}: {status}: {text}");
+        }
+        let entries: Vec<Entry> = serde_json::from_str(&text)
+            .with_context(|| format!("listing {dir} on {branch}: not a directory"))?;
+        Ok(entries
+            .into_iter()
+            .filter(|e| e.kind == "file")
+            .map(|e| e.name)
+            .collect())
+    }
+
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()> {
         let url = format!("https://github.com/{}/{}.git", self.owner, self.name);
         git::clone(&url, dir, branch, &self.git_env()).await

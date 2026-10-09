@@ -6,6 +6,7 @@ use linewright::domain::*;
 use linewright::marker::{Stage, marked};
 use linewright::reconcile::*;
 use linewright::spec_glob::SpecGlob;
+use linewright::workflow::{LastRuns, Workflow};
 
 const MACHINE: &str = "factory";
 
@@ -61,7 +62,7 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
 }
 
 fn decide(snapshot: &Snapshot) -> Vec<Action> {
-    reconcile(snapshot, &[], t(10), &policy())
+    reconcile(snapshot, &[], &Workflows::default(), t(10), &policy())
 }
 
 #[test]
@@ -186,7 +187,10 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
             tickets: vec![Number(10)],
         }]
     );
-    assert_eq!(reconcile(&world, &cutting, t(10), &policy()), vec![]);
+    assert_eq!(
+        reconcile(&world, &cutting, &Workflows::default(), t(10), &policy()),
+        vec![]
+    );
 }
 
 fn ticket(number: u64) -> Issue {
@@ -246,7 +250,10 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
         kind: WorkKind::Implement,
     }];
 
-    assert_eq!(reconcile(&world, &live, t(10), &policy()), vec![]);
+    assert_eq!(
+        reconcile(&world, &live, &Workflows::default(), t(10), &policy()),
+        vec![]
+    );
 }
 
 fn unassigned_by(mut issue: Issue, actor: &str, minute: i64) -> Issue {
@@ -327,7 +334,7 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
     let busy = [live(9, WorkKind::Implement)];
 
     assert_eq!(
-        reconcile(&world, &busy, t(10), &policy()),
+        reconcile(&world, &busy, &Workflows::default(), t(10), &policy()),
         vec![
             Action::Start(Work::Triage { issue: Number(3) }),
             Action::Start(Work::Tickets { pr: Number(5) }),
@@ -355,7 +362,7 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
         live(6, WorkKind::Implement),
     ];
 
-    let cancelled: Vec<Subject> = reconcile(&world, &runs, t(10), &policy())
+    let cancelled: Vec<Subject> = reconcile(&world, &runs, &Workflows::default(), t(10), &policy())
         .into_iter()
         .filter_map(|a| match a {
             Action::Cancel { subject, .. } => Some(subject),
@@ -381,7 +388,7 @@ fn a_tickets_run_is_cancelled_when_its_spec_change_is_marked_processed() {
     }];
 
     assert!(matches!(
-        reconcile(&world, &runs, t(10), &policy()).as_slice(),
+        reconcile(&world, &runs, &Workflows::default(), t(10), &policy()).as_slice(),
         [Action::Cancel {
             subject: Subject::SpecChange(Number(5)),
             ..
@@ -429,7 +436,7 @@ fn in_review(pr: Pull) -> Snapshot {
 }
 
 fn at(world: &Snapshot, minute: i64) -> Vec<Action> {
-    reconcile(world, &[], t(minute), &policy())
+    reconcile(world, &[], &Workflows::default(), t(minute), &policy())
 }
 
 #[test]
@@ -687,5 +694,132 @@ fn a_tracking_issue_is_closed_when_all_its_tickets_are() {
     assert_eq!(
         decide(&world),
         vec![Action::CloseTracking { issue: Number(9) }]
+    );
+}
+
+// Workflows: the due rule (`docs/specs/product.md`, "Workflows").
+
+fn hourly(name: &str) -> Workflow {
+    linewright::workflow::parse(
+        &name.parse().unwrap(),
+        "---\non:\n  schedule: \"0 * * * *\"\n---\nLook.\n",
+    )
+    .unwrap()
+}
+
+fn last_runs(runs: &[(&str, i64)]) -> LastRuns {
+    runs.iter()
+        .map(|&(name, minute)| (name.parse().unwrap(), t(minute)))
+        .collect()
+}
+
+fn workflows(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Workflows {
+    Workflows {
+        defined: defined.iter().map(|name| hourly(name)).collect(),
+        last_runs: last_runs(last),
+        in_flight: in_flight.iter().map(|name| name.parse().unwrap()).collect(),
+    }
+}
+
+/// The decisions at `minute` past 12:00, when ticks fall on the hour.
+fn scheduled(workflows: &Workflows, minute: i64) -> Vec<Action> {
+    reconcile(&snapshot(vec![]), &[], workflows, t(minute), &policy())
+}
+
+#[test]
+fn a_workflow_whose_schedule_ticked_since_its_last_run_runs_and_the_run_is_recorded() {
+    let world = workflows(&["hourly"], &[("hourly", 30)], &[]);
+
+    assert_eq!(
+        scheduled(&world, 70),
+        vec![
+            Action::RunWorkflow(Box::new(hourly("hourly"))),
+            Action::RecordLastRuns(last_runs(&[("hourly", 70)])),
+        ]
+    );
+}
+
+#[test]
+fn a_workflow_whose_schedule_has_not_ticked_since_its_last_run_waits() {
+    let world = workflows(&["hourly"], &[("hourly", 30)], &[]);
+
+    assert_eq!(scheduled(&world, 59), vec![]);
+}
+
+#[test]
+fn a_workflow_seen_for_the_first_time_does_not_run_and_counts_as_run_then() {
+    let world = workflows(&["hourly"], &[], &[]);
+
+    assert_eq!(
+        scheduled(&world, 70),
+        vec![Action::RecordLastRuns(last_runs(&[("hourly", 70)]))]
+    );
+}
+
+#[test]
+fn ticks_missed_since_the_last_run_collapse_into_one_run() {
+    // Five ticks, 13:00 to 17:00, since the last run at 12:30.
+    let world = workflows(&["hourly"], &[("hourly", 30)], &[]);
+
+    assert_eq!(
+        scheduled(&world, 310),
+        vec![
+            Action::RunWorkflow(Box::new(hourly("hourly"))),
+            Action::RecordLastRuns(last_runs(&[("hourly", 310)])),
+        ]
+    );
+}
+
+#[test]
+fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
+    // The run in flight started at 12:30; 13:00 and 14:00 tick meanwhile.
+    let running = workflows(&["hourly"], &[("hourly", 30)], &["hourly"]);
+    let ended = workflows(&["hourly"], &[("hourly", 30)], &[]);
+
+    assert_eq!(scheduled(&running, 130), vec![]);
+    assert_eq!(
+        scheduled(&ended, 131),
+        vec![
+            Action::RunWorkflow(Box::new(hourly("hourly"))),
+            Action::RecordLastRuns(last_runs(&[("hourly", 131)])),
+        ]
+    );
+}
+
+#[test]
+fn workflow_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves() {
+    // A ceiling of 4: two pipeline runs and one workflow run in flight, a
+    // ticket to implement, and two workflows due.
+    let world = snapshot(vec![
+        claimed(ticket(1)),
+        claimed(ticket(8)),
+        claimed(ticket(9)),
+    ]);
+    let busy = [live(8, WorkKind::Implement), live(9, WorkKind::Implement)];
+    let due = workflows(&["a", "b", "c"], &[("a", 30), ("b", 30), ("c", 30)], &["a"]);
+    let quieter = snapshot(vec![claimed(ticket(8)), claimed(ticket(9))]);
+
+    assert_eq!(
+        reconcile(&world, &busy, &due, t(70), &policy()),
+        vec![implement(1)]
+    );
+    assert_eq!(
+        reconcile(&quieter, &busy, &due, t(70), &policy()),
+        vec![
+            Action::RunWorkflow(Box::new(hourly("b"))),
+            Action::RecordLastRuns(last_runs(&[("a", 30), ("b", 70), ("c", 30)])),
+        ]
+    );
+}
+
+#[test]
+fn a_workflow_seen_for_the_first_time_is_recorded_even_with_no_room() {
+    let tickets = snapshot([1, 2, 3, 4].map(|n| claimed(ticket(n))).to_vec());
+    let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
+    let world = workflows(&["hourly"], &[], &[]);
+
+    assert_eq!(
+        reconcile(&tickets, &busy, &world, t(70), &policy()),
+        vec![Action::RecordLastRuns(last_runs(&[("hourly", 70)]))]
     );
 }

@@ -210,6 +210,7 @@ fn factory_config(config: &Config, work_dir: std::path::PathBuf) -> Result<Facto
         update_method: config.update_branch,
         briefs,
         work_dir,
+        schedule_workflows: true,
     })
 }
 

@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
+use chrono::TimeDelta;
 use common::*;
 use linewright::case::{Case, Event, replay};
 use linewright::domain::{Login, Number, UpdateMethod};
@@ -27,15 +28,20 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
-/// A case for a spec change: a repository at its base commit, and the merge
-/// that changed the spec.
-fn spec_change_case(dir: &Path) {
+/// A case for a spec change: a repository at its base commit, holding
+/// `files` beside the spec, and the merge that changed the spec.
+fn spec_change_case(dir: &Path, files: &[(&str, &str)]) {
     let repo = dir.join("source");
     std::fs::create_dir_all(repo.join("docs")).unwrap();
     git(&repo, &["init", "--quiet", "-b", "main"]);
     git(&repo, &["config", "user.name", "maintainer"]);
     git(&repo, &["config", "user.email", "maintainer@example.com"]);
     std::fs::write(repo.join("docs/spec.md"), "# Spec\n").unwrap();
+    for (path, contents) in files {
+        let path = repo.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
     git(&repo, &["add", "--all"]);
     git(&repo, &["commit", "--quiet", "-m", "Start"]);
     let base = git(&repo, &["rev-parse", "HEAD"]);
@@ -87,7 +93,7 @@ fn spec_change_case(dir: &Path) {
 #[tokio::test]
 async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_records_as_files() {
     let dir = tempfile::tempdir().unwrap();
-    spec_change_case(dir.path());
+    spec_change_case(dir.path(), &[]);
     let runtime = Arc::new(ScriptedRuntime::default());
     runtime.on(WorkKind::Tickets, |call| {
         assert!(call.spec.prompt.contains("+Gadgets exist."));
@@ -139,7 +145,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
 #[test]
 fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_holds() {
     let dir = tempfile::tempdir().unwrap();
-    spec_change_case(dir.path());
+    spec_change_case(dir.path(), &[]);
     let bin = dir.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     fake_claude(&bin, r#"{"tickets": [], "comment": "Nothing to build."}"#);
@@ -164,4 +170,48 @@ fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_ho
         std::fs::read_to_string(bin.join("tokens.log")).unwrap(),
         "GH_TOKEN= GITHUB_TOKEN=\n"
     );
+}
+
+#[tokio::test]
+async fn a_replay_runs_no_workflows() {
+    let dir = tempfile::tempdir().unwrap();
+    spec_change_case(
+        dir.path(),
+        &[(
+            ".linewright/workflows/hourly.md",
+            "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n",
+        )],
+    );
+    let clock = Arc::new(FakeClock::new());
+    let runtime = Arc::new(ScriptedRuntime::default());
+    runtime.on(WorkKind::Tickets, {
+        let clock = clock.clone();
+        move |_| {
+            // Past the workflow's next tick, while the replay goes on.
+            clock.advance(TimeDelta::hours(2));
+            json(json!({"tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}], "comment": "One slice."}))
+        }
+    });
+    runtime.on(WorkKind::Implement, |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("src/gadgets.txt", "gadget\n")],
+            "Gadgets",
+        );
+        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Adds gadgets."}))
+    });
+    runtime.on_workflow(|_| json(json!({"summary": "Nothing needs doing.", "issues": []})));
+    let out = dir.path().join("out");
+
+    replay(
+        &dir.path().join("case"),
+        &out,
+        runtime.clone(),
+        clock,
+        config(&out),
+    )
+    .await
+    .unwrap();
+
+    assert!(runtime.workflow_prompts().is_empty());
 }

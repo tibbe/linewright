@@ -1,6 +1,7 @@
 //! The functional core: one poll's decisions as a pure function of the
-//! store's snapshot, the runs in flight and the clock (`docs/specs/architecture.md`,
-//! "Functional core, imperative shell"). The rules are `docs/specs/product.md`'s.
+//! store's snapshot, the workflows and their last runs, the runs in flight
+//! and the clock (`docs/specs/architecture.md`, "Functional core, imperative
+//! shell"). The rules are `docs/specs/product.md`'s.
 
 use chrono::TimeDelta;
 
@@ -10,6 +11,7 @@ use crate::domain::{
 };
 use crate::marker::{Stage, stage_of};
 use crate::spec_glob::SpecGlob;
+use crate::workflow::{LastRuns, Workflow, WorkflowName};
 
 /// The settings the decisions depend on.
 #[derive(Clone, Debug)]
@@ -100,6 +102,17 @@ pub struct LiveRun {
     pub kind: WorkKind,
 }
 
+/// The workflows on the default branch and their runs: what the due rule
+/// reads.
+#[derive(Clone, Debug, Default)]
+pub struct Workflows {
+    /// The workflows whose files parse.
+    pub defined: Vec<Workflow>,
+    pub last_runs: LastRuns,
+    /// The workflows with a run in flight.
+    pub in_flight: Vec<WorkflowName>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Start(Work),
@@ -136,11 +149,17 @@ pub enum Action {
         tracking: Number,
         tickets: Vec<Number>,
     },
+    /// Keep the workflows' last runs, which changed, under the work
+    /// directory.
+    RecordLastRuns(LastRuns),
+    /// Run the workflow, as `linewright workflow run` does.
+    RunWorkflow(Box<Workflow>),
 }
 
 pub fn reconcile(
     snapshot: &Snapshot,
     live: &[LiveRun],
+    workflows: &Workflows,
     now: Timestamp,
     policy: &Policy,
 ) -> Vec<Action> {
@@ -218,7 +237,53 @@ pub fn reconcile(
         }
     }
 
-    plan.into_actions(policy.max_workers.saturating_sub(live.len()))
+    // Workflow runs count against the ceiling beside the pipeline's.
+    let room = policy
+        .max_workers
+        .saturating_sub(live.len() + workflows.in_flight.len());
+    let (mut actions, room) = plan.into_actions(room);
+    actions.extend(schedule(workflows, now, room));
+    actions
+}
+
+/// The workflows to run in the `room` the pipeline's runs left, and their
+/// last runs recorded. A workflow is due when a tick of its schedule has
+/// passed since its last run and it has no run in flight, so ticks missed
+/// meanwhile collapse into one run. A workflow seen for the first time
+/// counts as run now, so adding one does not start it at once.
+fn schedule(workflows: &Workflows, now: Timestamp, room: usize) -> Vec<Action> {
+    let mut last_runs = workflows.last_runs.clone();
+    let mut due = vec![];
+    for workflow in &workflows.defined {
+        let Some(last) = workflows.last_runs.get(&workflow.name) else {
+            last_runs.record(&workflow.name, now);
+            continue;
+        };
+        let ticked = workflow
+            .schedule
+            .next_after(last)
+            .is_some_and(|tick| tick <= now);
+        if ticked && !workflows.in_flight.contains(&workflow.name) {
+            due.push(workflow);
+        }
+    }
+    due.sort_by(|a, b| a.name.cmp(&b.name));
+    let runs: Vec<Action> = due
+        .into_iter()
+        .take(room)
+        .map(|workflow| {
+            last_runs.record(&workflow.name, now);
+            Action::RunWorkflow(Box::new(workflow.clone()))
+        })
+        .collect();
+    // The record follows the runs: a stop between the two leaves the
+    // workflow due, to run again after the restart, rather than recorded as
+    // run with no run started.
+    let mut actions = runs;
+    if last_runs != workflows.last_runs {
+        actions.push(Action::RecordLastRuns(last_runs));
+    }
+    actions
 }
 
 /// Why a run in flight must stop, if it must: its subject no longer asks for
@@ -287,10 +352,11 @@ impl Plan {
 
     /// Every action, then as many runs as there is room for, work closest to
     /// a person first: pull requests, then triage, then tickets, then fresh
-    /// implementations, each oldest first.
-    fn into_actions(self, room: usize) -> Vec<Action> {
+    /// implementations, each oldest first. Also returns the room left.
+    fn into_actions(self, room: usize) -> (Vec<Action>, usize) {
         let mut starts = self.starts;
         starts.sort_by_key(|s| (rank(s.work.kind()), s.work.subject()));
+        let room_left = room.saturating_sub(starts.len());
         let mut actions = self.actions;
         for start in starts.into_iter().take(room) {
             if let Some(issue) = start.claim {
@@ -298,7 +364,7 @@ impl Plan {
             }
             actions.push(Action::Start(start.work));
         }
-        actions
+        (actions, room_left)
     }
 }
 

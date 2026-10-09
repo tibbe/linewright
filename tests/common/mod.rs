@@ -253,6 +253,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         update_method: None,
         briefs: Briefs::shipped(),
         work_dir: work_dir.to_path_buf(),
+        schedule_workflows: true,
     }
 }
 

@@ -3,7 +3,7 @@
 //! runs in flight between polls (`docs/specs/architecture.md`).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -16,12 +16,12 @@ use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::domain::{Snapshot, Timestamp, UpdateMethod, label};
 use crate::marker::{Stage, marked};
-use crate::reconcile::{Action, LiveRun, Policy, Subject, WorkKind, reconcile};
+use crate::reconcile::{Action, LiveRun, Policy, Workflows, reconcile};
 use crate::run::{self, Shell};
 use crate::runtime::Runtime;
 use crate::spec_glob::SpecGlob;
 use crate::store::{CloseReason, Store};
-use crate::workflow::{self, WorkflowName};
+use crate::workflow::{self, LastRuns, Workflow, WorkflowName};
 
 /// The settings a factory runs with.
 #[derive(Clone, Debug)]
@@ -37,13 +37,21 @@ pub struct FactoryConfig {
     /// `None` follows the repository's settings.
     pub update_method: Option<UpdateMethod>,
     pub briefs: Briefs,
-    /// Where clones and session records go.
+    /// Where clones, session records and the workflows' last runs go.
     pub work_dir: PathBuf,
+    /// Whether each poll also starts the workflows that are due. Replay does
+    /// not: workflows are not captured or replayed.
+    pub schedule_workflows: bool,
+}
+
+/// What a run in flight works on.
+enum Running {
+    Work(LiveRun),
+    Workflow(WorkflowName),
 }
 
 struct LiveEntry {
-    subject: Subject,
-    kind: WorkKind,
+    running: Running,
     cancel: CancellationToken,
 }
 
@@ -52,6 +60,8 @@ pub struct Factory {
     runs: JoinSet<()>,
     live: HashMap<Id, LiveEntry>,
     stopping: CancellationToken,
+    schedule_workflows: bool,
+    last_runs: LastRuns,
 }
 
 impl Factory {
@@ -81,6 +91,11 @@ impl Factory {
             update_method = ?settings.update_method,
             "started"
         );
+        let last_runs = if config.schedule_workflows {
+            load_last_runs(&last_runs_path(&config.work_dir))
+        } else {
+            LastRuns::default()
+        };
         let shell = Shell {
             policy: Policy {
                 machine_user: identity.login.clone(),
@@ -106,6 +121,8 @@ impl Factory {
             runs: JoinSet::new(),
             live: HashMap::new(),
             stopping: CancellationToken::new(),
+            schedule_workflows: config.schedule_workflows,
+            last_runs,
         })
     }
 
@@ -130,15 +147,20 @@ impl Factory {
                 .await
                 .context("taking a snapshot")?,
         );
-        let live: Vec<LiveRun> = self
-            .live
-            .values()
-            .map(|e| LiveRun {
-                subject: e.subject,
-                kind: e.kind,
-            })
-            .collect();
-        let actions = reconcile(&snapshot, &live, now, &shell.policy);
+        let mut live: Vec<LiveRun> = vec![];
+        let mut in_flight: Vec<WorkflowName> = vec![];
+        for entry in self.live.values() {
+            match &entry.running {
+                Running::Work(run) => live.push(*run),
+                Running::Workflow(name) => in_flight.push(name.clone()),
+            }
+        }
+        let workflows = Workflows {
+            defined: self.workflows().await,
+            last_runs: self.last_runs.clone(),
+            in_flight,
+        };
+        let actions = reconcile(&snapshot, &live, &workflows, now, &self.shell.policy);
         for action in &actions {
             if self.stopping.is_cancelled() {
                 break;
@@ -165,16 +187,49 @@ impl Factory {
             .with_context(|| format!("there is no workflow `{name}`: `{branch}` has no {path}"))?;
         let workflow =
             workflow::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
-        info!(workflow = %name, "workflow run started");
-        let result = match run::workflow(shell, &workflow, self.stopping.clone()).await {
-            Ok(result) => result,
+        run_and_log(shell, &workflow, self.stopping.clone())
+            .await
+            .with_context(|| format!("the run of the workflow `{name}` failed"))
+    }
+
+    /// The workflows on the default branch whose files parse, when polls
+    /// schedule them. A file that does not parse is logged and skipped.
+    async fn workflows(&self) -> Vec<Workflow> {
+        if !self.schedule_workflows {
+            return vec![];
+        }
+        let store = &self.shell.store;
+        let branch = &self.shell.settings.default_branch;
+        let files = match store.list_files(branch, workflow::DIR).await {
+            Ok(files) => files,
             Err(e) => {
-                error!(workflow = %name, error = format!("{e:#}"), "workflow run failed");
-                return Err(e.context(format!("the run of the workflow `{name}` failed")));
+                error!(error = format!("{e:#}"), "listing the workflows failed");
+                return vec![];
             }
         };
-        info!(workflow = %name, summary = result.summary, "workflow run finished");
-        Ok(())
+        let mut workflows = vec![];
+        for file in files {
+            let Some(name) = file.strip_suffix(".md") else {
+                continue;
+            };
+            let parsed = async {
+                let name: WorkflowName = name.parse().map_err(anyhow::Error::msg)?;
+                let text = store
+                    .read_file(branch, &name.path())
+                    .await?
+                    .context("the file is gone")?;
+                workflow::parse(&name, &text)
+            };
+            match parsed.await {
+                Ok(workflow) => workflows.push(workflow),
+                Err(e) => warn!(
+                    path = format!("{}/{file}", workflow::DIR),
+                    error = format!("{e:#}"),
+                    "skipping a workflow file"
+                ),
+            }
+        }
+        workflows
     }
 
     pub fn is_idle(&self) -> bool {
@@ -241,16 +296,20 @@ impl Factory {
                 self.live.insert(
                     handle.id(),
                     LiveEntry {
-                        subject: work.subject(),
-                        kind: work.kind(),
+                        running: Running::Work(LiveRun {
+                            subject: work.subject(),
+                            kind: work.kind(),
+                        }),
                         cancel,
                     },
                 );
             }
             Action::Cancel { subject, reason } => {
                 info!(subject = ?subject, reason, "cancelling run");
-                for entry in self.live.values().filter(|e| e.subject == *subject) {
-                    entry.cancel.cancel();
+                for entry in self.live.values() {
+                    if matches!(&entry.running, Running::Work(run) if run.subject == *subject) {
+                        entry.cancel.cancel();
+                    }
                 }
             }
             Action::Claim { issue } => {
@@ -305,7 +364,81 @@ impl Factory {
                     store.close_issue(*issue, CloseReason::NotPlanned).await?;
                 }
             }
+            Action::RecordLastRuns(last_runs) => {
+                self.last_runs = last_runs.clone();
+                save_last_runs(&last_runs_path(&self.shell.work_dir), last_runs)?;
+            }
+            Action::RunWorkflow(workflow) => {
+                let cancel = CancellationToken::new();
+                let shell = self.shell.clone();
+                let handle = self.runs.spawn({
+                    let (workflow, cancel) = (workflow.clone(), cancel.clone());
+                    // A run that fails is logged; there is nothing to hand back.
+                    async move {
+                        let _ = run_and_log(&shell, &workflow, cancel).await;
+                    }
+                });
+                self.live.insert(
+                    handle.id(),
+                    LiveEntry {
+                        running: Running::Workflow(workflow.name.clone()),
+                        cancel,
+                    },
+                );
+            }
         }
         Ok(())
     }
+}
+
+/// Runs `workflow` once, files the issues its result returns and logs how
+/// it went: by hand or on its schedule.
+async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationToken) -> Result<()> {
+    let name = &workflow.name;
+    info!(workflow = %name, "workflow run started");
+    match run::workflow(shell, workflow, cancel).await {
+        Ok(result) => {
+            info!(workflow = %name, summary = result.summary, "workflow run finished");
+            Ok(())
+        }
+        Err(e) => {
+            error!(workflow = %name, error = format!("{e:#}"), "workflow run failed");
+            Err(e)
+        }
+    }
+}
+
+/// Where the workflows' last runs are kept, so they survive a restart.
+fn last_runs_path(work_dir: &Path) -> PathBuf {
+    work_dir.join("workflow-runs.json")
+}
+
+/// The workflows' last runs as recorded at `path`. None are recorded when
+/// the record is missing, and when it is unreadable, which is logged: every
+/// workflow then counts as seen for the first time.
+fn load_last_runs(path: &Path) -> LastRuns {
+    let read = || -> Result<LastRuns> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => Ok(serde_json::from_str(&text)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LastRuns::default()),
+            Err(e) => Err(e.into()),
+        }
+    };
+    read().unwrap_or_else(|e| {
+        warn!(path = %path.display(), error = format!("{e:#}"), "ignoring the workflows' last runs");
+        LastRuns::default()
+    })
+}
+
+/// Writes `last_runs` to `path` whole: to a file beside it, then renamed
+/// over it, so a crash leaves the old record or the new one.
+fn save_last_runs(path: &Path, last_runs: &LastRuns) -> Result<()> {
+    let dir = path.parent().context("the record has a directory")?;
+    std::fs::create_dir_all(dir).context("creating the work directory")?;
+    let mut file =
+        tempfile::NamedTempFile::new_in(dir).context("writing the workflows' last runs")?;
+    serde_json::to_writer_pretty(&mut file, last_runs)?;
+    file.persist(path)
+        .context("writing the workflows' last runs")?;
+    Ok(())
 }

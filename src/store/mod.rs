@@ -100,6 +100,9 @@ pub trait Store: Send + Sync {
     /// The contents of `path` at the head of `branch`, or `None` when it has
     /// no such file.
     async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>>;
+    /// The names of the files directly in the directory `dir` at the head of
+    /// `branch`: none when it has no such directory.
+    async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;
     /// Clones the repository into `dir`, with `branch` checked out.
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
     /// Pushes `HEAD` of the clone in `dir` to `branch`.
