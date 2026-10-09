@@ -50,6 +50,9 @@ are; you may build and run the code to verify a claim.
    that needs the spec to change, is `ready-for-human`: the spec is the
    maintainer's. Where the request needs fleshing out and only the reporter can
    do it, `needs-info`; where only the maintainer can, `ready-for-human`.
+   Facts come before decisions: while the reporter still owes a fact, choose
+   `needs-info` and ask only for the missing facts, even when a maintainer's
+   decision will follow, because that decision usually depends on the facts.
    Sharpen fuzzy terms against `GLOSSARY.md` in your comment; don't edit it.
 5. **Write the comment** for the outcome. Don't add a disclaimer or a marker
    line: Linewright adds its own.
