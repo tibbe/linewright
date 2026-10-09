@@ -97,6 +97,9 @@ pub trait Store: Send + Sync {
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String>;
     async fn check_failures(&self, pr: Number, checks: &[String]) -> Result<Vec<CheckFailure>>;
 
+    /// The contents of `path` at the head of `branch`, or `None` when it has
+    /// no such file.
+    async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>>;
     /// Clones the repository into `dir`, with `branch` checked out.
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
     /// Pushes `HEAD` of the clone in `dir` to `branch`.

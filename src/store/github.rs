@@ -501,6 +501,16 @@ struct Actor {
     login: String,
 }
 
+/// `text` as one segment of a URL's path or a query value.
+fn percent_encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 /// A login as REST spells it: GraphQL leaves the `[bot]` suffix off bots.
 fn login(actor: Option<Actor>) -> Login {
     match actor {
@@ -1175,6 +1185,45 @@ impl Store for GitHub {
         Ok(failures)
     }
 
+    async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>> {
+        #[derive(Deserialize)]
+        struct Contents {
+            content: String,
+            encoding: String,
+        }
+        // <https://docs.github.com/en/rest/repos/contents#get-repository-content>
+        let path_segments: Vec<String> = path.split('/').map(percent_encode).collect();
+        let resource = self.repo_path(&format!(
+            "/contents/{}?ref={}",
+            path_segments.join("/"),
+            percent_encode(branch)
+        ));
+        let response = self.send(Method::GET, &resource, None).await?;
+        let status = response.status();
+        if status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let text = response.text().await?;
+        if !status.is_success() {
+            bail!("reading {path} on {branch}: {status}: {text}");
+        }
+        let contents: Contents = serde_json::from_str(&text)
+            .with_context(|| format!("reading {path} on {branch}: not a file"))?;
+        if contents.encoding != "base64" {
+            bail!(
+                "reading {path} on {branch}: the file comes as {:?}, not base64",
+                contents.encoding
+            );
+        }
+        let encoded: String = contents.content.split_whitespace().collect();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .with_context(|| format!("decoding {path} on {branch}"))?;
+        String::from_utf8(bytes)
+            .map(Some)
+            .with_context(|| format!("{path} on {branch} is not UTF-8"))
+    }
+
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()> {
         let url = format!("https://github.com/{}/{}.git", self.owner, self.name);
         git::clone(&url, dir, branch, &self.git_env()).await
@@ -1207,19 +1256,14 @@ impl Store for GitHub {
     }
 
     async fn remove_label(&self, number: Number, label: &str) -> Result<()> {
-        let encoded: String = label
-            .bytes()
-            .map(|b| match b {
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
-                    (b as char).to_string()
-                }
-                _ => format!("%{b:02X}"),
-            })
-            .collect();
         let response = self
             .send(
                 Method::DELETE,
-                &self.repo_path(&format!("/issues/{}/labels/{encoded}", number.0)),
+                &self.repo_path(&format!(
+                    "/issues/{}/labels/{}",
+                    number.0,
+                    percent_encode(label)
+                )),
                 None,
             )
             .await?;

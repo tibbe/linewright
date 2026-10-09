@@ -17,7 +17,8 @@ linewright --repo owner/name serve
 ```
 
 - `linewright serve` polls until stopped; `once` runs one poll cycle and the
-  runs it starts; `status` lists the work in flight.
+  runs it starts; `status` lists the work in flight; `workflow run NAME` runs
+  the workflow in `.linewright/workflows/NAME.md` once, now.
 - Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
   in `linewright.toml`; `linewright --help` lists them with their defaults.
 - The `Dockerfile` builds the base image: `linewright`, `git` and Claude Code.

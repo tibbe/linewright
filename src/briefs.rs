@@ -1,6 +1,7 @@
 //! The briefs: one Markdown file per stage, read at startup from the `briefs`
-//! setting so a change needs no rebuild (`docs/specs/product.md`, "Replay"). The ones
-//! Linewright ships live in `briefs/` and are built in.
+//! setting so a change needs no rebuild (`docs/specs/product.md`, "Replay"), and one
+//! for workflow runs. The ones Linewright ships live in `briefs/` and are
+//! built in.
 
 use std::path::Path;
 
@@ -14,15 +15,17 @@ pub struct Briefs {
     pub tdd: String,
     pub code_review: String,
     pub pr: String,
+    pub workflow: String,
 }
 
-const FILES: [&str; 6] = [
+const FILES: [&str; 7] = [
     "triage.md",
     "to-tickets.md",
     "implement.md",
     "tdd.md",
     "code-review.md",
     "pr.md",
+    "workflow.md",
 ];
 
 impl Briefs {
@@ -34,6 +37,7 @@ impl Briefs {
             tdd: include_str!("../briefs/tdd.md").into(),
             code_review: include_str!("../briefs/code-review.md").into(),
             pr: include_str!("../briefs/pr.md").into(),
+            workflow: include_str!("../briefs/workflow.md").into(),
         }
     }
 
@@ -44,7 +48,15 @@ impl Briefs {
             std::fs::read_to_string(&path)
                 .with_context(|| format!("reading the brief {}", path.display()))
         };
-        let [triage, to_tickets, implement, tdd, code_review, pr] = FILES.map(read);
+        let [
+            triage,
+            to_tickets,
+            implement,
+            tdd,
+            code_review,
+            pr,
+            workflow,
+        ] = FILES.map(read);
         Ok(Briefs {
             triage: triage?,
             to_tickets: to_tickets?,
@@ -52,6 +64,7 @@ impl Briefs {
             tdd: tdd?,
             code_review: code_review?,
             pr: pr?,
+            workflow: workflow?,
         })
     }
 }

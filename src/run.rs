@@ -22,11 +22,13 @@ use crate::prompts::{self, Conflict, PullTask, Repo, Ticket};
 use crate::reconcile::{Feedback, Policy, Subject, Work, WorkKind, new_feedback};
 use crate::results::{
     self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
+    WorkflowResult,
 };
-use crate::runtime::{Runtime, SessionError, SessionSpec, Turn};
+use crate::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
 use crate::spec_gap;
 use crate::store::{Categories, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
 use crate::tracking;
+use crate::workflow::Workflow;
 
 /// What every run shares.
 pub(crate) struct Shell {
@@ -62,7 +64,6 @@ enum Failure {
     Infrastructure(anyhow::Error),
     /// The work goes back to the maintainer.
     HandBack {
-        stage: Stage,
         reason: String,
         log_tail: Option<String>,
     },
@@ -108,7 +109,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
     let subject = work.subject();
     let run_stage = stage_of(work.kind());
     let mut retried = false;
-    let (stage, reason, log_tail) = loop {
+    let (reason, log_tail) = loop {
         match attempt(shell, work, snapshot, ctx).await {
             Ok(()) => return info!(subject = ?subject, kind = ?work.kind(), "run finished"),
             Err(Failure::Infrastructure(e)) if !retried => {
@@ -117,7 +118,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
             }
             Err(Failure::Infrastructure(e)) => {
                 break (
-                    run_stage,
                     format!("The run failed twice on its infrastructure: {e:#}"),
                     None,
                 );
@@ -126,17 +126,9 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
                 return info!(subject = ?subject, "run cancelled; its branch is kept");
             }
             Err(Failure::Apply(e)) => {
-                break (
-                    run_stage,
-                    format!("Recording the run's outcome failed: {e:#}"),
-                    None,
-                );
+                break (format!("Recording the run's outcome failed: {e:#}"), None);
             }
-            Err(Failure::HandBack {
-                stage,
-                reason,
-                log_tail,
-            }) => break (stage, reason, log_tail),
+            Err(Failure::HandBack { reason, log_tail }) => break (reason, log_tail),
         }
     };
     // Comments hold only what belongs to the repository.
@@ -145,7 +137,9 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
     let log_tail = log_tail.map(|t| t.replace(&work_dir, "<work-dir>"));
     info!(subject = ?subject, reason, "handing back");
     let handed = match subject {
-        Subject::Issue(issue) => hand_back(shell, issue, stage, &reason, log_tail.as_deref()).await,
+        Subject::Issue(issue) => {
+            hand_back(shell, issue, run_stage, &reason, log_tail.as_deref()).await
+        }
         Subject::SpecChange(pr) => {
             hand_back_spec_change(shell, pr, &reason, log_tail.as_deref()).await
         }
@@ -260,14 +254,14 @@ struct Workspace {
 }
 
 impl Workspace {
-    async fn clone(shell: &Shell, subject: Subject, branch: &str) -> Result<Workspace, Failure> {
+    async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace, Failure> {
         let clones = shell.work_dir.join("clones");
         tokio::fs::create_dir_all(&clones)
             .await
             .context("creating the clones directory")
             .map_err(infra)?;
         let temp = tempfile::Builder::new()
-            .prefix(&format!("{}-", subject_name(subject)))
+            .prefix(&format!("{}-", purpose_name(purpose)))
             .tempdir_in(&clones)
             .context("creating a clone directory")
             .map_err(infra)?;
@@ -287,19 +281,27 @@ pub fn subject_name(subject: Subject) -> String {
     }
 }
 
+/// The name of what a session is for, as its clones and records are named:
+/// `issue-3`, `pr-4` or `workflow-weekly`.
+pub fn purpose_name(purpose: &Purpose) -> String {
+    match purpose {
+        Purpose::Work { subject, .. } => subject_name(*subject),
+        Purpose::Workflow(name) => format!("workflow-{name}"),
+    }
+}
+
 /// A new directory for a session's record: its brief, results and trace,
 /// kept under the work directory after the run ends.
-fn record_dir(
-    shell: &Shell,
-    subject: Subject,
-    kind: WorkKind,
-    now: Timestamp,
-) -> Result<PathBuf, Failure> {
-    let parent = shell.work_dir.join("sessions").join(subject_name(subject));
+fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBuf, Failure> {
+    let parent = shell.work_dir.join("sessions").join(purpose_name(purpose));
     std::fs::create_dir_all(&parent)
         .context("creating the sessions directory")
         .map_err(infra)?;
-    let base = format!("{}-{}", now.format("%Y%m%dT%H%M%SZ"), kind_name(kind));
+    let kind = match purpose {
+        Purpose::Work { kind, .. } => kind_name(*kind),
+        Purpose::Workflow(_) => "workflow",
+    };
+    let base = format!("{}-{kind}", now.format("%Y%m%dT%H%M%SZ"));
     for n in 1.. {
         let dir = if n == 1 {
             parent.join(&base)
@@ -363,7 +365,6 @@ where
     let session_failed = |error: SessionError| match error {
         SessionError::Infrastructure(reason) => infra(anyhow::anyhow!(reason)),
         SessionError::Failed { reason, log_tail } => Failure::HandBack {
-            stage: stage_of(spec.kind),
             reason: format!("The session ended unexpectedly: {reason}"),
             log_tail: Some(scrub(&log_tail, &spec.dir)),
         },
@@ -399,7 +400,6 @@ where
             }
             Err(Rejection::Retry(followup)) => {
                 return Err(Failure::HandBack {
-                    stage: stage_of(spec.kind),
                     reason: format!(
                         "The session's result still could not be used after {retries} follow-up(s).\n\n{followup}"
                     ),
@@ -443,31 +443,34 @@ fn tail(text: &str, lines: usize) -> String {
     all[all.len().saturating_sub(lines)..].join("\n")
 }
 
+/// A session that times out after `timeout`.
 fn session_spec(
     shell: &Shell,
-    subject: Subject,
-    kind: WorkKind,
+    purpose: Purpose,
     ws: &Workspace,
     prompt: String,
+    timeout: std::time::Duration,
 ) -> Result<SessionSpec, Failure> {
     Ok(SessionSpec {
-        subject,
-        kind,
+        record: record_dir(shell, &purpose, shell.clock.now())?,
+        purpose,
         dir: ws.dir.clone(),
-        record: record_dir(shell, subject, kind, shell.clock.now())?,
         prompt,
-        deadline: tokio::time::Instant::now() + shell.session_timeout,
+        deadline: tokio::time::Instant::now() + timeout,
     })
 }
 
 // Triage.
 
 async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> {
-    let subject = Subject::Issue(issue.number);
-    let ws = Workspace::clone(shell, subject, &shell.settings.default_branch).await?;
+    let purpose = Purpose::Work {
+        subject: Subject::Issue(issue.number),
+        kind: WorkKind::Triage,
+    };
+    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
     let prompt = prompts::triage(&shell.briefs, &shell.repo(), issue, &categories);
-    let spec = session_spec(shell, subject, WorkKind::Triage, &ws, prompt)?;
+    let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let categories = &categories;
     let (result, _) = converse(shell, ctx, &spec, None, |message| async move {
         results::parse_triage(&message, categories).map_err(parse_retry)
@@ -511,8 +514,11 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
 // Tickets.
 
 async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failure> {
-    let subject = Subject::SpecChange(pr.number);
-    let ws = Workspace::clone(shell, subject, &shell.settings.default_branch).await?;
+    let purpose = Purpose::Work {
+        subject: Subject::SpecChange(pr.number),
+        kind: WorkKind::Tickets,
+    };
+    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let spec_files: Vec<String> = pr
         .files
         .iter()
@@ -525,7 +531,7 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
         .await
         .map_err(infra)?;
     let prompt = prompts::tickets(&shell.briefs, &shell.repo(), pr, &diff);
-    let spec = session_spec(shell, subject, WorkKind::Tickets, &ws, prompt)?;
+    let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let (tickets, _) = converse(shell, ctx, &spec, None, |message| async move {
         results::parse_tickets(&message).map_err(parse_retry)
     })
@@ -617,13 +623,16 @@ fn branch_name(issue: &Issue) -> String {
 }
 
 async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), Failure> {
-    let subject = Subject::Issue(ticket.issue.number);
-    let ws = Workspace::clone(shell, subject, &shell.settings.default_branch).await?;
+    let purpose = Purpose::Work {
+        subject: Subject::Issue(ticket.issue.number),
+        kind: WorkKind::Implement,
+    };
+    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let branch = branch_name(ticket.issue);
     git::create_branch(&ws.dir, &branch).await.map_err(infra)?;
     let upstream = shell.upstream();
     let prompt = prompts::implement(&shell.briefs, &shell.repo(), ticket, &branch);
-    let spec = session_spec(shell, subject, WorkKind::Implement, &ws, prompt)?;
+    let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let (dir, base) = (&ws.dir, &upstream);
     let conversation = converse(shell, ctx, &spec, None, |message| async move {
         let result: ImplementResult = results::parse(&message).map_err(parse_retry)?;
@@ -707,7 +716,6 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
                 .map_err(Failure::Apply)?;
             let kept = keep_branch().await?;
             Err(Failure::HandBack {
-                stage: Stage::Implementation,
                 reason: format!(
                     "Blocked on a question the spec cannot decide:\n\n{}{kept}",
                     question.trim()
@@ -718,7 +726,6 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
         ImplementResult::GaveUp { reason } => {
             let kept = keep_branch().await?;
             Err(Failure::HandBack {
-                stage: Stage::Implementation,
                 reason: format!(
                     "The implementer handed the ticket back:\n\n{}{kept}",
                     reason.trim()
@@ -795,7 +802,8 @@ async fn pull_work(
     };
     let stage = stage_of(kind);
     let machine = &shell.policy.machine_user;
-    let ws = Workspace::clone(shell, subject, &pr.head_ref).await?;
+    let purpose = Purpose::Work { subject, kind };
+    let ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
     let start = git::head(&ws.dir).await.map_err(infra)?;
     let method = shell.settings.update_method;
     let conflict = match git::update(&ws.dir, &shell.settings.default_branch, method)
@@ -849,7 +857,7 @@ async fn pull_work(
         &pull_task,
         conflict.as_ref(),
     );
-    let spec = session_spec(shell, subject, kind, &ws, prompt)?;
+    let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
     let dir = &ws.dir;
     let accept = |message: String, threads: Vec<String>| async move {
@@ -946,7 +954,6 @@ async fn pull_work(
                 .await
                 .map_err(Failure::Apply)?;
             Err(Failure::HandBack {
-                stage,
                 reason: format!(
                     "Blocked on a question the spec cannot decide:\n\n{}",
                     question.trim()
@@ -955,7 +962,6 @@ async fn pull_work(
             })
         }
         PullWorkResult::GaveUp { reason } => Err(Failure::HandBack {
-            stage,
             reason: format!(
                 "The implementer handed the ticket back:\n\n{}",
                 reason.trim()
@@ -1055,4 +1061,41 @@ async fn record_pull_work(
         }
     }
     Ok(())
+}
+
+// Workflows.
+
+/// Runs `workflow` once: one session on a fresh clone of the default branch.
+/// A workflow run has no issue to hand back, so a run that fails is an error.
+pub(crate) async fn workflow(
+    shell: &Shell,
+    workflow: &Workflow,
+    cancel: CancellationToken,
+) -> Result<WorkflowResult> {
+    let ctx = Ctx {
+        as_of: shell.clock.now(),
+        cancel,
+    };
+    let session = async {
+        let purpose = Purpose::Workflow(workflow.name.clone());
+        let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
+        let prompt = prompts::workflow(&shell.briefs, &shell.repo(), workflow);
+        let timeout = workflow.timeout.unwrap_or(shell.session_timeout);
+        let spec = session_spec(shell, purpose, &ws, prompt, timeout)?;
+        let (result, _) = converse(shell, &ctx, &spec, None, |message| async move {
+            results::parse(&message).map_err(parse_retry)
+        })
+        .await?;
+        Ok(result)
+    };
+    session.await.map_err(|failure| match failure {
+        Failure::Infrastructure(e) | Failure::Apply(e) => e,
+        Failure::HandBack { reason, log_tail } => {
+            match log_tail.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                Some(tail) => anyhow::anyhow!("{reason}\n\nThe end of the session's log:\n{tail}"),
+                None => anyhow::anyhow!(reason),
+            }
+        }
+        Failure::Cancelled => anyhow::anyhow!("the run was cancelled"),
+    })
 }

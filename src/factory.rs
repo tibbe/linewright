@@ -21,6 +21,7 @@ use crate::run::{self, Shell};
 use crate::runtime::Runtime;
 use crate::spec_glob::SpecGlob;
 use crate::store::{CloseReason, Store};
+use crate::workflow::{self, WorkflowName};
 
 /// The settings a factory runs with.
 #[derive(Clone, Debug)]
@@ -147,6 +148,38 @@ impl Factory {
             }
         }
         Ok(actions)
+    }
+
+    /// Runs the workflow `name` on the default branch once, now, and logs
+    /// its result. Fails when there is no such workflow, its file does not
+    /// parse or the run fails.
+    pub async fn run_workflow(&self, name: &WorkflowName) -> Result<()> {
+        let shell = &self.shell;
+        let branch = &shell.settings.default_branch;
+        let path = name.path();
+        let text = shell
+            .store
+            .read_file(branch, &path)
+            .await
+            .with_context(|| format!("reading {path}"))?
+            .with_context(|| format!("there is no workflow `{name}`: `{branch}` has no {path}"))?;
+        let workflow =
+            workflow::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
+        info!(workflow = %name, "workflow run started");
+        let result = match run::workflow(shell, &workflow, self.stopping.clone()).await {
+            Ok(result) => result,
+            Err(e) => {
+                error!(workflow = %name, error = format!("{e:#}"), "workflow run failed");
+                return Err(e.context(format!("the run of the workflow `{name}` failed")));
+            }
+        };
+        info!(
+            workflow = %name,
+            summary = result.summary,
+            issues = ?result.issues,
+            "workflow run finished"
+        );
+        Ok(())
     }
 
     pub fn is_idle(&self) -> bool {

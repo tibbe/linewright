@@ -9,12 +9,21 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use crate::reconcile::{Subject, WorkKind};
+use crate::workflow::WorkflowName;
+
+/// What a session is for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    /// A stage of the pipeline, working on `subject`.
+    Work { subject: Subject, kind: WorkKind },
+    /// A run of the workflow with this name.
+    Workflow(WorkflowName),
+}
 
 /// A session to start.
 #[derive(Clone, Debug)]
 pub struct SessionSpec {
-    pub subject: Subject,
-    pub kind: WorkKind,
+    pub purpose: Purpose,
     /// The clone the session works in.
     pub dir: PathBuf,
     /// Where the session's record goes: brief, results and trace.

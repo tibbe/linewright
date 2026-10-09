@@ -7,7 +7,7 @@ use clap::Parser;
 use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
-use linewright::config::{Cli, Command, Config, LogFormat};
+use linewright::config::{Cli, Command, Config, LogFormat, WorkflowCommand};
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::Policy;
@@ -122,6 +122,9 @@ async fn run(command: Command, config: Config) -> Result<()> {
             }
             Ok(())
         }
+        Command::Workflow {
+            command: WorkflowCommand::Run { name },
+        } => start(&config).await?.run_workflow(&name).await,
         Command::Capture { target, dir } => {
             let (repo, number) = target
                 .split_once('#')

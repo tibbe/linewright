@@ -137,6 +137,29 @@ pub enum PullWorkResult {
     },
 }
 
+/// The label an issue a workflow hands back is filed with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkflowIssueLabel {
+    ReadyForAgent,
+    ReadyForHuman,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct WorkflowIssue {
+    pub title: String,
+    pub body: String,
+    pub label: WorkflowIssueLabel,
+}
+
+/// What a workflow's run did and found, and the issues it hands back.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct WorkflowResult {
+    pub summary: String,
+    #[serde(default)]
+    pub issues: Vec<WorkflowIssue>,
+}
+
 pub fn parse_triage(message: &str, categories: &[String]) -> Result<TriageResult, String> {
     let result: TriageResult = parse(message)?;
     if !categories.contains(&result.category) {

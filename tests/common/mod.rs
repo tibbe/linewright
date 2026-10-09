@@ -16,7 +16,7 @@ use linewright::clock::Clock;
 use linewright::domain::{Issue, Login, Number, Timestamp, UpdateMethod};
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::WorkKind;
-use linewright::runtime::{Runtime, SessionError, SessionSpec, Turn};
+use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
 use linewright::spec_glob::SpecGlob;
 use linewright::store::local::{LocalStore, Seed};
 use serde_json::Value;
@@ -60,11 +60,28 @@ pub struct Call<'a> {
 
 type Script = Arc<dyn Fn(&Call) -> Result<String, SessionError> + Send + Sync>;
 
+/// Which script a session runs: one per kind of work, and one for every
+/// workflow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ScriptKey {
+    Work(WorkKind),
+    Workflow,
+}
+
+impl ScriptKey {
+    fn of(spec: &SessionSpec) -> ScriptKey {
+        match spec.purpose {
+            Purpose::Work { kind, .. } => ScriptKey::Work(kind),
+            Purpose::Workflow(_) => ScriptKey::Workflow,
+        }
+    }
+}
+
 /// An agent runtime whose sessions run a script per kind of work.
 #[derive(Default)]
 pub struct ScriptedRuntime {
-    scripts: Mutex<HashMap<WorkKind, Script>>,
-    prompts: Mutex<Vec<(WorkKind, String)>>,
+    scripts: Mutex<HashMap<ScriptKey, Script>>,
+    prompts: Mutex<Vec<(ScriptKey, String)>>,
 }
 
 impl ScriptedRuntime {
@@ -73,33 +90,59 @@ impl ScriptedRuntime {
         kind: WorkKind,
         script: impl Fn(&Call) -> Result<String, SessionError> + Send + Sync + 'static,
     ) {
-        self.scripts.lock().unwrap().insert(kind, Arc::new(script));
+        self.script(ScriptKey::Work(kind), script);
+    }
+
+    /// The script every workflow's sessions run.
+    pub fn on_workflow(
+        &self,
+        script: impl Fn(&Call) -> Result<String, SessionError> + Send + Sync + 'static,
+    ) {
+        self.script(ScriptKey::Workflow, script);
+    }
+
+    fn script(
+        &self,
+        key: ScriptKey,
+        script: impl Fn(&Call) -> Result<String, SessionError> + Send + Sync + 'static,
+    ) {
+        self.scripts.lock().unwrap().insert(key, Arc::new(script));
     }
 
     /// Every prompt sessions of `kind` were given, follow-ups included.
     pub fn prompts(&self, kind: WorkKind) -> Vec<String> {
+        self.prompts_for(ScriptKey::Work(kind))
+    }
+
+    /// Every prompt workflow sessions were given, follow-ups included.
+    pub fn workflow_prompts(&self) -> Vec<String> {
+        self.prompts_for(ScriptKey::Workflow)
+    }
+
+    fn prompts_for(&self, key: ScriptKey) -> Vec<String> {
         self.prompts
             .lock()
             .unwrap()
             .iter()
-            .filter(|(k, _)| *k == kind)
+            .filter(|(k, _)| *k == key)
             .map(|(_, p)| p.clone())
             .collect()
     }
 
     fn turn(&self, spec: &SessionSpec, followup: Option<&str>) -> Result<Turn, SessionError> {
+        let key = ScriptKey::of(spec);
         self.prompts
             .lock()
             .unwrap()
-            .push((spec.kind, followup.unwrap_or(&spec.prompt).to_string()));
+            .push((key, followup.unwrap_or(&spec.prompt).to_string()));
         std::fs::write(spec.record.join("trace.jsonl"), "{\"type\":\"scripted\"}\n").unwrap();
-        let script = self.scripts.lock().unwrap().get(&spec.kind).cloned();
+        let script = self.scripts.lock().unwrap().get(&key).cloned();
         let script = script.ok_or_else(|| SessionError::Failed {
-            reason: format!("no script for {:?}", spec.kind),
+            reason: format!("no script for {key:?}"),
             log_tail: String::new(),
         })?;
         Ok(Turn {
-            session: format!("session-{:?}", spec.kind),
+            session: format!("session-{key:?}"),
             message: script(&Call { spec, followup })?,
             log_tail: String::new(),
         })
@@ -248,10 +291,7 @@ pub fn last_comment(issue: &Issue) -> &str {
 
 /// A file name unique to the session's subject, such as `issue-3`.
 pub fn subject_file(call: &Call) -> String {
-    match call.spec.subject {
-        linewright::reconcile::Subject::Issue(n) => format!("issue-{}", n.0),
-        linewright::reconcile::Subject::SpecChange(n) => format!("pr-{}", n.0),
-    }
+    linewright::run::purpose_name(&call.spec.purpose)
 }
 
 impl World {

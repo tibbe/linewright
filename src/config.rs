@@ -14,6 +14,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::domain::UpdateMethod;
 use crate::spec_glob::SpecGlob;
+use crate::workflow::WorkflowName;
 
 #[derive(Parser, Debug)]
 #[command(name = "linewright", version, about = "A spec-driven software factory")]
@@ -32,6 +33,11 @@ pub enum Command {
     Once,
     /// List the work in flight, read from GitHub.
     Status,
+    /// Workflows: `workflow run NAME` runs one now, then exits.
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
     /// Write a case from a spec change or issue on GitHub: `owner/name#N`.
     Capture { target: String, dir: PathBuf },
     /// Run a case through the whole pipeline against a local store.
@@ -39,6 +45,16 @@ pub enum Command {
         case: PathBuf,
         #[arg(long)]
         out: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WorkflowCommand {
+    /// Run the workflow in `.linewright/workflows/NAME.md` on the default
+    /// branch once, now, then exit; its schedule stays as it was.
+    Run {
+        #[arg(value_name = "NAME")]
+        name: WorkflowName,
     },
 }
 

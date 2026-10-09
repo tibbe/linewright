@@ -8,6 +8,7 @@ use std::fmt::Write;
 use crate::briefs::Briefs;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Pull, UpdateMethod};
 use crate::reconcile::Feedback;
+use crate::workflow::Workflow;
 
 /// The repository facts every task states.
 pub struct Repo<'a> {
@@ -192,6 +193,26 @@ Leave `pr_body` out when the description still fits."#;
         &task,
         contract,
     )
+}
+
+pub fn workflow(briefs: &Briefs, repo: &Repo, workflow: &Workflow) -> String {
+    let mut task = String::new();
+    repo_facts(&mut task, repo);
+    let _ = writeln!(
+        task,
+        "- Issues: at most {}.\n\n### The workflow `{}`\n\n{}",
+        workflow.max_issues,
+        workflow.name,
+        or_none(&workflow.instructions)
+    );
+    let contract = r#"{
+  "summary": "<Markdown: what you did and found>",
+  "issues": [ISSUE]
+}
+
+where ISSUE is { "title": "<issue title>", "body": "<the issue's Markdown body>", "label": "ready-for-agent" | "ready-for-human" }
+and `issues` lists the issues to file (often none)."#;
+    compose(&briefs.workflow, &[], &task, contract)
 }
 
 pub fn parse_error(error: &str) -> String {

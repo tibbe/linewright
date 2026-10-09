@@ -7,7 +7,7 @@ use common::*;
 use linewright::domain::Number;
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::runtime::claude::ClaudeCode;
-use linewright::runtime::{Runtime, SessionSpec};
+use linewright::runtime::{Purpose, Runtime, SessionSpec};
 
 #[tokio::test]
 async fn a_production_session_gets_the_machine_users_github_token() {
@@ -21,8 +21,10 @@ async fn a_production_session_gets_the_machine_users_github_token() {
 
     runtime
         .start(&SessionSpec {
-            subject: Subject::Issue(Number(1)),
-            kind: WorkKind::Triage,
+            purpose: Purpose::Work {
+                subject: Subject::Issue(Number(1)),
+                kind: WorkKind::Triage,
+            },
             dir: dir.path().to_path_buf(),
             record: dir.path().to_path_buf(),
             prompt: "Triage #1.".into(),

@@ -1,7 +1,8 @@
 # Briefs
 
-One brief per stage, read at startup from the `briefs` setting (default: these,
-built into the binary). Each is a fork of a skill from
+One brief per stage and one for workflow runs, read at startup from the
+`briefs` setting (default: these, built into the binary). Each stage's is a
+fork of a skill from
 [`mattpocock/skills`](https://github.com/mattpocock/skills) (commit
 `f3fc5632`), under its MIT license (`LICENSE`), made non-interactive for
 Linewright:
@@ -21,6 +22,7 @@ Linewright:
 | `tdd.md` | `tdd` (with `tests.md`, `mocking.md`) | appended to `implement.md` |
 | `code-review.md` | `code-review` | appended to `implement.md` |
 | `pr.md` | `pr` | appended to `implement.md` |
+| `workflow.md` | Linewright's own | workflow runs |
 
 Linewright appends the task (the issue, pull request or spec diff) and the
 result contract to each brief, so a brief says how to work, not what the

@@ -515,9 +515,11 @@ impl LocalStore {
         self.state().pulls.keys().copied().collect()
     }
 
-    /// The contents of `path` at the head of `branch`.
+    /// The contents of `path` at the head of `branch`, which has it.
     pub async fn file(&self, branch: &str, path: &str) -> Result<String> {
-        git::git(&self.repository(), &["show", &format!("{branch}:{path}")]).await
+        Store::read_file(self, branch, path)
+            .await?
+            .with_context(|| format!("{branch} has no {path}"))
     }
 
     /// Writes the store's state as files under its root: `issues/<n>.json`
@@ -901,6 +903,18 @@ impl Store for LocalStore {
                 log_tail: c.log,
             })
             .collect())
+    }
+
+    async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>> {
+        let object = format!("{branch}:{path}");
+        let repository = self.repository();
+        if git::git(&repository, &["cat-file", "-e", &object])
+            .await
+            .is_err()
+        {
+            return Ok(None);
+        }
+        git::git(&repository, &["show", &object]).await.map(Some)
     }
 
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()> {
