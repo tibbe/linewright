@@ -42,16 +42,19 @@ ready for a person.
   maintainer.
 - **Reviewed before a person sees it.** Agent review, the repository's own
   checks and CI all pass before a PR is marked ready.
-- **Everything shows in GitHub.** Every state is a label, an assignee or a
-  pull request, so GitHub's UI shows what the factory is doing and lets a
-  person change it, and a comment on the issue or PR records every outcome.
-  Nothing in the repository points at the factory: its labels, branches and
-  comments are ones a person could have written.
+- **Everything shows in GitHub.** Every state a person reads or changes is a
+  label, an assignee or a pull request, so GitHub's UI shows what the factory
+  is doing and lets a person change it, and a comment on the issue or PR
+  records every outcome. Its labels, branches and comments are ones a person
+  could have written, with no data only the factory reads, such as run ids.
 - **Each stage is a fresh agent session with a brief**, and work is cut so
   that every session stays in its smart zone, the part of its context window
   where it still works at full quality.
 - **Unattended.** Agents run without permission prompts, directly on a host
   or in a container, as the operator chooses.
+- **Workflows beside the pipeline.** Workflows in the repository run agents
+  on a trigger with instructions the maintainer writes, and may hand work to
+  the pipeline.
 - **Runs again on request.** A spec change the factory handled can be
   captured as a case and run through the whole pipeline on a machine, with
   every agent's trace kept, so the briefs are tuned against real cases.
@@ -64,6 +67,7 @@ The pipeline, end to end:
 flowchart LR
     spec[Spec PR merged] --> tickets[Tickets]
     issue[Issue labeled needs-triage] --> triage[Triage]
+    workflow[Workflow] -.-> ready
     triage --> ready[Issue labeled ready-for-agent]
     tickets --> ready
     ready --> impl[Implement, review, commit]
@@ -154,6 +158,7 @@ stateDiagram-v2
 2. As an operator, I want new issues triaged by an agent, so that reporters get an answer and clear issues become work without me.
 3. As an operator, I want to hand any issue to the factory by labeling it, so that I decide what gets built.
 4. As an operator, I want a spec change that is already implemented to produce no work, so that implementing by hand stays possible.
+5. As an operator, I want agents to run on a schedule with instructions I write, so that recurring work happens without me.
 
 ### Decisions
 
@@ -167,6 +172,7 @@ stateDiagram-v2
 - Issues enter in two ways: with `needs-triage`, which asks for triage, and
   with `ready-for-agent`, which asks for implementation once the issue is
   unclaimed and unblocked.
+- Workflows are a source of work too; see Workflows.
 - Linewright polls, at an interval (default 60 s).
 
 ## Triage
@@ -233,6 +239,66 @@ stateDiagram-v2
   spec change to the ready PRs with no human step, and a wrong set of tickets
   from a good spec is a defect in Linewright.
 
+## Workflows
+
+Work the maintainer describes in the repository for an agent to do when a
+trigger fires. Workflows sit beside the pipeline and may hand it work.
+
+### User Stories
+
+1. As an operator, I want an agent to run on a schedule with instructions I write, so that recurring work happens without me.
+2. As an operator, I want a workflow able to hand work to the pipeline, so that it is built and reviewed like any other work.
+3. As an operator, I want workflows defined in the repository, so that adding one is a reviewed change, versioned with the code.
+4. As an operator, I want to run a workflow by hand, so that I can try its instructions without waiting for its schedule.
+
+### Decisions
+
+- A **workflow** is a Markdown file in `.linewright/workflows/` on the
+  default branch. Its name is the file's name, its YAML front matter says
+  when it runs, and its body is the agent's instructions:
+
+  ```markdown
+  ---
+  on:
+    schedule: "0 6 * * 1"
+  timeout: 60m
+  max-issues: 3
+  ---
+  Look at the bugs fixed in the past week ...
+  ```
+
+  | key | meaning | default |
+  |---|---|---|
+  | `on.schedule` | when it runs: a cron expression, in UTC | required |
+  | `timeout` | the session timeout of its runs | `session-timeout` |
+  | `max-issues` | the most issues one run files | 3 |
+
+  A file that does not parse is logged and skipped; the other workflows run.
+- The **trigger**, `on`, is a schedule, the only kind for now.
+- A workflow is due when a tick of its schedule has passed since its last
+  run. Ticks missed while Linewright was down, or while a run of the
+  workflow was in flight, collapse into one run. A workflow seen for the
+  first time counts as run then, so adding one does not start it at once.
+  Linewright records each workflow's last run under the work directory.
+- `linewright workflow run NAME` runs one workflow now and exits, and
+  leaves its schedule as it was.
+- A run is one agent session in a fresh clone of the default branch, counted
+  against the ceiling on simultaneous runs. The agent does what its
+  instructions say. Its brief carries nothing of earlier runs: a workflow
+  that looks back says how far in its instructions.
+- A run may hand the pipeline work: issues it returns in its result, which
+  the manager files, each opening with the marker line
+  `> *Linewright, workflow <name>*`:
+  - `ready-for-agent`, for work an agent can do: what to build and its
+    acceptance criteria, like a ticket.
+  - `ready-for-human`, when a person must decide or help.
+
+  The agent searches the existing issues first and does not file one that
+  is already open. Issues beyond `max-issues` are dropped and logged.
+  Workflow issues skip triage, like tickets: triage passes over issues the
+  machine user authored.
+- A run that fails is logged, like any failure of Linewright's own.
+
 ## Implementation
 
 ### User Stories
@@ -253,8 +319,10 @@ stateDiagram-v2
   in fresh contexts for both standards and spec, addresses the findings and
   commits. How many review rounds it takes is its judgment, bounded by the
   session timeout.
-- Spec contract: a run whose branch changes any spec file fails, and the
-  ticket goes to `ready-for-human` with the diff named.
+- The implementer leaves spec files as they are, by its brief; a spec it
+  cannot build from is a spec gap, below. Linewright does not check the
+  branch for spec changes: they show in the PR's diff, and a maintainer who
+  wants a guarantee requires review of spec files in GitHub.
 - A spec gap that blocks the ticket (the spec cannot decide it) sends the
   ticket to `ready-for-human` with the question; the branch is kept. A gap
   that does not block it becomes a separate `ready-for-human` issue
@@ -329,12 +397,20 @@ stateDiagram-v2
 2. As an operator, I want a one-shot mode, so that I can test a cycle by hand or run it from cron.
 3. As an operator, I want to run it directly on a machine or inside a container, so that I choose the isolation.
 4. As an operator, I want to run it on Linux in production and on macOS while developing.
+5. As an operator, I want what Linewright does available as commands, so that I and coding agents can drive and debug it.
 
 ### Decisions
 
-- The binary is `linewright`, with `serve` (poll until stopped), `once` (one
-  poll cycle, then exit) and `status` (list the work in flight, read from
-  GitHub).
+- The binary is `linewright`, with these commands:
+
+  | command | what it does |
+  |---|---|
+  | `serve` | poll until stopped |
+  | `once` | one poll cycle, then exit |
+  | `status` | list the work in flight, read from GitHub, and each workflow with its last and next run and any file that does not parse |
+  | `workflow run NAME` | run one workflow now (see Workflows) |
+  | `capture` | write a case from GitHub (see Replay) |
+  | `replay` | run a case against a local store (see Replay) |
 - SIGINT (Ctrl-C) or SIGTERM stops `serve` once the action in progress is
   done, cancelling the runs in flight; a second one exits at once.
 - Configuration: every setting is a flag, an environment variable
@@ -403,8 +479,10 @@ briefs, reads the results and the traces, and iterates.
 - Replay runs the whole pipeline; what a stage did is read from its trace.
 - Agents see only the case: a session reads issues, comments and spec diffs
   from its brief and hands back tickets, comments and PR bodies in its
-  result, and the manager alone writes to the store. In replay nothing
-  points at GitHub, so a session reads no newer state than the case.
+  result, and the manager alone writes to the store. In replay agents get no
+  GitHub credentials, so a session reads no newer state than the case and
+  cannot touch the repository. Workflows, whose agents read GitHub, are not
+  captured or replayed.
 - Briefs are files Linewright reads at startup from the `briefs` directory
   setting, so a change needs no rebuild.
 - In production every session's trace is kept under the work directory,
@@ -443,4 +521,8 @@ Direction, not the first version:
 - Starting spec processing from a label on the PR instead of from any merged
   spec PR, for repositories shared with people who don't want the factory.
 - Per-repository overrides of the agents' briefs.
+- Other workflow triggers, such as a merged pull request touching certain
+  paths.
+- Workflows that open pull requests; today they hand code changes to the
+  pipeline as issues.
 - Forges other than GitHub.

@@ -27,3 +27,13 @@ _Avoid_: bot, model, worker
 **Machine user**:
 The GitHub user account Linewright acts as.
 _Avoid_: bot account, service account
+
+### Work
+
+**Workflow**:
+Instructions for an agent, paired with a trigger that says when they run.
+_Avoid_: action, automation, routine, job, scheduled task
+
+**Trigger**:
+The condition under which a workflow runs.
+_Avoid_: event
