@@ -16,7 +16,7 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::clock::Clock;
-use crate::domain::{Login, Number, UpdateMethod, label};
+use crate::domain::{Login, MergeMethods, Number, UpdateMethod, label};
 use crate::factory::{Factory, FactoryConfig};
 use crate::git;
 use crate::reconcile::Subject;
@@ -265,6 +265,7 @@ pub async fn replay(
                 // The repository's update method is a rebase exactly where
                 // its default branch requires linear history.
                 linear_history: case.update_method == UpdateMethod::Rebase,
+                allowed_merge_methods: MergeMethods::all(),
             },
             clock.clone(),
         )

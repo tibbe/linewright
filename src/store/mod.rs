@@ -13,7 +13,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, Login, MergeMethod, Number, Pull, Snapshot, Timestamp, UpdateMethod,
+    CheckFailure, Login, MergeMethod, MergeMethods, Number, Pull, Snapshot, Timestamp, UpdateMethod,
 };
 
 /// Who Linewright acts as.
@@ -51,6 +51,7 @@ pub struct RepoSettings {
     pub default_branch: String,
     pub update_method: UpdateMethod,
     pub merge_method: MergeMethod,
+    pub allowed_merge_methods: MergeMethods,
     pub categories: Categories,
 }
 
@@ -58,7 +59,12 @@ impl RepoSettings {
     /// The settings of a repository whose default branch requires linear
     /// history, or not: branches are updated and merged by rebasing where it
     /// does and by merging where it doesn't.
-    pub fn new(default_branch: String, linear_history: bool, categories: Categories) -> Self {
+    pub fn new(
+        default_branch: String,
+        linear_history: bool,
+        allowed_merge_methods: MergeMethods,
+        categories: Categories,
+    ) -> Self {
         let (update_method, merge_method) = if linear_history {
             (UpdateMethod::Rebase, MergeMethod::Rebase)
         } else {
@@ -68,6 +74,7 @@ impl RepoSettings {
             default_branch,
             update_method,
             merge_method,
+            allowed_merge_methods,
             categories,
         }
     }

@@ -331,6 +331,64 @@ pub enum MergeMethod {
     Rebase,
 }
 
+impl MergeMethod {
+    pub const ALL: [MergeMethod; 3] =
+        [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase];
+}
+
+impl fmt::Display for MergeMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            MergeMethod::Merge => "merge",
+            MergeMethod::Squash => "squash",
+            MergeMethod::Rebase => "rebase",
+        })
+    }
+}
+
+impl std::str::FromStr for MergeMethod {
+    type Err = ();
+
+    fn from_str(name: &str) -> Result<MergeMethod, ()> {
+        MergeMethod::ALL
+            .into_iter()
+            .find(|method| method.to_string() == name)
+            .ok_or(())
+    }
+}
+
+/// The merge methods a repository allows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MergeMethods(Vec<MergeMethod>);
+
+impl MergeMethods {
+    pub fn all() -> MergeMethods {
+        MergeMethod::ALL.into_iter().collect()
+    }
+
+    pub fn contains(&self, method: MergeMethod) -> bool {
+        self.0.contains(&method)
+    }
+}
+
+impl FromIterator<MergeMethod> for MergeMethods {
+    fn from_iter<I: IntoIterator<Item = MergeMethod>>(methods: I) -> MergeMethods {
+        MergeMethods(methods.into_iter().collect())
+    }
+}
+
+/// As a phrase: "only `squash`", "`merge` and `rebase`".
+impl fmt::Display for MergeMethods {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<String> = self.0.iter().map(|m| format!("`{m}`")).collect();
+        match names.as_slice() {
+            [] => f.write_str("none"),
+            [only] => write!(f, "only {only}"),
+            [rest @ .., last] => write!(f, "{} and {last}", rest.join(", ")),
+        }
+    }
+}
+
 /// A failing check, with what the store can tell about why it failed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckFailure {

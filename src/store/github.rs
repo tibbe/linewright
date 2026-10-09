@@ -927,10 +927,14 @@ impl Store for GitHub {
             default_branch: String,
         }
         let repo: Repo = self.rest(Method::GET, &self.repo_path(""), None).await?;
+        // <https://docs.github.com/en/graphql/reference/objects#repository>
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct Types {
+        struct Settings {
             issue_types: Option<Nodes<IssueType>>,
+            merge_commit_allowed: bool,
+            squash_merge_allowed: bool,
+            rebase_merge_allowed: bool,
         }
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -938,16 +942,27 @@ impl Store for GitHub {
             name: String,
             is_enabled: bool,
         }
-        let types: RepoData<Types> = self
+        let settings: RepoData<Settings> = self
             .graphql(
                 "query($owner: String!, $name: String!) {
-                  repository(owner: $owner, name: $name) { issueTypes(first: 25) { nodes { name isEnabled } } }
+                  repository(owner: $owner, name: $name) {
+                    issueTypes(first: 25) { nodes { name isEnabled } }
+                    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
+                  }
                 }",
                 json!({"owner": self.owner, "name": self.name}),
             )
             .await?;
-        let types: Vec<String> = types
-            .repository
+        let settings = settings.repository;
+        let allowed_merge_methods = [
+            (MergeMethod::Merge, settings.merge_commit_allowed),
+            (MergeMethod::Squash, settings.squash_merge_allowed),
+            (MergeMethod::Rebase, settings.rebase_merge_allowed),
+        ]
+        .into_iter()
+        .filter_map(|(method, allowed)| allowed.then_some(method))
+        .collect();
+        let types: Vec<String> = settings
             .issue_types
             .map(|t| t.nodes)
             .unwrap_or_default()
@@ -964,6 +979,7 @@ impl Store for GitHub {
         Ok(RepoSettings::new(
             repo.default_branch,
             linear_history,
+            allowed_merge_methods,
             categories,
         ))
     }

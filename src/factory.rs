@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::TimeDelta;
 use tokio::task::{Id, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -69,8 +69,9 @@ pub struct Factory {
 }
 
 impl Factory {
-    /// Checks the store can be worked (the token can push), creates missing
-    /// labels and reads the repository's settings.
+    /// Checks the store can be worked (the token can push and, with
+    /// auto-merge, the repository allows the merge method), reads the
+    /// repository's settings and creates missing labels.
     pub async fn start(
         store: Arc<dyn Store>,
         runtime: Arc<dyn Runtime>,
@@ -78,10 +79,6 @@ impl Factory {
         config: FactoryConfig,
     ) -> Result<Factory> {
         let identity = store.identity().await.context("checking the token")?;
-        store
-            .ensure_labels(&label::ALL)
-            .await
-            .context("creating labels")?;
         let mut settings = store
             .settings()
             .await
@@ -92,12 +89,28 @@ impl Factory {
         if let Some(method) = config.merge_method {
             settings.merge_method = method;
         }
+        if config.auto_merge
+            && !settings
+                .allowed_merge_methods
+                .contains(settings.merge_method)
+        {
+            bail!(
+                "the repository doesn't allow the merge method `{}`: it allows {}; \
+                 set `merge-method` to a method it allows",
+                settings.merge_method,
+                settings.allowed_merge_methods
+            );
+        }
+        store
+            .ensure_labels(&label::ALL)
+            .await
+            .context("creating labels")?;
         info!(
             machine_user = %identity.login,
             default_branch = %settings.default_branch,
             update_method = ?settings.update_method,
             auto_merge = config.auto_merge,
-            merge_method = ?settings.merge_method,
+            merge_method = %settings.merge_method,
             "started"
         );
         let last_runs = if config.schedule_workflows {

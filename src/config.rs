@@ -249,14 +249,13 @@ impl Config {
                 bail!("the setting `auto-merge` is {other:?}: it is `true` or `false`")
             }
         };
-        let merge_method = match get("merge-method").as_deref() {
+        let merge_method = match get("merge-method") {
             None => None,
-            Some("merge") => Some(MergeMethod::Merge),
-            Some("squash") => Some(MergeMethod::Squash),
-            Some("rebase") => Some(MergeMethod::Rebase),
-            Some(other) => bail!(
-                "the setting `merge-method` is {other:?}: it is `merge`, `squash` or `rebase`"
-            ),
+            Some(name) => Some(name.parse::<MergeMethod>().map_err(|()| {
+                anyhow!(
+                    "the setting `merge-method` is {name:?}: it is `merge`, `squash` or `rebase`"
+                )
+            })?),
         };
         let log_format = match get("log-format").as_deref() {
             None if on_terminal => LogFormat::Text,

@@ -17,8 +17,8 @@ use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, Repo
 use crate::clock::Clock;
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    Mergeability, MergedPull, Number, Pull, PullState, Push, Review, ReviewState, Snapshot, Thread,
-    Timestamp, closing_references,
+    MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Push, Review, ReviewState,
+    Snapshot, Thread, Timestamp, closing_references,
 };
 use crate::git;
 
@@ -30,6 +30,7 @@ pub struct Seed {
     pub issue_types: Option<Vec<String>>,
     /// Whether the default branch requires linear history.
     pub linear_history: bool,
+    pub allowed_merge_methods: MergeMethods,
 }
 
 pub struct LocalStore {
@@ -43,6 +44,7 @@ struct State {
     machine_user: Login,
     issue_types: Option<Vec<String>>,
     linear_history: bool,
+    allowed_merge_methods: MergeMethods,
     labels: BTreeSet<String>,
     next_number: u64,
     issues: BTreeMap<Number, IssueRecord>,
@@ -111,6 +113,7 @@ impl LocalStore {
                 machine_user: seed.machine_user,
                 issue_types: seed.issue_types,
                 linear_history: seed.linear_history,
+                allowed_merge_methods: seed.allowed_merge_methods,
                 labels: BTreeSet::new(),
                 next_number: 1,
                 issues: BTreeMap::new(),
@@ -826,6 +829,7 @@ impl Store for LocalStore {
         Ok(RepoSettings::new(
             state.default_branch.clone(),
             state.linear_history,
+            state.allowed_merge_methods.clone(),
             categories,
         ))
     }

@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::briefs::Briefs;
 use linewright::clock::Clock;
-use linewright::domain::{Issue, Login, Number, Timestamp};
+use linewright::domain::{Issue, Login, MergeMethods, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
@@ -240,6 +240,21 @@ pub struct World {
     pub dir: tempfile::TempDir,
 }
 
+/// The repository settings a world's store reports.
+pub struct Repository {
+    pub linear_history: bool,
+    pub allowed_merge_methods: MergeMethods,
+}
+
+impl Default for Repository {
+    fn default() -> Repository {
+        Repository {
+            linear_history: false,
+            allowed_merge_methods: MergeMethods::all(),
+        }
+    }
+}
+
 pub fn config(work_dir: &Path) -> FactoryConfig {
     FactoryConfig {
         spec_glob: SpecGlob::default(),
@@ -273,6 +288,19 @@ impl World {
         linear_history: bool,
         adjust: impl FnOnce(&mut FactoryConfig),
     ) -> World {
+        let repository = Repository {
+            linear_history,
+            ..Repository::default()
+        };
+        World::start(repository, adjust).await.unwrap()
+    }
+
+    /// Starts a factory on a store standing in for `repository`, as startup
+    /// does, failing as it fails.
+    pub async fn start(
+        repository: Repository,
+        adjust: impl FnOnce(&mut FactoryConfig),
+    ) -> anyhow::Result<World> {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(FakeClock::new());
         let store = Arc::new(
@@ -282,7 +310,8 @@ impl World {
                     default_branch: "main".into(),
                     machine_user: Login::new(MACHINE),
                     issue_types: None,
-                    linear_history,
+                    linear_history: repository.linear_history,
+                    allowed_merge_methods: repository.allowed_merge_methods,
                 },
                 clock.clone(),
             )
@@ -305,16 +334,14 @@ impl World {
         let runtime = Arc::new(ScriptedRuntime::default());
         let mut config = config(&dir.path().join("work"));
         adjust(&mut config);
-        let factory = Factory::start(store.clone(), runtime.clone(), clock.clone(), config)
-            .await
-            .unwrap();
-        World {
+        let factory = Factory::start(store.clone(), runtime.clone(), clock.clone(), config).await?;
+        Ok(World {
             store,
             runtime,
             clock,
             factory,
             dir,
-        }
+        })
     }
 
     /// One poll, and every run it started run to its end.
