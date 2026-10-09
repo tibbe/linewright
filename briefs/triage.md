@@ -24,11 +24,11 @@ are; you may build and run the code to verify a claim.
 ## Process
 
 1. **Gather context.** Read the issue and every comment. Parse earlier triage
-   notes so you don't re-ask resolved questions; when the reporter has answered,
-   build on the answers. Read `GLOSSARY.md` if the repository has one and use
-   its terms. Read the spec (the files matching the spec glob in your task) and
-   respect the architecture decisions in the area. Explore the codebase. Run two
-   checks:
+   notes so you don't re-ask resolved questions; when the reporter or the
+   maintainer has answered, build on the answers. Read `GLOSSARY.md` if the
+   repository has one and use its terms. Read the spec (the files matching the
+   spec glob in your task) and respect the architecture decisions in the area.
+   Explore the codebase. Run two checks:
    - **Redundancy**: search for an existing implementation of the requested
      behavior by domain concept, not just by the request's wording, and note
      where you looked. If it already exists, the outcome is `ready-for-human`

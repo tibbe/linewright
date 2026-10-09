@@ -483,16 +483,16 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
-    // A comment doesn't send a hand-back back, a label does
-    // (`docs/specs/product.md`, "Triage"), so the hand-back names them.
+    // The maintainer answers in the thread or hands the issue back with a
+    // label (`docs/specs/product.md`, "Triage"), so the hand-back names both.
     let (state, body) = match result.outcome {
         TriageOutcome::ReadyForAgent => (label::READY_FOR_AGENT, result.comment),
         TriageOutcome::NeedsInfo => (label::NEEDS_INFO, result.comment),
         TriageOutcome::ReadyForHuman => (
             label::READY_FOR_HUMAN,
             format!(
-                "{}\n\nA comment does not send this issue back: apply `{}` to implement it as \
-                 decided, or `{}` to triage it again.",
+                "{}\n\nAnswer in this thread to have it triaged again with your answer, or apply \
+                 `{}` to implement it as decided or `{}` to triage it again.",
                 result.comment.trim_end(),
                 label::READY_FOR_AGENT,
                 label::NEEDS_TRIAGE

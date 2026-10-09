@@ -228,15 +228,15 @@ pub fn reconcile(
                 issue: issue.number,
             });
         }
-        let answered = has_answer(issue, policy);
-        if answered {
+        let answered = answered_label(issue, policy);
+        if let Some(waiting) = answered {
             plan.act(Action::Relabel {
                 issue: issue.number,
-                remove: label::NEEDS_INFO.into(),
+                remove: waiting.into(),
                 add: label::NEEDS_TRIAGE.into(),
             });
         }
-        if answered || wants_triage(issue, policy) {
+        if answered.is_some() || wants_triage(issue, policy) {
             if !is_live(subject) {
                 plan.start(Work::Triage {
                     issue: issue.number,
@@ -739,26 +739,38 @@ fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
     issue.has_label(label::NEEDS_TRIAGE) && issue.author != policy.machine_user
 }
 
-/// `needs-info` is the one state a comment leaves: anyone other than the
-/// machine user commenting after the question was asked, that is after
-/// Linewright's last triage comment or the label, whichever is later.
-fn has_answer(issue: &Issue, policy: &Policy) -> bool {
-    if !issue.has_label(label::NEEDS_INFO) || issue.author == policy.machine_user {
-        return false;
+/// An answer in the thread (`docs/specs/product.md`, "Triage"): the label of
+/// an issue waiting on the reporter or the maintainer, if Linewright's last
+/// comment on it is a triage comment and anyone other than the machine user
+/// commented after it and after the label was applied. A hand-back from after
+/// triage asks no question, and a label the maintainer applied wins over their
+/// comment.
+fn answered_label(issue: &Issue, policy: &Policy) -> Option<&'static str> {
+    let machine = &policy.machine_user;
+    if issue.author == *machine
+        || [label::READY_FOR_AGENT, label::NEEDS_TRIAGE]
+            .into_iter()
+            .any(|l| issue.has_label(l))
+    {
+        return None;
     }
-    let last_triage = issue
+    let waiting = [label::NEEDS_INFO, label::READY_FOR_HUMAN]
+        .into_iter()
+        .find(|l| issue.has_label(l))?;
+    let (stage, last) = issue
         .comments
         .iter()
-        .filter(|c| stage_of(c, &policy.machine_user) == Some(Stage::Triage))
-        .map(|c| c.created_at)
-        .max();
-    let Some(asked) = last_triage.max(last_labeled(issue, label::NEEDS_INFO)) else {
-        return false;
-    };
+        .filter_map(|c| Some((stage_of(c, machine)?, c.created_at)))
+        .max_by_key(|(_, at)| *at)?;
+    if stage != Stage::Triage {
+        return None;
+    }
+    let asked = last_labeled(issue, waiting).map_or(last, |labeled| labeled.max(last));
     issue
         .comments
         .iter()
-        .any(|c| c.author != policy.machine_user && c.created_at > asked)
+        .any(|c| &c.author != machine && c.created_at > asked)
+        .then_some(waiting)
 }
 
 /// The spec changes waiting to be cut into tickets.

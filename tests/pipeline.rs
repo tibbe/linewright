@@ -37,16 +37,29 @@ async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
     assert!(issue.open);
 }
 
-#[tokio::test]
-async fn an_issue_triaged_for_the_maintainer_says_a_label_not_a_comment_sends_it_back() {
-    let mut world = World::new().await;
-    world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({
-            "outcome": "ready-for-human",
-            "category": "enhancement",
-            "comment": "Should widgets be resizable?"
-        }))
+fn triage_for_the_maintainer(world: &World) {
+    world.runtime.on(WorkKind::Triage, |call| {
+        let outcome = if call.spec.prompt.contains("Yes, make them resizable.") {
+            json!({
+                "outcome": "ready-for-agent",
+                "category": "enhancement",
+                "comment": "## Agent Brief\n\n**Summary:** Make widgets resizable."
+            })
+        } else {
+            json!({
+                "outcome": "ready-for-human",
+                "category": "enhancement",
+                "comment": "Should widgets be resizable?"
+            })
+        };
+        json(outcome)
     });
+}
+
+#[tokio::test]
+async fn an_issue_triaged_for_the_maintainer_says_an_answer_or_a_label_sends_it_back() {
+    let mut world = World::new().await;
+    triage_for_the_maintainer(&world);
     let issue = world
         .store
         .open_issue("reporter", "Resize widgets", "", &["needs-triage"]);
@@ -58,8 +71,32 @@ async fn an_issue_triaged_for_the_maintainer_says_a_label_not_a_comment_sends_it
     assert_eq!(
         last_comment(&issue),
         "> *Linewright, triage*\n\nShould widgets be resizable?\n\n\
-         A comment does not send this issue back: apply `ready-for-agent` to \
-         implement it as decided, or `needs-triage` to triage it again."
+         Answer in this thread to have it triaged again with your answer, or \
+         apply `ready-for-agent` to implement it as decided or `needs-triage` \
+         to triage it again."
+    );
+}
+
+#[tokio::test]
+async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again() {
+    let mut world = World::new().await;
+    triage_for_the_maintainer(&world);
+    let issue = world
+        .store
+        .open_issue("reporter", "Resize widgets", "", &["needs-triage"]);
+    world.poll().await;
+
+    world
+        .store
+        .comment_as("maintainer", issue, "Yes, make them resizable.")
+        .unwrap();
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["enhancement", "ready-for-agent"]);
+    assert_eq!(
+        last_comment(&issue),
+        "> *Linewright, triage*\n\n## Agent Brief\n\n**Summary:** Make widgets resizable."
     );
 }
 

@@ -122,6 +122,85 @@ fn needs_info_waits_while_only_linewright_has_spoken_since_triage() {
     assert_eq!(decide(&snapshot(vec![asked])), vec![]);
 }
 
+#[test]
+fn a_maintainers_answer_to_a_ready_for_human_triage_sends_the_issue_back_to_triage() {
+    let mut asked = labeled(issue(1), label::READY_FOR_HUMAN);
+    asked.comments = vec![
+        triage_comment(1),
+        comment("maintainer", 2, "Make them resizable."),
+    ];
+
+    assert_eq!(
+        decide(&snapshot(vec![asked])),
+        vec![
+            Action::Relabel {
+                issue: Number(1),
+                remove: label::READY_FOR_HUMAN.into(),
+                add: label::NEEDS_TRIAGE.into(),
+            },
+            Action::Start(Work::Triage { issue: Number(1) }),
+        ]
+    );
+}
+
+#[test]
+fn only_comments_by_others_than_the_machine_user_after_the_last_triage_comment_are_answers() {
+    for state in [label::NEEDS_INFO, label::READY_FOR_HUMAN] {
+        let mut asked = labeled(issue(1), state);
+        asked.comments = vec![
+            comment("maintainer", 0, "Should they be resizable?"),
+            triage_comment(1),
+            comment(MACHINE, 2, "Anything else?"),
+        ];
+
+        assert_eq!(decide(&snapshot(vec![asked])), vec![], "{state}");
+    }
+}
+
+#[test]
+fn a_comment_on_a_hand_back_from_after_triage_starts_nothing() {
+    for stage in [Stage::Ci, Stage::Review, Stage::Implementation] {
+        let mut handed_back = labeled(issue(1), label::READY_FOR_HUMAN);
+        handed_back.comments = vec![
+            triage_comment(1),
+            comment(MACHINE, 3, &marked(stage, "Handed back.")),
+            comment("maintainer", 5, "Looking into it."),
+        ];
+
+        assert_eq!(decide(&snapshot(vec![handed_back])), vec![], "{stage}");
+    }
+}
+
+#[test]
+fn an_issue_the_machine_user_filed_is_not_triaged_when_a_person_comments() {
+    let mut filed = labeled(issue(1), label::READY_FOR_HUMAN);
+    filed.author = Login::new(MACHINE);
+    filed.comments = vec![triage_comment(1), comment("maintainer", 2, "Agreed.")];
+
+    assert_eq!(decide(&snapshot(vec![filed])), vec![]);
+}
+
+#[test]
+fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_comment() {
+    let answered_with = |state: &str| {
+        let mut answered = labeled(labeled(issue(1), label::READY_FOR_HUMAN), state);
+        answered.comments = vec![
+            triage_comment(1),
+            comment("maintainer", 2, "Make them resizable."),
+        ];
+        snapshot(vec![answered])
+    };
+
+    assert_eq!(
+        decide(&answered_with(label::READY_FOR_AGENT)),
+        vec![Action::Claim { issue: Number(1) }, implement(1)]
+    );
+    assert_eq!(
+        decide(&answered_with(label::NEEDS_TRIAGE)),
+        vec![Action::Start(Work::Triage { issue: Number(1) })]
+    );
+}
+
 fn merged(number: u64, files: &[&str]) -> MergedPull {
     MergedPull {
         number: Number(number),
