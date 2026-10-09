@@ -192,6 +192,7 @@ fn policy(config: &Config, github: &GitHub) -> Policy {
         ci_grace: config.ci_grace,
         ci_timeout: config.ci_timeout,
         ci_attempts: config.ci_attempts,
+        auto_merge: config.auto_merge,
     }
 }
 
@@ -220,6 +221,8 @@ fn factory_config(config: &Config, work_dir: std::path::PathBuf) -> Result<Facto
         result_retries: config.result_retries,
         session_timeout: config.session_timeout,
         update_method: config.update_branch,
+        auto_merge: config.auto_merge,
+        merge_method: config.merge_method,
         briefs,
         work_dir,
         schedule_workflows: true,

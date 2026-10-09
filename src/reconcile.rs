@@ -23,6 +23,8 @@ pub struct Policy {
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
+    /// Merge green pull requests instead of requesting review.
+    pub auto_merge: bool,
 }
 
 /// What a run works on. At most one run per subject is in flight.
@@ -139,6 +141,14 @@ pub enum Action {
     MarkReady {
         pr: Number,
         reviewers: Vec<Login>,
+    },
+    /// Merge the pull request with the merge method, if its head is still
+    /// `head`. A draft is marked ready for review first: GitHub merges no
+    /// draft.
+    Merge {
+        pr: Number,
+        head: String,
+        draft: bool,
     },
     CloseTracking {
         issue: Number,
@@ -473,7 +483,8 @@ fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) 
 }
 
 /// An open pull request for the issue: address feedback, keep it up to date
-/// and get CI green, in that order, then mark it ready for review.
+/// and get CI green, in that order, then mark it ready for review or, with
+/// auto-merge, merge it.
 fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
     let (issue_number, pr_number) = (issue.number, pr.number);
     let machine = &policy.machine_user;
@@ -560,7 +571,18 @@ fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
         }
         return;
     }
-    if pr.state == (PullState::Open { draft: true }) {
+    let draft = pr.state == (PullState::Open { draft: true });
+    if policy.auto_merge {
+        // Behind and conflicting were brought up to date above; a
+        // mergeability not computed yet waits for the next poll.
+        if pr.mergeability == Mergeability::Clean {
+            plan.act(Action::Merge {
+                pr: pr_number,
+                head: pr.head_sha.clone(),
+                draft,
+            });
+        }
+    } else if draft {
         plan.act(Action::MarkReady {
             pr: pr_number,
             reviewers: issue

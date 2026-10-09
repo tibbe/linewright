@@ -320,6 +320,17 @@ pub enum UpdateMethod {
     Merge,
 }
 
+/// How a pull request is merged into the default branch, as GitHub's merge
+/// methods are named
+/// (<https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request>).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
 /// A failing check, with what the store can tell about why it failed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckFailure {

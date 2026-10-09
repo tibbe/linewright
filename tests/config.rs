@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use linewright::config::{Cli, Config, LogFormat};
+use linewright::domain::MergeMethod;
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
     let dir = tempfile::tempdir().unwrap();
@@ -91,4 +92,50 @@ fn a_ci_timeout_no_longer_than_the_grace_period_is_an_error() {
     let error = resolve(&["--ci-grace", "10m", "--ci-timeout", "5m"], &[], None).unwrap_err();
 
     assert!(error.contains("ci-timeout"), "{error}");
+}
+
+#[test]
+fn auto_merge_is_off_by_default_and_a_bare_flag_turns_it_on() {
+    let off = resolve(&[], &[], None).unwrap();
+    let flag = resolve(&["--auto-merge"], &[], None).unwrap();
+    let env = resolve(&[], &[("LINEWRIGHT_AUTO_MERGE", "true")], None).unwrap();
+    let file = resolve(&[], &[], Some("auto-merge = true\n")).unwrap();
+    let flag_over_file =
+        resolve(&["--auto-merge=false"], &[], Some("auto-merge = true\n")).unwrap();
+
+    assert!(!off.auto_merge);
+    assert!(flag.auto_merge);
+    assert!(env.auto_merge);
+    assert!(file.auto_merge);
+    assert!(!flag_over_file.auto_merge);
+}
+
+#[test]
+fn the_merge_method_follows_the_repository_unless_set() {
+    let unset = resolve(&[], &[], None).unwrap();
+    let flag = resolve(&["--merge-method", "squash"], &[], None).unwrap();
+    let env = resolve(
+        &[],
+        &[("LINEWRIGHT_MERGE_METHOD", "rebase")],
+        Some("merge-method = \"merge\"\n"),
+    )
+    .unwrap();
+
+    assert_eq!(unset.merge_method, None);
+    assert_eq!(flag.merge_method, Some(MergeMethod::Squash));
+    assert_eq!(env.merge_method, Some(MergeMethod::Rebase));
+}
+
+#[test]
+fn a_bad_auto_merge_or_merge_method_is_an_error_naming_the_setting() {
+    assert!(
+        resolve(&[], &[("LINEWRIGHT_MERGE_METHOD", "fast-forward")], None)
+            .unwrap_err()
+            .contains("merge-method")
+    );
+    assert!(
+        resolve(&[], &[], Some("auto-merge = \"yes\"\n"))
+            .unwrap_err()
+            .contains("auto-merge")
+    );
 }

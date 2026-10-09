@@ -18,9 +18,9 @@ use serde_json::{Value, json};
 use super::rate_limit;
 use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
 use crate::domain::{
-    Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login,
+    Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
     Mergeability, MergedPull, Number, Pull, PullState, Push, Review, ReviewState, Snapshot, Thread,
-    Timestamp, UpdateMethod, label,
+    Timestamp, label,
 };
 use crate::git;
 
@@ -955,20 +955,17 @@ impl Store for GitHub {
             .filter(|t| t.is_enabled)
             .map(|t| t.name)
             .collect();
-        let update_method = if self.linear_history_required(&repo.default_branch).await {
-            UpdateMethod::Rebase
+        let linear_history = self.linear_history_required(&repo.default_branch).await;
+        let categories = if types.is_empty() {
+            Categories::Labels
         } else {
-            UpdateMethod::Merge
+            Categories::IssueTypes(types)
         };
-        Ok(RepoSettings {
-            default_branch: repo.default_branch,
-            update_method,
-            categories: if types.is_empty() {
-                Categories::Labels
-            } else {
-                Categories::IssueTypes(types)
-            },
-        })
+        Ok(RepoSettings::new(
+            repo.default_branch,
+            linear_history,
+            categories,
+        ))
     }
 
     async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()> {
@@ -1457,6 +1454,16 @@ impl Store for GitHub {
             );
         }
         Ok(())
+    }
+
+    async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
+        // <https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request>
+        self.rest_ok(
+            Method::PUT,
+            &self.repo_path(&format!("/pulls/{}/merge", pr.0)),
+            Some(json!({"sha": head, "merge_method": method})),
+        )
+        .await
     }
 
     async fn reply_in_thread(&self, _pr: Number, thread: &str, body: &str) -> Result<()> {

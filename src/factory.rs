@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 
 use crate::briefs::Briefs;
 use crate::clock::Clock;
-use crate::domain::{Snapshot, Timestamp, UpdateMethod, label};
+use crate::domain::{MergeMethod, Snapshot, Timestamp, UpdateMethod, label};
 use crate::marker::{Stage, marked};
 use crate::reconcile::{Action, LiveRun, Policy, Workflows, reconcile};
 use crate::run::{self, Shell};
@@ -36,6 +36,10 @@ pub struct FactoryConfig {
     pub session_timeout: std::time::Duration,
     /// `None` follows the repository's settings.
     pub update_method: Option<UpdateMethod>,
+    /// Merge green pull requests instead of requesting review.
+    pub auto_merge: bool,
+    /// `None` follows the repository's settings.
+    pub merge_method: Option<MergeMethod>,
     pub briefs: Briefs,
     /// Where clones, session records and the workflows' last runs go.
     pub work_dir: PathBuf,
@@ -85,10 +89,15 @@ impl Factory {
         if let Some(method) = config.update_method {
             settings.update_method = method;
         }
+        if let Some(method) = config.merge_method {
+            settings.merge_method = method;
+        }
         info!(
             machine_user = %identity.login,
             default_branch = %settings.default_branch,
             update_method = ?settings.update_method,
+            auto_merge = config.auto_merge,
+            merge_method = ?settings.merge_method,
             "started"
         );
         let last_runs = if config.schedule_workflows {
@@ -105,6 +114,7 @@ impl Factory {
                 ci_grace: config.ci_grace,
                 ci_timeout: config.ci_timeout,
                 ci_attempts: config.ci_attempts,
+                auto_merge: config.auto_merge,
             },
             store,
             runtime,
@@ -327,6 +337,14 @@ impl Factory {
                     "No CI reported: ready for review."
                 };
                 store.comment(*pr, &marked(Stage::Review, note)).await?;
+            }
+            Action::Merge { pr, head, draft } => {
+                let method = self.shell.settings.merge_method;
+                info!(pr = pr.0, method = ?method, "merging");
+                if *draft {
+                    store.mark_ready(*pr).await?;
+                }
+                store.merge(*pr, head, method).await?;
             }
             Action::CloseTracking { issue } => {
                 info!(issue = issue.0, "closing tracking issue");

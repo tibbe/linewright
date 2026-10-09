@@ -26,6 +26,7 @@ fn policy() -> Policy {
         ci_grace: TimeDelta::minutes(5),
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
+        auto_merge: false,
     }
 }
 
@@ -620,6 +621,93 @@ fn a_pull_request_behind_or_in_conflict_with_the_default_branch_is_brought_up_to
 
     assert_eq!(at(&in_review(behind), 10), vec![update.clone()]);
     assert_eq!(at(&in_review(conflicting), 10), vec![update]);
+}
+
+fn auto_merging(world: &Snapshot, minute: i64) -> Vec<Action> {
+    let policy = Policy {
+        auto_merge: true,
+        ..policy()
+    };
+    reconcile(world, &[], &Workflows::default(), t(minute), &policy)
+}
+
+#[test]
+fn with_auto_merge_a_green_draft_is_merged_instead_of_marked_ready() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Passed)];
+
+    assert_eq!(
+        auto_merging(&in_review(pr), 10),
+        vec![Action::Merge {
+            pr: Number(20),
+            head: "abc123".into(),
+            draft: true,
+        }]
+    );
+}
+
+#[test]
+fn with_auto_merge_a_draft_with_no_ci_by_the_end_of_the_grace_period_is_merged() {
+    let world = in_review(pull(20, 2));
+
+    assert_eq!(auto_merging(&world, 5), vec![]);
+    assert!(matches!(
+        auto_merging(&world, 7).as_slice(),
+        [Action::Merge { draft: true, .. }]
+    ));
+}
+
+#[test]
+fn with_auto_merge_a_green_pull_request_already_ready_for_review_is_merged() {
+    let pr = ready(pull(20, 2));
+
+    assert_eq!(
+        auto_merging(&in_review(pr), 10),
+        vec![Action::Merge {
+            pr: Number(20),
+            head: "abc123".into(),
+            draft: false,
+        }]
+    );
+}
+
+#[test]
+fn with_auto_merge_a_pull_request_not_yet_green_keeps_its_handling_and_is_not_merged() {
+    let mut pending = ready(pull(20, 2));
+    pending.checks = vec![check("test", CheckState::Pending)];
+    let mut failing = ready(pull(20, 2));
+    failing.checks = vec![check("test", CheckState::Failed)];
+    let mut commented = ready(pull(20, 2));
+    commented.comments = vec![comment("maintainer", 4, "Please rename `foo`.")];
+    let mut behind = ready(pull(20, 2));
+    behind.mergeability = Mergeability::Behind;
+    let mut conflicting = ready(pull(20, 2));
+    conflicting.mergeability = Mergeability::Conflicting;
+    let update = Action::Start(Work::Update {
+        issue: Number(2),
+        pr: Number(20),
+    });
+
+    assert_eq!(auto_merging(&in_review(pending), 10), vec![]);
+    assert_eq!(
+        auto_merging(&in_review(failing), 10),
+        vec![Action::Start(Work::FixCi {
+            issue: Number(2),
+            pr: Number(20),
+            failing: vec!["test".into()],
+        })]
+    );
+    assert_eq!(auto_merging(&in_review(commented), 10), vec![rework(2, 20)]);
+    assert_eq!(auto_merging(&in_review(behind), 10), vec![update.clone()]);
+    assert_eq!(auto_merging(&in_review(conflicting), 10), vec![update]);
+}
+
+#[test]
+fn with_auto_merge_a_pull_request_whose_mergeability_is_not_known_yet_waits() {
+    let mut pr = ready(pull(20, 2));
+    pr.mergeability = Mergeability::Unknown;
+
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![]);
 }
 
 #[test]

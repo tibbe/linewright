@@ -12,7 +12,9 @@ use std::path::Path;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::domain::{CheckFailure, Login, Number, Pull, Snapshot, Timestamp, UpdateMethod};
+use crate::domain::{
+    CheckFailure, Login, MergeMethod, Number, Pull, Snapshot, Timestamp, UpdateMethod,
+};
 
 /// Who Linewright acts as.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +50,27 @@ impl Categories {
 pub struct RepoSettings {
     pub default_branch: String,
     pub update_method: UpdateMethod,
+    pub merge_method: MergeMethod,
     pub categories: Categories,
+}
+
+impl RepoSettings {
+    /// The settings of a repository whose default branch requires linear
+    /// history, or not: branches are updated and merged by rebasing where it
+    /// does and by merging where it doesn't.
+    pub fn new(default_branch: String, linear_history: bool, categories: Categories) -> Self {
+        let (update_method, merge_method) = if linear_history {
+            (UpdateMethod::Rebase, MergeMethod::Rebase)
+        } else {
+            (UpdateMethod::Merge, MergeMethod::Merge)
+        };
+        RepoSettings {
+            default_branch,
+            update_method,
+            merge_method,
+            categories,
+        }
+    }
 }
 
 /// How a push treats the branch it replaces.
@@ -126,6 +148,9 @@ pub trait Store: Send + Sync {
     async fn open_pull(&self, pull: NewPull) -> Result<Number>;
     async fn mark_ready(&self, pr: Number) -> Result<()>;
     async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()>;
+    /// Merges the pull request into the default branch with `method`, as
+    /// the machine user, if its head is still the commit `head`.
+    async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()>;
     async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()>;
     async fn resolve_thread(&self, pr: Number, thread: &str) -> Result<()>;
 }

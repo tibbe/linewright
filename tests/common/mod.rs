@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::briefs::Briefs;
 use linewright::clock::Clock;
-use linewright::domain::{Issue, Login, Number, Timestamp, UpdateMethod};
+use linewright::domain::{Issue, Login, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
@@ -251,6 +251,8 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         result_retries: 1,
         session_timeout: std::time::Duration::from_secs(30 * 60),
         update_method: None,
+        auto_merge: false,
+        merge_method: None,
         briefs: Briefs::shipped(),
         work_dir: work_dir.to_path_buf(),
         schedule_workflows: true,
@@ -263,6 +265,14 @@ impl World {
     }
 
     pub async fn with(adjust: impl FnOnce(&mut FactoryConfig)) -> World {
+        World::with_repository(false, adjust).await
+    }
+
+    /// A world whose default branch requires linear history, or not.
+    pub async fn with_repository(
+        linear_history: bool,
+        adjust: impl FnOnce(&mut FactoryConfig),
+    ) -> World {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(FakeClock::new());
         let store = Arc::new(
@@ -272,7 +282,7 @@ impl World {
                     default_branch: "main".into(),
                     machine_user: Login::new(MACHINE),
                     issue_types: None,
-                    update_method: UpdateMethod::Merge,
+                    linear_history,
                 },
                 clock.clone(),
             )

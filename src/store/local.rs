@@ -16,9 +16,9 @@ use serde::Serialize;
 use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
 use crate::clock::Clock;
 use crate::domain::{
-    Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login,
+    Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
     Mergeability, MergedPull, Number, Pull, PullState, Push, Review, ReviewState, Snapshot, Thread,
-    Timestamp, UpdateMethod, closing_references,
+    Timestamp, closing_references,
 };
 use crate::git;
 
@@ -28,7 +28,8 @@ pub struct Seed {
     pub machine_user: Login,
     /// The repository's issue types, if it has them.
     pub issue_types: Option<Vec<String>>,
-    pub update_method: UpdateMethod,
+    /// Whether the default branch requires linear history.
+    pub linear_history: bool,
 }
 
 pub struct LocalStore {
@@ -41,7 +42,7 @@ struct State {
     default_branch: String,
     machine_user: Login,
     issue_types: Option<Vec<String>>,
-    update_method: UpdateMethod,
+    linear_history: bool,
     labels: BTreeSet<String>,
     next_number: u64,
     issues: BTreeMap<Number, IssueRecord>,
@@ -109,7 +110,7 @@ impl LocalStore {
                 default_branch: seed.default_branch,
                 machine_user: seed.machine_user,
                 issue_types: seed.issue_types,
-                update_method: seed.update_method,
+                linear_history: seed.linear_history,
                 labels: BTreeSet::new(),
                 next_number: 1,
                 issues: BTreeMap::new(),
@@ -371,30 +372,52 @@ impl LocalStore {
         Ok(number)
     }
 
-    /// Merges an open pull request into the default branch, closing the
-    /// issues it closes.
+    /// A person merges an open pull request into the default branch, closing
+    /// the issues it closes.
     pub async fn merge_pull(&self, pr: Number) -> Result<()> {
-        let (head_ref, default_branch) = {
+        self.merge_as(pr, "maintainer", MergeMethod::Merge).await
+    }
+
+    /// Merges an open pull request into the default branch with `method`,
+    /// as GitHub does
+    /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>),
+    /// closing the issues it closes.
+    async fn merge_as(&self, pr: Number, by: &str, method: MergeMethod) -> Result<()> {
+        let (head_ref, title, default_branch) = {
             let mut state = self.state();
             let default_branch = state.default_branch.clone();
-            (state.pull_mut(pr)?.head_ref.clone(), default_branch)
+            let record = state.pull_mut(pr)?;
+            (
+                record.head_ref.clone(),
+                record.title.clone(),
+                default_branch,
+            )
         };
         let before = self.rev(&default_branch).await?;
         let work = tempfile::tempdir()?;
         let dir = work.path().join("clone");
         git::clone(&self.url(), &dir, &default_branch, &[]).await?;
-        git::set_identity(&dir, "maintainer", "maintainer@example.com").await?;
-        git::git(
-            &dir,
-            &[
-                "merge",
-                "--quiet",
-                "--no-ff",
-                "--no-edit",
-                &format!("origin/{head_ref}"),
-            ],
-        )
-        .await?;
+        git::set_identity(&dir, by, &format!("{by}@example.com")).await?;
+        let head = format!("origin/{head_ref}");
+        match method {
+            MergeMethod::Merge => {
+                let message = format!("Merge pull request {pr} from {head_ref}");
+                git::git(
+                    &dir,
+                    &["merge", "--quiet", "--no-ff", "-m", &message, &head],
+                )
+                .await?;
+            }
+            MergeMethod::Squash => {
+                git::git(&dir, &["merge", "--quiet", "--squash", &head]).await?;
+                let message = format!("{title} ({pr})");
+                git::git(&dir, &["commit", "--quiet", "-m", &message]).await?;
+            }
+            MergeMethod::Rebase => {
+                git::git(&dir, &["checkout", "--quiet", "-B", "rebased", &head]).await?;
+                git::git(&dir, &["rebase", "--quiet", &default_branch]).await?;
+            }
+        }
         git::git(
             &dir,
             &[
@@ -796,14 +819,15 @@ impl Store for LocalStore {
 
     async fn settings(&self) -> Result<RepoSettings> {
         let state = self.state();
-        Ok(RepoSettings {
-            default_branch: state.default_branch.clone(),
-            update_method: state.update_method,
-            categories: match &state.issue_types {
-                Some(types) => Categories::IssueTypes(types.clone()),
-                None => Categories::Labels,
-            },
-        })
+        let categories = match &state.issue_types {
+            Some(types) => Categories::IssueTypes(types.clone()),
+            None => Categories::Labels,
+        };
+        Ok(RepoSettings::new(
+            state.default_branch.clone(),
+            state.linear_history,
+            categories,
+        ))
     }
 
     async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()> {
@@ -1057,6 +1081,24 @@ impl Store for LocalStore {
             }
         }
         Ok(())
+    }
+
+    async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
+        let (state, head_ref) = {
+            let mut state = self.state();
+            let record = state.pull_mut(pr)?;
+            (record.state, record.head_ref.clone())
+        };
+        match state {
+            PullState::Open { draft: false } => {}
+            PullState::Open { draft: true } => bail!("{pr} is a draft"),
+            _ => bail!("{pr} is not open"),
+        }
+        if self.rev(&head_ref).await? != head {
+            bail!("the head of {pr} is no longer {head}");
+        }
+        let machine = self.state().machine_user.clone();
+        self.merge_as(pr, machine.as_str(), method).await
     }
 
     async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()> {

@@ -215,3 +215,45 @@ async fn a_replay_runs_no_workflows() {
 
     assert!(runtime.workflow_prompts().is_empty());
 }
+
+#[tokio::test]
+async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_it_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    spec_change_case(dir.path(), &[]);
+    let runtime = Arc::new(ScriptedRuntime::default());
+    runtime.on(WorkKind::Tickets, |_| {
+        json(json!({
+            "tickets": [
+                {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
+                {"id": "list", "title": "List gadgets", "body": "List them.", "blocked_by": ["store"]}
+            ],
+            "comment": "Two slices."
+        }))
+    });
+    runtime.on(WorkKind::Implement, |call| {
+        let file = format!("src/{}.txt", subject_file(call));
+        commit_in(&call.spec.dir, &[(&file, "gadget\n")], "Gadgets");
+        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Adds gadgets."}))
+    });
+    let out = dir.path().join("out");
+    let mut config = config(&out);
+    config.auto_merge = true;
+
+    replay(
+        &dir.path().join("case"),
+        &out,
+        runtime,
+        Arc::new(FakeClock::new()),
+        config,
+    )
+    .await
+    .unwrap();
+
+    let read = |path: &str| std::fs::read_to_string(out.join(path)).unwrap();
+    for pull in ["pulls/5.md", "pulls/6.md"] {
+        assert!(read(pull).contains("- State: merged at"), "{pull}");
+    }
+    for issue in ["issues/2.md", "issues/3.md", "issues/4.md"] {
+        assert!(read(issue).contains("- State: closed"), "{issue}");
+    }
+}

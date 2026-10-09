@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::TimeDelta;
 use clap::{Args, Parser, Subcommand};
 
-use crate::domain::UpdateMethod;
+use crate::domain::{MergeMethod, UpdateMethod};
 use crate::spec_glob::SpecGlob;
 use crate::workflow::WorkflowName;
 
@@ -107,6 +107,12 @@ pub struct Settings {
     /// `rebase` or `merge` [default: from the repository's settings]
     #[arg(long, global = true)]
     pub update_branch: Option<String>,
+    /// Merge green pull requests instead of requesting review [default: off]
+    #[arg(long, global = true, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    pub auto_merge: Option<String>,
+    /// `merge`, `squash` or `rebase` [default: from the repository's settings]
+    #[arg(long, global = true)]
+    pub merge_method: Option<String>,
     /// `text` or `json` [default: text on a terminal, json otherwise]
     #[arg(long, global = true)]
     pub log_format: Option<String>,
@@ -135,6 +141,8 @@ pub struct Config {
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
     pub update_branch: Option<UpdateMethod>,
+    pub auto_merge: bool,
+    pub merge_method: Option<MergeMethod>,
     pub log_format: LogFormat,
 }
 
@@ -155,6 +163,8 @@ impl Settings {
             ("ci-timeout", &self.ci_timeout),
             ("ci-attempts", &self.ci_attempts),
             ("update-branch", &self.update_branch),
+            ("auto-merge", &self.auto_merge),
+            ("merge-method", &self.merge_method),
             ("log-format", &self.log_format),
         ]
         .into_iter()
@@ -163,7 +173,7 @@ impl Settings {
     }
 }
 
-const KEYS: [&str; 15] = [
+const KEYS: [&str; 17] = [
     "repo",
     "poll-interval",
     "spec-glob",
@@ -178,6 +188,8 @@ const KEYS: [&str; 15] = [
     "ci-timeout",
     "ci-attempts",
     "update-branch",
+    "auto-merge",
+    "merge-method",
     "log-format",
 ];
 
@@ -230,6 +242,22 @@ impl Config {
                 bail!("the setting `update-branch` is {other:?}: it is `rebase` or `merge`")
             }
         };
+        let auto_merge = match get("auto-merge").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(other) => {
+                bail!("the setting `auto-merge` is {other:?}: it is `true` or `false`")
+            }
+        };
+        let merge_method = match get("merge-method").as_deref() {
+            None => None,
+            Some("merge") => Some(MergeMethod::Merge),
+            Some("squash") => Some(MergeMethod::Squash),
+            Some("rebase") => Some(MergeMethod::Rebase),
+            Some(other) => bail!(
+                "the setting `merge-method` is {other:?}: it is `merge`, `squash` or `rebase`"
+            ),
+        };
         let log_format = match get("log-format").as_deref() {
             None if on_terminal => LogFormat::Text,
             None => LogFormat::Json,
@@ -262,6 +290,8 @@ impl Config {
             ci_timeout,
             ci_attempts: number("ci-attempts", "2")?,
             update_branch,
+            auto_merge,
+            merge_method,
             log_format,
         })
     }
@@ -292,8 +322,9 @@ fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<BTreeMap<String, Str
             let value = match value {
                 toml::Value::String(s) => s,
                 toml::Value::Integer(i) => i.to_string(),
+                toml::Value::Boolean(b) => b.to_string(),
                 other => bail!(
-                    "{}: the setting `{key}` is {other}, not a string or number",
+                    "{}: the setting `{key}` is {other}, not a string, number or boolean",
                     path.display()
                 ),
             };

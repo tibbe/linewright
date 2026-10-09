@@ -25,6 +25,7 @@ fn policy() -> Policy {
         ci_grace: TimeDelta::minutes(5),
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
+        auto_merge: false,
     }
 }
 

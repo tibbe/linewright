@@ -624,3 +624,92 @@ async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date() {
     );
     assert_eq!(view.mergeability, linewright::domain::Mergeability::Clean);
 }
+
+/// The subject and parent count of each commit on the store's default
+/// branch, newest first.
+fn history(world: &World) -> Vec<(String, usize)> {
+    let output = std::process::Command::new("git")
+        .args(["log", "--format=%s%x09%P", "main"])
+        .current_dir(world.store.repository())
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let (subject, parents) = line.split_once('\t').unwrap();
+            (subject.to_string(), parents.split_whitespace().count())
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocked_is_worked() {
+    use linewright::domain::{MergeMethod, PullState};
+    use linewright::store::Store;
+
+    let mut world = World::with(|config| {
+        config.auto_merge = true;
+        config.merge_method = Some(MergeMethod::Squash);
+    })
+    .await;
+    implement_script(&world);
+    let first = world.store.open_issue(
+        "maintainer",
+        "Store gadgets",
+        "Gadgets persist.",
+        &["ready-for-agent"],
+    );
+    world.store.assign_as(first, "maintainer").unwrap();
+    let second = world.store.open_issue(
+        "maintainer",
+        "List gadgets",
+        "List them.",
+        &["ready-for-agent"],
+    );
+    Store::add_blocked_by(world.store.as_ref(), second, first)
+        .await
+        .unwrap();
+    world.poll().await;
+    let pr = *world.store.pulls().last().unwrap();
+
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert!(matches!(view.state, PullState::Merged { .. }));
+    assert_eq!(
+        history(&world)[0],
+        (format!("Add gadgets ({pr})"), 1),
+        "squashed onto the default branch"
+    );
+    assert!(!world.issue(first).open);
+    assert_eq!(world.store.requested_reviewers(pr), []);
+    assert_eq!(view.comments, []);
+
+    world.poll().await;
+
+    assert!(world.issue(second).is_assigned(&Login::new(MACHINE)));
+    let next = *world.store.pulls().last().unwrap();
+    assert_ne!(next, pr);
+    assert_eq!(world.store.snapshot_pull(next).await.closes, [second]);
+}
+
+/// Runs a ticket to a green pull request with auto-merge on and the merge
+/// method left to the repository.
+async fn auto_merged_by_default(linear_history: bool) -> World {
+    let mut world = World::with_repository(linear_history, |config| config.auto_merge = true).await;
+    world.ticket_in_review().await;
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+    world
+}
+
+#[tokio::test]
+async fn with_auto_merge_and_no_merge_method_set_the_repository_decides_it() {
+    let rebased = auto_merged_by_default(true).await;
+    let merged = auto_merged_by_default(false).await;
+
+    assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
+    assert_eq!(history(&merged)[0].1, 2, "a merge commit");
+}

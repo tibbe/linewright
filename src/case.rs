@@ -262,7 +262,9 @@ pub async fn replay(
                 default_branch: case.default_branch.clone(),
                 machine_user: case.machine_user.clone(),
                 issue_types: case.issue_types.clone(),
-                update_method: case.update_method,
+                // The repository's update method is a rebase exactly where
+                // its default branch requires linear history.
+                linear_history: case.update_method == UpdateMethod::Rebase,
             },
             clock.clone(),
         )
