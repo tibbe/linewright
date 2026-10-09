@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
@@ -198,6 +198,13 @@ impl Log {
     /// Captures what this thread logs until the guard is dropped. A
     /// `#[tokio::test]` runs every task on its one thread.
     pub fn capture() -> (Log, tracing::subscriber::DefaultGuard) {
+        // While just one subscriber exists, tracing caches whether a log line
+        // is wanted from the subscriber of the thread that first reaches it,
+        // so another test's thread would turn this one's lines off. A second
+        // subscriber, kept for the whole run, makes it ask each thread's own.
+        static SECOND_SUBSCRIBER: OnceLock<tracing::Dispatch> = OnceLock::new();
+        SECOND_SUBSCRIBER
+            .get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
         let log = Log::default();
         let writer = log.clone();
         let subscriber = tracing_subscriber::fmt()
