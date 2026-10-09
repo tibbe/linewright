@@ -17,8 +17,8 @@ use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, Repo
 use crate::clock::Clock;
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Push, Requirement, Review,
-    ReviewState, Snapshot, Thread, Timestamp, closing_references,
+    MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Push, Rebaseability,
+    Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, closing_references,
 };
 use crate::git;
 
@@ -686,6 +686,13 @@ impl LocalStore {
             }
             _ => Mergeability::Clean,
         };
+        let rebaseability = match record.state {
+            PullState::Open { .. } => {
+                self.rebaseability(&default_branch, &record.head_ref)
+                    .await?
+            }
+            _ => Rebaseability::Unknown,
+        };
         let checks = record
             .checks
             .get(&head_sha)
@@ -711,6 +718,7 @@ impl LocalStore {
             state: record.state,
             pushes: record.pushes,
             mergeability,
+            rebaseability,
             checks,
             comments: record.comments,
             reviews: record.reviews,
@@ -734,6 +742,38 @@ impl LocalStore {
             Mergeability::Behind
         } else {
             Mergeability::Conflicting
+        })
+    }
+
+    /// Whether the commits of `head` replay onto the default branch without
+    /// a conflict, as a rebase merge replays them: a merge commit that
+    /// resolved a conflict is dropped, and its resolution with it.
+    async fn rebaseability(&self, default_branch: &str, head: &str) -> Result<Rebaseability> {
+        let repo = self.repository();
+        let range = format!("{default_branch}..{head}");
+        let up_to_date = git::git(
+            &repo,
+            &["merge-base", "--is-ancestor", default_branch, head],
+        )
+        .await
+        .is_ok();
+        let merges = git::git(&repo, &["rev-list", "--merges", "--count", &range]).await?;
+        if up_to_date && merges.trim() == "0" {
+            return Ok(Rebaseability::Rebaseable);
+        }
+        let work = tempfile::tempdir()?;
+        let dir = work.path().join("clone");
+        git::clone(&self.url(), &dir, head, &[]).await?;
+        git::set_identity(&dir, "rebaser", "rebaser@example.com").await?;
+        let rebased = git::git(
+            &dir,
+            &["rebase", "--quiet", &format!("origin/{default_branch}")],
+        )
+        .await;
+        Ok(if rebased.is_ok() {
+            Rebaseability::Rebaseable
+        } else {
+            Rebaseability::NotRebaseable
         })
     }
 }

@@ -19,8 +19,8 @@ use super::rate_limit;
 use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    Mergeability, MergedPull, Number, Pull, PullState, Push, Requirement, Review, ReviewState,
-    Snapshot, Thread, Timestamp, label,
+    Mergeability, MergedPull, Number, Pull, PullState, Push, Rebaseability, Requirement, Review,
+    ReviewState, Snapshot, Thread, Timestamp, label,
 };
 use crate::git;
 
@@ -762,7 +762,7 @@ impl GqlIssue {
 
 const PULL_FIELDS: &str = "fragment PullFields on PullRequest {
   number title body createdAt baseRefName headRefName headRefOid isDraft state mergedAt closedAt
-  mergeable mergeStateStatus reviewDecision
+  mergeable mergeStateStatus canBeRebased reviewDecision
   author { __typename login }
   closingIssuesReferences(first: 20) { nodes { number } }
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
@@ -800,6 +800,7 @@ struct GqlPull {
     closed_at: Option<Timestamp>,
     mergeable: String,
     merge_state_status: String,
+    can_be_rebased: bool,
     review_decision: Option<String>,
     author: Option<Actor>,
     closing_issues_references: Option<Nodes<NumberNode>>,
@@ -980,6 +981,14 @@ impl GqlPull {
             ("UNKNOWN", _) | (_, "UNKNOWN" | "DRAFT") => Mergeability::Unknown,
             _ => Mergeability::Clean,
         };
+        // `canBeRebased` is never null, so it is taken as not computed while
+        // whether the pull request merges is not computed either
+        // (<https://docs.github.com/en/graphql/reference/objects#pullrequest>).
+        let rebaseability = match (self.mergeable.as_str(), self.can_be_rebased) {
+            ("UNKNOWN", _) => Rebaseability::Unknown,
+            (_, true) => Rebaseability::Rebaseable,
+            (_, false) => Rebaseability::NotRebaseable,
+        };
         Pull {
             number: Number(self.number),
             title: self.title,
@@ -995,6 +1004,7 @@ impl GqlPull {
                 .unwrap_or_default(),
             pushes,
             mergeability,
+            rebaseability,
             checks: self
                 .status_check_rollup
                 .map(|r| r.contexts.nodes.iter().map(GqlContext::check).collect())

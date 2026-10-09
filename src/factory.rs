@@ -18,7 +18,9 @@ use crate::domain::{
     Login, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
 use crate::marker::{Stage, marked};
-use crate::reconcile::{Action, FailedMerge, LiveRun, Policy, Workflows, hold_note, reconcile};
+use crate::reconcile::{
+    Action, FailedMerge, LiveRun, Memory, Policy, Workflows, hold_note, reconcile,
+};
 use crate::run::{self, Shell};
 use crate::runtime::Runtime;
 use crate::spec_glob::SpecGlob;
@@ -68,8 +70,8 @@ pub struct Factory {
     stopping: CancellationToken,
     schedule_workflows: bool,
     last_runs: LastRuns,
-    /// The merges the store refused, of pull requests still open.
-    failed_merges: Vec<FailedMerge>,
+    /// What it remembers between polls, of pull requests still open.
+    memory: Memory,
 }
 
 impl Factory {
@@ -123,7 +125,9 @@ impl Factory {
                 ci_grace: config.ci_grace,
                 ci_timeout: config.ci_timeout,
                 ci_attempts: config.ci_attempts,
-                auto_merge: config.auto_merge,
+                auto_merge: config.auto_merge.then_some(settings.merge_method),
+                update_rule: settings.update_rule,
+                allowed_merge_methods: settings.allowed_merge_methods.clone(),
             },
             store,
             runtime,
@@ -142,7 +146,7 @@ impl Factory {
             stopping: CancellationToken::new(),
             schedule_workflows: config.schedule_workflows,
             last_runs,
-            failed_merges: vec![],
+            memory: Memory::default(),
         })
     }
 
@@ -180,12 +184,11 @@ impl Factory {
             last_runs: self.last_runs.clone(),
             in_flight,
         };
-        self.failed_merges
-            .retain(|f| snapshot.pull(f.pr).is_some_and(|p| p.is_open()));
+        self.memory.retain_open(&snapshot);
         let actions = reconcile(
             &snapshot,
             &live,
-            &self.failed_merges,
+            &self.memory,
             &workflows,
             now,
             &self.shell.policy,
@@ -353,20 +356,29 @@ impl Factory {
                 };
                 ready_for_review(store.as_ref(), *pr, true, reviewers, note).await?;
             }
-            Action::Merge { pr, head, draft } => {
-                let method = self.shell.settings.merge_method;
+            Action::Merge {
+                pr,
+                head,
+                draft,
+                method,
+            } => {
                 info!(pr = pr.0, method = ?method, "merging");
                 if *draft {
                     store.mark_ready(*pr).await?;
                 }
-                if let Err(e) = store.merge(*pr, head, method).await {
+                if let Err(e) = store.merge(*pr, head, *method).await {
                     let reason = format!("{e:#}");
                     warn!(pr = pr.0, reason, "merge failed");
-                    self.failed_merges.push(FailedMerge { pr: *pr, reason });
+                    self.memory
+                        .failed_merges
+                        .push(FailedMerge { pr: *pr, reason });
                 }
             }
+            Action::RememberRebase(rebase) => {
+                self.memory.tried_rebases.push(rebase.clone());
+            }
             Action::ForgetFailedMerges { pr } => {
-                self.failed_merges.retain(|f| f.pr != *pr);
+                self.memory.failed_merges.retain(|f| f.pr != *pr);
             }
             Action::MarkReadyForMergeState { pr } => {
                 info!(pr = pr.0, "marking ready for its merge state");

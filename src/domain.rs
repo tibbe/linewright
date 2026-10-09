@@ -190,6 +190,17 @@ pub enum Mergeability {
     Unknown,
 }
 
+/// Whether the store can rebase the pull request's commits onto the default
+/// branch, as it reports it: what merging it by rebase needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Rebaseability {
+    Rebaseable,
+    NotRebaseable,
+    /// Not computed yet.
+    Unknown,
+}
+
 /// Something the default branch's rules require before a pull request
 /// merges
 /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>).
@@ -291,6 +302,7 @@ pub struct Pull {
     /// Pushes to the head branch, oldest first.
     pub pushes: Vec<Push>,
     pub mergeability: Mergeability,
+    pub rebaseability: Rebaseability,
     pub checks: Vec<Check>,
     pub comments: Vec<Comment>,
     pub reviews: Vec<Review>,

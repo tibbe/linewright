@@ -107,6 +107,19 @@ pub async fn update(dir: &Path, default_branch: &str, rule: UpdateRule) -> Resul
     }
 }
 
+/// Rebases the checked-out branch onto `origin/<default_branch>`, as fresh
+/// as the clone, even when it already contains it: replaying the branch's
+/// commits drops the merge commits on it. A branch with none that contains
+/// it is left as it is.
+pub async fn rebase(dir: &Path, default_branch: &str) -> Result<Updated> {
+    update_with(
+        dir,
+        &format!("origin/{default_branch}"),
+        UpdateMethod::Rebase,
+    )
+    .await
+}
+
 async fn update_with(dir: &Path, upstream: &str, method: UpdateMethod) -> Result<Updated> {
     let attempt = match method {
         UpdateMethod::Rebase => git(dir, &["rebase", "--quiet", upstream]).await,

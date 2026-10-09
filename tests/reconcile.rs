@@ -26,7 +26,9 @@ fn policy() -> Policy {
         ci_grace: TimeDelta::minutes(5),
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
-        auto_merge: false,
+        auto_merge: None,
+        update_rule: UpdateRule::RebaseOnConflict,
+        allowed_merge_methods: MergeMethods::all(),
     }
 }
 
@@ -63,7 +65,14 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
 }
 
 fn decide(snapshot: &Snapshot) -> Vec<Action> {
-    reconcile(snapshot, &[], &[], &Workflows::default(), t(10), &policy())
+    reconcile(
+        snapshot,
+        &[],
+        &Memory::default(),
+        &Workflows::default(),
+        t(10),
+        &policy(),
+    )
 }
 
 #[test]
@@ -271,7 +280,7 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
         reconcile(
             &world,
             &cutting,
-            &[],
+            &Memory::default(),
             &Workflows::default(),
             t(10),
             &policy()
@@ -338,7 +347,14 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
     }];
 
     assert_eq!(
-        reconcile(&world, &live, &[], &Workflows::default(), t(10), &policy()),
+        reconcile(
+            &world,
+            &live,
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &policy()
+        ),
         vec![]
     );
 }
@@ -421,7 +437,14 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
     let busy = [live(9, WorkKind::Implement)];
 
     assert_eq!(
-        reconcile(&world, &busy, &[], &Workflows::default(), t(10), &policy()),
+        reconcile(
+            &world,
+            &busy,
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &policy()
+        ),
         vec![
             Action::Start(Work::Triage { issue: Number(3) }),
             Action::Start(Work::Tickets { pr: Number(5) }),
@@ -449,14 +472,20 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
         live(6, WorkKind::Implement),
     ];
 
-    let cancelled: Vec<Subject> =
-        reconcile(&world, &runs, &[], &Workflows::default(), t(10), &policy())
-            .into_iter()
-            .filter_map(|a| match a {
-                Action::Cancel { subject, .. } => Some(subject),
-                _ => None,
-            })
-            .collect();
+    let cancelled: Vec<Subject> = reconcile(
+        &world,
+        &runs,
+        &Memory::default(),
+        &Workflows::default(),
+        t(10),
+        &policy(),
+    )
+    .into_iter()
+    .filter_map(|a| match a {
+        Action::Cancel { subject, .. } => Some(subject),
+        _ => None,
+    })
+    .collect();
 
     assert_eq!(
         cancelled,
@@ -476,7 +505,15 @@ fn a_tickets_run_is_cancelled_when_its_spec_change_is_marked_processed() {
     }];
 
     assert!(matches!(
-        reconcile(&world, &runs, &[], &Workflows::default(), t(10), &policy()).as_slice(),
+        reconcile(
+            &world,
+            &runs,
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &policy()
+        )
+        .as_slice(),
         [Action::Cancel {
             subject: Subject::SpecChange(Number(5)),
             ..
@@ -500,6 +537,7 @@ fn pull(number: u64, closes: u64) -> Pull {
             at: t(1),
         }],
         mergeability: Mergeability::Clean,
+        rebaseability: Rebaseability::Rebaseable,
         checks: vec![],
         comments: vec![],
         reviews: vec![],
@@ -524,7 +562,14 @@ fn in_review(pr: Pull) -> Snapshot {
 }
 
 fn at(world: &Snapshot, minute: i64) -> Vec<Action> {
-    reconcile(world, &[], &[], &Workflows::default(), t(minute), &policy())
+    reconcile(
+        world,
+        &[],
+        &Memory::default(),
+        &Workflows::default(),
+        t(minute),
+        &policy(),
+    )
 }
 
 #[test]
@@ -695,19 +740,225 @@ fn feedback_already_answered_starts_nothing() {
     assert_eq!(at(&answered_without_a_push, 10), vec![]);
 }
 
+fn update(issue: u64, pr: u64) -> Action {
+    Action::Start(Work::Update {
+        issue: Number(issue),
+        pr: Number(pr),
+    })
+}
+
 #[test]
 fn a_pull_request_behind_or_in_conflict_with_the_default_branch_is_brought_up_to_date() {
-    let update = Action::Start(Work::Update {
-        issue: Number(2),
-        pr: Number(20),
-    });
     let mut behind = ready(pull(20, 2));
     behind.mergeability = Mergeability::Behind;
     let mut conflicting = ready(pull(20, 2));
     conflicting.mergeability = Mergeability::Conflicting;
 
-    assert_eq!(at(&in_review(behind), 10), vec![update.clone()]);
-    assert_eq!(at(&in_review(conflicting), 10), vec![update]);
+    assert_eq!(at(&in_review(behind), 10), vec![update(2, 20)]);
+    assert_eq!(at(&in_review(conflicting), 10), vec![update(2, 20)]);
+}
+
+/// A green pull request ready for review, up to date, whose branch has a
+/// merge commit GitHub cannot rebase.
+fn not_rebaseable() -> Pull {
+    let mut pr = ready(pull(20, 2));
+    pr.checks = vec![check("test", CheckState::Passed)];
+    pr.rebaseability = Rebaseability::NotRebaseable;
+    pr
+}
+
+fn deciding(world: &Snapshot, memory: &Memory, policy: &Policy) -> Vec<Action> {
+    reconcile(world, &[], memory, &Workflows::default(), t(10), policy)
+}
+
+/// A rebase of #20 at `head`, tried at `minute`.
+fn tried(head: &str, minute: i64) -> TriedRebase {
+    TriedRebase {
+        pr: Number(20),
+        head: head.into(),
+        at: t(minute),
+    }
+}
+
+/// An update run of #20 that rebases it, started at minute 10 and
+/// remembered as it starts.
+fn rebase_update() -> Vec<Action> {
+    vec![Action::RememberRebase(tried("abc123", 10)), update(2, 20)]
+}
+
+#[test]
+fn a_pull_request_github_reports_not_rebaseable_is_rebased_where_rebase_merging_is_allowed() {
+    let world = in_review(not_rebaseable());
+    let rebasing = Policy {
+        update_rule: UpdateRule::Always(UpdateMethod::Rebase),
+        ..policy()
+    };
+
+    assert_eq!(at(&world, 10), rebase_update());
+    assert_eq!(
+        deciding(&world, &Memory::default(), &rebasing),
+        rebase_update()
+    );
+}
+
+#[test]
+fn rebaseability_starts_no_run_without_rebase_merging_or_with_update_branch_merge() {
+    let world = in_review(not_rebaseable());
+    let no_rebase_merging = Policy {
+        allowed_merge_methods: [MergeMethod::Merge, MergeMethod::Squash]
+            .into_iter()
+            .collect(),
+        update_rule: UpdateRule::Always(UpdateMethod::Merge),
+        ..policy()
+    };
+    let linear_squash_only = Policy {
+        allowed_merge_methods: [MergeMethod::Squash].into_iter().collect(),
+        update_rule: UpdateRule::Always(UpdateMethod::Rebase),
+        ..policy()
+    };
+    let update_branch_merge = Policy {
+        update_rule: UpdateRule::Always(UpdateMethod::Merge),
+        ..policy()
+    };
+
+    for policy in [no_rebase_merging, linear_squash_only, update_branch_merge] {
+        assert_eq!(deciding(&world, &Memory::default(), &policy), vec![]);
+    }
+}
+
+#[test]
+fn a_pull_request_whose_rebaseability_is_not_known_yet_waits_rather_than_starting_a_run() {
+    let mut pr = not_rebaseable();
+    pr.rebaseability = Rebaseability::Unknown;
+
+    assert_eq!(at(&in_review(pr), 10), vec![]);
+}
+
+fn remembering(rebase: TriedRebase) -> Memory {
+    Memory {
+        tried_rebases: vec![rebase],
+        ..Memory::default()
+    }
+}
+
+#[test]
+fn a_pull_request_still_not_rebaseable_after_a_rebase_at_its_head_starts_no_more_runs() {
+    let world = in_review(not_rebaseable());
+
+    assert_eq!(
+        deciding(&world, &remembering(tried("abc123", 5)), &policy()),
+        vec![]
+    );
+    assert_eq!(
+        deciding(&world, &remembering(tried("an-earlier-head", 5)), &policy()),
+        rebase_update()
+    );
+}
+
+#[test]
+fn a_pull_request_behind_is_rebased_again_though_a_rebase_was_tried_at_its_head() {
+    let mut pr = not_rebaseable();
+    pr.mergeability = Mergeability::Behind;
+
+    assert_eq!(
+        deciding(&in_review(pr), &remembering(tried("abc123", 5)), &policy()),
+        rebase_update()
+    );
+}
+
+#[test]
+fn a_ticket_handed_back_since_a_rebase_was_tried_tries_it_again_once_labeled_again() {
+    let mut world = in_review(not_rebaseable());
+    world.issues[0].comments = vec![comment(
+        MACHINE,
+        7,
+        &marked(Stage::Update, "The run failed twice on its infrastructure."),
+    )];
+
+    assert_eq!(
+        deciding(&world, &remembering(tried("abc123", 5)), &policy()),
+        rebase_update()
+    );
+}
+
+#[test]
+fn a_ticket_labeled_again_since_a_rebase_was_tried_tries_it_again() {
+    let mut world = in_review(not_rebaseable());
+    world.issues[0].events = vec![IssueEvent::Labeled {
+        label: label::READY_FOR_AGENT.into(),
+        at: t(7),
+    }];
+
+    assert_eq!(
+        deciding(&world, &remembering(tried("abc123", 5)), &policy()),
+        rebase_update()
+    );
+}
+
+fn merging_by(method: MergeMethod) -> Policy {
+    Policy {
+        auto_merge: Some(method),
+        ..policy()
+    }
+}
+
+#[test]
+fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_and_not_merged() {
+    let world = in_review(not_rebaseable());
+    let mut unknown = not_rebaseable();
+    unknown.rebaseability = Rebaseability::Unknown;
+    let mut rebaseable = not_rebaseable();
+    rebaseable.rebaseability = Rebaseability::Rebaseable;
+    let by_rebase = merging_by(MergeMethod::Rebase);
+
+    assert_eq!(
+        deciding(&world, &Memory::default(), &by_rebase),
+        rebase_update()
+    );
+    assert_eq!(
+        deciding(&in_review(unknown), &Memory::default(), &by_rebase),
+        vec![]
+    );
+    assert_eq!(
+        deciding(&in_review(rebaseable), &Memory::default(), &by_rebase),
+        vec![merge_by(20, false, MergeMethod::Rebase)]
+    );
+}
+
+#[test]
+fn with_auto_merge_by_rebase_a_pull_request_still_not_rebaseable_after_a_rebase_hands_its_ticket_back()
+ {
+    let world = in_review(not_rebaseable());
+
+    assert_eq!(
+        deciding(
+            &world,
+            &remembering(tried("abc123", 5)),
+            &merging_by(MergeMethod::Rebase)
+        ),
+        vec![Action::HandBack {
+            issue: Number(2),
+            stage: Stage::Review,
+            reason: "GitHub reports #20 not rebaseable though Linewright rebased it onto the \
+                     default branch, so it cannot be merged by rebase."
+                .into(),
+        }]
+    );
+}
+
+#[test]
+fn with_auto_merge_by_another_method_a_pull_request_still_not_rebaseable_after_a_rebase_is_merged()
+{
+    let world = in_review(not_rebaseable());
+
+    assert_eq!(
+        deciding(
+            &world,
+            &remembering(tried("abc123", 5)),
+            &merging_by(MergeMethod::Squash)
+        ),
+        vec![merge_by(20, false, MergeMethod::Squash)]
+    );
 }
 
 fn auto_merging(world: &Snapshot, minute: i64) -> Vec<Action> {
@@ -715,10 +966,15 @@ fn auto_merging(world: &Snapshot, minute: i64) -> Vec<Action> {
 }
 
 fn merge(pr: u64, draft: bool) -> Action {
+    merge_by(pr, draft, MergeMethod::Merge)
+}
+
+fn merge_by(pr: u64, draft: bool, method: MergeMethod) -> Action {
     Action::Merge {
         pr: Number(pr),
         head: "abc123".into(),
         draft,
+        method,
     }
 }
 
@@ -760,10 +1016,6 @@ fn with_auto_merge_a_pull_request_not_yet_green_keeps_its_handling_and_is_not_me
     behind.mergeability = Mergeability::Behind;
     let mut conflicting = ready(pull(20, 2));
     conflicting.mergeability = Mergeability::Conflicting;
-    let update = Action::Start(Work::Update {
-        issue: Number(2),
-        pr: Number(20),
-    });
 
     assert_eq!(auto_merging(&in_review(pending), 10), vec![]);
     assert_eq!(
@@ -775,8 +1027,11 @@ fn with_auto_merge_a_pull_request_not_yet_green_keeps_its_handling_and_is_not_me
         })]
     );
     assert_eq!(auto_merging(&in_review(commented), 10), vec![rework(2, 20)]);
-    assert_eq!(auto_merging(&in_review(behind), 10), vec![update.clone()]);
-    assert_eq!(auto_merging(&in_review(conflicting), 10), vec![update]);
+    assert_eq!(auto_merging(&in_review(behind), 10), vec![update(2, 20)]);
+    assert_eq!(
+        auto_merging(&in_review(conflicting), 10),
+        vec![update(2, 20)]
+    );
 }
 
 #[test]
@@ -1039,14 +1294,18 @@ fn failed_merge(pr: u64, reason: &str) -> FailedMerge {
 }
 
 fn auto_merging_after(world: &Snapshot, failed: &[FailedMerge], minute: i64) -> Vec<Action> {
+    let memory = Memory {
+        failed_merges: failed.to_vec(),
+        ..Memory::default()
+    };
     let policy = Policy {
-        auto_merge: true,
+        auto_merge: Some(MergeMethod::Merge),
         ..policy()
     };
     reconcile(
         world,
         &[],
-        failed,
+        &memory,
         &Workflows::default(),
         t(minute),
         &policy,
@@ -1226,7 +1485,14 @@ fn workflows(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Work
 
 /// The decisions at `minute` past 12:00, when ticks fall on the hour.
 fn scheduled(workflows: &Workflows, minute: i64) -> Vec<Action> {
-    reconcile(&snapshot(vec![]), &[], &[], workflows, t(minute), &policy())
+    reconcile(
+        &snapshot(vec![]),
+        &[],
+        &Memory::default(),
+        workflows,
+        t(minute),
+        &policy(),
+    )
 }
 
 #[test]
@@ -1303,11 +1569,11 @@ fn workflow_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves(
     let quieter = snapshot(vec![claimed(ticket(8)), claimed(ticket(9))]);
 
     assert_eq!(
-        reconcile(&world, &busy, &[], &due, t(70), &policy()),
+        reconcile(&world, &busy, &Memory::default(), &due, t(70), &policy()),
         vec![implement(1)]
     );
     assert_eq!(
-        reconcile(&quieter, &busy, &[], &due, t(70), &policy()),
+        reconcile(&quieter, &busy, &Memory::default(), &due, t(70), &policy()),
         vec![
             Action::RunWorkflow(Box::new(hourly("b"))),
             Action::RecordLastRuns(last_runs(&[("a", 30), ("b", 70), ("c", 30)])),
@@ -1322,7 +1588,14 @@ fn a_workflow_seen_for_the_first_time_is_recorded_even_with_no_room() {
     let world = workflows(&["hourly"], &[], &[]);
 
     assert_eq!(
-        reconcile(&tickets, &busy, &[], &world, t(70), &policy()),
+        reconcile(
+            &tickets,
+            &busy,
+            &Memory::default(),
+            &world,
+            t(70),
+            &policy()
+        ),
         vec![Action::RecordLastRuns(last_runs(&[("hourly", 70)]))]
     );
 }

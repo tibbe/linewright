@@ -6,8 +6,9 @@
 use chrono::TimeDelta;
 
 use crate::domain::{
-    CheckState, Comment, Filed, Issue, IssueEvent, Login, Mergeability, MergedPull, Number, Pull,
-    PullState, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, label,
+    CheckState, Comment, Filed, Issue, IssueEvent, Login, MergeMethod, MergeMethods, Mergeability,
+    MergedPull, Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
+    Thread, Timestamp, UpdateMethod, UpdateRule, label,
 };
 use crate::marker::{Stage, marked, stage_of};
 use crate::spec_glob::SpecGlob;
@@ -23,8 +24,24 @@ pub struct Policy {
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
-    /// Merge green pull requests instead of requesting review.
-    pub auto_merge: bool,
+    /// Merge green pull requests with this method instead of requesting
+    /// review.
+    pub auto_merge: Option<MergeMethod>,
+    pub update_rule: UpdateRule,
+    /// The merge methods the repository allows.
+    pub allowed_merge_methods: MergeMethods,
+}
+
+impl Policy {
+    /// Whether a pull request GitHub reports not rebaseable is rebased onto
+    /// the default branch, up to date or not: where the repository allows
+    /// rebase merging and branches are not always updated by merging
+    /// (`docs/specs/product.md`, "Keeping up to date"). A merge commit that
+    /// resolved a conflict is the usual cause, and a rebase drops it.
+    pub fn rebases_unrebaseable(&self) -> bool {
+        self.allowed_merge_methods.contains(MergeMethod::Rebase)
+            && self.update_rule != UpdateRule::Always(UpdateMethod::Merge)
+    }
 }
 
 /// What a run works on. At most one run per subject is in flight.
@@ -104,12 +121,40 @@ pub struct LiveRun {
     pub kind: WorkKind,
 }
 
-/// A merge of `pr` the store refused, for `reason`. The manager remembers
-/// it between polls, oldest first, and never in the store.
+/// What the manager remembers between polls, and never in the store.
+#[derive(Clone, Debug, Default)]
+pub struct Memory {
+    /// Oldest first.
+    pub failed_merges: Vec<FailedMerge>,
+    pub tried_rebases: Vec<TriedRebase>,
+}
+
+impl Memory {
+    /// Forgets what it remembers of pull requests the snapshot does not
+    /// show open.
+    pub fn retain_open(&mut self, snapshot: &Snapshot) {
+        let open = |pr| snapshot.pull(pr).is_some_and(|p| p.is_open());
+        self.failed_merges.retain(|f| open(f.pr));
+        self.tried_rebases.retain(|r| open(r.pr));
+    }
+}
+
+/// A merge of `pr` the store refused, for `reason`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailedMerge {
     pub pr: Number,
     pub reason: String,
+}
+
+/// An update run started on `pr` at `head`, at `at`, to rebase it while
+/// GitHub reported it not rebaseable. Another waits for a new head, or for
+/// its ticket to be handed back or labeled `ready-for-agent` since, so that a
+/// rebase that leaves the branch as it was is not tried again at every poll.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TriedRebase {
+    pub pr: Number,
+    pub head: String,
+    pub at: Timestamp,
 }
 
 /// The workflows on the default branch and their runs: what the due rule
@@ -155,13 +200,16 @@ pub enum Action {
     ForgetFailedMerges {
         pr: Number,
     },
-    /// Merge the pull request with the merge method, if its head is still
+    /// Remember the rebase an update run starting now tries.
+    RememberRebase(TriedRebase),
+    /// Merge the pull request with `method`, if its head is still
     /// `head`. A draft is marked ready for review first: GitHub merges no
     /// draft.
     Merge {
         pr: Number,
         head: String,
         draft: bool,
+        method: MergeMethod,
     },
     /// Mark the draft ready for review, so that the store reports its merge
     /// state: a later poll merges it, or holds it for review.
@@ -196,7 +244,7 @@ pub enum Action {
 pub fn reconcile(
     snapshot: &Snapshot,
     live: &[LiveRun],
-    failed_merges: &[FailedMerge],
+    memory: &Memory,
     workflows: &Workflows,
     now: Timestamp,
     policy: &Policy,
@@ -272,7 +320,7 @@ pub fn reconcile(
             }
         } else if issue.has_label(label::READY_FOR_AGENT) && !issue.has_label(label::NEEDS_TRIAGE) {
             let running = is_live(subject);
-            implementation(issue, snapshot, running, failed_merges, policy, &mut plan);
+            implementation(issue, snapshot, running, memory, policy, &mut plan);
         }
     }
 
@@ -388,6 +436,8 @@ struct Plan {
 struct Start {
     /// The issue to claim before the run starts.
     claim: Option<Number>,
+    /// The rebase the run tries, to remember as it starts.
+    rebase: Option<TriedRebase>,
     work: Work,
 }
 
@@ -397,13 +447,26 @@ impl Plan {
     }
 
     fn start(&mut self, work: Work) {
-        self.starts.push(Start { claim: None, work });
+        self.starts.push(Start {
+            claim: None,
+            rebase: None,
+            work,
+        });
     }
 
     fn claim_and_implement(&mut self, issue: Number) {
         self.starts.push(Start {
             claim: Some(issue),
+            rebase: None,
             work: Work::Implement { issue },
+        });
+    }
+
+    fn start_rebase(&mut self, work: Work, rebase: TriedRebase) {
+        self.starts.push(Start {
+            claim: None,
+            rebase: Some(rebase),
+            work,
         });
     }
 
@@ -418,6 +481,9 @@ impl Plan {
         for start in starts.into_iter().take(room) {
             if let Some(issue) = start.claim {
                 actions.push(Action::Claim { issue });
+            }
+            if let Some(rebase) = start.rebase {
+                actions.push(Action::RememberRebase(rebase));
             }
             actions.push(Action::Start(start.work));
         }
@@ -440,7 +506,7 @@ fn implementation(
     issue: &Issue,
     snapshot: &Snapshot,
     live: bool,
-    failed_merges: &[FailedMerge],
+    memory: &Memory,
     policy: &Policy,
     plan: &mut Plan,
 ) {
@@ -462,7 +528,7 @@ fn implementation(
                 issue: issue.number,
             });
         }
-        return in_review(issue, pr, failed_merges, policy, plan);
+        return in_review(issue, pr, memory, policy, plan);
     }
     // GitHub closes the issue shortly after the merge; until then, or after a
     // reopen, only applying the label again asks for more work.
@@ -515,13 +581,7 @@ fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) 
 /// An open pull request for the issue: address feedback, keep it up to date
 /// and get CI green, in that order, then mark it ready for review or, with
 /// auto-merge, merge it once no person holds it.
-fn in_review(
-    issue: &Issue,
-    pr: &Pull,
-    failed_merges: &[FailedMerge],
-    policy: &Policy,
-    plan: &mut Plan,
-) {
+fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &mut Plan) {
     let (issue_number, pr_number) = (issue.number, pr.number);
     let machine = &policy.machine_user;
     if !new_feedback(pr, machine).is_empty() {
@@ -530,14 +590,24 @@ fn in_review(
             pr: pr_number,
         });
     }
-    if matches!(
+    let behind = matches!(
         pr.mergeability,
         Mergeability::Behind | Mergeability::Conflicting
-    ) {
-        return plan.start(Work::Update {
-            issue: issue_number,
+    );
+    let update = Work::Update {
+        issue: issue_number,
+        pr: pr_number,
+    };
+    if rebases_to_repair(pr, policy) && (behind || !tried_rebase(issue, pr, memory, machine)) {
+        let rebase = TriedRebase {
             pr: pr_number,
-        });
+            head: pr.head_sha.clone(),
+            at: plan.now,
+        };
+        return plan.start_rebase(update, rebase);
+    }
+    if behind {
+        return plan.start(update);
     }
     let names = |state: CheckState| -> Vec<String> {
         pr.checks
@@ -618,35 +688,35 @@ fn in_review(
     };
     // A pull request a person holds is marked ready as it is without
     // auto-merge, so the people holding it can approve it.
-    if !policy.auto_merge || is_held(pr, machine) {
-        if draft {
-            plan.act(Action::MarkReady {
-                pr: pr_number,
-                reviewers: reviewers(),
-            });
-        }
-        return;
-    }
-    // Behind and conflicting were brought up to date above.
-    match &pr.mergeability {
-        Mergeability::Clean => match merge_failed_twice(pr, failed_merges) {
-            Some(failed) => {
-                plan.act(Action::ForgetFailedMerges { pr: pr_number });
-                plan.act(Action::HandBack {
-                    issue: issue_number,
-                    stage: Stage::Review,
-                    reason: format!(
-                        "Merging {pr_number} failed twice. GitHub's reason: {}",
-                        failed.reason
-                    ),
+    let method = match policy.auto_merge {
+        Some(method) if !is_held(pr, machine) => method,
+        _ => {
+            if draft {
+                plan.act(Action::MarkReady {
+                    pr: pr_number,
+                    reviewers: reviewers(),
                 });
             }
-            None => plan.act(Action::Merge {
-                pr: pr_number,
-                head: pr.head_sha.clone(),
-                draft,
+            return;
+        }
+    };
+    // Behind and conflicting were brought up to date above, and so was not
+    // rebaseable, once at each head.
+    match &pr.mergeability {
+        Mergeability::Clean if method == MergeMethod::Rebase => match pr.rebaseability {
+            Rebaseability::Rebaseable => merge(issue_number, pr, draft, method, memory, plan),
+            Rebaseability::NotRebaseable => plan.act(Action::HandBack {
+                issue: issue_number,
+                stage: Stage::Review,
+                reason: format!(
+                    "GitHub reports {pr_number} not rebaseable though Linewright rebased it \
+                     onto the default branch, so it cannot be merged by rebase."
+                ),
             }),
+            // Not computed yet: a later poll merges it.
+            Rebaseability::Unknown => {}
         },
+        Mergeability::Clean => merge(issue_number, pr, draft, method, memory, plan),
         // Held for review again only when what GitHub requires changes.
         Mergeability::Blocked { requires } if draft || !hold_noted(pr, requires, machine) => plan
             .act(Action::HoldForReview {
@@ -660,6 +730,59 @@ fn in_review(
         }
         // A merge state not computed yet waits for the next poll.
         _ => {}
+    }
+}
+
+/// Whether an update run already tried to rebase the pull request at its
+/// head since the ticket was last handed back or labeled `ready-for-agent`:
+/// a run cancelled or failed since is no rebase tried.
+fn tried_rebase(issue: &Issue, pr: &Pull, memory: &Memory, machine: &Login) -> bool {
+    let restarted = last_linewright_comment(issue, machine)
+        .into_iter()
+        .chain(last_labeled(issue, label::READY_FOR_AGENT))
+        .max();
+    memory
+        .tried_rebases
+        .iter()
+        .any(|r| r.pr == pr.number && r.head == pr.head_sha && restarted.is_none_or(|at| at < r.at))
+}
+
+/// Whether a run on the pull request rebases its branch onto the default
+/// branch, up to date or not, instead of updating it by the update rule:
+/// GitHub reports it not rebaseable, and the policy rebases such pull
+/// requests.
+pub fn rebases_to_repair(pr: &Pull, policy: &Policy) -> bool {
+    pr.rebaseability == Rebaseability::NotRebaseable && policy.rebases_unrebaseable()
+}
+
+/// Merges the pull request with `method`, unless its merge has failed twice:
+/// then its ticket is handed back.
+fn merge(
+    issue: Number,
+    pr: &Pull,
+    draft: bool,
+    method: MergeMethod,
+    memory: &Memory,
+    plan: &mut Plan,
+) {
+    match merge_failed_twice(pr, &memory.failed_merges) {
+        Some(failed) => {
+            plan.act(Action::ForgetFailedMerges { pr: pr.number });
+            plan.act(Action::HandBack {
+                issue,
+                stage: Stage::Review,
+                reason: format!(
+                    "Merging {} failed twice. GitHub's reason: {}",
+                    pr.number, failed.reason
+                ),
+            });
+        }
+        None => plan.act(Action::Merge {
+            pr: pr.number,
+            head: pr.head_sha.clone(),
+            draft,
+            method,
+        }),
     }
 }
 

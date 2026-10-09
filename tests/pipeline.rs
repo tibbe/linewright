@@ -706,8 +706,21 @@ async fn moved_past(
     update_branch: Option<linewright::domain::UpdateMethod>,
     conflicting: bool,
 ) -> (World, linewright::domain::Number) {
-    let mut world =
-        World::with_repository(repository, |config| config.update_method = update_branch).await;
+    moved_past_with(
+        repository,
+        |config| config.update_method = update_branch,
+        conflicting,
+    )
+    .await
+}
+
+/// [`moved_past`], with the settings `adjust` makes.
+async fn moved_past_with(
+    repository: Repository,
+    adjust: impl FnOnce(&mut linewright::factory::FactoryConfig),
+    conflicting: bool,
+) -> (World, linewright::domain::Number) {
+    let mut world = World::with_repository(repository, adjust).await;
     let (ticket, pr) = world.ticket_in_review().await;
     let file = if conflicting {
         format!("src/issue-{}.txt", ticket.0)
@@ -910,6 +923,146 @@ async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
         Vec::<String>::new()
     );
     assert_eq!(merges(&world, &view.head_ref), 0);
+}
+
+/// A person resolves the conflict between `branch` and the default branch in
+/// a merge commit, with `files` as the resolution, and pushes it: how #16's
+/// branch came to be impossible to rebase.
+async fn merge_default_branch_in(world: &World, branch: &str, files: &[(&str, &str)]) {
+    use linewright::git;
+
+    let work = tempfile::tempdir().unwrap();
+    let dir = work.path().join("clone");
+    let url = world.store.repository();
+    git::clone(url.to_str().unwrap(), &dir, branch, &[])
+        .await
+        .unwrap();
+    git::set_identity(&dir, "maintainer", "maintainer@example.com")
+        .await
+        .unwrap();
+    assert!(
+        git::git(&dir, &["merge", "--quiet", "origin/main"])
+            .await
+            .is_err(),
+        "the merge conflicts"
+    );
+    resolve_in(&dir, files);
+    git::git(
+        &dir,
+        &["push", "--quiet", "origin", &format!("HEAD:{branch}")],
+    )
+    .await
+    .unwrap();
+}
+
+/// A world with the settings `adjust` makes and a ticket in review whose
+/// branch the default branch moved past in a conflict, which a person
+/// resolved in a merge commit, and the file resolved. The pull request is up
+/// to date but not rebaseable.
+async fn merged_in_conflict(
+    adjust: impl FnOnce(&mut linewright::factory::FactoryConfig),
+) -> (World, linewright::domain::Number, String) {
+    use linewright::domain::{Mergeability, Rebaseability};
+
+    let (world, pr) = moved_past_with(Repository::default(), adjust, true).await;
+    let view = world.store.snapshot_pull(pr).await;
+    let file = format!("src/issue-{}.txt", view.closes[0].0);
+    merge_default_branch_in(&world, &view.head_ref, &[(&file, "done\nother\n")]).await;
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(
+        (view.mergeability, view.rebaseability),
+        (Mergeability::Clean, Rebaseability::NotRebaseable),
+        "up to date, but not rebaseable"
+    );
+    (world, pr, file)
+}
+
+#[tokio::test]
+async fn a_branch_with_a_merge_commit_github_cannot_rebase_is_rebased_by_an_update_run() {
+    use linewright::domain::{Mergeability, Rebaseability};
+
+    let (mut world, pr, file) = merged_in_conflict(|_| {}).await;
+
+    world.poll().await;
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(told_to_finish(&world, WorkKind::Update), ["rebase"]);
+    assert_eq!(merges(&world, &view.head_ref), 0);
+    assert_eq!(
+        (view.mergeability, view.rebaseability),
+        (Mergeability::Clean, Rebaseability::Rebaseable)
+    );
+    assert_eq!(
+        world.store.file(&view.head_ref, &file).await.unwrap(),
+        "done\nother\n"
+    );
+}
+
+#[tokio::test]
+async fn a_rework_run_on_a_pull_request_github_cannot_rebase_rebases_it_first() {
+    let (mut world, pr, _) = merged_in_conflict(|_| {}).await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Tidy up.")
+        .unwrap();
+
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(told_to_finish(&world, WorkKind::Rework), ["rebase"]);
+    assert_eq!(merges(&world, &view.head_ref), 0);
+}
+
+#[tokio::test]
+async fn a_rebase_that_leaves_the_branch_as_it_was_pushes_nothing_and_is_not_tried_again() {
+    let (mut world, pr, _) = merged_in_conflict(|_| {}).await;
+    let before = world.store.snapshot_pull(pr).await;
+    world.runtime.on(WorkKind::Update, |call| {
+        let aborted = std::process::Command::new("git")
+            .args(["rebase", "--abort"])
+            .current_dir(&call.spec.dir)
+            .output()
+            .unwrap();
+        assert!(aborted.status.success());
+        json(json!({"outcome": "done", "comment": "The branch is fine as it is."}))
+    });
+
+    world.poll().await;
+    world.poll().await;
+    world.poll().await;
+
+    let after = world.store.snapshot_pull(pr).await;
+    assert_eq!(world.runtime.prompts(WorkKind::Update).len(), 1);
+    assert_eq!(
+        (after.head_sha, after.pushes.len()),
+        (before.head_sha, before.pushes.len())
+    );
+}
+
+#[tokio::test]
+async fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_before_it_is_merged() {
+    use linewright::domain::{MergeMethod, PullState};
+
+    let (mut world, pr, _) = merged_in_conflict(|config| {
+        config.auto_merge = true;
+        config.merge_method = Some(MergeMethod::Rebase);
+    })
+    .await;
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+
+    world.poll().await;
+
+    assert_eq!(told_to_finish(&world, WorkKind::Update), ["rebase"]);
+    let view = world.store.snapshot_pull(pr).await;
+    assert!(matches!(view.state, PullState::Open { .. }));
+
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert!(matches!(view.state, PullState::Merged { .. }));
+    assert_eq!(history(&world)[0], ("Do the ticket".to_string(), 1));
 }
 
 /// The subject and parent count of each commit on the store's default

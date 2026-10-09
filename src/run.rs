@@ -19,7 +19,9 @@ use crate::domain::{
 use crate::git::{self, Updated};
 use crate::marker::{Stage, marked, workflow_marked};
 use crate::prompts::{self, PullTask, Repo, Ticket};
-use crate::reconcile::{Feedback, Policy, Subject, Work, WorkKind, new_feedback};
+use crate::reconcile::{
+    Feedback, Policy, Subject, Work, WorkKind, new_feedback, rebases_to_repair,
+};
 use crate::results::{
     self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
     WorkflowIssueLabel, WorkflowResult,
@@ -816,11 +818,14 @@ async fn pull_work(
     let purpose = Purpose::Work { subject, kind };
     let ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
     let start = git::head(&ws.dir).await.map_err(infra)?;
-    let rule = shell.settings.update_rule;
-    let conflict = match git::update(&ws.dir, &shell.settings.default_branch, rule)
-        .await
-        .map_err(infra)?
-    {
+    let default_branch = &shell.settings.default_branch;
+    let policy = &shell.policy;
+    let updated = if rebases_to_repair(pr, policy) {
+        git::rebase(&ws.dir, default_branch).await
+    } else {
+        git::update(&ws.dir, default_branch, policy.update_rule).await
+    };
+    let conflict = match updated.map_err(infra)? {
         Updated::Conflict(conflict) => Some(conflict),
         Updated::UpToDate | Updated::Updated => None,
     };

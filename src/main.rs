@@ -8,7 +8,7 @@ use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{Cli, Command, Config, LogFormat, WorkflowCommand};
-use linewright::domain::Number;
+use linewright::domain::{MergeMethods, Number, UpdateMethod, UpdateRule};
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::Policy;
 use linewright::runtime::claude::ClaudeCode;
@@ -183,6 +183,9 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }
 
+/// The policy the status report derives the work in flight with. The report
+/// reads neither how pull requests merge nor how they are updated, so the
+/// repository's settings are not read for them.
 fn policy(config: &Config, github: &GitHub) -> Policy {
     Policy {
         machine_user: github.machine_user(),
@@ -192,7 +195,9 @@ fn policy(config: &Config, github: &GitHub) -> Policy {
         ci_grace: config.ci_grace,
         ci_timeout: config.ci_timeout,
         ci_attempts: config.ci_attempts,
-        auto_merge: config.auto_merge,
+        auto_merge: None,
+        update_rule: UpdateRule::Always(UpdateMethod::Merge),
+        allowed_merge_methods: MergeMethods::all(),
     }
 }
 
