@@ -1,0 +1,8 @@
+# Changes to these files need a human's review: agents must not merge them
+# themselves.
+
+/docs/ @tibbe
+/GLOSSARY.md @tibbe
+AGENTS.md @tibbe
+CLAUDE.md @tibbe
+/.github/CODEOWNERS @tibbe
