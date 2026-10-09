@@ -19,8 +19,8 @@ use super::rate_limit;
 use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    Mergeability, MergedPull, Number, Pull, PullState, Push, Review, ReviewState, Snapshot, Thread,
-    Timestamp, label,
+    Mergeability, MergedPull, Number, Pull, PullState, Push, Requirement, Review, ReviewState,
+    Snapshot, Thread, Timestamp, label,
 };
 use crate::git;
 
@@ -385,7 +385,54 @@ impl GitHub {
         } else {
             vec![]
         };
-        Ok(pr.into_pull(pushes))
+        let ruled_checks = if pr.merge_state_status == "BLOCKED" {
+            self.ruled_checks(&pr.base_ref_name).await
+        } else {
+            vec![]
+        };
+        Ok(pr.into_pull(pushes, &ruled_checks))
+    }
+
+    /// The checks the rulesets on `branch` require
+    /// (<https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch>).
+    /// Classic branch protection is readable by admins only; its required
+    /// checks show only once reported, as required.
+    async fn ruled_checks(&self, branch: &str) -> Vec<String> {
+        #[derive(Deserialize)]
+        struct Rule {
+            #[serde(rename = "type")]
+            kind: String,
+            #[serde(default)]
+            parameters: Option<Value>,
+        }
+        let rules: Result<Vec<Rule>> = self
+            .rest(
+                Method::GET,
+                &self.repo_path(&format!("/rules/branches/{branch}")),
+                None,
+            )
+            .await;
+        let rules = rules.unwrap_or_else(|e| {
+            // The comment then names only the required checks reported.
+            tracing::warn!(
+                branch,
+                error = format!("{e:#}"),
+                "reading the branch's rules"
+            );
+            vec![]
+        });
+        rules
+            .into_iter()
+            .filter(|r| r.kind == "required_status_checks")
+            .filter_map(|r| r.parameters)
+            .flat_map(|p| match &p["required_status_checks"] {
+                Value::Array(checks) => checks
+                    .iter()
+                    .filter_map(|c| c["context"].as_str().map(String::from))
+                    .collect(),
+                _ => vec![],
+            })
+            .collect()
     }
 
     async fn pull_node_id(&self, pr: Number) -> Result<String> {
@@ -678,11 +725,15 @@ impl GqlIssue {
 }
 
 const PULL_FIELDS: &str = "fragment PullFields on PullRequest {
-  number title body createdAt headRefName headRefOid isDraft state mergedAt closedAt mergeable mergeStateStatus
+  number title body createdAt baseRefName headRefName headRefOid isDraft state mergedAt closedAt
+  mergeable mergeStateStatus reviewDecision
   author { __typename login }
   closingIssuesReferences(first: 20) { nodes { number } }
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
   reviews(last: 100) { nodes { author { __typename login } state body submittedAt } }
+  reviewRequests(first: 20) {
+    nodes { asCodeOwner requestedReviewer { __typename ... on User { login } ... on Team { combinedSlug } } }
+  }
   reviewThreads(first: 100) {
     nodes { id path isResolved comments(first: 100) { nodes { author { __typename login } body createdAt } } }
   }
@@ -690,8 +741,8 @@ const PULL_FIELDS: &str = "fragment PullFields on PullRequest {
     contexts(first: 100) {
       nodes {
         __typename
-        ... on CheckRun { name status conclusion }
-        ... on StatusContext { context state }
+        ... on CheckRun { name status conclusion isRequired(pullRequestNumber: $number) }
+        ... on StatusContext { context state isRequired(pullRequestNumber: $number) }
       }
     }
   }
@@ -704,6 +755,7 @@ struct GqlPull {
     title: String,
     body: String,
     created_at: Timestamp,
+    base_ref_name: String,
     head_ref_name: String,
     head_ref_oid: String,
     is_draft: bool,
@@ -712,10 +764,12 @@ struct GqlPull {
     closed_at: Option<Timestamp>,
     mergeable: String,
     merge_state_status: String,
+    review_decision: Option<String>,
     author: Option<Actor>,
     closing_issues_references: Option<Nodes<NumberNode>>,
     comments: Nodes<GqlComment>,
     reviews: Nodes<GqlReview>,
+    review_requests: Nodes<GqlReviewRequest>,
     review_threads: Nodes<GqlThread>,
     status_check_rollup: Option<Rollup>,
 }
@@ -736,6 +790,27 @@ struct GqlReview {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GqlReviewRequest {
+    as_code_owner: bool,
+    requested_reviewer: Option<GqlReviewer>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum GqlReviewer {
+    User {
+        login: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Team {
+        combined_slug: String,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GqlThread {
     id: String,
     path: String,
@@ -751,14 +826,18 @@ struct Rollup {
 #[derive(Deserialize)]
 #[serde(tag = "__typename")]
 enum GqlContext {
+    #[serde(rename_all = "camelCase")]
     CheckRun {
         name: String,
         status: String,
         conclusion: Option<String>,
+        is_required: bool,
     },
+    #[serde(rename_all = "camelCase")]
     StatusContext {
         context: String,
         state: String,
+        is_required: bool,
     },
 }
 
@@ -770,6 +849,7 @@ impl GqlContext {
                 name,
                 status,
                 conclusion,
+                ..
             } => Check {
                 name: name.clone(),
                 state: match (status.as_str(), conclusion.as_deref()) {
@@ -778,7 +858,7 @@ impl GqlContext {
                     _ => CheckState::Pending,
                 },
             },
-            GqlContext::StatusContext { context, state } => Check {
+            GqlContext::StatusContext { context, state, .. } => Check {
                 name: context.clone(),
                 state: match state.as_str() {
                     "SUCCESS" => CheckState::Passed,
@@ -788,10 +868,65 @@ impl GqlContext {
             },
         }
     }
+
+    fn is_required(&self) -> bool {
+        match self {
+            GqlContext::CheckRun { is_required, .. }
+            | GqlContext::StatusContext { is_required, .. } => *is_required,
+        }
+    }
 }
 
 impl GqlPull {
-    fn into_pull(self, pushes: Vec<Push>) -> Pull {
+    /// What GitHub requires before the pull request merges, read from its
+    /// review decision, the code owners it requested review from and its
+    /// required checks, `ruled_checks` those the default branch's rulesets
+    /// require, reported or not
+    /// (<https://docs.github.com/en/graphql/reference/enums#mergestatestatus>).
+    fn requirements(&self, ruled_checks: &[String]) -> Vec<Requirement> {
+        let mut requires = vec![];
+        let owners: Vec<String> = self
+            .review_requests
+            .nodes
+            .iter()
+            .filter(|r| r.as_code_owner)
+            .filter_map(|r| match r.requested_reviewer.as_ref()? {
+                GqlReviewer::User { login } => Some(login.clone()),
+                GqlReviewer::Team { combined_slug } => Some(combined_slug.clone()),
+                GqlReviewer::Other => None,
+            })
+            .collect();
+        match self.review_decision.as_deref() {
+            Some("REVIEW_REQUIRED") if !owners.is_empty() => {
+                requires.push(Requirement::CodeOwnerReview { owners })
+            }
+            Some("REVIEW_REQUIRED" | "CHANGES_REQUESTED") => requires.push(Requirement::Approval),
+            _ => {}
+        }
+        let contexts = self
+            .status_check_rollup
+            .as_ref()
+            .map_or(&[][..], |r| &r.contexts.nodes[..]);
+        let passed: Vec<String> = contexts
+            .iter()
+            .map(GqlContext::check)
+            .filter(|c| c.state == CheckState::Passed)
+            .map(|c| c.name)
+            .collect();
+        let mut missing: Vec<String> = contexts
+            .iter()
+            .filter(|c| c.is_required())
+            .map(|c| c.check().name)
+            .chain(ruled_checks.iter().cloned())
+            .filter(|name| !passed.contains(name))
+            .collect();
+        missing.sort();
+        missing.dedup();
+        requires.extend(missing.into_iter().map(|name| Requirement::Check { name }));
+        requires
+    }
+
+    fn into_pull(self, pushes: Vec<Push>, ruled_checks: &[String]) -> Pull {
         let state = match (self.state.as_str(), self.merged_at, self.closed_at) {
             ("MERGED", Some(at), _) => PullState::Merged { at },
             ("CLOSED", _, Some(at)) => PullState::Closed { at },
@@ -802,7 +937,11 @@ impl GqlPull {
         let mergeability = match (self.mergeable.as_str(), self.merge_state_status.as_str()) {
             ("CONFLICTING", _) | (_, "DIRTY") => Mergeability::Conflicting,
             (_, "BEHIND") => Mergeability::Behind,
-            ("UNKNOWN", _) | (_, "UNKNOWN") => Mergeability::Unknown,
+            (_, "BLOCKED") => Mergeability::Blocked {
+                requires: self.requirements(ruled_checks),
+            },
+            // GitHub reports no merge state for a draft.
+            ("UNKNOWN", _) | (_, "UNKNOWN" | "DRAFT") => Mergeability::Unknown,
             _ => Mergeability::Clean,
         };
         Pull {

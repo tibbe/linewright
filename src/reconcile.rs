@@ -7,9 +7,9 @@ use chrono::TimeDelta;
 
 use crate::domain::{
     CheckState, Comment, Filed, Issue, IssueEvent, Login, Mergeability, MergedPull, Number, Pull,
-    PullState, Review, ReviewState, Snapshot, Thread, Timestamp, label,
+    PullState, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, label,
 };
-use crate::marker::{Stage, stage_of};
+use crate::marker::{Stage, marked, stage_of};
 use crate::spec_glob::SpecGlob;
 use crate::workflow::{LastRuns, Workflow, WorkflowName};
 
@@ -149,6 +149,20 @@ pub enum Action {
         pr: Number,
         head: String,
         draft: bool,
+    },
+    /// Mark the draft ready for review, so that the store reports its merge
+    /// state: a later poll merges it, or holds it for review.
+    MarkReadyForMergeState {
+        pr: Number,
+    },
+    /// Hand a pull request the default branch's rules block to people: mark
+    /// it ready for review if a draft, request review and comment
+    /// [`hold_note`].
+    HoldForReview {
+        pr: Number,
+        draft: bool,
+        reviewers: Vec<Login>,
+        requires: Vec<Requirement>,
     },
     CloseTracking {
         issue: Number,
@@ -572,29 +586,74 @@ fn in_review(issue: &Issue, pr: &Pull, policy: &Policy, plan: &mut Plan) {
         return;
     }
     let draft = pr.state == (PullState::Open { draft: true });
-    // A held pull request is marked ready as it is without auto-merge, so
-    // the people holding it can approve it.
-    if policy.auto_merge && !is_held(pr, machine) {
-        // Behind and conflicting were brought up to date above; a
-        // mergeability not computed yet waits for the next poll.
-        if pr.mergeability == Mergeability::Clean {
-            plan.act(Action::Merge {
+    let reviewers = || {
+        issue
+            .assignees
+            .iter()
+            .filter(|a| a.is_person_besides(machine))
+            .cloned()
+            .collect()
+    };
+    // A pull request a person holds is marked ready as it is without
+    // auto-merge, so the people holding it can approve it.
+    if !policy.auto_merge || is_held(pr, machine) {
+        if draft {
+            plan.act(Action::MarkReady {
                 pr: pr_number,
-                head: pr.head_sha.clone(),
-                draft,
+                reviewers: reviewers(),
             });
         }
-    } else if draft {
-        plan.act(Action::MarkReady {
-            pr: pr_number,
-            reviewers: issue
-                .assignees
-                .iter()
-                .filter(|a| a.is_person_besides(machine))
-                .cloned()
-                .collect(),
-        });
+        return;
     }
+    // Behind and conflicting were brought up to date above.
+    match &pr.mergeability {
+        Mergeability::Clean => plan.act(Action::Merge {
+            pr: pr_number,
+            head: pr.head_sha.clone(),
+            draft,
+        }),
+        // Held for review again only when what GitHub requires changes.
+        Mergeability::Blocked { requires } if draft || !hold_noted(pr, requires, machine) => plan
+            .act(Action::HoldForReview {
+                pr: pr_number,
+                draft,
+                reviewers: reviewers(),
+                requires: requires.clone(),
+            }),
+        Mergeability::Unknown if draft => {
+            plan.act(Action::MarkReadyForMergeState { pr: pr_number })
+        }
+        // A merge state not computed yet waits for the next poll.
+        _ => {}
+    }
+}
+
+/// The comment on a pull request held for review: what GitHub requires
+/// before it merges.
+pub fn hold_note(requires: &[Requirement]) -> String {
+    let names: Vec<String> = requires.iter().map(ToString::to_string).collect();
+    let required = match names.as_slice() {
+        [] => "GitHub blocks the merge for a reason Linewright cannot read: the default \
+               branch's rules say what it needs"
+            .to_string(),
+        [one] => format!("GitHub requires {one} before merging"),
+        [rest @ .., last] => format!(
+            "GitHub requires {} and {last} before merging",
+            rest.join(", ")
+        ),
+    };
+    format!("Ready for review: {required}. Linewright merges it once GitHub allows it.")
+}
+
+/// Whether Linewright's latest review comment on the pull request already
+/// names `requires`.
+fn hold_noted(pr: &Pull, requires: &[Requirement], machine: &Login) -> bool {
+    let note = marked(Stage::Review, &hold_note(requires));
+    pr.comments
+        .iter()
+        .filter(|c| stage_of(c, machine) == Some(Stage::Review))
+        .max_by_key(|c| c.created_at)
+        .is_some_and(|c| c.body.trim() == note)
 }
 
 /// Whether a person who commented on or reviewed the pull request holds its

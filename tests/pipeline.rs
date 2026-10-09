@@ -741,6 +741,46 @@ async fn with_auto_merge_and_no_merge_method_set_the_repository_decides_it() {
 }
 
 #[tokio::test]
+async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_merges() {
+    use linewright::domain::{PullState, Requirement};
+
+    let mut world = World::with(|config| config.auto_merge = true).await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.store.block_merge(
+        pr,
+        vec![Requirement::CodeOwnerReview {
+            owners: vec!["acme/docs".into()],
+        }],
+    );
+
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(view.state, PullState::Open { draft: false });
+    assert_eq!(
+        world.store.requested_reviewers(pr),
+        [Login::new("maintainer")]
+    );
+    let comments: Vec<&str> = view.comments.iter().map(|c| c.body.as_str()).collect();
+    assert_eq!(
+        comments,
+        [
+            "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
+             (@acme/docs) before merging. Linewright merges it once GitHub allows it."
+        ]
+    );
+
+    world.store.allow_merge(pr);
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert!(matches!(view.state, PullState::Merged { .. }));
+    assert!(!world.issue(ticket).open);
+}
+
+#[tokio::test]
 async fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_approve() {
     use linewright::domain::PullState;
 

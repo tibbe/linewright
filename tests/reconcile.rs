@@ -704,6 +704,156 @@ fn with_auto_merge_a_pull_request_whose_mergeability_is_not_known_yet_waits() {
     assert_eq!(auto_merging(&in_review(pr), 10), vec![]);
 }
 
+fn code_owner_review() -> Vec<Requirement> {
+    vec![Requirement::CodeOwnerReview {
+        owners: vec!["acme/docs".into()],
+    }]
+}
+
+#[test]
+fn with_auto_merge_a_green_pull_request_github_blocks_is_held_for_review_and_not_merged() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Passed)];
+    pr.mergeability = Mergeability::Blocked {
+        requires: code_owner_review(),
+    };
+
+    assert_eq!(
+        auto_merging(&in_review(pr), 10),
+        vec![Action::HoldForReview {
+            pr: Number(20),
+            draft: true,
+            reviewers: vec![Login::new("maintainer")],
+            requires: code_owner_review(),
+        }]
+    );
+}
+
+#[test]
+fn a_pull_request_github_blocks_is_held_for_review_after_it_is_marked_ready() {
+    let mut pr = ready(pull(20, 2));
+    pr.mergeability = Mergeability::Blocked {
+        requires: code_owner_review(),
+    };
+
+    assert_eq!(
+        auto_merging(&in_review(pr), 10),
+        vec![Action::HoldForReview {
+            pr: Number(20),
+            draft: false,
+            reviewers: vec![Login::new("maintainer")],
+            requires: code_owner_review(),
+        }]
+    );
+}
+
+/// Linewright's comment on a pull request held for a code owner's review.
+fn held_for_a_code_owner(minute: i64) -> Comment {
+    comment(
+        MACHINE,
+        minute,
+        "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
+         (@acme/docs) before merging. Linewright merges it once GitHub allows it.",
+    )
+}
+
+#[test]
+fn a_pull_request_github_blocks_and_already_held_for_review_waits_also_after_a_push() {
+    let mut pr = ready(pull(20, 2));
+    pr.mergeability = Mergeability::Blocked {
+        requires: code_owner_review(),
+    };
+    pr.comments = vec![held_for_a_code_owner(2)];
+    let held = in_review(pr.clone());
+    pr.pushes.push(Push {
+        by: Login::new(MACHINE),
+        at: t(3),
+    });
+    let updated_since = in_review(pr);
+
+    assert_eq!(auto_merging(&held, 10), vec![]);
+    assert_eq!(auto_merging(&updated_since, 10), vec![]);
+}
+
+#[test]
+fn a_pull_request_held_for_review_is_merged_once_github_no_longer_blocks_it() {
+    let mut pr = ready(pull(20, 2));
+    pr.comments = vec![held_for_a_code_owner(7)];
+
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+}
+
+#[test]
+fn a_pull_request_is_held_again_when_what_github_requires_changes() {
+    let mut pr = ready(pull(20, 2));
+    let requires = vec![Requirement::Check {
+        name: "deploy".into(),
+    }];
+    pr.mergeability = Mergeability::Blocked {
+        requires: requires.clone(),
+    };
+    pr.comments = vec![held_for_a_code_owner(7)];
+
+    assert_eq!(
+        auto_merging(&in_review(pr), 10),
+        vec![Action::HoldForReview {
+            pr: Number(20),
+            draft: false,
+            reviewers: vec![Login::new("maintainer")],
+            requires,
+        }]
+    );
+}
+
+#[test]
+fn a_pull_request_marked_ready_without_auto_merge_is_held_when_github_blocks_it() {
+    let mut pr = ready(pull(20, 2));
+    pr.mergeability = Mergeability::Blocked {
+        requires: code_owner_review(),
+    };
+    pr.comments = vec![comment(
+        MACHINE,
+        7,
+        &marked(Stage::Review, "CI is green: ready for review."),
+    )];
+
+    assert!(matches!(
+        auto_merging(&in_review(pr), 10).as_slice(),
+        [Action::HoldForReview { draft: false, .. }]
+    ));
+}
+
+#[test]
+fn with_auto_merge_a_green_draft_whose_merge_state_is_unknown_is_marked_ready_first() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Passed)];
+    pr.mergeability = Mergeability::Unknown;
+
+    assert_eq!(
+        auto_merging(&in_review(pr), 10),
+        vec![Action::MarkReadyForMergeState { pr: Number(20) }]
+    );
+}
+
+#[test]
+fn without_auto_merge_a_green_pull_request_github_blocks_is_marked_ready_as_any_other() {
+    let mut draft = pull(20, 2);
+    draft.checks = vec![check("test", CheckState::Passed)];
+    draft.mergeability = Mergeability::Blocked {
+        requires: code_owner_review(),
+    };
+    let ready_for_review = ready(draft.clone());
+
+    assert_eq!(
+        at(&in_review(draft), 10),
+        vec![Action::MarkReady {
+            pr: Number(20),
+            reviewers: vec![Login::new("maintainer")],
+        }]
+    );
+    assert_eq!(at(&in_review(ready_for_review), 10), vec![]);
+}
+
 /// The pull request with a push by Linewright at minute 5, which answers the
 /// feedback before it.
 fn reworked(mut pr: Pull) -> Pull {

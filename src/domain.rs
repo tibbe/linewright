@@ -173,15 +173,52 @@ pub enum PullState {
 
 /// Whether the pull request's branch can merge into the default branch, as
 /// the store reports it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mergeability {
     Clean,
     /// The default branch has commits the branch lacks.
     Behind,
     Conflicting,
-    /// Not computed yet.
+    /// The branch merges cleanly, but the default branch's rules hold the
+    /// merge until what they require is met: `requires`, as far as the store
+    /// can name it.
+    Blocked {
+        requires: Vec<Requirement>,
+    },
+    /// Not computed yet. GitHub computes none for a draft.
     Unknown,
+}
+
+/// Something the default branch's rules require before a pull request
+/// merges
+/// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Requirement {
+    /// An approving review.
+    Approval,
+    /// An approving review from a code owner of the files changed: one of
+    /// `owners`, those GitHub requested review from.
+    CodeOwnerReview { owners: Vec<String> },
+    /// The required check `name`, passing.
+    Check { name: String },
+}
+
+impl fmt::Display for Requirement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Requirement::Approval => f.write_str("an approving review"),
+            Requirement::CodeOwnerReview { owners } if owners.is_empty() => {
+                f.write_str("a code owner's review")
+            }
+            Requirement::CodeOwnerReview { owners } => {
+                let owners: Vec<String> = owners.iter().map(|o| format!("@{o}")).collect();
+                write!(f, "a code owner's review ({})", owners.join(" or "))
+            }
+            Requirement::Check { name } => write!(f, "the required check `{name}` passing"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

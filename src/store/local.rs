@@ -17,8 +17,8 @@ use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, Repo
 use crate::clock::Clock;
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Push, Review, ReviewState,
-    Snapshot, Thread, Timestamp, closing_references,
+    MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Push, Requirement, Review,
+    ReviewState, Snapshot, Thread, Timestamp, closing_references,
 };
 use crate::git;
 
@@ -82,6 +82,9 @@ struct PullRecord {
     reviews: Vec<Review>,
     threads: Vec<Thread>,
     requested_reviewers: Vec<Login>,
+    /// What branch rules would require before the pull request merges, if
+    /// they block it: the local store has no rules of its own.
+    blocked: Option<Vec<Requirement>>,
     /// Checks by head commit: a push starts the head's checks afresh.
     checks: BTreeMap<String, Vec<CheckRecord>>,
     /// For a merged pull request: the default branch before and after.
@@ -448,6 +451,22 @@ impl LocalStore {
         Ok(())
     }
 
+    /// Blocks the pull request's merge until `requires` is met, as branch
+    /// rules on GitHub would, until [`LocalStore::allow_merge`].
+    pub fn block_merge(&self, pr: Number, requires: Vec<Requirement>) {
+        if let Ok(record) = self.state().pull_mut(pr) {
+            record.blocked = Some(requires);
+        }
+    }
+
+    /// Lifts [`LocalStore::block_merge`], as a person meeting what the rules
+    /// require would.
+    pub fn allow_merge(&self, pr: Number) {
+        if let Ok(record) = self.state().pull_mut(pr) {
+            record.blocked = None;
+        }
+    }
+
     pub fn close_pull_as(&self, pr: Number) -> Result<()> {
         let now = self.now();
         self.state().pull_mut(pr)?.state = PullState::Closed { at: now };
@@ -637,8 +656,15 @@ impl LocalStore {
             (state.pull_mut(number)?.clone(), default_branch)
         };
         let head_sha = self.rev(&record.head_ref).await.unwrap_or_default();
-        let mergeability = match record.state {
-            PullState::Open { .. } => self.mergeability(&default_branch, &record.head_ref).await?,
+        let mergeability = match (record.state, &record.blocked) {
+            (PullState::Open { .. }, blocked) => {
+                match self.mergeability(&default_branch, &record.head_ref).await? {
+                    Mergeability::Clean if let Some(requires) = blocked => Mergeability::Blocked {
+                        requires: requires.clone(),
+                    },
+                    other => other,
+                }
+            }
             _ => Mergeability::Clean,
         };
         let checks = record
@@ -802,6 +828,7 @@ impl PullRecord {
             reviews: vec![],
             threads: vec![],
             requested_reviewers: vec![],
+            blocked: None,
             checks: BTreeMap::new(),
             merge: None,
             files: vec![],
@@ -1088,11 +1115,18 @@ impl Store for LocalStore {
     }
 
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
-        let (state, head_ref) = {
+        let (state, head_ref, blocked) = {
             let mut state = self.state();
             let record = state.pull_mut(pr)?;
-            (record.state, record.head_ref.clone())
+            (
+                record.state,
+                record.head_ref.clone(),
+                record.blocked.is_some(),
+            )
         };
+        if blocked {
+            bail!("the branch rules block merging {pr}");
+        }
         match state {
             PullState::Open { draft: false } => {}
             PullState::Open { draft: true } => bail!("{pr} is a draft"),
