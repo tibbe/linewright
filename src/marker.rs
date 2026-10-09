@@ -1,10 +1,11 @@
 //! The marker line that opens every Linewright comment (`docs/specs/product.md`,
-//! "Visibility"), so people and the manager can tell its comments from
-//! others.
+//! "Visibility") and every issue a workflow files ("Workflows"), so people
+//! and the manager can tell its writing from others'.
 
 use std::fmt;
 
 use crate::domain::{Comment, Login};
+use crate::workflow::WorkflowName;
 
 /// The stage of the pipeline a comment reports on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -50,7 +51,22 @@ impl fmt::Display for Stage {
 
 /// A comment body opening with the stage's marker line.
 pub fn marked(stage: Stage, body: &str) -> String {
-    format!("> *Linewright, {stage}*\n\n{}", body.trim())
+    with_marker(stage, body)
+}
+
+/// The body of an issue the workflow `name` files, opening with its marker
+/// line.
+pub fn workflow_marked(name: &WorkflowName, body: &str) -> String {
+    with_marker(format_args!("workflow {name}"), body)
+}
+
+fn with_marker(source: impl fmt::Display, body: &str) -> String {
+    format!("{}\n\n{}", marker_line(source), body.trim())
+}
+
+/// The marker line of what Linewright wrote, such as a stage.
+fn marker_line(source: impl fmt::Display) -> String {
+    format!("> *Linewright, {source}*")
 }
 
 /// The stage of a comment the machine user wrote with a marker line, if it
@@ -62,5 +78,5 @@ pub fn stage_of(comment: &Comment, machine_user: &Login) -> Option<Stage> {
     let first = comment.body.lines().next()?.trim();
     Stage::ALL
         .into_iter()
-        .find(|stage| first == format!("> *Linewright, {stage}*"))
+        .find(|stage| first == marker_line(stage))
 }

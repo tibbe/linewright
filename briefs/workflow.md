@@ -33,6 +33,7 @@ Each issue is work for the pipeline or for the maintainer:
 - **`ready-for-human`**: a person must decide or help. Say what, and
   recommend.
 
-Search the open issues first and leave out any already filed. Keep to the
-number of issues your task allows; when you find more, hand back the most
-important ones.
+Search the existing issues first, and don't return one that is already open.
+Keep to the number of issues your task allows; when you find more, hand back
+the most important ones. Linewright opens each issue's body with a line naming
+the workflow, so leave that out.

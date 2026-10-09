@@ -17,12 +17,12 @@ use crate::domain::{
     Issue, Login, MergedPull, Number, Pull, Snapshot, Timestamp, closing_references, label,
 };
 use crate::git::{self, Updated};
-use crate::marker::{Stage, marked};
+use crate::marker::{Stage, marked, workflow_marked};
 use crate::prompts::{self, Conflict, PullTask, Repo, Ticket};
 use crate::reconcile::{Feedback, Policy, Subject, Work, WorkKind, new_feedback};
 use crate::results::{
     self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
-    WorkflowResult,
+    WorkflowIssueLabel, WorkflowResult,
 };
 use crate::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
 use crate::spec_gap;
@@ -1065,8 +1065,9 @@ async fn record_pull_work(
 
 // Workflows.
 
-/// Runs `workflow` once: one session on a fresh clone of the default branch.
-/// A workflow run has no issue to hand back, so a run that fails is an error.
+/// Runs `workflow` once: one session on a fresh clone of the default branch,
+/// then files the issues its result returns. A workflow run has no issue to
+/// hand back, so a run that fails is an error.
 pub(crate) async fn workflow(
     shell: &Shell,
     workflow: &Workflow,
@@ -1086,6 +1087,9 @@ pub(crate) async fn workflow(
             results::parse(&message).map_err(parse_retry)
         })
         .await?;
+        record_workflow(shell, workflow, &result)
+            .await
+            .map_err(Failure::Apply)?;
         Ok(result)
     };
     session.await.map_err(|failure| match failure {
@@ -1098,4 +1102,44 @@ pub(crate) async fn workflow(
         }
         Failure::Cancelled => anyhow::anyhow!("the run was cancelled"),
     })
+}
+
+/// Files the issues `result` returns, as the machine user, up to the
+/// workflow's `max-issues`; the rest are dropped.
+async fn record_workflow(
+    shell: &Shell,
+    workflow: &Workflow,
+    result: &WorkflowResult,
+) -> Result<()> {
+    let cap = (workflow.max_issues as usize).min(result.issues.len());
+    let (filed, dropped) = result.issues.split_at(cap);
+    for issue in filed {
+        let state = match issue.label {
+            WorkflowIssueLabel::ReadyForAgent => label::READY_FOR_AGENT,
+            WorkflowIssueLabel::ReadyForHuman => label::READY_FOR_HUMAN,
+        };
+        let number = shell
+            .store
+            .create_issue(NewIssue {
+                title: issue.title.clone(),
+                body: workflow_marked(&workflow.name, &issue.body),
+                labels: vec![state.into()],
+            })
+            .await?;
+        info!(
+            workflow = %workflow.name,
+            issue = %number,
+            title = issue.title,
+            "workflow issue filed"
+        );
+    }
+    for issue in dropped {
+        warn!(
+            workflow = %workflow.name,
+            max_issues = workflow.max_issues,
+            title = issue.title,
+            "workflow issue dropped: the run returned more than max-issues"
+        );
+    }
+    Ok(())
 }

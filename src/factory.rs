@@ -150,9 +150,9 @@ impl Factory {
         Ok(actions)
     }
 
-    /// Runs the workflow `name` on the default branch once, now, and logs
-    /// its result. Fails when there is no such workflow, its file does not
-    /// parse or the run fails.
+    /// Runs the workflow `name` on the default branch once, now, and files
+    /// the issues its result returns. Fails when there is no such workflow,
+    /// its file does not parse or the run fails.
     pub async fn run_workflow(&self, name: &WorkflowName) -> Result<()> {
         let shell = &self.shell;
         let branch = &shell.settings.default_branch;
@@ -173,12 +173,7 @@ impl Factory {
                 return Err(e.context(format!("the run of the workflow `{name}` failed")));
             }
         };
-        info!(
-            workflow = %name,
-            summary = result.summary,
-            issues = ?result.issues,
-            "workflow run finished"
-        );
+        info!(workflow = %name, summary = result.summary, "workflow run finished");
         Ok(())
     }
 

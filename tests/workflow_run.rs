@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::*;
+use linewright::reconcile::WorkKind;
 use linewright::runtime::SessionError;
 use serde_json::json;
 
@@ -69,12 +70,15 @@ async fn a_workflow_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the
 }
 
 #[tokio::test]
-async fn a_workflow_run_hands_no_work_to_the_pipeline_yet() {
+async fn a_workflow_run_files_the_issues_its_result_returns_as_the_machine_user() {
     let world = with_workflow("weekly", WEEKLY).await;
     world.runtime.on_workflow(|_| {
         json(json!({
-            "summary": "One bug looks unfixed.",
-            "issues": [{"title": "Fix it", "body": "It is broken.", "label": "ready-for-agent"}]
+            "summary": "One bug looks unfixed, one needs a decision.",
+            "issues": [
+                {"title": "Fix the widget count", "body": "Count them all.\n\n- [ ] All counted", "label": "ready-for-agent"},
+                {"title": "Should gadgets expire?", "body": "Recommend: yes.", "label": "ready-for-human"}
+            ]
         }))
     });
 
@@ -84,7 +88,169 @@ async fn a_workflow_run_hands_no_work_to_the_pipeline_yet() {
         .await
         .unwrap();
 
-    assert!(world.store.issues().is_empty());
+    let issues = world.store.issues();
+    let filed: Vec<(&str, Vec<&str>, &str, &str)> = issues
+        .iter()
+        .map(|i| {
+            (
+                i.title.as_str(),
+                labels(i),
+                i.author.as_str(),
+                i.body.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        filed,
+        [
+            (
+                "Fix the widget count",
+                vec!["ready-for-agent"],
+                MACHINE,
+                "> *Linewright, workflow weekly*\n\nCount them all.\n\n- [ ] All counted"
+            ),
+            (
+                "Should gadgets expire?",
+                vec!["ready-for-human"],
+                MACHINE,
+                "> *Linewright, workflow weekly*\n\nRecommend: yes."
+            ),
+        ]
+    );
+}
+
+const CAPPED: &str = "---
+on:
+  schedule: \"0 6 * * 1\"
+max-issues: 2
+---
+Look.
+";
+
+/// A result returning three issues, one more than [`CAPPED`] files.
+fn three_issues() -> Result<String, SessionError> {
+    let issue = |title: &str| json!({"title": title, "body": "Do it.", "label": "ready-for-agent"});
+    json(json!({
+        "summary": "Three things need doing.",
+        "issues": [issue("First"), issue("Second"), issue("Third")]
+    }))
+}
+
+#[tokio::test]
+async fn a_run_files_only_the_first_max_issues_issues() {
+    let world = with_workflow("weekly", CAPPED).await;
+    world.runtime.on_workflow(|_| three_issues());
+
+    world
+        .factory
+        .run_workflow(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+
+    let titles: Vec<String> = world.store.issues().into_iter().map(|i| i.title).collect();
+    assert_eq!(titles, ["First", "Second"]);
+}
+
+#[tokio::test]
+async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
+    let world = with_workflow("weekly", CAPPED).await;
+    world.runtime.on_workflow(|_| three_issues());
+    let (log, _guard) = Log::capture();
+
+    world
+        .factory
+        .run_workflow(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+
+    let dropped: Vec<String> = log
+        .lines("WARN")
+        .into_iter()
+        .filter(|line| line.contains("dropped"))
+        .collect();
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert!(dropped[0].contains("Third"), "{}", dropped[0]);
+}
+
+#[tokio::test]
+async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_the_error() {
+    let world = with_workflow("weekly", WEEKLY).await;
+    world.runtime.on_workflow(|call| {
+        let label = match call.followup {
+            None => "bug",
+            Some(_) => "ready-for-agent",
+        };
+        json(json!({
+            "summary": "One bug.",
+            "issues": [{"title": "Fix it", "body": "It is broken.", "label": label}]
+        }))
+    });
+
+    world
+        .factory
+        .run_workflow(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+
+    let prompts = world.runtime.workflow_prompts();
+    assert_eq!(prompts.len(), 2);
+    assert!(
+        prompts[1]
+            .contains("unknown variant `bug`, expected `ready-for-agent` or `ready-for-human`"),
+        "{}",
+        prompts[1]
+    );
+}
+
+#[tokio::test]
+async fn a_ready_for_agent_workflow_issue_is_implemented_on_the_next_poll_without_triage() {
+    let mut world = with_workflow("weekly", WEEKLY).await;
+    world.runtime.on_workflow(|_| {
+        json(json!({
+            "summary": "One bug.",
+            "issues": [{"title": "Fix it", "body": "It is broken.", "label": "ready-for-agent"}]
+        }))
+    });
+    world.runtime.on(WorkKind::Implement, |call| {
+        commit_in(&call.spec.dir, &[("src/fixed.txt", "fixed\n")], "Fix it");
+        json(json!({"outcome": "done", "pr_title": "Fix it", "pr_body": "Fixes it."}))
+    });
+    world
+        .factory
+        .run_workflow(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+    let issue = world.store.issues()[0].number;
+
+    world.poll().await;
+
+    let pr = *world
+        .store
+        .pulls()
+        .last()
+        .expect("a pull request was opened");
+    assert_eq!(world.store.snapshot_pull(pr).await.closes, [issue]);
+    assert!(world.runtime.prompts(WorkKind::Triage).is_empty());
+}
+
+#[tokio::test]
+async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_open_ones() {
+    let world = with_workflow("weekly", WEEKLY).await;
+    world.runtime.on_workflow(|_| finished());
+
+    world
+        .factory
+        .run_workflow(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+
+    let prompt = &world.runtime.workflow_prompts()[0];
+    assert!(
+        prompt.contains(
+            "Search the existing issues first, and don't return one that is already open."
+        ),
+        "{prompt}"
+    );
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 //! Fakes of the external systems for the end-to-end tests: the local store
 //! stands in for GitHub, a scripted runtime for the agents, and a clock that
-//! ticks a second per reading.
+//! ticks a second per reading. The log the operator reads is captured too.
 
 #![allow(dead_code)]
 
@@ -187,6 +187,44 @@ pub fn commit_in(dir: &Path, files: &[(&str, &str)], message: &str) {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+}
+
+/// The server's log, as the operator reads it, captured on this thread.
+#[derive(Clone, Default)]
+pub struct Log(Arc<Mutex<Vec<u8>>>);
+
+impl Log {
+    /// Captures what this thread logs until the guard is dropped. A
+    /// `#[tokio::test]` runs every task on its one thread.
+    pub fn capture() -> (Log, tracing::subscriber::DefaultGuard) {
+        let log = Log::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        (log, tracing::subscriber::set_default(subscriber))
+    }
+
+    /// The lines logged at `level`, such as `WARN`.
+    pub fn lines(&self, level: &str) -> Vec<String> {
+        String::from_utf8_lossy(&self.0.lock().unwrap())
+            .lines()
+            .filter(|line| line.split_whitespace().nth(1) == Some(level))
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+impl std::io::Write for Log {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
