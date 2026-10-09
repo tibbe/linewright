@@ -97,5 +97,8 @@ Each also tells it that it may read GitHub but must not write to it.
 Keep the two reports apart while you weigh them: a change can pass one axis
 and fail the other. Fix hard violations and spec findings; act on judgement
 calls where you agree. A finding you decide against needs a reason you could
-defend to the maintainer. A finding that needs the spec to change is a spec
-gap, not a fix.
+defend to the maintainer. A finding the spec doesn't settle is not a spec gap
+unless it is a product decision: a reasonable maintainer could want either
+answer, and the answer changes what a user sees. Otherwise decide it yourself
+and fix or dismiss it like any other finding. A finding that is a spec gap is
+not a fix.

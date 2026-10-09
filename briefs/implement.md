@@ -25,7 +25,21 @@ opens or updates the pull request and posts what your result says.
 ## The spec is the maintainer's
 
 Never change a file matching the spec glob, even to fill a gap; report the
-gap instead. When the spec cannot decide something:
+gap instead.
+
+The spec says what the software should do, not everything that follows from
+it; how the code does it belongs in the code. So a question the spec leaves
+open is a **spec gap** only when it is a product decision: a reasonable
+maintainer could want either answer, the answer changes what a user sees, and
+the spec's wording doesn't already settle it. Anything else is yours to
+decide, as the spec and the code support best:
+
+- the spec's wording already answers it, read for what it says;
+- one answer is the obvious one, and no maintainer would pick the other;
+- it is about how the code works rather than what a user sees, such as the
+  order work is picked in or when a message is posted again.
+
+For a spec gap:
 
 - If the gap **blocks** the ticket, stop and answer with the `blocked` outcome
   and the question the maintainer must answer. Commit what you have first.
