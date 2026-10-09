@@ -1044,7 +1044,7 @@ fn with_auto_merge_a_pull_request_whose_mergeability_is_not_known_yet_waits() {
 
 fn code_owner_review() -> Vec<Requirement> {
     vec![Requirement::CodeOwnerReview {
-        owners: vec!["acme/docs".into()],
+        owners: vec!["alice".into()],
     }]
 }
 
@@ -1091,7 +1091,7 @@ fn held_for_a_code_owner(minute: i64) -> Comment {
         MACHINE,
         minute,
         "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
-         (@acme/docs) before merging. Linewright merges it once GitHub allows it.",
+         (@alice) before merging. Linewright merges it once GitHub allows it.",
     )
 }
 

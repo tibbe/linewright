@@ -1206,7 +1206,7 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_me
     world.store.block_merge(
         pr,
         vec![Requirement::CodeOwnerReview {
-            owners: vec!["acme/docs".into()],
+            owners: vec!["alice".into()],
         }],
     );
 
@@ -1225,7 +1225,7 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_me
         comments,
         [
             "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
-             (@acme/docs) before merging. Linewright merges it once GitHub allows it."
+             (@alice) before merging. Linewright merges it once GitHub allows it."
         ]
     );
 

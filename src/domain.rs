@@ -210,7 +210,8 @@ pub enum Requirement {
     /// An approving review.
     Approval,
     /// An approving review from a code owner of the files changed: one of
-    /// `owners`, those GitHub requested review from.
+    /// `owners`, those GitHub requested review from. Empty when they can't
+    /// all be named.
     CodeOwnerReview { owners: Vec<String> },
     /// The required check `name`, passing.
     Check { name: String },

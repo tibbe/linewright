@@ -768,7 +768,7 @@ const PULL_FIELDS: &str = "fragment PullFields on PullRequest {
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
   reviews(last: 100) { nodes { author { __typename login } state body submittedAt } }
   reviewRequests(first: 20) {
-    nodes { asCodeOwner requestedReviewer { __typename ... on User { login } ... on Team { combinedSlug } } }
+    nodes { asCodeOwner requestedReviewer { __typename ... on User { login } } }
   }
   reviewThreads(first: 100) {
     nodes { id path isResolved comments(first: 100) { nodes { author { __typename login } body createdAt } } }
@@ -832,16 +832,16 @@ struct GqlReviewRequest {
     requested_reviewer: Option<GqlReviewer>,
 }
 
+/// Who review was requested from. A team is not named: its fields need the
+/// `read:org` scope, beyond the token's
+/// (<https://docs.github.com/en/graphql/reference/objects#team>).
 #[derive(Deserialize)]
 #[serde(tag = "__typename")]
 enum GqlReviewer {
     User {
         login: String,
     },
-    #[serde(rename_all = "camelCase")]
-    Team {
-        combined_slug: String,
-    },
+    Team,
     #[serde(other)]
     Other,
 }
@@ -922,22 +922,11 @@ impl GqlPull {
     /// (<https://docs.github.com/en/graphql/reference/enums#mergestatestatus>).
     fn requirements(&self, ruled_checks: &[String]) -> Vec<Requirement> {
         let mut requires = vec![];
-        let owners: Vec<String> = self
-            .review_requests
-            .nodes
-            .iter()
-            .filter(|r| r.as_code_owner)
-            .filter_map(|r| match r.requested_reviewer.as_ref()? {
-                GqlReviewer::User { login } => Some(login.clone()),
-                GqlReviewer::Team { combined_slug } => Some(combined_slug.clone()),
-                GqlReviewer::Other => None,
-            })
-            .collect();
-        match self.review_decision.as_deref() {
-            Some("REVIEW_REQUIRED") if !owners.is_empty() => {
-                requires.push(Requirement::CodeOwnerReview { owners })
+        match (self.review_decision.as_deref(), self.code_owner_review()) {
+            (Some("REVIEW_REQUIRED"), Some(review)) => requires.push(review),
+            (Some("REVIEW_REQUIRED" | "CHANGES_REQUESTED"), _) => {
+                requires.push(Requirement::Approval)
             }
-            Some("REVIEW_REQUIRED" | "CHANGES_REQUESTED") => requires.push(Requirement::Approval),
             _ => {}
         }
         let contexts = self
@@ -961,6 +950,31 @@ impl GqlPull {
         missing.dedup();
         requires.extend(missing.into_iter().map(|name| Requirement::Check { name }));
         requires
+    }
+
+    /// A code owner's review, if GitHub requested review from code owners,
+    /// naming them only when they are all users: a team can't be named, and
+    /// naming only the users would leave out the team's members.
+    fn code_owner_review(&self) -> Option<Requirement> {
+        // Each code owner requested, with its login if a user.
+        let code_owners: Vec<Option<String>> = self
+            .review_requests
+            .nodes
+            .iter()
+            .filter(|r| r.as_code_owner)
+            .filter_map(|r| match r.requested_reviewer.as_ref()? {
+                GqlReviewer::User { login } => Some(Some(login.clone())),
+                GqlReviewer::Team => Some(None),
+                GqlReviewer::Other => None,
+            })
+            .collect();
+        if code_owners.is_empty() {
+            return None;
+        }
+        let users: Option<Vec<String>> = code_owners.into_iter().collect();
+        Some(Requirement::CodeOwnerReview {
+            owners: users.unwrap_or_default(),
+        })
     }
 
     fn into_pull(self, pushes: Vec<Push>, ruled_checks: &[String]) -> Pull {
@@ -1691,5 +1705,79 @@ impl Store for GitHub {
             )
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pull request GitHub reports needs review, with `requests` its
+    /// review requests as the snapshot query returns them.
+    fn review_required(requests: Value) -> GqlPull {
+        serde_json::from_value(json!({
+            "number": 20, "title": "Do the ticket", "body": "",
+            "createdAt": "2026-10-09T12:00:00Z", "baseRefName": "main",
+            "headRefName": "20-do-the-ticket", "headRefOid": "abc", "isDraft": false,
+            "state": "OPEN", "mergedAt": null, "closedAt": null,
+            "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED", "canBeRebased": true,
+            "reviewDecision": "REVIEW_REQUIRED",
+            "author": {"__typename": "User", "login": "linewright"},
+            "closingIssuesReferences": {"nodes": []},
+            "comments": {"nodes": []},
+            "reviews": {"nodes": []},
+            "reviewRequests": {"nodes": requests},
+            "reviewThreads": {"nodes": []},
+            "statusCheckRollup": null,
+        }))
+        .unwrap()
+    }
+
+    fn code_owner(reviewer: Value) -> Value {
+        json!({"asCodeOwner": true, "requestedReviewer": reviewer})
+    }
+
+    fn displayed(requires: Vec<Requirement>) -> Vec<String> {
+        requires.iter().map(Requirement::to_string).collect()
+    }
+
+    #[test]
+    fn a_team_requested_as_code_owner_requires_a_code_owners_review_without_naming_it() {
+        let pr = review_required(json!([code_owner(json!({"__typename": "Team"}))]));
+
+        assert_eq!(displayed(pr.requirements(&[])), ["a code owner's review"]);
+    }
+
+    #[test]
+    fn users_requested_as_code_owners_are_named() {
+        let pr = review_required(json!([
+            code_owner(json!({"__typename": "User", "login": "alice"})),
+            code_owner(json!({"__typename": "User", "login": "bob"})),
+        ]));
+
+        assert_eq!(
+            displayed(pr.requirements(&[])),
+            ["a code owner's review (@alice or @bob)"]
+        );
+    }
+
+    #[test]
+    fn a_user_requested_as_code_owner_with_a_team_is_not_named_alone() {
+        let pr = review_required(json!([
+            code_owner(json!({"__typename": "User", "login": "alice"})),
+            code_owner(json!({"__typename": "Team"})),
+        ]));
+
+        assert_eq!(displayed(pr.requirements(&[])), ["a code owner's review"]);
+    }
+
+    #[test]
+    fn a_review_required_without_code_owners_requested_requires_an_approval() {
+        let pr = review_required(json!([{
+            "asCodeOwner": false,
+            "requestedReviewer": {"__typename": "User", "login": "alice"},
+        }]));
+
+        assert_eq!(pr.requirements(&[]), [Requirement::Approval]);
     }
 }
