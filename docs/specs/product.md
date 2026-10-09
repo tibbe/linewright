@@ -396,7 +396,8 @@ trigger fires. Workflows sit beside the pipeline and may hand it work.
     for review with a comment naming what GitHub requires, and is merged once
     GitHub allows it.
   - A PR a person has commented on or reviewed is merged only once that
-    person's latest review approves it. Bots' comments don't hold a merge.
+    person's newest comment or review is an approval. Bots' comments don't
+    hold a merge.
   - A merge that fails is retried once on the next poll, then the ticket goes
     to `ready-for-human` with GitHub's reason.
   - It covers every open PR the machine user opened, including those opened

@@ -38,8 +38,7 @@ later.
   `mattpocock/skills` (`triage`, `to-tickets`, `implement`, `code-review`,
   `pr`, `tdd`) with their MIT notice, made non-interactive: each decision the
   originals put to a person is made by the agent or handed back as an
-  outcome, tracker access is replaced by the brief and the result, and the
-  review's sub-agents invoke no skills.
+  outcome, and the review's sub-agents invoke no skills.
 - **Every session's trace is kept**: the runtime's own transcript, copied
   beside the session's brief and result under the work directory.
 - **Rust, with GitHub's REST and GraphQL APIs in-process.**
