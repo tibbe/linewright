@@ -13,8 +13,10 @@ This project uses specification-driven development.
 - `GLOSSARY.md`: the vocabulary the specs and the code use, each term defined
   once.
 
-How the code does what the specs say belongs in the code and its comments. Keep
-the specs in step with user-visible behavior changes.
+How the code does what the specs say belongs in the code and its comments. Write
+specs as what Linewright should do, not as an account of what follows from it
+or of what other systems such as GitHub do. Keep the specs in step with
+user-visible behavior changes.
 
 Changes to specs require human approval.
 
