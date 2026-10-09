@@ -37,6 +37,32 @@ async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
     assert!(issue.open);
 }
 
+#[tokio::test]
+async fn an_issue_triaged_for_the_maintainer_says_a_label_not_a_comment_sends_it_back() {
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Triage, |_| {
+        json(json!({
+            "outcome": "ready-for-human",
+            "category": "enhancement",
+            "comment": "Should widgets be resizable?"
+        }))
+    });
+    let issue = world
+        .store
+        .open_issue("reporter", "Resize widgets", "", &["needs-triage"]);
+
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["enhancement", "ready-for-human"]);
+    assert_eq!(
+        last_comment(&issue),
+        "> *Linewright, triage*\n\nShould widgets be resizable?\n\n\
+         A comment does not send this issue back: apply `ready-for-agent` to \
+         implement it as decided, or `needs-triage` to triage it again."
+    );
+}
+
 fn tickets_script(world: &World) {
     world.runtime.on(WorkKind::Tickets, |_| {
         json(json!({

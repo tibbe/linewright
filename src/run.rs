@@ -483,10 +483,21 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
-    let state = match result.outcome {
-        TriageOutcome::ReadyForAgent => label::READY_FOR_AGENT,
-        TriageOutcome::NeedsInfo => label::NEEDS_INFO,
-        TriageOutcome::ReadyForHuman => label::READY_FOR_HUMAN,
+    // A comment doesn't send a hand-back back, a label does
+    // (`docs/specs/product.md`, "Triage"), so the hand-back names them.
+    let (state, body) = match result.outcome {
+        TriageOutcome::ReadyForAgent => (label::READY_FOR_AGENT, result.comment),
+        TriageOutcome::NeedsInfo => (label::NEEDS_INFO, result.comment),
+        TriageOutcome::ReadyForHuman => (
+            label::READY_FOR_HUMAN,
+            format!(
+                "{}\n\nA comment does not send this issue back: apply `{}` to implement it as \
+                 decided, or `{}` to triage it again.",
+                result.comment.trim_end(),
+                label::READY_FOR_AGENT,
+                label::NEEDS_TRIAGE
+            ),
+        ),
     };
     for other in label::STATES.into_iter().filter(|l| *l != state) {
         store.remove_label(issue.number, other).await?;
@@ -507,7 +518,7 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     }
     store.add_label(issue.number, state).await?;
     store
-        .comment(issue.number, &marked(Stage::Triage, &result.comment))
+        .comment(issue.number, &marked(Stage::Triage, &body))
         .await
 }
 
