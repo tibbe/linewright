@@ -39,6 +39,49 @@ struct ResultEvent {
     api_error_status: Option<serde_json::Value>,
 }
 
+/// What every turn reads: only the repository's configuration and agent
+/// instructions, beside managed policy, never the operator's user-level
+/// setup, and no memory of its own (`docs/specs/product.md`, "Repository").
+/// The settings outrank the repository's, so it cannot turn auto-memory back
+/// on. claude.ai connectors come with the operator's login and `CLAUDE.md`
+/// files with every directory above the clone, whatever the setting sources,
+/// so the settings turn those off too. Docs:
+/// <https://code.claude.com/docs/en/agent-sdk/claude-code-features#what-settingsources-does-not-control>,
+/// <https://code.claude.com/docs/en/memory>.
+fn isolation_args(clone: &Path) -> [String; 4] {
+    let mut excludes = Vec::new();
+    for dir in clone.ancestors().skip(1) {
+        let pattern = escape_glob(dir.to_string_lossy().trim_end_matches('/'));
+        excludes.push(format!("{pattern}/*.md"));
+        // A clone under this `.claude` keeps its own instructions.
+        if !clone.starts_with(dir.join(".claude")) {
+            excludes.push(format!("{pattern}/.claude/**"));
+        }
+    }
+    let settings = serde_json::json!({
+        "autoMemoryEnabled": false,
+        "disableClaudeAiConnectors": true,
+        "claudeMdExcludes": excludes,
+    });
+    [
+        "--setting-sources".into(),
+        "project,local".into(),
+        "--settings".into(),
+        settings.to_string(),
+    ]
+}
+
+/// `path` as a glob that matches it alone. Claude Code's globs treat
+/// parentheses as special too, so `globset::escape` won't do.
+fn escape_glob(path: &str) -> String {
+    path.chars()
+        .map(|c| match c {
+            '?' | '*' | '[' | ']' | '{' | '}' | '(' | ')' => format!("[{c}]"),
+            c => c.to_string(),
+        })
+        .collect()
+}
+
 const TAIL_LINES: usize = 30;
 
 /// What a session said, kept as it streams so a timed-out session still
@@ -68,6 +111,8 @@ impl ClaudeCode {
         session_args: [&str; 2],
         prompt: &str,
     ) -> Result<Turn, SessionError> {
+        // Claude Code matches `CLAUDE.md` files by their real path.
+        let clone = std::fs::canonicalize(&spec.dir).unwrap_or_else(|_| spec.dir.clone());
         let mut command = Command::new(&self.program);
         command
             .args([
@@ -78,6 +123,7 @@ impl ClaudeCode {
                 "--permission-mode",
                 "bypassPermissions",
             ])
+            .args(isolation_args(&clone))
             .args(session_args)
             .current_dir(&spec.dir)
             .env("TMPDIR", &spec.scratch)

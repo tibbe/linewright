@@ -409,8 +409,9 @@ impl World {
 }
 
 /// A stand-in for the `claude` program, written to `dir`: every turn answers
-/// `message`, appends the GitHub tokens it was given to `dir/tokens.log` and
-/// its temporary directory to `dir/tmpdir.log`.
+/// `message`, appends the GitHub tokens it was given to `dir/tokens.log`, its
+/// temporary directory to `dir/tmpdir.log` and its arguments, one per line and
+/// followed by a blank line, to `dir/args.log`.
 pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
@@ -425,11 +426,13 @@ pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
         "#!/bin/sh\n\
          if [ \"$1\" = --version ]; then echo 'fake claude'; exit 0; fi\n\
          cat > /dev/null\n\
+         printf '%s\\n' \"$@\" '' >> '{args}'\n\
          echo \"GH_TOKEN=${{GH_TOKEN-}} GITHUB_TOKEN=${{GITHUB_TOKEN-}}\" >> '{tokens}'\n\
          echo \"TMPDIR=${{TMPDIR-}}\" >> '{tmpdir}'\n\
          cat <<'EOF'\n{event}\nEOF\n",
         tokens = dir.join("tokens.log").display(),
         tmpdir = dir.join("tmpdir.log").display(),
+        args = dir.join("args.log").display(),
     );
     std::fs::write(&program, script).unwrap();
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();

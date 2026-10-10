@@ -22,6 +22,14 @@ linewright --repo owner/name serve
   workflow with its last and next run, and any workflow file that does not
   parse; `workflow run NAME` runs the workflow in
   `.linewright/workflows/NAME.md` once, now.
+- Agent sessions ignore your user-level Claude Code setup: its settings,
+  skills, plugins, MCP servers, `CLAUDE.md` and claude.ai connectors, and the
+  `CLAUDE.md` files in directories above their clones. They read the
+  repository's `AGENTS.md`, `CLAUDE.md`, `.claude/` and `.mcp.json`, plus any
+  managed policy, and auto-memory is always off. Put what sessions need in the
+  environment (variables, and `ANTHROPIC_API_KEY` in place of an
+  `apiKeyHelper`) or the repository (its `.claude/settings.json` or
+  `.mcp.json`).
 - Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
   in `linewright.toml`; `linewright --help` lists them with their defaults.
 - The `Dockerfile` builds the base image: `linewright`, `git` and Claude Code.
