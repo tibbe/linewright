@@ -235,6 +235,26 @@ fn check(name: &str, state: CheckState, log: &str) -> CheckRecord {
 }
 
 #[tokio::test]
+async fn a_green_pull_request_is_marked_ready_for_review_with_no_one_asked_to_review_it() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .set_checks(pr, vec![check("test", CheckState::Passed, "")])
+        .await
+        .unwrap();
+
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(
+        view.state,
+        linewright::domain::PullState::Open { draft: false }
+    );
+    assert_eq!(world.store.requested_reviewers(pr), []);
+}
+
+#[tokio::test]
 async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_requested_again() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -1216,10 +1236,7 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_me
 
     let view = world.store.snapshot_pull(pr).await;
     assert_eq!(view.state, PullState::Open { draft: false });
-    assert_eq!(
-        world.store.requested_reviewers(pr),
-        [Login::new("maintainer")]
-    );
+    assert_eq!(world.store.requested_reviewers(pr), []);
     let comments: Vec<&str> = view.comments.iter().map(|c| c.body.as_str()).collect();
     assert_eq!(
         comments,

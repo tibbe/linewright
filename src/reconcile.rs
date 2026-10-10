@@ -193,7 +193,6 @@ pub enum Action {
     },
     MarkReady {
         pr: Number,
-        reviewers: Vec<Login>,
     },
     /// Forget the pull request's failed merges, so that its ticket, given
     /// back and labeled again, retries the merge afresh.
@@ -217,12 +216,10 @@ pub enum Action {
         pr: Number,
     },
     /// Hand a pull request the default branch's rules block to people: mark
-    /// it ready for review if a draft, request review and comment
-    /// [`hold_note`].
+    /// it ready for review if a draft and comment [`hold_note`].
     HoldForReview {
         pr: Number,
         draft: bool,
-        reviewers: Vec<Login>,
         requires: Vec<Requirement>,
     },
     CloseTracking {
@@ -678,24 +675,13 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
         return;
     }
     let draft = pr.state == (PullState::Open { draft: true });
-    let reviewers = || {
-        issue
-            .assignees
-            .iter()
-            .filter(|a| a.is_person_besides(machine))
-            .cloned()
-            .collect()
-    };
     // A pull request a person holds is marked ready as it is without
     // auto-merge, so the people holding it can approve it.
     let method = match policy.auto_merge {
         Some(method) if !is_held(pr, machine) => method,
         _ => {
             if draft {
-                plan.act(Action::MarkReady {
-                    pr: pr_number,
-                    reviewers: reviewers(),
-                });
+                plan.act(Action::MarkReady { pr: pr_number });
             }
             return;
         }
@@ -722,7 +708,6 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
             .act(Action::HoldForReview {
                 pr: pr_number,
                 draft,
-                reviewers: reviewers(),
                 requires: requires.clone(),
             }),
         Mergeability::Unknown if draft => {

@@ -14,9 +14,7 @@ use tracing::{error, info, warn};
 
 use crate::briefs::Briefs;
 use crate::clock::Clock;
-use crate::domain::{
-    Login, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
-};
+use crate::domain::{MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label};
 use crate::marker::{Stage, marked};
 use crate::reconcile::{
     Action, FailedMerge, LiveRun, Memory, Policy, Workflows, hold_note, reconcile,
@@ -40,7 +38,7 @@ pub struct FactoryConfig {
     pub session_timeout: std::time::Duration,
     /// `None` follows the repository's settings.
     pub update_method: Option<UpdateMethod>,
-    /// Merge green pull requests instead of requesting review.
+    /// Merge green pull requests instead of leaving them for review.
     pub auto_merge: bool,
     /// `None` follows the repository's settings.
     pub merge_method: Option<MergeMethod>,
@@ -346,7 +344,7 @@ impl Factory {
                 info!(issue = issue.0, stage = %stage, reason, "handing back");
                 run::hand_back(&self.shell, *issue, *stage, reason, None).await?;
             }
-            Action::MarkReady { pr, reviewers } => {
+            Action::MarkReady { pr } => {
                 info!(pr = pr.0, "marking ready for review");
                 let has_ci = snapshot.pull(*pr).is_some_and(|p| !p.checks.is_empty());
                 let note = if has_ci {
@@ -354,7 +352,7 @@ impl Factory {
                 } else {
                     "No CI reported: ready for review."
                 };
-                ready_for_review(store.as_ref(), *pr, true, reviewers, note).await?;
+                ready_for_review(store.as_ref(), *pr, true, note).await?;
             }
             Action::Merge {
                 pr,
@@ -387,7 +385,6 @@ impl Factory {
             Action::HoldForReview {
                 pr,
                 draft,
-                reviewers,
                 requires,
             } => {
                 info!(
@@ -395,8 +392,7 @@ impl Factory {
                     ?requires,
                     "holding for review: GitHub blocks the merge"
                 );
-                ready_for_review(store.as_ref(), *pr, *draft, reviewers, &hold_note(requires))
-                    .await?;
+                ready_for_review(store.as_ref(), *pr, *draft, &hold_note(requires)).await?;
             }
             Action::CloseTracking { issue } => {
                 info!(issue = issue.0, "closing tracking issue");
@@ -463,20 +459,11 @@ async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationTok
     }
 }
 
-/// Hands the pull request to people: marks it ready for review if `draft`,
-/// requests review from `reviewers` and comments `note`.
-async fn ready_for_review(
-    store: &dyn Store,
-    pr: Number,
-    draft: bool,
-    reviewers: &[Login],
-    note: &str,
-) -> Result<()> {
+/// Hands the pull request to people: marks it ready for review if `draft`
+/// and comments `note`.
+async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str) -> Result<()> {
     if draft {
         store.mark_ready(pr).await?;
-    }
-    if !reviewers.is_empty() {
-        store.request_review(pr, reviewers).await?;
     }
     store.comment(pr, &marked(Stage::Review, note)).await
 }

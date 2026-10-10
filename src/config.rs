@@ -107,7 +107,7 @@ pub struct Settings {
     /// `rebase` or `merge` [default: from the repository's settings]
     #[arg(long, global = true)]
     pub update_branch: Option<String>,
-    /// Merge green pull requests instead of requesting review [default: off]
+    /// Merge green pull requests instead of leaving them for review [default: off]
     #[arg(long, global = true, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     pub auto_merge: Option<String>,
     /// `merge`, `squash` or `rebase` [default: from the repository's settings]

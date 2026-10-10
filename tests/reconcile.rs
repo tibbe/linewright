@@ -573,16 +573,13 @@ fn at(world: &Snapshot, minute: i64) -> Vec<Action> {
 }
 
 #[test]
-fn a_green_draft_is_marked_ready_and_review_requested_from_the_human_assignees() {
+fn a_green_draft_is_marked_ready_for_review_with_no_one_asked_to_review_it() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
 
     assert_eq!(
         at(&in_review(pr), 10),
-        vec![Action::MarkReady {
-            pr: Number(20),
-            reviewers: vec![Login::new("maintainer")],
-        }]
+        vec![Action::MarkReady { pr: Number(20) }]
     );
 }
 
@@ -1061,7 +1058,6 @@ fn with_auto_merge_a_green_pull_request_github_blocks_is_held_for_review_and_not
         vec![Action::HoldForReview {
             pr: Number(20),
             draft: true,
-            reviewers: vec![Login::new("maintainer")],
             requires: code_owner_review(),
         }]
     );
@@ -1079,7 +1075,6 @@ fn a_pull_request_github_blocks_is_held_for_review_after_it_is_marked_ready() {
         vec![Action::HoldForReview {
             pr: Number(20),
             draft: false,
-            reviewers: vec![Login::new("maintainer")],
             requires: code_owner_review(),
         }]
     );
@@ -1137,7 +1132,6 @@ fn a_pull_request_is_held_again_when_what_github_requires_changes() {
         vec![Action::HoldForReview {
             pr: Number(20),
             draft: false,
-            reviewers: vec![Login::new("maintainer")],
             requires,
         }]
     );
@@ -1184,10 +1178,7 @@ fn without_auto_merge_a_green_pull_request_github_blocks_is_marked_ready_as_any_
 
     assert_eq!(
         at(&in_review(draft), 10),
-        vec![Action::MarkReady {
-            pr: Number(20),
-            reviewers: vec![Login::new("maintainer")],
-        }]
+        vec![Action::MarkReady { pr: Number(20) }]
     );
     assert_eq!(at(&in_review(ready_for_review), 10), vec![]);
 }
@@ -1212,10 +1203,7 @@ fn with_auto_merge_a_green_pull_request_a_person_commented_on_waits_for_their_ap
 
     assert_eq!(
         auto_merging(&draft, 10),
-        vec![Action::MarkReady {
-            pr: Number(20),
-            reviewers: vec![Login::new("maintainer")],
-        }]
+        vec![Action::MarkReady { pr: Number(20) }]
     );
     assert_eq!(auto_merging(&ready, 10), vec![]);
 }
@@ -1270,10 +1258,7 @@ fn with_auto_merge_a_person_who_comments_after_approving_holds_the_merge_until_t
 
     assert_eq!(
         auto_merging(&commented, 10),
-        vec![Action::MarkReady {
-            pr: Number(20),
-            reviewers: vec![Login::new("maintainer")],
-        }]
+        vec![Action::MarkReady { pr: Number(20) }]
     );
     assert_eq!(auto_merging(&approved_again, 10), vec![merge(20, false)]);
 }
