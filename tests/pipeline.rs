@@ -37,6 +37,94 @@ async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
     assert!(issue.open);
 }
 
+/// Triages two issues in one poll with sessions that each draft a comment in
+/// their scratch directory, and returns each session's scratch directory
+/// with whether it was empty when the session started.
+async fn triage_two_issues_drafting_in_scratch() -> Vec<(std::path::PathBuf, bool)> {
+    let mut world = World::new().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sessions = seen.clone();
+    world.runtime.on(WorkKind::Triage, move |call| {
+        let scratch = call.spec.scratch.clone();
+        let empty = std::fs::read_dir(&scratch).unwrap().next().is_none();
+        std::fs::write(scratch.join("comment.md"), "A draft.").unwrap();
+        sessions.lock().unwrap().push((scratch, empty));
+        json(json!({
+            "outcome": "ready-for-agent",
+            "category": "bug",
+            "comment": "## Agent Brief\n\n**Summary:** It crashes."
+        }))
+    });
+    for title in ["Crash on empty widget", "Crash on full widget"] {
+        world
+            .store
+            .open_issue("reporter", title, "It crashes.", &["needs-triage"]);
+    }
+
+    world.poll().await;
+
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2);
+    seen
+}
+
+#[tokio::test]
+async fn sessions_running_at_once_get_different_scratch_directories() {
+    let seen = triage_two_issues_drafting_in_scratch().await;
+
+    assert_ne!(seen[0].0, seen[1].0);
+}
+
+#[tokio::test]
+async fn a_sessions_scratch_directory_is_empty_when_it_starts() {
+    let seen = triage_two_issues_drafting_in_scratch().await;
+
+    assert_eq!(
+        seen.iter().map(|(_, empty)| *empty).collect::<Vec<_>>(),
+        [true, true]
+    );
+}
+
+#[tokio::test]
+async fn a_sessions_scratch_directory_is_removed_when_its_run_ends() {
+    let seen = triage_two_issues_drafting_in_scratch().await;
+
+    assert_eq!(
+        seen.iter()
+            .map(|(scratch, _)| scratch.exists())
+            .collect::<Vec<_>>(),
+        [false, false]
+    );
+}
+
+#[tokio::test]
+async fn triage_and_implement_tasks_say_to_keep_scratch_files_in_the_temporary_directory() {
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Triage, |_| {
+        json(json!({
+            "outcome": "ready-for-agent",
+            "category": "bug",
+            "comment": "## Agent Brief\n\n**Summary:** It crashes."
+        }))
+    });
+    world.store.open_issue(
+        "reporter",
+        "Crash on empty widget",
+        "It crashes.",
+        &["needs-triage"],
+    );
+    world.poll().await;
+    world.ticket_in_review().await;
+
+    let prompts = [WorkKind::Triage, WorkKind::Implement]
+        .into_iter()
+        .flat_map(|kind| world.runtime.prompts(kind));
+
+    for prompt in prompts {
+        assert!(prompt.contains("`$TMPDIR`"), "{prompt}");
+    }
+}
+
 fn triage_for_the_maintainer(world: &World) {
     world.runtime.on(WorkKind::Triage, |call| {
         let outcome = if call.spec.prompt.contains("Yes, make them resizable.") {

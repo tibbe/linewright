@@ -249,10 +249,12 @@ fn with_log(reason: &str, log_tail: Option<&str>) -> String {
     }
 }
 
-/// A fresh clone for one run, removed when the run ends.
+/// A fresh clone for one run and an empty scratch directory beside it, both
+/// removed when the run ends.
 struct Workspace {
     _temp: TempDir,
     dir: PathBuf,
+    scratch: PathBuf,
 }
 
 impl Workspace {
@@ -272,7 +274,16 @@ impl Workspace {
         git::set_identity(&dir, &shell.identity.name, &shell.identity.email)
             .await
             .map_err(infra)?;
-        Ok(Workspace { _temp: temp, dir })
+        let scratch = temp.path().join("tmp");
+        tokio::fs::create_dir(&scratch)
+            .await
+            .context("creating a scratch directory")
+            .map_err(infra)?;
+        Ok(Workspace {
+            _temp: temp,
+            dir,
+            scratch,
+        })
     }
 }
 
@@ -457,6 +468,7 @@ fn session_spec(
         record: record_dir(shell, &purpose, shell.clock.now())?,
         purpose,
         dir: ws.dir.clone(),
+        scratch: ws.scratch.clone(),
         prompt,
         deadline: tokio::time::Instant::now() + timeout,
     })

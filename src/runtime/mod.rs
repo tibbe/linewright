@@ -26,6 +26,9 @@ pub struct SessionSpec {
     pub purpose: Purpose,
     /// The clone the session works in.
     pub dir: PathBuf,
+    /// The session's own scratch directory, its temporary directory for
+    /// every turn: sessions running at once never share one.
+    pub scratch: PathBuf,
     /// Where the session's record goes: brief, results and trace.
     pub record: PathBuf,
     pub prompt: String,

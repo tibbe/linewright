@@ -80,6 +80,7 @@ impl ClaudeCode {
             ])
             .args(session_args)
             .current_dir(&spec.dir)
+            .env("TMPDIR", &spec.scratch)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

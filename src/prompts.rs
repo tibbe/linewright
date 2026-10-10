@@ -34,7 +34,7 @@ pub enum PullTask<'a> {
 
 pub fn triage(briefs: &Briefs, repo: &Repo, issue: &Issue, categories: &[String]) -> String {
     let mut task = String::new();
-    repo_facts(&mut task, repo);
+    task_facts(&mut task, repo);
     let _ = writeln!(
         task,
         "- Categories to choose from: {}\n",
@@ -62,7 +62,7 @@ pub fn triage(briefs: &Briefs, repo: &Repo, issue: &Issue, categories: &[String]
 
 pub fn tickets(briefs: &Briefs, repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
     let mut task = String::new();
-    repo_facts(&mut task, repo);
+    task_facts(&mut task, repo);
     let _ = writeln!(
         task,
         "\n### The spec change: {} {}\n\nMerged by its author @{} into `{}`.\n\n{}\n\n#### Spec diff\n\n```diff\n{}\n```",
@@ -91,7 +91,7 @@ pub fn tickets(briefs: &Briefs, repo: &Repo, pr: &MergedPull, spec_diff: &str) -
 
 pub fn implement(briefs: &Briefs, repo: &Repo, ticket: &Ticket, branch: &str) -> String {
     let mut task = String::new();
-    repo_facts(&mut task, repo);
+    task_facts(&mut task, repo);
     let _ = writeln!(
         task,
         "- Branch: `{branch}`, fresh from `{}`. The fixed point for review is `origin/{}`.\n",
@@ -125,7 +125,7 @@ pub fn pull_work(
     conflict: Option<&Conflict>,
 ) -> String {
     let mut task = String::new();
-    repo_facts(&mut task, repo);
+    task_facts(&mut task, repo);
     let _ = writeln!(
         task,
         "- Branch: `{}`, the head of pull request {} \"{}\". The fixed point for review is `origin/{}`.\n",
@@ -194,7 +194,7 @@ Leave `pr_body` out when the description still fits."#;
 
 pub fn workflow(briefs: &Briefs, repo: &Repo, workflow: &Workflow) -> String {
     let mut task = String::new();
-    repo_facts(&mut task, repo);
+    task_facts(&mut task, repo);
     let _ = writeln!(
         task,
         "- Issues: at most {}.\n\n### The workflow `{}`\n\n{}",
@@ -277,10 +277,13 @@ fn demote(text: &str) -> String {
         .join("\n")
 }
 
-fn repo_facts(task: &mut String, repo: &Repo) {
+/// The facts every task opens with: the repository's, and where the session
+/// keeps its scratch files (`docs/specs/architecture.md`, "Sessions are
+/// isolated").
+fn task_facts(task: &mut String, repo: &Repo) {
     let _ = writeln!(
         task,
-        "- Default branch: `{}`\n- Spec: the tracked files matching `{}`",
+        "- Default branch: `{}`\n- Spec: the tracked files matching `{}`\n- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.",
         repo.default_branch, repo.spec_glob
     );
 }
