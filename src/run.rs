@@ -947,17 +947,9 @@ async fn pull_work(
                     .await
                     .map_err(Failure::Apply)?;
             }
-            record_pull_work(
-                shell,
-                ticket.issue,
-                &pr_now,
-                stage,
-                &comment,
-                &replies,
-                feedback_authors,
-            )
-            .await
-            .map_err(Failure::Apply)?;
+            record_pull_work(shell, &pr_now, stage, &comment, &replies, feedback_authors)
+                .await
+                .map_err(Failure::Apply)?;
             file_spec_gaps(shell, &spec_gaps, ticket)
                 .await
                 .map_err(Failure::Apply)
@@ -1034,9 +1026,10 @@ fn feedback_people(feedback: &Feedback, machine: &Login) -> Vec<Login> {
         .collect()
 }
 
+/// Replies in the threads and comments on `pr`, and after a rework asks the
+/// people whose feedback it addressed, `feedback_authors`, to review again.
 async fn record_pull_work(
     shell: &Shell,
-    ticket: &Issue,
     pr: &Pull,
     stage: Stage,
     comment: &str,
@@ -1044,7 +1037,6 @@ async fn record_pull_work(
     feedback_authors: Vec<Login>,
 ) -> Result<()> {
     let store = &shell.store;
-    let machine = &shell.policy.machine_user;
     for reply in replies {
         store
             .reply_in_thread(pr.number, &reply.thread, &marked(stage, &reply.body))
@@ -1063,13 +1055,6 @@ async fn record_pull_work(
     store.comment(pr.number, &marked(stage, comment)).await?;
     if stage == Stage::Rework {
         let mut reviewers = feedback_authors;
-        reviewers.extend(
-            ticket
-                .assignees
-                .iter()
-                .filter(|a| a.is_person_besides(machine))
-                .cloned(),
-        );
         reviewers.sort();
         reviewers.dedup();
         if !reviewers.is_empty() {

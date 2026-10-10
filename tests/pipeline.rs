@@ -306,6 +306,83 @@ async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_r
     );
 }
 
+/// Runs a rework of the comments `authors` post, one each, on a ticket the
+/// maintainer is assigned, and returns who was asked for review.
+async fn reviewers_after_rework_of_comments_by(authors: &[&str]) -> Vec<Login> {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    for author in authors {
+        world.store.comment_as(author, pr, "Rename it.").unwrap();
+    }
+    world.runtime.on(WorkKind::Rework, |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("src/renamed.txt", "renamed\n")],
+            "Rename",
+        );
+        json(json!({"outcome": "done", "comment": "Renamed as asked."}))
+    });
+
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+    world.store.requested_reviewers(pr)
+}
+
+#[tokio::test]
+async fn a_rework_requests_review_from_the_commenter_and_not_from_an_assignee_who_did_not_comment()
+{
+    assert_eq!(
+        reviewers_after_rework_of_comments_by(&["reviewer"]).await,
+        [Login::new("reviewer")]
+    );
+}
+
+#[tokio::test]
+async fn a_rework_of_only_bot_comments_requests_review_from_no_one() {
+    assert_eq!(
+        reviewers_after_rework_of_comments_by(&["linter[bot]"]).await,
+        []
+    );
+}
+
+#[tokio::test]
+async fn a_rework_requests_review_from_a_person_whose_feedback_arrived_while_it_worked() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("reviewer", pr, "Add a changelog entry.")
+        .unwrap();
+    let store = world.store.clone();
+    world.runtime.on(WorkKind::Rework, move |call| {
+        if call.followup.is_none() {
+            commit_in(
+                &call.spec.dir,
+                &[("CHANGELOG.md", "- thing\n")],
+                "Changelog",
+            );
+            store
+                .comment_as("designer", pr, "Also update the README.")
+                .unwrap();
+            return json(json!({"outcome": "done", "comment": "Added the entry."}));
+        }
+        commit_in(
+            &call.spec.dir,
+            &[("README.md", "# Widgets, updated\n")],
+            "README",
+        );
+        json(json!({"outcome": "done", "comment": "Added the entry and updated the README."}))
+    });
+
+    world.poll().await;
+
+    assert_eq!(
+        world.store.requested_reviewers(pr),
+        [Login::new("designer"), Login::new("reviewer")]
+    );
+}
+
 #[tokio::test]
 async fn a_rework_that_makes_the_description_out_of_date_rewrites_it() {
     let mut world = World::new().await;
