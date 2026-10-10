@@ -105,10 +105,13 @@ it: labels start and stop work, and pull requests show it.
     reviews they require are skipped.
   - Spec files: tracked Markdown matching the spec glob (default
     `docs/**/*.md`).
-- Used when present: the files the agents' briefs rely on, `CODING_STANDARDS.md`
-  (what code review holds changes to) and `GLOSSARY.md` (the vocabulary
-  agents read before exploring), and CI as checks on pull requests. The agent instructions the runtime reads on its own
-  (`AGENTS.md`, `CLAUDE.md`) apply as in any session.
+- Used when present: the files the agents' briefs rely on,
+  `CODING_STANDARDS.md` (what code review holds changes to) and `GLOSSARY.md`
+  (the vocabulary agents read before exploring), and CI as checks on pull
+  requests. The agent instructions and configuration the runtime reads from
+  the repository apply as in any session. The operator's own Claude Code
+  setup does not, and sessions keep no memory of their own: what later
+  sessions should know belongs in the repository.
 - Labels. Linewright creates any that are missing at startup and never renames
   or deletes one. Labels only Linewright uses are prefixed `linewright:`.
 

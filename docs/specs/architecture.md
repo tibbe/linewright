@@ -16,7 +16,10 @@ later.
   a real and a fake implementation.
 - **Agents are headless Claude Code sessions, one per stage**, each in its
   own clone, without permission prompts, behind one runtime interface. The
-  model is configuration.
+  model is configuration. Sessions are isolated: those running at once
+  cannot disturb each other, and what a session does depends on its brief,
+  the repository and what it reads during the session, never on what an
+  earlier session left behind or on the host's user-level setup.
 - **The brief and the result are the protocol between the manager and an
   agent.** The manager puts what a session needs from the store (issue,
   comments, spec diff, PR comments) into its brief. The protocol is how the
