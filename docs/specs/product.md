@@ -87,10 +87,14 @@ it: labels start and stop work, and pull requests show it.
 
 ### User Stories
 
-1. As an operator, I want to point Linewright at a repository and have it create what it needs, so that setup is a token and a flag.
-2. As an operator, I want the repository to stay usable by people at the same time, so that the factory shares the repository rather than owning it.
-3. As an operator, I want Linewright to refuse to start when it cannot work, so that a misconfiguration is loud.
-4. As an operator, I want to start work by applying one label and stop it by removing it, so that control needs nothing but GitHub.
+1. As an operator, I want to point Linewright at a repository and have it create
+   what it needs, so that setup is a token and a flag.
+2. As an operator, I want the repository to stay usable by people at the same
+   time, so that the factory shares the repository rather than owning it.
+3. As an operator, I want Linewright to refuse to start when it cannot work, so
+   that a misconfiguration is loud.
+4. As an operator, I want to start work by applying one label and stop it by
+   removing it, so that control needs nothing but GitHub.
 
 ### Decisions
 
@@ -160,11 +164,16 @@ stateDiagram-v2
 
 ### User Stories
 
-1. As an operator, I want a merged change to the spec to start agents that bring the code in step with it, so that writing the spec is how I build.
-2. As an operator, I want new issues triaged by an agent, so that reporters get an answer and clear issues become work without me.
-3. As an operator, I want to hand any issue to the factory by labeling it, so that I decide what gets built.
-4. As an operator, I want a spec change that is already implemented to produce no work, so that implementing by hand stays possible.
-5. As an operator, I want agents to run on a schedule with instructions I write, so that recurring work happens without me.
+1. As an operator, I want a merged change to the spec to start agents that bring
+   the code in step with it, so that writing the spec is how I build.
+2. As an operator, I want new issues triaged by an agent, so that reporters get
+   an answer and clear issues become work without me.
+3. As an operator, I want to hand any issue to the factory by labeling it, so
+   that I decide what gets built.
+4. As an operator, I want a spec change that is already implemented to produce
+   no work, so that implementing by hand stays possible.
+5. As an operator, I want agents to run on a schedule with instructions I write,
+   so that recurring work happens without me.
 
 ### Decisions
 
@@ -185,10 +194,15 @@ stateDiagram-v2
 
 ### User Stories
 
-1. As an operator, I want new issues classified and their claims verified, so that only real, clear work reaches an implementer.
-2. As an operator, I want reporters asked for what is missing and their answers picked up, so that I am not the go-between.
-3. As an operator, I want an issue that needs my decision handed to me with a recommendation and my answer in the thread picked up, so that my part is a decision, not research or bookkeeping.
-4. As an operator, I want duplicates and already-fixed issues flagged rather than closed, so that no reporter is turned away by a machine.
+1. As an operator, I want new issues classified and their claims verified, so
+   that only real, clear work reaches an implementer.
+2. As an operator, I want reporters asked for what is missing and their answers
+   picked up, so that I am not the go-between.
+3. As an operator, I want an issue that needs my decision handed to me with a
+   recommendation and my answer in the thread picked up, so that my part is a
+   decision, not research or bookkeeping.
+4. As an operator, I want duplicates and already-fixed issues flagged rather
+   than closed, so that no reporter is turned away by a machine.
 
 ### Decisions
 
@@ -234,9 +248,13 @@ stateDiagram-v2
 
 ### User Stories
 
-1. As an operator, I want a spec change cut into tickets an agent session finishes within its smart zone, so that the work is done by agents at their sharpest; that each PR is small enough to review is a welcome side effect.
-2. As an operator, I want tickets ordered by dependency and worked in that order, so that each builds on merged work.
-3. As an operator, I want one place that shows a spec change's progress, so that I know when it is done.
+1. As an operator, I want a spec change cut into tickets an agent session
+   finishes within its smart zone, so that the work is done by agents at their
+   sharpest; that each PR is small enough to review is a welcome side effect.
+2. As an operator, I want tickets ordered by dependency and worked in that
+   order, so that each builds on merged work.
+3. As an operator, I want one place that shows a spec change's progress, so that
+   I know when it is done.
 
 ### Decisions
 
@@ -269,10 +287,14 @@ trigger fires. Workflows sit beside the pipeline and may hand it work.
 
 ### User Stories
 
-1. As an operator, I want an agent to run on a schedule with instructions I write, so that recurring work happens without me.
-2. As an operator, I want a workflow able to hand work to the pipeline, so that it is built and reviewed like any other work.
-3. As an operator, I want workflows defined in the repository, so that adding one is a reviewed change, versioned with the code.
-4. As an operator, I want to run a workflow by hand, so that I can try its instructions without waiting for its schedule.
+1. As an operator, I want an agent to run on a schedule with instructions I
+   write, so that recurring work happens without me.
+2. As an operator, I want a workflow able to hand work to the pipeline, so that
+   it is built and reviewed like any other work.
+3. As an operator, I want workflows defined in the repository, so that adding
+   one is a reviewed change, versioned with the code.
+4. As an operator, I want to run a workflow by hand, so that I can try its
+   instructions without waiting for its schedule.
 
 ### Decisions
 
@@ -326,20 +348,27 @@ trigger fires. Workflows sit beside the pipeline and may hand it work.
 
 ### User Stories
 
-1. As an operator, I want each ticket implemented on its own branch from a fresh checkout, so that runs never interfere with each other or with my working copy.
-2. As an operator, I want the work reviewed by agents and passing the repository's checks before a PR exists, so that the first version I see has been through review.
-3. As an operator, I want the spec left as it is by agents, so that it stays mine.
-4. As an operator, I want an agent that cannot finish to hand the ticket back with the reason, so that nothing stalls silently.
-5. As an operator, I want several tickets worked at once up to a ceiling I set, so that throughput is mine to choose.
+1. As an operator, I want each ticket implemented on its own branch from a fresh
+   checkout, so that runs never interfere with each other or with my working
+   copy.
+2. As an operator, I want the work reviewed by agents and passing the
+   repository's checks before a PR exists, so that the first version I see has
+   been through review.
+3. As an operator, I want the spec left as it is by agents, so that it stays
+   mine.
+4. As an operator, I want an agent that cannot finish to hand the ticket back
+   with the reason, so that nothing stalls silently.
+5. As an operator, I want several tickets worked at once up to a ceiling I set,
+   so that throughput is mine to choose.
 
 ### Decisions
 
 - Claiming is adding the machine user as an assignee. A **fresh run** (no
   open pull request for the ticket) starts from a fresh clone of the default
   branch on a new branch for the ticket, replacing any earlier one.
-- The implementer reads the ticket and its comments (the triage brief,
-  earlier handbacks), implements, runs the repository's checks, has the work reviewed
-  in fresh contexts for both standards and spec, addresses the findings and
+- The implementer reads the ticket and its comments (the triage brief, earlier
+  handbacks), implements, runs the repository's checks, has the work reviewed in
+  fresh contexts for both standards and spec, addresses the findings and
   commits. How many review rounds it takes is its judgment, bounded by the
   session timeout.
 - The implementer leaves spec files as they are, by its brief; a spec it
@@ -369,13 +398,21 @@ trigger fires. Workflows sit beside the pipeline and may hand it work.
 
 ### User Stories
 
-1. As an operator, I want the PR to be a draft until CI passes, so that I am only asked to review green PRs.
-2. As an operator, I want CI failures fixed by the agent, so that red CI costs me nothing.
-3. As an operator, I want my review comments addressed and answered where I wrote them, so that review is a conversation with the branch.
-4. As an operator, I want branches kept up to date with the default branch and mergeable by every method my repository allows, rewriting history only when they must, so that I pick how to merge and my review is not disturbed.
+1. As an operator, I want the PR to be a draft until CI passes, so that I am
+   only asked to review green PRs.
+2. As an operator, I want CI failures fixed by the agent, so that red CI costs
+   me nothing.
+3. As an operator, I want my review comments addressed and answered where I
+   wrote them, so that review is a conversation with the branch.
+4. As an operator, I want branches kept up to date with the default branch and
+   mergeable by every method my repository allows, rewriting history only when
+   they must, so that I pick how to merge and my review is not disturbed.
 5. As an operator, I want to merge myself, so that nothing lands without me.
-6. As an operator, I want closing a PR to mean rejection, so that the factory does not redo what I refused.
-7. As an operator, I want to let Linewright merge its own green PRs, except those my repository requires a person to review, so that only the changes I have reserved for myself wait for me.
+6. As an operator, I want closing a PR to mean rejection, so that the factory
+   does not redo what I refused.
+7. As an operator, I want to let Linewright merge its own green PRs, except
+   those my repository requires a person to review, so that only the changes I
+   have reserved for myself wait for me.
 
 ### Decisions
 
@@ -451,11 +488,16 @@ stateDiagram-v2
 
 ### User Stories
 
-1. As an operator, I want one binary configured by flags, environment variables or a config file, so that a deployment is reproducible.
-2. As an operator, I want a one-shot mode, so that I can test a cycle by hand or run it from cron.
-3. As an operator, I want to run it directly on a machine or inside a container, so that I choose the isolation.
-4. As an operator, I want to run it on Linux in production and on macOS while developing.
-5. As an operator, I want what Linewright does available as commands, so that I and coding agents can drive and debug it.
+1. As an operator, I want one binary configured by flags, environment variables
+   or a config file, so that a deployment is reproducible.
+2. As an operator, I want a one-shot mode, so that I can test a cycle by hand or
+   run it from cron.
+3. As an operator, I want to run it directly on a machine or inside a container,
+   so that I choose the isolation.
+4. As an operator, I want to run it on Linux in production and on macOS while
+   developing.
+5. As an operator, I want what Linewright does available as commands, so that I
+   and coding agents can drive and debug it.
 
 ### Decisions
 
@@ -515,10 +557,15 @@ briefs, reads the results and the traces, and iterates.
 
 ### User Stories
 
-1. As an operator, I want to capture a spec change the factory handled as a case on disk, so that I can run it again.
-2. As an operator, I want to run a case through the whole pipeline on my machine with GitHub out of the loop, so that a change to a brief is tried in minutes.
-3. As an operator, I want a run's results, the tickets, pull requests, comments and every agent session's trace, as files, so that a coding agent can read them, judge them and change the briefs.
-4. As an operator, I want to edit the briefs between runs without rebuilding Linewright, so that iterating is editing a file.
+1. As an operator, I want to capture a spec change the factory handled as a case
+   on disk, so that I can run it again.
+2. As an operator, I want to run a case through the whole pipeline on my machine
+   with GitHub out of the loop, so that a change to a brief is tried in minutes.
+3. As an operator, I want a run's results, the tickets, pull requests, comments
+   and every agent session's trace, as files, so that a coding agent can read
+   them, judge them and change the briefs.
+4. As an operator, I want to edit the briefs between runs without rebuilding
+   Linewright, so that iterating is editing a file.
 
 ### Decisions
 
@@ -556,8 +603,10 @@ briefs, reads the results and the traces, and iterates.
 
 ### User Stories
 
-1. As an operator, I want every outcome recorded on the issue or PR it concerns, so that GitHub is the audit trail.
-2. As an operator, I want the server's log to say what it is doing and why, so that I can debug it without GitHub.
+1. As an operator, I want every outcome recorded on the issue or PR it concerns,
+   so that GitHub is the audit trail.
+2. As an operator, I want the server's log to say what it is doing and why, so
+   that I can debug it without GitHub.
 
 ### Decisions
 

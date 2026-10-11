@@ -23,14 +23,14 @@ later.
 - **The brief and the result are the protocol between the manager and an
   agent.** The manager puts what a session needs from the store (issue,
   comments, spec diff, PR comments) into its brief. The protocol is how the
-  pipeline talks to an agent, not a limit on what the agent reaches: an
-  agent may read GitHub, the web or anything else its session can. The session works in its own clone
-  under the work directory and commits there; its final message is JSON the
-  manager parses and applies: the outcome, tickets, comments, the PR's title
-  and body. The manager pushes the branch and opens the PR through the store.
-  Only the manager writes to the store; prose for people goes to comments. A
-  result that does not parse is sent back to the session with the error, a
-  bounded number of times.
+  pipeline talks to an agent, not a limit on what the agent reaches: an agent
+  may read GitHub, the web or anything else its session can. The session works
+  in its own clone under the work directory and commits there; its final message
+  is JSON the manager parses and applies: the outcome, tickets, comments, the
+  PR's title and body. The manager pushes the branch and opens the PR through
+  the store. Only the manager writes to the store; prose for people goes to
+  comments. A result that does not parse is sent back to the session with the
+  error, a bounded number of times.
 - **Agents are trusted, and rules are kept by the brief.** Agents and
   maintainers are not adversaries; a rule is enforced in code only where
   Linewright would malfunction without it. Anything else, such as an agent

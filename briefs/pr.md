@@ -1,4 +1,6 @@
-<!-- Forked from mattpocock/skills, skills/engineering/pr (MIT, see LICENSE; its Summary visuals credit Dex Horthy's show-me skill). Made non-interactive for Linewright. -->
+<!-- Forked from mattpocock/skills, skills/engineering/pr (MIT, see LICENSE; its
+Summary visuals credit Dex Horthy's show-me skill). Made non-interactive for
+Linewright. -->
 
 # Pull request
 

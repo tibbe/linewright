@@ -10,15 +10,73 @@ true | 1) fix=false ;;
 *) fix=true ;;
 esac
 
+# rumdl (https://github.com/rvben/rumdl) is fetched from its release and
+# checked against these hashes, so this is the one place its version is set.
+rumdl_version=0.2.79
+
+has_sha256() {
+  local actual
+  actual="$({ sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1)"
+  if [ "$actual" != "$2" ]; then
+    echo "$1 has sha256 $actual, not $2"
+    return 1
+  fi
+}
+
+fetch_rumdl() {
+  local dir=$1 target sha archive tmp
+  case "$(uname -sm)" in
+  "Darwin arm64") target=aarch64-apple-darwin sha=8c0ecf93a61bf612df5f6c6f22813d066a6f51a5680f3c12da49b93ed892aebb ;;
+  "Darwin x86_64") target=x86_64-apple-darwin sha=09cca63968f9a3f35faab71ac8d09bda1a96ba4e0e38cac54bfb7b544523075f ;;
+  "Linux aarch64" | "Linux arm64") target=aarch64-unknown-linux-musl sha=f2ccb236a6b62b9980711a2f54c1e0d8d91ceaea5d7313d0b1a615237b3130bf ;;
+  "Linux x86_64") target=x86_64-unknown-linux-musl sha=a85ae77c6880616118e10dda1e36292df59815bcfbf767201736ff6971213cf3 ;;
+  *)
+    echo "rumdl $rumdl_version has no release for $(uname -sm)"
+    return 1
+    ;;
+  esac
+  archive="rumdl-v$rumdl_version-$target.tar.gz"
+  tmp="$(mktemp -d)"
+  # Renamed into place, so a check running at the same time never sees half
+  # a binary.
+  if curl -fsSL -o "$tmp/$archive" \
+    "https://github.com/rvben/rumdl/releases/download/v$rumdl_version/$archive" &&
+    has_sha256 "$tmp/$archive" "$sha" &&
+    tar -xzf "$tmp/$archive" -C "$tmp" &&
+    mkdir -p "$dir" &&
+    mv "$tmp/rumdl" "$dir/rumdl.$$" &&
+    mv -f "$dir/rumdl.$$" "$dir/rumdl"; then
+    rm -rf "$tmp"
+  else
+    rm -rf "$tmp"
+    return 1
+  fi
+}
+
+rumdl() {
+  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/linewright/rumdl-$rumdl_version"
+  if [ ! -x "$dir/rumdl" ]; then fetch_rumdl "$dir" || return 1; fi
+  "$dir/rumdl" "$@"
+}
+
 check_fmt() {
   if $fix; then cargo fmt; else cargo fmt --check -- --color=never; fi
+}
+
+check_markdown() {
+  if $fix; then
+    rumdl check --fix .
+  else
+    # rumdl itself is not on the PATH.
+    rumdl check . 2>&1 | sed "s/^Run \`rumdl fmt\`/Run \`scripts\/check markdown\`/"
+  fi
 }
 
 check_clippy() { cargo clippy --all-targets --locked --quiet; }
 check_test() { cargo test --locked --quiet; }
 check_doc() { cargo doc --no-deps --locked --quiet; }
 
-stages=("fmt" "clippy" "test doc")
+stages=("fmt markdown" "clippy" "test doc")
 
 usage() {
   echo "usage: scripts/check [NAME...]"

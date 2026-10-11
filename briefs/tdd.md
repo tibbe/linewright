@@ -1,4 +1,5 @@
-<!-- Forked from mattpocock/skills, skills/engineering/tdd with tests.md and mocking.md (MIT, see LICENSE). Made non-interactive for Linewright. -->
+<!-- Forked from mattpocock/skills, skills/engineering/tdd with tests.md and
+mocking.md (MIT, see LICENSE). Made non-interactive for Linewright. -->
 
 # Test-Driven Development
 

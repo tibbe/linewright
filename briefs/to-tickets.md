@@ -1,4 +1,5 @@
-<!-- Forked from mattpocock/skills, skills/engineering/to-tickets (MIT, see LICENSE). Made non-interactive for Linewright. -->
+<!-- Forked from mattpocock/skills, skills/engineering/to-tickets (MIT, see
+LICENSE). Made non-interactive for Linewright. -->
 
 # To Tickets
 

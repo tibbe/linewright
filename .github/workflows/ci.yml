@@ -13,6 +13,12 @@ jobs:
       - run: rustup toolchain install
       - run: scripts/check fmt
 
+  markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/check markdown
+
   clippy:
     runs-on: ubuntu-latest
     steps:

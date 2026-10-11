@@ -1,0 +1,9 @@
+[global]
+enable = ["MD013"]
+exclude = [".agents", ".claude"]
+
+[MD013]
+line-length = 80
+tables = false
+code-blocks = false
+reflow = true
