@@ -24,10 +24,15 @@ Changes to specs require human approval.
 
 `CODING_STANDARDS.md` should always be read before any code review.
 
+## Checks
+
+- Every check CI runs, fixing what it can: `scripts/check`
+- Only the named checks (`scripts/check --help` lists them):
+  `scripts/check NAME...`
+
 ## Area guides
 
 Before working in one of these areas, read its guide:
 
 - [Commits](./docs/commits.md)
-- [Checks](./docs/checks.md)
 - [Developing Linewright](./docs/developing.md): tuning the briefs

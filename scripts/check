@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# https://doc.rust-lang.org/cargo/reference/config.html#buildwarnings
+export CARGO_BUILD_WARNINGS=deny
+
+case "${CI:-}" in
+true | 1) fix=false ;;
+*) fix=true ;;
+esac
+
+check_fmt() {
+  if $fix; then cargo fmt; else cargo fmt --check -- --color=never; fi
+}
+
+check_clippy() { cargo clippy --all-targets --locked --quiet; }
+check_test() { cargo test --locked --quiet; }
+check_doc() { cargo doc --no-deps --locked --quiet; }
+
+stages=("fmt" "clippy" "test doc")
+
+usage() {
+  echo "usage: scripts/check [NAME...]"
+  echo "Runs every check CI runs, or only the named ones: ${stages[*]}."
+  echo "Outside CI it fixes what it can first."
+}
+
+if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
+  usage
+  exit 0
+fi
+if [ $# -gt 0 ]; then
+  for name in "$@"; do
+    if ! declare -F "check_$name" >/dev/null; then
+      usage >&2
+      exit 2
+    fi
+  done
+  stages=("$*")
+fi
+
+passed=""
+failed=""
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+for i in "${!stages[@]}"; do
+  for name in ${stages[$i]}; do
+    if "check_$name" >"$log" 2>&1; then
+      passed="$passed $name"
+    else
+      printf '✗ %s\n' "$name"
+      cat "$log"
+      failed="$failed $name"
+    fi
+  done
+  if [ -n "$failed" ]; then
+    skipped="${stages[*]:$((i + 1))}"
+    echo "failed:$failed${skipped:+; not run: $skipped}"
+    exit 1
+  fi
+done
+echo "ok:$passed (${SECONDS}s)"
