@@ -1,6 +1,4 @@
-# Developing Linewright
-
-## Tuning the briefs
+# Tuning the briefs
 
 Each stage's agent works from a brief in [`briefs/`](../briefs/). To try a
 change against a real case:

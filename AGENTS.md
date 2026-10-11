@@ -35,4 +35,4 @@ Changes to specs require human approval.
 Before working in one of these areas, read its guide:
 
 - [Commits](./docs/commits.md)
-- [Developing Linewright](./docs/developing.md): tuning the briefs
+- [Tuning the briefs](./docs/tuning-briefs.md)
