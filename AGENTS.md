@@ -30,4 +30,4 @@ Before working in one of these areas, read its guide:
 
 - [Commits](./docs/commits.md)
 - [Checks](./docs/checks.md)
-- [Developing Linewright](./docs/developing.md): tuning the briefs, the tests
+- [Developing Linewright](./docs/developing.md): tuning the briefs
