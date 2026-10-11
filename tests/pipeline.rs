@@ -290,13 +290,13 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
     world.clock.advance(chrono::TimeDelta::minutes(6));
     world.poll().await;
 
-    let view = world.store.snapshot_pull(pr).await;
+    let ready = world.store.snapshot_pull(pr).await;
     assert_eq!(
-        view.state,
+        ready.state,
         linewright::domain::PullState::Open { draft: false }
     );
     assert_eq!(
-        view.comments.last().unwrap().body,
+        ready.comments.last().unwrap().body,
         "> *Linewright, review*\n\nNo CI reported: ready for review."
     );
 
@@ -1058,16 +1058,16 @@ async fn by_default_a_branch_is_always_rebased_where_the_repository_requires_lin
     clean.poll().await;
     conflicting.poll().await;
 
-    let head_ref = clean.store.snapshot_pull(clean_pr).await.head_ref;
-    assert!(!contains(&clean, &head_ref, &before), "rebased");
-    assert_eq!(merges(&clean, &head_ref), 0);
+    let clean_ref = clean.store.snapshot_pull(clean_pr).await.head_ref;
+    assert!(!contains(&clean, &clean_ref, &before), "rebased");
+    assert_eq!(merges(&clean, &clean_ref), 0);
     assert_eq!(told_to_finish(&conflicting, WorkKind::Update), ["rebase"]);
-    let head_ref = conflicting
+    let conflicting_ref = conflicting
         .store
         .snapshot_pull(conflicting_pr)
         .await
         .head_ref;
-    assert_eq!(merges(&conflicting, &head_ref), 0);
+    assert_eq!(merges(&conflicting, &conflicting_ref), 0);
 }
 
 #[tokio::test]
@@ -1084,11 +1084,11 @@ async fn update_branch_merge_merges_even_on_a_conflict_and_rebase_always_rebases
     rebasing.poll().await;
 
     assert_eq!(told_to_finish(&merging, WorkKind::Update), ["merge"]);
-    let head_ref = merging.store.snapshot_pull(merging_pr).await.head_ref;
-    assert_eq!(merges(&merging, &head_ref), 1);
-    let head_ref = rebasing.store.snapshot_pull(rebasing_pr).await.head_ref;
-    assert!(!contains(&rebasing, &head_ref, &before), "rebased");
-    assert_eq!(merges(&rebasing, &head_ref), 0);
+    let merging_ref = merging.store.snapshot_pull(merging_pr).await.head_ref;
+    assert_eq!(merges(&merging, &merging_ref), 1);
+    let rebasing_ref = rebasing.store.snapshot_pull(rebasing_pr).await.head_ref;
+    assert!(!contains(&rebasing, &rebasing_ref, &before), "rebased");
+    assert_eq!(merges(&rebasing, &rebasing_ref), 0);
 }
 
 #[tokio::test]
@@ -1153,9 +1153,9 @@ async fn merged_in_conflict(
     let view = world.store.snapshot_pull(pr).await;
     let file = format!("src/issue-{}.txt", view.closes[0].0);
     merge_default_branch_in(&world, &view.head_ref, &[(&file, "done\nother\n")]).await;
-    let view = world.store.snapshot_pull(pr).await;
+    let updated = world.store.snapshot_pull(pr).await;
     assert_eq!(
-        (view.mergeability, view.rebaseability),
+        (updated.mergeability, updated.rebaseability),
         (Mergeability::Clean, Rebaseability::NotRebaseable),
         "up to date, but not rebaseable"
     );
@@ -1245,8 +1245,8 @@ async fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_befo
     world.clock.advance(chrono::TimeDelta::minutes(6));
     world.poll().await;
 
-    let view = world.store.snapshot_pull(pr).await;
-    assert!(matches!(view.state, PullState::Merged { .. }));
+    let merged = world.store.snapshot_pull(pr).await;
+    assert!(matches!(merged.state, PullState::Merged { .. }));
     assert_eq!(history(&world)[0], ("Do the ticket".to_string(), 1));
 }
 
@@ -1414,8 +1414,8 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_me
     world.store.allow_merge(pr);
     world.poll().await;
 
-    let view = world.store.snapshot_pull(pr).await;
-    assert!(matches!(view.state, PullState::Merged { .. }));
+    let merged = world.store.snapshot_pull(pr).await;
+    assert!(matches!(merged.state, PullState::Merged { .. }));
     assert!(!world.issue(ticket).open);
 }
 
@@ -1507,10 +1507,10 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_ticket_back_and_rela
     world.store.label_as(ticket, "ready-for-agent").unwrap();
     world.poll().await;
 
-    let issue = world.issue(ticket);
-    assert!(issue.is_assigned(&Login::new(MACHINE)), "reclaimed");
+    let reclaimed = world.issue(ticket);
+    assert!(reclaimed.is_assigned(&Login::new(MACHINE)), "reclaimed");
     assert_eq!(
-        labels(&issue),
+        labels(&reclaimed),
         ["ready-for-agent"],
         "a failure after the relabel is retried, not handed back"
     );

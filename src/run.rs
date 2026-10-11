@@ -429,7 +429,7 @@ async fn cancellable<T>(ctx: &Ctx, turn: impl Future<Output = T>) -> Result<T, F
     tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => Err(Failure::Cancelled),
-        turn = turn => Ok(turn),
+        output = turn => Ok(output),
     }
 }
 
@@ -888,13 +888,13 @@ async fn pull_work(
     let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
     let dir = &ws.dir;
-    let accept = |message: String, threads: Vec<String>| async move {
+    let accept = |message: String, pr_threads: Vec<String>| async move {
         let result: PullWorkResult = results::parse(&message).map_err(parse_retry)?;
         if let Some(problem) = git::unfinished(dir).await? {
             return Err(Rejection::Retry(prompts::unfinished(&problem)));
         }
         if let PullWorkResult::Done { replies, .. } = &result
-            && let Some(unknown) = replies.iter().find(|r| !threads.contains(&r.thread))
+            && let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread))
         {
             return Err(parse_retry(format!(
                 "`{}` is not a thread on the pull request",

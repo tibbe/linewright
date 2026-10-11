@@ -9,6 +9,9 @@ publish = false
 [lints.rust]
 unsafe_code = "forbid"
 
+[lints.clippy]
+shadow_unrelated = "warn"
+
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
