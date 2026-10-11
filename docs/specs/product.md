@@ -540,10 +540,11 @@ stateDiagram-v2
   | `merge-method` (`merge`, `squash`, `rebase`) | from the repository's settings |
   | `log-format` (`text`, `json`) | `text` on a terminal, `json` otherwise |
 
-- Linewright runs wherever `git`, the agent runtime and the project's
+- Linewright runs wherever `git`, `bash`, the agent runtime and the project's
   toolchain are on the path: directly on a machine, or in a container whose
   image the operator builds with those in it. Linewright publishes a base
-  image with everything but the project's toolchain to build from.
+  image with everything but the project's toolchain to build from. Agents'
+  commands run in `bash`, whatever shell the operator uses.
 - Agents run without permission prompts; the container is the isolation
   when one is used.
 - Unix-like systems: Linux is the deployment target, macOS a development
