@@ -1,6 +1,6 @@
 # Linewright
 
-See `README.md` for what it does.
+See `README.md` for what it does. It is written in Rust and built with cargo.
 
 ## Specs
 
