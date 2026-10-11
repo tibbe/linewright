@@ -410,8 +410,9 @@ impl World {
 
 /// A stand-in for the `claude` program, written to `dir`: every turn answers
 /// `message`, appends the GitHub tokens it was given to `dir/tokens.log`, its
-/// temporary directory to `dir/tmpdir.log` and its arguments, one per line and
-/// followed by a blank line, to `dir/args.log`.
+/// temporary directory to `dir/tmpdir.log`, the shell it was told to use to
+/// `dir/shell.log` and its arguments, one per line and followed by a blank
+/// line, to `dir/args.log`.
 pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
@@ -429,9 +430,11 @@ pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
          printf '%s\\n' \"$@\" '' >> '{args}'\n\
          echo \"GH_TOKEN=${{GH_TOKEN-}} GITHUB_TOKEN=${{GITHUB_TOKEN-}}\" >> '{tokens}'\n\
          echo \"TMPDIR=${{TMPDIR-}}\" >> '{tmpdir}'\n\
+         echo \"${{CLAUDE_CODE_SHELL-}}\" >> '{shell}'\n\
          cat <<'EOF'\n{event}\nEOF\n",
         tokens = dir.join("tokens.log").display(),
         tmpdir = dir.join("tmpdir.log").display(),
+        shell = dir.join("shell.log").display(),
         args = dir.join("args.log").display(),
     );
     std::fs::write(&program, script).unwrap();

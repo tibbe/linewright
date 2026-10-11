@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 fn runtime_without_token(dir: &Path) -> ClaudeCode {
     ClaudeCode {
         program: fake_claude(dir, "Done.").to_str().unwrap().into(),
+        bash: "/bin/bash".into(),
         model: None,
         github_token: None,
     }
@@ -79,6 +80,7 @@ async fn a_production_session_gets_the_machine_users_github_token() {
     let program = fake_claude(dir.path(), "Done.");
     let runtime = ClaudeCode {
         program: program.to_str().unwrap().into(),
+        bash: "/bin/bash".into(),
         model: None,
         github_token: Some("machine-token".into()),
     };

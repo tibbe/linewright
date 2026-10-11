@@ -17,6 +17,9 @@ use crate::store::github::TOKEN_VARIABLES;
 
 pub struct ClaudeCode {
     pub program: String,
+    /// The `bash` every session runs its commands in, whatever shell the
+    /// operator uses (`docs/specs/product.md`, "Operation").
+    pub bash: PathBuf,
     /// `None` uses the runtime's default model.
     pub model: Option<String>,
     /// The GitHub token sessions get, as `gh` reads it. `None` gives them
@@ -127,6 +130,11 @@ impl ClaudeCode {
             .args(session_args)
             .current_dir(&spec.dir)
             .env("TMPDIR", &spec.scratch)
+            // Claude Code otherwise picks the operator's `$SHELL`. It still
+            // sources the host's `~/.bashrc`, if there is one, and has no
+            // switch to stop that, so a session is not insulated from it.
+            // Docs: <https://code.claude.com/docs/en/settings#environment-variables>.
+            .env("CLAUDE_CODE_SHELL", &self.bash)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

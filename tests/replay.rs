@@ -182,6 +182,40 @@ fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_ho
     );
 }
 
+#[test]
+fn a_replayed_session_runs_its_commands_in_bash_whatever_the_operators_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    spec_change_case(dir.path(), &[]);
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    fake_claude(&bin, r#"{"tickets": [], "comment": "Nothing to build."}"#);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_linewright"))
+        .args(["replay", "case", "--out", "out"])
+        .current_dir(dir.path())
+        .env("PATH", path)
+        .env("CLAUDE_CONFIG_DIR", dir.path())
+        .env("SHELL", "/bin/zsh")
+        .env("CLAUDE_CODE_SHELL", "/bin/zsh")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let shell = std::fs::read_to_string(bin.join("shell.log")).unwrap();
+    let shell = Path::new(shell.trim_end());
+    let version = Command::new(shell).arg("--version").output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&version.stdout).starts_with("GNU bash"),
+        "{}",
+        shell.display()
+    );
+}
+
 #[tokio::test]
 async fn a_replay_runs_no_workflows() {
     let dir = tempfile::tempdir().unwrap();

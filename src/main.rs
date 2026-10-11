@@ -1,4 +1,6 @@
 use std::io::IsTerminal;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -148,12 +150,13 @@ async fn run(command: Command, config: Config) -> Result<()> {
             case: case_dir,
             out,
         } => {
+            let bash = require_bash()?;
             require_tool(RUNTIME).await?;
             let factory_config = factory_config(&config, out.clone())?;
             case::replay(
                 &case_dir,
                 &out,
-                Arc::new(runtime(&config, None)),
+                Arc::new(runtime(&config, bash, None)),
                 Arc::new(SystemClock),
                 factory_config,
             )
@@ -203,9 +206,10 @@ fn policy(config: &Config, github: &GitHub) -> Policy {
 
 /// The agent runtime, its sessions given `github_token`: the machine user's
 /// in production, none in replay (`docs/specs/product.md`, "Replay").
-fn runtime(config: &Config, github_token: Option<String>) -> ClaudeCode {
+fn runtime(config: &Config, bash: PathBuf, github_token: Option<String>) -> ClaudeCode {
     ClaudeCode {
         program: RUNTIME.into(),
+        bash,
         model: config.model.clone(),
         github_token,
     }
@@ -237,13 +241,14 @@ fn factory_config(config: &Config, work_dir: std::path::PathBuf) -> Result<Facto
 /// Startup: refuse to start when the factory cannot work.
 async fn start(config: &Config) -> Result<Factory> {
     require_tool("git").await?;
+    let bash = require_bash()?;
     require_tool(RUNTIME).await?;
     let token = token()?;
     let github = connect(config, token.clone()).await?;
     let factory_config = factory_config(config, work_dir(config, &github))?;
     Factory::start(
         Arc::new(github),
-        Arc::new(runtime(config, Some(token))),
+        Arc::new(runtime(config, bash, Some(token))),
         Arc::new(SystemClock),
         factory_config,
     )
@@ -307,4 +312,22 @@ async fn require_tool(program: &str) -> Result<()> {
         bail!("`{program}` is not on the path");
     }
     Ok(())
+}
+
+/// The first `bash` on the path. Claude Code takes the shell it is told to
+/// use as a path, not a name to look up.
+fn require_bash() -> Result<PathBuf> {
+    let found = std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .map(|dir| dir.join("bash"))
+        .find(|candidate| is_executable(candidate));
+    match found {
+        Some(bash) => std::path::absolute(&bash).context("locating `bash`"),
+        None => bail!("`bash` is not on the path"),
+    }
+}
+
+fn is_executable(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }

@@ -5,9 +5,10 @@ coding agents turn it into working software.
 
 ## Running it
 
-You need `git` and [Claude Code](https://code.claude.com) (`claude`) on the
-path, your project's toolchain so agents can build and test it, and a GitHub
-user for the factory with write access to the repository.
+You need `git`, `bash` and [Claude Code](https://code.claude.com) (`claude`)
+on the path, your project's toolchain so agents can build and test it, and a
+GitHub user for the factory with write access to the repository. Agents'
+commands run in `bash`, whatever shell you use.
 
 ```sh
 export GH_TOKEN=...            # the machine user's token (or GITHUB_TOKEN)
