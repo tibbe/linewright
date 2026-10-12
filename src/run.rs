@@ -54,6 +54,23 @@ impl Shell {
         }
     }
 
+    /// The label to put on what Linewright creates: the required label, when
+    /// one is set and the repository has it. Never created here: a missing
+    /// label is skipped, not an error.
+    async fn creation_label(&self) -> Result<Option<String>> {
+        let Some(name) = &self.policy.require_label else {
+            return Ok(None);
+        };
+        if self.store.label_exists(name).await? {
+            return Ok(Some(name.clone()));
+        }
+        warn!(
+            label = name,
+            "the required label does not exist: not applied"
+        );
+        Ok(None)
+    }
+
     fn upstream(&self) -> String {
         format!("origin/{}", self.settings.default_branch)
     }
@@ -583,11 +600,12 @@ async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Res
             .await?;
         return store.add_label(pr.number, label::SPEC_PROCESSED).await;
     }
+    let required: Vec<String> = shell.creation_label().await?.into_iter().collect();
     let tracking_issue = store
         .create_issue(NewIssue {
             title: tracking::title(&pr.title),
             body: tracking::body(pr.number, &[]),
-            labels: vec![],
+            labels: required.clone(),
         })
         .await?;
     // Tickets get `ready-for-agent` only once every edge exists, so no poll
@@ -598,7 +616,7 @@ async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Res
             .create_issue(NewIssue {
                 title: ticket.title.clone(),
                 body: ticket.body.clone(),
-                labels: vec![],
+                labels: required.clone(),
             })
             .await?;
         store.add_sub_issue(tracking_issue, number).await?;
@@ -732,6 +750,12 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
                 })
                 .await
                 .map_err(Failure::Apply)?;
+            if let Some(required) = shell.creation_label().await.map_err(Failure::Apply)? {
+                store
+                    .add_label(pr, &required)
+                    .await
+                    .map_err(Failure::Apply)?;
+            }
             info!(
                 issue = ticket.issue.number.0,
                 pr = pr.0,
@@ -801,7 +825,10 @@ async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], ticket: &Ticket<'_>) ->
             .create_issue(NewIssue {
                 title: gap.title.clone(),
                 body: spec_gap::body(&gap.body, ticket.issue.number),
-                labels: vec![label::READY_FOR_HUMAN.into()],
+                labels: [label::READY_FOR_HUMAN.into()]
+                    .into_iter()
+                    .chain(shell.creation_label().await?)
+                    .collect(),
             })
             .await?;
         info!(
@@ -1138,7 +1165,10 @@ async fn record_workflow(
             .create_issue(NewIssue {
                 title: issue.title.clone(),
                 body: workflow_marked(&workflow.name, &issue.body),
-                labels: vec![state.into()],
+                labels: [state.into()]
+                    .into_iter()
+                    .chain(shell.creation_label().await?)
+                    .collect(),
             })
             .await?;
         info!(

@@ -535,7 +535,16 @@ impl LocalStore {
         Ok(())
     }
 
+    /// Creates the label `name` in the repository, as a maintainer does.
+    pub fn create_label(&self, name: &str) {
+        self.state().labels.insert(name.to_string());
+    }
+
     // Reading the store's state, for tests.
+
+    pub fn has_label(&self, name: &str) -> bool {
+        self.state().labels.contains(name)
+    }
 
     pub fn issue(&self, number: Number) -> Option<Issue> {
         let state = self.state();
@@ -927,6 +936,10 @@ impl Store for LocalStore {
             state.labels.insert(name.to_string());
         }
         Ok(())
+    }
+
+    async fn label_exists(&self, name: &str) -> Result<bool> {
+        Ok(self.has_label(name))
     }
 
     async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot> {

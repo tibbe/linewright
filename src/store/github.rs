@@ -1183,6 +1183,21 @@ impl Store for GitHub {
         ))
     }
 
+    async fn label_exists(&self, name: &str) -> Result<bool> {
+        let response = self
+            .send(
+                Method::GET,
+                &self.repo_path(&format!("/labels/{}", percent_encode(name))),
+                None,
+            )
+            .await?;
+        match response.status() {
+            s if s.is_success() => Ok(true),
+            StatusCode::NOT_FOUND => Ok(false),
+            s => bail!("looking up label {name}: {s}: {}", response.text().await?),
+        }
+    }
+
     async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()> {
         let mut existing: Vec<String> = vec![];
         for page in 1.. {

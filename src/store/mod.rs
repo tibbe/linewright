@@ -158,6 +158,9 @@ pub trait Store: Send + Sync {
     async fn settings(&self) -> Result<RepoSettings>;
     /// Creates any of `labels` (name, description) that are missing.
     async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()>;
+    /// Whether the repository has the label `name`. Adding a label by name
+    /// can create it, so a label Linewright must not create is checked first.
+    async fn label_exists(&self, name: &str) -> Result<bool>;
 
     /// The facts one poll reconciles, with pull requests merged since
     /// `merged_since`.
