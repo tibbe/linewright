@@ -37,11 +37,16 @@ later.
   writing to GitHub outside its result, is the brief's to prevent, and a
   maintainer who wants stricter guards sets them in GitHub, such as required
   reviews on spec files.
-- **Briefs are files read at startup**, one per stage, forked from
-  `mattpocock/skills` (`triage`, `to-tickets`, `implement`, `code-review`,
-  `pr`, `tdd`) with their MIT notice, made non-interactive: each decision the
-  originals put to a person is made by the agent or handed back as an
-  outcome, and the review's sub-agents invoke no skills.
+- **Briefs are files read at startup**, forked from `mattpocock/skills`
+  (`triage`, `to-tickets`, `implement`, `code-review`, `pr`, `tdd`) with their
+  MIT notice. Each stage's session invokes its stage's skill, as a person would
+  invoke the original, with the task and the result contract. The skills that
+  skill calls (`tdd`, `code-review`, `pr`) are given to the session as skills
+  under a `linewright:` namespace and invoked as the originals invoke them, and
+  the repository's own skills are available to every session and sub-agent. No
+  person takes part in a session: a decision an original puts to a person is
+  made by an agent or handed back as an outcome, and judging an agent's own
+  work, as review does, falls to agents in fresh contexts.
 - **Every session's trace is kept**: the runtime's own transcript, copied
   beside the session's brief and result under the work directory.
 - **Rust, with GitHub's REST and GraphQL APIs in-process.**

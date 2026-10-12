@@ -368,7 +368,7 @@ trigger fires. Workflows sit beside the pipeline and may hand it work.
   branch on a new branch for the ticket, replacing any earlier one.
 - The implementer reads the ticket and its comments (the triage brief, earlier
   handbacks), implements, runs the repository's checks, has the work reviewed in
-  fresh contexts for both standards and spec, addresses the findings and
+  fresh contexts for both standards and spec, applies the findings and
   commits. How many review rounds it takes is its judgment, bounded by the
   session timeout.
 - The implementer leaves spec files as they are, by its brief; a spec it
