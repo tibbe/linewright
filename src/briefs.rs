@@ -1,7 +1,10 @@
-//! The briefs: one Markdown file per stage, read at startup from the `briefs`
-//! setting so a change needs no rebuild (`docs/specs/product.md`, "Replay"), and one
-//! for workflow runs. The ones Linewright ships live in `briefs/` and are
-//! built in.
+//! The briefs, read at startup from the `briefs` setting so a change needs no
+//! rebuild (`docs/specs/product.md`, "Replay"): a Claude Code plugin,
+//! `linewright`, holding a skill per stage and the skills those call, and the
+//! brief for workflow runs. The ones Linewright ships live in `briefs/` and
+//! are built in. Every session is given a copy of the plugin, so no session
+//! can change what another reads (`docs/specs/architecture.md`, "Briefs are
+//! files read at startup"). Docs: <https://code.claude.com/docs/en/plugins>.
 
 use std::path::Path;
 
@@ -9,62 +12,79 @@ use anyhow::{Context, Result};
 
 #[derive(Clone, Debug)]
 pub struct Briefs {
-    pub triage: String,
-    pub to_tickets: String,
-    pub implement: String,
-    pub tdd: String,
-    pub code_review: String,
-    pub pr: String,
     pub workflow: String,
+    /// The plugin's files, each with its path in the directory.
+    pub plugin: Vec<(&'static str, String)>,
 }
 
-const FILES: [&str; 7] = [
-    "triage.md",
-    "to-tickets.md",
-    "implement.md",
-    "tdd.md",
-    "code-review.md",
-    "pr.md",
-    "workflow.md",
+/// The plugin's files Linewright ships, by their path in `briefs/`.
+const PLUGIN: [(&str, &str); 8] = [
+    (
+        ".claude-plugin/plugin.json",
+        include_str!("../briefs/.claude-plugin/plugin.json"),
+    ),
+    ("LICENSE", include_str!("../briefs/LICENSE")),
+    (
+        "skills/triage/SKILL.md",
+        include_str!("../briefs/skills/triage/SKILL.md"),
+    ),
+    (
+        "skills/to-tickets/SKILL.md",
+        include_str!("../briefs/skills/to-tickets/SKILL.md"),
+    ),
+    (
+        "skills/implement/SKILL.md",
+        include_str!("../briefs/skills/implement/SKILL.md"),
+    ),
+    (
+        "skills/tdd/SKILL.md",
+        include_str!("../briefs/skills/tdd/SKILL.md"),
+    ),
+    (
+        "skills/code-review/SKILL.md",
+        include_str!("../briefs/skills/code-review/SKILL.md"),
+    ),
+    (
+        "skills/pr/SKILL.md",
+        include_str!("../briefs/skills/pr/SKILL.md"),
+    ),
 ];
 
 impl Briefs {
     pub fn shipped() -> Briefs {
         Briefs {
-            triage: include_str!("../briefs/triage.md").into(),
-            to_tickets: include_str!("../briefs/to-tickets.md").into(),
-            implement: include_str!("../briefs/implement.md").into(),
-            tdd: include_str!("../briefs/tdd.md").into(),
-            code_review: include_str!("../briefs/code-review.md").into(),
-            pr: include_str!("../briefs/pr.md").into(),
             workflow: include_str!("../briefs/workflow.md").into(),
+            plugin: PLUGIN
+                .iter()
+                .map(|(path, text)| (*path, text.to_string()))
+                .collect(),
         }
     }
 
     /// Reads every brief from `dir`, failing on the first one missing.
     pub fn load(dir: &Path) -> Result<Briefs> {
-        let read = |name: &str| {
-            let path = dir.join(name);
-            std::fs::read_to_string(&path)
+        let read = |path: &Path| {
+            std::fs::read_to_string(path)
                 .with_context(|| format!("reading the brief {}", path.display()))
         };
-        let [
-            triage,
-            to_tickets,
-            implement,
-            tdd,
-            code_review,
-            pr,
-            workflow,
-        ] = FILES.map(read);
+        let workflow = read(&dir.join("workflow.md"));
+        let plugin = PLUGIN
+            .iter()
+            .map(|(path, _)| Ok((*path, read(&dir.join(path))?)))
+            .collect::<Result<_>>()?;
         Ok(Briefs {
-            triage: triage?,
-            to_tickets: to_tickets?,
-            implement: implement?,
-            tdd: tdd?,
-            code_review: code_review?,
-            pr: pr?,
             workflow: workflow?,
+            plugin,
         })
+    }
+
+    /// Copies the plugin into `dir`.
+    pub fn write_plugin(&self, dir: &Path) -> std::io::Result<()> {
+        for (path, text) in &self.plugin {
+            let path = dir.join(path);
+            std::fs::create_dir_all(path.parent().expect("plugin files sit in a directory"))?;
+            std::fs::write(path, text)?;
+        }
+        Ok(())
     }
 }

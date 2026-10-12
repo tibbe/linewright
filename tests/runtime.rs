@@ -69,6 +69,7 @@ fn triage_session(dir: &Path) -> SessionSpec {
         dir: dir.join("repo"),
         scratch: dir.join("tmp"),
         record: dir.to_path_buf(),
+        plugin: dir.join("plugin"),
         prompt: "Triage #1.".into(),
         deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(30),
     }
@@ -109,6 +110,28 @@ async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_dire
     assert_eq!(
         std::fs::read_to_string(dir.path().join("tmpdir.log")).unwrap(),
         format!("TMPDIR={0}\nTMPDIR={0}\n", scratch.display())
+    );
+}
+
+#[tokio::test]
+async fn every_turn_of_a_session_is_given_its_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_without_token(dir.path());
+    let spec = triage_session(dir.path());
+
+    let turn = runtime.start(&spec).await.unwrap();
+    runtime
+        .resume(&spec, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    let plugin = dir.path().join("plugin");
+    assert_eq!(
+        turn_args(dir.path())
+            .iter()
+            .map(|args| flag_value(args, "--plugin-dir"))
+            .collect::<Vec<_>>(),
+        [plugin.to_str(), plugin.to_str()]
     );
 }
 

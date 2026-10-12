@@ -127,6 +127,8 @@ impl ClaudeCode {
                 "bypassPermissions",
             ])
             .args(isolation_args(&clone))
+            .arg("--plugin-dir")
+            .arg(&spec.plugin)
             .args(session_args)
             .current_dir(&spec.dir)
             .env("TMPDIR", &spec.scratch)

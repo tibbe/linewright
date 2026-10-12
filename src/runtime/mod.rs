@@ -31,6 +31,8 @@ pub struct SessionSpec {
     pub scratch: PathBuf,
     /// Where the session's record goes: brief, results and trace.
     pub record: PathBuf,
+    /// The plugin that gives the session the skills its brief calls.
+    pub plugin: PathBuf,
     pub prompt: String,
     /// When the session times out, across all its turns.
     pub deadline: tokio::time::Instant,

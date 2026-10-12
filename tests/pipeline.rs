@@ -125,6 +125,96 @@ async fn triage_and_implement_tasks_say_to_keep_scratch_files_in_the_temporary_d
     }
 }
 
+#[tokio::test]
+async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
+    let mut world = World::new().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sessions = seen.clone();
+    world.runtime.on(WorkKind::Implement, move |call| {
+        let read = |path: &str| std::fs::read_to_string(call.spec.plugin.join(path)).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_str(&read(".claude-plugin/plugin.json")).unwrap();
+        *sessions.lock().unwrap() = Some((
+            manifest["name"].as_str().unwrap().to_string(),
+            read("skills/code-review/SKILL.md"),
+        ));
+        commit_in(
+            &call.spec.dir,
+            &[("src/thing.txt", "done\n")],
+            "Do the ticket",
+        );
+        json(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world.store.assign_as(ticket, "maintainer").unwrap();
+
+    world.poll().await;
+
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        Some((
+            "linewright".to_string(),
+            include_str!("../briefs/skills/code-review/SKILL.md").to_string()
+        ))
+    );
+}
+
+#[tokio::test]
+async fn each_stages_session_starts_by_invoking_its_linewright_skill() {
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Triage, |_| {
+        json(json!({
+            "outcome": "ready-for-human",
+            "category": "bug",
+            "comment": "Does it crash on every widget?"
+        }))
+    });
+    tickets_script(&world);
+    world.store.open_issue(
+        "reporter",
+        "Crash on empty widget",
+        "It crashes.",
+        &["needs-triage"],
+    );
+    world
+        .store
+        .merge_change(
+            "maintainer",
+            "Gadgets",
+            "Adds gadgets.",
+            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
+        )
+        .await
+        .unwrap();
+
+    world.poll().await;
+    world.ticket_in_review().await;
+
+    let first_lines = |kind| {
+        let mut lines: Vec<String> = world
+            .runtime
+            .prompts(kind)
+            .iter()
+            .map(|prompt| prompt.lines().next().unwrap_or_default().to_string())
+            .collect();
+        lines.dedup();
+        lines
+    };
+    assert_eq!(
+        [WorkKind::Triage, WorkKind::Tickets, WorkKind::Implement].map(first_lines),
+        [
+            ["/linewright:triage"],
+            ["/linewright:to-tickets"],
+            ["/linewright:implement"]
+        ]
+    );
+}
+
 fn triage_for_the_maintainer(world: &World) {
     world.runtime.on(WorkKind::Triage, |call| {
         let outcome = if call.spec.prompt.contains("Yes, make them resizable.") {

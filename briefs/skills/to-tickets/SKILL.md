@@ -1,10 +1,16 @@
+---
+name: to-tickets
+description: Break a plan, spec, or the current conversation into a set of tracer-bullet tickets, each declaring its blocking edges, published to the configured tracker (edges as text in one file per ticket locally, or native blocking links on a real tracker).
+disable-model-invocation: true
+---
+
 <!-- Forked from mattpocock/skills, skills/engineering/to-tickets (MIT, see
 LICENSE). Made non-interactive for Linewright. -->
 
 # To Tickets
 
 You break one merged spec change into **tickets**: tracer-bullet vertical
-slices, each declaring the tickets that **block** it. Your task below holds
+slices, each declaring the tickets that **block** it. Your task holds
 the pull request that changed the spec and its spec diff; the repository is
 checked out at the default branch, with the change merged. You may read GitHub
 but must not write to it: Linewright publishes the tickets in your result,

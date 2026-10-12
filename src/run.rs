@@ -249,12 +249,13 @@ fn with_log(reason: &str, log_tail: Option<&str>) -> String {
     }
 }
 
-/// A fresh clone for one run and an empty scratch directory beside it, both
-/// removed when the run ends.
+/// A fresh clone for one run, with an empty scratch directory and the
+/// briefs' plugin beside it, all removed when the run ends.
 struct Workspace {
     _temp: TempDir,
     dir: PathBuf,
     scratch: PathBuf,
+    plugin: PathBuf,
 }
 
 impl Workspace {
@@ -279,10 +280,17 @@ impl Workspace {
             .await
             .context("creating a scratch directory")
             .map_err(infra)?;
+        let plugin = temp.path().join("plugin");
+        shell
+            .briefs
+            .write_plugin(&plugin)
+            .context("writing the briefs' plugin")
+            .map_err(infra)?;
         Ok(Workspace {
             _temp: temp,
             dir,
             scratch,
+            plugin,
         })
     }
 }
@@ -469,6 +477,7 @@ fn session_spec(
         purpose,
         dir: ws.dir.clone(),
         scratch: ws.scratch.clone(),
+        plugin: ws.plugin.clone(),
         prompt,
         deadline: tokio::time::Instant::now() + timeout,
     })
@@ -483,7 +492,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
-    let prompt = prompts::triage(&shell.briefs, &shell.repo(), issue, &categories);
+    let prompt = prompts::triage(&shell.repo(), issue, &categories);
     let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let categories = &categories;
     let (result, _) = converse(shell, ctx, &spec, None, |message| async move {
@@ -555,7 +564,7 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
         .diff(pr.number, &spec_files)
         .await
         .map_err(infra)?;
-    let prompt = prompts::tickets(&shell.briefs, &shell.repo(), pr, &diff);
+    let prompt = prompts::tickets(&shell.repo(), pr, &diff);
     let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let (tickets, _) = converse(shell, ctx, &spec, None, |message| async move {
         results::parse_tickets(&message).map_err(parse_retry)
@@ -656,7 +665,7 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
     let branch = branch_name(ticket.issue);
     git::create_branch(&ws.dir, &branch).await.map_err(infra)?;
     let upstream = shell.upstream();
-    let prompt = prompts::implement(&shell.briefs, &shell.repo(), ticket, &branch);
+    let prompt = prompts::implement(&shell.repo(), ticket, &branch);
     let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let (dir, base) = (&ws.dir, &upstream);
     let conversation = converse(shell, ctx, &spec, None, |message| async move {
@@ -877,14 +886,7 @@ async fn pull_work(
         Task::FixCi(_) => PullTask::FixCi(&failures),
         Task::Update => PullTask::Update,
     };
-    let prompt = prompts::pull_work(
-        &shell.briefs,
-        &shell.repo(),
-        ticket,
-        pr,
-        &pull_task,
-        conflict.as_ref(),
-    );
+    let prompt = prompts::pull_work(&shell.repo(), ticket, pr, &pull_task, conflict.as_ref());
     let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
     let dir = &ws.dir;

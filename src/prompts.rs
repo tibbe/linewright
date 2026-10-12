@@ -32,7 +32,13 @@ pub enum PullTask<'a> {
     Update,
 }
 
-pub fn triage(briefs: &Briefs, repo: &Repo, issue: &Issue, categories: &[String]) -> String {
+/// What starts each stage's session: its skill, invoked as a person invokes
+/// the original, the task and the result contract following as its input.
+const TRIAGE: &str = "/linewright:triage";
+const TO_TICKETS: &str = "/linewright:to-tickets";
+const IMPLEMENT: &str = "/linewright:implement";
+
+pub fn triage(repo: &Repo, issue: &Issue, categories: &[String]) -> String {
     let mut task = String::new();
     task_facts(&mut task, repo);
     let _ = writeln!(
@@ -57,10 +63,10 @@ pub fn triage(briefs: &Briefs, repo: &Repo, issue: &Issue, categories: &[String]
             .collect::<Vec<_>>()
             .join(" | ")
     );
-    compose(&briefs.triage, &[], &task, &contract)
+    compose(TRIAGE, &task, &contract)
 }
 
-pub fn tickets(briefs: &Briefs, repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
+pub fn tickets(repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
     let mut task = String::new();
     task_facts(&mut task, repo);
     let _ = writeln!(
@@ -86,10 +92,10 @@ pub fn tickets(briefs: &Briefs, repo: &Repo, pr: &MergedPull, spec_diff: &str) -
 }
 
 `tickets` is empty when the code already does what the spec change asks."#;
-    compose(&briefs.to_tickets, &[], &task, contract)
+    compose(TO_TICKETS, &task, contract)
 }
 
-pub fn implement(briefs: &Briefs, repo: &Repo, ticket: &Ticket, branch: &str) -> String {
+pub fn implement(repo: &Repo, ticket: &Ticket, branch: &str) -> String {
     let mut task = String::new();
     task_facts(&mut task, repo);
     let _ = writeln!(
@@ -99,17 +105,12 @@ pub fn implement(briefs: &Briefs, repo: &Repo, ticket: &Ticket, branch: &str) ->
     );
     write_issue(&mut task, "The ticket", ticket.issue);
     write_filed_gaps(&mut task, &ticket.filed_gaps);
-    compose(
-        &briefs.implement,
-        &implement_references(briefs),
-        &task,
-        IMPLEMENT_CONTRACT,
-    )
+    compose(IMPLEMENT, &task, IMPLEMENT_CONTRACT)
 }
 
 const IMPLEMENT_CONTRACT: &str = r#"One of:
 
-{ "outcome": "done", "pr_title": "<the pull request title, per the PR reference>", "pr_body": "<the pull request body, per the PR reference>", "spec_gaps": [SPEC_GAP] }
+{ "outcome": "done", "pr_title": "<the pull request title, per the linewright:pr skill>", "pr_body": "<the pull request body, per the linewright:pr skill, without a closing reference to the ticket: Linewright adds it>", "spec_gaps": [SPEC_GAP] }
 { "outcome": "blocked", "question": "<the question the maintainer must answer>", "spec_gaps": [SPEC_GAP] }
 { "outcome": "gave-up", "reason": "<why the work cannot be done>" }
 
@@ -117,7 +118,6 @@ where SPEC_GAP is { "title": "<issue title>", "body": "<the spec change needed, 
 and `spec_gaps` lists the gaps that did not block the ticket (often none)."#;
 
 pub fn pull_work(
-    briefs: &Briefs,
     repo: &Repo,
     ticket: &Ticket,
     pr: &Pull,
@@ -176,7 +176,7 @@ pub fn pull_work(
     write_filed_gaps(&mut task, &ticket.filed_gaps);
     let contract = r#"One of:
 
-{ "outcome": "done", "comment": "<Markdown summary of what you changed, for the pull request>", "pr_body": "<only when your change made the description out of date: the whole body rewritten, per the PR reference>", "replies": [REPLY], "spec_gaps": [SPEC_GAP] }
+{ "outcome": "done", "comment": "<Markdown summary of what you changed, for the pull request>", "pr_body": "<only when your change made the description out of date: the whole body rewritten, per the linewright:pr skill>", "replies": [REPLY], "spec_gaps": [SPEC_GAP] }
 { "outcome": "blocked", "question": "<the question the maintainer must answer>", "spec_gaps": [SPEC_GAP] }
 { "outcome": "gave-up", "reason": "<why the work cannot be done>" }
 
@@ -184,12 +184,7 @@ where REPLY is { "thread": "<thread id>", "body": "<your reply in that thread>",
 and SPEC_GAP is { "title": "<issue title>", "body": "<the spec change needed, in Markdown>" }.
 Reply in every thread with new feedback. Resolve only threads a bot opened: people resolve their own.
 Leave `pr_body` out when the description still fits."#;
-    compose(
-        &briefs.implement,
-        &implement_references(briefs),
-        &task,
-        contract,
-    )
+    compose(IMPLEMENT, &task, contract)
 }
 
 pub fn workflow(briefs: &Briefs, repo: &Repo, workflow: &Workflow) -> String {
@@ -209,7 +204,7 @@ pub fn workflow(briefs: &Briefs, repo: &Repo, workflow: &Workflow) -> String {
 
 where ISSUE is { "title": "<issue title>", "body": "<the issue's Markdown body>", "label": "ready-for-agent" | "ready-for-human" }
 and `issues` lists the issues to file (often none)."#;
-    compose(&briefs.workflow, &[], &task, contract)
+    compose(&briefs.workflow, &task, contract)
 }
 
 pub fn parse_error(error: &str) -> String {
@@ -232,23 +227,8 @@ pub fn late_feedback(pr: &Pull, feedback: &Feedback) -> String {
     text
 }
 
-fn implement_references(briefs: &Briefs) -> [(&'static str, &str); 3] {
-    [
-        ("test-driven development", briefs.tdd.as_str()),
-        ("code review", briefs.code_review.as_str()),
-        ("pull request body", briefs.pr.as_str()),
-    ]
-}
-
-fn compose(brief: &str, references: &[(&str, &str)], task: &str, contract: &str) -> String {
+fn compose(brief: &str, task: &str, contract: &str) -> String {
     let mut prompt = String::from(brief.trim());
-    for (name, text) in references {
-        let _ = write!(
-            prompt,
-            "\n\n---\n\n# Reference: {name}\n\n{}",
-            demote(text.trim())
-        );
-    }
     let _ = write!(
         prompt,
         "\n\n---\n\n# Your task\n\n{}\n\n---\n\n# Result\n\nEnd your session with a final message that is a single JSON object and nothing else:\n\n```\n{}\n```\n",
@@ -256,25 +236,6 @@ fn compose(brief: &str, references: &[(&str, &str)], task: &str, contract: &str)
         contract.trim()
     );
     prompt
-}
-
-/// A reference brief's headings, one level down, so they nest under its
-/// `Reference` heading.
-fn demote(text: &str) -> String {
-    let mut in_fence = false;
-    text.lines()
-        .map(|line| {
-            if line.trim_start().starts_with("```") {
-                in_fence = !in_fence;
-            }
-            if !in_fence && line.starts_with('#') {
-                format!("#{line}")
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// The facts every task opens with: the repository's, and where the session
