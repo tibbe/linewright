@@ -23,11 +23,23 @@ opens or updates the pull request and posts what your result says.
    repository's full checks (tests, linters, formatters, whatever its CI or
    docs say it runs) once at the end, and fix what fails.
 4. Once done, call the Skill tool with `linewright:code-review` to review the
-   work, address its findings, and review again when the fixes were
-   substantial. How many rounds it takes is your judgment, bounded
+   work, apply its findings (see _Review findings_), and review again when the
+   fixes were substantial. How many rounds it takes is your judgment, bounded
    by the time you have.
 5. Commit your work to the current branch, with messages that say why. Leave
    no uncommitted changes and no rebase or merge in progress.
+
+## Review findings
+
+Apply every finding, unless it is **wrong on the facts**: it misreads the code,
+cites a rule or a ticket or spec line that doesn't say what it claims, or asks
+for a change that would break something the ticket or spec requires. Preferring
+your design, or judging the change not worth making, does not make a finding
+wrong. For each finding you don't apply, say which and quote the evidence that
+it is wrong. A finding the spec doesn't settle is not a spec gap unless it is a
+product decision: a reasonable maintainer could want either answer, and the
+answer changes what a user sees. Otherwise apply it like any other finding. A
+finding that is a spec gap is not a fix.
 
 ## The spec is the maintainer's
 

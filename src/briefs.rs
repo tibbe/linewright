@@ -18,7 +18,7 @@ pub struct Briefs {
 }
 
 /// The plugin's files Linewright ships, by their path in `briefs/`.
-const PLUGIN: [(&str, &str); 8] = [
+const PLUGIN: [(&str, &str); 11] = [
     (
         ".claude-plugin/plugin.json",
         include_str!("../briefs/.claude-plugin/plugin.json"),
@@ -41,12 +41,24 @@ const PLUGIN: [(&str, &str); 8] = [
         include_str!("../briefs/skills/tdd/SKILL.md"),
     ),
     (
+        "skills/tdd/tests.md",
+        include_str!("../briefs/skills/tdd/tests.md"),
+    ),
+    (
+        "skills/tdd/mocking.md",
+        include_str!("../briefs/skills/tdd/mocking.md"),
+    ),
+    (
         "skills/code-review/SKILL.md",
         include_str!("../briefs/skills/code-review/SKILL.md"),
     ),
     (
         "skills/pr/SKILL.md",
         include_str!("../briefs/skills/pr/SKILL.md"),
+    ),
+    (
+        "skills/pr/CREDITS.md",
+        include_str!("../briefs/skills/pr/CREDITS.md"),
     ),
 ];
 
