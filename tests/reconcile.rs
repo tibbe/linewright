@@ -1830,3 +1830,102 @@ fn removing_the_required_label_cancels_no_run_in_flight() {
 
     assert_eq!(actions, vec![]);
 }
+
+#[test]
+fn with_a_required_label_only_a_labeled_spec_change_is_cut_into_tickets() {
+    let unlabeled = merged(1, &["docs/spec.md"]);
+    let mut with_label = merged(2, &["docs/spec.md"]);
+    with_label.labels.push(REQUIRED.into());
+    let mut world = snapshot(vec![]);
+    world.merged = vec![unlabeled, with_label];
+
+    assert_eq!(
+        deciding_with_label(&world),
+        vec![Action::Start(Work::Tickets { pr: Number(2) })]
+    );
+}
+
+#[test]
+fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_picked_up_on_a_later_poll() {
+    let mut pr = merged(1, &["docs/spec.md"]);
+    let mut world = snapshot(vec![]);
+    world.merged = vec![pr.clone()];
+    assert_eq!(deciding_with_label(&world), vec![]);
+
+    pr.labels.push(REQUIRED.into());
+    world.merged = vec![pr];
+    assert_eq!(
+        deciding_with_label(&world),
+        vec![Action::Start(Work::Tickets { pr: Number(1) })]
+    );
+}
+
+#[test]
+fn with_a_required_label_a_retried_handback_is_cut_again_only_if_labeled() {
+    // The maintainer retries by removing `ready-for-human`.
+    let retried_unlabeled = merged(1, &["docs/spec.md"]);
+    let mut retried = merged(2, &["docs/spec.md"]);
+    retried.labels.push(REQUIRED.into());
+    let mut still_handed_back = merged(3, &["docs/spec.md"]);
+    still_handed_back.labels = vec![REQUIRED.into(), label::READY_FOR_HUMAN.into()];
+    let mut world = snapshot(vec![]);
+    world.merged = vec![retried_unlabeled, retried, still_handed_back];
+
+    assert_eq!(
+        deciding_with_label(&world),
+        vec![Action::Start(Work::Tickets { pr: Number(2) })]
+    );
+}
+
+#[test]
+fn with_a_required_label_processed_and_machine_spec_changes_are_skipped_even_if_labeled() {
+    let mut processed = merged(1, &["docs/spec.md"]);
+    processed.labels = vec![REQUIRED.into(), label::SPEC_PROCESSED.into()];
+    let mut by_machine = merged(2, &["docs/spec.md"]);
+    by_machine.labels = vec![REQUIRED.into()];
+    by_machine.author = Login::new(MACHINE);
+    let mut world = snapshot(vec![]);
+    world.merged = vec![processed, by_machine];
+
+    assert_eq!(deciding_with_label(&world), vec![]);
+}
+
+#[test]
+fn removing_the_required_label_does_not_cancel_a_cut_under_way() {
+    let mut world = snapshot(vec![]);
+    world.merged = vec![merged(5, &["docs/spec.md"])];
+    let runs = [LiveRun {
+        subject: Subject::SpecChange(Number(5)),
+        kind: WorkKind::Tickets,
+    }];
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &runs,
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &requiring_label()
+        ),
+        vec![]
+    );
+}
+
+#[test]
+fn pending_spec_changes_agree_with_the_required_label() {
+    let unlabeled = merged(1, &["docs/spec.md"]);
+    let mut with_label = merged(2, &["docs/spec.md"]);
+    with_label.labels.push(REQUIRED.into());
+    let mut world = snapshot(vec![]);
+    world.merged = vec![unlabeled, with_label];
+
+    let numbers = |policy: &Policy| {
+        linewright::reconcile::pending_spec_changes(&world, t(10), policy)
+            .iter()
+            .map(|pr| pr.number)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(numbers(&requiring_label()), vec![Number(2)]);
+    assert_eq!(numbers(&policy()), vec![Number(1), Number(2)]);
+}

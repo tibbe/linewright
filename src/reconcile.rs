@@ -1027,13 +1027,19 @@ pub fn pending_spec_changes<'a>(
 }
 
 /// A spec change: merged into the default branch within the lookback window,
-/// touching the spec, not authored by the machine user, and neither processed
-/// nor handed back.
+/// touching the spec, not authored by the machine user, neither processed nor
+/// handed back and, with a label required, carrying it. The label is checked
+/// on every poll, so one applied after the merge counts; `cancel_reason` does
+/// not look at it, so a cut under way survives its removal.
 fn is_spec_change(pr: &MergedPull, snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> bool {
     pr.base_ref == snapshot.default_branch
         && pr.merged_at >= now - policy.spec_lookback
         && pr.author != policy.machine_user
         && !pr.has_label(label::SPEC_PROCESSED)
         && !pr.has_label(label::READY_FOR_HUMAN)
+        && policy
+            .require_label
+            .as_ref()
+            .is_none_or(|l| pr.has_label(l))
         && pr.files.iter().any(|f| policy.spec_glob.matches(f))
 }
