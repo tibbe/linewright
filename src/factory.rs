@@ -42,6 +42,8 @@ pub struct FactoryConfig {
     pub auto_merge: bool,
     /// `None` follows the repository's settings.
     pub merge_method: Option<MergeMethod>,
+    /// Start work only on issues with this label, which is never created.
+    pub require_label: Option<String>,
     pub briefs: Briefs,
     /// Where clones, session records and the workflows' last runs go.
     pub work_dir: PathBuf,
@@ -126,6 +128,7 @@ impl Factory {
                 auto_merge: config.auto_merge.then_some(settings.merge_method),
                 update_rule: settings.update_rule,
                 allowed_merge_methods: settings.allowed_merge_methods.clone(),
+                require_label: config.require_label,
             },
             store,
             runtime,

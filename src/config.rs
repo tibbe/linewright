@@ -113,6 +113,9 @@ pub struct Settings {
     /// `merge`, `squash` or `rebase` [default: from the repository's settings]
     #[arg(long, global = true)]
     pub merge_method: Option<String>,
+    /// Start work only on issues carrying this label [default: every issue]
+    #[arg(long, global = true)]
+    pub require_label: Option<String>,
     /// `text` or `json` [default: text on a terminal, json otherwise]
     #[arg(long, global = true)]
     pub log_format: Option<String>,
@@ -143,6 +146,7 @@ pub struct Config {
     pub update_branch: Option<UpdateMethod>,
     pub auto_merge: bool,
     pub merge_method: Option<MergeMethod>,
+    pub require_label: Option<String>,
     pub log_format: LogFormat,
 }
 
@@ -165,6 +169,7 @@ impl Settings {
             ("update-branch", &self.update_branch),
             ("auto-merge", &self.auto_merge),
             ("merge-method", &self.merge_method),
+            ("require-label", &self.require_label),
             ("log-format", &self.log_format),
         ]
         .into_iter()
@@ -173,7 +178,7 @@ impl Settings {
     }
 }
 
-const KEYS: [&str; 17] = [
+const KEYS: [&str; 18] = [
     "repo",
     "poll-interval",
     "spec-glob",
@@ -190,6 +195,7 @@ const KEYS: [&str; 17] = [
     "update-branch",
     "auto-merge",
     "merge-method",
+    "require-label",
     "log-format",
 ];
 
@@ -291,6 +297,7 @@ impl Config {
             update_branch,
             auto_merge,
             merge_method,
+            require_label: get("require-label"),
             log_format,
         })
     }

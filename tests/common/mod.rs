@@ -285,6 +285,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         update_method: None,
         auto_merge: false,
         merge_method: None,
+        require_label: None,
         briefs: Briefs::shipped(),
         work_dir: work_dir.to_path_buf(),
         schedule_workflows: true,

@@ -28,6 +28,7 @@ fn policy() -> Policy {
         auto_merge: None,
         update_rule: UpdateRule::RebaseOnConflict,
         allowed_merge_methods: MergeMethods::all(),
+        require_label: None,
     }
 }
 

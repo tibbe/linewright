@@ -29,6 +29,7 @@ fn policy() -> Policy {
         auto_merge: None,
         update_rule: UpdateRule::RebaseOnConflict,
         allowed_merge_methods: MergeMethods::all(),
+        require_label: None,
     }
 }
 
@@ -1677,4 +1678,155 @@ fn a_workflow_seen_for_the_first_time_is_recorded_even_with_no_room() {
         ),
         vec![Action::RecordLastRuns(last_runs(&[("hourly", 70)]))]
     );
+}
+
+const REQUIRED: &str = "linewright";
+
+fn requiring_label() -> Policy {
+    Policy {
+        require_label: Some(REQUIRED.into()),
+        ..policy()
+    }
+}
+
+fn deciding_with_label(world: &Snapshot) -> Vec<Action> {
+    deciding(world, &Memory::default(), &requiring_label())
+}
+
+#[test]
+fn with_a_required_label_only_a_labeled_needs_triage_issue_is_triaged() {
+    let unlabeled = labeled(issue(1), label::NEEDS_TRIAGE);
+    let with_label = labeled(labeled(issue(2), label::NEEDS_TRIAGE), REQUIRED);
+
+    assert_eq!(
+        deciding_with_label(&snapshot(vec![unlabeled, with_label])),
+        vec![Action::Start(Work::Triage { issue: Number(2) })]
+    );
+}
+
+#[test]
+fn with_a_required_label_only_a_labeled_issue_answered_after_a_triage_question_is_triaged_again() {
+    let mut unlabeled = labeled(issue(1), label::NEEDS_INFO);
+    unlabeled.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
+    let mut with_label = labeled(unlabeled.clone(), REQUIRED);
+    with_label.number = Number(2);
+
+    assert_eq!(
+        deciding_with_label(&snapshot(vec![unlabeled, with_label])),
+        vec![
+            Action::Relabel {
+                issue: Number(2),
+                remove: label::NEEDS_INFO.into(),
+                add: label::NEEDS_TRIAGE.into(),
+            },
+            Action::Start(Work::Triage { issue: Number(2) }),
+        ]
+    );
+}
+
+#[test]
+fn with_a_required_label_only_a_labeled_unclaimed_ticket_is_claimed() {
+    let unlabeled = ticket(1);
+    let with_label = labeled(ticket(2), REQUIRED);
+
+    assert_eq!(
+        deciding_with_label(&snapshot(vec![unlabeled, with_label])),
+        vec![Action::Claim { issue: Number(2) }, implement(2)]
+    );
+}
+
+#[test]
+fn with_a_required_label_a_ticket_is_claimed_again_after_an_unassignment_only_if_labeled() {
+    let restart = |number, required: bool| {
+        let mut ticket = labeled_at(
+            unassigned_by(
+                labeled_at(ticket(number), label::READY_FOR_AGENT, 1),
+                "maintainer",
+                2,
+            ),
+            label::READY_FOR_AGENT,
+            3,
+        );
+        if required {
+            ticket.labels.push(REQUIRED.into());
+        }
+        ticket
+    };
+
+    assert_eq!(
+        deciding_with_label(&snapshot(vec![restart(1, false), restart(2, true)])),
+        vec![Action::Claim { issue: Number(2) }, implement(2)]
+    );
+}
+
+#[test]
+fn with_a_required_label_a_reopened_ticket_is_implemented_again_only_if_labeled() {
+    let reopened = |required: bool| {
+        let mut pr = pull(20, 2);
+        pr.state = PullState::Merged { at: t(5) };
+        let mut world = in_review(pr);
+        world.issues[0] = labeled_at(world.issues[0].clone(), label::READY_FOR_AGENT, 7);
+        if required {
+            world.issues[0].labels.push(REQUIRED.into());
+        }
+        world
+    };
+
+    assert_eq!(deciding_with_label(&reopened(false)), vec![]);
+    assert_eq!(deciding_with_label(&reopened(true)), vec![implement(2)]);
+}
+
+#[test]
+fn with_a_required_label_work_already_started_carries_on_unlabeled() {
+    let mut failing = pull(20, 2);
+    failing.checks = vec![check("test", CheckState::Failed)];
+    let mut behind = pull(21, 3);
+    behind.mergeability = Mergeability::Behind;
+    let mut green = pull(22, 4);
+    green.checks = vec![check("test", CheckState::Passed)];
+    green.state = PullState::Open { draft: false };
+    let mut world = in_review(failing);
+    for pr in [behind, green] {
+        world.issues.push(in_review(pr.clone()).issues.remove(0));
+        world.pulls.push(pr);
+    }
+    world.issues.push(claimed(ticket(5)));
+    let policy = Policy {
+        auto_merge: Some(MergeMethod::Merge),
+        ..requiring_label()
+    };
+
+    assert_eq!(
+        deciding(&world, &Memory::default(), &policy),
+        vec![
+            merge_by(22, false, MergeMethod::Merge),
+            Action::Start(Work::FixCi {
+                issue: Number(2),
+                pr: Number(20),
+                failing: vec!["test".into()]
+            }),
+            Action::Start(Work::Update {
+                issue: Number(3),
+                pr: Number(21)
+            }),
+            implement(5),
+        ]
+    );
+}
+
+#[test]
+fn removing_the_required_label_cancels_no_run_in_flight() {
+    let world = snapshot(vec![claimed(ticket(1))]);
+    let runs = [live(1, WorkKind::Implement)];
+
+    let actions = reconcile(
+        &world,
+        &runs,
+        &Memory::default(),
+        &Workflows::default(),
+        t(10),
+        &requiring_label(),
+    );
+
+    assert_eq!(actions, vec![]);
 }

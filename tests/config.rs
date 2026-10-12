@@ -139,3 +139,21 @@ fn a_bad_auto_merge_or_merge_method_is_an_error_naming_the_setting() {
             .contains("auto-merge")
     );
 }
+
+#[test]
+fn every_issue_is_in_scope_unless_a_label_is_required() {
+    let unset = resolve(&[], &[], None).unwrap();
+    let flag = resolve(&["--require-label", "linewright"], &[], None).unwrap();
+    let env = resolve(
+        &[],
+        &[("LINEWRIGHT_REQUIRE_LABEL", "from-env")],
+        Some("require-label = \"from-file\"\n"),
+    )
+    .unwrap();
+    let file = resolve(&[], &[], Some("require-label = \"from-file\"\n")).unwrap();
+
+    assert_eq!(unset.require_label, None);
+    assert_eq!(flag.require_label.as_deref(), Some("linewright"));
+    assert_eq!(env.require_label.as_deref(), Some("from-env"));
+    assert_eq!(file.require_label.as_deref(), Some("from-file"));
+}

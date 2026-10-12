@@ -201,6 +201,7 @@ fn policy(config: &Config, github: &GitHub) -> Policy {
         auto_merge: None,
         update_rule: UpdateRule::Always(UpdateMethod::Merge),
         allowed_merge_methods: MergeMethods::all(),
+        require_label: config.require_label.clone(),
     }
 }
 
@@ -232,6 +233,7 @@ fn factory_config(config: &Config, work_dir: std::path::PathBuf) -> Result<Facto
         update_method: config.update_branch,
         auto_merge: config.auto_merge,
         merge_method: config.merge_method,
+        require_label: config.require_label.clone(),
         briefs,
         work_dir,
         schedule_workflows: true,

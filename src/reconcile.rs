@@ -30,9 +30,20 @@ pub struct Policy {
     pub update_rule: UpdateRule,
     /// The merge methods the repository allows.
     pub allowed_merge_methods: MergeMethods,
+    /// Start work only on issues carrying this label (`docs/specs/product.md`,
+    /// "Operation"). Work already started carries on without it.
+    pub require_label: Option<String>,
 }
 
 impl Policy {
+    /// Whether Linewright may start work on `issue`: unless a label is
+    /// required and the issue lacks it.
+    fn may_start_on(&self, issue: &Issue) -> bool {
+        self.require_label
+            .as_ref()
+            .is_none_or(|l| issue.has_label(l))
+    }
+
     /// Whether a pull request GitHub reports not rebaseable is rebased onto
     /// the default branch, up to date or not: where the repository allows
     /// rebase merging and branches are not always updated by merging
@@ -508,7 +519,7 @@ fn implementation(
     plan: &mut Plan,
 ) {
     let claimed = issue.is_assigned(&policy.machine_user);
-    if live || (!claimed && stopped_by_unassign(issue, policy)) {
+    if live || (!claimed && (stopped_by_unassign(issue, policy) || !policy.may_start_on(issue))) {
         return;
     }
     let mut pulls = snapshot
@@ -534,6 +545,14 @@ fn implementation(
         .clone()
         .any(|p| matches!(p.state, PullState::Merged { at } if !relabeled_since(at)))
     {
+        return;
+    }
+    // Still claimed after a merge, the issue was reopened, and more work on
+    // it is a start.
+    let reopened = pulls
+        .clone()
+        .any(|p| matches!(p.state, PullState::Merged { .. }));
+    if reopened && !policy.may_start_on(issue) {
         return;
     }
     if claimed {
@@ -954,7 +973,9 @@ fn last_labeled(issue: &Issue, name: &str) -> Option<Timestamp> {
 /// Triage runs on `needs-triage` issues not authored by the machine user:
 /// tickets Linewright creates are already briefed.
 fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
-    issue.has_label(label::NEEDS_TRIAGE) && issue.author != policy.machine_user
+    issue.has_label(label::NEEDS_TRIAGE)
+        && issue.author != policy.machine_user
+        && policy.may_start_on(issue)
 }
 
 /// An answer in the thread (`docs/specs/product.md`, "Triage"): the label of
@@ -966,6 +987,7 @@ fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
 fn answered_label(issue: &Issue, policy: &Policy) -> Option<&'static str> {
     let machine = &policy.machine_user;
     if issue.author == *machine
+        || !policy.may_start_on(issue)
         || [label::READY_FOR_AGENT, label::NEEDS_TRIAGE]
             .into_iter()
             .any(|l| issue.has_label(l))
