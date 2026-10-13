@@ -440,9 +440,13 @@ trigger fires. Workflows sit beside the pipeline and may hand it work.
   open pull request for the ticket) starts from a fresh clone of the default
   branch on a new branch for the ticket, replacing any earlier one.
 - The implementer reads the ticket and its comments (the triage brief, earlier
-  handbacks), implements, runs the repository's checks, has the work reviewed in
-  fresh contexts for both standards and spec, applies the findings, reviews
-  again when the fixes were substantial, and commits.
+  handbacks). Its brief names the ticket's parent issue, and for a ticket cut
+  from a spec change, the spec change: pointers, not their content. The
+  implementer and its reviewers read them when they need to know what the other
+  tickets cover, since those own what this ticket leaves out. It implements,
+  runs the repository's checks, has the work reviewed in fresh contexts for both
+  standards and spec, applies the findings, reviews again when the fixes were
+  substantial, and commits.
 - The implementer leaves spec files as they are, by its brief; a spec it
   cannot build from is a spec gap, below. Linewright does not check the
   branch for spec changes: they show in the PR's diff, and a maintainer who

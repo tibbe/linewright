@@ -37,3 +37,15 @@ _Avoid_: action, automation, routine, job, scheduled task
 **Trigger**:
 The condition under which a workflow runs.
 _Avoid_: event
+
+**Spec change**:
+A merged pull request that changes the spec.
+_Avoid_: spec update
+
+**Ticket**:
+An issue an agent implements.
+_Avoid_: task, story
+
+**Tracking issue**:
+The parent issue of the tickets cut from one spec change.
+_Avoid_: epic
