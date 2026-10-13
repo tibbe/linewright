@@ -44,7 +44,10 @@ linewright --repo owner/name serve
 ## Webhooks
 
 With webhooks on, GitHub sends `serve` a delivery for each change in the
-repository, and `serve` checks each one's signature and logs what it names.
+repository, and `serve` checks each one's signature, logs what it names and,
+for an issue or a pull request, reads it again and acts on it within
+seconds. A check, status or push delivery is only logged for now: the next
+poll acts on it.
 The poll still runs at `poll-interval` with webhooks on, for the reason
 [the spec](docs/specs/product.md#webhooks) gives.
 

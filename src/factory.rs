@@ -8,10 +8,12 @@ use std::collections::{BTreeSet, HashMap};
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::TimeDelta;
 use tokio::task::{Id, JoinSet};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -27,7 +29,8 @@ use crate::reconcile::{
 use crate::run::{self, Shell};
 use crate::runtime::Runtime;
 use crate::spec_glob::SpecGlob;
-use crate::store::{CloseReason, Store};
+use crate::store::{CloseReason, IssueRead, Store};
+use crate::webhook::Pending;
 use crate::workflow::{self, LastRuns, Workflow, WorkflowName};
 
 /// The settings a factory runs with.
@@ -221,7 +224,7 @@ impl Factory {
     /// runs in flight and act on the decisions, without taking a snapshot.
     /// Workflows wait for the next poll. Before the first poll there is
     /// nothing kept, and it polls instead. Returns the decisions.
-    pub async fn refresh(&mut self, items: &[Item]) -> Result<Vec<Action>> {
+    pub async fn refresh(&mut self, items: impl IntoIterator<Item = Item>) -> Result<Vec<Action>> {
         let Some(mut kept) = self.kept.clone() else {
             return self.cycle().await;
         };
@@ -232,7 +235,10 @@ impl Factory {
         let now = shell.clock.now();
         let merged_since = now - shell.policy.spec_lookback;
         let snapshot = Arc::make_mut(&mut kept.snapshot);
-        let items: BTreeSet<Item> = items.iter().chain(&self.written).copied().collect();
+        let items: BTreeSet<Item> = items
+            .into_iter()
+            .chain(self.written.iter().copied())
+            .collect();
         for item in items {
             let read = read_into(snapshot, shell, item, merged_since)
                 .await
@@ -242,6 +248,37 @@ impl Factory {
         }
         self.written.clear();
         Ok(self.reconcile(kept, vec![], now).await)
+    }
+
+    /// Polls every `poll_interval` and, between polls, refreshes the items
+    /// deliveries add to `pending`, until stopping. A refresh never races a
+    /// poll: one still running when the poll falls due finishes first. A
+    /// failed poll or refresh is logged and left for the next poll to catch
+    /// up on (`docs/specs/product.md`, "Webhooks").
+    pub async fn serve(&mut self, poll_interval: Duration, pending: &Pending) {
+        let stopping = self.stopping.clone();
+        while !stopping.is_cancelled() {
+            // The poll reads what deliveries named before it as well.
+            pending.take();
+            if let Err(e) = self.cycle().await {
+                error!(error = format!("{e:#}"), "poll failed");
+            }
+            let next_poll = Instant::now() + poll_interval;
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep_until(next_poll) => break,
+                    () = stopping.cancelled() => break,
+                    items = pending.next() => {
+                        if let Err(e) = self.refresh(items).await {
+                            error!(
+                                error = format!("{e:#}"),
+                                "acting on deliveries failed; the next poll catches up"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Keeps `kept`, reconciles its snapshot with the runs in flight and the
@@ -572,7 +609,8 @@ async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str
 
 /// Reads `item` again into `snapshot`, as a snapshot taken now holds it,
 /// with pull requests merged since `merged_since`. Returns the items read:
-/// an issue's pull requests are read with it.
+/// an issue's pull requests are read with it, and so are the ended ones a
+/// snapshot may hold only for the issues it holds.
 async fn read_into(
     snapshot: &mut Snapshot,
     shell: &Shell,
@@ -582,16 +620,37 @@ async fn read_into(
     let store = &shell.store;
     let mut read = vec![item];
     match item {
-        Item::Issue(number) => match store.issue(number).await? {
-            Some(issue) => {
-                snapshot.put_issue(issue.issue);
-                for pull in issue.pulls {
-                    read.push(Item::Pull(pull.number));
-                    snapshot.put_pull(pull);
+        Item::Issue(number) => {
+            let left = match store.issue(number).await? {
+                IssueRead::Held { issue, pulls } => {
+                    snapshot.relink(number, issue.open);
+                    snapshot.put_issue(*issue);
+                    for pull in pulls {
+                        read.push(Item::Pull(pull.number));
+                        snapshot.put_pull(pull);
+                    }
+                    false
+                }
+                IssueRead::LeftOut { open } => {
+                    snapshot.relink(number, open);
+                    true
+                }
+                IssueRead::Gone => {
+                    snapshot.unlink(number);
+                    true
+                }
+            };
+            if left {
+                snapshot.remove_issue(number);
+                for pr in snapshot.ended_pulls_closing(number) {
+                    read.push(Item::Pull(pr));
+                    match store.machine_pull(pr).await? {
+                        Some(pull) => snapshot.put_pull(pull),
+                        None => snapshot.remove_pull(pr),
+                    }
                 }
             }
-            None => snapshot.remove_issue(number),
-        },
+        }
         Item::Pull(number) => {
             match store.machine_pull(number).await? {
                 Some(pull) => snapshot.put_pull(pull),

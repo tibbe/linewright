@@ -388,6 +388,37 @@ impl Snapshot {
         self.issues.retain(|i| i.number != number);
     }
 
+    /// Records whether the issue `number` is `open`, read again, where the
+    /// issues the snapshot holds link to it as a blocker or a sub-issue.
+    pub fn relink(&mut self, number: Number, open: bool) {
+        for issue in &mut self.issues {
+            for linked in issue.blocked_by.iter_mut().chain(&mut issue.sub_issues) {
+                if linked.number == number {
+                    linked.open = open;
+                }
+            }
+        }
+    }
+
+    /// Drops the links to the issue `number`, which the store no longer has,
+    /// from the issues the snapshot holds.
+    pub fn unlink(&mut self, number: Number) {
+        for issue in &mut self.issues {
+            issue.blocked_by.retain(|linked| linked.number != number);
+            issue.sub_issues.retain(|linked| linked.number != number);
+        }
+    }
+
+    /// The closed and merged pull requests the snapshot holds that close the
+    /// issue `number`.
+    pub fn ended_pulls_closing(&self, number: Number) -> Vec<Number> {
+        self.pulls
+            .iter()
+            .filter(|p| !p.is_open() && p.closes.contains(&number))
+            .map(|p| p.number)
+            .collect()
+    }
+
     /// Puts `pull`, read again, in place of the one the snapshot holds, or
     /// beside the others.
     pub fn put_pull(&mut self, pull: Pull) {

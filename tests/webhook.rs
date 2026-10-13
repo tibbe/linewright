@@ -4,53 +4,13 @@
 
 mod common;
 
-use common::Log;
-use hmac::{Hmac, Mac};
-use linewright::webhook::{Address, Listener, Secret, Webhooks};
-use reqwest::StatusCode;
-use sha2::Sha256;
-
-const SECRET: &str = "It's a Secret to Everybody";
+use common::*;
+use linewright::webhook::{Listener, Pending};
 
 async fn listen() -> Listener {
-    Listener::bind(&webhooks("127.0.0.1:0")).await.unwrap()
-}
-
-fn webhooks(address: &str) -> Webhooks {
-    Webhooks {
-        address: address.parse::<Address>().unwrap(),
-        secret: Secret::new(SECRET.into()).unwrap(),
-    }
-}
-
-/// The `X-Hub-Signature-256` GitHub sends with `body`.
-fn signature(body: &str) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).unwrap();
-    mac.update(body.as_bytes());
-    format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
-}
-
-/// Sends a delivery of `event` and returns the response's status.
-async fn deliver(
-    listener: &Listener,
-    event: &str,
-    body: &str,
-    signature: Option<&str>,
-) -> StatusCode {
-    let mut request = reqwest::Client::new()
-        .post(format!("http://{}/", listener.local_address()))
-        .header("X-GitHub-Event", event)
-        .header("X-GitHub-Delivery", "72d3162e-cc78-11e3-81ab-4c9367dc0958")
-        .header("Content-Type", "application/json")
-        .body(body.to_string());
-    if let Some(signature) = signature {
-        request = request.header("X-Hub-Signature-256", signature);
-    }
-    request.send().await.unwrap().status()
-}
-
-async fn signed(listener: &Listener, event: &str, body: &str) -> StatusCode {
-    deliver(listener, event, body, Some(&signature(body))).await
+    Listener::bind(&webhooks("127.0.0.1:0"), Pending::default())
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

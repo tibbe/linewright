@@ -1,9 +1,11 @@
 //! Webhooks: GitHub's signed deliveries, received beside polling
 //! (`docs/specs/product.md`, "Webhooks").
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, bail};
 use axum::Router;
@@ -11,11 +13,12 @@ use axum::body::Bytes;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderMap, StatusCode};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, info_span, warn};
 
-use crate::domain::Number;
+use crate::domain::{Item, Number};
 
 /// The environment variable the webhook's secret comes from. The secret is a
 /// credential, so it is never a flag or a key in the config file.
@@ -105,18 +108,31 @@ impl fmt::Display for Address {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Subject {
     Issue(Number),
-    /// Each pull request a delivery names, such as those a check suite ran
-    /// for; it may be none.
-    PullRequests(Vec<Number>),
+    PullRequest(Number),
+    /// The pull requests a check run or check suite ran for; it may be none.
+    Checks(Vec<Number>),
     /// The branch pushed to, or those whose head's status changed.
     Branches(Vec<String>),
+}
+
+impl Subject {
+    /// The issues and pull requests a refresh reads again for it. Checks and
+    /// branches name none yet: what CI and pushes change is left to the poll.
+    fn items(&self) -> Vec<Item> {
+        match self {
+            Subject::Issue(number) => vec![Item::Issue(*number)],
+            Subject::PullRequest(number) => vec![Item::Pull(*number)],
+            Subject::Checks(_) | Subject::Branches(_) => vec![],
+        }
+    }
 }
 
 impl fmt::Display for Subject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Subject::Issue(number) => write!(f, "issue {number}"),
-            Subject::PullRequests(numbers) => list(f, ("pull request", "pull requests"), numbers),
+            Subject::PullRequest(number) => write!(f, "pull request {number}"),
+            Subject::Checks(numbers) => list(f, ("pull request", "pull requests"), numbers),
             Subject::Branches(branches) => list(f, ("branch", "branches"), branches),
         }
     }
@@ -242,7 +258,7 @@ fn read_delivery(event: &str, body: &[u8]) -> serde_json::Result<Delivery> {
         reference: String,
     }
     let pull_requests = |check: CheckPullRequests| {
-        Subject::PullRequests(
+        Subject::Checks(
             check
                 .pull_requests
                 .into_iter()
@@ -254,13 +270,13 @@ fn read_delivery(event: &str, body: &[u8]) -> serde_json::Result<Delivery> {
         "issues" | "issue_comment" => {
             let IssueEvent { issue } = from_slice(body)?;
             match issue.pull_request {
-                Some(_) => Subject::PullRequests(vec![issue.number]),
+                Some(_) => Subject::PullRequest(issue.number),
                 None => Subject::Issue(issue.number),
             }
         }
         "pull_request" | "pull_request_review" | "pull_request_review_comment" => {
             let PullRequestEvent { pull_request } = from_slice(body)?;
-            Subject::PullRequests(vec![pull_request.number])
+            Subject::PullRequest(pull_request.number)
         }
         "check_run" => pull_requests(from_slice::<CheckRunEvent>(body)?.check_run),
         "check_suite" => pull_requests(from_slice::<CheckSuiteEvent>(body)?.check_suite),
@@ -280,6 +296,45 @@ fn read_delivery(event: &str, body: &[u8]) -> serde_json::Result<Delivery> {
     Ok(Delivery::Accepted(subject))
 }
 
+/// The items accepted deliveries named that the factory has yet to read
+/// again: the listener adds to them and the factory takes them, so deliveries
+/// never race a poll, and those that arrive while it reads coalesce.
+#[derive(Clone, Default)]
+pub struct Pending(Arc<PendingItems>);
+
+#[derive(Default)]
+struct PendingItems {
+    items: Mutex<BTreeSet<Item>>,
+    arrived: Notify,
+}
+
+impl Pending {
+    fn add(&self, items: Vec<Item>) {
+        if items.is_empty() {
+            return;
+        }
+        self.0.items.lock().unwrap().extend(items);
+        self.0.arrived.notify_one();
+    }
+
+    /// Waits until a delivery names an item, and takes every item named
+    /// since the last take.
+    pub async fn next(&self) -> BTreeSet<Item> {
+        loop {
+            let items = self.take();
+            if !items.is_empty() {
+                return items;
+            }
+            self.0.arrived.notified().await;
+        }
+    }
+
+    /// Takes every item named since the last take.
+    pub fn take(&self) -> BTreeSet<Item> {
+        std::mem::take(&mut *self.0.items.lock().unwrap())
+    }
+}
+
 /// The HTTP server `serve` runs with webhooks on, until stopped.
 pub struct Listener {
     address: SocketAddr,
@@ -292,8 +347,9 @@ pub struct Listener {
 const PAYLOAD_CAP: usize = 25 * 1024 * 1024;
 
 impl Listener {
-    /// Listens on `webhooks.address`, or refuses when it cannot.
-    pub async fn bind(webhooks: &Webhooks) -> anyhow::Result<Listener> {
+    /// Listens on `webhooks.address`, or refuses when it cannot, adding what
+    /// accepted deliveries name to `pending`.
+    pub async fn bind(webhooks: &Webhooks, pending: Pending) -> anyhow::Result<Listener> {
         let address = &webhooks.address;
         let socket = TcpListener::bind((address.host(), address.port()))
             .await
@@ -301,7 +357,7 @@ impl Listener {
         let local = socket.local_addr()?;
         let secret = webhooks.secret.clone();
         let router = Router::new()
-            .fallback(move |headers, body| answer(secret.clone(), headers, body))
+            .fallback(move |headers, body| answer(secret.clone(), pending.clone(), headers, body))
             .layer(DefaultBodyLimit::max(PAYLOAD_CAP));
         let stop = CancellationToken::new();
         let task = tokio::spawn({
@@ -336,7 +392,7 @@ impl Listener {
 }
 
 /// Answers a delivery, and logs what became of it.
-async fn answer(secret: Secret, headers: HeaderMap, body: Bytes) -> StatusCode {
+async fn answer(secret: Secret, pending: Pending, headers: HeaderMap, body: Bytes) -> StatusCode {
     let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
     let event = header("X-GitHub-Event");
     let span = info_span!(
@@ -346,7 +402,10 @@ async fn answer(secret: Secret, headers: HeaderMap, body: Bytes) -> StatusCode {
     );
     let _entered = span.enter();
     match receive(&secret, event, header("X-Hub-Signature-256"), &body) {
-        Ok(Delivery::Accepted(subject)) => info!(%subject, "accepted"),
+        Ok(Delivery::Accepted(subject)) => {
+            info!(%subject, "accepted");
+            pending.add(subject.items());
+        }
         Ok(Delivery::Ignored) => info!("ignored: not a change Linewright acts on"),
         Ok(Delivery::Unreadable(reason)) => warn!(%reason, "ignored"),
         Err(refusal) => {

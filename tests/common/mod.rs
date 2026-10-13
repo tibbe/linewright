@@ -19,6 +19,7 @@ use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
 use linewright::spec_glob::SpecGlob;
 use linewright::store::local::{LocalStore, Seed};
+use linewright::webhook::{Address, Listener, Secret, Webhooks};
 use serde_json::Value;
 
 pub const MACHINE: &str = "factory";
@@ -384,14 +385,19 @@ pub fn subject_file(call: &Call) -> String {
     linewright::run::purpose_name(&call.spec.purpose)
 }
 
+/// Implementing sessions commit a file named for their subject and finish.
+pub fn implement(world: &World) {
+    world.runtime.on(WorkKind::Implement, |call| {
+        let file = format!("src/{}.txt", subject_file(call));
+        commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
+        json(serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
+    });
+}
+
 impl World {
     /// A ticket for the factory and the draft pull request it implemented.
     pub async fn ticket_in_review(&mut self) -> (Number, Number) {
-        self.runtime.on(WorkKind::Implement, |call| {
-            let file = format!("src/{}.txt", subject_file(call));
-            commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
-            json(serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
-        });
+        implement(self);
         let ticket = self.store.open_issue(
             "maintainer",
             "Do the thing",
@@ -441,4 +447,46 @@ pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
     std::fs::write(&program, script).unwrap();
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
     program
+}
+
+/// The secret the tests' webhook and listener share.
+pub const SECRET: &str = "It's a Secret to Everybody";
+
+pub fn webhooks(address: &str) -> Webhooks {
+    Webhooks {
+        address: address.parse::<Address>().unwrap(),
+        secret: Secret::new(SECRET.into()).unwrap(),
+    }
+}
+
+/// The `X-Hub-Signature-256` GitHub sends with `body`.
+pub fn signature(body: &str) -> String {
+    use hmac::Mac;
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(SECRET.as_bytes()).unwrap();
+    mac.update(body.as_bytes());
+    format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+}
+
+/// Sends a delivery of `event` and returns the response's status.
+pub async fn deliver(
+    listener: &Listener,
+    event: &str,
+    body: &str,
+    signature: Option<&str>,
+) -> reqwest::StatusCode {
+    let mut request = reqwest::Client::new()
+        .post(format!("http://{}/", listener.local_address()))
+        .header("X-GitHub-Event", event)
+        .header("X-GitHub-Delivery", "72d3162e-cc78-11e3-81ab-4c9367dc0958")
+        .header("Content-Type", "application/json")
+        .body(body.to_string());
+    if let Some(signature) = signature {
+        request = request.header("X-Hub-Signature-256", signature);
+    }
+    request.send().await.unwrap().status()
+}
+
+/// Sends a delivery of `event` signed with the secret.
+pub async fn signed(listener: &Listener, event: &str, body: &str) -> reqwest::StatusCode {
+    deliver(listener, event, body, Some(&signature(body))).await
 }

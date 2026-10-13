@@ -17,7 +17,7 @@ use linewright::runtime::claude::ClaudeCode;
 use linewright::status;
 use linewright::store::Store;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
-use linewright::webhook::Listener;
+use linewright::webhook::{Listener, Pending};
 use linewright::workflow::{self, LastRuns, WorkflowFiles};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
@@ -71,11 +71,12 @@ async fn run(command: Command, config: Config) -> Result<()> {
             let signals = StopSignals::new().context("listening for stop signals")?;
             // `once` and the other commands never listen
             // (`docs/specs/product.md`, "Webhooks").
+            let pending = Pending::default();
             let listener = match &config.webhooks {
-                Some(webhooks) => Some(Listener::bind(webhooks).await?),
+                Some(webhooks) => Some(Listener::bind(webhooks, pending.clone()).await?),
                 None => None,
             };
-            let served = serve(&config, signals).await;
+            let served = serve(&config, signals, &pending).await;
             if let Some(listener) = listener {
                 listener.stop().await;
             }
@@ -144,8 +145,9 @@ async fn run(command: Command, config: Config) -> Result<()> {
     }
 }
 
-/// Starts the factory and polls until a stop signal.
-async fn serve(config: &Config, mut signals: StopSignals) -> Result<()> {
+/// Starts the factory and serves, polling and reading again the items
+/// deliveries add to `pending`, until a stop signal.
+async fn serve(config: &Config, mut signals: StopSignals, pending: &Pending) -> Result<()> {
     let mut factory = tokio::select! {
         factory = start(config) => factory?,
         signal = signals.next() => {
@@ -169,15 +171,7 @@ async fn serve(config: &Config, mut signals: StopSignals) -> Result<()> {
             std::process::exit(128 + second.kind().as_raw_value());
         }
     });
-    while !stopping.is_cancelled() {
-        if let Err(e) = factory.cycle().await {
-            error!(error = format!("{e:#}"), "poll failed");
-        }
-        tokio::select! {
-            _ = tokio::time::sleep(config.poll_interval) => {}
-            () = stopping.cancelled() => {}
-        }
-    }
+    factory.serve(config.poll_interval, pending).await;
     info!("stopping: cancelling the runs in flight");
     factory.stop().await;
     Ok(())

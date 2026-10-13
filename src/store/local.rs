@@ -54,6 +54,9 @@ struct State {
     pulls: BTreeMap<Number, PullRecord>,
     /// How many snapshots have been taken.
     snapshots_taken: usize,
+    /// Why snapshots and reads of issues and pull requests fail, while they
+    /// do.
+    unreadable: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -130,6 +133,7 @@ impl LocalStore {
                 issues: BTreeMap::new(),
                 pulls: BTreeMap::new(),
                 snapshots_taken: 0,
+                unreadable: None,
             }),
         })
     }
@@ -284,6 +288,12 @@ impl LocalStore {
 
     pub fn close_issue_as(&self, issue: Number) -> Result<()> {
         self.state().issue_mut(issue)?.issue.open = false;
+        Ok(())
+    }
+
+    /// Reopens a closed issue, as a person does.
+    pub fn reopen_issue_as(&self, issue: Number) -> Result<()> {
+        self.state().issue_mut(issue)?.issue.open = true;
         Ok(())
     }
 
@@ -596,6 +606,25 @@ impl LocalStore {
     /// How many snapshots have been taken of the store.
     pub fn snapshots_taken(&self) -> usize {
         self.state().snapshots_taken
+    }
+
+    /// Makes snapshots and reads of issues and pull requests fail with
+    /// `reason`, as when GitHub cannot be reached, until
+    /// [`LocalStore::restore_reads`].
+    pub fn fail_reads(&self, reason: &str) {
+        self.state().unreadable = Some(reason.into());
+    }
+
+    /// Lets reads succeed again after [`LocalStore::fail_reads`].
+    pub fn restore_reads(&self) {
+        self.state().unreadable = None;
+    }
+
+    fn readable(&self) -> Result<()> {
+        match &self.state().unreadable {
+            Some(reason) => bail!("{reason}"),
+            None => Ok(()),
+        }
     }
 
     /// The contents of `path` at the head of `branch`, which has it.
@@ -953,6 +982,7 @@ impl Store for LocalStore {
     }
 
     async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot> {
+        self.readable()?;
         let (default_branch, issues, machine, pulls) = {
             let mut state = self.state();
             state.snapshots_taken += 1;
@@ -986,11 +1016,12 @@ impl Store for LocalStore {
         Ok(snapshot)
     }
 
-    async fn issue(&self, number: Number) -> Result<Option<IssueRead>> {
+    async fn issue(&self, number: Number) -> Result<IssueRead> {
+        self.readable()?;
         let (issue, pulls) = {
             let state = self.state();
             let Some(record) = state.issues.get(&number) else {
-                return Ok(None);
+                return Ok(IssueRead::Gone);
             };
             let issue = state.issue_view(record);
             let machine = &state.machine_user;
@@ -1006,10 +1037,10 @@ impl Store for LocalStore {
         for pr in pulls {
             views.push(self.pull_view(pr).await?);
         }
-        Ok(Some(IssueRead {
-            issue,
+        Ok(IssueRead::Held {
+            issue: Box::new(issue),
             pulls: views,
-        }))
+        })
     }
 
     async fn pull(&self, number: Number) -> Result<Pull> {
@@ -1017,6 +1048,7 @@ impl Store for LocalStore {
     }
 
     async fn machine_pull(&self, number: Number) -> Result<Option<Pull>> {
+        self.readable()?;
         let by_machine = {
             let state = self.state();
             let Some(record) = state.pulls.get(&number) else {
@@ -1035,6 +1067,7 @@ impl Store for LocalStore {
         number: Number,
         merged_since: Timestamp,
     ) -> Result<Option<MergedPull>> {
+        self.readable()?;
         let state = self.state();
         let Some(record) = state.pulls.get(&number) else {
             return Ok(None);

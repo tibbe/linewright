@@ -1437,12 +1437,14 @@ impl Store for GitHub {
         Ok(Some(self.pull_view(pr).await?))
     }
 
-    async fn issue(&self, number: Number) -> Result<Option<IssueRead>> {
+    async fn issue(&self, number: Number) -> Result<IssueRead> {
         let Some(issue) = self.gql_issue(number).await? else {
-            return Ok(None);
+            return Ok(IssueRead::Gone);
         };
         if !issue.in_view(&self.viewer.login) {
-            return Ok(None);
+            return Ok(IssueRead::LeftOut {
+                open: issue.state == "OPEN",
+            });
         }
         // A snapshot holds the machine user's open pull requests, and its
         // closed and merged ones for the issues in view.
@@ -1455,10 +1457,10 @@ impl Store for GitHub {
         {
             pulls.push(self.pull(Number(pr.number)).await?);
         }
-        Ok(Some(IssueRead {
-            issue: issue.into_issue(&self.machine_user()),
+        Ok(IssueRead::Held {
+            issue: Box::new(issue.into_issue(&self.machine_user())),
             pulls,
-        }))
+        })
     }
 
     async fn merged_pull(

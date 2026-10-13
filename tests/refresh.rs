@@ -25,7 +25,7 @@ async fn an_issue_labeled_ready_for_agent_and_refreshed_after_a_poll_is_claimed_
     let polled = world.store.snapshots_taken();
 
     world.store.label_as(issue, "ready-for-agent").unwrap();
-    let actions = world.factory.refresh(&[Item::Issue(issue)]).await.unwrap();
+    let actions = world.factory.refresh([Item::Issue(issue)]).await.unwrap();
 
     assert_eq!(
         actions,
@@ -50,7 +50,7 @@ async fn refreshing_an_issue_closed_since_the_poll_cancels_its_run() {
     world.factory.cycle().await.unwrap();
 
     world.store.close_issue_as(issue).unwrap();
-    let actions = world.factory.refresh(&[Item::Issue(issue)]).await.unwrap();
+    let actions = world.factory.refresh([Item::Issue(issue)]).await.unwrap();
 
     assert_eq!(
         actions,
@@ -69,7 +69,7 @@ async fn a_spec_change_merged_since_the_poll_and_refreshed_is_cut_into_tickets()
     world.poll().await;
 
     let pr = spec_change(&world).await;
-    let actions = world.factory.refresh(&[Item::Pull(pr)]).await.unwrap();
+    let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
 
     assert_eq!(actions, [Action::Start(Work::Tickets { pr })]);
 }
@@ -89,7 +89,7 @@ async fn a_review_on_the_machine_users_pull_request_refreshed_after_its_run_is_a
             &[],
         )
         .unwrap();
-    let actions = world.factory.refresh(&[Item::Pull(pr)]).await.unwrap();
+    let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
 
     assert_eq!(actions, [Action::Start(Work::Rework { issue, pr })]);
 }
@@ -121,7 +121,7 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
     let polled = poller.cycle().await.unwrap();
     let refreshed = world
         .factory
-        .refresh(&[Item::Issue(issue), Item::Pull(spec), Item::Pull(pr)])
+        .refresh([Item::Issue(issue), Item::Pull(spec), Item::Pull(pr)])
         .await
         .unwrap();
 
@@ -318,7 +318,7 @@ async fn a_refresh_naming_items_the_store_does_not_have_reads_the_others() {
     world.store.label_as(issue, "ready-for-agent").unwrap();
     let actions = world
         .factory
-        .refresh(&[
+        .refresh([
             Item::Issue(Number(99)),
             Item::Pull(Number(98)),
             Item::Issue(issue),
@@ -337,15 +337,7 @@ async fn a_refresh_naming_items_the_store_does_not_have_reads_the_others() {
 }
 
 async fn refresh(world: &mut World, item: Item) -> Vec<Action> {
-    world.factory.refresh(&[item]).await.unwrap()
-}
-
-fn implement(world: &World) {
-    world.runtime.on(WorkKind::Implement, |call| {
-        let file = format!("src/{}.txt", subject_file(call));
-        commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
-        json(serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
-    });
+    world.factory.refresh([item]).await.unwrap()
 }
 
 /// Sessions of `kind` wait until the returned sender sends, then fail.

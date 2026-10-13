@@ -137,13 +137,21 @@ pub enum CloseReason {
     NotPlanned,
 }
 
-/// An issue as a snapshot holds it.
+/// An issue, as a snapshot taken now sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IssueRead {
-    pub issue: Issue,
-    /// The machine user's pull requests that close the issue, which a
-    /// snapshot holds with it.
-    pub pulls: Vec<Pull>,
+pub enum IssueRead {
+    /// One the snapshot holds.
+    Held {
+        issue: Box<Issue>,
+        /// The machine user's pull requests that close the issue, which a
+        /// snapshot holds with it.
+        pulls: Vec<Pull>,
+    },
+    /// One the snapshot's filters leave out, though the issues it holds may
+    /// link to it.
+    LeftOut { open: bool },
+    /// One the store does not have, such as a deleted issue.
+    Gone,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -174,9 +182,8 @@ pub trait Store: Send + Sync {
     /// The facts one poll reconciles, with pull requests merged since
     /// `merged_since`.
     async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot>;
-    /// The issue as a snapshot taken now holds it: `None` when a snapshot
-    /// leaves it out, as it does an issue the store does not have.
-    async fn issue(&self, number: Number) -> Result<Option<IssueRead>>;
+    /// The issue as a snapshot taken now sees it.
+    async fn issue(&self, number: Number) -> Result<IssueRead>;
     async fn pull(&self, number: Number) -> Result<Pull>;
     /// The pull request as a snapshot taken now holds it among the machine
     /// user's: `None` when the snapshot leaves it out, as it does every other
