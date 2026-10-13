@@ -17,18 +17,23 @@ RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
 
 FROM debian:${DEBIAN_RELEASE}-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash ca-certificates git tini \
+    && apt-get install -y --no-install-recommends bash ca-certificates git python3 tini \
     && rm -rf /var/lib/apt/lists/*
 ADD --checksum=sha256:bd70a5e4a268002704024ceba7f8446024114e94f3f0bdd11c23a9e592be81c6 \
     https://downloads.claude.ai/keys/claude-code.asc /etc/apt/keyrings/claude-code.asc
-ARG CLAUDE_CODE_VERSION=2.1.287
+ADD --checksum=sha256:6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b \
+    https://cli.github.com/packages/githubcli-archive-keyring.gpg /etc/apt/keyrings/githubcli.gpg
+ARG CLAUDE_CODE_VERSION=2.1.287 GH_VERSION=2.102.0
 RUN <<EOF
 set -eu
-chmod 644 /etc/apt/keyrings/claude-code.asc
+chmod 644 /etc/apt/keyrings/claude-code.asc /etc/apt/keyrings/githubcli.gpg
 echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
   > /etc/apt/sources.list.d/claude-code.list
+echo "deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
+  > /etc/apt/sources.list.d/github-cli.list
 apt-get update
-apt-get install -y --no-install-recommends "claude-code=${CLAUDE_CODE_VERSION}-1"
+apt-get install -y --no-install-recommends \
+  "claude-code=${CLAUDE_CODE_VERSION}-1" "gh=${GH_VERSION}"
 rm -rf /var/lib/apt/lists/*
 EOF
 ENV DISABLE_AUTOUPDATER=1
@@ -45,4 +50,4 @@ FROM runtime AS base
 COPY --link --from=build /usr/local/bin/linewright /usr/local/bin/linewright
 LABEL org.opencontainers.image.source="https://github.com/tibbe/linewright" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.description="Linewright, git, and Claude Code"
+      org.opencontainers.image.description="Linewright, Claude Code, git, gh, and python3"

@@ -34,12 +34,12 @@ linewright --repo owner/name serve
 - Webhooks are optional; see [Webhooks](#webhooks).
 - Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
   in `linewright.toml`; `linewright --help` lists them with their defaults.
-- The `Dockerfile` builds the base image: `linewright`, `git`, and Claude
-  Code on Debian, without Node.js. Build your own image from it with your
-  project's toolchain added. It runs as the user `linewright`, uid and gid
-  1000; to give a work directory on the host another owner, build it with the
-  `LINEWRIGHT_UID` and `LINEWRIGHT_GID` build arguments. `deploy/` runs
-  Linewright on itself in a locked-down container.
+- The `Dockerfile` builds the base image: `linewright`, Claude Code,
+  `git`, `gh`, and `python3` on Debian, without Node.js. Build your own image
+  from it with your project's toolchain added. It runs as the user
+  `linewright`, uid and gid 1000; to give a work directory on the host another
+  owner, build it with the `LINEWRIGHT_UID` and `LINEWRIGHT_GID` build
+  arguments. `deploy/` runs Linewright on itself in a locked-down container.
 
 ## Webhooks
 
