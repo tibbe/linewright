@@ -30,7 +30,7 @@ pipeline to work, like any others.
   branch, touched at least one spec file, was merged within the lookback
   window (default 7 days), has no `linewright:spec-processed` label and,
   with `require-label` set, carries the required label, applied before or
-  after the merge. PRs authored by the machine user are skipped. The spec as
+  after the merge. PRs Linewright authored are skipped. The spec as
   merged is what gets built; a push straight to the default branch is the
   maintainer's own change, outside the factory.
 - Issues enter in two ways: with `needs-triage`, which asks for triage, and

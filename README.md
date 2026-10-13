@@ -7,11 +7,11 @@ coding agents turn it into working software.
 
 You need `git`, `bash` and [Claude Code](https://code.claude.com) (`claude`)
 on the path, your project's toolchain so agents can build and test it, and a
-GitHub user for the factory with write access to the repository. Agents'
+GitHub user account for Linewright with write access to the repository. Agents'
 commands run in `bash`, whatever shell you use.
 
 ```sh
-export GH_TOKEN=...            # the machine user's token (or GITHUB_TOKEN)
+export GH_TOKEN=...            # that account's token (or GITHUB_TOKEN)
 export ANTHROPIC_API_KEY=...   # or any login Claude Code already has
 cargo install --path .
 linewright --repo owner/name serve
@@ -64,8 +64,8 @@ The poll still runs at `poll-interval` with webhooks on, for the reason
    HTTPS to `webhook-address`; `deploy/README.md` does so with Nginx Proxy
    Manager. `serve` answers on any path.
 
-4. Create the webhook by hand. The machine user cannot: creating one takes
-   admin rights on the repository, which the machine user does not need and,
+4. Create the webhook by hand. Linewright cannot: creating one takes admin
+   rights on the repository, which its account does not need and,
    with `--auto-merge`, must not have. As a repository admin, open the
    repository's **Settings → Webhooks → Add webhook** and set:
    - **Payload URL**: the reverse proxy's HTTPS URL, such as

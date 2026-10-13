@@ -8,7 +8,8 @@ where they see what it is doing, so working with Linewright needs nothing but
 GitHub, and a comment on the issue or pull request records every outcome.
 
 For example, the maintainer hands an issue to Linewright by labeling it, and
-sees that Linewright has taken it on because the machine user is assigned.
+sees that Linewright has taken it on because the issue is assigned to
+Linewright.
 When Linewright cannot finish it, a comment on the issue says why.
 
 ## User Stories
@@ -31,11 +32,11 @@ When Linewright cannot finish it, a comment on the issue says why.
 
 - Requirements:
   - A GitHub repository.
-  - A **machine user**: a GitHub user account for Linewright, with a token
-    that lets it push branches, open pull requests, and read and write issues
-    and labels. Everything Linewright does on GitHub carries that identity, so
-    the maintainer can review its PRs and see its claims as assignments. With
-    `--auto-merge`, the machine user must not be able to bypass the default
+  - A GitHub user account for Linewright, with a token that lets it push
+    branches, open pull requests, and read and write issues and labels.
+    Everything Linewright does on GitHub carries that identity, so the
+    maintainer can review its PRs and see its claims as assignments. With
+    `--auto-merge`, the account must not be able to bypass the default
     branch's rules (no admin rights, not on a ruleset's bypass list), or the
     reviews they require are skipped.
   - Spec files: tracked Markdown matching the spec glob (default
@@ -64,7 +65,7 @@ When Linewright cannot finish it, a comment on the issue says why.
 - For issues, the human interface is two labels: `needs-triage` asks for
   triage and `ready-for-agent` asks for implementation. Spec changes need no
   label: every merged pull request that touches the spec is picked up.
-  Removing `ready-for-agent`, unassigning the machine user or closing the
+  Removing `ready-for-agent`, unassigning Linewright or closing the
   issue stops its work; after an unassignment, applying `ready-for-agent`
   again restarts it.
 - With `require-label` set, Linewright starts work only on issues and pull
@@ -78,8 +79,8 @@ When Linewright cannot finish it, a comment on the issue says why.
   on their schedule either way. Unset, every issue and pull request is
   Linewright's to work.
 - Machine state is derived from GitHub, never labeled. An issue is
-  **claimed** when the machine user is among its assignees, and **in review**
-  when an open pull request by the machine user closes it.
+  **claimed** when Linewright is among its assignees, and **in review** when
+  an open pull request by Linewright closes it.
 - Linewright comments at every outcome: a triage result, tickets created (on
   the tracking issue and the spec PR), a ticket handed back and why, a PR
   made ready, a rework done. Every comment opens with the marker line
@@ -108,7 +109,7 @@ stateDiagram-v2
     triage --> ready_for_human: maintainer must decide
     ready_for_human --> triage: a person comments after triage, or maintainer labels needs-triage
     ready_for_human --> ready_for_agent: maintainer labels
-    ready_for_agent --> work: unblocked, machine user assigned
+    ready_for_agent --> work: unblocked, Linewright assigned
     work --> ready_for_human: cannot finish, or PR closed unmerged
     work --> [*]: PR merged, issue closed
 ```

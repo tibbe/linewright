@@ -23,8 +23,8 @@ requests, the rework starts within seconds.
   redeliver a failed delivery, so the poll is what catches a missed one.
 - The maintainer creates the repository's webhook by hand, in the
   repository's settings: creating one takes admin rights on the repository,
-  which the machine user does not need and, with `--auto-merge`, must not
-  have. Linewright cannot see the webhook, so a misconfigured one shows as
+  which Linewright's account does not need and, with `--auto-merge`, must
+  not have. Linewright cannot see the webhook, so a misconfigured one shows as
   deliveries that never arrive, or that arrive and are refused, which the
   webhook's Recent Deliveries on GitHub and Linewright's log both show.
 - The webhook and Linewright share a secret, with which GitHub signs each
@@ -39,7 +39,7 @@ requests, the rework starts within seconds.
 - A delivery names what changed, and Linewright acts on that alone: it
   reads the issue or pull request again from GitHub and does what a poll
   would do with it, without a poll of everything. A push to the default
-  branch names every open pull request the machine user opened. What it acts
+  branch names every open pull request Linewright opened. What it acts
   on is what it read, never the delivery's own account of the change, so a
   delivery that arrives late, twice or out of order changes nothing a poll
   would not.

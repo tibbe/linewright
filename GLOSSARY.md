@@ -24,10 +24,6 @@ _Avoid_: customer, author
 A coding-agent session Linewright runs.
 _Avoid_: bot, model, worker
 
-**Machine user**:
-The GitHub user account Linewright acts as.
-_Avoid_: bot account, service account
-
 ### Work
 
 **Workflow**:

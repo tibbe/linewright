@@ -59,7 +59,7 @@ requests that have already been through review.
 
 ### Runs
 
-- Claiming is adding the machine user as an assignee. A **fresh run** (no
+- Claiming is adding Linewright as an assignee. A **fresh run** (no
   open pull request for the ticket) starts from a fresh clone of the default
   branch on a new branch for the ticket, replacing any earlier one.
 - The implementer reads the ticket and its comments (the triage brief, earlier
@@ -86,7 +86,7 @@ requests that have already been through review.
   reason and the tail of the log. Infrastructure failures are retried once
   first. A session refused for the usage limit has not failed: it waits the
   limit out (see [Operation](operation.md)).
-- Removing `ready-for-agent`, unassigning the machine user or closing the
+- Removing `ready-for-agent`, unassigning Linewright or closing the
   issue cancels its run; the branch is kept. A run on a PR that is merged or
   closed while it works pushes and posts nothing.
 - After a restart, a claimed ticket with no open or merged PR and no live

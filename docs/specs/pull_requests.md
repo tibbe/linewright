@@ -38,8 +38,8 @@ to review again; the maintainer approves and merges.
   running). A failure starts a fix session, at most 2 attempts, then
   `ready-for-human` naming the failing check.
 - Green: the PR is marked ready for review.
-- **Auto-merge**: with `--auto-merge`, Linewright merges each green PR the
-  machine user opened, with the `merge-method` setting: by default a rebase
+- **Auto-merge**: with `--auto-merge`, Linewright merges each green PR it
+  opened, with the `merge-method` setting: by default a rebase
   where the repository requires linear history, and otherwise the first
   method of merge, squash and rebase that the repository allows. This is
   Linewright merging, not GitHub's auto-merge feature.
@@ -51,9 +51,9 @@ to review again; the maintainer approves and merges.
     hold a merge.
   - A merge that fails is retried once on the next poll, then the ticket goes
     to `ready-for-human` with GitHub's reason.
-  - It covers every open PR the machine user opened, including those opened
-    while Linewright ran without it.
-- **Rework**: a comment or review from anyone other than the machine user,
+  - It covers every open PR Linewright opened, including those opened
+    while it ran without `--auto-merge`.
+- **Rework**: a comment or review from anyone other than Linewright,
   posted after Linewright's last push, starts a rework run; a review that
   only approves starts nothing. The run brings the branch up to date,
   addresses the comments, pushes, replies in each thread and re-requests
@@ -89,7 +89,7 @@ The `work` states of the issue lifecycle, derived as under
 
 ```mermaid
 stateDiagram-v2
-    [*] --> claimed: unblocked, machine user assigned
+    [*] --> claimed: unblocked, Linewright assigned
     claimed --> in_review: PR opened and green
     claimed --> [*]: cannot finish, to ready-for-human
     in_review --> claimed: person comments on the PR

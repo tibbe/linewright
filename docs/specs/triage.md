@@ -25,7 +25,7 @@ brief an implementer works from.
 
 ## Decisions
 
-- Triage runs on `needs-triage` issues not authored by the machine user
+- Triage runs on `needs-triage` issues not authored by Linewright
   (tickets Linewright creates are already briefed).
 - The agent reads the issue and its comments, the codebase and the spec. It
   categorizes, verifies the claim (reproduces a bug, runs the tests, checks
