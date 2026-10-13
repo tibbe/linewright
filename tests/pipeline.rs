@@ -1821,27 +1821,6 @@ async fn a_run_refused_for_the_usage_limit_whose_work_cannot_be_pushed_still_kee
 }
 
 #[tokio::test]
-async fn the_next_poll_starts_a_run_refused_for_the_usage_limit_again() {
-    let mut world = World::new().await;
-    world
-        .runtime
-        .on(WorkKind::Implement, |_| refused_for_the_usage_limit());
-    world.store.open_issue(
-        "maintainer",
-        "Do the thing",
-        "Please.",
-        &["ready-for-agent"],
-    );
-    world.poll().await;
-
-    implement(&world);
-    world.poll().await;
-
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
-    assert_eq!(world.store.pulls().len(), 1);
-}
-
-#[tokio::test]
 async fn a_session_that_fails_on_its_infrastructure_is_retried_once_then_handed_back() {
     use linewright::runtime::SessionError;
 

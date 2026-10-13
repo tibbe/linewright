@@ -152,6 +152,10 @@ pub struct Memory {
     /// Oldest first.
     pub failed_merges: Vec<FailedMerge>,
     pub tried_rebases: Vec<TriedRebase>,
+    /// When the usage limit the agent runtime refused a session for resets:
+    /// until then no session starts (`docs/specs/operation.md`, "Usage
+    /// limit").
+    pub usage_limit_resets_at: Option<Timestamp>,
 }
 
 impl Memory {
@@ -161,6 +165,34 @@ impl Memory {
         let open = |pr| snapshot.pull(pr).is_some_and(|p| p.is_open());
         self.failed_merges.retain(|f| open(f.pr));
         self.tried_rebases.retain(|r| open(r.pr));
+    }
+
+    /// Whether the usage limit holds starts back at `now`.
+    pub fn holds_starts(&self, now: Timestamp) -> bool {
+        self.usage_limit_resets_at
+            .is_some_and(|resets_at| now < resets_at)
+    }
+
+    /// Holds starts back until `resets_at`, unless a later reset already
+    /// holds them: the latest wins. Returns whether the hold changed.
+    pub fn hold_until(&mut self, resets_at: Timestamp) -> bool {
+        if self
+            .usage_limit_resets_at
+            .is_some_and(|held| held >= resets_at)
+        {
+            return false;
+        }
+        self.usage_limit_resets_at = Some(resets_at);
+        true
+    }
+
+    /// Lifts the hold on starts if its reset has passed at `now`. Returns
+    /// the reset it lifted.
+    pub fn lift_usage_limit(&mut self, now: Timestamp) -> Option<Timestamp> {
+        if self.holds_starts(now) {
+            return None;
+        }
+        self.usage_limit_resets_at.take()
     }
 }
 
@@ -346,10 +378,15 @@ pub fn reconcile(
         }
     }
 
-    // Workflow runs count against the ceiling beside the pipeline's.
-    let room = policy
-        .max_workers
-        .saturating_sub(live.len() + workflows.in_flight.len());
+    // Workflow runs count against the ceiling beside the pipeline's. Under
+    // the usage limit there is no room: a due workflow stays due.
+    let room = if memory.holds_starts(now) {
+        0
+    } else {
+        policy
+            .max_workers
+            .saturating_sub(live.len() + workflows.in_flight.len())
+    };
     let (mut actions, room) = plan.into_actions(room);
     actions.extend(schedule(workflows, now, room));
     actions

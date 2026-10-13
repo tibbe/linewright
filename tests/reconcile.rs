@@ -1930,3 +1930,154 @@ fn pending_spec_changes_agree_with_the_required_label() {
     assert_eq!(numbers(&requiring_label()), vec![Number(2)]);
     assert_eq!(numbers(&policy()), vec![Number(1), Number(2)]);
 }
+
+// The usage limit (`docs/specs/operation.md`, "Usage limit").
+
+/// A world with work of every kind to start and actions that start no
+/// session: an answered question, a run whose ticket lost its label, a
+/// ticket out of CI attempts, a green draft and a tracking issue whose
+/// tickets are all closed, beside a workflow due since 13:00.
+fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
+    let mut answered = labeled(issue(1), label::NEEDS_INFO);
+    answered.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
+    let mut reworked = ready(pull(20, 2));
+    reworked.comments = vec![comment("maintainer", 4, "Please rename `foo`.")];
+    let mut green = pull(21, 6);
+    green.checks = vec![check("test", CheckState::Passed)];
+    let mut failing = pull(22, 11);
+    failing.checks = vec![check("test", CheckState::Failed)];
+    failing.comments = vec![ci_fix_comment(3), ci_fix_comment(6)];
+    let mut world = snapshot(vec![
+        answered,
+        claimed(ticket(2)),
+        ticket(3),
+        claimed(ticket(4)),
+        claimed(ticket(6)),
+        tracking(9, 7, &[(10, false)]),
+        claimed(ticket(11)),
+        claimed(issue(12)),
+    ]);
+    world.pulls = vec![reworked, green, failing];
+    world.merged = vec![merged(5, &["docs/spec.md"])];
+    (
+        world,
+        vec![live(12, WorkKind::Implement)],
+        workflows(&["hourly"], &[("hourly", 30)], &[]),
+    )
+}
+
+fn under_usage_limit_until(resets_at: i64) -> Memory {
+    Memory {
+        usage_limit_resets_at: Some(t(resets_at)),
+        ..Memory::default()
+    }
+}
+
+/// The decisions at 13:10 with room for every run, under a usage limit
+/// that resets at `resets_at` minutes past 12:00.
+fn under_usage_limit(resets_at: i64) -> Vec<Action> {
+    let (world, live, workflows) = work_of_every_kind();
+    let policy = Policy {
+        max_workers: 10,
+        ..policy()
+    };
+    let memory = under_usage_limit_until(resets_at);
+    reconcile(&world, &live, &memory, &workflows, t(70), &policy)
+}
+
+/// The actions in [`work_of_every_kind`] that start no session.
+fn sessionless_actions() -> Vec<Action> {
+    vec![
+        Action::Cancel {
+            subject: Subject::Issue(Number(12)),
+            reason: "`ready-for-agent` was removed from #12".into(),
+        },
+        Action::Relabel {
+            issue: Number(1),
+            remove: label::NEEDS_INFO.into(),
+            add: label::NEEDS_TRIAGE.into(),
+        },
+        Action::MarkReady { pr: Number(21) },
+        Action::CloseTracking { issue: Number(9) },
+    ]
+}
+
+#[test]
+fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions_are_taken() {
+    let actions = under_usage_limit(80);
+
+    let (handed_back, others): (Vec<Action>, Vec<Action>) = actions
+        .into_iter()
+        .partition(|a| matches!(a, Action::HandBack { .. }));
+    assert_eq!(others, sessionless_actions());
+    assert!(matches!(
+        handed_back.as_slice(),
+        [Action::HandBack {
+            issue: Number(11),
+            stage: Stage::Ci,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn once_the_usage_limit_resets_every_run_starts_and_the_due_workflow_runs() {
+    let starts: Vec<Action> = under_usage_limit(70)
+        .into_iter()
+        .filter(|a| !sessionless_actions().contains(a) && !matches!(a, Action::HandBack { .. }))
+        .collect();
+
+    assert_eq!(
+        starts,
+        vec![
+            rework(2, 20),
+            Action::Start(Work::Triage { issue: Number(1) }),
+            Action::Start(Work::Tickets { pr: Number(5) }),
+            Action::Claim { issue: Number(3) },
+            implement(3),
+            implement(4),
+            Action::RunWorkflow(Box::new(hourly("hourly"))),
+            Action::RecordLastRuns(last_runs(&[("hourly", 70)])),
+        ]
+    );
+}
+
+#[test]
+fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Passed)];
+
+    assert_eq!(
+        reconcile(
+            &in_review(pr),
+            &[],
+            &under_usage_limit_until(80),
+            &Workflows::default(),
+            t(10),
+            &merging_by(MergeMethod::Merge),
+        ),
+        vec![merge(20, true)]
+    );
+}
+
+#[test]
+fn the_latest_usage_limit_reset_holds_starts_back() {
+    let mut memory = Memory::default();
+
+    assert!(memory.hold_until(t(80)));
+    assert!(!memory.hold_until(t(50)));
+    assert!(memory.holds_starts(t(70)));
+    assert!(memory.hold_until(t(90)));
+    assert!(memory.holds_starts(t(85)));
+}
+
+#[test]
+fn the_usage_limit_is_lifted_once_its_reset_passes() {
+    let mut memory = under_usage_limit_until(80);
+
+    assert_eq!(memory.lift_usage_limit(t(79)), None);
+    assert!(memory.holds_starts(t(79)));
+    assert_eq!(memory.lift_usage_limit(t(80)), Some(t(80)));
+    assert!(!memory.holds_starts(t(79)));
+    assert_eq!(memory.lift_usage_limit(t(81)), None);
+}

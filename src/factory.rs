@@ -27,7 +27,7 @@ use crate::reconcile::{
     Action, FailedMerge, LiveRun, Memory, Policy, Subject, Work, Workflows, hold_note, reconcile,
 };
 use crate::run::{self, Shell, WorkflowEnd};
-use crate::runtime::Runtime;
+use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
 use crate::store::{CloseReason, IssueRead, Store};
 use crate::webhook::{self, Pending};
@@ -73,7 +73,8 @@ struct LiveEntry {
 
 pub struct Factory {
     shell: Arc<Shell>,
-    runs: JoinSet<()>,
+    /// Each ends in the usage limit its session was refused for, if it was.
+    runs: JoinSet<Option<UsageLimit>>,
     live: HashMap<Id, LiveEntry>,
     stopping: CancellationToken,
     schedule_workflows: bool,
@@ -300,6 +301,9 @@ impl Factory {
     ) -> Vec<Action> {
         let kept = self.kept.insert(kept).clone();
         let snapshot = &kept.snapshot;
+        if let Some(resets_at) = self.memory.lift_usage_limit(now) {
+            info!(%resets_at, "usage limit reset; sessions start again");
+        }
         // A cut that ended since the snapshot was taken counts as in flight:
         // the snapshot may miss what it wrote.
         let mut live: Vec<LiveRun> = self.ended.clone();
@@ -353,7 +357,8 @@ impl Factory {
             workflow::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
         run_and_log(shell, &workflow, self.stopping.clone())
             .await
-            .with_context(|| format!("the run of the workflow `{name}` failed"))
+            .with_context(|| format!("the run of the workflow `{name}` failed"))?;
+        Ok(())
     }
 
     /// The workflows on the default branch whose files parse, when polls
@@ -413,9 +418,16 @@ impl Factory {
         }
     }
 
-    fn finished(&mut self, result: Result<(Id, ()), tokio::task::JoinError>) {
+    fn finished(&mut self, result: Result<(Id, Option<UsageLimit>), tokio::task::JoinError>) {
         let id = match result {
-            Ok((id, ())) => id,
+            Ok((id, refused)) => {
+                if let Some(UsageLimit { resets_at }) = refused
+                    && self.memory.hold_until(resets_at)
+                {
+                    info!(%resets_at, "usage limit in force; no session starts until it resets");
+                }
+                id
+            }
             Err(e) => {
                 error!(error = %e, "a run panicked");
                 e.id()
@@ -572,10 +584,9 @@ impl Factory {
                 let shell = self.shell.clone();
                 let handle = self.runs.spawn({
                     let (workflow, cancel) = (workflow.clone(), cancel.clone());
-                    // A run that fails is logged; there is nothing to hand back.
-                    async move {
-                        let _ = run_and_log(&shell, &workflow, cancel).await;
-                    }
+                    // A run that fails is logged, with nothing to hand back;
+                    // only a refusal for the usage limit is reported.
+                    async move { run_and_log(&shell, &workflow, cancel).await.ok().flatten() }
                 });
                 self.live.insert(
                     handle.id(),
@@ -591,14 +602,19 @@ impl Factory {
 }
 
 /// Runs `workflow` once, files the issues its result returns and logs how
-/// it went: by hand or on its schedule.
-async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationToken) -> Result<()> {
+/// it went: by hand or on its schedule. Returns the usage limit its session
+/// was refused for, if it was.
+async fn run_and_log(
+    shell: &Shell,
+    workflow: &Workflow,
+    cancel: CancellationToken,
+) -> Result<Option<UsageLimit>> {
     let name = &workflow.name;
     info!(workflow = %name, "workflow run started");
     match run::workflow(shell, workflow, cancel).await {
         Ok(WorkflowEnd::Finished(result)) => {
             info!(workflow = %name, summary = result.summary, "workflow run finished");
-            Ok(())
+            Ok(None)
         }
         Ok(WorkflowEnd::UsageLimit(limit)) => {
             warn!(
@@ -606,7 +622,7 @@ async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationTok
                 resets_at = %limit.resets_at,
                 "workflow run ended for the usage limit"
             );
-            Ok(())
+            Ok(Some(limit))
         }
         Err(e) => {
             error!(workflow = %name, error = format!("{e:#}"), "workflow run failed");

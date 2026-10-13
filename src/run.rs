@@ -117,23 +117,28 @@ fn stage_of(kind: WorkKind) -> Stage {
     }
 }
 
+/// Runs `work` to its end. Returns the usage limit its session was refused
+/// for, if it was.
 pub(crate) async fn run(
     shell: Arc<Shell>,
     work: Work,
     snapshot: Arc<Snapshot>,
     as_of: Timestamp,
     cancel: CancellationToken,
-) {
+) -> Option<UsageLimit> {
     drive(&shell, &work, &snapshot, &Ctx { as_of, cancel }).await
 }
 
-async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
+async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Option<UsageLimit> {
     let subject = work.subject();
     let run_stage = stage_of(work.kind());
     let mut retried = false;
     let (reason, log_tail) = loop {
         match attempt(shell, work, snapshot, ctx).await {
-            Ok(()) => return info!(subject = ?subject, kind = ?work.kind(), "run finished"),
+            Ok(()) => {
+                info!(subject = ?subject, kind = ?work.kind(), "run finished");
+                return None;
+            }
             Err(Failure::Infrastructure(e)) if !retried => {
                 warn!(subject = ?subject, error = format!("{e:#}"), "infrastructure failure; retrying once");
                 retried = true;
@@ -145,14 +150,16 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
                 );
             }
             Err(Failure::Cancelled) => {
-                return info!(subject = ?subject, "run cancelled; its branch is kept");
+                info!(subject = ?subject, "run cancelled; its branch is kept");
+                return None;
             }
             Err(Failure::UsageLimit(limit)) => {
-                return warn!(
+                warn!(
                     subject = ?subject,
                     resets_at = %limit.resets_at,
                     "run ended for the usage limit; its claim and branch are kept"
                 );
+                return Some(limit);
             }
             Err(Failure::Apply(e)) => {
                 break (format!("Recording the run's outcome failed: {e:#}"), None);
@@ -176,6 +183,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
     if let Err(e) = handed {
         warn!(subject = ?subject, error = format!("{e:#}"), "handing back failed");
     }
+    None
 }
 
 async fn attempt(

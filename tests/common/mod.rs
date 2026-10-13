@@ -236,11 +236,17 @@ impl std::io::Write for Log {
     }
 }
 
+/// When the usage limit [`refused_for_the_usage_limit`] refuses sessions
+/// for resets: 7:50 UTC on 13 October 2026.
+pub fn usage_limit_resets_at() -> Timestamp {
+    "2026-10-13T07:50:00Z".parse().unwrap()
+}
+
 /// A session's end when the runtime refuses it for the usage limit, which
-/// resets at 7:50 UTC on 13 October 2026.
+/// resets at [`usage_limit_resets_at`].
 pub fn refused_for_the_usage_limit() -> Result<String, SessionError> {
     Err(SessionError::UsageLimit(UsageLimit {
-        resets_at: "2026-10-13T07:50:00Z".parse().unwrap(),
+        resets_at: usage_limit_resets_at(),
     }))
 }
 
