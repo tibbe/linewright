@@ -18,8 +18,6 @@ use linewright::store::Store;
 use linewright::store::local::LocalStore;
 use linewright::webhook::{Listener, Pending};
 use serde_json::json;
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 /// A poll interval no test waits out: what such a test sees, deliveries did.
 const NEVER: Duration = Duration::from_secs(3600);
@@ -29,8 +27,7 @@ struct Served {
     store: Arc<LocalStore>,
     runtime: Arc<ScriptedRuntime>,
     listener: Listener,
-    stopping: CancellationToken,
-    serving: JoinHandle<()>,
+    serving: Serving,
     _dir: tempfile::TempDir,
 }
 
@@ -40,7 +37,7 @@ async fn serve(world: World, poll_interval: Duration) -> Served {
     let World {
         store,
         runtime,
-        mut factory,
+        factory,
         dir,
         ..
     } = world;
@@ -48,18 +45,13 @@ async fn serve(world: World, poll_interval: Duration) -> Served {
     let listener = Listener::bind(&webhooks("127.0.0.1:0"), pending.clone())
         .await
         .unwrap();
-    let stopping = factory.stopping();
     let polled = store.snapshots_taken();
-    let serving = tokio::spawn(async move {
-        factory.serve(poll_interval, &pending).await;
-        factory.stop().await;
-    });
+    let serving = Serving::start(factory, poll_interval, pending);
     eventually(|| store.snapshots_taken() > polled).await;
     Served {
         store,
         runtime,
         listener,
-        stopping,
         serving,
         _dir: dir,
     }
@@ -83,26 +75,9 @@ impl Served {
     }
 
     async fn stop(self) {
-        self.stopping.cancel();
-        self.serving.await.unwrap();
+        self.serving.stop().await;
         self.listener.stop().await;
     }
-}
-
-/// Waits until `done`, failing the test after ten seconds.
-async fn eventually(done: impl Fn() -> bool) {
-    eventually_async(|| std::future::ready(done())).await;
-}
-
-/// Waits until `done` resolves to true, failing the test after ten seconds.
-async fn eventually_async<F: Future<Output = bool>>(done: impl Fn() -> F) {
-    let waited = tokio::time::timeout(Duration::from_secs(10), async {
-        while !done().await {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await;
-    assert!(waited.is_ok(), "timed out");
 }
 
 fn claimed(store: &LocalStore, issue: Number) -> bool {

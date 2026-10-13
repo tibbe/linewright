@@ -5,6 +5,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
 use linewright::marker::{Stage, marked};
 use linewright::reconcile::*;
+use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
 use linewright::workflow::{LastRuns, Workflow};
 
@@ -1968,7 +1969,9 @@ fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
 
 fn under_usage_limit_until(resets_at: i64) -> Memory {
     Memory {
-        usage_limit_resets_at: Some(t(resets_at)),
+        usage_limit: Some(UsageLimit {
+            resets_at: t(resets_at),
+        }),
         ..Memory::default()
     }
 }

@@ -19,8 +19,10 @@ use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::spec_glob::SpecGlob;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
-use linewright::webhook::{Address, Listener, Secret, Webhooks};
+use linewright::webhook::{Address, Listener, Pending, Secret, Webhooks};
 use serde_json::Value;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 pub const MACHINE: &str = "factory";
 
@@ -593,5 +595,50 @@ pub fn check(name: &str, state: CheckState, log: &str) -> CheckRecord {
         name: name.into(),
         state,
         log: log.into(),
+    }
+}
+
+/// Waits until `done`, failing the test after ten seconds.
+pub async fn eventually(done: impl Fn() -> bool) {
+    eventually_async(|| std::future::ready(done())).await;
+}
+
+/// Waits until `done` resolves to true, failing the test after ten seconds.
+pub async fn eventually_async<F: Future<Output = bool>>(done: impl Fn() -> F) {
+    let waited = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !done().await {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(waited.is_ok(), "timed out");
+}
+
+/// A factory serving in the background, as `serve` does, until stopped.
+pub struct Serving {
+    stopping: CancellationToken,
+    handle: JoinHandle<()>,
+}
+
+impl Serving {
+    /// Serves `factory`, polling every `poll_interval` and refreshing what
+    /// deliveries add to `pending`.
+    pub fn start(
+        mut factory: Factory,
+        poll_interval: std::time::Duration,
+        pending: Pending,
+    ) -> Serving {
+        let stopping = factory.stopping();
+        let handle = tokio::spawn(async move {
+            factory.serve(poll_interval, &pending).await;
+            factory.stop().await;
+        });
+        Serving { stopping, handle }
+    }
+
+    /// Stops serving, as a stop signal does, and waits for it to stop.
+    pub async fn stop(self) {
+        self.stopping.cancel();
+        self.handle.await.unwrap();
     }
 }

@@ -17,6 +17,7 @@ use linewright::runtime::claude::ClaudeCode;
 use linewright::status;
 use linewright::store::Store;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
+use linewright::usage_limit;
 use linewright::webhook::{Listener, Pending};
 use linewright::workflow::{self, LastRuns, WorkflowFiles};
 use tokio::signal::unix::{Signal, SignalKind, signal};
@@ -101,9 +102,13 @@ async fn run(command: Command, config: Config) -> Result<()> {
                     error!(error = format!("{e:#}"), "listing the workflows failed");
                     WorkflowFiles::default()
                 });
-            let last_runs = LastRuns::load(&work_dir(&config, &github));
+            let work_dir = work_dir(&config, &github);
+            let last_runs = LastRuns::load(&work_dir);
+            let usage_limit = usage_limit::load(&work_dir);
             let policy = policy(&config, &github);
-            for line in status::report(&snapshot, &workflows, &last_runs, now, &policy) {
+            let lines =
+                status::report(&snapshot, &workflows, &last_runs, usage_limit, now, &policy);
+            for line in lines {
                 println!("{line}");
             }
             Ok(())
@@ -190,8 +195,8 @@ async fn connect(config: &Config, token: String) -> Result<GitHub> {
     GitHub::connect(repo, token).await
 }
 
-/// The repository's work directory: its clones, session records and the
-/// workflows' last runs.
+/// The repository's work directory: its clones, session records, the
+/// workflows' last runs and the usage limit `serve` waits out.
 fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }

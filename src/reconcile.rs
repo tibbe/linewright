@@ -12,6 +12,7 @@ use crate::domain::{
     ReviewState, Snapshot, Thread, Timestamp, UpdateMethod, UpdateRule, label,
 };
 use crate::marker::{Stage, marked, stage_of};
+use crate::runtime::UsageLimit;
 use crate::spec_glob::SpecGlob;
 use crate::workflow::{LastRuns, Workflow, WorkflowName};
 
@@ -152,10 +153,9 @@ pub struct Memory {
     /// Oldest first.
     pub failed_merges: Vec<FailedMerge>,
     pub tried_rebases: Vec<TriedRebase>,
-    /// When the usage limit the agent runtime refused a session for resets:
-    /// until then no session starts (`docs/specs/operation.md`, "Usage
-    /// limit").
-    pub usage_limit_resets_at: Option<Timestamp>,
+    /// The usage limit the agent runtime refused a session for: until it
+    /// resets no session starts (`docs/specs/operation.md`, "Usage limit").
+    pub usage_limit: Option<UsageLimit>,
 }
 
 impl Memory {
@@ -169,20 +169,19 @@ impl Memory {
 
     /// Whether the usage limit holds starts back at `now`.
     pub fn holds_starts(&self, now: Timestamp) -> bool {
-        self.usage_limit_resets_at
-            .is_some_and(|resets_at| now < resets_at)
+        self.usage_limit.is_some_and(|limit| now < limit.resets_at)
     }
 
     /// Holds starts back until `resets_at`, unless a later reset already
     /// holds them: the latest wins. Returns whether the hold changed.
     pub fn hold_until(&mut self, resets_at: Timestamp) -> bool {
         if self
-            .usage_limit_resets_at
-            .is_some_and(|held| held >= resets_at)
+            .usage_limit
+            .is_some_and(|held| held.resets_at >= resets_at)
         {
             return false;
         }
-        self.usage_limit_resets_at = Some(resets_at);
+        self.usage_limit = Some(UsageLimit { resets_at });
         true
     }
 
@@ -192,7 +191,7 @@ impl Memory {
         if self.holds_starts(now) {
             return None;
         }
-        self.usage_limit_resets_at.take()
+        self.usage_limit.take().map(|limit| limit.resets_at)
     }
 }
 

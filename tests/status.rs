@@ -1,10 +1,11 @@
 //! `linewright status`, end to end on its data model: a snapshot, the
-//! workflow files, their last runs and the clock in, the report out
+//! workflow files, their last runs, the usage limit and the clock in, the report out
 //! (`CODING_STANDARDS.md`, "Where tests go").
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
 use linewright::reconcile::Policy;
+use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::report;
 use linewright::workflow::{LastRuns, Unparsed, WorkflowFiles};
@@ -100,6 +101,7 @@ fn a_workflow_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
             &snapshot(vec![]),
             &workflows,
             &runs,
+            None,
             at("2026-10-01T12:00:00Z"),
             &policy()
         ),
@@ -117,6 +119,7 @@ fn a_workflow_whose_schedule_ticked_since_its_last_run_is_due_now() {
             &snapshot(vec![]),
             &workflows,
             &runs,
+            None,
             at("2026-10-01T12:10:00Z"),
             &policy()
         ),
@@ -134,6 +137,7 @@ fn a_workflow_whose_schedule_never_ticks_again_has_no_next_run() {
             &snapshot(vec![]),
             &workflows,
             &runs,
+            None,
             at("2026-10-01T12:00:00Z"),
             &policy()
         ),
@@ -152,6 +156,7 @@ fn a_workflow_with_no_recorded_run_is_shown_as_not_run_yet() {
             &snapshot(vec![]),
             &workflows,
             &LastRuns::default(),
+            None,
             at("2026-10-01T12:10:00Z"),
             &policy()
         ),
@@ -174,6 +179,7 @@ fn a_workflow_file_that_does_not_parse_is_listed_with_the_reason() {
             &snapshot(vec![]),
             &workflows,
             &LastRuns::default(),
+            None,
             at("2026-10-01T12:10:00Z"),
             &policy()
         ),
@@ -199,6 +205,7 @@ fn the_work_in_flight_comes_first_then_the_workflows_by_name_then_the_files_that
             &snapshot(vec![ready_issue()]),
             &workflows,
             &runs,
+            None,
             at("2026-10-01T12:10:00Z"),
             &policy()
         ),
@@ -218,9 +225,71 @@ fn nothing_in_flight_shows_when_there_is_neither_work_nor_a_workflow() {
             &snapshot(vec![]),
             &files(&[], &[]),
             &LastRuns::default(),
+            None,
             at("2026-10-01T12:10:00Z"),
             &policy()
         ),
         vec!["Nothing in flight."]
+    );
+}
+
+#[test]
+fn a_usage_limit_in_force_is_shown_first_with_its_reset_in_utc() {
+    let workflows = files(&[("weekly", "0 6 * * 1")], &[]);
+    let runs = last_runs(&[("weekly", "2026-09-28T06:00:00Z")]);
+
+    assert_eq!(
+        report(
+            &snapshot(vec![ready_issue()]),
+            &workflows,
+            &runs,
+            Some(UsageLimit {
+                resets_at: at("2026-10-01T14:30:00Z")
+            }),
+            at("2026-10-01T12:10:00Z"),
+            &policy()
+        ),
+        vec![
+            "usage limit in force: no session starts until it resets 2026-10-01 14:30 UTC",
+            "#7 Do the thing: ready to claim",
+            "workflow weekly: last run 2026-09-28 06:00 UTC, next run 2026-10-05 06:00 UTC",
+        ]
+    );
+}
+
+#[test]
+fn a_usage_limit_in_force_with_nothing_in_flight_still_says_nothing_is_in_flight() {
+    assert_eq!(
+        report(
+            &snapshot(vec![]),
+            &files(&[], &[]),
+            &LastRuns::default(),
+            Some(UsageLimit {
+                resets_at: at("2026-10-01T14:30:00Z")
+            }),
+            at("2026-10-01T12:10:00Z"),
+            &policy()
+        ),
+        vec![
+            "usage limit in force: no session starts until it resets 2026-10-01 14:30 UTC",
+            "Nothing in flight.",
+        ]
+    );
+}
+
+#[test]
+fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
+    assert_eq!(
+        report(
+            &snapshot(vec![ready_issue()]),
+            &files(&[], &[]),
+            &LastRuns::default(),
+            Some(UsageLimit {
+                resets_at: at("2026-10-01T12:00:00Z")
+            }),
+            at("2026-10-01T12:10:00Z"),
+            &policy()
+        ),
+        vec!["#7 Do the thing: ready to claim"]
     );
 }

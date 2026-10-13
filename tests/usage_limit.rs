@@ -1,9 +1,12 @@
 //! Under the usage limit `serve` starts no session until the limit resets,
 //! end to end at the operator's level: a runtime that refuses sessions and a
-//! fake clock in, the issues, sessions and log out, against the local store
-//! (`docs/specs/operation.md`, "Usage limit").
+//! fake clock in, the issues, sessions, log and the limit `status` reads
+//! out, against the local store (`docs/specs/operation.md`, "Usage limit").
 
 mod common;
+
+use std::path::PathBuf;
+use std::time::Duration;
 
 use chrono::TimeDelta;
 use common::*;
@@ -13,6 +16,8 @@ use linewright::factory::Factory;
 use linewright::marker::{Stage, marked};
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{SessionError, UsageLimit};
+use linewright::usage_limit;
+use linewright::webhook::Pending;
 use serde_json::json;
 
 /// A world whose implementing sessions are refused for the usage limit
@@ -233,7 +238,7 @@ async fn a_restarted_factory_holds_no_limit() {
         world.store.clone(),
         world.runtime.clone(),
         world.clock.clone(),
-        config(&world.dir.path().join("work")),
+        config(&work_dir(&world)),
     )
     .await
     .unwrap();
@@ -241,4 +246,112 @@ async fn a_restarted_factory_holds_no_limit() {
 
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
     assert_eq!(world.store.pulls().len(), 1);
+}
+
+/// A world's factory serving, polling every few milliseconds.
+struct Served {
+    world: World,
+    serving: Serving,
+}
+
+impl Served {
+    /// Serves a fresh world's factory, as `serve` does, in place of `world`'s.
+    async fn start(world: World) -> Served {
+        let factory = Factory::start(
+            world.store.clone(),
+            world.runtime.clone(),
+            world.clock.clone(),
+            config(&work_dir(&world)),
+        )
+        .await
+        .unwrap();
+        let serving = Serving::start(factory, Duration::from_millis(10), Pending::default());
+        Served { world, serving }
+    }
+
+    /// The usage limit `status` reads.
+    fn usage_limit(&self) -> Option<UsageLimit> {
+        usage_limit::load(&work_dir(&self.world))
+    }
+
+    async fn stop(self) -> World {
+        self.serving.stop().await;
+        self.world
+    }
+}
+
+fn work_dir(world: &World) -> PathBuf {
+    world.dir.path().join("work")
+}
+
+fn the_usage_limit() -> Option<UsageLimit> {
+    Some(UsageLimit {
+        resets_at: usage_limit_resets_at(),
+    })
+}
+
+#[tokio::test]
+async fn while_serve_waits_out_the_limit_status_reads_it_until_the_reset() {
+    let world = World::new().await;
+    world
+        .runtime
+        .on(WorkKind::Implement, |_| refused_for_the_usage_limit());
+    world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    let served = Served::start(world).await;
+    eventually(|| served.usage_limit() == the_usage_limit()).await;
+
+    implement(&served.world);
+    advance_past_the_reset(&served.world, 1);
+
+    eventually(|| served.usage_limit().is_none()).await;
+    served.stop().await;
+}
+
+#[tokio::test]
+async fn serve_starts_with_no_usage_limit_for_status_to_read() {
+    let world = World::new().await;
+    usage_limit::record(&work_dir(&world), the_usage_limit()).unwrap();
+
+    let served = Served::start(world).await;
+    let polled = served.world.store.snapshots_taken();
+    eventually(|| served.world.store.snapshots_taken() > polled).await;
+
+    assert_eq!(served.usage_limit(), None);
+    served.stop().await;
+}
+
+#[tokio::test]
+async fn once_leaves_no_usage_limit_for_status_to_read() {
+    let (world, _) = refused().await;
+
+    assert_eq!(usage_limit::load(&work_dir(&world)), None);
+}
+
+#[tokio::test]
+async fn a_workflow_run_by_hand_leaves_no_usage_limit_for_status_to_read() {
+    let world = World::new().await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(".linewright/workflows/hourly.md", HOURLY)],
+            "Add a workflow",
+        )
+        .await
+        .unwrap();
+    world.runtime.on_workflow(|_| refused_for_the_usage_limit());
+
+    world
+        .factory
+        .run_workflow(&"hourly".parse().unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(usage_limit::load(&work_dir(&world)), None);
 }

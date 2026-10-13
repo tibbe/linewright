@@ -7,6 +7,7 @@ pub mod claude;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
@@ -50,7 +51,7 @@ pub struct Turn {
 
 /// The runtime refusing sessions for the usage limit, until `resets_at`
 /// (`docs/specs/operation.md`, "Usage limit").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageLimit {
     pub resets_at: Timestamp,
 }

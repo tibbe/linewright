@@ -1,17 +1,20 @@
-//! `linewright status`: the work in flight and the workflows, derived from a
-//! snapshot, the workflow files and their last runs the way the reconcile
-//! step derives them.
+//! `linewright status`: the usage limit, the work in flight and the
+//! workflows, derived from a snapshot, the workflow files and their last runs
+//! the way the reconcile step derives them.
 
 use crate::domain::{CheckState, Filed, PullState, Snapshot, Timestamp, label};
 use crate::reconcile::{NextRun, Policy, next_run, pending_spec_changes};
+use crate::runtime::UsageLimit;
 use crate::workflow::{LastRuns, WorkflowFiles};
 
-/// The report's lines: the work in flight, then each workflow by name with
+/// The report's lines: the usage limit `serve` waits out, if it is still in
+/// force at `now`, then the work in flight, then each workflow by name with
 /// its last and next run, then each workflow file that does not parse.
 pub fn report(
     snapshot: &Snapshot,
     workflows: &WorkflowFiles,
     last_runs: &LastRuns,
+    usage_limit: Option<UsageLimit>,
     now: Timestamp,
     policy: &Policy,
 ) -> Vec<String> {
@@ -39,6 +42,17 @@ pub fn report(
     }
     if lines.is_empty() {
         lines.push("Nothing in flight.".into());
+    }
+    if let Some(UsageLimit { resets_at }) = usage_limit
+        && now < resets_at
+    {
+        lines.insert(
+            0,
+            format!(
+                "usage limit in force: no session starts until it resets {}",
+                utc(resets_at)
+            ),
+        );
     }
     lines
 }

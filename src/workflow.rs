@@ -14,9 +14,9 @@ use anyhow::{Context, Result, anyhow};
 use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 use crate::domain::Timestamp;
+use crate::records;
 use crate::store::Store;
 
 /// Where the workflows live on the default branch.
@@ -124,35 +124,16 @@ impl LastRuns {
     /// record is missing, and when it is unreadable, which is logged: every
     /// workflow then counts as seen for the first time.
     pub fn load(work_dir: &Path) -> LastRuns {
-        let path = last_runs_path(work_dir);
-        let read = || -> Result<LastRuns> {
-            match std::fs::read_to_string(&path) {
-                Ok(text) => Ok(serde_json::from_str(&text)?),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LastRuns::default()),
-                Err(e) => Err(e.into()),
-            }
-        };
-        read().unwrap_or_else(|e| {
-            warn!(path = %path.display(), error = format!("{e:#}"), "ignoring the workflows' last runs");
-            LastRuns::default()
-        })
+        records::load(&last_runs_path(work_dir), WHAT).unwrap_or_default()
     }
 
-    /// Records these last runs under `work_dir`, whole: to a file beside the
-    /// record, then renamed over it, so a crash leaves the old record or the
-    /// new one.
+    /// Records these last runs under `work_dir`, whole.
     pub fn save(&self, work_dir: &Path) -> Result<()> {
-        let path = last_runs_path(work_dir);
-        let dir = path.parent().context("the record has a directory")?;
-        std::fs::create_dir_all(dir).context("creating the work directory")?;
-        let mut file =
-            tempfile::NamedTempFile::new_in(dir).context("writing the workflows' last runs")?;
-        serde_json::to_writer_pretty(&mut file, self)?;
-        file.persist(path)
-            .context("writing the workflows' last runs")?;
-        Ok(())
+        records::save(&last_runs_path(work_dir), self, WHAT)
     }
 }
+
+const WHAT: &str = "the workflows' last runs";
 
 /// Where the workflows' last runs are kept, so they survive a restart.
 fn last_runs_path(work_dir: &Path) -> PathBuf {

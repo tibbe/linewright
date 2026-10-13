@@ -30,6 +30,7 @@ use crate::run::{self, Shell, WorkflowEnd};
 use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
 use crate::store::{CloseReason, IssueRead, Store};
+use crate::usage_limit;
 use crate::webhook::{self, Pending};
 use crate::workflow::{self, LastRuns, Workflow, WorkflowName};
 
@@ -53,7 +54,8 @@ pub struct FactoryConfig {
     /// Start work only on issues with this label, which is never created.
     pub require_label: Option<String>,
     pub briefs: Briefs,
-    /// Where clones, session records and the workflows' last runs go.
+    /// Where clones, session records, the workflows' last runs and, under
+    /// `serve`, the usage limit go.
     pub work_dir: PathBuf,
     /// Whether each poll also starts the workflows that are due. Replay does
     /// not: workflows are not captured or replayed.
@@ -89,6 +91,14 @@ pub struct Factory {
     /// The items Linewright's actions and runs changed since the kept
     /// snapshot last read them.
     written: BTreeSet<Item>,
+}
+
+/// What the usage limit `serve` last recorded for `status` says.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Recorded {
+    /// Not yet recorded, or recording it failed.
+    Unknown,
+    As(Option<UsageLimit>),
 }
 
 /// The snapshot kept between polls, with what refreshes read into it.
@@ -264,15 +274,19 @@ impl Factory {
     /// deliveries add to `pending`, until stopping. A refresh never races a
     /// poll: one still running when the poll falls due finishes first. A
     /// failed poll or refresh is logged and left for the next poll to catch
-    /// up on (`docs/specs/webhooks.md`).
+    /// up on (`docs/specs/webhooks.md`). After each, the usage limit is
+    /// recorded for `status` as it then holds; it holds none at the start.
     pub async fn serve(&mut self, poll_interval: Duration, pending: &Pending) {
         let stopping = self.stopping.clone();
+        let mut recorded = Recorded::Unknown;
+        self.record_usage_limit(&mut recorded);
         while !stopping.is_cancelled() {
             // The poll reads what deliveries named before it as well.
             pending.take();
             if let Err(e) = self.cycle().await {
                 error!(error = format!("{e:#}"), "poll failed");
             }
+            self.record_usage_limit(&mut recorded);
             let next_poll = Instant::now() + poll_interval;
             loop {
                 tokio::select! {
@@ -285,8 +299,29 @@ impl Factory {
                                 "acting on deliveries failed; the next poll catches up"
                             );
                         }
+                        self.record_usage_limit(&mut recorded);
                     }
                 }
+            }
+        }
+    }
+
+    /// Records the usage limit the factory holds for `status` to read,
+    /// unless `recorded` already says so. A failure is logged and tried
+    /// again next time.
+    fn record_usage_limit(&self, recorded: &mut Recorded) {
+        let held = self.memory.usage_limit;
+        if *recorded == Recorded::As(held) {
+            return;
+        }
+        match usage_limit::record(&self.shell.work_dir, held) {
+            Ok(()) => *recorded = Recorded::As(held),
+            Err(e) => {
+                *recorded = Recorded::Unknown;
+                error!(
+                    error = format!("{e:#}"),
+                    "recording the usage limit for `status` failed"
+                );
             }
         }
     }
