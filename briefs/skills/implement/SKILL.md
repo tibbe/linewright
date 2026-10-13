@@ -24,8 +24,7 @@ opens or updates the pull request and posts what your result says.
    docs say it runs) once at the end, and fix what fails.
 4. Once done, call the Skill tool with `linewright:code-review` to review the
    work, apply its findings (see _Review findings_), and review again when the
-   fixes were substantial. How many rounds it takes is your judgment, bounded
-   by the time you have.
+   fixes were substantial.
 5. Commit your work to the current branch, with messages that say why. Leave
    no uncommitted changes and no rebase or merge in progress.
 

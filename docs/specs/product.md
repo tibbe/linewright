@@ -384,9 +384,8 @@ trigger fires. Workflows sit beside the pipeline and may hand it work.
   branch on a new branch for the ticket, replacing any earlier one.
 - The implementer reads the ticket and its comments (the triage brief, earlier
   handbacks), implements, runs the repository's checks, has the work reviewed in
-  fresh contexts for both standards and spec, applies the findings and
-  commits. How many review rounds it takes is its judgment, bounded by the
-  session timeout.
+  fresh contexts for both standards and spec, applies the findings, reviews
+  again when the fixes were substantial, and commits.
 - The implementer leaves spec files as they are, by its brief; a spec it
   cannot build from is a spec gap, below. Linewright does not check the
   branch for spec changes: they show in the PR's diff, and a maintainer who
