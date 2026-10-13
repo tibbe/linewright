@@ -44,6 +44,8 @@ test. The pipeline then works those issues like any other.
   | `max-issues` | the most issues one run files | 3 |
 
   A file that does not parse is logged and skipped; the other workflows run.
+- `status` shows each workflow with its last and next run, and each file
+  that does not parse.
 - The **trigger**, `on`, is a schedule, the only kind for now.
 - A workflow is due when a tick of its schedule has passed since its last
   run. Ticks missed while Linewright was down, or while a run of the

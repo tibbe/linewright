@@ -84,14 +84,15 @@ requests that have already been through review.
 - Any unexpected end (crash, timeout, the agent giving up, a result that
   still does not parse) sends the ticket to `ready-for-human` with the
   reason and the tail of the log. Infrastructure failures are retried once
-  first.
+  first. A session refused for the usage limit has not failed: it waits the
+  limit out (see [Operation](operation.md)).
 - Removing `ready-for-agent`, unassigning the machine user or closing the
   issue cancels its run; the branch is kept. A run on a PR that is merged or
   closed while it works pushes and posts nothing.
 - After a restart, a claimed ticket with no open or merged PR and no live
   run starts a fresh run.
 - Concurrency is a ceiling on simultaneous runs (default 4); each agent
-  session has a timeout (default 30 min).
+  session has a timeout (default 30 min) on the time it runs.
 
 ## Out of scope
 

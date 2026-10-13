@@ -49,3 +49,9 @@ _Avoid_: task, story
 **Tracking issue**:
 The parent issue of the tickets cut from one spec change.
 _Avoid_: epic
+
+**Usage limit**:
+The cap a subscription puts on how much its agents may run in a window, such
+as five hours or a week, beyond which the agent runtime refuses sessions until
+a stated reset time.
+_Avoid_: rate limit, session limit, quota

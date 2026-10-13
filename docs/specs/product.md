@@ -92,14 +92,14 @@ flowchart LR
 
 | Area | What it covers |
 |---|---|
-| [Repository](repository.md) | What Linewright needs from the repository, the labels people steer it with and the comments that record its work. |
-| [Sources of work](sources_of_work.md) | The spec changes, issues and workflows that start work. |
-| [Webhooks](webhooks.md) | GitHub telling Linewright about changes as they happen, beside polling. |
-| [Triage](triage.md) | Turning a new issue into a ticket, a question for the reporter or a decision for the maintainer. |
-| [Workflows](workflows.md) | Agents run on a schedule with the maintainer's instructions. |
+| [Repository](repository.md) | What Linewright needs from the repository, and how people and Linewright work together through it. |
+| [Sources of work](sources_of_work.md) | What starts work. |
+| [Webhooks](webhooks.md) | GitHub telling Linewright about changes as they happen. |
+| [Triage](triage.md) | Deciding what happens to a new issue. |
+| [Workflows](workflows.md) | Running agents on a trigger with the maintainer's instructions. |
 | [Implementation](implementation.md) | Turning spec changes and tickets into reviewed, committed branches. |
-| [Pull requests](pull_requests.md) | From draft pull request through CI and review to merge. |
-| [Operation](operation.md) | Running Linewright: commands, configuration, where it runs and its log. |
+| [Pull requests](pull_requests.md) | Taking the work from a pull request to a merge. |
+| [Operation](operation.md) | Running Linewright and seeing what it is doing. |
 | [Replay](replay.md) | Running a captured case through the pipeline again to tune the briefs. |
 
 ## Out of scope

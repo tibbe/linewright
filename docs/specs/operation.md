@@ -21,6 +21,9 @@ at any time what it is working on with `linewright status`.
    and coding agents can drive and debug it.
 6. As an operator, I want the server's log to say what it is doing and why, so
    that I can debug it without GitHub.
+7. As an operator, I want Linewright to wait out the usage limit and carry on
+   where it stopped, so that hitting the limit costs no work and needs no
+   person.
 
 ## Decisions
 
@@ -30,7 +33,7 @@ at any time what it is working on with `linewright status`.
   |---|---|
   | `serve` | poll until stopped |
   | `once` | one poll cycle, then exit |
-  | `status` | list the work in flight, read from GitHub, and each workflow with its last and next run and any file that does not parse |
+  | `status` | show what Linewright is doing |
   | `workflow run NAME` | run one workflow now (see [Workflows](workflows.md)) |
   | `capture` | write a case from GitHub (see [Replay](replay.md)) |
   | `replay` | run a case against a local store (see [Replay](replay.md)) |
@@ -81,6 +84,28 @@ at any time what it is working on with `linewright status`.
 - Unix-like systems: Linux is the deployment target, macOS a development
   host.
 
+### Usage limit
+
+- When the agent runtime refuses a session for the usage limit and says when
+  the limit resets, Linewright starts no session, for any stage, until then.
+  It claims no tickets and takes on no new issues, and workflows that come
+  due wait. Work that needs no session goes on.
+- The refused session waits in its clone and, once the limit resets, resumes
+  as the same session with the time it had left.
+- The wait lasts until the reset, however long that is.
+- A session refused again at the reset waits until the new reset time; one
+  whose reset time has passed waits a short time.
+- A refusal that does not say when the limit resets is an infrastructure
+  failure.
+- Only `serve` waits. `once` and `workflow run` log the limit and when it
+  resets, and end the refused run without handing it back.
+- A restart forgets the limit and drops the waiting runs, as it drops any run
+  in flight.
+- `status` shows the usage limit while one is in force, and when it resets.
+  The log records each refusal, wait and resume.
+
 ## Out of scope
 
 - One container per run, instead of agents as processes beside the manager.
+- Resuming, after a restart, a session that was waiting out the usage limit.
+- Slowing down as the usage limit approaches, before a session is refused.
