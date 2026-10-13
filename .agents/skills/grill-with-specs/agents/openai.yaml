@@ -1,5 +1,0 @@
-interface:
-  display_name: "Grill with Specs"
-  short_description: "Grill a design and write it into the specs"
-policy:
-  allow_implicit_invocation: false
