@@ -77,7 +77,7 @@ async fn before_the_reset_a_poll_starts_no_run_and_claims_no_issue() {
     assert!(world.runtime.prompts(WorkKind::Triage).is_empty());
     assert!(world.issue(fresh).assignees.is_empty());
     assert_eq!(labels(&world.issue(new)), ["needs-triage"]);
-    assert!(world.issue(ticket).is_assigned(&Login::new(MACHINE)));
+    assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
 }
 
 #[tokio::test]
@@ -106,7 +106,7 @@ async fn before_the_reset_actions_that_start_no_session_are_still_taken() {
         .open_issue("reporter", "It broke", "How?", &["needs-info"]);
     world
         .store
-        .comment_as(MACHINE, asked, &marked(Stage::Triage, "Which version?"))
+        .comment_as(LINEWRIGHT, asked, &marked(Stage::Triage, "Which version?"))
         .unwrap();
     world
         .store
