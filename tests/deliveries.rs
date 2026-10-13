@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use common::*;
-use linewright::domain::{Issue, Login, Number, ReviewState};
+use linewright::domain::{CheckState, Issue, Login, Mergeability, Number, PullState, ReviewState};
 use linewright::factory::Factory;
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{Runtime, SessionError, SessionSpec, Turn};
@@ -84,8 +84,13 @@ impl Served {
 
 /// Waits until `done`, failing the test after ten seconds.
 async fn eventually(done: impl Fn() -> bool) {
+    eventually_async(|| std::future::ready(done())).await;
+}
+
+/// Waits until `done` resolves to true, failing the test after ten seconds.
+async fn eventually_async<F: Future<Output = bool>>(done: impl Fn() -> F) {
     let waited = tokio::time::timeout(Duration::from_secs(10), async {
-        while !done() {
+        while !done().await {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -504,5 +509,124 @@ async fn a_failed_read_for_a_delivery_is_logged_and_the_next_poll_catches_up() {
     served.store.restore_reads();
 
     eventually(|| claimed(&served.store, issue)).await;
+    served.stop().await;
+}
+
+/// The events GitHub sends a delivery of as CI reports on a commit.
+const CI_EVENTS: [&str; 3] = ["check_run", "check_suite", "status"];
+
+/// The payload GitHub sends with a delivery of `event`, one of
+/// [`CI_EVENTS`], about the commit `sha`, cut to what names it. The pull
+/// requests a check names are left empty, as GitHub leaves them for one from
+/// a fork.
+fn about_commit(event: &str, sha: &str) -> serde_json::Value {
+    match event {
+        "check_run" => json!({"check_run": {"head_sha": sha, "pull_requests": []}}),
+        "check_suite" => json!({"check_suite": {"head_sha": sha, "pull_requests": []}}),
+        "status" => json!({"sha": sha, "branches": []}),
+        _ => unreachable!("{event} is not a CI event"),
+    }
+}
+
+impl Served {
+    /// CI reports a check `test` in `state` on the head of `pr`, and GitHub
+    /// sends a delivery of `event`, one of [`CI_EVENTS`], about it.
+    async fn report_check(&self, pr: Number, state: CheckState, event: &str) {
+        let check = check("test", state, "assertion failed: widgets == 2");
+        self.store.set_checks(pr, vec![check]).await.unwrap();
+        let head = self.store.snapshot_pull(pr).await.head_sha;
+        self.deliver(event, about_commit(event, &head)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_failing_check_on_linewrights_pull_request_starts_the_ci_fix_on_the_delivery() {
+    for event in CI_EVENTS {
+        let mut world = World::new().await;
+        let (_, pr) = world.ticket_in_review().await;
+        world.runtime.on(WorkKind::FixCi, |_| {
+            json(json!({"outcome": "done", "comment": "Fixed the widget count."}))
+        });
+        let served = serve(world, NEVER).await;
+
+        served.report_check(pr, CheckState::Failed, event).await;
+
+        eventually(|| served.runtime.prompts(WorkKind::FixCi).len() == 1).await;
+        let prompt = &served.runtime.prompts(WorkKind::FixCi)[0];
+        assert!(prompt.contains("widgets == 2"), "{event}: {prompt}");
+        assert_eq!(served.store.snapshots_taken(), 2, "{event}");
+        served.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn green_checks_on_linewrights_pull_request_mark_it_ready_on_the_delivery() {
+    for event in CI_EVENTS {
+        let mut world = World::new().await;
+        let (_, pr) = world.ticket_in_review().await;
+        let served = serve(world, NEVER).await;
+
+        served.report_check(pr, CheckState::Passed, event).await;
+
+        eventually_async(|| async {
+            served.store.snapshot_pull(pr).await.state == PullState::Open { draft: false }
+        })
+        .await;
+        assert_eq!(served.store.snapshots_taken(), 2, "{event}");
+        served.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn with_auto_merge_green_checks_on_linewrights_pull_request_merge_it_on_the_delivery() {
+    for event in CI_EVENTS {
+        let mut world = World::with(|config| config.auto_merge = true).await;
+        let (ticket, pr) = world.ticket_in_review().await;
+        let served = serve(world, NEVER).await;
+
+        served.report_check(pr, CheckState::Passed, event).await;
+
+        eventually(|| !served.issue(ticket).open).await;
+        let state = served.store.snapshot_pull(pr).await.state;
+        assert!(
+            matches!(state, PullState::Merged { .. }),
+            "{event}: {state:?}"
+        );
+        assert_eq!(served.store.snapshots_taken(), 2, "{event}");
+        served.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn a_push_to_the_default_branch_brings_linewrights_pull_request_up_to_date_on_the_delivery() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    let served = serve(world, NEVER).await;
+    let before = served.store.snapshot_pull(pr).await;
+
+    served
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[("src/other.txt", "other\n")],
+            "Other",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        served.store.snapshot_pull(pr).await.mergeability,
+        Mergeability::Behind
+    );
+    served
+        .deliver("push", json!({"ref": "refs/heads/main"}))
+        .await;
+
+    eventually_async(|| async {
+        let after = served.store.snapshot_pull(pr).await;
+        after.mergeability == Mergeability::Clean && after.head_sha != before.head_sha
+    })
+    .await;
+    assert_eq!(served.store.snapshots_taken(), 2);
     served.stop().await;
 }

@@ -13,12 +13,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::briefs::Briefs;
 use linewright::clock::Clock;
-use linewright::domain::{Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
+use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
 use linewright::spec_glob::SpecGlob;
-use linewright::store::local::{LocalStore, Seed};
+use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::{Address, Listener, Secret, Webhooks};
 use serde_json::Value;
 
@@ -489,4 +489,14 @@ pub async fn deliver(
 /// Sends a delivery of `event` signed with the secret.
 pub async fn signed(listener: &Listener, event: &str, body: &str) -> reqwest::StatusCode {
     deliver(listener, event, body, Some(&signature(body))).await
+}
+
+/// A check named `name` in `state`, which logged `log`, as CI reports it on
+/// a pull request's head.
+pub fn check(name: &str, state: CheckState, log: &str) -> CheckRecord {
+    CheckRecord {
+        name: name.into(),
+        state,
+        log: log.into(),
+    }
 }

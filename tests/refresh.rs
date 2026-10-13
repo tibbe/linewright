@@ -10,9 +10,10 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 
 use common::*;
-use linewright::domain::{Item, Number, ReviewState};
+use linewright::domain::{CheckState, Item, Number, ReviewState};
 use linewright::factory::Factory;
 use linewright::reconcile::{Action, Subject, Work, WorkKind};
+use linewright::webhook;
 
 #[tokio::test]
 async fn an_issue_labeled_ready_for_agent_and_refreshed_after_a_poll_is_claimed_and_implemented() {
@@ -366,4 +367,105 @@ async fn spec_change(world: &World) -> Number {
         )
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn a_commit_names_the_open_pull_request_a_run_opened_since_the_poll_whose_head_it_is() {
+    let mut world = World::new().await;
+    // The poll that started the run that opened it took its snapshot first.
+    let (issue, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .set_checks(
+            pr,
+            vec![check("test", CheckState::Failed, "assertion failed")],
+        )
+        .await
+        .unwrap();
+    let head = world.store.snapshot_pull(pr).await.head_sha;
+
+    let actions = world
+        .factory
+        .refresh([webhook::Subject::Commit(head)])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        actions,
+        [Action::Start(Work::FixCi {
+            issue,
+            pr,
+            failing: vec!["test".into()]
+        })]
+    );
+}
+
+#[tokio::test]
+async fn another_commit_or_a_push_to_another_branch_reads_nothing_and_decides_nothing() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.poll().await;
+    world
+        .store
+        .set_checks(
+            pr,
+            vec![check("test", CheckState::Failed, "assertion failed")],
+        )
+        .await
+        .unwrap();
+    let read = world.store.items_read();
+    // The kept snapshot has no checks on it, and a reconcile past the grace
+    // period would mark it ready.
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+
+    let actions = world
+        .factory
+        .refresh([
+            webhook::Subject::Commit("0123456789abcdef0123456789abcdef01234567".into()),
+            webhook::Subject::Push(world.store.snapshot_pull(pr).await.head_ref),
+        ])
+        .await
+        .unwrap();
+
+    assert_eq!(actions, []);
+    assert_eq!(world.store.items_read(), read);
+}
+
+#[tokio::test]
+async fn a_push_to_the_default_branch_names_every_open_pull_request_of_the_machine_users() {
+    let mut world = World::new().await;
+    let (first_issue, first) = world.ticket_in_review().await;
+    let (second_issue, second) = world.ticket_in_review().await;
+    world.poll().await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[("src/other.txt", "other\n")],
+            "Other",
+        )
+        .await
+        .unwrap();
+
+    let actions = world
+        .factory
+        .refresh([webhook::Subject::Push("main".into())])
+        .await
+        .unwrap();
+    world.factory.settle().await;
+
+    assert_eq!(
+        actions,
+        [
+            Action::Start(Work::Update {
+                issue: first_issue,
+                pr: first
+            }),
+            Action::Start(Work::Update {
+                issue: second_issue,
+                pr: second
+            }),
+        ]
+    );
 }

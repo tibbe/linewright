@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, info_span, warn};
 
-use crate::domain::{Item, Number};
+use crate::domain::{Item, Number, Snapshot};
 
 /// The environment variable the webhook's secret comes from. The secret is a
 /// credential, so it is never a flag or a key in the config file.
@@ -105,50 +105,49 @@ impl fmt::Display for Address {
 }
 
 /// What an accepted delivery names: what Linewright reads again for it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Subject {
-    Issue(Number),
-    PullRequest(Number),
-    /// The pull requests a check run or check suite ran for; it may be none.
-    Checks(Vec<Number>),
-    /// The branch pushed to, or those whose head's status changed.
-    Branches(Vec<String>),
+    Item(Item),
+    /// The commit a check run, check suite or status reports on.
+    Commit(String),
+    /// A push to the branch.
+    Push(String),
 }
 
 impl Subject {
-    /// The issues and pull requests a refresh reads again for it. Checks and
-    /// branches name none yet: what CI and pushes change is left to the poll.
-    fn items(&self) -> Vec<Item> {
+    /// The issues and pull requests a refresh reads again for it, found in
+    /// `snapshot`, whose pull requests are the machine user's: the open ones
+    /// whose head is the commit, and every open one for a push to the
+    /// default branch.
+    pub fn items(&self, snapshot: &Snapshot) -> Vec<Item> {
+        let open = snapshot.pulls.iter().filter(|pull| pull.is_open());
         match self {
-            Subject::Issue(number) => vec![Item::Issue(*number)],
-            Subject::PullRequest(number) => vec![Item::Pull(*number)],
-            Subject::Checks(_) | Subject::Branches(_) => vec![],
+            Subject::Item(item) => vec![*item],
+            Subject::Commit(sha) => open
+                .filter(|pull| pull.head_sha == *sha)
+                .map(|pull| Item::Pull(pull.number))
+                .collect(),
+            Subject::Push(branch) if *branch == snapshot.default_branch => {
+                open.map(|pull| Item::Pull(pull.number)).collect()
+            }
+            Subject::Push(_) => vec![],
         }
+    }
+}
+
+impl From<Item> for Subject {
+    fn from(item: Item) -> Subject {
+        Subject::Item(item)
     }
 }
 
 impl fmt::Display for Subject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Subject::Issue(number) => write!(f, "issue {number}"),
-            Subject::PullRequest(number) => write!(f, "pull request {number}"),
-            Subject::Checks(numbers) => list(f, ("pull request", "pull requests"), numbers),
-            Subject::Branches(branches) => list(f, ("branch", "branches"), branches),
+            Subject::Item(item) => write!(f, "{item}"),
+            Subject::Commit(sha) => write!(f, "commit {sha}"),
+            Subject::Push(branch) => write!(f, "a push to branch {branch}"),
         }
-    }
-}
-
-/// `items` after the word for one of them or for more.
-fn list(
-    f: &mut fmt::Formatter<'_>,
-    (one, more): (&str, &str),
-    items: &[impl fmt::Display],
-) -> fmt::Result {
-    let items: Vec<String> = items.iter().map(ToString::to_string).collect();
-    match items.as_slice() {
-        [] => write!(f, "no {one}"),
-        [item] => write!(f, "{one} {item}"),
-        items => write!(f, "{more} {}", items.join(", ")),
     }
 }
 
@@ -231,63 +230,47 @@ fn read_delivery(event: &str, body: &[u8]) -> serde_json::Result<Delivery> {
     struct PullRequestEvent {
         pull_request: Numbered,
     }
-    /// A check run or check suite, by the pull requests it ran for.
+    /// A check run or check suite, by the commit it ran on.
     #[derive(Deserialize)]
-    struct CheckPullRequests {
-        pull_requests: Vec<Numbered>,
+    struct Check {
+        head_sha: String,
     }
     #[derive(Deserialize)]
     struct CheckRunEvent {
-        check_run: CheckPullRequests,
+        check_run: Check,
     }
     #[derive(Deserialize)]
     struct CheckSuiteEvent {
-        check_suite: CheckPullRequests,
-    }
-    #[derive(Deserialize)]
-    struct Branch {
-        name: String,
+        check_suite: Check,
     }
     #[derive(Deserialize)]
     struct StatusEvent {
-        branches: Vec<Branch>,
+        sha: String,
     }
     #[derive(Deserialize)]
     struct PushEvent {
         #[serde(rename = "ref")]
         reference: String,
     }
-    let pull_requests = |check: CheckPullRequests| {
-        Subject::Checks(
-            check
-                .pull_requests
-                .into_iter()
-                .map(|pr| pr.number)
-                .collect(),
-        )
-    };
     let subject = match event {
         "issues" | "issue_comment" => {
             let IssueEvent { issue } = from_slice(body)?;
-            match issue.pull_request {
-                Some(_) => Subject::PullRequest(issue.number),
-                None => Subject::Issue(issue.number),
-            }
+            Subject::Item(match issue.pull_request {
+                Some(_) => Item::Pull(issue.number),
+                None => Item::Issue(issue.number),
+            })
         }
         "pull_request" | "pull_request_review" | "pull_request_review_comment" => {
             let PullRequestEvent { pull_request } = from_slice(body)?;
-            Subject::PullRequest(pull_request.number)
+            Subject::Item(Item::Pull(pull_request.number))
         }
-        "check_run" => pull_requests(from_slice::<CheckRunEvent>(body)?.check_run),
-        "check_suite" => pull_requests(from_slice::<CheckSuiteEvent>(body)?.check_suite),
-        "status" => {
-            let StatusEvent { branches } = from_slice(body)?;
-            Subject::Branches(branches.into_iter().map(|branch| branch.name).collect())
-        }
+        "check_run" => Subject::Commit(from_slice::<CheckRunEvent>(body)?.check_run.head_sha),
+        "check_suite" => Subject::Commit(from_slice::<CheckSuiteEvent>(body)?.check_suite.head_sha),
+        "status" => Subject::Commit(from_slice::<StatusEvent>(body)?.sha),
         "push" => {
             let PushEvent { reference } = from_slice(body)?;
             match reference.strip_prefix("refs/heads/") {
-                Some(branch) => Subject::Branches(vec![branch.to_string()]),
+                Some(branch) => Subject::Push(branch.to_string()),
                 None => return Ok(Delivery::Ignored),
             }
         }
@@ -296,42 +279,39 @@ fn read_delivery(event: &str, body: &[u8]) -> serde_json::Result<Delivery> {
     Ok(Delivery::Accepted(subject))
 }
 
-/// The items accepted deliveries named that the factory has yet to read
-/// again: the listener adds to them and the factory takes them, so deliveries
-/// never race a poll, and those that arrive while it reads coalesce.
+/// What accepted deliveries named that the factory has yet to read again:
+/// the listener adds to it and the factory takes it, so deliveries never race
+/// a poll, and those that arrive while it reads coalesce.
 #[derive(Clone, Default)]
-pub struct Pending(Arc<PendingItems>);
+pub struct Pending(Arc<PendingSubjects>);
 
 #[derive(Default)]
-struct PendingItems {
-    items: Mutex<BTreeSet<Item>>,
+struct PendingSubjects {
+    subjects: Mutex<BTreeSet<Subject>>,
     arrived: Notify,
 }
 
 impl Pending {
-    fn add(&self, items: Vec<Item>) {
-        if items.is_empty() {
-            return;
-        }
-        self.0.items.lock().unwrap().extend(items);
+    fn add(&self, subject: Subject) {
+        self.0.subjects.lock().unwrap().insert(subject);
         self.0.arrived.notify_one();
     }
 
-    /// Waits until a delivery names an item, and takes every item named
+    /// Waits until a delivery names something, and takes everything named
     /// since the last take.
-    pub async fn next(&self) -> BTreeSet<Item> {
+    pub async fn next(&self) -> BTreeSet<Subject> {
         loop {
-            let items = self.take();
-            if !items.is_empty() {
-                return items;
+            let subjects = self.take();
+            if !subjects.is_empty() {
+                return subjects;
             }
             self.0.arrived.notified().await;
         }
     }
 
-    /// Takes every item named since the last take.
-    pub fn take(&self) -> BTreeSet<Item> {
-        std::mem::take(&mut *self.0.items.lock().unwrap())
+    /// Takes everything named since the last take.
+    pub fn take(&self) -> BTreeSet<Subject> {
+        std::mem::take(&mut *self.0.subjects.lock().unwrap())
     }
 }
 
@@ -404,7 +384,7 @@ async fn answer(secret: Secret, pending: Pending, headers: HeaderMap, body: Byte
     match receive(&secret, event, header("X-Hub-Signature-256"), &body) {
         Ok(Delivery::Accepted(subject)) => {
             info!(%subject, "accepted");
-            pending.add(subject.items());
+            pending.add(subject);
         }
         Ok(Delivery::Ignored) => info!("ignored: not a change Linewright acts on"),
         Ok(Delivery::Unreadable(reason)) => warn!(%reason, "ignored"),

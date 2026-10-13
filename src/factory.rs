@@ -30,7 +30,7 @@ use crate::run::{self, Shell};
 use crate::runtime::Runtime;
 use crate::spec_glob::SpecGlob;
 use crate::store::{CloseReason, IssueRead, Store};
-use crate::webhook::Pending;
+use crate::webhook::{self, Pending};
 use crate::workflow::{self, LastRuns, Workflow, WorkflowName};
 
 /// The settings a factory runs with.
@@ -219,12 +219,18 @@ impl Factory {
         Ok(self.reconcile(kept, defined, now).await)
     }
 
-    /// One refresh: read `items` again, with those Linewright changed since
-    /// they were last read, into the kept snapshot, reconcile it with the
-    /// runs in flight and act on the decisions, without taking a snapshot.
+    /// One refresh: read the items Linewright changed since they were last
+    /// read, then those `subjects` name, into the kept snapshot, reconcile it
+    /// with the runs in flight and act on the decisions, without taking a
+    /// snapshot. What a commit or a push names is found in the kept snapshot
+    /// once it holds what Linewright changed, such as a pull request a run
+    /// opened or pushed to. With nothing to read, it decides nothing.
     /// Workflows wait for the next poll. Before the first poll there is
     /// nothing kept, and it polls instead. Returns the decisions.
-    pub async fn refresh(&mut self, items: impl IntoIterator<Item = Item>) -> Result<Vec<Action>> {
+    pub async fn refresh(
+        &mut self,
+        subjects: impl IntoIterator<Item: Into<webhook::Subject>>,
+    ) -> Result<Vec<Action>> {
         let Some(mut kept) = self.kept.clone() else {
             return self.cycle().await;
         };
@@ -235,22 +241,25 @@ impl Factory {
         let now = shell.clock.now();
         let merged_since = now - shell.policy.spec_lookback;
         let snapshot = Arc::make_mut(&mut kept.snapshot);
-        let items: BTreeSet<Item> = items
+        let mut read = read_all(snapshot, shell, self.written.clone(), merged_since).await?;
+        let named: BTreeSet<Item> = subjects
             .into_iter()
-            .chain(self.written.iter().copied())
+            .flat_map(|subject| subject.into().items(snapshot))
+            .filter(|item| !read.contains(item))
             .collect();
-        for item in items {
-            let read = read_into(snapshot, shell, item, merged_since)
-                .await
-                .with_context(|| format!("reading {item} again"))?;
-            kept.read_at
-                .extend(read.into_iter().map(|read| (read, now)));
+        // Deliveries for other commits and branches are many: with nothing
+        // read, there is nothing new to decide on.
+        if read.is_empty() && named.is_empty() {
+            return Ok(vec![]);
         }
+        read.extend(read_all(snapshot, shell, named, merged_since).await?);
+        kept.read_at
+            .extend(read.into_iter().map(|item| (item, now)));
         self.written.clear();
         Ok(self.reconcile(kept, vec![], now).await)
     }
 
-    /// Polls every `poll_interval` and, between polls, refreshes the items
+    /// Polls every `poll_interval` and, between polls, refreshes what
     /// deliveries add to `pending`, until stopping. A refresh never races a
     /// poll: one still running when the poll falls due finishes first. A
     /// failed poll or refresh is logged and left for the next poll to catch
@@ -268,8 +277,8 @@ impl Factory {
                 tokio::select! {
                     () = tokio::time::sleep_until(next_poll) => break,
                     () = stopping.cancelled() => break,
-                    items = pending.next() => {
-                        if let Err(e) = self.refresh(items).await {
+                    subjects = pending.next() => {
+                        if let Err(e) = self.refresh(subjects).await {
                             error!(
                                 error = format!("{e:#}"),
                                 "acting on deliveries failed; the next poll catches up"
@@ -605,6 +614,22 @@ async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str
         store.mark_ready(pr).await?;
     }
     store.comment(pr, &marked(Stage::Review, note)).await
+}
+
+/// Reads each of `items` again into `snapshot`, as [`read_into`] does.
+/// Returns the items read.
+async fn read_all(
+    snapshot: &mut Snapshot,
+    shell: &Shell,
+    items: impl IntoIterator<Item = Item>,
+    merged_since: Timestamp,
+) -> Result<BTreeSet<Item>> {
+    let mut read = BTreeSet::new();
+    for item in items {
+        let read_with = read_into(snapshot, shell, item, merged_since).await;
+        read.extend(read_with.with_context(|| format!("reading {item} again"))?);
+    }
+    Ok(read)
 }
 
 /// Reads `item` again into `snapshot`, as a snapshot taken now holds it,

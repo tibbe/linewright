@@ -54,6 +54,9 @@ struct State {
     pulls: BTreeMap<Number, PullRecord>,
     /// How many snapshots have been taken.
     snapshots_taken: usize,
+    /// How many reads of an issue or pull request on its own, outside a
+    /// snapshot, there have been.
+    items_read: usize,
     /// Why snapshots and reads of issues and pull requests fail, while they
     /// do.
     unreadable: Option<String>,
@@ -133,6 +136,7 @@ impl LocalStore {
                 issues: BTreeMap::new(),
                 pulls: BTreeMap::new(),
                 snapshots_taken: 0,
+                items_read: 0,
                 unreadable: None,
             }),
         })
@@ -608,6 +612,12 @@ impl LocalStore {
         self.state().snapshots_taken
     }
 
+    /// How many reads of an issue or pull request on its own, outside a
+    /// snapshot, there have been.
+    pub fn items_read(&self) -> usize {
+        self.state().items_read
+    }
+
     /// Makes snapshots and reads of issues and pull requests fail with
     /// `reason`, as when GitHub cannot be reached, until
     /// [`LocalStore::restore_reads`].
@@ -625,6 +635,14 @@ impl LocalStore {
             Some(reason) => bail!("{reason}"),
             None => Ok(()),
         }
+    }
+
+    /// Counts a read of an issue or pull request on its own, which fails
+    /// as [`LocalStore::fail_reads`] says.
+    fn read_item(&self) -> Result<()> {
+        self.readable()?;
+        self.state().items_read += 1;
+        Ok(())
     }
 
     /// The contents of `path` at the head of `branch`, which has it.
@@ -1017,7 +1035,7 @@ impl Store for LocalStore {
     }
 
     async fn issue(&self, number: Number) -> Result<IssueRead> {
-        self.readable()?;
+        self.read_item()?;
         let (issue, pulls) = {
             let state = self.state();
             let Some(record) = state.issues.get(&number) else {
@@ -1048,7 +1066,7 @@ impl Store for LocalStore {
     }
 
     async fn machine_pull(&self, number: Number) -> Result<Option<Pull>> {
-        self.readable()?;
+        self.read_item()?;
         let by_machine = {
             let state = self.state();
             let Some(record) = state.pulls.get(&number) else {
@@ -1067,7 +1085,7 @@ impl Store for LocalStore {
         number: Number,
         merged_since: Timestamp,
     ) -> Result<Option<MergedPull>> {
-        self.readable()?;
+        self.read_item()?;
         let state = self.state();
         let Some(record) = state.pulls.get(&number) else {
             return Ok(None);

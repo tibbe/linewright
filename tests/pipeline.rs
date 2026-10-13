@@ -402,16 +402,6 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
 }
 
 use linewright::domain::{CheckState, Login, ReviewState};
-use linewright::store::local::CheckRecord;
-
-fn check(name: &str, state: CheckState, log: &str) -> CheckRecord {
-    CheckRecord {
-        name: name.into(),
-        state,
-        log: log.into(),
-    }
-}
-
 #[tokio::test]
 async fn a_green_pull_request_is_marked_ready_for_review_with_no_one_asked_to_review_it() {
     let mut world = World::new().await;

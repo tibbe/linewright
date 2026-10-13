@@ -94,15 +94,19 @@ async fn an_accepted_delivery_is_logged_with_its_event_and_what_it_names() {
         ),
         (
             "check_suite",
-            r#"{"check_suite":{"pull_requests":[{"number":11},{"number":12}]}}"#,
-            "pull requests #11, #12",
+            r#"{"check_suite":{"head_sha":"7e8e2de","pull_requests":[{"number":11}]}}"#,
+            "commit 7e8e2de",
         ),
         (
             "status",
             r#"{"sha":"6dcb09b","branches":[{"name":"linewright/7"}]}"#,
-            "branch linewright/7",
+            "commit 6dcb09b",
         ),
-        ("push", r#"{"ref":"refs/heads/main"}"#, "branch main"),
+        (
+            "push",
+            r#"{"ref":"refs/heads/main"}"#,
+            "a push to branch main",
+        ),
     ];
 
     for (event, body, _) in deliveries {
