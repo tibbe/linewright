@@ -404,6 +404,8 @@ async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
     world.runtime.on_workflow(|_| refused_for_the_usage_limit());
     let (log, _guard) = Log::capture();
 
+    // A run that waited for the reset would never return: the fake clock
+    // stands still.
     world
         .factory
         .run_workflow(&"weekly".parse().unwrap())

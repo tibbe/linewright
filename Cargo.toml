@@ -39,3 +39,7 @@ toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# Paused time, for the session timeout under the usage limit.
+tokio = { version = "1", features = ["test-util"] }

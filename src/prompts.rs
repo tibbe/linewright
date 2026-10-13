@@ -217,6 +217,10 @@ pub fn unfinished(problem: &str) -> String {
     )
 }
 
+pub fn usage_limit_reset() -> String {
+    "The usage limit that stopped you has reset. Carry on where you stopped, and answer as your task says.".into()
+}
+
 pub fn late_feedback(pr: &Pull, feedback: &Feedback) -> String {
     let mut text = String::from(
         "New feedback arrived on the pull request while you worked. Address it as well, commit, and answer again with only the result JSON object, covering all your work and replying in every thread with new feedback.\n\n",

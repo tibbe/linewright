@@ -60,6 +60,10 @@ pub struct FactoryConfig {
     /// Whether each poll also starts the workflows that are due. Replay does
     /// not: workflows are not captured or replayed.
     pub schedule_workflows: bool,
+    /// Whether a session refused for the usage limit waits for the reset and
+    /// carries on, rather than ending its run: only `serve` waits
+    /// (`docs/specs/operation.md`, "Usage limit").
+    pub waits_out_usage_limit: bool,
 }
 
 /// What a run in flight works on.
@@ -75,8 +79,9 @@ struct LiveEntry {
 
 pub struct Factory {
     shell: Arc<Shell>,
-    /// Each ends in the usage limit its session was refused for, if it was.
-    runs: JoinSet<Option<UsageLimit>>,
+    runs: JoinSet<()>,
+    /// The refusals for the usage limit the runs report.
+    refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
     live: HashMap<Id, LiveEntry>,
     stopping: CancellationToken,
     schedule_workflows: bool,
@@ -162,6 +167,7 @@ impl Factory {
         } else {
             LastRuns::default()
         };
+        let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
         let shell = Shell {
             policy: Policy {
                 linewright: identity.login.clone(),
@@ -185,10 +191,13 @@ impl Factory {
             result_retries: config.result_retries,
             session_timeout: config.session_timeout,
             work_dir: config.work_dir,
+            waits_out_usage_limit: config.waits_out_usage_limit,
+            report_refusal,
         };
         Ok(Factory {
             shell: Arc::new(shell),
             runs: JoinSet::new(),
+            refusals,
             live: HashMap::new(),
             stopping: CancellationToken::new(),
             schedule_workflows: config.schedule_workflows,
@@ -392,8 +401,7 @@ impl Factory {
             workflow::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
         run_and_log(shell, &workflow, self.stopping.clone())
             .await
-            .with_context(|| format!("the run of the workflow `{name}` failed"))?;
-        Ok(())
+            .with_context(|| format!("the run of the workflow `{name}` failed"))
     }
 
     /// The workflows on the default branch whose files parse, when polls
@@ -451,18 +459,16 @@ impl Factory {
         while let Some(result) = self.runs.try_join_next_with_id() {
             self.finished(result);
         }
+        while let Ok(UsageLimit { resets_at }) = self.refusals.try_recv() {
+            if self.memory.hold_until(resets_at) {
+                info!(%resets_at, "usage limit in force; no session starts until it resets");
+            }
+        }
     }
 
-    fn finished(&mut self, result: Result<(Id, Option<UsageLimit>), tokio::task::JoinError>) {
+    fn finished(&mut self, result: Result<(Id, ()), tokio::task::JoinError>) {
         let id = match result {
-            Ok((id, refused)) => {
-                if let Some(UsageLimit { resets_at }) = refused
-                    && self.memory.hold_until(resets_at)
-                {
-                    info!(%resets_at, "usage limit in force; no session starts until it resets");
-                }
-                id
-            }
+            Ok((id, ())) => id,
             Err(e) => {
                 error!(error = %e, "a run panicked");
                 e.id()
@@ -619,9 +625,10 @@ impl Factory {
                 let shell = self.shell.clone();
                 let handle = self.runs.spawn({
                     let (workflow, cancel) = (workflow.clone(), cancel.clone());
-                    // A run that fails is logged, with nothing to hand back;
-                    // only a refusal for the usage limit is reported.
-                    async move { run_and_log(&shell, &workflow, cancel).await.ok().flatten() }
+                    // A run that fails is logged; there is nothing to hand back.
+                    async move {
+                        let _ = run_and_log(&shell, &workflow, cancel).await;
+                    }
                 });
                 self.live.insert(
                     handle.id(),
@@ -637,19 +644,14 @@ impl Factory {
 }
 
 /// Runs `workflow` once, files the issues its result returns and logs how
-/// it went: by hand or on its schedule. Returns the usage limit its session
-/// was refused for, if it was.
-async fn run_and_log(
-    shell: &Shell,
-    workflow: &Workflow,
-    cancel: CancellationToken,
-) -> Result<Option<UsageLimit>> {
+/// it went: by hand or on its schedule.
+async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationToken) -> Result<()> {
     let name = &workflow.name;
     info!(workflow = %name, "workflow run started");
     match run::workflow(shell, workflow, cancel).await {
         Ok(WorkflowEnd::Finished(result)) => {
             info!(workflow = %name, summary = result.summary, "workflow run finished");
-            Ok(None)
+            Ok(())
         }
         Ok(WorkflowEnd::UsageLimit(limit)) => {
             warn!(
@@ -657,7 +659,7 @@ async fn run_and_log(
                 resets_at = %limit.resets_at,
                 "workflow run ended for the usage limit"
             );
-            Ok(Some(limit))
+            Ok(())
         }
         Err(e) => {
             error!(workflow = %name, error = format!("{e:#}"), "workflow run failed");

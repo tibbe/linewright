@@ -247,29 +247,57 @@ fn refused_for_the_usage_limit(rate_limit_info: Value) -> Vec<Value> {
     ]
 }
 
+/// The `rate_limit_info` of a refusal for the usage limit that resets at
+/// 7:50 UTC on 13 October 2026.
+fn rejected() -> Value {
+    json!({
+        "status": "rejected",
+        "resetsAt": 1791877800,
+        "rateLimitType": "five_hour",
+        "overageStatus": "rejected",
+        "isUsingOverage": false,
+    })
+}
+
 #[tokio::test]
 async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_streaming(
-        dir.path(),
-        &refused_for_the_usage_limit(json!({
-            "status": "rejected",
-            "resetsAt": 1791877800,
-            "rateLimitType": "five_hour",
-            "overageStatus": "rejected",
-            "isUsingOverage": false,
-        })),
-    );
+    let runtime = runtime_streaming(dir.path(), &refused_for_the_usage_limit(rejected()));
 
     let error = runtime
         .start(&triage_session(dir.path()))
         .await
         .unwrap_err();
 
-    let SessionError::UsageLimit(limit) = error else {
+    let SessionError::UsageLimit { limit, underway } = error else {
         panic!("expected the usage limit, got {error:?}");
     };
     assert_eq!(limit.resets_at.to_rfc3339(), "2026-10-13T07:50:00+00:00");
+    assert_eq!(underway, None, "refused before the agent said anything");
+}
+
+#[tokio::test]
+async fn a_turn_refused_part_way_for_the_usage_limit_names_its_session_to_resume() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut stream = refused_for_the_usage_limit(rejected());
+    stream.insert(
+        1,
+        json!({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Reading the ticket."}]},
+        }),
+    );
+    let runtime = runtime_streaming(dir.path(), &stream);
+
+    let error = runtime
+        .resume(&triage_session(dir.path()), "c0ffee", "Go on.")
+        .await
+        .unwrap_err();
+
+    let SessionError::UsageLimit { underway, .. } = error else {
+        panic!("expected the usage limit, got {error:?}");
+    };
+    assert_eq!(underway.as_deref(), Some("c0ffee"));
 }
 
 #[tokio::test]

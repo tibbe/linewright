@@ -84,7 +84,7 @@ async fn run(command: Command, config: Config) -> Result<()> {
             served
         }
         Command::Once => {
-            let mut factory = start(&config).await?;
+            let mut factory = start(&config, OnUsageLimit::End).await?;
             factory.cycle().await?;
             factory.settle().await;
             Ok(())
@@ -115,7 +115,12 @@ async fn run(command: Command, config: Config) -> Result<()> {
         }
         Command::Workflow {
             command: WorkflowCommand::Run { name },
-        } => start(&config).await?.run_workflow(&name).await,
+        } => {
+            start(&config, OnUsageLimit::End)
+                .await?
+                .run_workflow(&name)
+                .await
+        }
         Command::Capture { target, dir } => {
             let (repo, number) = target
                 .split_once('#')
@@ -135,7 +140,7 @@ async fn run(command: Command, config: Config) -> Result<()> {
         } => {
             let bash = require_bash()?;
             require_tool(RUNTIME).await?;
-            let factory_config = factory_config(&config, out.clone())?;
+            let factory_config = factory_config(&config, out.clone(), OnUsageLimit::End)?;
             case::replay(
                 &case_dir,
                 &out,
@@ -154,7 +159,7 @@ async fn run(command: Command, config: Config) -> Result<()> {
 /// deliveries add to `pending`, until a stop signal.
 async fn serve(config: &Config, mut signals: StopSignals, pending: &Pending) -> Result<()> {
     let mut factory = tokio::select! {
-        factory = start(config) => factory?,
+        factory = start(config, OnUsageLimit::Wait) => factory?,
         signal = signals.next() => {
             info!(signal = signal.name(), "stopped while starting");
             return Ok(());
@@ -231,7 +236,11 @@ fn runtime(config: &Config, bash: PathBuf, github_token: Option<String>) -> Clau
     }
 }
 
-fn factory_config(config: &Config, work_dir: std::path::PathBuf) -> Result<FactoryConfig> {
+fn factory_config(
+    config: &Config,
+    work_dir: std::path::PathBuf,
+    on_usage_limit: OnUsageLimit,
+) -> Result<FactoryConfig> {
     let briefs = match &config.briefs {
         Some(dir) => Briefs::load(dir)?,
         None => Briefs::shipped(),
@@ -252,17 +261,25 @@ fn factory_config(config: &Config, work_dir: std::path::PathBuf) -> Result<Facto
         briefs,
         work_dir,
         schedule_workflows: true,
+        waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
     })
 }
 
+/// What a run refused for the usage limit does: only `serve` waits
+/// (`docs/specs/operation.md`, "Usage limit").
+enum OnUsageLimit {
+    Wait,
+    End,
+}
+
 /// Startup: refuse to start when the factory cannot work.
-async fn start(config: &Config) -> Result<Factory> {
+async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory> {
     require_tool("git").await?;
     let bash = require_bash()?;
     require_tool(RUNTIME).await?;
     let token = token()?;
     let github = connect(config, token.clone()).await?;
-    let factory_config = factory_config(config, work_dir(config, &github))?;
+    let factory_config = factory_config(config, work_dir(config, &github), on_usage_limit)?;
     Factory::start(
         Arc::new(github),
         Arc::new(runtime(config, bash, Some(token))),

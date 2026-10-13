@@ -44,6 +44,11 @@ pub(crate) struct Shell {
     pub result_retries: u32,
     pub session_timeout: std::time::Duration,
     pub work_dir: PathBuf,
+    /// Whether a session turn refused for the usage limit waits for the
+    /// reset and carries on, as under `serve`, rather than ending its run.
+    pub waits_out_usage_limit: bool,
+    /// Reports each refusal for the usage limit as it happens.
+    pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
 }
 
 impl Shell {
@@ -90,8 +95,8 @@ enum Failure {
     Apply(anyhow::Error),
     /// The subject stopped asking for the work.
     Cancelled,
-    /// The runtime refused a session for the usage limit: the run ends,
-    /// keeping its claim and its work.
+    /// The runtime refused a session for the usage limit, and the run does
+    /// not wait it out: the run ends, keeping its claim and its work.
     UsageLimit(UsageLimit),
 }
 
@@ -117,19 +122,18 @@ fn stage_of(kind: WorkKind) -> Stage {
     }
 }
 
-/// Runs `work` to its end. Returns the usage limit its session was refused
-/// for, if it was.
+/// Runs `work` to its end.
 pub(crate) async fn run(
     shell: Arc<Shell>,
     work: Work,
     snapshot: Arc<Snapshot>,
     as_of: Timestamp,
     cancel: CancellationToken,
-) -> Option<UsageLimit> {
+) {
     drive(&shell, &work, &snapshot, &Ctx { as_of, cancel }).await
 }
 
-async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Option<UsageLimit> {
+async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
     let subject = work.subject();
     let run_stage = stage_of(work.kind());
     let mut retried = false;
@@ -137,7 +141,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Op
         match attempt(shell, work, snapshot, ctx).await {
             Ok(()) => {
                 info!(subject = ?subject, kind = ?work.kind(), "run finished");
-                return None;
+                return;
             }
             Err(Failure::Infrastructure(e)) if !retried => {
                 warn!(subject = ?subject, error = format!("{e:#}"), "infrastructure failure; retrying once");
@@ -151,7 +155,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Op
             }
             Err(Failure::Cancelled) => {
                 info!(subject = ?subject, "run cancelled; its branch is kept");
-                return None;
+                return;
             }
             Err(Failure::UsageLimit(limit)) => {
                 warn!(
@@ -159,7 +163,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Op
                     resets_at = %limit.resets_at,
                     "run ended for the usage limit; its claim and branch are kept"
                 );
-                return Some(limit);
+                return;
             }
             Err(Failure::Apply(e)) => {
                 break (format!("Recording the run's outcome failed: {e:#}"), None);
@@ -183,7 +187,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Op
     if let Err(e) = handed {
         warn!(subject = ?subject, error = format!("{e:#}"), "handing back failed");
     }
-    None
 }
 
 async fn attempt(
@@ -401,42 +404,21 @@ fn parse_retry(error: String) -> Rejection {
     Rejection::Retry(prompts::parse_error(&error))
 }
 
-/// Runs a session turn and asks again, up to the result retries, while its
-/// answer is rejected. Starts the session, or resumes `session` with a
-/// follow-up. Returns the accepted result and the turn that gave it.
+/// Runs a session turn, `first`, and asks again, up to the result retries,
+/// while its answer is rejected. Returns the accepted result and the turn
+/// that gave it.
 async fn converse<T, F, Fut>(
     shell: &Shell,
     ctx: &Ctx,
-    spec: &SessionSpec,
-    resume: Option<(&str, String)>,
+    spec: &mut SessionSpec,
+    first: Step,
     accept: F,
 ) -> Result<(T, Turn), Failure>
 where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, Rejection>>,
 {
-    let record = |name: &str, text: &str| {
-        let _ = std::fs::write(spec.record.join(name), text);
-    };
-    let session_failed = |error: SessionError| match error {
-        SessionError::Infrastructure(reason) => infra(anyhow::anyhow!(reason)),
-        SessionError::UsageLimit(limit) => Failure::UsageLimit(limit),
-        SessionError::Failed { reason, log_tail } => Failure::HandBack {
-            reason: format!("The session ended unexpectedly: {reason}"),
-            log_tail: Some(scrub(&log_tail, &spec.dir)),
-        },
-    };
-    let mut turn = match &resume {
-        None => {
-            record("brief.md", &spec.prompt);
-            cancellable(ctx, shell.runtime.start(spec)).await
-        }
-        Some((session, followup)) => {
-            record(&followup_name(&spec.record), followup);
-            cancellable(ctx, shell.runtime.resume(spec, session, followup)).await
-        }
-    }?
-    .map_err(session_failed)?;
+    let mut turn = take_turn(shell, ctx, spec, first).await?;
     let mut retries = 0;
     loop {
         match accept(turn.message.clone()).await {
@@ -444,16 +426,17 @@ where
                 let json = results::json_value(&turn.message)
                     .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
                     .unwrap_or_else(|| turn.message.clone());
-                record("result.json", &json);
+                record(spec, "result.json", &json);
                 return Ok((result, turn));
             }
             Err(Rejection::Fail(failure)) => return Err(failure),
             Err(Rejection::Retry(followup)) if retries < shell.result_retries => {
                 retries += 1;
-                record(&followup_name(&spec.record), &followup);
-                turn = cancellable(ctx, shell.runtime.resume(spec, &turn.session, &followup))
-                    .await?
-                    .map_err(session_failed)?;
+                let step = Step::Resume {
+                    session: turn.session.clone(),
+                    prompt: followup,
+                };
+                turn = take_turn(shell, ctx, spec, step).await?;
             }
             Err(Rejection::Retry(followup)) => {
                 return Err(Failure::HandBack {
@@ -463,6 +446,80 @@ where
                     log_tail: Some(tail(&scrub(&turn.message, &spec.dir), 40)),
                 });
             }
+        }
+    }
+}
+
+/// A turn of a session: its first, or one resuming it with a prompt.
+enum Step {
+    Start,
+    Resume { session: String, prompt: String },
+}
+
+/// Writes `text` to the file `name` in the session's record.
+fn record(spec: &SessionSpec, name: &str, text: &str) {
+    let _ = std::fs::write(spec.record.join(name), text);
+}
+
+/// Takes the session turn `step`, kept in the session's record, stopping at
+/// once when the run is cancelled. A turn the runtime refuses for the usage
+/// limit is reported as it happens. A run that waits out the limit then
+/// waits for the reset, its session's deadline moved on by the wait, and
+/// carries on: in the session the turn got under way in, or taking the turn
+/// again (`docs/specs/operation.md`, "Usage limit").
+async fn take_turn(
+    shell: &Shell,
+    ctx: &Ctx,
+    spec: &mut SessionSpec,
+    mut step: Step,
+) -> Result<Turn, Failure> {
+    let subject = purpose_name(&spec.purpose);
+    loop {
+        let turn = match &step {
+            Step::Start => {
+                record(spec, "brief.md", &spec.prompt);
+                cancellable(ctx, shell.runtime.start(spec)).await?
+            }
+            Step::Resume { session, prompt } => {
+                record(spec, &followup_name(&spec.record), prompt);
+                cancellable(ctx, shell.runtime.resume(spec, session, prompt)).await?
+            }
+        };
+        let (limit, underway) = match turn {
+            Ok(turn) => return Ok(turn),
+            Err(SessionError::UsageLimit { limit, underway }) => (limit, underway),
+            Err(SessionError::Infrastructure(reason)) => {
+                return Err(infra(anyhow::anyhow!(reason)));
+            }
+            Err(SessionError::Failed { reason, log_tail }) => {
+                return Err(Failure::HandBack {
+                    reason: format!("The session ended unexpectedly: {reason}"),
+                    log_tail: Some(scrub(&log_tail, &spec.dir)),
+                });
+            }
+        };
+        let _ = shell.report_refusal.send(limit);
+        if !shell.waits_out_usage_limit {
+            return Err(Failure::UsageLimit(limit));
+        }
+        let resets_at = limit.resets_at;
+        let left = spec
+            .deadline
+            .saturating_duration_since(tokio::time::Instant::now());
+        let until = limit.wait_until(shell.clock.now());
+        warn!(subject, %resets_at, "session refused for the usage limit");
+        info!(subject, %resets_at, %until, "waiting out the usage limit");
+        cancellable(ctx, shell.clock.sleep_until(until)).await?;
+        spec.deadline = tokio::time::Instant::now() + left;
+        match underway {
+            Some(session) => {
+                info!(subject, %resets_at, "usage limit reset; resuming the session");
+                step = Step::Resume {
+                    session,
+                    prompt: prompts::usage_limit_reset(),
+                };
+            }
+            None => info!(subject, %resets_at, "usage limit reset; taking the refused turn again"),
         }
     }
 }
@@ -529,9 +586,9 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
     let prompt = prompts::triage(&shell.repo(), issue, &categories);
-    let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let categories = &categories;
-    let (result, _) = converse(shell, ctx, &spec, None, |message| async move {
+    let (result, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         results::parse_triage(&message, categories).map_err(parse_retry)
     })
     .await?;
@@ -601,8 +658,8 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
         .await
         .map_err(infra)?;
     let prompt = prompts::tickets(&shell.repo(), pr, &diff);
-    let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
-    let (tickets, _) = converse(shell, ctx, &spec, None, |message| async move {
+    let mut spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
+    let (tickets, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         results::parse_tickets(&message).map_err(parse_retry)
     })
     .await?;
@@ -712,9 +769,9 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
     git::create_branch(&ws.dir, &branch).await.map_err(infra)?;
     let upstream = shell.upstream();
     let prompt = prompts::implement(&shell.repo(), ticket, &branch);
-    let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let (dir, base) = (&ws.dir, &upstream);
-    let conversation = converse(shell, ctx, &spec, None, |message| async move {
+    let conversation = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         let result: ImplementResult = results::parse(&message).map_err(parse_retry)?;
         if let Some(problem) = git::unfinished(dir).await? {
             return Err(Rejection::Retry(prompts::unfinished(&problem)));
@@ -945,7 +1002,7 @@ async fn pull_work(
         Task::Update => PullTask::Update,
     };
     let prompt = prompts::pull_work(&shell.repo(), ticket, pr, &pull_task, conflict.as_ref());
-    let spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
     let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
     let dir = &ws.dir;
     let accept = |message: String, pr_threads: Vec<String>| async move {
@@ -963,8 +1020,10 @@ async fn pull_work(
         }
         Ok(result)
     };
-    let (mut result, mut turn) =
-        converse(shell, ctx, &spec, None, |m| accept(m, threads.clone())).await?;
+    let (mut result, mut turn) = converse(shell, ctx, &mut spec, Step::Start, |m| {
+        accept(m, threads.clone())
+    })
+    .await?;
     // Feedback posted after the snapshot the brief came from would be older
     // than the push that follows, so it goes to the session before anything
     // is pushed, for as long as it keeps coming within the session's time.
@@ -984,11 +1043,12 @@ async fn pull_work(
         feedback_authors.extend(feedback_people(&arrived, linewright));
         threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
         let followup = prompts::late_feedback(&pr_now, &arrived);
-        let session = turn.session.clone();
-        (result, turn) = converse(shell, ctx, &spec, Some((&session, followup)), |m| {
-            accept(m, threads.clone())
-        })
-        .await?;
+        let step = Step::Resume {
+            session: turn.session.clone(),
+            prompt: followup,
+        };
+        (result, turn) =
+            converse(shell, ctx, &mut spec, step, |m| accept(m, threads.clone())).await?;
     }
     // Merged or closed while the session worked: its work is for a pull
     // request that is done, and what happens to the ticket is the next
@@ -1163,8 +1223,8 @@ pub(crate) async fn workflow(
         let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
         let prompt = prompts::workflow(&shell.briefs, &shell.repo(), workflow);
         let timeout = workflow.timeout.unwrap_or(shell.session_timeout);
-        let spec = session_spec(shell, purpose, &ws, prompt, timeout)?;
-        let (result, _) = converse(shell, &ctx, &spec, None, |message| async move {
+        let mut spec = session_spec(shell, purpose, &ws, prompt, timeout)?;
+        let (result, _) = converse(shell, &ctx, &mut spec, Step::Start, |message| async move {
             results::parse(&message).map_err(parse_retry)
         })
         .await?;

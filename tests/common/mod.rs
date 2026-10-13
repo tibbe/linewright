@@ -28,29 +28,55 @@ pub const LINEWRIGHT: &str = "factory";
 
 pub struct FakeClock {
     now: Mutex<Timestamp>,
+    advanced: tokio::sync::Notify,
+    sleeps: tokio::sync::mpsc::UnboundedSender<Timestamp>,
+    slept: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Timestamp>>,
 }
 
 impl FakeClock {
     pub fn new() -> FakeClock {
+        let (sleeps, slept) = tokio::sync::mpsc::unbounded_channel();
         FakeClock {
             now: Mutex::new(
                 DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
                     .unwrap()
                     .with_timezone(&Utc),
             ),
+            advanced: tokio::sync::Notify::new(),
+            sleeps,
+            slept: tokio::sync::Mutex::new(slept),
         }
     }
 
     pub fn advance(&self, by: TimeDelta) {
         *self.now.lock().unwrap() += by;
+        self.advanced.notify_waiters();
+    }
+
+    /// Waits for the next sleep to begin, and returns when it ends.
+    pub async fn next_sleep(&self) -> Timestamp {
+        // No timeout: under paused time it would fire while git runs.
+        self.slept.lock().await.recv().await.unwrap()
     }
 }
 
+#[async_trait]
 impl Clock for FakeClock {
     fn now(&self) -> Timestamp {
         let mut now = self.now.lock().unwrap();
         *now += TimeDelta::seconds(1);
         *now
+    }
+
+    async fn sleep_until(&self, at: Timestamp) {
+        let _ = self.sleeps.send(at);
+        loop {
+            let advanced = self.advanced.notified();
+            if *self.now.lock().unwrap() >= at {
+                return;
+            }
+            advanced.await;
+        }
     }
 }
 
@@ -58,6 +84,9 @@ impl Clock for FakeClock {
 /// follow-up prompt.
 pub struct Call<'a> {
     pub spec: &'a SessionSpec,
+    /// The session the turn is in: a new one when started, the one
+    /// resumed otherwise.
+    pub session: &'a str,
     pub followup: Option<&'a str>,
 }
 
@@ -85,6 +114,9 @@ impl ScriptKey {
 pub struct ScriptedRuntime {
     scripts: Mutex<HashMap<ScriptKey, Script>>,
     prompts: Mutex<Vec<(ScriptKey, String)>>,
+    started: std::sync::atomic::AtomicUsize,
+    /// How long the next turn runs, in the runtime's time.
+    turn_time: Mutex<std::time::Duration>,
 }
 
 impl ScriptedRuntime {
@@ -112,6 +144,11 @@ impl ScriptedRuntime {
         self.scripts.lock().unwrap().insert(key, Arc::new(script));
     }
 
+    /// Has the next turn run for `time` before its script answers.
+    pub fn takes(&self, time: std::time::Duration) {
+        *self.turn_time.lock().unwrap() = time;
+    }
+
     /// Every prompt sessions of `kind` were given, follow-ups included.
     pub fn prompts(&self, kind: WorkKind) -> Vec<String> {
         self.prompts_for(ScriptKey::Work(kind))
@@ -132,7 +169,16 @@ impl ScriptedRuntime {
             .collect()
     }
 
-    fn turn(&self, spec: &SessionSpec, followup: Option<&str>) -> Result<Turn, SessionError> {
+    async fn turn(
+        &self,
+        spec: &SessionSpec,
+        session: String,
+        followup: Option<&str>,
+    ) -> Result<Turn, SessionError> {
+        let time = std::mem::take(&mut *self.turn_time.lock().unwrap());
+        if !time.is_zero() {
+            tokio::time::sleep(time).await;
+        }
         let key = ScriptKey::of(spec);
         self.prompts
             .lock()
@@ -144,9 +190,14 @@ impl ScriptedRuntime {
             reason: format!("no script for {key:?}"),
             log_tail: String::new(),
         })?;
+        let message = script(&Call {
+            spec,
+            session: &session,
+            followup,
+        })?;
         Ok(Turn {
-            session: format!("session-{key:?}"),
-            message: script(&Call { spec, followup })?,
+            session,
+            message,
             log_tail: String::new(),
         })
     }
@@ -155,16 +206,19 @@ impl ScriptedRuntime {
 #[async_trait]
 impl Runtime for ScriptedRuntime {
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError> {
-        self.turn(spec, None)
+        let n = self
+            .started
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.turn(spec, format!("session-{}", n + 1), None).await
     }
 
     async fn resume(
         &self,
         spec: &SessionSpec,
-        _session: &str,
+        session: &str,
         prompt: &str,
     ) -> Result<Turn, SessionError> {
-        self.turn(spec, Some(prompt))
+        self.turn(spec, session.to_string(), Some(prompt)).await
     }
 }
 
@@ -244,12 +298,28 @@ pub fn usage_limit_resets_at() -> Timestamp {
     "2026-10-13T07:50:00Z".parse().unwrap()
 }
 
-/// A session's end when the runtime refuses it for the usage limit, which
-/// resets at [`usage_limit_resets_at`].
+/// A session's end when the runtime refuses its turn for the usage limit,
+/// which resets at [`usage_limit_resets_at`], before the turn began.
 pub fn refused_for_the_usage_limit() -> Result<String, SessionError> {
-    Err(SessionError::UsageLimit(UsageLimit {
-        resets_at: usage_limit_resets_at(),
-    }))
+    refused_until(usage_limit_resets_at(), None)
+}
+
+/// The end of the turn `call` when the runtime refuses it part way for the
+/// usage limit that resets at [`usage_limit_resets_at`].
+pub fn refused_part_way(call: &Call) -> Result<String, SessionError> {
+    refused_until(usage_limit_resets_at(), Some(call))
+}
+
+/// The end of a turn the runtime refuses for the usage limit that resets at
+/// `resets_at`: part way through `call`, or before the turn began.
+pub fn refused_until(
+    resets_at: Timestamp,
+    part_way: Option<&Call>,
+) -> Result<String, SessionError> {
+    Err(SessionError::UsageLimit {
+        limit: UsageLimit { resets_at },
+        underway: part_way.map(|call| call.session.to_string()),
+    })
 }
 
 impl Log {
@@ -317,12 +387,18 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         briefs: Briefs::shipped(),
         work_dir: work_dir.to_path_buf(),
         schedule_workflows: true,
+        waits_out_usage_limit: false,
     }
 }
 
 impl World {
     pub async fn new() -> World {
         World::with(|_| {}).await
+    }
+
+    /// A world whose factory serves: its sessions wait out the usage limit.
+    pub async fn serving() -> World {
+        World::with(|config| config.waits_out_usage_limit = true).await
     }
 
     pub async fn with(adjust: impl FnOnce(&mut FactoryConfig)) -> World {

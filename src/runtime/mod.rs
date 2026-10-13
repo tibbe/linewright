@@ -36,7 +36,8 @@ pub struct SessionSpec {
     /// The plugin that gives the session the skills its brief calls.
     pub plugin: PathBuf,
     pub prompt: String,
-    /// When the session times out, across all its turns.
+    /// When the session times out, across all its turns. A run that waits
+    /// out the usage limit moves it on by the wait.
     pub deadline: tokio::time::Instant,
 }
 
@@ -56,14 +57,37 @@ pub struct UsageLimit {
     pub resets_at: Timestamp,
 }
 
+impl UsageLimit {
+    /// How long a refused session waits when its limit's reset has passed
+    /// before it tries again.
+    pub const SHORT_WAIT: chrono::TimeDelta = chrono::TimeDelta::minutes(1);
+
+    /// Until when a session refused at `now` waits: the reset, or a short
+    /// time when that has passed.
+    pub fn wait_until(self, now: Timestamp) -> Timestamp {
+        if self.resets_at > now {
+            self.resets_at
+        } else {
+            now + UsageLimit::SHORT_WAIT
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     /// The runtime could not run the session: worth one retry.
     #[error("{0}")]
     Infrastructure(String),
-    /// The runtime refused the session for the usage limit: not a failure.
-    #[error("the agents' usage limit was reached; it resets at {}", .0.resets_at)]
-    UsageLimit(UsageLimit),
+    /// The runtime refused the session's turn for the usage limit: not a
+    /// failure.
+    #[error("the agents' usage limit was reached; it resets at {}", .limit.resets_at)]
+    UsageLimit {
+        limit: UsageLimit,
+        /// The session the turn got under way in, to carry on in with a
+        /// resume; `None` when the turn was refused before it began, so
+        /// that it is to be taken again.
+        underway: Option<String>,
+    },
     /// The session ended without a final message: it crashed, timed out or
     /// stopped on an error.
     #[error("{reason}")]
