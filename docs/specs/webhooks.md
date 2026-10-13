@@ -24,13 +24,14 @@ requests, the rework starts within seconds.
 - The maintainer creates the repository's webhook by hand, in the
   repository's settings: creating one takes admin rights on the repository,
   which the machine user does not need and, with `--auto-merge`, must not
-  have. Linewright cannot see the webhook, so a misconfigured one shows only
-  as deliveries that never arrive.
+  have. Linewright cannot see the webhook, so a misconfigured one shows as
+  deliveries that never arrive, or that arrive and are refused, which the
+  webhook's Recent Deliveries on GitHub and Linewright's log both show.
 - The webhook and Linewright share a secret, with which GitHub signs each
   delivery. The secret is a credential, so it comes from the environment only,
   as `LINEWRIGHT_WEBHOOK_SECRET`; Linewright does not accept deliveries
   without one. A delivery whose signature is missing or does not match is
-  refused and logged.
+  refused and logged, and its response does not say why.
 - Setting the secret turns webhooks on: `serve` then also listens for
   deliveries on the `webhook-address` setting, a host and port (default
   `0.0.0.0:8080`), over plain HTTP; TLS, where wanted, is a reverse proxy's
@@ -54,5 +55,11 @@ requests, the rework starts within seconds.
   | `check_run`, `check_suite`, `status` | CI on Linewright's pull requests |
   | `push` | Linewright's pull requests falling behind the default branch |
 
+- Linewright reads a delivery in either content type GitHub offers,
+  `application/json` or `application/x-www-form-urlencoded`, as its
+  `Content-Type` header says. A signed delivery that names no event, or one of
+  an event in the table from which Linewright cannot tell what it names, is
+  refused and logged, and its response says why, so the webhook's Recent
+  Deliveries on GitHub shows the reason.
 - A delivery seen before is not refused: a repeat costs a read of what it
   names, and the signature is what keeps others out.
