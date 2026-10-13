@@ -1730,3 +1730,142 @@ async fn with_auto_merge_a_merge_that_succeeds_on_the_retry_leaves_no_handback_o
     assert_eq!(issue.comments.len(), comments_before);
     assert!(!issue.has_label("ready-for-human"));
 }
+
+/// Checks that the implementing run on `ticket`, refused for the usage
+/// limit, ended at once, logging the limit, and left the ticket as it was.
+fn assert_run_ended_keeping_its_claim(
+    world: &World,
+    ticket: linewright::domain::Number,
+    log: &Log,
+) {
+    use linewright::domain::Login;
+
+    let issue = world.issue(ticket);
+    assert_eq!(labels(&issue), ["ready-for-agent"]);
+    assert!(issue.is_assigned(&Login::new(MACHINE)));
+    assert!(issue.comments.is_empty(), "{:#?}", issue.comments);
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Implement).len(),
+        1,
+        "not retried"
+    );
+    let refused = log.usage_limit_warnings();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_run_refused_for_the_usage_limit_ends_keeping_its_claim_and_its_work() {
+    use linewright::store::Store;
+
+    let (log, _guard) = Log::capture();
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Implement, |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("src/half.txt", "half\n")],
+            "Start the ticket",
+        );
+        refused_for_the_usage_limit()
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+
+    world.poll().await;
+
+    assert_run_ended_keeping_its_claim(&world, ticket, &log);
+    assert_eq!(
+        world
+            .store
+            .read_file(&format!("{}-do-the-thing", ticket.0), "src/half.txt")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("half\n")
+    );
+}
+
+#[tokio::test]
+async fn a_run_refused_for_the_usage_limit_whose_work_cannot_be_pushed_still_keeps_its_claim() {
+    let (log, _guard) = Log::capture();
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Implement, |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("src/half.txt", "half\n")],
+            "Start the ticket",
+        );
+        let unreachable = call.spec.dir.join("no-such-remote");
+        let moved = std::process::Command::new("git")
+            .args(["remote", "set-url", "origin"])
+            .arg(&unreachable)
+            .current_dir(&call.spec.dir)
+            .status()
+            .unwrap();
+        assert!(moved.success());
+        refused_for_the_usage_limit()
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+
+    world.poll().await;
+
+    assert_run_ended_keeping_its_claim(&world, ticket, &log);
+}
+
+#[tokio::test]
+async fn the_next_poll_starts_a_run_refused_for_the_usage_limit_again() {
+    let mut world = World::new().await;
+    world
+        .runtime
+        .on(WorkKind::Implement, |_| refused_for_the_usage_limit());
+    world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world.poll().await;
+
+    implement(&world);
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(world.store.pulls().len(), 1);
+}
+
+#[tokio::test]
+async fn a_session_that_fails_on_its_infrastructure_is_retried_once_then_handed_back() {
+    use linewright::runtime::SessionError;
+
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Implement, |_| {
+        Err(SessionError::Infrastructure(
+            "the agent runtime's API failed".into(),
+        ))
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert!(
+        last_comment(&issue).contains("The run failed twice on its infrastructure"),
+        "{}",
+        last_comment(&issue)
+    );
+}

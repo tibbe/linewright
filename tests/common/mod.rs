@@ -16,7 +16,7 @@ use linewright::clock::Clock;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::WorkKind;
-use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
+use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::spec_glob::SpecGlob;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::{Address, Listener, Secret, Webhooks};
@@ -236,6 +236,25 @@ impl std::io::Write for Log {
     }
 }
 
+/// A session's end when the runtime refuses it for the usage limit, which
+/// resets at 7:50 UTC on 13 October 2026.
+pub fn refused_for_the_usage_limit() -> Result<String, SessionError> {
+    Err(SessionError::UsageLimit(UsageLimit {
+        resets_at: "2026-10-13T07:50:00Z".parse().unwrap(),
+    }))
+}
+
+impl Log {
+    /// The warnings that name the usage limit and its reset in
+    /// [`refused_for_the_usage_limit`].
+    pub fn usage_limit_warnings(&self) -> Vec<String> {
+        self.lines("WARN")
+            .into_iter()
+            .filter(|line| line.contains("usage limit") && line.contains("2026-10-13 07:50:00"))
+            .collect()
+    }
+}
+
 pub fn json(value: Value) -> Result<String, SessionError> {
     Ok(value.to_string())
 }
@@ -421,14 +440,24 @@ impl World {
 /// `dir/shell.log` and its arguments, one per line and followed by a blank
 /// line, to `dir/args.log`.
 pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
+    fake_claude_streaming(
+        dir,
+        &[serde_json::json!({
+            "type": "result",
+            "subtype": "success",
+            "is_error": false,
+            "result": message,
+        })],
+    )
+}
+
+/// The stand-in `claude` of [`fake_claude`], whose every turn streams
+/// `events` instead.
+pub fn fake_claude_streaming(dir: &Path, events: &[Value]) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
-    let event = serde_json::json!({
-        "type": "result",
-        "subtype": "success",
-        "is_error": false,
-        "result": message,
-    });
+    let stream: Vec<String> = events.iter().map(Value::to_string).collect();
+    let stream = stream.join("\n");
     let program = dir.join("claude");
     let script = format!(
         "#!/bin/sh\n\
@@ -438,7 +467,7 @@ pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
          echo \"GH_TOKEN=${{GH_TOKEN-}} GITHUB_TOKEN=${{GITHUB_TOKEN-}}\" >> '{tokens}'\n\
          echo \"TMPDIR=${{TMPDIR-}}\" >> '{tmpdir}'\n\
          echo \"${{CLAUDE_CODE_SHELL-}}\" >> '{shell}'\n\
-         cat <<'EOF'\n{event}\nEOF\n",
+         cat <<'EOF'\n{stream}\nEOF\n",
         tokens = dir.join("tokens.log").display(),
         tmpdir = dir.join("tmpdir.log").display(),
         shell = dir.join("shell.log").display(),

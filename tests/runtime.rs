@@ -9,12 +9,20 @@ use common::*;
 use linewright::domain::Number;
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::runtime::claude::ClaudeCode;
-use linewright::runtime::{Purpose, Runtime, SessionSpec};
+use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec};
 use serde_json::{Value, json};
 
 fn runtime_without_token(dir: &Path) -> ClaudeCode {
+    runtime_streaming(
+        dir,
+        &[json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."})],
+    )
+}
+
+/// A runtime without a GitHub token whose every turn streams `events`.
+fn runtime_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
     ClaudeCode {
-        program: fake_claude(dir, "Done.").to_str().unwrap().into(),
+        program: fake_claude_streaming(dir, events).to_str().unwrap().into(),
         bash: "/bin/bash".into(),
         model: None,
         github_token: None,
@@ -218,4 +226,86 @@ async fn a_clone_under_a_claude_directory_keeps_its_own_agent_instructions() {
         .map(|path| excludes.is_match(path)),
         [true, true, false, false, false]
     );
+}
+
+/// The stream of a session the runtime refused for the usage limit, as
+/// Claude Code streamed one, with the `rate_limit_info` it gave.
+fn refused_for_the_usage_limit(rate_limit_info: Value) -> Vec<Value> {
+    let session = "9f4fb233-b170-4a09-8ce1-34e0a9c68e36";
+    vec![
+        json!({"type": "system", "subtype": "init", "session_id": session}),
+        json!({"type": "rate_limit_event", "rate_limit_info": rate_limit_info, "session_id": session}),
+        json!({
+            "type": "result",
+            "subtype": "success",
+            "is_error": true,
+            "terminal_reason": "api_error",
+            "api_error_status": 429,
+            "result": "You've hit your session limit \u{b7} resets 7:50am (UTC)",
+            "session_id": session,
+        }),
+    ]
+}
+
+#[tokio::test]
+async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_streaming(
+        dir.path(),
+        &refused_for_the_usage_limit(json!({
+            "status": "rejected",
+            "resetsAt": 1791877800,
+            "rateLimitType": "five_hour",
+            "overageStatus": "rejected",
+            "isUsingOverage": false,
+        })),
+    );
+
+    let error = runtime
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::UsageLimit(limit) = error else {
+        panic!("expected the usage limit, got {error:?}");
+    };
+    assert_eq!(limit.resets_at.to_rfc3339(), "2026-10-13T07:50:00+00:00");
+}
+
+#[tokio::test]
+async fn a_refusal_that_does_not_say_when_the_limit_resets_is_an_infrastructure_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_streaming(
+        dir.path(),
+        &refused_for_the_usage_limit(json!({"status": "rejected"})),
+    );
+
+    let error = runtime
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(error, SessionError::Infrastructure(_)),
+        "expected an infrastructure failure, got {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_streaming(
+        dir.path(),
+        &[
+            json!({
+                "type": "rate_limit_event",
+                "rate_limit_info": {"status": "allowed_warning", "resetsAt": 1791877800},
+            }),
+            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
+        ],
+    );
+
+    let turn = runtime.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "Done.");
 }

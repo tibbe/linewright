@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
+use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
 use crate::workflow::WorkflowName;
 
@@ -47,11 +48,21 @@ pub struct Turn {
     pub log_tail: String,
 }
 
+/// The runtime refusing sessions for the usage limit, until `resets_at`
+/// (`docs/specs/operation.md`, "Usage limit").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UsageLimit {
+    pub resets_at: Timestamp,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     /// The runtime could not run the session: worth one retry.
     #[error("{0}")]
     Infrastructure(String),
+    /// The runtime refused the session for the usage limit: not a failure.
+    #[error("the agents' usage limit was reached; it resets at {}", .0.resets_at)]
+    UsageLimit(UsageLimit),
     /// The session ended without a final message: it crashed, timed out or
     /// stopped on an error.
     #[error("{reason}")]

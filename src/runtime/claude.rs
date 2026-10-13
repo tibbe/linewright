@@ -12,7 +12,8 @@ use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-use super::{Runtime, SessionError, SessionSpec, Turn};
+use super::{Runtime, SessionError, SessionSpec, Turn, UsageLimit};
+use crate::domain::Timestamp;
 use crate::store::github::TOKEN_VARIABLES;
 
 pub struct ClaudeCode {
@@ -40,6 +41,44 @@ struct ResultEvent {
     terminal_reason: Option<String>,
     #[serde(default)]
     api_error_status: Option<serde_json::Value>,
+}
+
+/// The event Claude Code streams about the usage limit: as it refuses the
+/// session, and beside it as the limit nears. Its name is Claude Code's.
+#[derive(Deserialize)]
+struct RateLimitEvent {
+    rate_limit_info: RateLimitInfo,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RateLimitInfo {
+    status: RateLimitStatus,
+    #[serde(default, with = "chrono::serde::ts_seconds_option")]
+    resets_at: Option<Timestamp>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RateLimitStatus {
+    Rejected,
+    /// Allowed, or allowed with a warning.
+    #[serde(other)]
+    Other,
+}
+
+impl RateLimitEvent {
+    /// The usage limit the event refuses the session for, when it says
+    /// when the limit resets.
+    fn refusal(&self) -> Option<UsageLimit> {
+        match self.rate_limit_info {
+            RateLimitInfo {
+                status: RateLimitStatus::Rejected,
+                resets_at: Some(resets_at),
+            } => Some(UsageLimit { resets_at }),
+            _ => None,
+        }
+    }
 }
 
 /// What every turn reads: only the repository's configuration and agent
@@ -175,6 +214,7 @@ impl ClaudeCode {
                 .ok();
             let mut lines = BufReader::new(stdout).lines();
             let mut result = None;
+            let mut refusal = None;
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Some(file) = output.as_mut() {
                     let _ = file.write_all(format!("{line}\n").as_bytes()).await;
@@ -184,6 +224,10 @@ impl ClaudeCode {
                 };
                 match event["type"].as_str() {
                     Some("result") => result = serde_json::from_value::<ResultEvent>(event).ok(),
+                    Some("rate_limit_event") => {
+                        let event = serde_json::from_value::<RateLimitEvent>(event).ok();
+                        refusal = event.and_then(|e| e.refusal()).or(refusal);
+                    }
                     Some("assistant") => {
                         let mut log = log.lock().expect("the log's lock is not poisoned");
                         for text in assistant_text(&event) {
@@ -196,7 +240,7 @@ impl ClaudeCode {
                     _ => {}
                 }
             }
-            result
+            (result, refusal)
         };
         let read_stderr = async {
             let mut errors = String::new();
@@ -204,15 +248,15 @@ impl ClaudeCode {
             log.lock().expect("the log's lock is not poisoned").errors = errors;
         };
         let outcome = tokio::time::timeout_at(spec.deadline, async {
-            let (result, (), ()) = tokio::join!(read_stdout, read_stderr, feed);
-            (result, child.wait().await)
+            let ((result, refusal), (), ()) = tokio::join!(read_stdout, read_stderr, feed);
+            (result, refusal, child.wait().await)
         })
         .await;
         let session = session_args[1].to_string();
         copy_transcript(&session, &spec.record.join("trace.jsonl")).await;
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
-        let Ok((result, status)) = outcome else {
+        let Ok((result, refusal, status)) = outcome else {
             return Err(SessionError::Failed {
                 reason: "it timed out".into(),
                 log_tail: log.tail(),
@@ -228,6 +272,7 @@ impl ClaudeCode {
                 message,
                 log_tail: log.tail(),
             }),
+            _ if let Some(limit) = refusal => Err(SessionError::UsageLimit(limit)),
             Some(event)
                 if event.terminal_reason.as_deref() == Some("api_error")
                     || event

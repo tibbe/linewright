@@ -26,7 +26,7 @@ use crate::marker::{Stage, marked};
 use crate::reconcile::{
     Action, FailedMerge, LiveRun, Memory, Policy, Subject, Work, Workflows, hold_note, reconcile,
 };
-use crate::run::{self, Shell};
+use crate::run::{self, Shell, WorkflowEnd};
 use crate::runtime::Runtime;
 use crate::spec_glob::SpecGlob;
 use crate::store::{CloseReason, IssueRead, Store};
@@ -596,8 +596,16 @@ async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationTok
     let name = &workflow.name;
     info!(workflow = %name, "workflow run started");
     match run::workflow(shell, workflow, cancel).await {
-        Ok(result) => {
+        Ok(WorkflowEnd::Finished(result)) => {
             info!(workflow = %name, summary = result.summary, "workflow run finished");
+            Ok(())
+        }
+        Ok(WorkflowEnd::UsageLimit(limit)) => {
+            warn!(
+                workflow = %name,
+                resets_at = %limit.resets_at,
+                "workflow run ended for the usage limit"
+            );
             Ok(())
         }
         Err(e) => {

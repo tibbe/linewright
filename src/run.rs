@@ -26,7 +26,7 @@ use crate::results::{
     self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
     WorkflowIssueLabel, WorkflowResult,
 };
-use crate::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn};
+use crate::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::spec_gap;
 use crate::store::{Categories, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
 use crate::tracking;
@@ -90,6 +90,9 @@ enum Failure {
     Apply(anyhow::Error),
     /// The subject stopped asking for the work.
     Cancelled,
+    /// The runtime refused a session for the usage limit: the run ends,
+    /// keeping its claim and its work.
+    UsageLimit(UsageLimit),
 }
 
 /// What a run knows beyond the shell: when its snapshot was taken, and
@@ -143,6 +146,13 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
             }
             Err(Failure::Cancelled) => {
                 return info!(subject = ?subject, "run cancelled; its branch is kept");
+            }
+            Err(Failure::UsageLimit(limit)) => {
+                return warn!(
+                    subject = ?subject,
+                    resets_at = %limit.resets_at,
+                    "run ended for the usage limit; its claim and branch are kept"
+                );
             }
             Err(Failure::Apply(e)) => {
                 break (format!("Recording the run's outcome failed: {e:#}"), None);
@@ -402,6 +412,7 @@ where
     };
     let session_failed = |error: SessionError| match error {
         SessionError::Infrastructure(reason) => infra(anyhow::anyhow!(reason)),
+        SessionError::UsageLimit(limit) => Failure::UsageLimit(limit),
         SessionError::Failed { reason, log_tail } => Failure::HandBack {
             reason: format!("The session ended unexpectedly: {reason}"),
             log_tail: Some(scrub(&log_tail, &spec.dir)),
@@ -652,6 +663,15 @@ async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Res
 
 // Implementation.
 
+/// Keeps the branch of a run that stopped before its result: what the
+/// session committed in `dir` is pushed.
+async fn keep_stopped_work(shell: &Shell, dir: &Path, upstream: &str, branch: &str) -> Result<()> {
+    if git::commits_ahead(dir, upstream).await? > 0 {
+        shell.store.push(dir, branch, PushMode::Replace).await?;
+    }
+    Ok(())
+}
+
 /// A branch name a person could have chosen: the issue number and its
 /// title, as GitHub names branches it creates for an issue.
 fn branch_name(issue: &Issue) -> String {
@@ -701,19 +721,22 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
     .await;
     let (result, turn) = match conversation {
         Err(Failure::Cancelled) => {
-            // The branch is kept: what the session committed is pushed.
-            if git::commits_ahead(&ws.dir, &upstream)
+            keep_stopped_work(shell, &ws.dir, &upstream, &branch)
                 .await
-                .map_err(infra)?
-                > 0
-            {
-                shell
-                    .store
-                    .push(&ws.dir, &branch, PushMode::Replace)
-                    .await
-                    .map_err(infra)?;
-            }
+                .map_err(infra)?;
             return Err(Failure::Cancelled);
+        }
+        Err(Failure::UsageLimit(limit)) => {
+            // A refused session has not failed, so neither has its run if
+            // its work cannot be kept: it is neither retried nor handed back.
+            if let Err(e) = keep_stopped_work(shell, &ws.dir, &upstream, &branch).await {
+                warn!(
+                    branch,
+                    error = format!("{e:#}"),
+                    "keeping the refused run's branch failed"
+                );
+            }
+            return Err(Failure::UsageLimit(limit));
         }
         conversation => conversation?,
     };
@@ -1107,6 +1130,14 @@ async fn record_pull_work(
 
 // Workflows.
 
+/// How a workflow run that did not fail ended.
+pub(crate) enum WorkflowEnd {
+    /// The session's result, whose issues were filed.
+    Finished(WorkflowResult),
+    /// The runtime refused the session for the usage limit.
+    UsageLimit(UsageLimit),
+}
+
 /// Runs `workflow` once: one session on a fresh clone of the default branch,
 /// then files the issues its result returns. A workflow run has no issue to
 /// hand back, so a run that fails is an error.
@@ -1114,7 +1145,7 @@ pub(crate) async fn workflow(
     shell: &Shell,
     workflow: &Workflow,
     cancel: CancellationToken,
-) -> Result<WorkflowResult> {
+) -> Result<WorkflowEnd> {
     let ctx = Ctx {
         as_of: shell.clock.now(),
         cancel,
@@ -1134,16 +1165,18 @@ pub(crate) async fn workflow(
             .map_err(Failure::Apply)?;
         Ok(result)
     };
-    session.await.map_err(|failure| match failure {
-        Failure::Infrastructure(e) | Failure::Apply(e) => e,
-        Failure::HandBack { reason, log_tail } => {
+    match session.await {
+        Ok(result) => Ok(WorkflowEnd::Finished(result)),
+        Err(Failure::UsageLimit(limit)) => Ok(WorkflowEnd::UsageLimit(limit)),
+        Err(Failure::Infrastructure(e) | Failure::Apply(e)) => Err(e),
+        Err(Failure::HandBack { reason, log_tail }) => Err(
             match log_tail.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
                 Some(tail) => anyhow::anyhow!("{reason}\n\nThe end of the session's log:\n{tail}"),
                 None => anyhow::anyhow!(reason),
-            }
-        }
-        Failure::Cancelled => anyhow::anyhow!("the run was cancelled"),
-    })
+            },
+        ),
+        Err(Failure::Cancelled) => Err(anyhow::anyhow!("the run was cancelled")),
+    }
 }
 
 /// Files the issues `result` returns, as the machine user, up to the

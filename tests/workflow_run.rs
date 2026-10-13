@@ -397,3 +397,22 @@ fn the_help_lists_workflow_run_name() {
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("`workflow run NAME`"), "{help}");
 }
+
+#[tokio::test]
+async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
+    let world = with_workflow("weekly", WEEKLY).await;
+    world.runtime.on_workflow(|_| refused_for_the_usage_limit());
+    let (log, _guard) = Log::capture();
+
+    world
+        .factory
+        .run_workflow(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+
+    let ended = log.usage_limit_warnings();
+    assert_eq!(ended.len(), 1, "{ended:?}");
+    assert!(log.lines("ERROR").is_empty(), "{:?}", log.lines("ERROR"));
+    assert_eq!(world.runtime.workflow_prompts().len(), 1, "not retried");
+    assert!(world.store.issues().is_empty());
+}
