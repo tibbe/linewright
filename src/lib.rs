@@ -16,4 +16,5 @@ pub mod spec_glob;
 pub mod status;
 pub mod store;
 pub mod tracking;
+pub mod webhook;
 pub mod workflow;

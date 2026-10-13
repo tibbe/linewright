@@ -31,6 +31,11 @@ linewright --repo owner/name serve
   environment (variables, and `ANTHROPIC_API_KEY` in place of an
   `apiKeyHelper`) or the repository (its `.claude/settings.json` or
   `.mcp.json`).
+- Webhooks are optional. Create the repository's webhook by hand, sending
+  JSON, with a secret, and set `LINEWRIGHT_WEBHOOK_SECRET` to it: `serve` then
+  also listens for deliveries over plain HTTP on `webhook-address` (default
+  `0.0.0.0:8080`), checks each one's signature and logs it. Put a reverse
+  proxy in front for TLS.
 - Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
   in `linewright.toml`; `linewright --help` lists them with their defaults.
 - The `Dockerfile` builds the base image: `linewright`, `git`, and Claude

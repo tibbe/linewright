@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use linewright::config::{Cli, Config, LogFormat};
 use linewright::domain::MergeMethod;
 
@@ -156,4 +156,108 @@ fn every_issue_is_in_scope_unless_a_label_is_required() {
     assert_eq!(flag.require_label.as_deref(), Some("linewright"));
     assert_eq!(env.require_label.as_deref(), Some("from-env"));
     assert_eq!(file.require_label.as_deref(), Some("from-file"));
+}
+
+#[test]
+fn webhooks_are_off_without_the_secret() {
+    let config = resolve(&[], &[], None).unwrap();
+
+    assert!(config.webhooks.is_none());
+}
+
+#[test]
+fn the_secret_turns_webhooks_on_at_the_default_address() {
+    let config = resolve(&[], &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")], None).unwrap();
+
+    let webhooks = config.webhooks.unwrap();
+    assert_eq!(webhooks.address.to_string(), "0.0.0.0:8080");
+}
+
+#[test]
+fn the_webhook_address_is_a_flag_the_environment_or_the_file() {
+    let secret = ("LINEWRIGHT_WEBHOOK_SECRET", "s3cret");
+    let address = |args: &[&str], env: &[(&str, &str)], file| {
+        let mut env = env.to_vec();
+        env.push(secret);
+        resolve(args, &env, file)
+            .unwrap()
+            .webhooks
+            .unwrap()
+            .address
+            .to_string()
+    };
+    let file = Some("webhook-address = \"127.0.0.1:9000\"\n");
+
+    assert_eq!(address(&[], &[], file), "127.0.0.1:9000");
+    assert_eq!(
+        address(
+            &[],
+            &[("LINEWRIGHT_WEBHOOK_ADDRESS", "localhost:9001")],
+            file
+        ),
+        "localhost:9001"
+    );
+    assert_eq!(
+        address(
+            &["--webhook-address", "[::1]:9002"],
+            &[("LINEWRIGHT_WEBHOOK_ADDRESS", "localhost:9001")],
+            file
+        ),
+        "[::1]:9002"
+    );
+}
+
+#[test]
+fn a_webhook_address_that_is_not_a_host_and_port_is_an_error_naming_the_setting() {
+    let secret = [("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")];
+    for bad in [
+        "8080",
+        "localhost",
+        ":8080",
+        "localhost:http",
+        "localhost:99999",
+    ] {
+        let error = resolve(&["--webhook-address", bad], &secret, None).unwrap_err();
+
+        assert!(error.contains("webhook-address"), "{bad}: {error}");
+    }
+}
+
+#[test]
+fn a_webhook_address_without_the_secret_is_an_error_naming_the_secret() {
+    let flag = resolve(&["--webhook-address", "127.0.0.1:9000"], &[], None).unwrap_err();
+    let file = resolve(&[], &[], Some("webhook-address = \"127.0.0.1:9000\"\n")).unwrap_err();
+
+    assert!(flag.contains("LINEWRIGHT_WEBHOOK_SECRET"), "{flag}");
+    assert!(file.contains("LINEWRIGHT_WEBHOOK_SECRET"), "{file}");
+}
+
+#[test]
+fn the_webhook_secret_is_not_a_flag_or_a_file_key() {
+    let flag = Cli::try_parse_from(["linewright", "--webhook-secret", "s3cret", "status"]);
+    let file = resolve(&[], &[], Some("webhook-secret = \"s3cret\"\n")).unwrap_err();
+
+    assert!(flag.is_err());
+    assert!(file.contains("webhook-secret"), "{file}");
+}
+
+#[test]
+fn the_webhook_secret_is_not_shown_in_the_config() {
+    let config = resolve(&[], &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")], None).unwrap();
+
+    let shown = format!("{config:?}");
+    assert!(!shown.contains("s3cret"), "{shown}");
+}
+
+#[test]
+fn help_lists_the_webhook_address_with_its_default() {
+    let help = Cli::command().render_long_help().to_string();
+
+    let line = help
+        .lines()
+        .skip_while(|line| !line.contains("--webhook-address"))
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(line.contains("0.0.0.0:8080"), "{help}");
 }

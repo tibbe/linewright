@@ -17,6 +17,7 @@ use linewright::runtime::claude::ClaudeCode;
 use linewright::status;
 use linewright::store::Store;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
+use linewright::webhook::Listener;
 use linewright::workflow::{self, LastRuns, WorkflowFiles};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
@@ -67,42 +68,18 @@ async fn run(command: Command, config: Config) -> Result<()> {
             // Listening before startup, which talks to GitHub: in a container
             // `linewright` can be PID 1, which the kernel sends no signal it
             // has no handler for.
-            let mut signals = StopSignals::new().context("listening for stop signals")?;
-            let mut factory = tokio::select! {
-                factory = start(&config) => factory?,
-                signal = signals.next() => {
-                    info!(signal = signal.name(), "stopped while starting");
-                    return Ok(());
-                }
+            let signals = StopSignals::new().context("listening for stop signals")?;
+            // `once` and the other commands never listen
+            // (`docs/specs/product.md`, "Webhooks").
+            let listener = match &config.webhooks {
+                Some(webhooks) => Some(Listener::bind(webhooks).await?),
+                None => None,
             };
-            let stopping = factory.stopping();
-            tokio::spawn({
-                let stopping = stopping.clone();
-                async move {
-                    let first = signals.next().await;
-                    info!(
-                        signal = first.name(),
-                        "stopping after the action in progress; a second signal exits at once"
-                    );
-                    stopping.cancel();
-                    let second = signals.next().await;
-                    // 128 plus the signal's number, as a shell reports it
-                    // (<https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html>).
-                    std::process::exit(128 + second.kind().as_raw_value());
-                }
-            });
-            while !stopping.is_cancelled() {
-                if let Err(e) = factory.cycle().await {
-                    error!(error = format!("{e:#}"), "poll failed");
-                }
-                tokio::select! {
-                    _ = tokio::time::sleep(config.poll_interval) => {}
-                    () = stopping.cancelled() => {}
-                }
+            let served = serve(&config, signals).await;
+            if let Some(listener) = listener {
+                listener.stop().await;
             }
-            info!("stopping: cancelling the runs in flight");
-            factory.stop().await;
-            Ok(())
+            served
         }
         Command::Once => {
             let mut factory = start(&config).await?;
@@ -165,6 +142,45 @@ async fn run(command: Command, config: Config) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Starts the factory and polls until a stop signal.
+async fn serve(config: &Config, mut signals: StopSignals) -> Result<()> {
+    let mut factory = tokio::select! {
+        factory = start(config) => factory?,
+        signal = signals.next() => {
+            info!(signal = signal.name(), "stopped while starting");
+            return Ok(());
+        }
+    };
+    let stopping = factory.stopping();
+    tokio::spawn({
+        let stopping = stopping.clone();
+        async move {
+            let first = signals.next().await;
+            info!(
+                signal = first.name(),
+                "stopping after the action in progress; a second signal exits at once"
+            );
+            stopping.cancel();
+            let second = signals.next().await;
+            // 128 plus the signal's number, as a shell reports it
+            // (<https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html>).
+            std::process::exit(128 + second.kind().as_raw_value());
+        }
+    });
+    while !stopping.is_cancelled() {
+        if let Err(e) = factory.cycle().await {
+            error!(error = format!("{e:#}"), "poll failed");
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(config.poll_interval) => {}
+            () = stopping.cancelled() => {}
+        }
+    }
+    info!("stopping: cancelling the runs in flight");
+    factory.stop().await;
+    Ok(())
 }
 
 /// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.

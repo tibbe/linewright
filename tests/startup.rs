@@ -99,27 +99,105 @@ async fn without_auto_merge_neither_the_merge_method_nor_update_branch_is_checke
     assert!(disallowed_merge_method.is_ok());
 }
 
+/// Runs `linewright` with `args`, `env` and only `path` on the path, and
+/// returns whether it succeeded and what it wrote to stderr.
+fn linewright(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
+        .args(args)
+        .current_dir(dir.path())
+        .env("PATH", path)
+        .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
+        .envs(env.iter().copied())
+        .output()
+        .unwrap();
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
 #[test]
 fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
-    let dir = tempfile::tempdir().unwrap();
-    let bin = dir.path().join("bin");
-    std::fs::create_dir(&bin).unwrap();
-    fake_claude(&bin, "Done.");
+    let bin = tempfile::tempdir().unwrap();
+    fake_claude(bin.path(), "Done.");
     let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
         .map(|path| path.join("git"))
         .find(|git| git.is_file())
         .unwrap();
-    std::os::unix::fs::symlink(git, bin.join("git")).unwrap();
+    std::os::unix::fs::symlink(git, bin.path().join("git")).unwrap();
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
-        .args(["--repo", "owner/name", "once"])
-        .current_dir(dir.path())
-        .env("PATH", &bin)
-        .env("GH_TOKEN", "token")
-        .output()
-        .unwrap();
+    let (succeeded, error) = linewright(
+        bin.path(),
+        &["--repo", "owner/name", "once"],
+        &[("GH_TOKEN", "token")],
+    );
 
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "{error}");
+    assert!(!succeeded, "{error}");
     assert!(error.contains("`bash` is not on the path"), "{error}");
+}
+
+#[test]
+fn serve_refuses_a_webhook_address_without_the_secret() {
+    let empty = tempfile::tempdir().unwrap();
+    let (succeeded, error) = linewright(
+        empty.path(),
+        &[
+            "--repo",
+            "owner/name",
+            "--webhook-address",
+            "127.0.0.1:0",
+            "serve",
+        ],
+        &[],
+    );
+
+    assert!(!succeeded, "{error}");
+    assert!(error.contains("LINEWRIGHT_WEBHOOK_SECRET"), "{error}");
+}
+
+#[test]
+fn serve_refuses_a_webhook_address_it_cannot_listen_on() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = taken.local_addr().unwrap().to_string();
+
+    let empty = tempfile::tempdir().unwrap();
+    let (succeeded, error) = linewright(
+        empty.path(),
+        &[
+            "--repo",
+            "owner/name",
+            "--webhook-address",
+            &address,
+            "serve",
+        ],
+        &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")],
+    );
+
+    assert!(!succeeded, "{error}");
+    assert!(error.contains("webhook-address"), "{error}");
+    assert!(error.contains(&address), "{error}");
+}
+
+#[test]
+fn once_does_not_listen_even_with_the_secret() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = taken.local_addr().unwrap().to_string();
+
+    let empty = tempfile::tempdir().unwrap();
+    let (succeeded, error) = linewright(
+        empty.path(),
+        &[
+            "--repo",
+            "owner/name",
+            "--webhook-address",
+            &address,
+            "once",
+        ],
+        &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")],
+    );
+
+    // It goes on to the startup checks, which fail here for want of `git`.
+    assert!(!succeeded, "{error}");
+    assert!(error.contains("`git` is not on the path"), "{error}");
 }

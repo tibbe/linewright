@@ -2,7 +2,8 @@
 //! variable or a key in a TOML file, with precedence flag, environment, file,
 //! default (`docs/specs/product.md`, "Operation"), parsed once into one typed value.
 //! Credentials are not settings: they come from the environment variables
-//! their tools already read.
+//! their tools already read, and the webhook secret from
+//! `LINEWRIGHT_WEBHOOK_SECRET`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::domain::{MergeMethod, UpdateMethod};
 use crate::spec_glob::SpecGlob;
+use crate::webhook::{self, Webhooks};
 use crate::workflow::WorkflowName;
 
 #[derive(Parser, Debug)]
@@ -71,6 +73,10 @@ pub struct Settings {
     /// How often to poll [default: 60s]
     #[arg(long, global = true)]
     pub poll_interval: Option<String>,
+    /// The host and port `serve` listens on for webhook deliveries, with
+    /// `LINEWRIGHT_WEBHOOK_SECRET` set [default: 0.0.0.0:8080]
+    #[arg(long, global = true)]
+    pub webhook_address: Option<String>,
     /// The tracked Markdown files that are the spec [default: docs/**/*.md]
     #[arg(long, global = true)]
     pub spec_glob: Option<String>,
@@ -132,6 +138,8 @@ pub struct Config {
     /// Required by the commands that talk to GitHub; `replay` runs without.
     pub repo: Option<String>,
     pub poll_interval: Duration,
+    /// Set by the webhook secret; `serve` alone listens.
+    pub webhooks: Option<Webhooks>,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
     pub max_workers: usize,
@@ -155,6 +163,7 @@ impl Settings {
         [
             ("repo", &self.repo),
             ("poll-interval", &self.poll_interval),
+            ("webhook-address", &self.webhook_address),
             ("spec-glob", &self.spec_glob),
             ("spec-lookback", &self.spec_lookback),
             ("max-workers", &self.max_workers),
@@ -178,9 +187,10 @@ impl Settings {
     }
 }
 
-const KEYS: [&str; 18] = [
+const KEYS: [&str; 19] = [
     "repo",
     "poll-interval",
+    "webhook-address",
     "spec-glob",
     "spec-lookback",
     "max-workers",
@@ -276,6 +286,24 @@ impl Config {
                 .context("no data directory for the default `work-dir`; set it")?
                 .join("linewright"),
         };
+        let webhook_address = get("webhook-address");
+        let webhooks = match env(webhook::SECRET_VARIABLE).and_then(webhook::Secret::new) {
+            Some(secret) => Some(Webhooks {
+                address: parsed(
+                    "webhook-address",
+                    webhook_address,
+                    "0.0.0.0:8080",
+                    str::parse,
+                )?,
+                secret,
+            }),
+            None if webhook_address.is_some() => bail!(
+                "the setting `webhook-address` is set, but `{}` is not: set it to the \
+                 webhook's secret to turn webhooks on",
+                webhook::SECRET_VARIABLE
+            ),
+            None => None,
+        };
         let (ci_grace, ci_timeout) = (delta("ci-grace", "5m")?, delta("ci-timeout", "6h")?);
         if ci_timeout <= ci_grace {
             bail!("the setting `ci-timeout` must be longer than `ci-grace`");
@@ -283,6 +311,7 @@ impl Config {
         Ok(Config {
             repo: get("repo"),
             poll_interval: duration("poll-interval", "60s")?,
+            webhooks,
             spec_glob,
             spec_lookback: delta("spec-lookback", "7d")?,
             max_workers: number("max-workers", "4")? as usize,
