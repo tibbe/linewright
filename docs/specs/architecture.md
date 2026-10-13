@@ -74,8 +74,8 @@ later.
 - **Identity is a user account**: a token for a GitHub user dedicated to
   Linewright, whose assignments are its claims.
 - **Runs on a host or in a container the operator builds.** A published base
-  image (`linewright`, `git`, the agent runtime) is the starting point for
-  the operator's image.
+  image (`linewright`, the agent runtime, and the tools coding agents expect:
+  `git`, `gh`, `python3`) is the starting point for the operator's image.
 - **Configuration is layered**: flags, `LINEWRIGHT_*` environment variables,
   a TOML file, defaults, parsed once into one typed value. Credentials come
   from the environment only.
