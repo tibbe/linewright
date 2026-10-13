@@ -13,7 +13,9 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::Serialize;
 
-use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
+use super::{
+    Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode, RepoSettings, Store,
+};
 use crate::clock::Clock;
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
@@ -50,6 +52,8 @@ struct State {
     next_number: u64,
     issues: BTreeMap<Number, IssueRecord>,
     pulls: BTreeMap<Number, PullRecord>,
+    /// How many snapshots have been taken.
+    snapshots_taken: usize,
 }
 
 #[derive(Clone, Serialize)]
@@ -125,6 +129,7 @@ impl LocalStore {
                 next_number: 1,
                 issues: BTreeMap::new(),
                 pulls: BTreeMap::new(),
+                snapshots_taken: 0,
             }),
         })
     }
@@ -588,6 +593,11 @@ impl LocalStore {
         self.state().pulls.keys().copied().collect()
     }
 
+    /// How many snapshots have been taken of the store.
+    pub fn snapshots_taken(&self) -> usize {
+        self.state().snapshots_taken
+    }
+
     /// The contents of `path` at the head of `branch`, which has it.
     pub async fn file(&self, branch: &str, path: &str) -> Result<String> {
         Store::read_file(self, branch, path)
@@ -944,7 +954,8 @@ impl Store for LocalStore {
 
     async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot> {
         let (default_branch, issues, machine, pulls) = {
-            let state = self.state();
+            let mut state = self.state();
+            state.snapshots_taken += 1;
             let issues: Vec<Issue> = state.issues.values().map(|r| state.issue_view(r)).collect();
             let pulls: Vec<(Number, Login)> = state
                 .pulls
@@ -965,20 +976,8 @@ impl Store for LocalStore {
             merged: vec![],
         };
         for (number, author) in pulls {
-            let record = self.state().pull_mut(number)?.clone();
-            if let PullState::Merged { at } = record.state
-                && at >= merged_since
-            {
-                snapshot.merged.push(MergedPull {
-                    number,
-                    title: record.title.clone(),
-                    body: record.body.clone(),
-                    author: record.author.clone(),
-                    merged_at: at,
-                    base_ref: default_branch.clone(),
-                    labels: record.labels.clone(),
-                    files: record.files.clone(),
-                });
+            if let Some(merged) = self.merged_pull(number, merged_since).await? {
+                snapshot.merged.push(merged);
             }
             if author == machine {
                 snapshot.pulls.push(self.pull_view(number).await?);
@@ -987,8 +986,73 @@ impl Store for LocalStore {
         Ok(snapshot)
     }
 
+    async fn issue(&self, number: Number) -> Result<Option<IssueRead>> {
+        let (issue, pulls) = {
+            let state = self.state();
+            let Some(record) = state.issues.get(&number) else {
+                return Ok(None);
+            };
+            let issue = state.issue_view(record);
+            let machine = &state.machine_user;
+            let pulls: Vec<Number> = state
+                .pulls
+                .values()
+                .filter(|p| &p.author == machine && closing_references(&p.body).contains(&number))
+                .map(|p| p.number)
+                .collect();
+            (issue, pulls)
+        };
+        let mut views = vec![];
+        for pr in pulls {
+            views.push(self.pull_view(pr).await?);
+        }
+        Ok(Some(IssueRead {
+            issue,
+            pulls: views,
+        }))
+    }
+
     async fn pull(&self, number: Number) -> Result<Pull> {
         self.pull_view(number).await
+    }
+
+    async fn machine_pull(&self, number: Number) -> Result<Option<Pull>> {
+        let by_machine = {
+            let state = self.state();
+            let Some(record) = state.pulls.get(&number) else {
+                return Ok(None);
+            };
+            record.author == state.machine_user
+        };
+        if !by_machine {
+            return Ok(None);
+        }
+        Ok(Some(self.pull_view(number).await?))
+    }
+
+    async fn merged_pull(
+        &self,
+        number: Number,
+        merged_since: Timestamp,
+    ) -> Result<Option<MergedPull>> {
+        let state = self.state();
+        let Some(record) = state.pulls.get(&number) else {
+            return Ok(None);
+        };
+        let default_branch = state.default_branch.clone();
+        Ok(match record.state {
+            PullState::Merged { at } if at >= merged_since => Some(MergedPull {
+                number,
+                title: record.title.clone(),
+                body: record.body.clone(),
+                author: record.author.clone(),
+                merged_at: at,
+                base_ref: default_branch,
+                labels: record.labels.clone(),
+                files: record.files.clone(),
+            }),
+            _ => None,
+        })
     }
 
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String> {

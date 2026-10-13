@@ -1,8 +1,11 @@
 //! The manager: each poll takes a snapshot of the store, asks the reconcile
-//! step what to do, and does it, starting runs as tasks and holding only the
-//! runs in flight between polls (`docs/specs/architecture.md`).
+//! step what to do, and does it, starting runs as tasks. Between polls it
+//! holds the runs in flight and keeps the snapshot, which a refresh reads the
+//! items a delivery names into again before it reconciles
+//! (`docs/specs/architecture.md`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,10 +17,12 @@ use tracing::{error, info, warn};
 
 use crate::briefs::Briefs;
 use crate::clock::Clock;
-use crate::domain::{MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label};
+use crate::domain::{
+    Item, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
+};
 use crate::marker::{Stage, marked};
 use crate::reconcile::{
-    Action, FailedMerge, LiveRun, Memory, Policy, Workflows, hold_note, reconcile,
+    Action, FailedMerge, LiveRun, Memory, Policy, Subject, Work, Workflows, hold_note, reconcile,
 };
 use crate::run::{self, Shell};
 use crate::runtime::Runtime;
@@ -72,6 +77,33 @@ pub struct Factory {
     last_runs: LastRuns,
     /// What it remembers between polls, of pull requests still open.
     memory: Memory,
+    /// The last poll's snapshot, with what refreshes read into it since:
+    /// `None` before the first poll.
+    kept: Option<Kept>,
+    /// The cuts into tickets that ended since the kept snapshot was taken.
+    ended: Vec<LiveRun>,
+    /// The items Linewright's actions and runs changed since the kept
+    /// snapshot last read them.
+    written: BTreeSet<Item>,
+}
+
+/// The snapshot kept between polls, with what refreshes read into it.
+#[derive(Clone)]
+struct Kept {
+    snapshot: Arc<Snapshot>,
+    /// When the poll took the snapshot.
+    taken_at: Timestamp,
+    /// When refreshes read the items they read into it.
+    read_at: HashMap<Item, Timestamp>,
+}
+
+impl Kept {
+    /// When what `work` starts from was read. The run takes feedback since
+    /// as having arrived after.
+    fn as_of(&self, work: &Work) -> Timestamp {
+        let read_at = self.read_at.get(&work.starts_from());
+        read_at.copied().unwrap_or(self.taken_at)
+    }
 }
 
 impl Factory {
@@ -148,31 +180,83 @@ impl Factory {
             schedule_workflows: config.schedule_workflows,
             last_runs,
             memory: Memory::default(),
+            kept: None,
+            ended: vec![],
+            written: BTreeSet::new(),
         })
     }
 
-    /// One poll: reconcile a fresh snapshot with the runs in flight and act
-    /// on the decisions. Returns the decisions.
-    /// Cancelled to stop: a poll then takes no more actions, though the one
-    /// in progress finishes, so no action is left half done.
+    /// Cancelled to stop: a poll or refresh then takes no more actions,
+    /// though the one in progress finishes, so no action is left half done.
     pub fn stopping(&self) -> CancellationToken {
         self.stopping.clone()
     }
 
+    /// One poll: reconcile a fresh snapshot with the runs in flight and act
+    /// on the decisions, and keep the snapshot. Returns the decisions.
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
         // Reap first: a run that ends during the snapshot stays live for this
         // poll, so the snapshot cannot miss what it wrote.
         self.reap();
         let shell = &self.shell;
         let now = shell.clock.now();
-        let snapshot = Arc::new(
-            shell
-                .store
-                .snapshot(now - shell.policy.spec_lookback)
+        let snapshot = shell
+            .store
+            .snapshot(now - shell.policy.spec_lookback)
+            .await
+            .context("taking a snapshot")?;
+        self.ended.clear();
+        self.written.clear();
+        let kept = Kept {
+            snapshot: Arc::new(snapshot),
+            taken_at: now,
+            read_at: HashMap::new(),
+        };
+        let defined = self.workflows().await;
+        Ok(self.reconcile(kept, defined, now).await)
+    }
+
+    /// One refresh: read `items` again, with those Linewright changed since
+    /// they were last read, into the kept snapshot, reconcile it with the
+    /// runs in flight and act on the decisions, without taking a snapshot.
+    /// Workflows wait for the next poll. Before the first poll there is
+    /// nothing kept, and it polls instead. Returns the decisions.
+    pub async fn refresh(&mut self, items: &[Item]) -> Result<Vec<Action>> {
+        let Some(mut kept) = self.kept.clone() else {
+            return self.cycle().await;
+        };
+        // Reap first, as a poll does: a run that ends during the reads stays
+        // live for this refresh.
+        self.reap();
+        let shell = &self.shell;
+        let now = shell.clock.now();
+        let merged_since = now - shell.policy.spec_lookback;
+        let snapshot = Arc::make_mut(&mut kept.snapshot);
+        let items: BTreeSet<Item> = items.iter().chain(&self.written).copied().collect();
+        for item in items {
+            let read = read_into(snapshot, shell, item, merged_since)
                 .await
-                .context("taking a snapshot")?,
-        );
-        let mut live: Vec<LiveRun> = vec![];
+                .with_context(|| format!("reading {item} again"))?;
+            kept.read_at
+                .extend(read.into_iter().map(|read| (read, now)));
+        }
+        self.written.clear();
+        Ok(self.reconcile(kept, vec![], now).await)
+    }
+
+    /// Keeps `kept`, reconciles its snapshot with the runs in flight and the
+    /// workflows `defined`, and acts on the decisions. Returns the decisions.
+    async fn reconcile(
+        &mut self,
+        kept: Kept,
+        defined: Vec<Workflow>,
+        now: Timestamp,
+    ) -> Vec<Action> {
+        let kept = self.kept.insert(kept).clone();
+        let snapshot = &kept.snapshot;
+        // A cut that ended since the snapshot was taken counts as in flight:
+        // the snapshot may miss what it wrote.
+        let mut live: Vec<LiveRun> = self.ended.clone();
         let mut in_flight: Vec<WorkflowName> = vec![];
         for entry in self.live.values() {
             match &entry.running {
@@ -181,13 +265,13 @@ impl Factory {
             }
         }
         let workflows = Workflows {
-            defined: self.workflows().await,
+            defined,
             last_runs: self.last_runs.clone(),
             in_flight,
         };
-        self.memory.retain_open(&snapshot);
+        self.memory.retain_open(snapshot);
         let actions = reconcile(
-            &snapshot,
+            snapshot,
             &live,
             &self.memory,
             &workflows,
@@ -198,11 +282,12 @@ impl Factory {
             if self.stopping.is_cancelled() {
                 break;
             }
-            if let Err(e) = self.execute(action, &snapshot, now).await {
+            self.written.extend(written(action, snapshot));
+            if let Err(e) = self.execute(action, &kept).await {
                 error!(action = ?action, error = format!("{e:#}"), "action failed");
             }
         }
-        Ok(actions)
+        actions
     }
 
     /// Runs the workflow `name` on the default branch once, now, and files
@@ -290,16 +375,28 @@ impl Factory {
                 e.id()
             }
         };
-        self.live.remove(&id);
+        let Some(LiveEntry {
+            running: Running::Work(run),
+            ..
+        }) = self.live.remove(&id)
+        else {
+            return;
+        };
+        match run.subject {
+            // Reading the issue again reads what the run wrote: the issue,
+            // and the pull requests that close it.
+            Subject::Issue(issue) => {
+                self.written.insert(Item::Issue(issue));
+            }
+            // A cut writes issues the kept snapshot may lack, such as a
+            // tracking issue it left part way.
+            Subject::SpecChange(_) => self.ended.push(run),
+        }
     }
 
-    async fn execute(
-        &mut self,
-        action: &Action,
-        snapshot: &Arc<Snapshot>,
-        as_of: Timestamp,
-    ) -> Result<()> {
+    async fn execute(&mut self, action: &Action, kept: &Kept) -> Result<()> {
         let store = &self.shell.store;
+        let snapshot = &kept.snapshot;
         match action {
             Action::Start(work) => {
                 let cancel = CancellationToken::new();
@@ -307,7 +404,7 @@ impl Factory {
                     self.shell.clone(),
                     work.clone(),
                     snapshot.clone(),
-                    as_of,
+                    kept.as_of(work),
                     cancel.clone(),
                 ));
                 info!(subject = ?work.subject(), kind = ?work.kind(), "run started");
@@ -323,9 +420,11 @@ impl Factory {
                 );
             }
             Action::Cancel { subject, reason } => {
-                info!(subject = ?subject, reason, "cancelling run");
+                // A run that ended since the snapshot is cancelled too, and
+                // there is nothing left to stop.
                 for entry in self.live.values() {
                     if matches!(&entry.running, Running::Work(run) if run.subject == *subject) {
+                        info!(subject = ?subject, reason, "cancelling run");
                         entry.cancel.cancel();
                     }
                 }
@@ -469,4 +568,72 @@ async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str
         store.mark_ready(pr).await?;
     }
     store.comment(pr, &marked(Stage::Review, note)).await
+}
+
+/// Reads `item` again into `snapshot`, as a snapshot taken now holds it,
+/// with pull requests merged since `merged_since`. Returns the items read:
+/// an issue's pull requests are read with it.
+async fn read_into(
+    snapshot: &mut Snapshot,
+    shell: &Shell,
+    item: Item,
+    merged_since: Timestamp,
+) -> Result<Vec<Item>> {
+    let store = &shell.store;
+    let mut read = vec![item];
+    match item {
+        Item::Issue(number) => match store.issue(number).await? {
+            Some(issue) => {
+                snapshot.put_issue(issue.issue);
+                for pull in issue.pulls {
+                    read.push(Item::Pull(pull.number));
+                    snapshot.put_pull(pull);
+                }
+            }
+            None => snapshot.remove_issue(number),
+        },
+        Item::Pull(number) => {
+            match store.machine_pull(number).await? {
+                Some(pull) => snapshot.put_pull(pull),
+                None => snapshot.remove_pull(number),
+            }
+            match store.merged_pull(number, merged_since).await? {
+                Some(merged) => snapshot.put_merged(merged),
+                None => snapshot.remove_merged(number),
+            }
+        }
+    }
+    Ok(read)
+}
+
+/// The items `action` changes in the store, beyond what the runs it starts
+/// write.
+fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
+    match action {
+        Action::Claim { issue }
+        | Action::Relabel { issue, .. }
+        | Action::HandBack { issue, .. }
+        | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
+        Action::DiscardTickets { tracking, tickets } => tickets
+            .iter()
+            .chain([tracking])
+            .map(|issue| Item::Issue(*issue))
+            .collect(),
+        // A merge closes the issues the pull request closes.
+        Action::Merge { pr, .. } => snapshot
+            .pull(*pr)
+            .into_iter()
+            .flat_map(|p| p.closes.iter().map(|issue| Item::Issue(*issue)))
+            .chain([Item::Pull(*pr)])
+            .collect(),
+        Action::MarkReady { pr }
+        | Action::MarkReadyForMergeState { pr }
+        | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
+        Action::Start(_)
+        | Action::Cancel { .. }
+        | Action::RememberRebase(_)
+        | Action::ForgetFailedMerges { .. }
+        | Action::RecordLastRuns(_)
+        | Action::RunWorkflow(_) => vec![],
+    }
 }

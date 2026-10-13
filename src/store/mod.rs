@@ -13,8 +13,8 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, Login, MergeMethod, MergeMethods, Number, Pull, Snapshot, Timestamp,
-    UpdateMethod, UpdateRule,
+    CheckFailure, Issue, Login, MergeMethod, MergeMethods, MergedPull, Number, Pull, Snapshot,
+    Timestamp, UpdateMethod, UpdateRule,
 };
 
 /// Who Linewright acts as.
@@ -137,6 +137,15 @@ pub enum CloseReason {
     NotPlanned,
 }
 
+/// An issue as a snapshot holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IssueRead {
+    pub issue: Issue,
+    /// The machine user's pull requests that close the issue, which a
+    /// snapshot holds with it.
+    pub pulls: Vec<Pull>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewIssue {
     pub title: String,
@@ -165,7 +174,23 @@ pub trait Store: Send + Sync {
     /// The facts one poll reconciles, with pull requests merged since
     /// `merged_since`.
     async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot>;
+    /// The issue as a snapshot taken now holds it: `None` when a snapshot
+    /// leaves it out, as it does an issue the store does not have.
+    async fn issue(&self, number: Number) -> Result<Option<IssueRead>>;
     async fn pull(&self, number: Number) -> Result<Pull>;
+    /// The pull request as a snapshot taken now holds it among the machine
+    /// user's: `None` when the snapshot leaves it out, as it does every other
+    /// user's and one the store does not have.
+    async fn machine_pull(&self, number: Number) -> Result<Option<Pull>>;
+    /// The pull request as a snapshot taken now, with pull requests merged
+    /// since `merged_since`, holds it among the merged ones: `None` when the
+    /// snapshot leaves it out of them, as it does one the store does not
+    /// have.
+    async fn merged_pull(
+        &self,
+        number: Number,
+        merged_since: Timestamp,
+    ) -> Result<Option<MergedPull>>;
     /// The pull request's changes to `paths`, as a unified diff.
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String>;
     async fn check_failures(&self, pr: Number, checks: &[String]) -> Result<Vec<CheckFailure>>;

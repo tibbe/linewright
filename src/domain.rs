@@ -316,6 +316,23 @@ impl Pull {
     }
 }
 
+/// An issue or pull request the store holds. GitHub numbers both from
+/// one sequence, but reads them differently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Item {
+    Issue(Number),
+    Pull(Number),
+}
+
+impl fmt::Display for Item {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Item::Issue(number) => write!(f, "issue {number}"),
+            Item::Pull(number) => write!(f, "pull request {number}"),
+        }
+    }
+}
+
 /// A pull request merged into the default branch: a candidate spec change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergedPull {
@@ -359,6 +376,47 @@ impl Snapshot {
 
     pub fn merged_pull(&self, number: Number) -> Option<&MergedPull> {
         self.merged.iter().find(|p| p.number == number)
+    }
+
+    /// Puts `issue`, read again, in place of the one the snapshot holds, or
+    /// beside the others.
+    pub fn put_issue(&mut self, issue: Issue) {
+        put(&mut self.issues, issue, |i| i.number);
+    }
+
+    pub fn remove_issue(&mut self, number: Number) {
+        self.issues.retain(|i| i.number != number);
+    }
+
+    /// Puts `pull`, read again, in place of the one the snapshot holds, or
+    /// beside the others.
+    pub fn put_pull(&mut self, pull: Pull) {
+        put(&mut self.pulls, pull, |p| p.number);
+    }
+
+    pub fn remove_pull(&mut self, number: Number) {
+        self.pulls.retain(|p| p.number != number);
+    }
+
+    /// Puts `pull`, read again, in place of the merged one the snapshot
+    /// holds, or beside the others.
+    pub fn put_merged(&mut self, pull: MergedPull) {
+        put(&mut self.merged, pull, |p| p.number);
+    }
+
+    pub fn remove_merged(&mut self, number: Number) {
+        self.merged.retain(|p| p.number != number);
+    }
+}
+
+/// Puts `item` in place of the one in `items` with its number, or before the
+/// first with a higher number, so that items in number order stay so.
+fn put<T>(items: &mut Vec<T>, item: T, number: impl Fn(&T) -> Number) {
+    if let Some(held) = items.iter_mut().find(|i| number(i) == number(&item)) {
+        *held = item;
+    } else {
+        let at = items.iter().position(|i| number(i) > number(&item));
+        items.insert(at.unwrap_or(items.len()), item);
     }
 }
 

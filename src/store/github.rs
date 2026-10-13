@@ -16,7 +16,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::rate_limit;
-use super::{Categories, CloseReason, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
+use super::{
+    Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode, RepoSettings, Store,
+};
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
     Mergeability, MergedPull, Number, Pull, PullState, Push, Rebaseability, Requirement, Review,
@@ -120,6 +122,13 @@ impl GitHub {
         Login::new(&self.viewer.login)
     }
 
+    /// Whether `author` is the machine user.
+    fn by_machine(&self, author: &Option<Actor>) -> bool {
+        author
+            .as_ref()
+            .is_some_and(|a| a.login == self.viewer.login && a.typename != "Bot")
+    }
+
     fn repo_path(&self, rest: &str) -> String {
         format!("/repos/{}/{}{rest}", self.owner, self.name)
     }
@@ -188,23 +197,44 @@ impl GitHub {
     }
 
     async fn graphql<T: DeserializeOwned>(&self, query: &str, variables: Value) -> Result<T> {
-        #[derive(Deserialize)]
-        struct Response<T> {
-            data: Option<T>,
-            #[serde(default)]
-            errors: Vec<Value>,
-        }
-        let response: Response<T> = self
-            .rest(
-                Method::POST,
-                "/graphql",
-                Some(json!({"query": query, "variables": variables})),
-            )
-            .await?;
+        let response: GqlResponse<T> = self.graphql_response(query, variables).await?;
         if !response.errors.is_empty() {
             bail!("GraphQL errors: {}", Value::Array(response.errors));
         }
         response.data.context("GraphQL returned no data")
+    }
+
+    /// As `graphql`, but `None` when GitHub resolves nothing the query names,
+    /// such as an issue that was deleted
+    /// (<https://docs.github.com/en/graphql/guides/forming-calls-with-graphql>).
+    async fn graphql_found<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+    ) -> Result<Option<T>> {
+        let response: GqlResponse<Value> = self.graphql_response(query, variables).await?;
+        let not_found = |e: &Value| e["type"] == "NOT_FOUND";
+        if !response.errors.is_empty() && response.errors.iter().all(not_found) {
+            return Ok(None);
+        }
+        if !response.errors.is_empty() {
+            bail!("GraphQL errors: {}", Value::Array(response.errors));
+        }
+        let data = response.data.context("GraphQL returned no data")?;
+        Ok(Some(serde_json::from_value(data)?))
+    }
+
+    async fn graphql_response<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+    ) -> Result<GqlResponse<T>> {
+        self.rest(
+            Method::POST,
+            "/graphql",
+            Some(json!({"query": query, "variables": variables})),
+        )
+        .await
     }
 
     /// Git configuration in the environment that authenticates to GitHub.
@@ -332,21 +362,17 @@ impl GitHub {
                 pullRequests(first: 25, after: $cursor, states: [MERGED], baseRefName: $base,
                              orderBy: {field: UPDATED_AT, direction: DESC}) {
                   pageInfo { hasNextPage endCursor }
-                  nodes {
-                    number title body mergedAt updatedAt baseRefName
-                    author { __typename login }
-                    labels(first: 50) { nodes { name } }
-                    files(first: 100) { pageInfo { hasNextPage } nodes { path } }
-                  }
+                  nodes { ...MergedFields }
                 }
               }
             }";
+        let query = format!("{query}\n{MERGED_FIELDS}");
         let mut merged = vec![];
         let mut cursor = Value::Null;
         loop {
             let data: RepoData<PullsData<GqlMerged>> = self
                 .graphql(
-                    query,
+                    &query,
                     json!({"owner": self.owner, "name": self.name, "base": base, "cursor": cursor}),
                 )
                 .await?;
@@ -359,30 +385,46 @@ impl GitHub {
                     older = true;
                     continue;
                 }
-                let Some(merged_at) = pr.merged_at.filter(|at| *at >= since) else {
-                    continue;
-                };
-                merged.push(MergedPull {
-                    number: Number(pr.number),
-                    title: pr.title,
-                    body: pr.body,
-                    author: login(pr.author),
-                    merged_at,
-                    base_ref: pr.base_ref_name,
-                    labels: pr.labels.nodes.into_iter().map(|l| l.name).collect(),
-                    files: match pr.files {
-                        Some(files) if !files.page_info.has_next_page => {
-                            files.nodes.into_iter().map(|f| f.path).collect()
-                        }
-                        _ => self.all_files(pr.number).await?,
-                    },
-                });
+                if let Some(pr) = self.merged_view(pr, base, since).await? {
+                    merged.push(pr);
+                }
             }
             if older || !page.page_info.has_next_page {
                 return Ok(merged);
             }
             cursor = json!(page.page_info.end_cursor);
         }
+    }
+
+    /// `pr` as a snapshot of the pull requests merged into `base` since
+    /// `since` holds it: `None` when it is not one of them.
+    async fn merged_view(
+        &self,
+        pr: GqlMerged,
+        base: &str,
+        since: Timestamp,
+    ) -> Result<Option<MergedPull>> {
+        let Some(merged_at) = pr.merged_at.filter(|at| *at >= since) else {
+            return Ok(None);
+        };
+        if pr.base_ref_name != base {
+            return Ok(None);
+        }
+        Ok(Some(MergedPull {
+            number: Number(pr.number),
+            title: pr.title,
+            body: pr.body,
+            author: login(pr.author),
+            merged_at,
+            base_ref: pr.base_ref_name,
+            labels: pr.labels.nodes.into_iter().map(|l| l.name).collect(),
+            files: match pr.files {
+                Some(files) if !files.page_info.has_next_page => {
+                    files.nodes.into_iter().map(|f| f.path).collect()
+                }
+                _ => self.all_files(pr.number).await?,
+            },
+        }))
     }
 
     /// Pushes to the branch, oldest first, from the repository's activity
@@ -413,6 +455,47 @@ impl GitHub {
             .collect();
         pushes.reverse();
         Ok(pushes)
+    }
+
+    async fn gql_pull(&self, number: Number) -> Result<Option<GqlPull>> {
+        let query = format!(
+            "query($owner: String!, $name: String!, $number: Int!) {{
+              repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{ ...PullFields }} }}
+            }}
+            {PULL_FIELDS}"
+        );
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct One {
+            pull_request: GqlPull,
+        }
+        let data: Option<RepoData<One>> = self
+            .graphql_found(
+                &query,
+                json!({"owner": self.owner, "name": self.name, "number": number.0}),
+            )
+            .await?;
+        Ok(data.map(|d| d.repository.pull_request))
+    }
+
+    async fn gql_issue(&self, number: Number) -> Result<Option<GqlIssue>> {
+        let query = format!(
+            "query($owner: String!, $name: String!, $number: Int!) {{
+              repository(owner: $owner, name: $name) {{ issue(number: $number) {{ ...IssueFields }} }}
+            }}
+            {ISSUE_FIELDS}"
+        );
+        #[derive(Deserialize)]
+        struct One {
+            issue: GqlIssue,
+        }
+        let data: Option<RepoData<One>> = self
+            .graphql_found(
+                &query,
+                json!({"owner": self.owner, "name": self.name, "number": number.0}),
+            )
+            .await?;
+        Ok(data.map(|d| d.repository.issue))
     }
 
     async fn pull_view(&self, pr: GqlPull) -> Result<Pull> {
@@ -534,6 +617,13 @@ impl GitHub {
 #[derive(Deserialize)]
 struct RestUser {
     login: String,
+}
+
+#[derive(Deserialize)]
+struct GqlResponse<T> {
+    data: Option<T>,
+    #[serde(default)]
+    errors: Vec<Value>,
 }
 
 #[derive(Deserialize)]
@@ -709,7 +799,32 @@ enum GqlEvent {
     },
 }
 
+/// The labels of the open issues a snapshot reads, besides those assigned to
+/// or opened by the machine user.
+const IN_VIEW_LABELS: [&str; 3] = [
+    label::NEEDS_TRIAGE,
+    label::NEEDS_INFO,
+    label::READY_FOR_AGENT,
+];
+
 impl GqlIssue {
+    /// Whether a snapshot reads the issue: open, and labeled one of
+    /// `IN_VIEW_LABELS`, assigned to the machine user or opened by it, as the
+    /// snapshot's filters select issues.
+    fn in_view(&self, machine_user: &str) -> bool {
+        self.state == "OPEN"
+            && (self
+                .labels
+                .nodes
+                .iter()
+                .any(|l| IN_VIEW_LABELS.contains(&l.name.as_str()))
+                || self.assignees.nodes.iter().any(|a| a.login == machine_user)
+                || self
+                    .author
+                    .as_ref()
+                    .is_some_and(|a| a.login == machine_user))
+    }
+
     fn into_issue(self, machine_user: &Login) -> Issue {
         let i = self;
         let author = login(i.author);
@@ -1058,6 +1173,13 @@ impl GqlPull {
     }
 }
 
+const MERGED_FIELDS: &str = "fragment MergedFields on PullRequest {
+  number title body mergedAt updatedAt baseRefName
+  author { __typename login }
+  labels(first: 50) { nodes { name } }
+  files(first: 100) { pageInfo { hasNextPage } nodes { path } }
+}";
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GqlMerged {
@@ -1235,8 +1357,9 @@ impl Store for GitHub {
             .to_string();
         let machine = &self.viewer.login;
         let mut issues: BTreeMap<u64, GqlIssue> = BTreeMap::new();
+        // As `GqlIssue::in_view` reads one issue.
         for filter in [
-            json!({"states": ["OPEN"], "labels": [label::NEEDS_TRIAGE, label::NEEDS_INFO, label::READY_FOR_AGENT]}),
+            json!({"states": ["OPEN"], "labels": IN_VIEW_LABELS}),
             json!({"states": ["OPEN"], "assignee": machine}),
             json!({"states": ["OPEN"], "createdBy": machine}),
         ] {
@@ -1244,14 +1367,9 @@ impl Store for GitHub {
                 issues.insert(issue.number, issue);
             }
         }
-        let by_machine = |author: &Option<Actor>| {
-            author
-                .as_ref()
-                .is_some_and(|a| &a.login == machine && a.typename != "Bot")
-        };
         let mut pulls = vec![];
         for pr in self.open_pulls().await? {
-            if by_machine(&pr.author) {
+            if self.by_machine(&pr.author) {
                 pulls.push(self.pull(Number(pr.number)).await?);
             }
         }
@@ -1265,7 +1383,9 @@ impl Store for GitHub {
                     .iter()
                     .flat_map(|n| &n.nodes)
             })
-            .filter(|p| matches!(p.state.as_str(), "CLOSED" | "MERGED") && by_machine(&p.author))
+            .filter(|p| {
+                matches!(p.state.as_str(), "CLOSED" | "MERGED") && self.by_machine(&p.author)
+            })
             .map(|p| p.number)
             .collect();
         for number in closed {
@@ -1283,24 +1403,99 @@ impl Store for GitHub {
     }
 
     async fn pull(&self, number: Number) -> Result<Pull> {
+        let pr = self.gql_pull(number).await?;
+        self.pull_view(pr.with_context(|| format!("there is no pull request {number}"))?)
+            .await
+    }
+
+    async fn machine_pull(&self, number: Number) -> Result<Option<Pull>> {
+        let Some(pr) = self.gql_pull(number).await? else {
+            return Ok(None);
+        };
+        if !self.by_machine(&pr.author) {
+            return Ok(None);
+        }
+        // As the snapshot reads them: every open one, and closed and merged
+        // ones for the issues in view.
+        let mut held = pr.state == "OPEN";
+        let closes: Vec<u64> = pr
+            .closing_issues_references
+            .iter()
+            .flat_map(|n| &n.nodes)
+            .map(|n| n.number)
+            .collect();
+        for issue in closes {
+            if held {
+                break;
+            }
+            let issue = self.gql_issue(Number(issue)).await?;
+            held = issue.is_some_and(|i| i.in_view(&self.viewer.login));
+        }
+        if !held {
+            return Ok(None);
+        }
+        Ok(Some(self.pull_view(pr).await?))
+    }
+
+    async fn issue(&self, number: Number) -> Result<Option<IssueRead>> {
+        let Some(issue) = self.gql_issue(number).await? else {
+            return Ok(None);
+        };
+        if !issue.in_view(&self.viewer.login) {
+            return Ok(None);
+        }
+        // A snapshot holds the machine user's open pull requests, and its
+        // closed and merged ones for the issues in view.
+        let mut pulls = vec![];
+        for pr in issue
+            .closed_by_pull_requests_references
+            .iter()
+            .flat_map(|n| &n.nodes)
+            .filter(|p| self.by_machine(&p.author))
+        {
+            pulls.push(self.pull(Number(pr.number)).await?);
+        }
+        Ok(Some(IssueRead {
+            issue: issue.into_issue(&self.machine_user()),
+            pulls,
+        }))
+    }
+
+    async fn merged_pull(
+        &self,
+        number: Number,
+        merged_since: Timestamp,
+    ) -> Result<Option<MergedPull>> {
         let query = format!(
             "query($owner: String!, $name: String!, $number: Int!) {{
-              repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{ ...PullFields }} }}
+              repository(owner: $owner, name: $name) {{
+                defaultBranchRef {{ name }}
+                pullRequest(number: $number) {{ ...MergedFields }}
+              }}
             }}
-            {PULL_FIELDS}"
+            {MERGED_FIELDS}"
         );
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct One {
-            pull_request: GqlPull,
+            default_branch_ref: Name,
+            pull_request: GqlMerged,
         }
-        let data: RepoData<One> = self
-            .graphql(
+        let Some(data): Option<RepoData<One>> = self
+            .graphql_found(
                 &query,
                 json!({"owner": self.owner, "name": self.name, "number": number.0}),
             )
-            .await?;
-        self.pull_view(data.repository.pull_request).await
+            .await?
+        else {
+            return Ok(None);
+        };
+        let One {
+            default_branch_ref,
+            pull_request,
+        } = data.repository;
+        self.merged_view(pull_request, &default_branch_ref.name, merged_since)
+            .await
     }
 
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String> {

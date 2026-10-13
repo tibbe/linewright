@@ -6,9 +6,9 @@
 use chrono::TimeDelta;
 
 use crate::domain::{
-    CheckState, Comment, Filed, Issue, IssueEvent, Login, MergeMethod, MergeMethods, Mergeability,
-    MergedPull, Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
-    Thread, Timestamp, UpdateMethod, UpdateRule, label,
+    CheckState, Comment, Filed, Issue, IssueEvent, Item, Login, MergeMethod, MergeMethods,
+    Mergeability, MergedPull, Number, Pull, PullState, Rebaseability, Requirement, Review,
+    ReviewState, Snapshot, Thread, Timestamp, UpdateMethod, UpdateRule, label,
 };
 use crate::marker::{Stage, marked, stage_of};
 use crate::spec_glob::SpecGlob;
@@ -100,6 +100,18 @@ impl Work {
             | Work::FixCi { issue, .. }
             | Work::Update { issue, .. } => Subject::Issue(*issue),
             Work::Tickets { pr } => Subject::SpecChange(*pr),
+        }
+    }
+
+    /// The item whose facts the run starts from: its pull request, or else
+    /// its subject.
+    pub fn starts_from(&self) -> Item {
+        match self {
+            Work::Triage { issue } | Work::Implement { issue } => Item::Issue(*issue),
+            Work::Tickets { pr }
+            | Work::Rework { pr, .. }
+            | Work::FixCi { pr, .. }
+            | Work::Update { pr, .. } => Item::Pull(*pr),
         }
     }
 
