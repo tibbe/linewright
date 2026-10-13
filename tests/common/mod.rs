@@ -473,7 +473,7 @@ pub struct Request<'a> {
     pub event: Option<&'a str>,
     pub content_type: Option<&'a str>,
     pub signature: Option<String>,
-    pub body: &'a str,
+    pub body: String,
 }
 
 /// The listener's response to a delivery.
@@ -485,11 +485,26 @@ pub struct Response {
 impl<'a> Request<'a> {
     /// A delivery of `body` as `application/json`, signed with the secret,
     /// with no event.
-    pub fn signed_json(body: &'a str) -> Request<'a> {
+    pub fn signed_json(body: &str) -> Request<'a> {
         Request {
             event: None,
             content_type: Some("application/json"),
             signature: Some(signature(body)),
+            body: body.to_string(),
+        }
+    }
+
+    /// A delivery of the JSON `payload` as GitHub sends it with the content
+    /// type `application/x-www-form-urlencoded`: the value of the form field
+    /// `payload`. Signed with the secret, with no event.
+    pub fn signed_form(payload: &str) -> Request<'a> {
+        let body = form_urlencoded::Serializer::new(String::new())
+            .append_pair("payload", payload)
+            .finish();
+        Request {
+            event: None,
+            content_type: Some("application/x-www-form-urlencoded"),
+            signature: Some(signature(&body)),
             body,
         }
     }
@@ -498,7 +513,7 @@ impl<'a> Request<'a> {
         let mut request = reqwest::Client::new()
             .post(format!("http://{}/", listener.local_address()))
             .header("X-GitHub-Delivery", "72d3162e-cc78-11e3-81ab-4c9367dc0958")
-            .body(self.body.to_string());
+            .body(self.body.clone());
         if let Some(signature) = &self.signature {
             request = request.header("X-Hub-Signature-256", signature);
         }
@@ -521,6 +536,17 @@ pub async fn signed(listener: &Listener, event: &str, body: &str) -> reqwest::St
     let request = Request {
         event: Some(event),
         ..Request::signed_json(body)
+    };
+    request.send(listener).await.status
+}
+
+/// Sends a delivery of `event` with the JSON `payload` form-encoded, as
+/// GitHub sends it with the webhook's content type at its default, signed
+/// with the secret.
+pub async fn signed_form(listener: &Listener, event: &str, payload: &str) -> reqwest::StatusCode {
+    let request = Request {
+        event: Some(event),
+        ..Request::signed_form(payload)
     };
     request.send(listener).await.status
 }

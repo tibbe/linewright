@@ -1,6 +1,7 @@
 //! Webhooks: GitHub's signed deliveries, received beside polling
 //! (`docs/specs/webhooks.md`).
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::net::SocketAddr;
@@ -194,10 +195,12 @@ pub enum Unreadable {
     #[error("it names no event (`X-GitHub-Event`)")]
     NoEvent,
     #[error(
-        "its content type (`Content-Type`) is {}, and Linewright reads only `application/json`",
+        "its content type (`Content-Type`) is {}, and Linewright reads only `application/json` and `application/x-www-form-urlencoded`",
         .0.as_deref().map_or("missing".into(), |got| format!("`{got}`"))
     )]
     ContentType(Option<String>),
+    #[error("it is form-encoded and has no `payload` field")]
+    NoPayloadField,
     #[error("Linewright cannot tell what its `{event}` payload names: {error}")]
     Payload {
         event: String,
@@ -268,12 +271,8 @@ pub fn receive(secret: &Secret, headers: Headers, body: &[u8]) -> Result<Deliver
     let Some(table_event) = Event::parse(name) else {
         return Ok(Delivery::Ignored);
     };
-    // GitHub sends it without parameters, and only `application/json` is
-    // read for now.
-    if headers.content_type != Some("application/json") {
-        return Err(Unreadable::ContentType(headers.content_type.map(str::to_string)).into());
-    }
-    read_delivery(table_event, body).map_err(|error| {
+    let payload = Format::parse(headers.content_type)?.payload(body)?;
+    read_delivery(table_event, &payload).map_err(|error| {
         Unreadable::Payload {
             event: name.to_string(),
             error,
@@ -282,7 +281,49 @@ pub fn receive(secret: &Secret, headers: Headers, body: &[u8]) -> Result<Deliver
     })
 }
 
-/// What a JSON delivery of `event` names, from the parts of its payload that
+/// The content types GitHub sends a delivery in
+/// (<https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks#creating-a-repository-webhook>).
+#[derive(Clone, Copy)]
+enum Format {
+    /// `application/json`: the body is the payload.
+    Json,
+    /// `application/x-www-form-urlencoded`: the payload is the value of the
+    /// form field `payload`.
+    Form,
+}
+
+impl Format {
+    /// The format a delivery's `Content-Type` header says it is in, by its
+    /// media type, which is case-insensitive and may be followed by
+    /// parameters (<https://www.rfc-editor.org/rfc/rfc9110#name-media-type>).
+    fn parse(content_type: Option<&str>) -> Result<Format, Unreadable> {
+        let unreadable = || Unreadable::ContentType(content_type.map(str::to_string));
+        let media_type = content_type
+            .and_then(|header| header.split(';').next())
+            .map(str::trim)
+            .ok_or_else(unreadable)?;
+        if media_type.eq_ignore_ascii_case("application/json") {
+            Ok(Format::Json)
+        } else if media_type.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
+            Ok(Format::Form)
+        } else {
+            Err(unreadable())
+        }
+    }
+
+    /// The JSON payload of a delivery whose body is `body`.
+    fn payload(self, body: &[u8]) -> Result<Cow<'_, [u8]>, Unreadable> {
+        match self {
+            Format::Json => Ok(Cow::Borrowed(body)),
+            Format::Form => form_urlencoded::parse(body)
+                .find(|(name, _)| name == "payload")
+                .map(|(_, payload)| Cow::Owned(payload.into_owned().into_bytes()))
+                .ok_or(Unreadable::NoPayloadField),
+        }
+    }
+}
+
+/// What a JSON payload of `event` names, from the parts of its payload that
 /// say which item changed.
 fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
     use serde::Deserialize;

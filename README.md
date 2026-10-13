@@ -70,8 +70,8 @@ The poll still runs at `poll-interval` with webhooks on, for the reason
    repository's **Settings → Webhooks → Add webhook** and set:
    - **Payload URL**: the reverse proxy's HTTPS URL, such as
      `https://linewright.example.com/`.
-   - **Content type**: `application/json`. A delivery sent form-encoded is
-     refused, as its payload cannot be read.
+   - **Content type**: `application/json` or GitHub's default,
+     `application/x-www-form-urlencoded`. Linewright reads either.
    - **Secret**: the secret from step 1.
    - **SSL verification**: enabled.
    - **Which events would you like to trigger this webhook?**: _Let me select
@@ -103,5 +103,6 @@ delivery with the answer it got and can redeliver it:
   `LINEWRIGHT_WEBHOOK_SECRET` differ.
 - **GitHub lists deliveries as refused**, answered `400` with a response that
   says why, which the log has too, as `refused`. With a content type that is
-  not `application/json`, set the webhook's content type to
-  `application/json`.
+  neither `application/json` nor `application/x-www-form-urlencoded`,
+  something between GitHub and `serve`, such as the reverse proxy, changed
+  it.

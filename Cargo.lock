@@ -917,6 +917,7 @@ dependencies = [
  "clap",
  "croner",
  "dirs",
+ "form_urlencoded",
  "globset",
  "hex",
  "hmac",

@@ -84,70 +84,168 @@ async fn a_delivery_with_a_missing_or_wrong_signature_is_refused_and_logged() {
     }
 }
 
-#[tokio::test]
-async fn an_accepted_delivery_is_logged_with_its_event_and_what_it_names() {
-    let (log, _guard) = Log::capture();
-    let listener = listen().await;
-    let deliveries = [
-        (
-            "issues",
-            r#"{"action":"labeled","issue":{"number":7}}"#,
-            "issue #7",
-        ),
-        (
-            "issue_comment",
-            r#"{"issue":{"number":8,"pull_request":{"url":"x"}}}"#,
-            "pull request #8",
-        ),
-        (
-            "pull_request",
-            r#"{"number":9,"pull_request":{"number":9}}"#,
-            "pull request #9",
-        ),
-        (
-            "pull_request_review",
-            r#"{"pull_request":{"number":10}}"#,
-            "pull request #10",
-        ),
-        (
-            "pull_request_review_comment",
-            r#"{"pull_request":{"number":12}}"#,
-            "pull request #12",
-        ),
-        (
-            "check_run",
-            r#"{"check_run":{"head_sha":"9b2c4f1"}}"#,
-            "commit 9b2c4f1",
-        ),
-        (
-            "check_suite",
-            r#"{"check_suite":{"head_sha":"7e8e2de","pull_requests":[{"number":11}]}}"#,
-            "commit 7e8e2de",
-        ),
-        (
-            "status",
-            r#"{"sha":"6dcb09b","branches":[{"name":"linewright/7"}]}"#,
-            "commit 6dcb09b",
-        ),
-        (
-            "push",
-            r#"{"ref":"refs/heads/main"}"#,
-            "a push to branch main",
-        ),
-    ];
+/// A delivery of each event in the table, with what it names, as the log
+/// shows it.
+const DELIVERIES: [(&str, &str, &str); 9] = [
+    (
+        "issues",
+        r#"{"action":"labeled","issue":{"number":7}}"#,
+        "issue #7",
+    ),
+    (
+        "issue_comment",
+        r#"{"issue":{"number":8,"pull_request":{"url":"x"}}}"#,
+        "pull request #8",
+    ),
+    (
+        "pull_request",
+        r#"{"number":9,"pull_request":{"number":9}}"#,
+        "pull request #9",
+    ),
+    (
+        "pull_request_review",
+        r#"{"pull_request":{"number":10}}"#,
+        "pull request #10",
+    ),
+    (
+        "pull_request_review_comment",
+        r#"{"pull_request":{"number":12}}"#,
+        "pull request #12",
+    ),
+    (
+        "check_run",
+        r#"{"check_run":{"head_sha":"9b2c4f1"}}"#,
+        "commit 9b2c4f1",
+    ),
+    (
+        "check_suite",
+        r#"{"check_suite":{"head_sha":"7e8e2de","pull_requests":[{"number":11}]}}"#,
+        "commit 7e8e2de",
+    ),
+    (
+        "status",
+        r#"{"sha":"6dcb09b","branches":[{"name":"linewright/7"}]}"#,
+        "commit 6dcb09b",
+    ),
+    (
+        "push",
+        r#"{"ref":"refs/heads/main"}"#,
+        "a push to branch main",
+    ),
+];
 
-    for (event, body, _) in deliveries {
-        let status = signed(&listener, event, body).await;
-        assert!(status.is_success(), "{event}: {status}");
-    }
-
+/// Checks that `log` has each of `DELIVERIES` accepted, naming what it names.
+fn assert_each_accepted(log: &Log) {
     let accepted = log.lines("INFO");
-    for (event, _, names) in deliveries {
+    for (event, _, names) in DELIVERIES {
         assert!(
             accepted
                 .iter()
                 .any(|line| line.contains(&format!("event={event} ")) && line.contains(names)),
             "{event} naming {names}: {accepted:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_form_encoded_delivery_is_verified_against_its_body_as_sent() {
+    let payload = r#"{"issue":{"number":7}}"#;
+    let deliveries = [
+        (None, "no signature"),
+        // Over the payload rather than the body that carries it.
+        (Some(signature(payload)), "does not match"),
+    ];
+
+    for (signature, reason) in deliveries {
+        let (log, _guard) = Log::capture();
+        let listener = listen().await;
+
+        let response = Request {
+            event: Some("issues"),
+            signature: signature.clone(),
+            ..Request::signed_form(payload)
+        }
+        .send(&listener)
+        .await;
+
+        assert_eq!(
+            response.status,
+            reqwest::StatusCode::UNAUTHORIZED,
+            "{signature:?}"
+        );
+        assert_eq!(response.body, "", "{signature:?}");
+        let refused = log.lines("WARN");
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(refused[0].contains(reason), "{}", refused[0]);
+    }
+}
+
+#[tokio::test]
+async fn an_accepted_delivery_is_logged_with_its_event_and_what_it_names() {
+    let (log, _guard) = Log::capture();
+    let listener = listen().await;
+
+    for (event, body, _) in DELIVERIES {
+        let status = signed(&listener, event, body).await;
+        assert!(status.is_success(), "{event}: {status}");
+    }
+
+    assert_each_accepted(&log);
+}
+
+#[tokio::test]
+async fn a_delivery_sent_form_encoded_names_what_its_json_counterpart_does() {
+    let (log, _guard) = Log::capture();
+    let listener = listen().await;
+
+    for (event, payload, _) in DELIVERIES {
+        let status = signed_form(&listener, event, payload).await;
+        assert!(status.is_success(), "{event}: {status}");
+    }
+
+    assert!(log.lines("WARN").is_empty(), "{:?}", log.lines("WARN"));
+    assert_each_accepted(&log);
+}
+
+#[tokio::test]
+async fn a_content_type_with_parameters_is_read_by_its_media_type() {
+    let (log, _guard) = Log::capture();
+    let listener = listen().await;
+    let content_types = [
+        (
+            "application/json; charset=utf-8",
+            Request::signed_json(r#"{"issue":{"number":7}}"#),
+        ),
+        (
+            "Application/JSON",
+            Request::signed_json(r#"{"issue":{"number":8}}"#),
+        ),
+        (
+            "application/x-www-form-urlencoded;charset=UTF-8",
+            Request::signed_form(r#"{"issue":{"number":9}}"#),
+        ),
+    ];
+
+    for (content_type, request) in content_types {
+        let response = Request {
+            event: Some("issues"),
+            content_type: Some(content_type),
+            ..request
+        }
+        .send(&listener)
+        .await;
+        assert!(
+            response.status.is_success(),
+            "{content_type}: {}",
+            response.status
+        );
+    }
+
+    let accepted = log.lines("INFO");
+    for names in ["issue #7", "issue #8", "issue #9"] {
+        assert!(
+            accepted.iter().any(|line| line.contains(names)),
+            "{names}: {accepted:?}"
         );
     }
 }
@@ -196,8 +294,26 @@ async fn a_signed_delivery_that_names_no_event_or_that_cannot_be_read_is_refused
         (
             Some("issues"),
             Some("application/x-www-form-urlencoded"),
-            form,
-            "`application/x-www-form-urlencoded`",
+            r#"{"issue":{"number":7}}"#,
+            "no `payload` field",
+        ),
+        (
+            Some("issues"),
+            Some("application/x-www-form-urlencoded"),
+            "zen=%7B%7D",
+            "no `payload` field",
+        ),
+        (
+            Some("issues"),
+            Some("application/x-www-form-urlencoded"),
+            "payload=not+json",
+            "`issues` payload",
+        ),
+        (
+            Some("issues"),
+            Some("application/x-www-form-urlencoded"),
+            "payload=%7B%22issue%22%3A%7B%22title%22%3A%22x%22%7D%7D",
+            "missing field `number`",
         ),
         (
             Some("issues"),

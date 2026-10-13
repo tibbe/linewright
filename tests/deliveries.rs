@@ -71,6 +71,13 @@ impl Served {
         assert!(status.is_success(), "{event}: {status}");
     }
 
+    /// Delivers `body` as GitHub does with the webhook's content type left
+    /// at its default, `application/x-www-form-urlencoded`.
+    async fn deliver_form_encoded(&self, event: &str, body: serde_json::Value) {
+        let status = signed_form(&self.listener, event, &body.to_string()).await;
+        assert!(status.is_success(), "{event}: {status}");
+    }
+
     fn issue(&self, number: Number) -> Issue {
         self.store.issue(number).unwrap()
     }
@@ -115,6 +122,28 @@ async fn an_issue_labeled_ready_for_agent_is_claimed_on_the_delivery() {
     served.store.label_as(issue, "ready-for-agent").unwrap();
     served
         .deliver(
+            "issues",
+            json!({"action": "labeled", "issue": {"number": issue.0}}),
+        )
+        .await;
+
+    eventually(|| claimed(&served.store, issue)).await;
+    assert_eq!(served.store.snapshots_taken(), 1);
+    served.stop().await;
+}
+
+#[tokio::test]
+async fn an_issue_labeled_ready_for_agent_is_claimed_on_a_form_encoded_delivery() {
+    let world = World::new().await;
+    implement(&world);
+    let issue = world
+        .store
+        .open_issue("maintainer", "Do the thing", "Please.", &[]);
+    let served = serve(world, NEVER).await;
+
+    served.store.label_as(issue, "ready-for-agent").unwrap();
+    served
+        .deliver_form_encoded(
             "issues",
             json!({"action": "labeled", "issue": {"number": issue.0}}),
         )
