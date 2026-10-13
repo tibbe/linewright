@@ -1,7 +1,7 @@
 //! Workflows run on their schedule by `serve` and `once`, end to end at the
 //! operator's level: workflow files on the default branch and a fake clock
 //! in, agent sessions out, against the local store and a scripted runtime
-//! (`docs/specs/product.md`, "Workflows").
+//! (`docs/specs/workflows.md`).
 
 mod common;
 

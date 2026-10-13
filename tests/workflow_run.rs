@@ -1,7 +1,7 @@
 //! Running a workflow by hand, `linewright workflow run NAME`, end to end at
 //! the operator's level: a workflow file on the default branch in, one agent
 //! session and its record out, against the local store and a scripted
-//! runtime (`docs/specs/product.md`, "Workflows").
+//! runtime (`docs/specs/workflows.md`).
 
 mod common;
 

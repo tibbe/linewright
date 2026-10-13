@@ -263,7 +263,7 @@ impl Factory {
     /// deliveries add to `pending`, until stopping. A refresh never races a
     /// poll: one still running when the poll falls due finishes first. A
     /// failed poll or refresh is logged and left for the next poll to catch
-    /// up on (`docs/specs/product.md`, "Webhooks").
+    /// up on (`docs/specs/webhooks.md`).
     pub async fn serve(&mut self, poll_interval: Duration, pending: &Pending) {
         let stopping = self.stopping.clone();
         while !stopping.is_cancelled() {

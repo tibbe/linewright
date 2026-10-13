@@ -1540,7 +1540,7 @@ fn a_tracking_issue_is_closed_when_all_its_tickets_are() {
     );
 }
 
-// Workflows: the due rule (`docs/specs/product.md`, "Workflows").
+// Workflows: the due rule (`docs/specs/workflows.md`).
 
 fn hourly(name: &str) -> Workflow {
     linewright::workflow::parse(

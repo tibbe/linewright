@@ -1,6 +1,6 @@
 //! Configuration: every setting is a flag, a `LINEWRIGHT_<FLAG>` environment
 //! variable or a key in a TOML file, with precedence flag, environment, file,
-//! default (`docs/specs/product.md`, "Operation"), parsed once into one typed value.
+//! default (`docs/specs/operation.md`), parsed once into one typed value.
 //! Credentials are not settings: they come from the environment variables
 //! their tools already read, and the webhook secret from
 //! `LINEWRIGHT_WEBHOOK_SECRET`.

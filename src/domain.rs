@@ -52,7 +52,7 @@ impl fmt::Display for Login {
     }
 }
 
-/// The labels of `docs/specs/product.md`, "Repository".
+/// The labels of `docs/specs/repository.md`.
 pub mod label {
     pub const NEEDS_TRIAGE: &str = "needs-triage";
     pub const NEEDS_INFO: &str = "needs-info";
@@ -483,7 +483,7 @@ pub enum UpdateMethod {
 }
 
 /// Which method brings a branch up to date with the default branch
-/// (`docs/specs/product.md`, "Keeping up to date").
+/// (`docs/specs/pull_requests.md`, "Keeping up to date").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateRule {
     Always(UpdateMethod),
@@ -506,7 +506,7 @@ pub enum MergeMethod {
 
 impl MergeMethod {
     /// Every merge method, in the order Linewright prefers them
-    /// (`docs/specs/product.md`, "Auto-merge").
+    /// (`docs/specs/pull_requests.md`, "Auto-merge").
     pub const ALL: [MergeMethod; 3] =
         [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase];
 }

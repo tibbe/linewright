@@ -270,8 +270,8 @@ fn write_issue(task: &mut String, heading: &str, issue: &Issue) {
 }
 
 /// The ticket, the pointers to the tickets cut alongside it (its parent
-/// issue and the spec change it tracks, if any: `docs/specs/product.md`,
-/// "Implementation"), and the spec gaps already filed for it.
+/// issue and the spec change it tracks, if any: `docs/specs/implementation.md`,
+/// "Runs"), and the spec gaps already filed for it.
 fn write_ticket(task: &mut String, ticket: &Ticket) {
     write_issue(task, "The ticket", ticket.issue);
     if let Some(parent) = ticket.issue.parent {

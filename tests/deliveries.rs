@@ -1,7 +1,7 @@
 //! `serve` acting on webhook deliveries between polls, end to end: signed
 //! deliveries as GitHub sends them to the listener, a factory serving the
 //! local store and a scripted runtime, and what the user then sees
-//! (`docs/specs/product.md`, "Webhooks").
+//! (`docs/specs/webhooks.md`).
 
 mod common;
 

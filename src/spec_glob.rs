@@ -1,7 +1,7 @@
 use globset::GlobMatcher;
 
-/// The glob that says which tracked files are the spec (`docs/specs/product.md`,
-/// "Sources of work").
+/// The glob that says which tracked files are the spec
+/// (`docs/specs/sources_of_work.md`).
 #[derive(Clone, Debug)]
 pub struct SpecGlob {
     pattern: String,

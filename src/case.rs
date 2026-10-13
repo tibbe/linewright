@@ -1,6 +1,6 @@
 //! Cases: a spec change or issue the factory handled, captured on disk and
 //! run again through the whole pipeline against a local store
-//! (`docs/specs/product.md`, "Replay").
+//! (`docs/specs/replay.md`).
 //!
 //! A case directory holds `case.json` (the repository's facts and the event),
 //! `repo.bundle` (the repository at the event's base commit, and the merge

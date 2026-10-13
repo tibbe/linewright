@@ -1,7 +1,7 @@
 //! Workflows: Markdown files in `.linewright/workflows/` on the default
 //! branch, each an agent's instructions under YAML front matter that says
-//! when they run (`docs/specs/product.md`, "Workflows"). A file is parsed once,
-//! here, into a [`Workflow`]. The files are read from the store here too, and
+//! when they run (`docs/specs/workflows.md`). A file is parsed once, here,
+//! into a [`Workflow`]. The files are read from the store here too, and
 //! the workflows' last runs kept under the work directory.
 
 use std::collections::BTreeMap;

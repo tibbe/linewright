@@ -49,7 +49,7 @@ that again and acts on it within seconds: an issue or pull request,
 those of Linewright's open pull requests whose head commit a check or status
 reports on, and, for a push to the default branch, all of them.
 The poll still runs at `poll-interval` with webhooks on, for the reason
-[the spec](docs/specs/product.md#webhooks) gives.
+[the spec](docs/specs/webhooks.md) gives.
 
 1. Choose a secret for the webhook to sign its deliveries with, such as one
    from `openssl rand -hex 32`.

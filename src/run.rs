@@ -524,7 +524,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
     // The maintainer answers in the thread or hands the issue back with a
-    // label (`docs/specs/product.md`, "Triage"), so the hand-back names both.
+    // label (`docs/specs/triage.md`), so the hand-back names both.
     let (state, body) = match result.outcome {
         TriageOutcome::ReadyForAgent => (label::READY_FOR_AGENT, result.comment),
         TriageOutcome::NeedsInfo => (label::NEEDS_INFO, result.comment),

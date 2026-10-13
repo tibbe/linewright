@@ -1,6 +1,6 @@
 //! Webhook deliveries, end to end as GitHub sends them: signed HTTP requests
 //! to the listener `serve` runs with the secret set, and the log the operator
-//! reads (`docs/specs/product.md`, "Webhooks").
+//! reads (`docs/specs/webhooks.md`).
 
 mod common;
 

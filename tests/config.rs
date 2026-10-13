@@ -1,6 +1,6 @@
 //! Configuration as the operator gives it: flags, `LINEWRIGHT_*` environment
 //! variables and a TOML file, with that precedence over the defaults
-//! (`docs/spec.md`, "Operation").
+//! (`docs/specs/operation.md`).
 
 use std::collections::HashMap;
 use std::time::Duration;

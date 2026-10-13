@@ -1,7 +1,8 @@
 //! The functional core: one poll's decisions as a pure function of the
 //! store's snapshot, the workflows and their last runs, the runs in flight
 //! and the clock (`docs/specs/architecture.md`, "Functional core, imperative
-//! shell"). The rules are `docs/specs/product.md`'s.
+//! shell"). The rules are the product spec's: `docs/specs/product.md` and the
+//! areas it lists.
 
 use chrono::TimeDelta;
 
@@ -30,8 +31,9 @@ pub struct Policy {
     pub update_rule: UpdateRule,
     /// The merge methods the repository allows.
     pub allowed_merge_methods: MergeMethods,
-    /// Start work only on issues carrying this label (`docs/specs/product.md`,
-    /// "Operation"). Work already started carries on without it.
+    /// Start work only on issues carrying this label
+    /// (`docs/specs/repository.md`). Work already started carries on without
+    /// it.
     pub require_label: Option<String>,
 }
 
@@ -47,8 +49,8 @@ impl Policy {
     /// Whether a pull request GitHub reports not rebaseable is rebased onto
     /// the default branch, up to date or not: where the repository allows
     /// rebase merging and branches are not always updated by merging
-    /// (`docs/specs/product.md`, "Keeping up to date"). A merge commit that
-    /// resolved a conflict is the usual cause, and a rebase drops it.
+    /// (`docs/specs/pull_requests.md`, "Keeping up to date"). A merge commit
+    /// that resolved a conflict is the usual cause, and a rebase drops it.
     pub fn rebases_unrebaseable(&self) -> bool {
         self.allowed_merge_methods.contains(MergeMethod::Rebase)
             && self.update_rule != UpdateRule::Always(UpdateMethod::Merge)
@@ -990,7 +992,7 @@ fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
         && policy.may_start_on(issue)
 }
 
-/// An answer in the thread (`docs/specs/product.md`, "Triage"): the label of
+/// An answer in the thread (`docs/specs/triage.md`): the label of
 /// an issue waiting on the reporter or the maintainer, if Linewright's last
 /// comment on it is a triage comment and anyone other than the machine user
 /// commented after it and after the label was applied. A hand-back from after

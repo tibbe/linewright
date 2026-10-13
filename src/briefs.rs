@@ -1,10 +1,10 @@
 //! The briefs, read at startup from the `briefs` setting so a change needs no
-//! rebuild (`docs/specs/product.md`, "Replay"): a Claude Code plugin,
-//! `linewright`, holding a skill per stage and the skills those call, and the
-//! brief for workflow runs. The ones Linewright ships live in `briefs/` and
-//! are built in. Every session is given a copy of the plugin, so no session
-//! can change what another reads (`docs/specs/architecture.md`, "Briefs are
-//! files read at startup"). Docs: <https://code.claude.com/docs/en/plugins>.
+//! rebuild (`docs/specs/replay.md`): a Claude Code plugin, `linewright`,
+//! holding a skill per stage and the skills those call, and the brief for
+//! workflow runs. The ones Linewright ships live in `briefs/` and are built
+//! in. Every session is given a copy of the plugin, so no session can change
+//! what another reads (`docs/specs/architecture.md`, "Briefs are files read
+//! at startup"). Docs: <https://code.claude.com/docs/en/plugins>.
 
 use std::path::Path;
 

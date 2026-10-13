@@ -1,6 +1,7 @@
-//! The marker line that opens every Linewright comment (`docs/specs/product.md`,
-//! "Visibility") and every issue a workflow files ("Workflows"), so people
-//! and the manager can tell its writing from others'.
+//! The marker line that opens every Linewright comment
+//! (`docs/specs/repository.md`) and every issue a workflow files
+//! (`docs/specs/workflows.md`), so people and the manager can tell its
+//! writing from others'.
 
 use std::fmt;
 

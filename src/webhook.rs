@@ -1,5 +1,5 @@
 //! Webhooks: GitHub's signed deliveries, received beside polling
-//! (`docs/specs/product.md`, "Webhooks").
+//! (`docs/specs/webhooks.md`).
 
 use std::collections::BTreeSet;
 use std::fmt;

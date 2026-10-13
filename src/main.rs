@@ -70,7 +70,7 @@ async fn run(command: Command, config: Config) -> Result<()> {
             // has no handler for.
             let signals = StopSignals::new().context("listening for stop signals")?;
             // `once` and the other commands never listen
-            // (`docs/specs/product.md`, "Webhooks").
+            // (`docs/specs/webhooks.md`).
             let pending = Pending::default();
             let listener = match &config.webhooks {
                 Some(webhooks) => Some(Listener::bind(webhooks, pending.clone()).await?),
@@ -216,7 +216,7 @@ fn policy(config: &Config, github: &GitHub) -> Policy {
 }
 
 /// The agent runtime, its sessions given `github_token`: the machine user's
-/// in production, none in replay (`docs/specs/product.md`, "Replay").
+/// in production, none in replay (`docs/specs/replay.md`).
 fn runtime(config: &Config, bash: PathBuf, github_token: Option<String>) -> ClaudeCode {
     ClaudeCode {
         program: RUNTIME.into(),

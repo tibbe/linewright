@@ -1,5 +1,5 @@
-//! A spec gap that did not block its ticket (`docs/specs/product.md`, "Implementation"):
-//! an issue whose body the manager writes and a store reads back
+//! A spec gap that did not block its ticket (`docs/specs/implementation.md`,
+//! "Runs"): an issue whose body the manager writes and a store reads back
 //! ([`crate::domain::Filed`]), so later sessions on the ticket see the gaps
 //! already filed and don't file them again.
 

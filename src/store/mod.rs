@@ -63,7 +63,7 @@ impl RepoSettings {
     /// are updated and merged by rebasing where it requires linear history,
     /// and otherwise updated by merging, or by rebasing on a conflict where
     /// it allows rebase merging, and merged with the first method it allows
-    /// (`docs/specs/product.md`, "Keeping up to date" and "Auto-merge").
+    /// (`docs/specs/pull_requests.md`, "Keeping up to date" and "Auto-merge").
     pub fn new(
         default_branch: String,
         linear_history: bool,
@@ -99,8 +99,7 @@ impl RepoSettings {
 
     /// Fails unless auto-merge can merge with the merge method: the
     /// repository allows it, and `update_branch`, the `update-branch`
-    /// setting, keeps branches mergeable with it (`docs/specs/product.md`,
-    /// "Repository").
+    /// setting, keeps branches mergeable with it (`docs/specs/repository.md`).
     pub fn check_auto_merge(&self, update_branch: Option<UpdateMethod>) -> Result<()> {
         let method = self.merge_method;
         let allowed = &self.allowed_merge_methods;

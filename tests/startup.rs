@@ -1,7 +1,7 @@
 //! Startup, end to end at the operator's level: the repository's settings
 //! and Linewright's in, a factory or an error out, against the local store
-//! (`docs/specs/product.md`, "Repository"). `serve`, `once` and
-//! `workflow run` all start this way.
+//! (`docs/specs/repository.md`). `serve`, `once` and `workflow run` all start
+//! this way.
 
 mod common;
 

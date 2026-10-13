@@ -18,7 +18,7 @@ use crate::store::github::TOKEN_VARIABLES;
 pub struct ClaudeCode {
     pub program: String,
     /// The `bash` every session runs its commands in, whatever shell the
-    /// operator uses (`docs/specs/product.md`, "Operation").
+    /// operator uses (`docs/specs/operation.md`).
     pub bash: PathBuf,
     /// `None` uses the runtime's default model.
     pub model: Option<String>,
@@ -44,7 +44,7 @@ struct ResultEvent {
 
 /// What every turn reads: only the repository's configuration and agent
 /// instructions, beside managed policy, never the operator's user-level
-/// setup, and no memory of its own (`docs/specs/product.md`, "Repository").
+/// setup, and no memory of its own (`docs/specs/repository.md`).
 /// The settings outrank the repository's, so it cannot turn auto-memory back
 /// on. claude.ai connectors come with the operator's login and `CLAUDE.md`
 /// files with every directory above the clone, whatever the setting sources,
@@ -147,7 +147,7 @@ impl ClaudeCode {
         // A session's GitHub token is the one it was built with, never one
         // inherited: production sessions read GitHub and write to it only
         // through their result, a rule the brief keeps, and replay sessions
-        // get none (`docs/specs/product.md`, "Replay").
+        // get none (`docs/specs/replay.md`).
         for variable in TOKEN_VARIABLES {
             match &self.github_token {
                 Some(token) => command.env(variable, token),
