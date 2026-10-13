@@ -467,28 +467,62 @@ pub fn signature(body: &str) -> String {
     format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
 }
 
-/// Sends a delivery of `event` and returns the response's status.
-pub async fn deliver(
-    listener: &Listener,
-    event: &str,
-    body: &str,
-    signature: Option<&str>,
-) -> reqwest::StatusCode {
-    let mut request = reqwest::Client::new()
-        .post(format!("http://{}/", listener.local_address()))
-        .header("X-GitHub-Event", event)
-        .header("X-GitHub-Delivery", "72d3162e-cc78-11e3-81ab-4c9367dc0958")
-        .header("Content-Type", "application/json")
-        .body(body.to_string());
-    if let Some(signature) = signature {
-        request = request.header("X-Hub-Signature-256", signature);
+/// A delivery as it reaches the listener, with each header GitHub sends it
+/// with left out when `None`.
+pub struct Request<'a> {
+    pub event: Option<&'a str>,
+    pub content_type: Option<&'a str>,
+    pub signature: Option<String>,
+    pub body: &'a str,
+}
+
+/// The listener's response to a delivery.
+pub struct Response {
+    pub status: reqwest::StatusCode,
+    pub body: String,
+}
+
+impl<'a> Request<'a> {
+    /// A delivery of `body` as `application/json`, signed with the secret,
+    /// with no event.
+    pub fn signed_json(body: &'a str) -> Request<'a> {
+        Request {
+            event: None,
+            content_type: Some("application/json"),
+            signature: Some(signature(body)),
+            body,
+        }
     }
-    request.send().await.unwrap().status()
+
+    pub async fn send(&self, listener: &Listener) -> Response {
+        let mut request = reqwest::Client::new()
+            .post(format!("http://{}/", listener.local_address()))
+            .header("X-GitHub-Delivery", "72d3162e-cc78-11e3-81ab-4c9367dc0958")
+            .body(self.body.to_string());
+        if let Some(signature) = &self.signature {
+            request = request.header("X-Hub-Signature-256", signature);
+        }
+        if let Some(event) = self.event {
+            request = request.header("X-GitHub-Event", event);
+        }
+        if let Some(content_type) = self.content_type {
+            request = request.header("Content-Type", content_type);
+        }
+        let response = request.send().await.unwrap();
+        Response {
+            status: response.status(),
+            body: response.text().await.unwrap(),
+        }
+    }
 }
 
 /// Sends a delivery of `event` signed with the secret.
 pub async fn signed(listener: &Listener, event: &str, body: &str) -> reqwest::StatusCode {
-    deliver(listener, event, body, Some(&signature(body))).await
+    let request = Request {
+        event: Some(event),
+        ..Request::signed_json(body)
+    };
+    request.send(listener).await.status
 }
 
 /// A check named `name` in `state`, which logged `log`, as CI reports it on

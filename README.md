@@ -71,7 +71,7 @@ The poll still runs at `poll-interval` with webhooks on, for the reason
    - **Payload URL**: the reverse proxy's HTTPS URL, such as
      `https://linewright.example.com/`.
    - **Content type**: `application/json`. A delivery sent form-encoded is
-     logged as ignored, as its payload cannot be read.
+     refused, as its payload cannot be read.
    - **Secret**: the secret from step 1.
    - **SSL verification**: enabled.
    - **Which events would you like to trigger this webhook?**: _Let me select
@@ -101,5 +101,7 @@ delivery with the answer it got and can redeliver it:
   `refused`, with why: with no signature, the webhook has no secret; with a
   signature that does not match, the webhook's secret and
   `LINEWRIGHT_WEBHOOK_SECRET` differ.
-- **The log has `ignored`, with a reason** that the payload is not JSON: set
-  the webhook's content type to `application/json`.
+- **GitHub lists deliveries as refused**, answered `400` with a response that
+  says why, which the log has too, as `refused`. With a content type that is
+  not `application/json`, set the webhook's content type to
+  `application/json`.

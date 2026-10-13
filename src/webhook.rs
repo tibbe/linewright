@@ -151,16 +151,14 @@ impl fmt::Display for Subject {
     }
 }
 
-/// A delivery whose signature matches, which is never refused.
+/// A signed delivery Linewright reads.
 #[derive(Debug)]
 pub enum Delivery {
     /// One of the events Linewright acts on, and what it names.
     Accepted(Subject),
-    /// Any other event, or a push to something other than a branch.
+    /// Any other event, whatever its payload, or a push to something other
+    /// than a branch.
     Ignored,
-    /// One whose event or payload cannot be read, such as one GitHub sends
-    /// form-encoded.
-    Unreadable(String),
 }
 
 /// Why a delivery is refused.
@@ -170,19 +168,92 @@ pub enum Refusal {
     NoSignature,
     #[error("its signature does not match the secret")]
     WrongSignature,
+    /// Signed, so the reason is the sender's to see.
+    #[error(transparent)]
+    Unreadable(#[from] Unreadable),
+}
+
+impl Refusal {
+    /// The status and body a refused delivery is answered with. Only a
+    /// signed one's says why, so a sender without the secret learns nothing.
+    pub fn response(&self) -> (StatusCode, String) {
+        match self {
+            Refusal::NoSignature | Refusal::WrongSignature => {
+                (StatusCode::UNAUTHORIZED, String::new())
+            }
+            Refusal::Unreadable(reason) => {
+                (StatusCode::BAD_REQUEST, format!("refused: {reason}\n"))
+            }
+        }
+    }
+}
+
+/// Why Linewright cannot tell what a signed delivery names.
+#[derive(Debug, thiserror::Error)]
+pub enum Unreadable {
+    #[error("it names no event (`X-GitHub-Event`)")]
+    NoEvent,
+    #[error(
+        "its content type (`Content-Type`) is {}, and Linewright reads only `application/json`",
+        .0.as_deref().map_or("missing".into(), |got| format!("`{got}`"))
+    )]
+    ContentType(Option<String>),
+    #[error("Linewright cannot tell what its `{event}` payload names: {error}")]
+    Payload {
+        event: String,
+        error: serde_json::Error,
+    },
+}
+
+/// The events Linewright acts on, by where their payloads name what changed
+/// (<https://docs.github.com/en/webhooks/webhook-events-and-payloads>).
+#[derive(Clone, Copy)]
+enum Event {
+    /// `issues` and `issue_comment`.
+    Issue,
+    /// `pull_request` and its reviews and review comments.
+    PullRequest,
+    CheckRun,
+    CheckSuite,
+    Status,
+    Push,
+}
+
+impl Event {
+    /// The event named `name`, unless it is outside the table.
+    fn parse(name: &str) -> Option<Event> {
+        Some(match name {
+            "issues" | "issue_comment" => Event::Issue,
+            "pull_request" | "pull_request_review" | "pull_request_review_comment" => {
+                Event::PullRequest
+            }
+            "check_run" => Event::CheckRun,
+            "check_suite" => Event::CheckSuite,
+            "status" => Event::Status,
+            "push" => Event::Push,
+            _ => return None,
+        })
+    }
+}
+
+/// The headers of a delivery that say how to read it, each `None` when the
+/// delivery lacks it.
+#[derive(Clone, Copy, Debug)]
+pub struct Headers<'a> {
+    /// `X-GitHub-Event`.
+    pub event: Option<&'a str>,
+    /// `Content-Type`.
+    pub content_type: Option<&'a str>,
+    /// `X-Hub-Signature-256`.
+    pub signature: Option<&'a str>,
 }
 
 /// Checks a delivery's signature against `secret`
 /// (<https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries>)
-/// and reads what it names from `body`.
-pub fn receive(
-    secret: &Secret,
-    event: Option<&str>,
-    signature: Option<&str>,
-    body: &[u8],
-) -> Result<Delivery, Refusal> {
+/// and reads what it names from `body`, as its content type says it is sent.
+pub fn receive(secret: &Secret, headers: Headers, body: &[u8]) -> Result<Delivery, Refusal> {
     use hmac::Mac;
-    let signature = signature.ok_or(Refusal::NoSignature)?;
+    let signature = headers.signature.ok_or(Refusal::NoSignature)?;
     let signature = signature
         .strip_prefix("sha256=")
         .and_then(|hex| hex::decode(hex).ok())
@@ -193,23 +264,27 @@ pub fn receive(
     // In constant time, so the signature cannot be found by timing.
     mac.verify_slice(&signature)
         .map_err(|_| Refusal::WrongSignature)?;
-    let Some(event) = event else {
-        return Ok(Delivery::Unreadable(
-            "it names no event (`X-GitHub-Event`)".into(),
-        ));
+    let name = headers.event.ok_or(Unreadable::NoEvent)?;
+    let Some(table_event) = Event::parse(name) else {
+        return Ok(Delivery::Ignored);
     };
-    Ok(read_delivery(event, body).unwrap_or_else(|error| {
-        Delivery::Unreadable(format!(
-            "its payload is not JSON as GitHub sends it with the content type \
-             `application/json`: {error}"
-        ))
-    }))
+    // GitHub sends it without parameters, and only `application/json` is
+    // read for now.
+    if headers.content_type != Some("application/json") {
+        return Err(Unreadable::ContentType(headers.content_type.map(str::to_string)).into());
+    }
+    read_delivery(table_event, body).map_err(|error| {
+        Unreadable::Payload {
+            event: name.to_string(),
+            error,
+        }
+        .into()
+    })
 }
 
-/// What a delivery of `event` names, from the parts of its payload
-/// (<https://docs.github.com/en/webhooks/webhook-events-and-payloads>) that
+/// What a JSON delivery of `event` names, from the parts of its payload that
 /// say which item changed.
-fn read_delivery(event: &str, body: &[u8]) -> serde_json::Result<Delivery> {
+fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
     use serde::Deserialize;
     use serde_json::from_slice;
     #[derive(Deserialize)]
@@ -253,28 +328,29 @@ fn read_delivery(event: &str, body: &[u8]) -> serde_json::Result<Delivery> {
         reference: String,
     }
     let subject = match event {
-        "issues" | "issue_comment" => {
+        Event::Issue => {
             let IssueEvent { issue } = from_slice(body)?;
             Subject::Item(match issue.pull_request {
                 Some(_) => Item::Pull(issue.number),
                 None => Item::Issue(issue.number),
             })
         }
-        "pull_request" | "pull_request_review" | "pull_request_review_comment" => {
+        Event::PullRequest => {
             let PullRequestEvent { pull_request } = from_slice(body)?;
             Subject::Item(Item::Pull(pull_request.number))
         }
-        "check_run" => Subject::Commit(from_slice::<CheckRunEvent>(body)?.check_run.head_sha),
-        "check_suite" => Subject::Commit(from_slice::<CheckSuiteEvent>(body)?.check_suite.head_sha),
-        "status" => Subject::Commit(from_slice::<StatusEvent>(body)?.sha),
-        "push" => {
+        Event::CheckRun => Subject::Commit(from_slice::<CheckRunEvent>(body)?.check_run.head_sha),
+        Event::CheckSuite => {
+            Subject::Commit(from_slice::<CheckSuiteEvent>(body)?.check_suite.head_sha)
+        }
+        Event::Status => Subject::Commit(from_slice::<StatusEvent>(body)?.sha),
+        Event::Push => {
             let PushEvent { reference } = from_slice(body)?;
             match reference.strip_prefix("refs/heads/") {
                 Some(branch) => Subject::Push(branch.to_string()),
                 None => return Ok(Delivery::Ignored),
             }
         }
-        _ => return Ok(Delivery::Ignored),
     };
     Ok(Delivery::Accepted(subject))
 }
@@ -372,7 +448,12 @@ impl Listener {
 }
 
 /// Answers a delivery, and logs what became of it.
-async fn answer(secret: Secret, pending: Pending, headers: HeaderMap, body: Bytes) -> StatusCode {
+async fn answer(
+    secret: Secret,
+    pending: Pending,
+    headers: HeaderMap,
+    body: Bytes,
+) -> (StatusCode, String) {
     let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
     let event = header("X-GitHub-Event");
     let span = info_span!(
@@ -381,17 +462,21 @@ async fn answer(secret: Secret, pending: Pending, headers: HeaderMap, body: Byte
         delivery = %header("X-GitHub-Delivery").unwrap_or("none"),
     );
     let _entered = span.enter();
-    match receive(&secret, event, header("X-Hub-Signature-256"), &body) {
+    let read_by = Headers {
+        event,
+        content_type: header("Content-Type"),
+        signature: header("X-Hub-Signature-256"),
+    };
+    match receive(&secret, read_by, &body) {
         Ok(Delivery::Accepted(subject)) => {
             info!(%subject, "accepted");
             pending.add(subject);
         }
         Ok(Delivery::Ignored) => info!("ignored: not a change Linewright acts on"),
-        Ok(Delivery::Unreadable(reason)) => warn!(%reason, "ignored"),
         Err(refusal) => {
             warn!(reason = %refusal, "refused");
-            return StatusCode::UNAUTHORIZED;
+            return refusal.response();
         }
     }
-    StatusCode::ACCEPTED
+    (StatusCode::ACCEPTED, String::new())
 }
