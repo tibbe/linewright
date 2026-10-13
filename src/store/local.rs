@@ -19,7 +19,7 @@ use super::{
 use crate::clock::Clock;
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Push, Rebaseability,
+    MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
     Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, closing_references,
 };
 use crate::git;
@@ -233,6 +233,7 @@ impl LocalStore {
                     comments: vec![],
                     blocked_by: vec![],
                     sub_issues: vec![],
+                    parent: None,
                     filed: None,
                     events: labels
                         .iter()
@@ -878,9 +879,18 @@ impl State {
         Issue {
             blocked_by: self.linked(&record.blocked_by),
             sub_issues: self.linked(&record.sub_issues),
-            filed: Filed::read(&issue.author, &issue.title, &issue.body, &self.machine_user),
+            parent: self
+                .issues
+                .values()
+                .find(|r| r.sub_issues.contains(&issue.number))
+                .map(|r| Parent::new(r.issue.number, self.filed(&r.issue))),
+            filed: self.filed(issue),
             ..issue.clone()
         }
+    }
+
+    fn filed(&self, issue: &Issue) -> Option<Filed> {
+        Filed::read(&issue.author, &issue.title, &issue.body, &self.machine_user)
     }
 
     fn add_label(&mut self, number: Number, label: &str, now: Timestamp) -> Result<()> {
@@ -1388,7 +1398,7 @@ fn render_issue(issue: &Issue, issue_type: Option<&str>) -> String {
     };
     let _ = writeln!(
         out,
-        "# {} {}\n\n- State: {}\n- Author: @{}\n- Type: {}\n- Labels: {}\n- Assignees: {}\n- Blocked by: {}\n- Sub-issues: {}\n\n{}\n",
+        "# {} {}\n\n- State: {}\n- Author: @{}\n- Type: {}\n- Labels: {}\n- Assignees: {}\n- Blocked by: {}\n- Sub-issues: {}\n- Parent: {}\n\n{}\n",
         issue.number,
         issue.title,
         if issue.open { "open" } else { "closed" },
@@ -1403,6 +1413,9 @@ fn render_issue(issue: &Issue, issue_type: Option<&str>) -> String {
             .join(", "),
         numbers(&issue.blocked_by),
         numbers(&issue.sub_issues),
+        issue
+            .parent
+            .map_or("none".to_string(), |p| p.number.to_string()),
         issue.body.trim()
     );
     render_comments(&mut out, &issue.comments);

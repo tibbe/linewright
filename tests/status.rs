@@ -54,6 +54,7 @@ fn ready_issue() -> Issue {
         comments: vec![],
         blocked_by: vec![],
         sub_issues: vec![],
+        parent: None,
         events: vec![],
         filed: None,
     }

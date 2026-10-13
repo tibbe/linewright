@@ -43,6 +43,10 @@ Look for the originating spec, in this order:
 4. If nothing is found, the **Spec** sub-agent will skip and report "no spec
    available".
 
+Note too the ticket's parent issue and the spec change it was cut from, when
+you were given them. The parent's other sub-issues are the tickets cut
+alongside this one, and they own what this ticket leaves out.
+
 ### 3. Identify the standards sources
 
 Search the repo for every file that documents how code should be written. When
@@ -108,6 +112,11 @@ not write to it.
 
 - The diff command and commit list.
 - The path or fetched contents of the spec.
+- The ticket's parent issue and spec change, if any, by number, and what they
+  are for: the spec change and the parent's other sub-issues show what this
+  ticket leaves to the other tickets. Read them before reporting something as
+  missing or as scope creep when the ticket's scope is in question; not on
+  every review.
 - The brief: "Report: (a) requirements the spec asked for that are missing or
   partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c)
   requirements that look implemented but where the implementation looks wrong.

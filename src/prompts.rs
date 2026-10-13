@@ -103,8 +103,7 @@ pub fn implement(repo: &Repo, ticket: &Ticket, branch: &str) -> String {
         "- Branch: `{branch}`, fresh from `{}`. The fixed point for review is `origin/{}`.\n",
         repo.default_branch, repo.default_branch
     );
-    write_issue(&mut task, "The ticket", ticket.issue);
-    write_filed_gaps(&mut task, &ticket.filed_gaps);
+    write_ticket(&mut task, ticket);
     compose(IMPLEMENT, &task, IMPLEMENT_CONTRACT)
 }
 
@@ -172,8 +171,7 @@ pub fn pull_work(
         "### The pull request's description\n\n{}\n",
         or_none(&pr.body)
     );
-    write_issue(&mut task, "The ticket", ticket.issue);
-    write_filed_gaps(&mut task, &ticket.filed_gaps);
+    write_ticket(&mut task, ticket);
     let contract = r#"One of:
 
 { "outcome": "done", "comment": "<Markdown summary of what you changed, for the pull request>", "pr_body": "<only when your change made the description out of date: the whole body rewritten, per the linewright:pr skill>", "replies": [REPLY], "spec_gaps": [SPEC_GAP] }
@@ -269,6 +267,24 @@ fn write_issue(task: &mut String, heading: &str, issue: &Issue) {
             write_comment(task, comment);
         }
     }
+}
+
+/// The ticket, the pointers to the tickets cut alongside it (its parent
+/// issue and the spec change it tracks, if any: `docs/specs/product.md`,
+/// "Implementation"), and the spec gaps already filed for it.
+fn write_ticket(task: &mut String, ticket: &Ticket) {
+    write_issue(task, "The ticket", ticket.issue);
+    if let Some(parent) = ticket.issue.parent {
+        let _ = match parent.spec_change {
+            Some(spec_change) => writeln!(
+                task,
+                "### Parent issue\n\n{}, the tracking issue of the spec change {spec_change}.\n",
+                parent.number
+            ),
+            None => writeln!(task, "### Parent issue\n\n{}.\n", parent.number),
+        };
+    }
+    write_filed_gaps(task, &ticket.filed_gaps);
 }
 
 /// The spec gaps earlier sessions on the ticket filed and the maintainer has

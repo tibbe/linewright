@@ -135,6 +135,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     let read = |path: &str| std::fs::read_to_string(out.join(path)).unwrap();
     assert!(read("issues/2.md").starts_with("# #2 Spec change: Gadgets"));
     assert!(read("issues/3.md").contains("- Labels: ready-for-agent"));
+    assert!(read("issues/3.md").contains("- Parent: #2\n"));
     let pull = read("pulls/4.md");
     assert!(pull.contains("- State: ready for review"), "{pull}");
     assert!(read("pulls/4.diff").contains("+gadget"));

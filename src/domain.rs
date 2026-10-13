@@ -124,6 +124,9 @@ pub struct Issue {
     pub comments: Vec<Comment>,
     pub blocked_by: Vec<Linked>,
     pub sub_issues: Vec<Linked>,
+    /// The issue this one is a sub-issue of, if any.
+    #[serde(default)]
+    pub parent: Option<Parent>,
     pub events: Vec<IssueEvent>,
     /// What the issue is for, if Linewright filed it.
     #[serde(default)]
@@ -150,6 +153,26 @@ impl Filed {
             return Some(Filed::Tracking { spec_change });
         }
         crate::spec_gap::ticket_of(body).map(|ticket| Filed::SpecGap { ticket })
+    }
+}
+
+/// An issue's parent issue, with the spec change it tracks when it is a
+/// tracking issue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Parent {
+    pub number: Number,
+    pub spec_change: Option<Number>,
+}
+
+impl Parent {
+    pub fn new(number: Number, filed: Option<Filed>) -> Parent {
+        Parent {
+            number,
+            spec_change: match filed {
+                Some(Filed::Tracking { spec_change }) => Some(spec_change),
+                _ => None,
+            },
+        }
     }
 }
 

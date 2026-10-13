@@ -28,6 +28,16 @@ opens or updates the pull request and posts what your result says.
 5. Commit your work to the current branch, with messages that say why. Leave
    no uncommitted changes and no rebase or merge in progress.
 
+## The ticket's scope
+
+Your task may name the ticket's parent issue and, when the ticket was cut from
+a spec change, that spec change: pointers, not their content. The parent's
+other sub-issues are the tickets cut alongside this one, and they own what
+this ticket leaves out; the spec change and those tickets show what that is.
+Read them on GitHub when the ticket's scope is in question, for example before
+adding something the ticket doesn't ask for, and pass them to the code review
+so its spec reviewer can too. You need not read them on every run.
+
 ## Review findings
 
 Apply every finding, unless it is **wrong on the facts**: it misreads the code,

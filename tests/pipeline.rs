@@ -401,6 +401,108 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
     );
 }
 
+#[tokio::test]
+async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_the_spec_change() {
+    let mut world = World::new().await;
+    tickets_script(&world);
+    implement_script(&world);
+    let spec_pr = world
+        .store
+        .merge_change(
+            "maintainer",
+            "Gadgets",
+            "Adds gadgets.",
+            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
+        )
+        .await
+        .unwrap();
+
+    world.poll().await;
+    world.poll().await;
+
+    let issues = world.store.issues();
+    let tracking = &issues[0];
+    let prompts = world.runtime.prompts(WorkKind::Implement);
+    let brief = &prompts[0];
+    assert!(brief.contains("Gadgets persist."), "{brief}");
+    assert!(
+        brief.contains(&format!(
+            "### Parent issue\n\n{}, the tracking issue of the spec change {spec_pr}.\n",
+            tracking.number
+        )),
+        "{brief}"
+    );
+    assert!(!brief.contains("Tickets for the spec change"), "{brief}");
+    assert!(!brief.contains("List gadgets"), "{brief}");
+}
+
+#[tokio::test]
+async fn a_ticket_a_person_parented_is_briefed_with_its_parent_and_no_spec_change() {
+    use linewright::store::Store;
+    let mut world = World::new().await;
+    implement(&world);
+    let parent = world
+        .store
+        .open_issue("maintainer", "Gadgets, all of them", "", &[]);
+    let ticket = world
+        .store
+        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    world.store.add_sub_issue(parent, ticket).await.unwrap();
+
+    world.poll().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Implement);
+    assert!(
+        prompts[0].contains(&format!("### Parent issue\n\n{parent}.\n")),
+        "{}",
+        prompts[0]
+    );
+    assert!(!prompts[0].contains("spec change #"), "{}", prompts[0]);
+}
+
+#[tokio::test]
+async fn a_ticket_with_no_parent_is_briefed_with_no_parent_issue() {
+    let mut world = World::new().await;
+    world.ticket_in_review().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Implement);
+    assert_eq!(prompts.len(), 1);
+    assert!(!prompts[0].contains("Parent issue"), "{}", prompts[0]);
+}
+
+#[tokio::test]
+async fn sessions_on_a_tickets_pull_request_are_briefed_with_its_parent_issue() {
+    use linewright::store::Store;
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    let parent = world
+        .store
+        .open_issue("maintainer", "Gadgets, all of them", "", &[]);
+    world.store.add_sub_issue(parent, ticket).await.unwrap();
+    world
+        .store
+        .comment_as("maintainer", pr, "Rename it.")
+        .unwrap();
+    world.runtime.on(WorkKind::Rework, |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("src/renamed.txt", "renamed\n")],
+            "Rename",
+        );
+        json(json!({"outcome": "done", "comment": "Renamed."}))
+    });
+
+    world.poll().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Rework);
+    assert_eq!(prompts.len(), 1);
+    assert!(
+        prompts[0].contains(&format!("### Parent issue\n\n{parent}.\n")),
+        "{}",
+        prompts[0]
+    );
+}
+
 use linewright::domain::{CheckState, Login, ReviewState};
 #[tokio::test]
 async fn a_green_pull_request_is_marked_ready_for_review_with_no_one_asked_to_review_it() {

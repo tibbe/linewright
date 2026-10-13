@@ -21,8 +21,8 @@ use super::{
 };
 use crate::domain::{
     Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    Mergeability, MergedPull, Number, Pull, PullState, Push, Rebaseability, Requirement, Review,
-    ReviewState, Snapshot, Thread, Timestamp, label,
+    Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement,
+    Review, ReviewState, Snapshot, Thread, Timestamp, label,
 };
 use crate::git;
 
@@ -739,6 +739,21 @@ fn linked(nodes: Option<Nodes<LinkedNode>>) -> Vec<Linked> {
         .collect()
 }
 
+#[derive(Deserialize)]
+struct ParentNode {
+    number: u64,
+    title: String,
+    body: String,
+    author: Option<Actor>,
+}
+
+impl ParentNode {
+    fn into_parent(self, machine_user: &Login) -> Parent {
+        let filed = Filed::read(&login(self.author), &self.title, &self.body, machine_user);
+        Parent::new(Number(self.number), filed)
+    }
+}
+
 const ISSUE_FIELDS: &str = "fragment IssueFields on Issue {
   number title body createdAt state
   author { __typename login }
@@ -746,6 +761,7 @@ const ISSUE_FIELDS: &str = "fragment IssueFields on Issue {
   assignees(first: 20) { nodes { login } }
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
   subIssues(first: 100) { nodes { number state } }
+  parent { number title body author { __typename login } }
   blockedBy(first: 50) { nodes { number state } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state author { __typename login } } }
   timelineItems(last: 100, itemTypes: [LABELED_EVENT, UNASSIGNED_EVENT]) {
@@ -774,6 +790,7 @@ struct GqlIssue {
     assignees: Nodes<LoginNode>,
     comments: Nodes<GqlComment>,
     sub_issues: Option<Nodes<LinkedNode>>,
+    parent: Option<ParentNode>,
     blocked_by: Option<Nodes<LinkedNode>>,
     closed_by_pull_requests_references: Option<Nodes<ClosingPull>>,
     timeline_items: Nodes<GqlEvent>,
@@ -869,6 +886,7 @@ impl GqlIssue {
             comments: i.comments.nodes.into_iter().map(Comment::from).collect(),
             blocked_by: linked(i.blocked_by),
             sub_issues: linked(i.sub_issues),
+            parent: i.parent.map(|p| p.into_parent(machine_user)),
             events,
             filed,
         }
@@ -1991,5 +2009,63 @@ mod tests {
         }]));
 
         assert_eq!(pr.requirements(&[]), [Requirement::Approval]);
+    }
+
+    /// A ticket as the snapshot query returns it, with `parent` its parent.
+    fn ticket_with_parent(parent: Value) -> Issue {
+        let issue: GqlIssue = serde_json::from_value(json!({
+            "number": 12, "title": "Store gadgets", "body": "Gadgets persist.",
+            "createdAt": "2026-10-09T12:00:00Z", "state": "OPEN",
+            "author": {"__typename": "User", "login": "linewright"},
+            "labels": {"nodes": [{"name": "ready-for-agent"}]},
+            "assignees": {"nodes": []},
+            "comments": {"nodes": []},
+            "subIssues": {"nodes": []},
+            "parent": parent,
+            "blockedBy": {"nodes": []},
+            "closedByPullRequestsReferences": {"nodes": []},
+            "timelineItems": {"nodes": []},
+        }))
+        .unwrap();
+        issue.into_issue(&Login::new("linewright"))
+    }
+
+    #[test]
+    fn a_ticket_whose_parent_is_a_tracking_issue_knows_the_spec_change() {
+        let issue = ticket_with_parent(json!({
+            "number": 11, "title": "Spec change: Gadgets",
+            "body": "Tickets for the spec change in #10.\n\n- #12 Store gadgets\n",
+            "author": {"__typename": "User", "login": "linewright"},
+        }));
+
+        assert_eq!(
+            issue.parent,
+            Some(Parent {
+                number: Number(11),
+                spec_change: Some(Number(10)),
+            })
+        );
+    }
+
+    #[test]
+    fn a_ticket_whose_parent_a_person_opened_knows_no_spec_change() {
+        let issue = ticket_with_parent(json!({
+            "number": 11, "title": "Spec change: Gadgets",
+            "body": "Tickets for the spec change in #10.",
+            "author": {"__typename": "User", "login": "maintainer"},
+        }));
+
+        assert_eq!(
+            issue.parent,
+            Some(Parent {
+                number: Number(11),
+                spec_change: None,
+            })
+        );
+    }
+
+    #[test]
+    fn a_ticket_without_a_parent_has_none() {
+        assert_eq!(ticket_with_parent(Value::Null).parent, None);
     }
 }
