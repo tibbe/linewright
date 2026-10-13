@@ -1,0 +1,6 @@
+interface:
+  display_name: "Software design"
+  short_description: "Design the code before changing it"
+
+policy:
+  allow_implicit_invocation: true
