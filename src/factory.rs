@@ -140,7 +140,7 @@ impl Factory {
             .await
             .context("creating labels")?;
         info!(
-            machine_user = %identity.login,
+            account = %identity.login,
             default_branch = %settings.default_branch,
             update_rule = ?settings.update_rule,
             auto_merge = config.auto_merge,
@@ -154,7 +154,7 @@ impl Factory {
         };
         let shell = Shell {
             policy: Policy {
-                machine_user: identity.login.clone(),
+                linewright: identity.login.clone(),
                 spec_glob: config.spec_glob,
                 spec_lookback: config.spec_lookback,
                 max_workers: config.max_workers,
@@ -693,7 +693,7 @@ async fn read_into(
                 snapshot.remove_issue(number);
                 for pr in snapshot.ended_pulls_closing(number) {
                     read.push(Item::Pull(pr));
-                    match store.machine_pull(pr).await? {
+                    match store.linewright_pull(pr).await? {
                         Some(pull) => snapshot.put_pull(pull),
                         None => snapshot.remove_pull(pr),
                     }
@@ -701,7 +701,7 @@ async fn read_into(
             }
         }
         Item::Pull(number) => {
-            match store.machine_pull(number).await? {
+            match store.linewright_pull(number).await? {
                 Some(pull) => snapshot.put_pull(pull),
                 None => snapshot.remove_pull(number),
             }

@@ -369,12 +369,12 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
     assert!(
         world
             .issue(store_ticket.number)
-            .is_assigned(&linewright::domain::Login::new(MACHINE))
+            .is_assigned(&linewright::domain::Login::new(LINEWRIGHT))
     );
     assert!(
         !world
             .issue(list_ticket.number)
-            .is_assigned(&linewright::domain::Login::new(MACHINE))
+            .is_assigned(&linewright::domain::Login::new(LINEWRIGHT))
     );
 
     world.clock.advance(chrono::TimeDelta::minutes(6));
@@ -397,7 +397,7 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
     assert!(
         world
             .issue(list_ticket.number)
-            .is_assigned(&linewright::domain::Login::new(MACHINE))
+            .is_assigned(&linewright::domain::Login::new(LINEWRIGHT))
     );
 }
 
@@ -837,7 +837,7 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
 
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-human"]);
-    assert!(!issue.is_assigned(&Login::new(MACHINE)));
+    assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
     assert_eq!(
         last_comment(&issue),
         "> *Linewright, CI*\n\n`test` still failing after 2 fix attempts."
@@ -875,7 +875,7 @@ async fn a_branch_that_changes_the_spec_is_pushed_and_its_pull_request_opened() 
             .unwrap(),
         "# Spec\n\nRewritten.\n"
     );
-    assert!(world.issue(ticket).is_assigned(&Login::new(MACHINE)));
+    assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
 }
 
 #[tokio::test]
@@ -1496,7 +1496,7 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
 
     world.poll().await;
 
-    assert!(world.issue(second).is_assigned(&Login::new(MACHINE)));
+    assert!(world.issue(second).is_assigned(&Login::new(LINEWRIGHT)));
     let next = *world.store.pulls().last().unwrap();
     assert_ne!(next, pr);
     assert_eq!(world.store.snapshot_pull(next).await.closes, [second]);
@@ -1672,7 +1672,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_ticket_back_and_rela
 
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-human"]);
-    assert!(!issue.is_assigned(&Login::new(MACHINE)));
+    assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
     assert_eq!(
         last_comment(&issue),
         format!(
@@ -1690,7 +1690,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_ticket_back_and_rela
     world.poll().await;
 
     let reclaimed = world.issue(ticket);
-    assert!(reclaimed.is_assigned(&Login::new(MACHINE)), "reclaimed");
+    assert!(reclaimed.is_assigned(&Login::new(LINEWRIGHT)), "reclaimed");
     assert_eq!(
         labels(&reclaimed),
         ["ready-for-agent"],
@@ -1742,7 +1742,7 @@ fn assert_run_ended_keeping_its_claim(
 
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-agent"]);
-    assert!(issue.is_assigned(&Login::new(MACHINE)));
+    assert!(issue.is_assigned(&Login::new(LINEWRIGHT)));
     assert!(issue.comments.is_empty(), "{:#?}", issue.comments);
     assert_eq!(
         world.runtime.prompts(WorkKind::Implement).len(),

@@ -142,7 +142,7 @@ pub enum IssueRead {
     /// One the snapshot holds.
     Held {
         issue: Box<Issue>,
-        /// The machine user's pull requests that close the issue, which a
+        /// Linewright's pull requests that close the issue, which a
         /// snapshot holds with it.
         pulls: Vec<Pull>,
     },
@@ -184,10 +184,10 @@ pub trait Store: Send + Sync {
     /// The issue as a snapshot taken now sees it.
     async fn issue(&self, number: Number) -> Result<IssueRead>;
     async fn pull(&self, number: Number) -> Result<Pull>;
-    /// The pull request as a snapshot taken now holds it among the machine
-    /// user's: `None` when the snapshot leaves it out, as it does every other
-    /// user's and one the store does not have.
-    async fn machine_pull(&self, number: Number) -> Result<Option<Pull>>;
+    /// The pull request as a snapshot taken now holds it among Linewright's pull
+    /// requests: `None` when the snapshot leaves it out, as it does anyone else's
+    /// and one the store does not have.
+    async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>>;
     /// The pull request as a snapshot taken now, with pull requests merged
     /// since `merged_since`, holds it among the merged ones: `None` when the
     /// snapshot leaves it out of them, as it does one the store does not
@@ -215,7 +215,7 @@ pub trait Store: Send + Sync {
     async fn add_label(&self, number: Number, label: &str) -> Result<()>;
     /// Removes the label if the issue or pull request has it.
     async fn remove_label(&self, number: Number, label: &str) -> Result<()>;
-    /// Adds the machine user as an assignee.
+    /// Adds Linewright as an assignee.
     async fn assign(&self, issue: Number) -> Result<()>;
     async fn unassign(&self, issue: Number) -> Result<()>;
     async fn comment(&self, number: Number, body: &str) -> Result<()>;
@@ -231,7 +231,7 @@ pub trait Store: Send + Sync {
     async fn mark_ready(&self, pr: Number) -> Result<()>;
     async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()>;
     /// Merges the pull request into the default branch with `method`, as
-    /// the machine user, if its head is still the commit `head`.
+    /// Linewright, if its head is still the commit `head`.
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()>;
     async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()>;
     async fn resolve_thread(&self, pr: Number, thread: &str) -> Result<()>;

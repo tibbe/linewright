@@ -84,21 +84,21 @@ fn triage_session(dir: &Path) -> SessionSpec {
 }
 
 #[tokio::test]
-async fn a_production_session_gets_the_machine_users_github_token() {
+async fn a_production_session_gets_linewrights_github_token() {
     let dir = tempfile::tempdir().unwrap();
     let program = fake_claude(dir.path(), "Done.");
     let runtime = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
         model: None,
-        github_token: Some("machine-token".into()),
+        github_token: Some("linewright-token".into()),
     };
 
     runtime.start(&triage_session(dir.path())).await.unwrap();
 
     assert_eq!(
         std::fs::read_to_string(dir.path().join("tokens.log")).unwrap(),
-        "GH_TOKEN=machine-token GITHUB_TOKEN=machine-token\n"
+        "GH_TOKEN=linewright-token GITHUB_TOKEN=linewright-token\n"
     );
 }
 

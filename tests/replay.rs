@@ -79,7 +79,7 @@ fn spec_change_case_allowing(
     let case_json = Case {
         repo: "acme/widgets".into(),
         default_branch: "main".into(),
-        machine_user: Login::new(MACHINE),
+        linewright: Login::new(LINEWRIGHT),
         issue_types: None,
         update_method: UpdateMethod::Merge,
         allowed_merge_methods: allowed_merge_methods.iter().copied().collect(),

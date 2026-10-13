@@ -31,7 +31,7 @@ use crate::tracking;
 pub struct Case {
     pub repo: String,
     pub default_branch: String,
-    pub machine_user: Login,
+    pub linewright: Login,
     pub issue_types: Option<Vec<String>>,
     /// `rebase` exactly where the default branch requires linear history.
     pub update_method: UpdateMethod,
@@ -88,7 +88,7 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
     }
     std::fs::create_dir_all(dir)?;
     let settings = github.settings().await?;
-    let machine = github.machine_user();
+    let linewright = github.linewright();
     let issue = github.repo_get(&format!("/issues/{}", number.0)).await?;
     let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
     let author = |v: &Value| Login::new(text(&v["user"]["login"]));
@@ -115,7 +115,7 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
             })
             .collect();
         handled.push(Subject::SpecChange(number));
-        handled.extend(tickets_of(github, &machine, number, &text(&pr["title"])).await?);
+        handled.extend(tickets_of(github, &linewright, number, &text(&pr["title"])).await?);
         let event = Event::SpecChange {
             number,
             title: text(&pr["title"]),
@@ -173,7 +173,7 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
     let case = Case {
         repo: github.full_name(),
         default_branch: settings.default_branch.clone(),
-        machine_user: machine,
+        linewright,
         issue_types: match settings.categories {
             Categories::IssueTypes(types) => Some(types),
             Categories::Labels => None,
@@ -203,12 +203,14 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
 /// tracking issue.
 async fn tickets_of(
     github: &GitHub,
-    machine: &Login,
+    linewright: &Login,
     pr: Number,
     title: &str,
 ) -> Result<Vec<Subject>> {
     let issues = github
-        .repo_get(&format!("/issues?creator={machine}&state=all&per_page=100"))
+        .repo_get(&format!(
+            "/issues?creator={linewright}&state=all&per_page=100"
+        ))
         .await?;
     let tracking_title = tracking::title(title);
     let reference = format!("{pr}.");
@@ -271,7 +273,7 @@ pub async fn replay(
             out,
             Seed {
                 default_branch: case.default_branch.clone(),
-                machine_user: case.machine_user.clone(),
+                linewright: case.linewright.clone(),
                 issue_types: case.issue_types.clone(),
                 linear_history: case.update_method == UpdateMethod::Rebase,
                 allowed_merge_methods: case.allowed_merge_methods.clone(),
@@ -305,13 +307,13 @@ pub async fn replay(
             // A ticket the factory wrote is already briefed; anything else
             // starts at triage. The factory's own comments are its output,
             // not the case.
-            let entry = if *author == case.machine_user {
+            let entry = if *author == case.linewright {
                 label::READY_FOR_AGENT
             } else {
                 label::NEEDS_TRIAGE
             };
             let issue = store.open_issue(author.as_str(), title, body, &[entry]);
-            for comment in comments.iter().filter(|c| c.author != case.machine_user) {
+            for comment in comments.iter().filter(|c| c.author != case.linewright) {
                 store.comment_as(comment.author.as_str(), issue, &comment.body)?;
             }
         }

@@ -40,9 +40,9 @@ impl Login {
         &self.0
     }
 
-    /// A person other than the machine user: someone to ask for a review.
-    pub fn is_person_besides(&self, machine_user: &Login) -> bool {
-        self != machine_user && !self.is_bot()
+    /// A person other than Linewright: someone to ask for a review.
+    pub fn is_person_besides(&self, linewright: &Login) -> bool {
+        self != linewright && !self.is_bot()
     }
 }
 
@@ -145,8 +145,8 @@ pub enum Filed {
 }
 
 impl Filed {
-    pub fn read(author: &Login, title: &str, body: &str, machine_user: &Login) -> Option<Filed> {
-        if author != machine_user {
+    pub fn read(author: &Login, title: &str, body: &str, linewright: &Login) -> Option<Filed> {
+        if author != linewright {
             return None;
         }
         if let Some(spec_change) = crate::tracking::spec_change_of(title, body) {
@@ -382,7 +382,7 @@ pub struct Snapshot {
     pub default_branch: String,
     /// Open issues Linewright may act on, and any others the store returns.
     pub issues: Vec<Issue>,
-    /// Pull requests by the machine user: open ones, and recently closed ones.
+    /// Pull requests by Linewright: open ones, and recently closed ones.
     pub pulls: Vec<Pull>,
     /// Pull requests merged into the default branch since the lookback cutoff.
     pub merged: Vec<MergedPull>,

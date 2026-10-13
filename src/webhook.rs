@@ -117,7 +117,7 @@ pub enum Subject {
 
 impl Subject {
     /// The issues and pull requests a refresh reads again for it, found in
-    /// `snapshot`, whose pull requests are the machine user's: the open ones
+    /// `snapshot`, whose pull requests are Linewright's: the open ones
     /// whose head is the commit, and every open one for a push to the
     /// default branch.
     pub fn items(&self, snapshot: &Snapshot) -> Vec<Item> {

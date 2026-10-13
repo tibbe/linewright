@@ -22,7 +22,7 @@ use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::{Address, Listener, Secret, Webhooks};
 use serde_json::Value;
 
-pub const MACHINE: &str = "factory";
+pub const LINEWRIGHT: &str = "factory";
 
 pub struct FakeClock {
     now: Mutex<Timestamp>,
@@ -348,7 +348,7 @@ impl World {
                 &dir.path().join("store"),
                 Seed {
                     default_branch: "main".into(),
-                    machine_user: Login::new(MACHINE),
+                    linewright: Login::new(LINEWRIGHT),
                     issue_types: None,
                     linear_history: repository.linear_history,
                     allowed_merge_methods: repository.allowed_merge_methods,

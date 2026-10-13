@@ -182,7 +182,7 @@ fn token() -> Result<String> {
     TOKEN_VARIABLES
         .into_iter()
         .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()))
-        .context("set GH_TOKEN or GITHUB_TOKEN to the machine user's token")
+        .context("set GH_TOKEN or GITHUB_TOKEN to the token of Linewright's account")
 }
 
 async fn connect(config: &Config, token: String) -> Result<GitHub> {
@@ -201,7 +201,7 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
 /// repository's settings are not read for them.
 fn policy(config: &Config, github: &GitHub) -> Policy {
     Policy {
-        machine_user: github.machine_user(),
+        linewright: github.linewright(),
         spec_glob: config.spec_glob.clone(),
         spec_lookback: config.spec_lookback,
         max_workers: config.max_workers,
@@ -215,8 +215,8 @@ fn policy(config: &Config, github: &GitHub) -> Policy {
     }
 }
 
-/// The agent runtime, its sessions given `github_token`: the machine user's
-/// in production, none in replay (`docs/specs/replay.md`).
+/// The agent runtime, its sessions given `github_token`: the token of
+/// Linewright's account in production, none in replay (`docs/specs/replay.md`).
 fn runtime(config: &Config, bash: PathBuf, github_token: Option<String>) -> ClaudeCode {
     ClaudeCode {
         program: RUNTIME.into(),

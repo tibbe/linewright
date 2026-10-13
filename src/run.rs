@@ -893,7 +893,7 @@ async fn pull_work(
         Task::Update => WorkKind::Update,
     };
     let stage = stage_of(kind);
-    let machine = &shell.policy.machine_user;
+    let linewright = &shell.policy.linewright;
     let purpose = Purpose::Work { subject, kind };
     let ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
     let start = git::head(&ws.dir).await.map_err(infra)?;
@@ -918,7 +918,7 @@ async fn pull_work(
             return Ok(());
         }
         let fresh = store.pull(pr.number).await.map_err(infra)?;
-        if !late(&new_feedback(&fresh, machine), ctx.as_of).is_empty() {
+        if !late(&new_feedback(&fresh, linewright), ctx.as_of).is_empty() {
             info!(
                 pr = pr.number.0,
                 "feedback arrived; leaving the update to a rework run"
@@ -937,8 +937,8 @@ async fn pull_work(
             .map_err(infra)?,
         _ => vec![],
     };
-    let feedback = new_feedback(pr, machine);
-    let mut feedback_authors = feedback_people(&feedback, machine);
+    let feedback = new_feedback(pr, linewright);
+    let mut feedback_authors = feedback_people(&feedback, linewright);
     let pull_task = match task {
         Task::Rework => PullTask::Rework(feedback),
         Task::FixCi(_) => PullTask::FixCi(&failures),
@@ -976,12 +976,12 @@ async fn pull_work(
         if !pr_now.is_open() || !matches!(result, PullWorkResult::Done { .. }) {
             break;
         }
-        let arrived = late(&new_feedback(&pr_now, machine), shown_until);
+        let arrived = late(&new_feedback(&pr_now, linewright), shown_until);
         if arrived.is_empty() {
             break;
         }
         shown_until = read_at;
-        feedback_authors.extend(feedback_people(&arrived, machine));
+        feedback_authors.extend(feedback_people(&arrived, linewright));
         threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
         let followup = prompts::late_feedback(&pr_now, &arrived);
         let session = turn.session.clone();
@@ -1081,7 +1081,7 @@ fn late<'a>(feedback: &Feedback<'a>, since: Timestamp) -> Feedback<'a> {
     }
 }
 
-fn feedback_people(feedback: &Feedback, machine: &Login) -> Vec<Login> {
+fn feedback_people(feedback: &Feedback, linewright: &Login) -> Vec<Login> {
     feedback
         .comments
         .iter()
@@ -1093,7 +1093,7 @@ fn feedback_people(feedback: &Feedback, machine: &Login) -> Vec<Login> {
                 .iter()
                 .flat_map(|(_, cs)| cs.iter().map(|c| &c.author)),
         )
-        .filter(|a| a.is_person_besides(machine))
+        .filter(|a| a.is_person_besides(linewright))
         .cloned()
         .collect()
 }
@@ -1187,7 +1187,7 @@ pub(crate) async fn workflow(
     }
 }
 
-/// Files the issues `result` returns, as the machine user, up to the
+/// Files the issues `result` returns, as Linewright, up to the
 /// workflow's `max-issues`; the rest are dropped.
 async fn record_workflow(
     shell: &Shell,

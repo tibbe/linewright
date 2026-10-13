@@ -70,7 +70,7 @@ async fn a_workflow_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the
 }
 
 #[tokio::test]
-async fn a_workflow_run_files_the_issues_its_result_returns_as_the_machine_user() {
+async fn a_workflow_run_files_the_issues_its_result_returns_as_linewright() {
     let world = with_workflow("weekly", WEEKLY).await;
     world.runtime.on_workflow(|_| {
         json(json!({
@@ -106,13 +106,13 @@ async fn a_workflow_run_files_the_issues_its_result_returns_as_the_machine_user(
             (
                 "Fix the widget count",
                 vec!["ready-for-agent"],
-                MACHINE,
+                LINEWRIGHT,
                 "> *Linewright, workflow weekly*\n\nCount them all.\n\n- [ ] All counted"
             ),
             (
                 "Should gadgets expire?",
                 vec!["ready-for-human"],
-                MACHINE,
+                LINEWRIGHT,
                 "> *Linewright, workflow weekly*\n\nRecommend: yes."
             ),
         ]

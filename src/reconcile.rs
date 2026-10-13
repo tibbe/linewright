@@ -18,7 +18,7 @@ use crate::workflow::{LastRuns, Workflow, WorkflowName};
 /// The settings the decisions depend on.
 #[derive(Clone, Debug)]
 pub struct Policy {
-    pub machine_user: Login,
+    pub linewright: Login,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
     pub max_workers: usize,
@@ -232,7 +232,7 @@ pub enum Action {
         subject: Subject,
         reason: String,
     },
-    /// Add the machine user as an assignee.
+    /// Add Linewright as an assignee.
     Claim {
         issue: Number,
     },
@@ -452,7 +452,7 @@ fn schedule(workflows: &Workflows, now: Timestamp, room: usize) -> Vec<Action> {
 
 /// Why a run in flight must stop, if it must: its subject no longer asks for
 /// the work. Runs stop when their issue loses its label, is closed or, for
-/// implementation, loses the machine user as an assignee.
+/// implementation, loses Linewright as an assignee.
 fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<String> {
     match run.subject {
         Subject::SpecChange(pr) => {
@@ -472,10 +472,10 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
             };
             if !issue.has_label(wanted) {
                 Some(format!("`{wanted}` was removed from {number}"))
-            } else if run.kind != WorkKind::Triage && !issue.is_assigned(&policy.machine_user) {
+            } else if run.kind != WorkKind::Triage && !issue.is_assigned(&policy.linewright) {
                 Some(format!(
                     "{} was unassigned from {number}",
-                    policy.machine_user
+                    policy.linewright
                 ))
             } else {
                 None
@@ -569,14 +569,14 @@ fn implementation(
     policy: &Policy,
     plan: &mut Plan,
 ) {
-    let claimed = issue.is_assigned(&policy.machine_user);
+    let claimed = issue.is_assigned(&policy.linewright);
     if live || (!claimed && (stopped_by_unassign(issue, policy) || !policy.may_start_on(issue))) {
         return;
     }
     let mut pulls = snapshot
         .pulls
         .iter()
-        .filter(|p| p.author == policy.machine_user && p.closes.contains(&issue.number));
+        .filter(|p| p.author == policy.linewright && p.closes.contains(&issue.number));
     if let Some(pr) = pulls
         .clone()
         .filter(|p| p.is_open())
@@ -629,11 +629,11 @@ fn implementation(
     }
 }
 
-fn last_linewright_comment(issue: &Issue, machine: &Login) -> Option<Timestamp> {
+fn last_linewright_comment(issue: &Issue, linewright: &Login) -> Option<Timestamp> {
     issue
         .comments
         .iter()
-        .filter(|c| stage_of(c, machine).is_some())
+        .filter(|c| stage_of(c, linewright).is_some())
         .map(|c| c.created_at)
         .max()
 }
@@ -642,7 +642,7 @@ fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) 
     issue
         .comments
         .iter()
-        .any(|c| c.created_at > since && stage_of(c, &policy.machine_user).is_some())
+        .any(|c| c.created_at > since && stage_of(c, &policy.linewright).is_some())
 }
 
 /// An open pull request for the issue: address feedback, keep it up to date
@@ -650,8 +650,8 @@ fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) 
 /// auto-merge, merge it once no person holds it.
 fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &mut Plan) {
     let (issue_number, pr_number) = (issue.number, pr.number);
-    let machine = &policy.machine_user;
-    if !new_feedback(pr, machine).is_empty() {
+    let linewright = &policy.linewright;
+    if !new_feedback(pr, linewright).is_empty() {
         return plan.start(Work::Rework {
             issue: issue_number,
             pr: pr_number,
@@ -665,7 +665,7 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
         issue: issue_number,
         pr: pr_number,
     };
-    if rebases_to_repair(pr, policy) && (behind || !tried_rebase(issue, pr, memory, machine)) {
+    if rebases_to_repair(pr, policy) && (behind || !tried_rebase(issue, pr, memory, linewright)) {
         let rebase = TriedRebase {
             pr: pr_number,
             head: pr.head_sha.clone(),
@@ -697,7 +697,8 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
     }
     // A ticket given back to the maintainer and labeled again waits a full
     // timeout again.
-    let waiting_since = last_linewright_comment(issue, machine).map_or(pushed, |c| c.max(pushed));
+    let waiting_since =
+        last_linewright_comment(issue, linewright).map_or(pushed, |c| c.max(pushed));
     if !pending.is_empty() {
         if now > waiting_since + policy.ci_timeout {
             plan.act(Action::HandBack {
@@ -715,8 +716,8 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
     if !failed.is_empty() {
         let cycle_start = [
             Some(pr.created_at),
-            last_marked(&pr.comments, Stage::Rework, machine),
-            last_linewright_comment(issue, machine),
+            last_marked(&pr.comments, Stage::Rework, linewright),
+            last_linewright_comment(issue, linewright),
         ]
         .into_iter()
         .flatten()
@@ -724,7 +725,9 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
         let attempts = pr
             .comments
             .iter()
-            .filter(|c| stage_of(c, machine) == Some(Stage::Ci) && Some(c.created_at) > cycle_start)
+            .filter(|c| {
+                stage_of(c, linewright) == Some(Stage::Ci) && Some(c.created_at) > cycle_start
+            })
             .count();
         if attempts < policy.ci_attempts as usize {
             plan.start(Work::FixCi {
@@ -748,7 +751,7 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
     // A pull request a person holds is marked ready as it is without
     // auto-merge, so the people holding it can approve it.
     let method = match policy.auto_merge {
-        Some(method) if !is_held(pr, machine) => method,
+        Some(method) if !is_held(pr, linewright) => method,
         _ => {
             if draft {
                 plan.act(Action::MarkReady { pr: pr_number });
@@ -774,12 +777,13 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
         },
         Mergeability::Clean => merge(issue_number, pr, draft, method, memory, plan),
         // Held for review again only when what GitHub requires changes.
-        Mergeability::Blocked { requires } if draft || !hold_noted(pr, requires, machine) => plan
-            .act(Action::HoldForReview {
+        Mergeability::Blocked { requires } if draft || !hold_noted(pr, requires, linewright) => {
+            plan.act(Action::HoldForReview {
                 pr: pr_number,
                 draft,
                 requires: requires.clone(),
-            }),
+            })
+        }
         Mergeability::Unknown if draft => {
             plan.act(Action::MarkReadyForMergeState { pr: pr_number })
         }
@@ -791,8 +795,8 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
 /// Whether an update run already tried to rebase the pull request at its
 /// head since the ticket was last handed back or labeled `ready-for-agent`:
 /// a run cancelled or failed since is no rebase tried.
-fn tried_rebase(issue: &Issue, pr: &Pull, memory: &Memory, machine: &Login) -> bool {
-    let restarted = last_linewright_comment(issue, machine)
+fn tried_rebase(issue: &Issue, pr: &Pull, memory: &Memory, linewright: &Login) -> bool {
+    let restarted = last_linewright_comment(issue, linewright)
         .into_iter()
         .chain(last_labeled(issue, label::READY_FOR_AGENT))
         .max();
@@ -867,11 +871,11 @@ pub fn hold_note(requires: &[Requirement]) -> String {
 
 /// Whether Linewright's latest review comment on the pull request already
 /// names `requires`.
-fn hold_noted(pr: &Pull, requires: &[Requirement], machine: &Login) -> bool {
+fn hold_noted(pr: &Pull, requires: &[Requirement], linewright: &Login) -> bool {
     let note = marked(Stage::Review, &hold_note(requires));
     pr.comments
         .iter()
-        .filter(|c| stage_of(c, machine) == Some(Stage::Review))
+        .filter(|c| stage_of(c, linewright) == Some(Stage::Review))
         .max_by_key(|c| c.created_at)
         .is_some_and(|c| c.body.trim() == note)
 }
@@ -880,8 +884,8 @@ fn hold_noted(pr: &Pull, requires: &[Requirement], machine: &Login) -> bool {
 /// merge: they have no approving review newer than every comment they made
 /// on it, as a PR comment, in a review thread or as another review. The
 /// inline comments submitted with an approval are made no later than it, so
-/// they don't hold the merge. Bots and the machine user hold nothing.
-fn is_held(pr: &Pull, machine: &Login) -> bool {
+/// they don't hold the merge. Bots and Linewright hold nothing.
+fn is_held(pr: &Pull, linewright: &Login) -> bool {
     let comments = pr
         .comments
         .iter()
@@ -890,7 +894,7 @@ fn is_held(pr: &Pull, machine: &Login) -> bool {
     let reviews = pr.reviews.iter().map(|r| (&r.author, r.submitted_at));
     let activity: Vec<_> = comments
         .chain(reviews)
-        .filter(|(author, _)| author.is_person_besides(machine))
+        .filter(|(author, _)| author.is_person_besides(linewright))
         .collect();
     activity.iter().any(|(person, _)| {
         let approved = pr
@@ -922,18 +926,22 @@ impl Feedback<'_> {
     }
 }
 
-/// Comments and reviews from anyone other than the machine user, posted after
+/// Comments and reviews from anyone other than Linewright, posted after
 /// Linewright last answered: its last push, or its last rework comment when a
 /// rework needed no change. A review that only approves is not feedback.
-pub fn new_feedback<'a>(pr: &'a Pull, machine: &Login) -> Feedback<'a> {
-    let pushed = pr.pushes.iter().filter(|p| &p.by == machine).map(|p| p.at);
-    let created = (&pr.author == machine).then_some(pr.created_at);
+pub fn new_feedback<'a>(pr: &'a Pull, linewright: &Login) -> Feedback<'a> {
+    let pushed = pr
+        .pushes
+        .iter()
+        .filter(|p| &p.by == linewright)
+        .map(|p| p.at);
+    let created = (&pr.author == linewright).then_some(pr.created_at);
     let answered = pushed
         .chain(created)
-        .chain(last_marked(&pr.comments, Stage::Rework, machine))
+        .chain(last_marked(&pr.comments, Stage::Rework, linewright))
         .max();
     let new = |author: &Login, at: Timestamp| {
-        author != machine && answered.is_none_or(|answered| at > answered)
+        author != linewright && answered.is_none_or(|answered| at > answered)
     };
     Feedback {
         comments: pr
@@ -965,11 +973,11 @@ pub fn new_feedback<'a>(pr: &'a Pull, machine: &Login) -> Feedback<'a> {
 fn last_marked(
     comments: &[crate::domain::Comment],
     stage: Stage,
-    machine: &Login,
+    linewright: &Login,
 ) -> Option<Timestamp> {
     comments
         .iter()
-        .filter(|c| stage_of(c, machine) == Some(stage))
+        .filter(|c| stage_of(c, linewright) == Some(stage))
         .map(|c| c.created_at)
         .max()
 }
@@ -986,10 +994,10 @@ fn humanize(delta: TimeDelta) -> String {
     humantime::format_duration(delta.to_std().unwrap_or_default()).to_string()
 }
 
-/// A person unassigning the machine user stops the issue's work until
+/// A person unassigning Linewright stops the issue's work until
 /// `ready-for-agent` is applied again.
 fn stopped_by_unassign(issue: &Issue, policy: &Policy) -> bool {
-    let machine = &policy.machine_user;
+    let linewright = &policy.linewright;
     let unassigned = issue
         .events
         .iter()
@@ -998,7 +1006,7 @@ fn stopped_by_unassign(issue: &Issue, policy: &Policy) -> bool {
                 assignee,
                 actor,
                 at,
-            } if assignee == machine && actor != machine => Some(*at),
+            } if assignee == linewright && actor != linewright => Some(*at),
             _ => None,
         })
         .max();
@@ -1021,23 +1029,23 @@ fn last_labeled(issue: &Issue, name: &str) -> Option<Timestamp> {
         .max()
 }
 
-/// Triage runs on `needs-triage` issues not authored by the machine user:
+/// Triage runs on `needs-triage` issues not authored by Linewright:
 /// tickets Linewright creates are already briefed.
 fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
     issue.has_label(label::NEEDS_TRIAGE)
-        && issue.author != policy.machine_user
+        && issue.author != policy.linewright
         && policy.may_start_on(issue)
 }
 
 /// An answer in the thread (`docs/specs/triage.md`): the label of
 /// an issue waiting on the reporter or the maintainer, if Linewright's last
-/// comment on it is a triage comment and anyone other than the machine user
+/// comment on it is a triage comment and anyone other than Linewright
 /// commented after it and after the label was applied. A hand-back from after
 /// triage asks no question, and a label the maintainer applied wins over their
 /// comment.
 fn answered_label(issue: &Issue, policy: &Policy) -> Option<&'static str> {
-    let machine = &policy.machine_user;
-    if issue.author == *machine
+    let linewright = &policy.linewright;
+    if issue.author == *linewright
         || !policy.may_start_on(issue)
         || [label::READY_FOR_AGENT, label::NEEDS_TRIAGE]
             .into_iter()
@@ -1051,7 +1059,7 @@ fn answered_label(issue: &Issue, policy: &Policy) -> Option<&'static str> {
     let (stage, last) = issue
         .comments
         .iter()
-        .filter_map(|c| Some((stage_of(c, machine)?, c.created_at)))
+        .filter_map(|c| Some((stage_of(c, linewright)?, c.created_at)))
         .max_by_key(|(_, at)| *at)?;
     if stage != Stage::Triage {
         return None;
@@ -1060,7 +1068,7 @@ fn answered_label(issue: &Issue, policy: &Policy) -> Option<&'static str> {
     issue
         .comments
         .iter()
-        .any(|c| &c.author != machine && c.created_at > asked)
+        .any(|c| &c.author != linewright && c.created_at > asked)
         .then_some(waiting)
 }
 
@@ -1078,14 +1086,14 @@ pub fn pending_spec_changes<'a>(
 }
 
 /// A spec change: merged into the default branch within the lookback window,
-/// touching the spec, not authored by the machine user, neither processed nor
+/// touching the spec, not authored by Linewright, neither processed nor
 /// handed back and, with a label required, carrying it. The label is checked
 /// on every poll, so one applied after the merge counts; `cancel_reason` does
 /// not look at it, so a cut under way survives its removal.
 fn is_spec_change(pr: &MergedPull, snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> bool {
     pr.base_ref == snapshot.default_branch
         && pr.merged_at >= now - policy.spec_lookback
-        && pr.author != policy.machine_user
+        && pr.author != policy.linewright
         && !pr.has_label(label::SPEC_PROCESSED)
         && !pr.has_label(label::READY_FOR_HUMAN)
         && policy

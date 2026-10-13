@@ -114,16 +114,12 @@ impl GitHub {
         format!("{}/{}", self.owner, self.name)
     }
 
-    pub fn machine_user(&self) -> Login {
-        self.machine()
-    }
-
-    fn machine(&self) -> Login {
+    pub fn linewright(&self) -> Login {
         Login::new(&self.viewer.login)
     }
 
-    /// Whether `author` is the machine user.
-    fn by_machine(&self, author: &Option<Actor>) -> bool {
+    /// Whether `author` is Linewright.
+    fn by_linewright(&self, author: &Option<Actor>) -> bool {
         author
             .as_ref()
             .is_some_and(|a| a.login == self.viewer.login && a.typename != "Bot")
@@ -303,7 +299,7 @@ impl GitHub {
     }
 
     /// The repository's open pull requests, by number and author only: the
-    /// full fields cost points per pull request, so only the machine user's
+    /// full fields cost points per pull request, so only Linewright's
     /// are read in full.
     async fn open_pulls(&self) -> Result<Vec<GqlOpenPull>> {
         let query = "query($owner: String!, $name: String!, $cursor: String) {
@@ -748,8 +744,8 @@ struct ParentNode {
 }
 
 impl ParentNode {
-    fn into_parent(self, machine_user: &Login) -> Parent {
-        let filed = Filed::read(&login(self.author), &self.title, &self.body, machine_user);
+    fn into_parent(self, linewright: &Login) -> Parent {
+        let filed = Filed::read(&login(self.author), &self.title, &self.body, linewright);
         Parent::new(Number(self.number), filed)
     }
 }
@@ -817,7 +813,7 @@ enum GqlEvent {
 }
 
 /// The labels of the open issues a snapshot reads, besides those assigned to
-/// or opened by the machine user.
+/// or opened by Linewright.
 const IN_VIEW_LABELS: [&str; 3] = [
     label::NEEDS_TRIAGE,
     label::NEEDS_INFO,
@@ -826,26 +822,23 @@ const IN_VIEW_LABELS: [&str; 3] = [
 
 impl GqlIssue {
     /// Whether a snapshot reads the issue: open, and labeled one of
-    /// `IN_VIEW_LABELS`, assigned to the machine user or opened by it, as the
+    /// `IN_VIEW_LABELS`, assigned to Linewright or opened by it, as the
     /// snapshot's filters select issues.
-    fn in_view(&self, machine_user: &str) -> bool {
+    fn in_view(&self, linewright: &str) -> bool {
         self.state == "OPEN"
             && (self
                 .labels
                 .nodes
                 .iter()
                 .any(|l| IN_VIEW_LABELS.contains(&l.name.as_str()))
-                || self.assignees.nodes.iter().any(|a| a.login == machine_user)
-                || self
-                    .author
-                    .as_ref()
-                    .is_some_and(|a| a.login == machine_user))
+                || self.assignees.nodes.iter().any(|a| a.login == linewright)
+                || self.author.as_ref().is_some_and(|a| a.login == linewright))
     }
 
-    fn into_issue(self, machine_user: &Login) -> Issue {
+    fn into_issue(self, linewright: &Login) -> Issue {
         let i = self;
         let author = login(i.author);
-        let filed = Filed::read(&author, &i.title, &i.body, machine_user);
+        let filed = Filed::read(&author, &i.title, &i.body, linewright);
         let events = i
             .timeline_items
             .nodes
@@ -886,7 +879,7 @@ impl GqlIssue {
             comments: i.comments.nodes.into_iter().map(Comment::from).collect(),
             blocked_by: linked(i.blocked_by),
             sub_issues: linked(i.sub_issues),
-            parent: i.parent.map(|p| p.into_parent(machine_user)),
+            parent: i.parent.map(|p| p.into_parent(linewright)),
             events,
             filed,
         }
@@ -1244,14 +1237,14 @@ impl Store for GitHub {
             .unwrap_or(false);
         if !can_push {
             bail!(
-                "{} cannot push to {}/{}: the machine user needs write access",
+                "{} cannot push to {}/{}: Linewright's account needs write access",
                 self.viewer.login,
                 self.owner,
                 self.name
             );
         }
         Ok(Identity {
-            login: self.machine(),
+            login: self.linewright(),
             name: self.viewer.login.clone(),
             email: format!(
                 "{}+{}@users.noreply.github.com",
@@ -1373,13 +1366,13 @@ impl Store for GitHub {
             .as_str()
             .context("the repository has a default branch")?
             .to_string();
-        let machine = &self.viewer.login;
+        let linewright = &self.viewer.login;
         let mut issues: BTreeMap<u64, GqlIssue> = BTreeMap::new();
         // As `GqlIssue::in_view` reads one issue.
         for filter in [
             json!({"states": ["OPEN"], "labels": IN_VIEW_LABELS}),
-            json!({"states": ["OPEN"], "assignee": machine}),
-            json!({"states": ["OPEN"], "createdBy": machine}),
+            json!({"states": ["OPEN"], "assignee": linewright}),
+            json!({"states": ["OPEN"], "createdBy": linewright}),
         ] {
             for issue in self.issues(filter).await? {
                 issues.insert(issue.number, issue);
@@ -1387,11 +1380,11 @@ impl Store for GitHub {
         }
         let mut pulls = vec![];
         for pr in self.open_pulls().await? {
-            if self.by_machine(&pr.author) {
+            if self.by_linewright(&pr.author) {
                 pulls.push(self.pull(Number(pr.number)).await?);
             }
         }
-        // The machine user's closed and merged pull requests for the issues in
+        // Linewright's closed and merged pull requests for the issues in
         // view, however long ago: a refused pull request is not redone, and a
         // merged one is not redone while GitHub closes its issue.
         let closed: std::collections::BTreeSet<u64> = issues
@@ -1402,7 +1395,7 @@ impl Store for GitHub {
                     .flat_map(|n| &n.nodes)
             })
             .filter(|p| {
-                matches!(p.state.as_str(), "CLOSED" | "MERGED") && self.by_machine(&p.author)
+                matches!(p.state.as_str(), "CLOSED" | "MERGED") && self.by_linewright(&p.author)
             })
             .map(|p| p.number)
             .collect();
@@ -1414,7 +1407,7 @@ impl Store for GitHub {
             default_branch,
             issues: issues
                 .into_values()
-                .map(|i| i.into_issue(&self.machine_user()))
+                .map(|i| i.into_issue(&self.linewright()))
                 .collect(),
             pulls,
         })
@@ -1426,11 +1419,11 @@ impl Store for GitHub {
             .await
     }
 
-    async fn machine_pull(&self, number: Number) -> Result<Option<Pull>> {
+    async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>> {
         let Some(pr) = self.gql_pull(number).await? else {
             return Ok(None);
         };
-        if !self.by_machine(&pr.author) {
+        if !self.by_linewright(&pr.author) {
             return Ok(None);
         }
         // As the snapshot reads them: every open one, and closed and merged
@@ -1464,19 +1457,19 @@ impl Store for GitHub {
                 open: issue.state == "OPEN",
             });
         }
-        // A snapshot holds the machine user's open pull requests, and its
+        // A snapshot holds Linewright's open pull requests, and its
         // closed and merged ones for the issues in view.
         let mut pulls = vec![];
         for pr in issue
             .closed_by_pull_requests_references
             .iter()
             .flat_map(|n| &n.nodes)
-            .filter(|p| self.by_machine(&p.author))
+            .filter(|p| self.by_linewright(&p.author))
         {
             pulls.push(self.pull(Number(pr.number)).await?);
         }
         Ok(IssueRead::Held {
-            issue: Box::new(issue.into_issue(&self.machine_user())),
+            issue: Box::new(issue.into_issue(&self.linewright())),
             pulls,
         })
     }

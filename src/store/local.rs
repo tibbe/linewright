@@ -27,7 +27,7 @@ use crate::git;
 /// The repository a local store starts with.
 pub struct Seed {
     pub default_branch: String,
-    pub machine_user: Login,
+    pub linewright: Login,
     /// The repository's issue types, if it has them.
     pub issue_types: Option<Vec<String>>,
     /// Whether the default branch requires linear history.
@@ -44,7 +44,7 @@ pub struct LocalStore {
 
 struct State {
     default_branch: String,
-    machine_user: Login,
+    linewright: Login,
     issue_types: Option<Vec<String>>,
     linear_history: bool,
     allowed_merge_methods: MergeMethods,
@@ -127,7 +127,7 @@ impl LocalStore {
             clock,
             state: Mutex::new(State {
                 default_branch: seed.default_branch,
-                machine_user: seed.machine_user,
+                linewright: seed.linewright,
                 issue_types: seed.issue_types,
                 linear_history: seed.linear_history,
                 allowed_merge_methods: seed.allowed_merge_methods,
@@ -890,7 +890,7 @@ impl State {
     }
 
     fn filed(&self, issue: &Issue) -> Option<Filed> {
-        Filed::read(&issue.author, &issue.title, &issue.body, &self.machine_user)
+        Filed::read(&issue.author, &issue.title, &issue.body, &self.linewright)
     }
 
     fn add_label(&mut self, number: Number, label: &str, now: Timestamp) -> Result<()> {
@@ -975,7 +975,7 @@ impl PullRecord {
 #[async_trait]
 impl Store for LocalStore {
     async fn identity(&self) -> Result<Identity> {
-        let login = self.state().machine_user.clone();
+        let login = self.state().linewright.clone();
         Ok(Identity {
             name: login.0.clone(),
             email: format!("{login}@users.noreply.github.com"),
@@ -1011,7 +1011,7 @@ impl Store for LocalStore {
 
     async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot> {
         self.readable()?;
-        let (default_branch, issues, machine, pulls) = {
+        let (default_branch, issues, linewright, pulls) = {
             let mut state = self.state();
             state.snapshots_taken += 1;
             let issues: Vec<Issue> = state.issues.values().map(|r| state.issue_view(r)).collect();
@@ -1023,7 +1023,7 @@ impl Store for LocalStore {
             (
                 state.default_branch.clone(),
                 issues,
-                state.machine_user.clone(),
+                state.linewright.clone(),
                 pulls,
             )
         };
@@ -1037,7 +1037,7 @@ impl Store for LocalStore {
             if let Some(merged) = self.merged_pull(number, merged_since).await? {
                 snapshot.merged.push(merged);
             }
-            if author == machine {
+            if author == linewright {
                 snapshot.pulls.push(self.pull_view(number).await?);
             }
         }
@@ -1052,11 +1052,13 @@ impl Store for LocalStore {
                 return Ok(IssueRead::Gone);
             };
             let issue = state.issue_view(record);
-            let machine = &state.machine_user;
+            let linewright = &state.linewright;
             let pulls: Vec<Number> = state
                 .pulls
                 .values()
-                .filter(|p| &p.author == machine && closing_references(&p.body).contains(&number))
+                .filter(|p| {
+                    &p.author == linewright && closing_references(&p.body).contains(&number)
+                })
                 .map(|p| p.number)
                 .collect();
             (issue, pulls)
@@ -1075,16 +1077,16 @@ impl Store for LocalStore {
         self.pull_view(number).await
     }
 
-    async fn machine_pull(&self, number: Number) -> Result<Option<Pull>> {
+    async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>> {
         self.read_item()?;
-        let by_machine = {
+        let by_linewright = {
             let state = self.state();
             let Some(record) = state.pulls.get(&number) else {
                 return Ok(None);
             };
-            record.author == state.machine_user
+            record.author == state.linewright
         };
-        if !by_machine {
+        if !by_linewright {
             return Ok(None);
         }
         Ok(Some(self.pull_view(number).await?))
@@ -1207,8 +1209,8 @@ impl Store for LocalStore {
             }
         }
         git::git(dir, &args).await?;
-        let machine = self.state().machine_user.clone();
-        self.record_push(branch, &machine);
+        let linewright = self.state().linewright.clone();
+        self.record_push(branch, &linewright);
         Ok(())
     }
 
@@ -1222,26 +1224,26 @@ impl Store for LocalStore {
     }
 
     async fn assign(&self, issue: Number) -> Result<()> {
-        let machine = self.state().machine_user.clone();
-        self.assign_as(issue, machine.as_str())
+        let linewright = self.state().linewright.clone();
+        self.assign_as(issue, linewright.as_str())
     }
 
     async fn unassign(&self, issue: Number) -> Result<()> {
         let now = self.now();
         let mut state = self.state();
-        let machine = state.machine_user.clone();
-        state.unassign(issue, &machine, &machine, now)
+        let linewright = state.linewright.clone();
+        state.unassign(issue, &linewright, &linewright, now)
     }
 
     async fn comment(&self, number: Number, body: &str) -> Result<()> {
-        let machine = self.state().machine_user.clone();
-        self.comment_as(machine.as_str(), number, body)
+        let linewright = self.state().linewright.clone();
+        self.comment_as(linewright.as_str(), number, body)
     }
 
     async fn create_issue(&self, issue: NewIssue) -> Result<Number> {
-        let machine = self.state().machine_user.clone();
+        let linewright = self.state().linewright.clone();
         let labels: Vec<&str> = issue.labels.iter().map(String::as_str).collect();
-        Ok(self.open_issue(machine.as_str(), &issue.title, &issue.body, &labels))
+        Ok(self.open_issue(linewright.as_str(), &issue.title, &issue.body, &labels))
     }
 
     async fn edit_body(&self, number: Number, body: &str) -> Result<()> {
@@ -1288,7 +1290,7 @@ impl Store for LocalStore {
         let now = self.now();
         let mut state = self.state();
         let number = state.take_number();
-        let author = state.machine_user.clone();
+        let author = state.linewright.clone();
         state.pulls.insert(
             number,
             PullRecord::new(number, &pull.title, &pull.body, author, &pull.head, now),
@@ -1340,14 +1342,14 @@ impl Store for LocalStore {
         if !self.state().allowed_merge_methods.contains(method) {
             bail!("the repository doesn't allow the merge method `{method}`");
         }
-        let machine = self.state().machine_user.clone();
-        self.merge_as(pr, machine.as_str(), method).await
+        let linewright = self.state().linewright.clone();
+        self.merge_as(pr, linewright.as_str(), method).await
     }
 
     async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()> {
         let now = self.now();
         let mut state = self.state();
-        let machine = state.machine_user.clone();
+        let linewright = state.linewright.clone();
         let thread = state
             .pull_mut(pr)?
             .threads
@@ -1355,7 +1357,7 @@ impl Store for LocalStore {
             .find(|t| t.id == thread)
             .with_context(|| format!("no thread {thread} on {pr}"))?;
         thread.comments.push(Comment {
-            author: machine,
+            author: linewright,
             body: body.into(),
             created_at: now,
         });

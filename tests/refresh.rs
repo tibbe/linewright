@@ -76,7 +76,7 @@ async fn a_spec_change_merged_since_the_poll_and_refreshed_is_cut_into_tickets()
 }
 
 #[tokio::test]
-async fn a_review_on_the_machine_users_pull_request_refreshed_after_its_run_is_addressed() {
+async fn a_review_on_linewrights_pull_request_refreshed_after_its_run_is_addressed() {
     let mut world = World::new().await;
     let (issue, pr) = world.ticket_in_review().await;
 
@@ -432,7 +432,7 @@ async fn another_commit_or_a_push_to_another_branch_reads_nothing_and_decides_no
 }
 
 #[tokio::test]
-async fn a_push_to_the_default_branch_names_every_open_pull_request_of_the_machine_users() {
+async fn a_push_to_the_default_branch_names_every_open_pull_request_of_linewright() {
     let mut world = World::new().await;
     let (first_issue, first) = world.ticket_in_review().await;
     let (second_issue, second) = world.ticket_in_review().await;

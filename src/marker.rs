@@ -70,10 +70,10 @@ fn marker_line(source: impl fmt::Display) -> String {
     format!("> *Linewright, {source}*")
 }
 
-/// The stage of a comment the machine user wrote with a marker line, if it
+/// The stage of a comment Linewright wrote with a marker line, if it
 /// is one.
-pub fn stage_of(comment: &Comment, machine_user: &Login) -> Option<Stage> {
-    if &comment.author != machine_user {
+pub fn stage_of(comment: &Comment, linewright: &Login) -> Option<Stage> {
+    if &comment.author != linewright {
         return None;
     }
     let first = comment.body.lines().next()?.trim();

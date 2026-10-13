@@ -18,7 +18,7 @@ fn at(time: &str) -> Timestamp {
 
 fn policy() -> Policy {
     Policy {
-        machine_user: Login::new("factory"),
+        linewright: Login::new("factory"),
         spec_glob: SpecGlob::default(),
         spec_lookback: TimeDelta::days(7),
         max_workers: 4,

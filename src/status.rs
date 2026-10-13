@@ -48,7 +48,7 @@ fn utc(time: Timestamp) -> String {
 }
 
 fn work_in_flight(snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> Vec<String> {
-    let machine = &policy.machine_user;
+    let linewright = &policy.linewright;
     let mut lines = vec![];
     for pr in pending_spec_changes(snapshot, now, policy) {
         lines.push(format!(
@@ -70,10 +70,9 @@ fn work_in_flight(snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> Vec<S
         } else if issue.has_label(label::READY_FOR_HUMAN) {
             "with the maintainer".into()
         } else if issue.has_label(label::READY_FOR_AGENT) {
-            let pr = snapshot
-                .pulls
-                .iter()
-                .find(|p| p.is_open() && &p.author == machine && p.closes.contains(&issue.number));
+            let pr = snapshot.pulls.iter().find(|p| {
+                p.is_open() && &p.author == linewright && p.closes.contains(&issue.number)
+            });
             let blockers: Vec<String> = issue
                 .blocked_by
                 .iter()
@@ -98,7 +97,7 @@ fn work_in_flight(snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> Vec<S
                     format!("in review: {} ({stage}, {ci})", pr.number)
                 }
                 None if !blockers.is_empty() => format!("blocked by {}", blockers.join(", ")),
-                None if issue.is_assigned(machine) => "claimed: being implemented".into(),
+                None if issue.is_assigned(linewright) => "claimed: being implemented".into(),
                 None => "ready to claim".into(),
             }
         } else {

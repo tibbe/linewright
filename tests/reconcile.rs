@@ -8,7 +8,7 @@ use linewright::reconcile::*;
 use linewright::spec_glob::SpecGlob;
 use linewright::workflow::{LastRuns, Workflow};
 
-const MACHINE: &str = "factory";
+const LINEWRIGHT: &str = "factory";
 
 fn t(minute: i64) -> Timestamp {
     DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
@@ -19,7 +19,7 @@ fn t(minute: i64) -> Timestamp {
 
 fn policy() -> Policy {
     Policy {
-        machine_user: Login::new(MACHINE),
+        linewright: Login::new(LINEWRIGHT),
         spec_glob: SpecGlob::default(),
         spec_lookback: TimeDelta::days(7),
         max_workers: 4,
@@ -97,7 +97,7 @@ fn comment(author: &str, minute: i64, body: &str) -> Comment {
 
 fn triage_comment(minute: i64) -> Comment {
     comment(
-        MACHINE,
+        LINEWRIGHT,
         minute,
         &marked(Stage::Triage, "What version are you on?"),
     )
@@ -127,7 +127,7 @@ fn needs_info_waits_while_only_linewright_has_spoken_since_triage() {
     asked.comments = vec![
         comment("reporter", 0, "It crashes."),
         triage_comment(1),
-        comment(MACHINE, 2, "Anything else?"),
+        comment(LINEWRIGHT, 2, "Anything else?"),
     ];
 
     assert_eq!(decide(&snapshot(vec![asked])), vec![]);
@@ -155,13 +155,13 @@ fn a_maintainers_answer_to_a_ready_for_human_triage_sends_the_issue_back_to_tria
 }
 
 #[test]
-fn only_comments_by_others_than_the_machine_user_after_the_last_triage_comment_are_answers() {
+fn only_comments_by_others_than_linewright_after_the_last_triage_comment_are_answers() {
     for state in [label::NEEDS_INFO, label::READY_FOR_HUMAN] {
         let mut asked = labeled(issue(1), state);
         asked.comments = vec![
             comment("maintainer", 0, "Should they be resizable?"),
             triage_comment(1),
-            comment(MACHINE, 2, "Anything else?"),
+            comment(LINEWRIGHT, 2, "Anything else?"),
         ];
 
         assert_eq!(decide(&snapshot(vec![asked])), vec![], "{state}");
@@ -174,7 +174,7 @@ fn a_comment_on_a_hand_back_from_after_triage_starts_nothing() {
         let mut handed_back = labeled(issue(1), label::READY_FOR_HUMAN);
         handed_back.comments = vec![
             triage_comment(1),
-            comment(MACHINE, 3, &marked(stage, "Handed back.")),
+            comment(LINEWRIGHT, 3, &marked(stage, "Handed back.")),
             comment("maintainer", 5, "Looking into it."),
         ];
 
@@ -183,9 +183,9 @@ fn a_comment_on_a_hand_back_from_after_triage_starts_nothing() {
 }
 
 #[test]
-fn an_issue_the_machine_user_filed_is_not_triaged_when_a_person_comments() {
+fn an_issue_linewright_filed_is_not_triaged_when_a_person_comments() {
     let mut filed = labeled(issue(1), label::READY_FOR_HUMAN);
-    filed.author = Login::new(MACHINE);
+    filed.author = Login::new(LINEWRIGHT);
     filed.comments = vec![triage_comment(1), comment("maintainer", 2, "Agreed.")];
 
     assert_eq!(decide(&snapshot(vec![filed])), vec![]);
@@ -241,8 +241,8 @@ fn only_unprocessed_spec_changes_by_people_within_the_lookback_are_picked_up() {
     let code_only = merged(1, &["src/main.rs", "README.md"]);
     let mut processed = merged(2, &["docs/spec.md"]);
     processed.labels.push(label::SPEC_PROCESSED.into());
-    let mut by_machine = merged(3, &["docs/spec.md"]);
-    by_machine.author = Login::new(MACHINE);
+    let mut by_linewright = merged(3, &["docs/spec.md"]);
+    by_linewright.author = Login::new(LINEWRIGHT);
     let mut too_old = merged(4, &["docs/spec.md"]);
     too_old.merged_at = t(10) - TimeDelta::days(8);
     let mut other_base = merged(6, &["docs/spec.md"]);
@@ -253,7 +253,7 @@ fn only_unprocessed_spec_changes_by_people_within_the_lookback_are_picked_up() {
     world.merged = vec![
         code_only,
         processed,
-        by_machine,
+        by_linewright,
         too_old,
         other_base,
         handed_back,
@@ -293,12 +293,12 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
 
 fn ticket(number: u64) -> Issue {
     let mut ticket = labeled(issue(number), label::READY_FOR_AGENT);
-    ticket.author = Login::new(MACHINE);
+    ticket.author = Login::new(LINEWRIGHT);
     ticket
 }
 
 fn claimed(mut issue: Issue) -> Issue {
-    issue.assignees.push(Login::new(MACHINE));
+    issue.assignees.push(Login::new(LINEWRIGHT));
     issue
 }
 
@@ -363,7 +363,7 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
 
 fn unassigned_by(mut issue: Issue, actor: &str, minute: i64) -> Issue {
     issue.events.push(IssueEvent::Unassigned {
-        assignee: Login::new(MACHINE),
+        assignee: Login::new(LINEWRIGHT),
         actor: Login::new(actor),
         at: t(minute),
     });
@@ -379,7 +379,7 @@ fn labeled_at(mut issue: Issue, label: &str, minute: i64) -> Issue {
 }
 
 #[test]
-fn unassigning_the_machine_user_stops_the_work_until_the_label_is_applied_again() {
+fn unassigning_linewright_stops_the_work_until_the_label_is_applied_again() {
     let stopped = unassigned_by(
         labeled_at(ticket(2), label::READY_FOR_AGENT, 1),
         "maintainer",
@@ -394,8 +394,11 @@ fn unassigning_the_machine_user_stops_the_work_until_the_label_is_applied_again(
         label::READY_FOR_AGENT,
         3,
     );
-    let handed_back_by_linewright =
-        unassigned_by(labeled_at(ticket(4), label::READY_FOR_AGENT, 1), MACHINE, 2);
+    let handed_back_by_linewright = unassigned_by(
+        labeled_at(ticket(4), label::READY_FOR_AGENT, 1),
+        LINEWRIGHT,
+        2,
+    );
 
     assert_eq!(
         decide(&snapshot(vec![
@@ -528,14 +531,14 @@ fn pull(number: u64, closes: u64) -> Pull {
         number: Number(number),
         title: format!("Ticket {closes}"),
         body: format!("Closes #{closes}"),
-        author: Login::new(MACHINE),
+        author: Login::new(LINEWRIGHT),
         created_at: t(1),
         head_ref: format!("{closes}-ticket"),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: true },
         closes: vec![Number(closes)],
         pushes: vec![Push {
-            by: Login::new(MACHINE),
+            by: Login::new(LINEWRIGHT),
             at: t(1),
         }],
         mergeability: Mergeability::Clean,
@@ -609,7 +612,7 @@ fn a_draft_waits_while_checks_run() {
 
 fn ci_fix_comment(minute: i64) -> Comment {
     comment(
-        MACHINE,
+        LINEWRIGHT,
         minute,
         &marked(Stage::Ci, "Fixed the failing test."),
     )
@@ -646,7 +649,7 @@ fn a_ticket_given_back_after_a_ci_timeout_waits_a_full_timeout_again() {
     pr.checks = vec![check("e2e", CheckState::Pending)];
     let mut world = in_review(pr);
     world.issues[0].comments = vec![comment(
-        MACHINE,
+        LINEWRIGHT,
         6 * 60 + 3,
         &marked(
             Stage::Ci,
@@ -722,13 +725,13 @@ fn feedback_already_answered_starts_nothing() {
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![
         comment("reviewer", 0, "Looks odd."),
-        comment(MACHINE, 3, "Thanks!"),
+        comment(LINEWRIGHT, 3, "Thanks!"),
     ];
     let before_the_push = in_review(pr.clone());
     pr.comments = vec![
         comment("coverage[bot]", 4, "Coverage dropped 0.1%."),
         comment(
-            MACHINE,
+            LINEWRIGHT,
             5,
             &marked(Stage::Rework, "No change needed: noise."),
         ),
@@ -869,7 +872,7 @@ fn a_pull_request_behind_is_rebased_again_though_a_rebase_was_tried_at_its_head(
 fn a_ticket_handed_back_since_a_rebase_was_tried_tries_it_again_once_labeled_again() {
     let mut world = in_review(not_rebaseable());
     world.issues[0].comments = vec![comment(
-        MACHINE,
+        LINEWRIGHT,
         7,
         &marked(Stage::Update, "The run failed twice on its infrastructure."),
     )];
@@ -1085,7 +1088,7 @@ fn a_pull_request_github_blocks_is_held_for_review_after_it_is_marked_ready() {
 /// Linewright's comment on a pull request held for a code owner's review.
 fn held_for_a_code_owner(minute: i64) -> Comment {
     comment(
-        MACHINE,
+        LINEWRIGHT,
         minute,
         "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
          (@alice) before merging. Linewright merges it once GitHub allows it.",
@@ -1101,7 +1104,7 @@ fn a_pull_request_github_blocks_and_already_held_for_review_waits_also_after_a_p
     pr.comments = vec![held_for_a_code_owner(2)];
     let held = in_review(pr.clone());
     pr.pushes.push(Push {
-        by: Login::new(MACHINE),
+        by: Login::new(LINEWRIGHT),
         at: t(3),
     });
     let updated_since = in_review(pr);
@@ -1146,7 +1149,7 @@ fn a_pull_request_marked_ready_without_auto_merge_is_held_when_github_blocks_it(
         requires: code_owner_review(),
     };
     pr.comments = vec![comment(
-        MACHINE,
+        LINEWRIGHT,
         7,
         &marked(Stage::Review, "CI is green: ready for review."),
     )];
@@ -1189,7 +1192,7 @@ fn without_auto_merge_a_green_pull_request_github_blocks_is_marked_ready_as_any_
 /// feedback before it.
 fn reworked(mut pr: Pull) -> Pull {
     pr.pushes.push(Push {
-        by: Login::new(MACHINE),
+        by: Login::new(LINEWRIGHT),
         at: t(5),
     });
     pr
@@ -1328,10 +1331,10 @@ fn with_auto_merge_a_pull_request_merges_once_each_persons_newest_comment_or_rev
 }
 
 #[test]
-fn with_auto_merge_comments_from_the_machine_user_after_an_approval_do_not_hold_the_merge() {
+fn with_auto_merge_comments_from_linewright_after_an_approval_do_not_hold_the_merge() {
     let mut pr = reworked(ready(pull(20, 2)));
     pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 2)];
-    pr.comments = vec![comment(MACHINE, 3, "Renamed `foo`.")];
+    pr.comments = vec![comment(LINEWRIGHT, 3, "Renamed `foo`.")];
 
     assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
 }
@@ -1445,9 +1448,9 @@ fn with_auto_merge_failed_merges_of_another_pull_request_do_not_count() {
 fn with_auto_merge_relabeling_a_ticket_handed_back_for_failed_merges_tries_the_merge_again() {
     let mut world = in_review(ready(pull(20, 2)));
     let ticket = &mut world.issues[0];
-    ticket.assignees.retain(|a| a.as_str() != MACHINE);
+    ticket.assignees.retain(|a| a.as_str() != LINEWRIGHT);
     ticket.comments = vec![comment(
-        MACHINE,
+        LINEWRIGHT,
         12,
         &marked(
             Stage::Review,
@@ -1472,7 +1475,7 @@ fn a_pull_request_closed_without_merging_hands_the_ticket_back_once() {
     let closed = in_review(pr);
     let mut handed_back = closed.clone();
     handed_back.issues[0].comments = vec![comment(
-        MACHINE,
+        LINEWRIGHT,
         6,
         &marked(Stage::Review, "#20 was closed without merging."),
     )];
@@ -1512,7 +1515,7 @@ fn a_ticket_whose_pull_request_merged_waits_for_github_to_close_it_until_labeled
 
 fn tracking(number: u64, pr: u64, tickets: &[(u64, bool)]) -> Issue {
     let mut tracking = issue(number);
-    tracking.author = Login::new(MACHINE);
+    tracking.author = Login::new(LINEWRIGHT);
     tracking.title = format!("Spec change: Spec PR {pr}");
     tracking.filed = Some(Filed::Tracking {
         spec_change: Number(pr),
@@ -1879,14 +1882,14 @@ fn with_a_required_label_a_retried_handback_is_cut_again_only_if_labeled() {
 }
 
 #[test]
-fn with_a_required_label_processed_and_machine_spec_changes_are_skipped_even_if_labeled() {
+fn with_a_required_label_processed_and_linewrights_spec_changes_are_skipped_even_if_labeled() {
     let mut processed = merged(1, &["docs/spec.md"]);
     processed.labels = vec![REQUIRED.into(), label::SPEC_PROCESSED.into()];
-    let mut by_machine = merged(2, &["docs/spec.md"]);
-    by_machine.labels = vec![REQUIRED.into()];
-    by_machine.author = Login::new(MACHINE);
+    let mut by_linewright = merged(2, &["docs/spec.md"]);
+    by_linewright.labels = vec![REQUIRED.into()];
+    by_linewright.author = Login::new(LINEWRIGHT);
     let mut world = snapshot(vec![]);
-    world.merged = vec![processed, by_machine];
+    world.merged = vec![processed, by_linewright];
 
     assert_eq!(deciding_with_label(&world), vec![]);
 }
