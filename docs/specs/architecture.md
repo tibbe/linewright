@@ -5,11 +5,13 @@ later.
 
 - **The store is an interface; GitHub is the production store.** State that
   people read or change (labels, assignees, pull requests, comments) lives in
-  the store and nowhere else. Each poll reconciles a snapshot of the store
-  with the runs in flight. Machine state is derived from the store's facts
-  (assignee, linked PR, review and check state), never written as labels.
-  Linewright may keep bookkeeping no person reads or sets under the work
-  directory. A local store of plain files serves replay and tests.
+  the store and nowhere else. Each poll takes a snapshot of the store and
+  reconciles it with the runs in flight; between polls the snapshot is kept,
+  and a webhook delivery reads the items it names into it again and
+  reconciles. Machine state is derived from the store's facts (assignee,
+  linked PR, review and check state), never written as labels. Linewright may
+  keep bookkeeping no person reads or sets under the work directory. A local
+  store of plain files serves replay and tests.
 - **Functional core, imperative shell.** The reconcile step is a pure
   function from a snapshot, the live runs and the clock to a list of actions.
   The store, git, the agent runtime and the clock sit behind interfaces with
@@ -61,6 +63,12 @@ later.
   configured jobs for the same reason; Zuul's single trigger model pays off
   for a CI system that routes many projects' events into pipelines, which
   Linewright does not do.
+- **Webhook deliveries are hints, not state.** A delivery says which item to
+  read again; the payload never stands in for the store. GitHub neither orders
+  deliveries nor redelivers a failed one, so state built from payloads would
+  drift until a poll repaired it; reading the item again keeps every reconcile
+  on the store's facts, as Kubernetes controllers, Argo CD and rust-lang/bors
+  do. The cost is one read per changed item, against a full snapshot per poll.
 - **Spec changes are found by lookback**: pull requests merged within the
   window, minus those labeled processed.
 - **Identity is a user account**: a token for a GitHub user dedicated to

@@ -31,9 +31,9 @@ someone has to read, classify, verify and brief before an agent can start.
 
 ## Solution
 
-A server that polls GitHub and drives a pipeline of agent sessions from a
-merged spec change or an issue to a pull request that is reviewed, green and
-ready for a person.
+A server that polls GitHub, and optionally receives its webhooks, and drives a
+pipeline of agent sessions from a merged spec change or an issue to a pull
+request that is reviewed, green and ready for a person.
 
 - **Spec in, PR out.** A merged spec change or a labeled issue starts the
   pipeline and a pull request ends it. Between the two the factory runs on
@@ -153,9 +153,11 @@ it: labels start and stop work, and pull requests show it.
   **claimed** when the machine user is among its assignees, and **in review**
   when an open pull request by the machine user closes it.
 - Startup checks: the token can push to the repository and, with
-  `--auto-merge`, the repository allows the merge method and the update
-  method keeps the branch mergeable with it (`update-branch` `merge` cannot
-  keep a branch rebase-mergeable); otherwise Linewright exits with an error.
+  `--auto-merge`, the repository allows the merge method and the update method
+  keeps the branch mergeable with it (`update-branch` `merge` cannot keep a
+  branch rebase-mergeable); with webhooks on, `serve` can listen on
+  `webhook-address`; and `webhook-address` is not set without the webhook
+  secret. Otherwise Linewright exits with an error.
 - One Linewright per repository.
 
 The lifecycle of an issue. `triage` and `work` each group several states,
@@ -204,7 +206,62 @@ stateDiagram-v2
   with `ready-for-agent`, which asks for implementation once the issue is
   unclaimed and unblocked.
 - Workflows are a source of work too; see Workflows.
-- Linewright polls, at an interval (default 60 s).
+- Linewright polls, at an interval (default 60 s), and with webhooks on
+  also reacts to GitHub's deliveries as they arrive; see Webhooks.
+
+## Webhooks
+
+Optional: GitHub tells Linewright about a change as it happens, so it reacts
+in seconds rather than at the next poll, without polling more often.
+
+### User Stories
+
+1. As an operator, I want Linewright to react to a change in the repository
+   within seconds, so that work does not wait for the next poll.
+2. As an operator, I want faster reactions without more calls to GitHub, so
+   that Linewright stays within its rate limit.
+3. As an operator, I want webhooks to be optional, so that Linewright still
+   runs where GitHub cannot reach it.
+
+### Decisions
+
+- Polling continues at `poll-interval` with webhooks on: GitHub does not
+  redeliver a failed delivery, so the poll is what catches a missed one.
+- The maintainer creates the repository's webhook by hand, in the
+  repository's settings: creating one takes admin rights on the repository,
+  which the machine user does not need and, with `--auto-merge`, must not
+  have. Linewright cannot see the webhook, so a misconfigured one shows only
+  as deliveries that never arrive.
+- The webhook and Linewright share a secret, with which GitHub signs each
+  delivery. The secret is a credential, so it comes from the environment only,
+  as `LINEWRIGHT_WEBHOOK_SECRET`; Linewright does not accept deliveries
+  without one. A delivery whose signature is missing or does not match is
+  refused and logged.
+- Setting the secret turns webhooks on: `serve` then also listens for
+  deliveries on the `webhook-address` setting, a host and port (default
+  `0.0.0.0:8080`), over plain HTTP; TLS, where wanted, is a reverse proxy's
+  in front. `once`, `status` and the other commands do not listen.
+- A delivery names what changed, and Linewright acts on that alone: it
+  reads the issue or pull request again from GitHub and does what a poll
+  would do with it, without a poll of everything. A push to the default
+  branch names every open pull request the machine user opened. What it acts
+  on is what it read, never the delivery's own account of the change, so a
+  delivery that arrives late, twice or out of order changes nothing a poll
+  would not.
+- The webhook sends these events, and Linewright accepts any other and ignores
+  it:
+
+  | event | what it changes |
+  |---|---|
+  | `issues` | labels, assignees, closing and reopening |
+  | `issue_comment` | answers to triage, feedback on a pull request |
+  | `pull_request` | merged spec changes, Linewright's pull requests merged or closed, labels |
+  | `pull_request_review`, `pull_request_review_comment` | feedback and approvals |
+  | `check_run`, `check_suite`, `status` | CI on Linewright's pull requests |
+  | `push` | Linewright's pull requests falling behind the default branch |
+
+- A delivery seen before is not refused: a repeat costs a read of what it
+  names, and the signature is what keeps others out.
 
 ## Triage
 
@@ -534,12 +591,14 @@ stateDiagram-v2
   `linewright.toml` in the working directory), with precedence flag, then
   environment, then file, then default. Credentials are the environment
   variables their tools already use, so an existing setup is picked up:
-  `GITHUB_TOKEN` or `GH_TOKEN` as `gh` reads them, and `ANTHROPIC_API_KEY`.
+  `GITHUB_TOKEN` or `GH_TOKEN` as `gh` reads them, and `ANTHROPIC_API_KEY`. The
+  webhook secret has no such variable and is `LINEWRIGHT_WEBHOOK_SECRET`.
 
   | setting | default |
   |---|---|
   | `repo` (`owner/name`) | required |
   | `poll-interval` | 60s |
+  | `webhook-address` | `0.0.0.0:8080` |
   | `spec-glob` | `docs/**/*.md` |
   | `spec-lookback` | 7d |
   | `max-workers` | 4 |
@@ -638,12 +697,14 @@ briefs, reads the results and the traces, and iterates.
   links to the factory.
 - The server logs each decision and action, readable for a person tailing it
   and structured (JSON lines) for machines, by the `log-format` setting.
+  With webhooks on, that includes the address it listens on, each delivery
+  and what it names, and each delivery refused and why; `status` shows none
+  of it.
 
 ## Out of scope
 
 Direction, not the first version:
 
-- Webhooks instead of polling.
 - One session for a whole spec change. Tickets exist to keep each session in
   its smart zone; as that zone grows, a spec change may need no cutting.
 - One container per run, instead of agents as processes beside the manager.
