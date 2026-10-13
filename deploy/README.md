@@ -13,8 +13,9 @@ Docker at it with a
 image is built there.
 
 1. Copy `.env.example` to `.env` and fill it in: `GH_TOKEN`, the token of
-   the factory's GitHub user, and either `ANTHROPIC_API_KEY` or a
-   `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
+   the factory's GitHub user, either `ANTHROPIC_API_KEY` or a
+   `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and, for webhooks,
+   `LINEWRIGHT_WEBHOOK_SECRET` (see [Webhooks](#webhooks)).
 
 2. Optionally, set what this host needs in `compose.override.yaml`, such as
    a directory of the host's for the work directory, in place of a volume,
@@ -40,6 +41,35 @@ image is built there.
    docker compose up -d --build
    docker compose logs -f
    ```
+
+## Webhooks
+
+GitHub's deliveries reach Linewright through
+[Nginx Proxy Manager](https://nginxproxymanager.com) (NPM), which terminates
+TLS, and `webhook-relay`, a socat container that forwards to
+`linewright:8080` and nowhere else. The relay is on both `fenced` and the
+external Docker network `proxy`, where NPM reaches it as `linewright-webhook`;
+`linewright` stays on `fenced` alone, so the agents cannot reach NPM.
+
+The relay always runs, so `docker compose up` fails until the `proxy` network
+exists, webhooks on or not. Create it with `docker network create proxy`, and
+attach NPM's container to it, as an external network in NPM's own
+`compose.yaml`.
+
+1. Set `LINEWRIGHT_WEBHOOK_SECRET` in `.env`, as the repository's
+   [README](../README.md#webhooks) says, and rerun step 3 above.
+
+2. In NPM, add a proxy host:
+   - **Domain names**: the public name for the webhook, such as
+     `linewright.example.com`.
+   - **Scheme** `http`, **Forward hostname** `linewright-webhook`, **Forward
+     port** `8080`.
+   - Under **SSL**, a Let's Encrypt certificate, with **Force SSL** on.
+
+3. Create the repository's webhook as the repository's
+   [README](../README.md#webhooks) says, with that domain name in the payload
+   URL, such as `https://linewright.example.com/`, and the secret from
+   step 1.
 
 ## Deploying and watching it
 

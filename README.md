@@ -58,7 +58,8 @@ The poll still runs at `poll-interval` with webhooks on, for the reason
    `listening for webhook deliveries` with the address.
 
 3. Put a reverse proxy in front for TLS, such as Caddy or nginx, forwarding
-   HTTPS to `webhook-address`. `serve` answers on any path.
+   HTTPS to `webhook-address`; `deploy/README.md` does so with Nginx Proxy
+   Manager. `serve` answers on any path.
 
 4. Create the webhook by hand. The machine user cannot: creating one takes
    admin rights on the repository, which the machine user does not need and,
