@@ -73,7 +73,10 @@ test that hangs.
 
 - `runs` lists every run, newest first, including runs that started no session:
   its run ID, item, stage, start, duration and outcome. `runs N` lists #N's.
-  `--stage`, `--since` and `--limit` narrow the list.
+  `--stage`, `--since` and `--limit` narrow the list. `--since` keeps the runs
+  that started at or after a time (`2026-10-14T12:00:00Z`), a date, taken as
+  midnight UTC (`2026-10-14`), or a duration ago, written as the duration
+  settings are (`2h`).
 - A run ID is `<item>/<stage>-<n>`, the `n`th run of that stage on that item,
   such as `42/rework-2`, or `<workflow>/<n>` for a workflow's runs. The stages
   in IDs are `triage`, `tickets`, `implement`, `rework`, `fix-ci` and `update`.
