@@ -23,7 +23,7 @@ use crate::workflow::WorkflowName;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "linewright",
+    name = crate::COMMAND,
     version = crate::VERSION_AND_COMMIT,
     about = "A spec-driven software factory"
 )]

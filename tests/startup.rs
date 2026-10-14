@@ -99,13 +99,13 @@ async fn without_auto_merge_neither_the_merge_method_nor_update_branch_is_checke
     assert!(disallowed_merge_method.is_ok());
 }
 
-/// Runs `linewright` with `args`, `env` and only `path` on the path, and
+/// Runs `lw` with `args`, `env` and only `path` on the path, and
 /// returns whether it succeeded and what it wrote to stderr. It gets a runtime
 /// directory of its own, so that `serve`s run by tests at the same time don't
 /// claim the same socket.
-fn linewright(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
+fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
     let dir = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(args)
         .current_dir(dir.path())
         .env("PATH", path)
@@ -130,7 +130,7 @@ fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
         .unwrap();
     std::os::unix::fs::symlink(git, bin.path().join("git")).unwrap();
 
-    let (succeeded, error) = linewright(
+    let (succeeded, error) = lw(
         bin.path(),
         &["--repo", "owner/name", "once"],
         &[("GH_TOKEN", "token")],
@@ -143,7 +143,7 @@ fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
 #[test]
 fn serve_refuses_a_webhook_address_without_the_secret() {
     let empty = tempfile::tempdir().unwrap();
-    let (succeeded, error) = linewright(
+    let (succeeded, error) = lw(
         empty.path(),
         &[
             "--repo",
@@ -165,7 +165,7 @@ fn serve_refuses_a_webhook_address_it_cannot_listen_on() {
     let address = taken.local_addr().unwrap().to_string();
 
     let empty = tempfile::tempdir().unwrap();
-    let (succeeded, error) = linewright(
+    let (succeeded, error) = lw(
         empty.path(),
         &[
             "--repo",
@@ -188,7 +188,7 @@ fn once_does_not_listen_even_with_the_secret() {
     let address = taken.local_addr().unwrap().to_string();
 
     let empty = tempfile::tempdir().unwrap();
-    let (succeeded, error) = linewright(
+    let (succeeded, error) = lw(
         empty.path(),
         &[
             "--repo",
@@ -234,7 +234,7 @@ fn names_head(commit: &str) -> bool {
 /// What `serve` logs, in `format`, when it stops for want of `git`.
 fn serve_log(format: &str) -> String {
     let empty = tempfile::tempdir().unwrap();
-    let (_, log) = linewright(
+    let (_, log) = lw(
         empty.path(),
         &[
             "--repo",
@@ -259,7 +259,7 @@ fn without_colors(text: &str) -> String {
 
 #[test]
 fn version_names_the_version_and_the_commit_built_from() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .arg("--version")
         .output()
         .unwrap();
@@ -267,9 +267,39 @@ fn version_names_the_version_and_the_commit_built_from() {
     assert!(output.status.success());
     let printed = String::from_utf8(output.stdout).unwrap();
     let commit = printed
-        .strip_prefix(&format!("linewright {} (", version()))
+        .strip_prefix(&format!("lw {} (", version()))
         .and_then(|rest| rest.strip_suffix(")\n"));
     assert!(commit.is_some_and(names_head), "{printed}");
+}
+
+#[test]
+fn help_shows_the_command_as_lw() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
+        .arg("--help")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let printed = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        printed.contains("\nUsage: lw [OPTIONS] <COMMAND>\n"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn an_error_the_program_prints_itself_starts_with_lw() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
+        .arg("status")
+        .current_dir(dir.path())
+        .env_remove("LINEWRIGHT_REPO")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let error = String::from_utf8(output.stderr).unwrap();
+    assert!(error.starts_with("lw: set `repo`"), "{error}");
 }
 
 #[test]

@@ -1,6 +1,6 @@
-//! `linewright logs`, end to end at the operator's level: a factory doing
+//! `lw logs`, end to end at the operator's level: a factory doing
 //! runs on the local store, its sessions streaming a recorded Claude Code
-//! transcript, and the `linewright` program showing it from the records with
+//! transcript, and the `lw` program showing it from the records with
 //! no `serve` running; and which run `logs` shows, end to end on its data
 //! model (`docs/specs/monitoring.md`, "logs").
 
@@ -125,7 +125,7 @@ fn an_item_with_no_runs_has_none_to_show() {
 
 const REPO: &str = "owner/widgets";
 
-/// A world whose factory keeps its records where `linewright --work-dir`
+/// A world whose factory keeps its records where `lw --work-dir`
 /// finds those of `owner/widgets`, with that work directory.
 async fn world() -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
@@ -139,12 +139,12 @@ struct Output {
     stderr: String,
 }
 
-/// Runs `linewright --repo owner/widgets --work-dir <work_dir>` with `args`,
+/// Runs `lw --repo owner/widgets --work-dir <work_dir>` with `args`,
 /// with no `serve` running.
-async fn linewright(work_dir: &Path, args: &[&str]) -> Output {
+async fn lw(work_dir: &Path, args: &[&str]) -> Output {
     let runtime_dir = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(["--repo", REPO, "--work-dir"])
         .arg(work_dir)
         .args(args)
@@ -194,7 +194,7 @@ async fn implemented_as_recorded() -> (World, tempfile::TempDir) {
 async fn logs_shows_the_items_latest_run_compact() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
-    let output = linewright(work_dir.path(), &["logs", "1"]).await;
+    let output = lw(work_dir.path(), &["logs", "1"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -220,7 +220,7 @@ async fn logs_shows_the_items_latest_run_compact() {
 async fn logs_verbose_adds_the_brief_and_the_thinking() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
-    let output = linewright(work_dir.path(), &["logs", "1", "--verbose"]).await;
+    let output = lw(work_dir.path(), &["logs", "1", "--verbose"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -238,7 +238,7 @@ async fn logs_verbose_adds_the_brief_and_the_thinking() {
 async fn logs_json_prints_one_object_per_line() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
-    let output = linewright(work_dir.path(), &["logs", "1", "--json"]).await;
+    let output = lw(work_dir.path(), &["logs", "1", "--json"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<serde_json::Value> = output
@@ -271,8 +271,8 @@ async fn a_run_that_started_no_session_says_so() {
     // Brought up to date without a session: nothing conflicts.
     world.poll().await;
 
-    let output = linewright(work_dir.path(), &["logs", "1", "--run", "1/update-1"]).await;
-    let json = linewright(work_dir.path(), &["logs", "--run", "1/update-1", "--json"]).await;
+    let output = lw(work_dir.path(), &["logs", "1", "--run", "1/update-1"]).await;
+    let json = lw(work_dir.path(), &["logs", "--run", "1/update-1", "--json"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(output.stdout, "run: 1/update-1 (it started no session)\n");
@@ -286,10 +286,10 @@ async fn a_run_that_started_no_session_says_so() {
 async fn an_unknown_item_or_run_exits_4_saying_so() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
-    let no_item = linewright(work_dir.path(), &["logs", "7"]).await;
-    let no_run = linewright(work_dir.path(), &["logs", "1", "--run", "1/rework-1"]).await;
-    let other_item = linewright(work_dir.path(), &["logs", "2", "--run", "1/implement-1"]).await;
-    let neither = linewright(work_dir.path(), &["logs"]).await;
+    let no_item = lw(work_dir.path(), &["logs", "7"]).await;
+    let no_run = lw(work_dir.path(), &["logs", "1", "--run", "1/rework-1"]).await;
+    let other_item = lw(work_dir.path(), &["logs", "2", "--run", "1/implement-1"]).await;
+    let neither = lw(work_dir.path(), &["logs"]).await;
 
     for (output, error) in [
         (&no_item, "#7 has no runs"),

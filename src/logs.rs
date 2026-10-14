@@ -1,4 +1,4 @@
-//! `linewright logs`: which run's transcript to show, and the transcript as
+//! `lw logs`: which run's transcript to show, and the transcript as
 //! the sessions' records keep it (`docs/specs/monitoring.md`, "logs").
 
 use anyhow::Context;

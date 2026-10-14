@@ -20,7 +20,7 @@ fn resolve_blaming(
     file: Option<&str>,
 ) -> Result<Config, ResolveError> {
     let dir = tempfile::tempdir().unwrap();
-    let mut argv = vec!["linewright"];
+    let mut argv = vec!["lw"];
     argv.extend(args);
     argv.push("status");
     let mut cli = Cli::try_parse_from(argv).unwrap();
@@ -135,13 +135,7 @@ fn a_wrong_value_is_blamed_on_the_command_line_only_when_a_flag_gave_it() {
 fn a_config_file_the_command_line_names_that_cannot_be_read_is_blamed_on_it() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.toml");
-    let cli = Cli::try_parse_from([
-        "linewright",
-        "--config",
-        missing.to_str().unwrap(),
-        "status",
-    ])
-    .unwrap();
+    let cli = Cli::try_parse_from(["lw", "--config", missing.to_str().unwrap(), "status"]).unwrap();
 
     let resolved = Config::resolve(&cli.settings, dir.path(), &|_| None, false);
 
@@ -150,7 +144,7 @@ fn a_config_file_the_command_line_names_that_cannot_be_read_is_blamed_on_it() {
 
 #[test]
 fn max_workers_is_no_longer_a_flag() {
-    assert!(Cli::try_parse_from(["linewright", "--max-workers", "2", "status"]).is_err());
+    assert!(Cli::try_parse_from(["lw", "--max-workers", "2", "status"]).is_err());
 }
 
 #[test]
@@ -300,7 +294,7 @@ fn a_webhook_address_without_the_secret_is_an_error_naming_the_secret() {
 
 #[test]
 fn the_webhook_secret_is_not_a_flag_or_a_file_key() {
-    let flag = Cli::try_parse_from(["linewright", "--webhook-secret", "s3cret", "status"]);
+    let flag = Cli::try_parse_from(["lw", "--webhook-secret", "s3cret", "status"]);
     let file = resolve(&[], &[], Some("webhook-secret = \"s3cret\"\n")).unwrap_err();
 
     assert!(flag.is_err());

@@ -1,4 +1,4 @@
-//! `linewright status`: what `serve` is doing and what holds it back
+//! `lw status`: what `serve` is doing and what holds it back
 //! (`docs/specs/monitoring.md`, "status"). `serve` answers it from its own
 //! view, deriving the tracked items, what Linewright waits for on them and
 //! the workflows' next runs the way the reconcile step derives them; the

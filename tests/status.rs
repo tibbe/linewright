@@ -1,4 +1,4 @@
-//! `linewright status`, end to end on its data model: what `serve` knows of
+//! `lw status`, end to end on its data model: what `serve` knows of
 //! itself and its view of the repository, and the clock in, the answer and
 //! its text out (`CODING_STANDARDS.md`, "Where tests go";
 //! `docs/specs/monitoring.md`, "status").

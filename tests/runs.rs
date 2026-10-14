@@ -1,5 +1,5 @@
-//! `linewright runs`, end to end at the operator's level: a factory doing
-//! runs on the local store, and the `linewright` program listing them, from
+//! `lw runs`, end to end at the operator's level: a factory doing
+//! runs on the local store, and the `lw` program listing them, from
 //! the records with no `serve` running (`docs/specs/monitoring.md`, "runs").
 
 mod common;
@@ -15,7 +15,7 @@ use serde_json::json;
 
 const REPO: &str = "owner/widgets";
 
-/// A world whose factory keeps its records where `linewright --work-dir`
+/// A world whose factory keeps its records where `lw --work-dir`
 /// finds those of `owner/widgets`, with that work directory.
 async fn world() -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
@@ -29,12 +29,12 @@ struct Output {
     stderr: String,
 }
 
-/// Runs `linewright --repo owner/widgets --work-dir <work_dir>` with `args`,
+/// Runs `lw --repo owner/widgets --work-dir <work_dir>` with `args`,
 /// with no `serve` running.
-async fn linewright(work_dir: &Path, args: &[&str]) -> Output {
+async fn lw(work_dir: &Path, args: &[&str]) -> Output {
     let runtime_dir = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(["--repo", REPO, "--work-dir"])
         .arg(work_dir)
         .args(args)
@@ -69,7 +69,7 @@ async fn a_triage_run_is_listed_under_its_run_id_with_its_outcome() {
         .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
     world.poll().await;
 
-    let output = linewright(work_dir.path(), &["runs"]).await;
+    let output = lw(work_dir.path(), &["runs"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -113,7 +113,7 @@ async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
     triage_again(&world, issue);
     world.poll().await;
 
-    let output = linewright(work_dir.path(), &["runs"]).await;
+    let output = lw(work_dir.path(), &["runs"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let ids: Vec<&str> = output
@@ -146,7 +146,7 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     // Brought up to date without a session: nothing conflicts.
     world.poll().await;
 
-    let output = linewright(work_dir.path(), &["runs"]).await;
+    let output = lw(work_dir.path(), &["runs"]).await;
     let recorded = Runs::new(&work_dir.path().join(REPO)).read().unwrap();
 
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -197,7 +197,7 @@ async fn a_workflows_runs_are_numbered_under_its_name_with_their_outcomes() {
         .on_workflow(|_| json(json!({"not": "a result"})));
     assert!(world.factory.run_workflow(&weekly).await.is_err());
 
-    let output = linewright(work_dir.path(), &["runs"]).await;
+    let output = lw(work_dir.path(), &["runs"]).await;
 
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}", output.stdout);
@@ -224,7 +224,7 @@ async fn a_run_handed_back_says_so() {
         .open_issue("maintainer", "Do it", "Please.", &["ready-for-agent"]);
     world.poll().await;
 
-    let output = linewright(work_dir.path(), &["runs", "1"]).await;
+    let output = lw(work_dir.path(), &["runs", "1"]).await;
 
     assert!(
         output
@@ -248,7 +248,7 @@ async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
         .open_issue("maintainer", "Do it", "Please.", &["ready-for-agent"]);
     world.poll().await;
 
-    let output = linewright(work_dir.path(), &["runs", "1"]).await;
+    let output = lw(work_dir.path(), &["runs", "1"]).await;
 
     assert!(
         output
@@ -268,8 +268,8 @@ async fn runs_of_an_item_with_none_exits_4_saying_so() {
         .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
     world.poll().await;
 
-    let output = linewright(work_dir.path(), &["runs", "7"]).await;
-    let narrowed = linewright(work_dir.path(), &["runs", "1", "--stage", "rework"]).await;
+    let output = lw(work_dir.path(), &["runs", "7"]).await;
+    let narrowed = lw(work_dir.path(), &["runs", "1", "--stage", "rework"]).await;
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert_eq!(output.stdout, "");
@@ -291,7 +291,7 @@ async fn runs_json_prints_the_answer_as_json() {
         .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
     world.poll().await;
 
-    let output = linewright(work_dir.path(), &["runs", "--json"]).await;
+    let output = lw(work_dir.path(), &["runs", "--json"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
@@ -486,7 +486,7 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
     world.poll().await;
     let dir = work_dir.path();
 
-    let limited = linewright(
+    let limited = lw(
         dir,
         &[
             "runs",
@@ -500,9 +500,9 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
         ],
     )
     .await;
-    let later = linewright(dir, &["runs", "--since", "2026-10-02T00:00:00Z"]).await;
-    let other_stage = linewright(dir, &["runs", "--stage", "fix-ci"]).await;
-    let no_stage = linewright(dir, &["runs", "--stage", "review"]).await;
+    let later = lw(dir, &["runs", "--since", "2026-10-02T00:00:00Z"]).await;
+    let other_stage = lw(dir, &["runs", "--stage", "fix-ci"]).await;
+    let no_stage = lw(dir, &["runs", "--stage", "review"]).await;
 
     let lines: Vec<&str> = limited.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}{}", limited.stdout, limited.stderr);

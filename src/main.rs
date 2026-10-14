@@ -19,7 +19,7 @@ use linewright::runtime::claude::ClaudeCode;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
 use linewright::transcript::{self, Verbosity};
 use linewright::webhook::{Listener, Pending};
-use linewright::{COMMIT, VERSION};
+use linewright::{COMMAND, COMMIT, VERSION};
 use linewright::{explain, status};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
@@ -44,7 +44,7 @@ async fn main() -> ExitCode {
     ) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("linewright: {e}");
+            complain(&e);
             return match e {
                 ResolveError::CommandLine(_) => ExitCode::from(WRONG_COMMAND_LINE),
                 ResolveError::Elsewhere(_) => ExitCode::FAILURE,
@@ -59,6 +59,12 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Prints `message` to standard error as an error of the program's own,
+/// without the log's decoration.
+fn complain(message: impl std::fmt::Display) {
+    eprintln!("{COMMAND}: {message}");
 }
 
 fn init_logging(format: LogFormat) {
@@ -87,22 +93,22 @@ async fn ask<T: serde::de::DeserializeOwned>(
     let repo = match config.required_repo() {
         Ok(repo) => repo,
         Err(e) => {
-            eprintln!("linewright: {e:#}");
+            complain(format_args!("{e:#}"));
             return ExitCode::FAILURE;
         }
     };
     let body = match api::get_answer(&socket_dir(), repo, resource).await {
         Ok(body) => body,
         Err(e @ RequestError::NotServing { .. }) => {
-            eprintln!("linewright: {e}");
+            complain(e);
             return ExitCode::from(NOT_SERVING);
         }
         Err(e @ RequestError::NotFound(_)) => {
-            eprintln!("linewright: {e}");
+            complain(e);
             return ExitCode::from(NO_SUCH_ITEM);
         }
         Err(RequestError::Other(e)) => {
-            eprintln!("linewright: {e:#}");
+            complain(format_args!("{e:#}"));
             return ExitCode::FAILURE;
         }
     };
@@ -112,7 +118,9 @@ async fn ask<T: serde::de::DeserializeOwned>(
         match serde_json::from_slice::<T>(&body) {
             Ok(answer) => render(&answer, colour()),
             Err(e) => {
-                eprintln!("linewright: `serve`'s answer does not read as {what}: {e}");
+                complain(format_args!(
+                    "`serve`'s answer does not read as {what}: {e}"
+                ));
                 return ExitCode::FAILURE;
             }
         }
@@ -124,7 +132,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
     ExitCode::SUCCESS
 }
 
-/// `linewright runs`: the runs `query` asks for, from the `serve` of the
+/// `lw runs`: the runs `query` asks for, from the `serve` of the
 /// configured repository or, with none running, from the records it keeps,
 /// printed as text or, with `json`, as JSON.
 async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
@@ -136,7 +144,7 @@ async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
     print_answer(answer.map(|answer| answer.text(json)))
 }
 
-/// `linewright logs`: the transcript of the run `which` names, from the
+/// `lw logs`: the transcript of the run `which` names, from the
 /// `serve` of the configured repository or, with none running, from the
 /// records it keeps, printed as text or, with `json`, as JSON lines.
 async fn show_logs(config: &Config, which: &Which, verbosity: Verbosity, json: bool) -> ExitCode {
@@ -164,7 +172,7 @@ fn print_answer(answer: Result<String, (u8, String)>) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err((code, message)) => {
-            eprintln!("linewright: {message}");
+            complain(message);
             ExitCode::from(code)
         }
     }
@@ -288,7 +296,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             // First, so a log names the build it came from.
             info!(version = %VERSION, commit = %COMMIT, "starting");
             // Listening before startup, which talks to GitHub: in a container
-            // `linewright` can be PID 1, which the kernel sends no signal it
+            // `lw` can be PID 1, which the kernel sends no signal it
             // has no handler for.
             let signals = StopSignals::new().context("listening for stop signals")?;
             let clock: Arc<dyn Clock> = Arc::new(SystemClock);

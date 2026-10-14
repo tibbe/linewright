@@ -1,4 +1,4 @@
-//! Running a workflow by hand, `linewright workflow run NAME`, end to end at
+//! Running a workflow by hand, `lw workflow run NAME`, end to end at
 //! the operator's level: a workflow file on the default branch in, one agent
 //! session and its record out, against the local store and a scripted
 //! runtime (`docs/specs/workflows.md`).
@@ -389,7 +389,7 @@ async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
 
 #[test]
 fn the_help_lists_workflow_run_name() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .arg("--help")
         .output()
         .unwrap();

@@ -37,4 +37,4 @@ RUN curl --proto '=https' --tlsv1.2 -sSf -o /tmp/rustup-init.sh https://sh.rustu
     && rm /tmp/rustup-init.sh \
     && cd /tmp/toolchain && rustup toolchain install
 COPY linewright.toml ./
-COPY --link --from=base /usr/local/bin/linewright /usr/local/bin/linewright
+COPY --link --from=base /usr/local/bin/lw /usr/local/bin/lw

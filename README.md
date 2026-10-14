@@ -14,10 +14,10 @@ commands run in `bash`, whatever shell you use.
 export GH_TOKEN=...            # that account's token (or GITHUB_TOKEN)
 export ANTHROPIC_API_KEY=...   # or any login Claude Code already has
 cargo install --path .
-linewright --repo owner/name serve
+lw --repo owner/name serve
 ```
 
-- `linewright serve` polls until stopped; `once` runs one poll cycle and the
+- `lw serve` polls until stopped; `once` runs one poll cycle and the
   runs it starts; each poll also runs the workflows in `.linewright/workflows/`
   that are due on their schedule. `workflow run NAME` runs the workflow in
   `.linewright/workflows/NAME.md` once, now. One `serve` runs per repository
@@ -67,8 +67,8 @@ linewright --repo owner/name serve
   `.mcp.json`).
 - Webhooks are optional; see [Webhooks](#webhooks).
 - Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
-  in `linewright.toml`; `linewright --help` lists them with their defaults.
-- The `Dockerfile` builds the base image: `linewright`, Claude Code,
+  in `linewright.toml`; `lw --help` lists them with their defaults.
+- The `Dockerfile` builds the base image: `lw`, Claude Code,
   `git`, `gh`, and `python3` on Debian, without Node.js. Build your own image
   from it with your project's toolchain added. It runs as the user
   `linewright`, uid and gid 1000; to give a work directory on the host another

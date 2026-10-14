@@ -1,4 +1,4 @@
-//! `linewright explain N`, end to end on its data model: `serve`'s view of
+//! `lw explain N`, end to end on its data model: `serve`'s view of
 //! the repository and the clock in, the answer about #N and its text out
 //! (`CODING_STANDARDS.md`, "Where tests go"; `docs/specs/monitoring.md`,
 //! "explain").

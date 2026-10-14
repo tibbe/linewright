@@ -6,6 +6,12 @@ description = "A spec-driven software factory: a server that turns spec changes 
 license = "MIT"
 publish = false
 
+# The command, `linewright::COMMAND` (`docs/specs/operation.md`); the package
+# and library keep the Linewright name.
+[[bin]]
+name = "lw"
+path = "src/main.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

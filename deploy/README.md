@@ -79,7 +79,7 @@ From another machine, run each command in the host's clone:
 - Deploy another version: once CI has pushed its images, `git pull`, so
   `compose.yaml` matches them, and rerun step 3. For a commit other than the
   latest on `main`, check it out and set `LINEWRIGHT_TAG=sha-...`. A restart
-  drops the runs in flight. Check `linewright status` first.
+  drops the runs in flight. Check `lw status` first.
 - The commit it runs, from its image's labels:
 
   ```sh
@@ -88,11 +88,11 @@ From another machine, run each command in the host's clone:
   ```
 - The server's log, a JSON line for each decision and action:
   `docker compose logs -f linewright`.
-- What Linewright is doing: `docker compose exec linewright linewright status`.
-- What Linewright did: `docker compose exec linewright linewright runs`, or
+- What Linewright is doing: `docker compose exec linewright lw status`.
+- What Linewright did: `docker compose exec linewright lw runs`, or
   `runs N` for issue or pull request #N's runs. Each run's record, with the
   sessions it started, is under `/data/OWNER/NAME/runs/` in the container.
-- What an agent did: `docker compose exec linewright linewright logs N`
+- What an agent did: `docker compose exec linewright lw logs N`
   shows the transcript of #N's run in flight or else its latest run that
   started a session, `--run ID` another run's, and `--verbose` all of it.
 - Each agent session's record, under

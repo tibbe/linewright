@@ -1,6 +1,6 @@
-//! The local API and `linewright status`, end to end at the operator's
+//! The local API and `lw status`, end to end at the operator's
 //! level: a factory serving the local store with the API on a socket, and
-//! the `linewright` program asking it (`docs/specs/monitoring.md`;
+//! the `lw` program asking it (`docs/specs/monitoring.md`;
 //! `docs/specs/architecture.md`, "The local API").
 
 mod common;
@@ -85,10 +85,10 @@ impl Answering {
         }
     }
 
-    /// Runs `linewright --repo owner/widgets` with `args`, as the operator
+    /// Runs `lw --repo owner/widgets` with `args`, as the operator
     /// would on this host.
-    async fn linewright(&self, args: &[&str]) -> Output {
-        linewright(self.runtime_dir.path(), args).await
+    async fn lw(&self, args: &[&str]) -> Output {
+        lw(self.runtime_dir.path(), args).await
     }
 
     async fn stop(self) {
@@ -111,18 +111,18 @@ struct Output {
     stderr: String,
 }
 
-/// Runs `linewright --repo owner/widgets` with `args` and `XDG_RUNTIME_DIR`
+/// Runs `lw --repo owner/widgets` with `args` and `XDG_RUNTIME_DIR`
 /// set to `runtime_dir`, in an empty working directory.
-async fn linewright(runtime_dir: &Path, args: &[&str]) -> Output {
+async fn lw(runtime_dir: &Path, args: &[&str]) -> Output {
     let args: Vec<&str> = ["--repo", REPO].iter().chain(args).copied().collect();
-    linewright_with(runtime_dir, &args, &[]).await
+    lw_with(runtime_dir, &args, &[]).await
 }
 
-/// Runs `linewright` with `args`, `env` and `XDG_RUNTIME_DIR` set to
+/// Runs `lw` with `args`, `env` and `XDG_RUNTIME_DIR` set to
 /// `runtime_dir`, in an empty working directory.
-async fn linewright_with(runtime_dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
+async fn lw_with(runtime_dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     let cwd = tempfile::tempdir().unwrap();
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(args)
         .current_dir(cwd.path())
         .env("XDG_RUNTIME_DIR", runtime_dir)
@@ -187,7 +187,7 @@ async fn with_ticket_and_workflow() -> World {
 async fn status_shows_linewright_then_the_tracked_items_then_the_workflows() {
     let answering = Answering::start(with_ticket_and_workflow().await, false).await;
 
-    let output = answering.linewright(&["status"]).await;
+    let output = answering.lw(&["status"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -223,7 +223,7 @@ async fn status_shows_linewright_then_the_tracked_items_then_the_workflows() {
 async fn status_to_a_pipe_is_not_coloured() {
     let answering = Answering::start(with_ticket_and_workflow().await, false).await;
 
-    let output = answering.linewright(&["status"]).await;
+    let output = answering.lw(&["status"]).await;
 
     assert!(!output.stdout.contains('\x1b'), "{:?}", output.stdout);
     answering.stop().await;
@@ -234,7 +234,7 @@ async fn status_json_prints_the_api_answer_as_it_is() {
     let answering = Answering::start(with_ticket_and_workflow().await, false).await;
     let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/status").await;
 
-    let output = answering.linewright(&["status", "--json"]).await;
+    let output = answering.lw(&["status", "--json"]).await;
 
     assert_eq!(status, 200);
     assert_eq!(output.code, Some(0), "{}", output.stderr);
@@ -257,7 +257,7 @@ async fn with_webhooks_on_status_shows_the_last_accepted_delivery_and_those_refu
     unsigned.send(listener).await;
     unsigned.send(listener).await;
 
-    let output = answering.linewright(&["status"]).await;
+    let output = answering.lw(&["status"]).await;
 
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert!(
@@ -319,8 +319,8 @@ async fn status_reaches_the_serve_of_the_repository_whatever_the_case_of_its_nam
     let answering = Answering::start(World::new().await, false).await;
     let dir = answering.runtime_dir.path();
 
-    let same = linewright_with(dir, &["--repo", "Owner/Widgets", "status"], &[]).await;
-    let other = linewright_with(dir, &["--repo", "owner/gadgets", "status"], &[]).await;
+    let same = lw_with(dir, &["--repo", "Owner/Widgets", "status"], &[]).await;
+    let other = lw_with(dir, &["--repo", "owner/gadgets", "status"], &[]).await;
 
     assert_eq!(same.code, Some(0), "{}", same.stderr);
     assert_eq!(other.code, Some(3), "{}", other.stderr);
@@ -332,7 +332,7 @@ async fn a_second_serve_for_the_repository_exits_saying_one_already_runs() {
     let answering = Answering::start(World::new().await, false).await;
 
     let in_process = api::claim(&socket_dir(answering.runtime_dir.path()), REPO);
-    let output = answering.linewright(&["serve"]).await;
+    let output = answering.lw(&["serve"]).await;
 
     assert!(
         matches!(in_process, Err(ClaimError::AlreadyServing { .. })),
@@ -384,7 +384,7 @@ async fn once_a_serve_stops_another_can_start() {
 async fn status_without_serve_running_exits_3_saying_so() {
     let runtime_dir = tempfile::tempdir().unwrap();
 
-    let output = linewright(runtime_dir.path(), &["status"]).await;
+    let output = lw(runtime_dir.path(), &["status"]).await;
 
     assert_eq!(output.code, Some(3));
     assert_eq!(output.stdout, "");
@@ -401,7 +401,7 @@ async fn a_wrong_command_line_exits_2() {
     ];
 
     for args in wrong {
-        let output = linewright(runtime_dir.path(), args).await;
+        let output = lw(runtime_dir.path(), args).await;
 
         assert_eq!(output.code, Some(2), "{args:?}: {}", output.stderr);
         assert_eq!(output.stdout, "");
@@ -413,7 +413,7 @@ async fn a_wrong_command_line_exits_2() {
 async fn a_wrong_setting_outside_the_command_line_exits_1() {
     let runtime_dir = tempfile::tempdir().unwrap();
 
-    let output = linewright_with(
+    let output = lw_with(
         runtime_dir.path(),
         &["--repo", REPO, "status"],
         &[("LINEWRIGHT_POLL_INTERVAL", "often")],
@@ -425,7 +425,7 @@ async fn a_wrong_setting_outside_the_command_line_exits_1() {
 }
 
 /// A world whose factory records its runs where `serve` and
-/// `linewright --work-dir <dir>/work` look for those of `owner/widgets`,
+/// `lw --work-dir <dir>/work` look for those of `owner/widgets`,
 /// with an issue for triage, which triage readies.
 async fn with_issue_for_triage() -> World {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
@@ -450,13 +450,11 @@ async fn runs_gives_the_same_answer_with_serve_running_and_without() {
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
     let args = ["--work-dir", work_dir, "runs", "1"];
-    eventually_async(|| async { answering.linewright(&args).await.stdout.contains("done") }).await;
+    eventually_async(|| async { answering.lw(&args).await.stdout.contains("done") }).await;
 
     let served = [
-        answering.linewright(&args).await,
-        answering
-            .linewright(&[&args[..], &["--json"]].concat())
-            .await,
+        answering.lw(&args).await,
+        answering.lw(&[&args[..], &["--json"]].concat()).await,
     ];
     let Answering {
         serving,
@@ -468,8 +466,8 @@ async fn runs_gives_the_same_answer_with_serve_running_and_without() {
     api.stop().await;
     serving.stop().await;
     let read = [
-        linewright(runtime_dir.path(), &args).await,
-        linewright(runtime_dir.path(), &[&args[..], &["--json"]].concat()).await,
+        lw(runtime_dir.path(), &args).await,
+        lw(runtime_dir.path(), &[&args[..], &["--json"]].concat()).await,
     ];
 
     for (from_serve, from_records) in served.iter().zip(&read) {
@@ -494,9 +492,9 @@ async fn a_run_in_flight_is_listed_so_and_once_a_stop_cancels_it_as_cancelled() 
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
     let args = ["--work-dir", work_dir, "runs"];
-    eventually_async(|| async { !answering.linewright(&args).await.stdout.is_empty() }).await;
+    eventually_async(|| async { !answering.lw(&args).await.stdout.is_empty() }).await;
 
-    let in_flight = answering.linewright(&args).await;
+    let in_flight = answering.lw(&args).await;
     let Answering {
         serving,
         api,
@@ -506,7 +504,7 @@ async fn a_run_in_flight_is_listed_so_and_once_a_stop_cancels_it_as_cancelled() 
     } = answering;
     api.stop().await;
     serving.stop().await;
-    let stopped = linewright(runtime_dir.path(), &args).await;
+    let stopped = lw(runtime_dir.path(), &args).await;
 
     assert!(
         in_flight
@@ -528,7 +526,7 @@ async fn a_run_in_flight_is_listed_so_and_once_a_stop_cancels_it_as_cancelled() 
 async fn runs_of_an_item_with_none_exits_4_with_serve_running() {
     let answering = Answering::start(World::new().await, false).await;
 
-    let output = answering.linewright(&["runs", "7"]).await;
+    let output = answering.lw(&["runs", "7"]).await;
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert!(
@@ -547,7 +545,7 @@ async fn a_run_whose_serve_died_is_listed_as_interrupted() {
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
     let args = ["--work-dir", work_dir, "runs"];
-    eventually_async(|| async { !answering.linewright(&args).await.stdout.is_empty() }).await;
+    eventually_async(|| async { !answering.lw(&args).await.stdout.is_empty() }).await;
     let Answering {
         serving,
         api,
@@ -559,7 +557,7 @@ async fn a_run_whose_serve_died_is_listed_as_interrupted() {
     serving.kill().await;
     api.stop().await;
 
-    let output = linewright(runtime_dir.path(), &args).await;
+    let output = lw(runtime_dir.path(), &args).await;
     let line = output.stdout.lines().next().unwrap_or_default();
     assert!(
         line.starts_with("1/triage-1: interrupted — #1 triage, started 2026-10-01 12:00:"),
@@ -587,7 +585,7 @@ async fn a_resource_serve_does_not_have_is_an_error_not_a_missing_item() {
 async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewright_waits_for() {
     let answering = Answering::start(with_ticket_and_workflow().await, false).await;
 
-    let output = answering.linewright(&["explain", "1"]).await;
+    let output = answering.lw(&["explain", "1"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -613,7 +611,7 @@ async fn explain_json_prints_the_api_answer_as_it_is() {
     let answering = Answering::start(with_ticket_and_workflow().await, false).await;
     let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/items/1").await;
 
-    let output = answering.linewright(&["explain", "1", "--json"]).await;
+    let output = answering.lw(&["explain", "1", "--json"]).await;
 
     assert_eq!(status, 200);
     assert_eq!(output.code, Some(0), "{}", output.stderr);
@@ -636,9 +634,7 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
     world.store.close_issue_as(closed).unwrap();
     let answering = Answering::start(world, false).await;
 
-    let output = answering
-        .linewright(&["explain", &closed.0.to_string()])
-        .await;
+    let output = answering.lw(&["explain", &closed.0.to_string()]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -653,7 +649,7 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
 async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
     let answering = Answering::start(World::new().await, false).await;
 
-    let output = answering.linewright(&["explain", "7"]).await;
+    let output = answering.lw(&["explain", "7"]).await;
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert_eq!(output.stdout, "");
@@ -665,7 +661,7 @@ async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
 async fn explain_without_serve_running_exits_3_saying_so() {
     let runtime_dir = tempfile::tempdir().unwrap();
 
-    let output = linewright(runtime_dir.path(), &["explain", "1"]).await;
+    let output = lw(runtime_dir.path(), &["explain", "1"]).await;
 
     assert_eq!(output.code, Some(3));
     assert_eq!(output.stdout, "");
@@ -693,7 +689,7 @@ async fn logs_gives_the_same_answer_with_serve_running_and_without() {
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
     let runs = ["--work-dir", work_dir, "runs", "1"];
-    eventually_async(|| async { answering.linewright(&runs).await.stdout.contains("done") }).await;
+    eventually_async(|| async { answering.lw(&runs).await.stdout.contains("done") }).await;
     let ways: [&[&str]; 4] = [
         &["logs", "1"],
         &["logs", "1", "--verbose"],
@@ -707,7 +703,7 @@ async fn logs_gives_the_same_answer_with_serve_running_and_without() {
 
     let mut served = vec![];
     for command in &commands {
-        served.push(answering.linewright(command).await);
+        served.push(answering.lw(command).await);
     }
     let Answering {
         serving,
@@ -720,7 +716,7 @@ async fn logs_gives_the_same_answer_with_serve_running_and_without() {
     serving.stop().await;
     let mut read = vec![];
     for command in &commands {
-        read.push(linewright(runtime_dir.path(), command).await);
+        read.push(lw(runtime_dir.path(), command).await);
     }
 
     for (from_serve, from_records) in served.iter().zip(&read) {
@@ -763,23 +759,22 @@ async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_
     let run = "1/triage-1: #1 triage, running for ";
     // Once its session has started.
     eventually_async(|| async {
-        line_starting(&answering.linewright(&["status"]).await.stdout, run)
+        line_starting(&answering.lw(&["status"]).await.stdout, run)
             .is_some_and(|line| line.contains(", quiet for "))
     })
     .await;
 
     clock.advance(chrono::TimeDelta::minutes(25));
-    let quiet = answering.linewright(&["status"]).await;
+    let quiet = answering.lw(&["status"]).await;
     agent.says();
     eventually_async(|| async {
-        line_starting(&answering.linewright(&["status"]).await.stdout, run)
-            .is_some_and(quiet_for_seconds)
+        line_starting(&answering.lw(&["status"]).await.stdout, run).is_some_and(quiet_for_seconds)
     })
     .await;
-    let heard = answering.linewright(&["status"]).await;
-    let explained = answering.linewright(&["explain", "1"]).await;
-    let status_json = answering.linewright(&["status", "--json"]).await;
-    let explain_json = answering.linewright(&["explain", "1", "--json"]).await;
+    let heard = answering.lw(&["status"]).await;
+    let explained = answering.lw(&["explain", "1"]).await;
+    let status_json = answering.lw(&["status", "--json"]).await;
+    let explain_json = answering.lw(&["explain", "1", "--json"]).await;
 
     let lines: Vec<&str> = quiet.stdout.lines().collect();
     assert_eq!(
@@ -822,10 +817,10 @@ async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_
     drop(agent);
     let past = "past run: 1/triage-1: done — #1 triage, started ";
     eventually_async(|| async {
-        line_starting(&answering.linewright(&["explain", "1"]).await.stdout, past).is_some()
+        line_starting(&answering.lw(&["explain", "1"]).await.stdout, past).is_some()
     })
     .await;
-    let ended = answering.linewright(&["status", "--json"]).await;
+    let ended = answering.lw(&["status", "--json"]).await;
     let ended: serde_json::Value = serde_json::from_str(&ended.stdout).unwrap();
     assert_eq!(ended["runs"], serde_json::json!([]));
     answering.stop().await;

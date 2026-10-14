@@ -17,7 +17,7 @@ RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target,sharing=locked \
     cargo build --release --locked \
-    && cp target/release/linewright /usr/local/bin/linewright
+    && cp target/release/lw /usr/local/bin/lw
 
 FROM debian:${DEBIAN_RELEASE}-slim AS runtime
 RUN apt-get update \
@@ -47,11 +47,11 @@ RUN (getent group "$LINEWRIGHT_GID" >/dev/null || groupadd --gid "$LINEWRIGHT_GI
         --create-home --shell /bin/bash linewright
 USER linewright
 WORKDIR /home/linewright
-ENTRYPOINT ["tini", "--", "linewright"]
+ENTRYPOINT ["tini", "--", "lw"]
 CMD ["serve"]
 
 FROM runtime AS base
-COPY --link --from=build /usr/local/bin/linewright /usr/local/bin/linewright
+COPY --link --from=build /usr/local/bin/lw /usr/local/bin/lw
 LABEL org.opencontainers.image.source="https://github.com/tibbe/linewright" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.description="Linewright, Claude Code, git, gh, and python3"

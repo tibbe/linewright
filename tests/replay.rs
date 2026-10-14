@@ -164,7 +164,7 @@ fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathB
     fake_claude(&bin, r#"{"tickets": [], "comment": "Nothing to build."}"#);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_linewright"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(["replay", "case", "--out", "out"])
         .current_dir(dir)
         .env("PATH", path)

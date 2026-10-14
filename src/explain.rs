@@ -1,4 +1,4 @@
-//! `linewright explain N`: where issue or pull request #N stands and what
+//! `lw explain N`: where issue or pull request #N stands and what
 //! Linewright waits for before it acts on it next, or why Linewright leaves
 //! it alone (`docs/specs/monitoring.md`, "explain"). `serve` answers it from
 //! its own view, with the waits the reconcile step derives, and for an item

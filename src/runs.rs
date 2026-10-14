@@ -1,6 +1,6 @@
 //! The runs: each run `serve`, `once` and `workflow run` start is recorded
 //! under its run ID in the work directory, from its start to its end and
-//! with the sessions it started, and `linewright runs` lists them
+//! with the sessions it started, and `lw runs` lists them
 //! (`docs/specs/monitoring.md`, "runs").
 
 use std::fmt::{self, Write as _};

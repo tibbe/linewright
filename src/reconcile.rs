@@ -362,7 +362,7 @@ pub enum Action {
     /// Keep the workflows' last runs, which changed, under the work
     /// directory.
     RecordLastRuns(LastRuns),
-    /// Run the workflow, as `linewright workflow run` does.
+    /// Run the workflow, as `lw workflow run` does.
     RunWorkflow(Box<Workflow>),
 }
 
