@@ -528,54 +528,39 @@ impl GitHub {
         } else {
             vec![]
         };
-        let ruled_checks = if pr.merge_state_status == "BLOCKED" {
-            self.ruled_checks(&pr.base_ref_name).await
+        let rules = if pr.merge_state_status == "BLOCKED" {
+            self.branch_rules(&pr.base_ref_name).await
         } else {
-            vec![]
+            BranchRules::default()
         };
-        Ok(pr.into_pull(pushes, &ruled_checks))
+        Ok(pr.into_pull(pushes, &rules))
     }
 
-    /// The checks the rulesets on `branch` require
+    /// What the rulesets on `branch` require
     /// (<https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch>).
     /// Classic branch protection is readable by admins only; its required
     /// checks show only once reported, as required.
-    async fn ruled_checks(&self, branch: &str) -> Vec<String> {
-        #[derive(Deserialize)]
-        struct Rule {
-            #[serde(rename = "type")]
-            kind: String,
-            #[serde(default)]
-            parameters: Option<Value>,
-        }
-        let rules: Result<Vec<Rule>> = self
+    async fn branch_rules(&self, branch: &str) -> BranchRules {
+        let rules: Result<Vec<Value>> = self
             .rest(
                 Method::GET,
                 &self.repo_path(&format!("/rules/branches/{branch}")),
                 None,
             )
             .await;
-        let rules = rules.unwrap_or_else(|e| {
-            // The comment then names only the required checks reported.
-            tracing::warn!(
-                branch,
-                error = format!("{e:#}"),
-                "reading the branch's rules"
-            );
-            vec![]
-        });
-        rules
-            .into_iter()
-            .filter(|r| r.kind == "required_status_checks")
-            .filter_map(|r| r.parameters)
-            .flat_map(|p| match &p["required_status_checks"] {
-                Value::Array(checks) => checks
-                    .iter()
-                    .filter_map(|c| c["context"].as_str().map(String::from))
-                    .collect(),
-                _ => vec![],
-            })
-            .collect()
+        match rules {
+            Ok(rules) => BranchRules::from_rules(&rules),
+            Err(e) => {
+                // What the rules require is then read only where GitHub
+                // reports it elsewhere.
+                tracing::warn!(
+                    branch,
+                    error = format!("{e:#}"),
+                    "reading the branch's rules"
+                );
+                BranchRules::default()
+            }
+        }
     }
 
     async fn pull_node_id(&self, pr: Number) -> Result<String> {
@@ -594,19 +579,7 @@ impl GitHub {
     }
 
     async fn linear_history_required(&self, branch: &str) -> bool {
-        #[derive(Deserialize)]
-        struct Rule {
-            #[serde(rename = "type")]
-            kind: String,
-        }
-        let rules: Result<Vec<Rule>> = self
-            .rest(
-                Method::GET,
-                &self.repo_path(&format!("/rules/branches/{branch}")),
-                None,
-            )
-            .await;
-        if rules.is_ok_and(|rules| rules.iter().any(|r| r.kind == "required_linear_history")) {
+        if self.branch_rules(branch).await.linear_history {
             return true;
         }
         // Classic branch protection is readable by admins only.
@@ -634,6 +607,41 @@ impl GitHub {
             return None;
         }
         Some(job_log::failed_step_output(&response.text().await.ok()?))
+    }
+}
+
+/// What the rulesets on a branch require that GitHub does not always report
+/// elsewhere.
+#[derive(Default)]
+struct BranchRules {
+    /// The checks required, reported or not.
+    checks: Vec<String>,
+    /// Whether a code owner's review is required.
+    code_owner_review: bool,
+    /// Whether the branch's history must be linear.
+    linear_history: bool,
+}
+
+impl BranchRules {
+    /// Reads `rules`, a branch's rules as the REST API returns them
+    /// (<https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch>).
+    fn from_rules(rules: &[Value]) -> Self {
+        let of_kind = |kind: &'static str| {
+            rules
+                .iter()
+                .filter(move |r| r["type"] == kind)
+                .map(|r| &r["parameters"])
+        };
+        BranchRules {
+            checks: of_kind("required_status_checks")
+                .filter_map(|p| p["required_status_checks"].as_array())
+                .flatten()
+                .filter_map(|c| c["context"].as_str().map(String::from))
+                .collect(),
+            code_owner_review: of_kind("pull_request")
+                .any(|p| p["require_code_owner_review"] == json!(true)),
+            linear_history: of_kind("required_linear_history").next().is_some(),
+        }
     }
 }
 
@@ -1061,14 +1069,18 @@ impl GqlContext {
 
 impl GqlPull {
     /// What GitHub requires before the pull request merges, read from its
-    /// review decision, the code owners it requested review from and its
-    /// required checks, `ruled_checks` those the default branch's rulesets
-    /// require, reported or not
+    /// review decision, the code owners it requested review from, its
+    /// required checks and what the rulesets on its base branch require,
+    /// `rules`
     /// (<https://docs.github.com/en/graphql/reference/enums#mergestatestatus>).
-    fn requirements(&self, ruled_checks: &[String]) -> Vec<Requirement> {
+    /// GitHub reports no review decision when the rules require a code
+    /// owner's review but no approvals, so the rules say that review is
+    /// needed then.
+    fn requirements(&self, rules: &BranchRules) -> Vec<Requirement> {
         let mut requires = vec![];
         match (self.review_decision.as_deref(), self.code_owner_review()) {
             (Some("REVIEW_REQUIRED"), Some(review)) => requires.push(review),
+            (_, Some(review)) if rules.code_owner_review => requires.push(review),
             (Some("REVIEW_REQUIRED" | "CHANGES_REQUESTED"), _) => {
                 requires.push(Requirement::Approval)
             }
@@ -1088,7 +1100,7 @@ impl GqlPull {
             .iter()
             .filter(|c| c.is_required())
             .map(|c| c.check().name)
-            .chain(ruled_checks.iter().cloned())
+            .chain(rules.checks.iter().cloned())
             .filter(|name| !passed.contains(name))
             .collect();
         missing.sort();
@@ -1122,7 +1134,7 @@ impl GqlPull {
         })
     }
 
-    fn into_pull(self, pushes: Vec<Push>, ruled_checks: &[String]) -> Pull {
+    fn into_pull(self, pushes: Vec<Push>, rules: &BranchRules) -> Pull {
         let state = match (self.state.as_str(), self.merged_at, self.closed_at) {
             ("MERGED", Some(at), _) => PullState::Merged { at },
             ("CLOSED", _, Some(at)) => PullState::Closed { at },
@@ -1134,7 +1146,7 @@ impl GqlPull {
             ("CONFLICTING", _) | (_, "DIRTY") => Mergeability::Conflicting,
             (_, "BEHIND") => Mergeability::Behind,
             (_, "BLOCKED") => Mergeability::Blocked {
-                requires: self.requirements(ruled_checks),
+                requires: self.requirements(rules),
             },
             // GitHub reports no merge state for a draft.
             ("UNKNOWN", _) | (_, "UNKNOWN" | "DRAFT") => Mergeability::Unknown,
@@ -2024,7 +2036,10 @@ mod tests {
     fn a_team_requested_as_code_owner_requires_a_code_owners_review_without_naming_it() {
         let pr = review_required(json!([code_owner(json!({"__typename": "Team"}))]));
 
-        assert_eq!(displayed(pr.requirements(&[])), ["a code owner's review"]);
+        assert_eq!(
+            displayed(pr.requirements(&BranchRules::default())),
+            ["a code owner's review"]
+        );
     }
 
     #[test]
@@ -2035,7 +2050,7 @@ mod tests {
         ]));
 
         assert_eq!(
-            displayed(pr.requirements(&[])),
+            displayed(pr.requirements(&BranchRules::default())),
             ["a code owner's review (@alice or @bob)"]
         );
     }
@@ -2047,7 +2062,10 @@ mod tests {
             code_owner(json!({"__typename": "Team"})),
         ]));
 
-        assert_eq!(displayed(pr.requirements(&[])), ["a code owner's review"]);
+        assert_eq!(
+            displayed(pr.requirements(&BranchRules::default())),
+            ["a code owner's review"]
+        );
     }
 
     #[test]
@@ -2057,7 +2075,101 @@ mod tests {
             "requestedReviewer": {"__typename": "User", "login": "alice"},
         }]));
 
-        assert_eq!(pr.requirements(&[]), [Requirement::Approval]);
+        assert_eq!(
+            pr.requirements(&BranchRules::default()),
+            [Requirement::Approval]
+        );
+    }
+
+    /// A blocked pull request GitHub reports no review decision for, as it
+    /// does when the rules require a code owner's review and no approvals.
+    fn no_review_decision(requests: Value) -> GqlPull {
+        let mut pr = review_required(requests);
+        pr.review_decision = None;
+        pr
+    }
+
+    fn code_owner_review_ruled() -> BranchRules {
+        BranchRules {
+            code_owner_review: true,
+            ..BranchRules::default()
+        }
+    }
+
+    #[test]
+    fn a_code_owner_requested_under_rules_requiring_its_review_is_required_without_a_review_decision()
+     {
+        let pr = no_review_decision(json!([code_owner(
+            json!({"__typename": "User", "login": "tibbe"})
+        )]));
+
+        assert_eq!(
+            pr.requirements(&code_owner_review_ruled()),
+            [Requirement::CodeOwnerReview {
+                owners: vec!["tibbe".into()]
+            }]
+        );
+    }
+
+    #[test]
+    fn a_team_requested_as_code_owner_under_rules_requiring_its_review_is_required_unnamed() {
+        let pr = no_review_decision(json!([code_owner(json!({"__typename": "Team"}))]));
+
+        assert_eq!(
+            pr.requirements(&code_owner_review_ruled()),
+            [Requirement::CodeOwnerReview { owners: vec![] }]
+        );
+    }
+
+    #[test]
+    fn a_code_owner_requested_without_a_review_decision_or_a_rule_requiring_it_is_not_required() {
+        let pr = no_review_decision(json!([code_owner(
+            json!({"__typename": "User", "login": "tibbe"})
+        )]));
+
+        assert_eq!(pr.requirements(&BranchRules::default()), []);
+    }
+
+    #[test]
+    fn rules_requiring_a_code_owners_review_require_none_when_no_code_owner_is_requested() {
+        let pr = no_review_decision(json!([{
+            "asCodeOwner": false,
+            "requestedReviewer": {"__typename": "User", "login": "alice"},
+        }]));
+
+        assert_eq!(pr.requirements(&code_owner_review_ruled()), []);
+    }
+
+    #[test]
+    fn a_branchs_rules_give_its_required_checks_and_whether_a_code_owners_review_is_required() {
+        // As `GET /repos/tibbe/linewright/rules/branches/main` returns them.
+        let rules: Vec<Value> = serde_json::from_value(json!([
+            {"type": "deletion", "ruleset_source_type": "Repository",
+             "ruleset_source": "tibbe/linewright", "ruleset_id": 1},
+            {"type": "pull_request", "ruleset_source_type": "Repository",
+             "ruleset_source": "tibbe/linewright", "ruleset_id": 1,
+             "parameters": {
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": false,
+                "require_code_owner_review": true,
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": false,
+                "allowed_merge_methods": ["rebase"],
+             }},
+            {"type": "required_status_checks", "ruleset_source_type": "Repository",
+             "ruleset_source": "tibbe/linewright", "ruleset_id": 1,
+             "parameters": {
+                "strict_required_status_checks_policy": false,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [{"context": "check", "integration_id": 15368}],
+             }},
+        ]))
+        .unwrap();
+
+        let rules = BranchRules::from_rules(&rules);
+
+        assert_eq!(rules.checks, ["check"]);
+        assert!(rules.code_owner_review);
     }
 
     /// A ticket as the snapshot query returns it, with `parent` its parent.
