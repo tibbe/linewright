@@ -1,0 +1,6 @@
+interface:
+  display_name: "Prior art"
+  short_description: "Find how the problem was solved before, and choose"
+
+policy:
+  allow_implicit_invocation: true

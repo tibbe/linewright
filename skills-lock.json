@@ -1,11 +1,11 @@
 {
   "version": 1,
   "skills": {
-    "software-design": {
+    "prior-art": {
       "source": "tibbe/skills",
       "sourceType": "github",
-      "skillPath": "skills/software-design/SKILL.md",
-      "computedHash": "5a2bbe25ac8008ab19f5bd58cae62d297b444d3dc9451349ee2ff2936786d538"
+      "skillPath": "skills/prior-art/SKILL.md",
+      "computedHash": "910c7ff2dccda97446a93dfaf288288f30e7260ac4016437ce174a8df6af18ae"
     }
   }
 }
