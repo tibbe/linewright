@@ -671,3 +671,74 @@ async fn explain_without_serve_running_exits_3_saying_so() {
     assert_eq!(output.stdout, "");
     assert!(output.stderr.contains("not running"), "{}", output.stderr);
 }
+
+#[tokio::test]
+async fn logs_gives_the_same_answer_with_serve_running_and_without() {
+    let world = with_issue_for_triage().await;
+    world
+        .runtime
+        .on(linewright::reconcile::WorkKind::Triage, |call| {
+            std::fs::write(
+                call.spec.record.join(linewright::transcript::OUTPUT),
+                include_str!("fixtures/transcript/turn-1.jsonl"),
+            )
+            .unwrap();
+            json(serde_json::json!({
+                "outcome": "ready-for-agent",
+                "category": "bug",
+                "comment": "## Agent Brief\n\n**Summary:** It crashes."
+            }))
+        });
+    let answering = Answering::start(world, false).await;
+    let work_dir = answering._dir.path().join("work");
+    let work_dir = work_dir.to_str().unwrap();
+    let runs = ["--work-dir", work_dir, "runs", "1"];
+    eventually_async(|| async { answering.linewright(&runs).await.stdout.contains("done") }).await;
+    let ways: [&[&str]; 4] = [
+        &["logs", "1"],
+        &["logs", "1", "--verbose"],
+        &["logs", "--run", "1/triage-1", "--json"],
+        &["logs", "1", "--run", "1/triage-2"],
+    ];
+    let commands: Vec<Vec<&str>> = ways
+        .iter()
+        .map(|way| [&["--work-dir", work_dir][..], way].concat())
+        .collect();
+
+    let mut served = vec![];
+    for command in &commands {
+        served.push(answering.linewright(command).await);
+    }
+    let Answering {
+        serving,
+        api,
+        runtime_dir,
+        _dir,
+        ..
+    } = answering;
+    api.stop().await;
+    serving.stop().await;
+    let mut read = vec![];
+    for command in &commands {
+        read.push(linewright(runtime_dir.path(), command).await);
+    }
+
+    for (from_serve, from_records) in served.iter().zip(&read) {
+        assert_eq!(from_serve.code, from_records.code, "{}", from_serve.stderr);
+        assert_eq!(from_serve.stdout, from_records.stdout);
+    }
+    assert_eq!(served[0].code, Some(0), "{}", served[0].stderr);
+    assert!(
+        served[0].stdout.starts_with(
+            "run: 1/triage-1\nsession 1: started 2026-10-13 10:09:08 UTC\n 0:03  Bash("
+        ),
+        "{}",
+        served[0].stdout
+    );
+    assert_eq!(served[3].code, Some(4), "{}", served[3].stderr);
+    assert!(
+        served[3].stderr.contains("there is no run 1/triage-2"),
+        "{}",
+        served[3].stderr
+    );
+}

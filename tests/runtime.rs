@@ -10,6 +10,7 @@ use linewright::domain::Number;
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::runtime::claude::ClaudeCode;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec};
+use linewright::transcript::{Prompt, What};
 use serde_json::{Value, json};
 
 fn runtime_without_token(dir: &Path) -> ClaudeCode {
@@ -336,4 +337,53 @@ async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
     let turn = runtime.start(&triage_session(dir.path())).await.unwrap();
 
     assert_eq!(turn.message, "Done.");
+}
+
+#[tokio::test]
+async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_streaming(
+        dir.path(),
+        &[
+            json!({"type": "system", "subtype": "init", "cwd": "/clone"}),
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-13T10:09:11.268Z",
+                "message": {"content": [{"type": "text", "text": "Done."}]},
+            }),
+            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
+        ],
+    );
+    let spec = triage_session(dir.path());
+
+    let turn = runtime.start(&spec).await.unwrap();
+    runtime
+        .resume(&spec, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    let record = linewright::transcript::SessionRecord::read(dir.path()).unwrap();
+    let session = linewright::transcript::parse(&record);
+    let turns: Vec<(&Prompt, Vec<&What>)> = session
+        .turns
+        .iter()
+        .map(|kept| {
+            let messages = kept
+                .entries
+                .iter()
+                .map(|entry| &entry.what)
+                .filter(|what| matches!(what, What::Message(_)))
+                .collect();
+            (&kept.prompt, messages)
+        })
+        .collect();
+    let done = What::Message("Done.".into());
+    assert_eq!(
+        turns,
+        [
+            (&Prompt::Brief(None), vec![&done]),
+            (&Prompt::FollowUp(None), vec![&done])
+        ]
+    );
+    assert!(session.turns.iter().all(|kept| kept.started_at.is_some()));
 }

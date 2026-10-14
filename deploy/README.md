@@ -85,7 +85,10 @@ With Docker on another machine, pass its context to each command:
 - What Linewright did: `docker compose exec linewright linewright runs`, or
   `runs N` for issue or pull request #N's runs. Each run's record, with the
   sessions it started, is under `/data/OWNER/NAME/runs/` in the container.
-- What each agent session did: its record, under
+- What an agent did: `docker compose exec linewright linewright logs N`
+  shows the transcript of #N's run in flight or else its latest run that
+  started a session, `--run ID` another run's, and `--verbose` all of it.
+- Each agent session's record, under
   `/data/OWNER/NAME/sessions/` in the container. There is a directory for
   each issue (`issue-N`), spec PR (`pr-N`) and workflow (`workflow-NAME`),
   and in it one for each session, named by its start time (UTC) and kind:

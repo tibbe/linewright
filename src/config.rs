@@ -13,9 +13,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::TimeDelta;
 use clap::{Args, Parser, Subcommand};
 
-use crate::domain::{MergeMethod, Timestamp, UpdateMethod};
+use crate::domain::{MergeMethod, Number, Timestamp, UpdateMethod};
+use crate::logs::Which;
 use crate::reconcile::WorkKind;
-use crate::runs::RepoWorkDir;
+use crate::runs::{RepoWorkDir, RunId};
 use crate::spec_glob::SpecGlob;
 use crate::webhook::{self, Webhooks};
 use crate::workflow::WorkflowName;
@@ -76,6 +77,20 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Show the transcript of issue or pull request #N's run in flight, or
+    /// else of its latest run that started a session.
+    Logs {
+        #[command(flatten)]
+        which: Which,
+        /// Show everything the transcript holds: also the thinking, each
+        /// tool's full input and result, the brief and follow-ups, and the
+        /// runtime's other events.
+        #[arg(long)]
+        verbose: bool,
+        /// Print one JSON object per transcript entry and line.
+        #[arg(long)]
+        json: bool,
+    },
     /// Workflows: `workflow run NAME` runs one now, then exits.
     Workflow {
         #[command(subcommand)]
@@ -121,6 +136,42 @@ fn parse_since(value: &str) -> Result<Since, String> {
     humantime::parse_duration(value).map(Since::Ago).map_err(|_| {
         format!("{value:?} is not a time (2026-10-14T12:00:00Z), a date (2026-10-14) or a duration (2h)")
     })
+}
+
+/// The arguments of `logs` that say which run to show: an item, a run ID,
+/// or both.
+#[derive(Args, Debug)]
+#[group(required = true, multiple = true)]
+struct WhichArgs {
+    /// The run's issue or pull request.
+    #[arg(value_name = "N")]
+    item: Option<u64>,
+    /// Another run, by its run ID, such as 42/rework-2 or weekly/3.
+    #[arg(long, value_name = "ID")]
+    run: Option<RunId>,
+}
+
+impl clap::FromArgMatches for Which {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Which, clap::Error> {
+        let args = WhichArgs::from_arg_matches(matches)?;
+        Which::new(args.item.map(Number), args.run)
+            .map_err(|e| clap::Error::raw(clap::error::ErrorKind::MissingRequiredArgument, e))
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        *self = Which::from_arg_matches(matches)?;
+        Ok(())
+    }
+}
+
+impl Args for Which {
+    fn augment_args(command: clap::Command) -> clap::Command {
+        WhichArgs::augment_args(command)
+    }
+
+    fn augment_args_for_update(command: clap::Command) -> clap::Command {
+        WhichArgs::augment_args_for_update(command)
+    }
 }
 
 #[derive(Subcommand, Debug)]

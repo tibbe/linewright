@@ -31,6 +31,7 @@ use crate::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLim
 use crate::spec_gap;
 use crate::store::{Categories, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
 use crate::tracking;
+use crate::transcript;
 use crate::workflow::Workflow;
 
 /// What every run shares.
@@ -477,7 +478,7 @@ async fn take_turn(
     loop {
         let turn = match &step {
             Step::Start => {
-                record(spec, "brief.md", &spec.prompt);
+                record(spec, transcript::BRIEF, &spec.prompt);
                 cancellable(ctx, shell.runtime.start(spec)).await?
             }
             Step::Resume { session, prompt } => {
@@ -535,15 +536,10 @@ async fn cancellable<T>(ctx: &Ctx, turn: impl Future<Output = T>) -> Result<T, F
 }
 
 fn followup_name(record: &Path) -> String {
-    let n = std::fs::read_dir(record)
-        .map(|entries| {
-            entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_name().to_string_lossy().starts_with("followup-"))
-                .count()
-        })
-        .unwrap_or(0);
-    format!("followup-{}.md", n + 1)
+    let n = (1..)
+        .find(|n| !record.join(transcript::followup_file(*n)).exists())
+        .expect("a session has fewer follow-ups than numbers");
+    transcript::followup_file(n)
 }
 
 /// The log without the clone's location: comments hold only what belongs

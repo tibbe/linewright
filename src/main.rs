@@ -6,16 +6,18 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use linewright::api::{self, Api, RequestError, Served, Sources};
+use linewright::api::{self, Api, RequestError, Served, Sources, Unanswered};
 use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, Since, WorkflowCommand};
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig};
-use linewright::runs::{self, ListError, Query};
+use linewright::logs::{self, Which};
+use linewright::runs::{self, Query, RepoWorkDir};
 use linewright::runtime::claude::ClaudeCode;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
+use linewright::transcript::{self, Verbosity};
 use linewright::webhook::{Listener, Pending};
 use linewright::{COMMIT, VERSION};
 use linewright::{explain, status};
@@ -124,12 +126,41 @@ async fn ask<T: serde::de::DeserializeOwned>(
 
 /// `linewright runs`: the runs `query` asks for, from the `serve` of the
 /// configured repository or, with none running, from the records it keeps,
-/// printed as text or, with `json`, as JSON. Errors go to standard error,
-/// without the log's decoration.
+/// printed as text or, with `json`, as JSON.
 async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
-    match answer_runs(config, query).await {
-        Ok(answer) => {
-            print!("{}", answer.text(json));
+    let resource = format!("/runs?{}", runs::query_string(query));
+    let answer = ask_or_read(config, &resource, "runs", |work_dir| {
+        runs::answer(work_dir, query, SystemClock.now())
+    })
+    .await;
+    print_answer(answer.map(|answer| answer.text(json)))
+}
+
+/// `linewright logs`: the transcript of the run `which` names, from the
+/// `serve` of the configured repository or, with none running, from the
+/// records it keeps, printed as text or, with `json`, as JSON lines.
+async fn show_logs(config: &Config, which: &Which, verbosity: Verbosity, json: bool) -> ExitCode {
+    let resource = format!("/logs?{}", which.query_string());
+    let answer = ask_or_read(config, &resource, "a transcript", |work_dir| {
+        logs::answer(work_dir, which)
+    })
+    .await;
+    print_answer(answer.map(|answer| {
+        let transcript = answer.value();
+        if json {
+            transcript::json_lines(transcript, verbosity)
+        } else {
+            transcript::render(transcript, verbosity, colour())
+        }
+    }))
+}
+
+/// Prints `answer`, or its error to standard error, without the log's
+/// decoration, and gives the exit status.
+fn print_answer(answer: Result<String, (u8, String)>) -> ExitCode {
+    match answer {
+        Ok(text) => {
+            print!("{text}");
             ExitCode::SUCCESS
         }
         Err((code, message)) => {
@@ -139,39 +170,48 @@ async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
     }
 }
 
-/// The answer to `query`, or the exit status and the error.
-async fn answer_runs(config: &Config, query: &Query) -> Result<Answer, (u8, String)> {
+/// Asks the `serve` of the configured repository for `resource`, an answer
+/// that reads as `what`, or, with none running, reads it from the records
+/// with `read`. Fails with the exit status and the error.
+async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
+    config: &Config,
+    resource: &str,
+    what: &str,
+    read: impl FnOnce(&RepoWorkDir) -> Result<T, E>,
+) -> Result<Answer<T>, (u8, String)> {
     let failed = |e: anyhow::Error| (1, format!("{e:#}"));
     let work_dir = config.repo_work_dir().map_err(failed)?;
-    let resource = format!("/runs?{}", runs::query_string(query));
-    match api::get_answer(&socket_dir(), &work_dir.repo, &resource).await {
+    match api::get_answer(&socket_dir(), &work_dir.repo, resource).await {
         Ok(body) => {
-            let listing = serde_json::from_slice(&body)
-                .map_err(|e| (1, format!("`serve`'s answer does not read as runs: {e}")))?;
-            Ok(Answer::Served { body, listing })
+            let value = serde_json::from_slice(&body)
+                .map_err(|e| (1, format!("`serve`'s answer does not read as {what}: {e}")))?;
+            Ok(Answer::Served { body, value })
         }
-        Err(RequestError::NotServing { .. }) => {
-            match runs::answer(&work_dir, query, SystemClock.now()) {
-                Ok(listing) => Ok(Answer::Read(listing)),
-                Err(e @ ListError::NoRuns(_)) => Err((NO_SUCH_ITEM, e.to_string())),
-                Err(ListError::Other(e)) => Err(failed(e)),
-            }
-        }
+        Err(RequestError::NotServing { .. }) => match read(&work_dir).map_err(Into::into) {
+            Ok(value) => Ok(Answer::Read(value)),
+            Err(Unanswered::NoSuch { error, .. }) => Err((NO_SUCH_ITEM, error)),
+            Err(Unanswered::Failed(e)) => Err(failed(e)),
+        },
         Err(e @ RequestError::NotFound(_)) => Err((NO_SUCH_ITEM, e.to_string())),
         Err(RequestError::Other(e)) => Err(failed(e)),
     }
 }
 
-/// The answer to `runs`: `serve`'s, or one read with no `serve` running.
-enum Answer {
-    Served {
-        body: axum::body::Bytes,
-        listing: runs::Listing,
-    },
-    Read(runs::Listing),
+/// An answer: `serve`'s, or one read with no `serve` running.
+enum Answer<T> {
+    Served { body: axum::body::Bytes, value: T },
+    Read(T),
 }
 
-impl Answer {
+impl<T> Answer<T> {
+    fn value(&self) -> &T {
+        match self {
+            Answer::Served { value, .. } | Answer::Read(value) => value,
+        }
+    }
+}
+
+impl Answer<runs::Listing> {
     /// The answer as text or, with `json`, as JSON: `serve`'s as it sent it
     /// (`docs/specs/architecture.md`, "The local API").
     fn text(&self, json: bool) -> String {
@@ -185,9 +225,7 @@ impl Answer {
                     serde_json::to_string(listing).expect("the answers serialize")
                 )
             }
-            (Answer::Served { listing, .. } | Answer::Read(listing), false) => {
-                runs::render(listing, colour())
-            }
+            (answer, false) => runs::render(answer.value(), colour()),
         }
     }
 }
@@ -233,6 +271,18 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 limit,
             };
             return Ok(list_runs(&config, &query, json).await);
+        }
+        Command::Logs {
+            which,
+            verbose,
+            json,
+        } => {
+            let verbosity = if verbose {
+                Verbosity::Full
+            } else {
+                Verbosity::Compact
+            };
+            return Ok(show_logs(&config, &which, verbosity, json).await);
         }
         Command::Serve => {
             // First, so a log names the build it came from.

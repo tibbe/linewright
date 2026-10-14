@@ -15,6 +15,7 @@ use tokio::process::Command;
 use super::{Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::domain::Timestamp;
 use crate::store::github::TOKEN_VARIABLES;
+use crate::transcript::{self, StartedBy};
 
 pub struct ClaudeCode {
     pub program: String,
@@ -124,6 +125,36 @@ fn escape_glob(path: &str) -> String {
         .collect()
 }
 
+/// The session a turn is in, by its ID: one it starts, or one it resumes.
+#[derive(Clone, Copy)]
+enum Session<'a> {
+    Start(&'a str),
+    Resume(&'a str),
+}
+
+impl<'a> Session<'a> {
+    fn id(self) -> &'a str {
+        match self {
+            Session::Start(id) | Session::Resume(id) => id,
+        }
+    }
+
+    fn started_by(self) -> StartedBy {
+        match self {
+            Session::Start(_) => StartedBy::Brief,
+            Session::Resume(_) => StartedBy::FollowUp,
+        }
+    }
+
+    /// The arguments that tell Claude Code which session the turn is in.
+    fn args(self) -> [&'a str; 2] {
+        match self {
+            Session::Start(id) => ["--session-id", id],
+            Session::Resume(id) => ["--resume", id],
+        }
+    }
+}
+
 const TAIL_LINES: usize = 30;
 
 /// What a session said, kept as it streams so a timed-out session still
@@ -150,7 +181,7 @@ impl ClaudeCode {
     async fn turn(
         &self,
         spec: &SessionSpec,
-        session_args: [&str; 2],
+        session: Session<'_>,
         prompt: &str,
     ) -> Result<Turn, SessionError> {
         // Claude Code matches `CLAUDE.md` files by their real path.
@@ -168,7 +199,7 @@ impl ClaudeCode {
             .args(isolation_args(&clone))
             .arg("--plugin-dir")
             .arg(&spec.plugin)
-            .args(session_args)
+            .args(session.args())
             .current_dir(&spec.dir)
             .env("TMPDIR", &spec.scratch)
             // Claude Code otherwise picks the operator's `$SHELL`. It still
@@ -204,7 +235,7 @@ impl ClaudeCode {
             let _ = stdin.write_all(prompt.as_bytes()).await;
             drop(stdin);
         };
-        let output_path = spec.record.join("output.jsonl");
+        let output_path = spec.record.join(transcript::OUTPUT);
         let read_stdout = async {
             let mut output = tokio::fs::OpenOptions::new()
                 .create(true)
@@ -212,6 +243,10 @@ impl ClaudeCode {
                 .open(&output_path)
                 .await
                 .ok();
+            if let Some(file) = output.as_mut() {
+                let marker = transcript::turn_marker(chrono::Utc::now(), session.started_by());
+                let _ = file.write_all(format!("{marker}\n").as_bytes()).await;
+            }
             let mut lines = BufReader::new(stdout).lines();
             let mut result = None;
             let mut refusal = None;
@@ -255,7 +290,7 @@ impl ClaudeCode {
             (result, refusal, underway, child.wait().await)
         })
         .await;
-        let session = session_args[1].to_string();
+        let session = session.id().to_string();
         copy_transcript(&session, &spec.record.join("trace.jsonl")).await;
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
@@ -349,7 +384,7 @@ async fn copy_transcript(session: &str, to: &Path) {
 impl Runtime for ClaudeCode {
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError> {
         let session = uuid::Uuid::new_v4().to_string();
-        self.turn(spec, ["--session-id", &session], &spec.prompt)
+        self.turn(spec, Session::Start(&session), &spec.prompt)
             .await
     }
 
@@ -359,6 +394,6 @@ impl Runtime for ClaudeCode {
         session: &str,
         prompt: &str,
     ) -> Result<Turn, SessionError> {
-        self.turn(spec, ["--resume", session], prompt).await
+        self.turn(spec, Session::Resume(session), prompt).await
     }
 }

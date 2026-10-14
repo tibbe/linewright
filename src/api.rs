@@ -27,6 +27,7 @@ use tracing::{error, info};
 use crate::clock::Clock;
 use crate::domain::Number;
 use crate::explain;
+use crate::logs::{self, LogsError, NoSuchRun};
 use crate::runs::{self, ListError, RepoWorkDir};
 use crate::status::{self, Serving, View};
 use crate::store::Store;
@@ -181,6 +182,7 @@ impl Api {
             .route("/status", get(answer_status))
             .route("/runs", get(answer_runs))
             .route("/items/{number}", get(answer_item))
+            .route("/logs", get(answer_logs))
             .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
             .layer(middleware::from_fn(local_only))
             .with_state(sources);
@@ -235,16 +237,66 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
 /// The runs the query asks for, read from their records as `runs` reads
 /// them with no `serve` running, so that the answer is the same.
 async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Query>) -> Response {
-    match runs::answer(&sources.work_dir, &query, sources.clock.now()) {
-        Ok(listing) => json_response(StatusCode::OK, &listing),
-        Err(ListError::NoRuns(no_runs)) => json_response(
+    answer(runs::answer(&sources.work_dir, &query, sources.clock.now()))
+}
+
+/// The transcript of the run the query names, read from the records as
+/// `logs` reads it with no `serve` running, so that the answer is the same.
+async fn answer_logs(State(sources): State<Sources>, Query(which): Query<logs::Which>) -> Response {
+    answer(logs::answer(&sources.work_dir, &which))
+}
+
+/// Why there is no answer from the records, `serve`'s or a command's.
+#[derive(Debug)]
+pub enum Unanswered {
+    /// The item or run asked about does not exist (`docs/specs/monitoring.md`,
+    /// "Output").
+    NoSuch {
+        missing: Missing,
+        error: String,
+    },
+    Failed(anyhow::Error),
+}
+
+impl From<ListError> for Unanswered {
+    fn from(e: ListError) -> Unanswered {
+        match e {
+            ListError::NoRuns(no_runs) => Unanswered::NoSuch {
+                missing: Missing::Item,
+                error: no_runs.to_string(),
+            },
+            ListError::Other(e) => Unanswered::Failed(e),
+        }
+    }
+}
+
+impl From<LogsError> for Unanswered {
+    fn from(e: LogsError) -> Unanswered {
+        match e {
+            LogsError::NoSuchRun(no_such) => Unanswered::NoSuch {
+                missing: match no_such {
+                    NoSuchRun::NoRuns(_) => Missing::Item,
+                    NoSuchRun::NoRun(_) | NoSuchRun::NotOf { .. } => Missing::Run,
+                },
+                error: no_such.to_string(),
+            },
+            LogsError::Other(e) => Unanswered::Failed(e),
+        }
+    }
+}
+
+/// `answer` as `serve` sends it.
+fn answer(answer: Result<impl serde::Serialize, impl Into<Unanswered>>) -> Response {
+    match answer.map_err(Into::into) {
+        Ok(value) => json_response(StatusCode::OK, &value),
+        Err(Unanswered::NoSuch { missing, error }) => json_response(
             StatusCode::NOT_FOUND,
             &ErrorAnswer {
-                error: no_runs.to_string(),
-                missing: Some(Missing::Item),
+                error,
+                missing: Some(missing),
             },
         ),
-        Err(ListError::Other(e)) => {
+        Err(Unanswered::Failed(e)) => {
             error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"))
         }
     }
@@ -411,8 +463,10 @@ struct ErrorAnswer {
     missing: Option<Missing>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+/// What does not exist.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
-enum Missing {
+pub enum Missing {
     Item,
+    Run,
 }
