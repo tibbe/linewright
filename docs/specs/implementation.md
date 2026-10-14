@@ -86,6 +86,12 @@ requests that have already been through review.
   reason and the tail of the log. Infrastructure failures are retried once
   first. A session refused for the usage limit has not failed: it waits the
   limit out (see [Operation](operation.md)).
+- A push GitHub refuses because Linewright's token lacks a permission, such
+  as changing a workflow file without the workflow permission, is not
+  retried: the ticket goes to `ready-for-human` with GitHub's reason, and the
+  comment says the work was not kept and that the maintainer can grant the
+  permission and apply `ready-for-agent` again, or make the change
+  themselves.
 - Removing `ready-for-agent`, unassigning Linewright or closing the
   issue cancels its run; the branch is kept. A run on a PR that is merged or
   closed while it works pushes and posts nothing.
