@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::{Item, Login, Number, Pull, Timestamp, label};
 use crate::reconcile::{NotSpecChange, Wait, not_a_spec_change};
+use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
     InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, standing, tracked,
     utc,
@@ -38,6 +39,58 @@ pub struct Explanation {
     /// When `serve` last read #N.
     pub last_read: Timestamp,
     pub waiting_for: Vec<Wait>,
+    #[serde(flatten)]
+    pub runs: ItemRuns,
+}
+
+/// An item's runs: its run in flight, with its quiet time, and its past
+/// runs as `runs N` lists them (`docs/specs/monitoring.md`, "explain").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemRuns {
+    pub run_in_flight: Option<RunInFlight>,
+    /// Newest first.
+    pub past_runs: Vec<Run>,
+}
+
+impl ItemRuns {
+    /// The runs of #`item` at `now`: the one in flight in `view`, and the
+    /// others of those `recorded`.
+    fn of(view: &View, recorded: &[Recorded], item: Number, now: Timestamp) -> ItemRuns {
+        let run_in_flight = view
+            .in_flight
+            .iter()
+            .find(|run| run.id.of.item() == Some(item))
+            .map(|run| run.at(now));
+        // A run that has just ended may still be in flight in the view.
+        let in_flight = run_in_flight.as_ref().map(|run| &run.id);
+        let mut past: Vec<Recorded> = recorded
+            .iter()
+            .filter(|run| {
+                run.id.of.item() == Some(item)
+                    && run.state != State::InFlight
+                    && Some(&run.id) != in_flight
+            })
+            .cloned()
+            .collect();
+        runs::sort_newest_first(&mut past);
+        ItemRuns {
+            run_in_flight,
+            past_runs: past.into_iter().map(|run| run.at(now)).collect(),
+        }
+    }
+
+    /// The runs as text, one per line, coloured with `paint`.
+    fn lines(&self, paint: Paint) -> Vec<String> {
+        let in_flight = self
+            .run_in_flight
+            .iter()
+            .map(|run| format!("run in flight: {}", run.render(paint)));
+        let past = self
+            .past_runs
+            .iter()
+            .map(|run| format!("past run: {}", runs::render_run(run, paint)));
+        in_flight.chain(past).collect()
+    }
 }
 
 /// Where #N is in the pipeline.
@@ -55,9 +108,16 @@ pub enum Standing {
     Item(ItemState),
 }
 
-/// The answer about #`number` at `now`: an item Linewright tracks, or
-/// Linewright's open pull request for one. `None` for any other number.
-pub fn explain(view: &View, number: Number, now: Timestamp) -> Option<Explanation> {
+/// The answer about #`number` at `now`, with its runs among those
+/// `recorded`: an item Linewright tracks, or Linewright's open pull request
+/// for one, which shows the runs of the issue it is for, as the runs on it
+/// are recorded under the issue. `None` for any other number.
+pub fn explain(
+    view: &View,
+    recorded: &[Recorded],
+    number: Number,
+    now: Timestamp,
+) -> Option<Explanation> {
     let items = tracked(view, now);
     let last_read = |item: Item| view.read_at.get(&item).copied().unwrap_or(view.polls.last);
     if let Some(tracked) = items.iter().find(|t| t.number == number) {
@@ -73,6 +133,7 @@ pub fn explain(view: &View, number: Number, now: Timestamp) -> Option<Explanatio
             standing: Standing::Item(tracked.state.clone()),
             last_read: last_read(read),
             waiting_for: tracked.waiting_for.clone(),
+            runs: ItemRuns::of(view, recorded, number, now),
         });
     }
     items.into_iter().find_map(|tracked| match tracked.state {
@@ -85,6 +146,7 @@ pub fn explain(view: &View, number: Number, now: Timestamp) -> Option<Explanatio
             },
             last_read: last_read(Item::Pull(number)),
             waiting_for: tracked.waiting_for,
+            runs: ItemRuns::of(view, recorded, tracked.number, now),
         }),
         _ => None,
     })
@@ -100,6 +162,8 @@ pub struct LeftAlone {
     pub item: LeftAloneItem,
     /// When `serve` read #N.
     pub last_read: Timestamp,
+    #[serde(flatten)]
+    pub runs: ItemRuns,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,8 +230,9 @@ pub enum PullExclusion {
 /// because its view tracks no such item: where #N stands if the read places
 /// it in the pipeline after all, as a label applied since the last poll
 /// does, or else why Linewright leaves it alone, by the rules that decide
-/// what it tracks.
-pub fn explain_read(view: &View, read: &AnyItem, now: Timestamp) -> Answer {
+/// what it tracks; with its runs among those `recorded`, as [`explain`]
+/// shows them.
+pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Timestamp) -> Answer {
     let mut fresh = view.clone();
     let linewright = &view.policy.linewright;
     // As a poll taking a snapshot now would hold #N.
@@ -189,6 +254,7 @@ pub fn explain_read(view: &View, read: &AnyItem, now: Timestamp) -> Answer {
             standing: Standing::Item(state),
             last_read: now,
             waiting_for,
+            runs: ItemRuns::of(view, recorded, number, now),
         })
     };
     let (title, item) = match read {
@@ -230,7 +296,7 @@ pub fn explain_read(view: &View, read: &AnyItem, now: Timestamp) -> Answer {
             &pull.title,
             LeftAloneItem::PullRequest(LeftAlonePull::Closed),
         ),
-        AnyItem::Pull(pull) => match pull_standing(&fresh, pull, now) {
+        AnyItem::Pull(pull) => match pull_standing(&fresh, recorded, pull, now) {
             Ok(explanation) => return Answer::Tracked(explanation),
             Err(left_alone) => (
                 &pull.title,
@@ -243,13 +309,19 @@ pub fn explain_read(view: &View, read: &AnyItem, now: Timestamp) -> Answer {
         title: title.clone(),
         item,
         last_read: now,
+        runs: ItemRuns::of(view, recorded, number, now),
     })
 }
 
 /// Where the open pull request `pull` stands in `view` at `now`, as
 /// Linewright's pull request for an issue in review, or why Linewright
 /// leaves it alone.
-fn pull_standing(view: &View, pull: &Pull, now: Timestamp) -> Result<Explanation, PullExclusion> {
+fn pull_standing(
+    view: &View,
+    recorded: &[Recorded],
+    pull: &Pull,
+    now: Timestamp,
+) -> Result<Explanation, PullExclusion> {
     if pull.author != view.policy.linewright {
         return Err(PullExclusion::NotLinewrights {
             author: pull.author.clone(),
@@ -277,6 +349,7 @@ fn pull_standing(view: &View, pull: &Pull, now: Timestamp) -> Result<Explanation
             },
             last_read: now,
             waiting_for: issue.waiting_for,
+            runs: ItemRuns::of(view, recorded, issue.number, now),
         }),
         ItemState::InReview(review) => Err(PullExclusion::Superseded {
             issue: issue.number,
@@ -324,7 +397,9 @@ pub fn render_answer(answer: &Answer, colour: bool) -> String {
         format!("state: {state}"),
         format!("last read: {}", utc(left_alone.last_read)),
         format!("left alone: {why}"),
-    ];
+    ]
+    .into_iter()
+    .chain(left_alone.runs.lines(paint));
     let mut text = String::new();
     for line in lines {
         let _ = writeln!(text, "{line}");
@@ -453,6 +528,7 @@ pub fn render(explanation: &Explanation, colour: bool) -> String {
     for wait in &explanation.waiting_for {
         lines.push(format!("waiting for: {}", describe_wait(wait)));
     }
+    lines.extend(explanation.runs.lines(paint));
     let mut text = String::new();
     for line in lines {
         let _ = writeln!(text, "{line}");

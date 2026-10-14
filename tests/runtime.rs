@@ -4,12 +4,14 @@
 mod common;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use common::*;
 use linewright::domain::Number;
 use linewright::reconcile::{Subject, WorkKind};
+use linewright::runs::Activity;
 use linewright::runtime::claude::ClaudeCode;
-use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec};
+use linewright::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec};
 use linewright::transcript::{Prompt, What};
 use serde_json::{Value, json};
 
@@ -67,6 +69,13 @@ fn instruction_excludes(args: &[String]) -> globset::GlobSet {
 /// A triage session laid out under `dir` as a run lays it out: its clone in
 /// `repo` with its scratch directory `tmp` beside it, and its record in `dir`.
 fn triage_session(dir: &Path) -> SessionSpec {
+    triage_session_heard(dir, &Activity::default())
+}
+
+/// The triage session of [`triage_session`], whose output is noted in
+/// `activity` by a clock that starts at 12:00:00 and ticks a second per
+/// reading.
+fn triage_session_heard(dir: &Path, activity: &Activity) -> SessionSpec {
     for sub in ["repo", "tmp"] {
         std::fs::create_dir(dir.join(sub)).unwrap();
     }
@@ -81,7 +90,36 @@ fn triage_session(dir: &Path) -> SessionSpec {
         plugin: dir.join("plugin"),
         prompt: "Triage #1.".into(),
         deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+        output: OutputWatch::new(activity.clone(), Arc::new(FakeClock::new())),
     }
+}
+
+#[tokio::test]
+async fn each_line_the_agent_streams_is_heard_as_it_comes() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_streaming(
+        dir.path(),
+        &[
+            json!({"type": "system", "subtype": "init"}),
+            json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "Looking."}]}}),
+            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
+        ],
+    );
+    let activity = Activity::default();
+
+    runtime
+        .start(&triage_session_heard(dir.path(), &activity))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        activity.last(),
+        Some(
+            chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:03Z")
+                .unwrap()
+                .into()
+        )
+    );
 }
 
 #[tokio::test]

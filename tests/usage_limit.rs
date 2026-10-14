@@ -587,7 +587,7 @@ impl Served {
             .served
             .borrow()
             .as_ref()?
-            .view
+            .view_now()
             .memory
             .usage_limit
     }

@@ -6,10 +6,11 @@
 mod views;
 
 use linewright::domain::*;
+use linewright::reconcile::{LiveRun, Subject, WorkKind};
 use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
 use linewright::workflow::{LastRuns, Unparsed, WorkflowFiles};
-use views::{at, implementing, limited_until, ticket};
+use views::{at, implementing, in_flight, limited_until, ticket};
 
 /// The workflows, each a name and a cron expression, and the files that do
 /// not parse.
@@ -83,12 +84,12 @@ fn after_linewright(view: &View, now: &str) -> Vec<String> {
 fn the_linewright_section_says_since_when_serve_runs_its_polls_and_the_runs_in_flight() {
     let view = View {
         live: [1, 2].map(implementing).to_vec(),
-        workflows_in_flight: vec!["weekly".parse().unwrap()],
+        in_flight: vec![in_flight("weekly/1", "2026-10-01T12:00:00Z", None)],
         ..view(vec![])
     };
 
     assert_eq!(
-        text(Some(&view), "2026-10-01T12:00:30Z"),
+        text(Some(&view), "2026-10-01T12:00:30Z")[..4],
         [
             "serving since: 2026-10-01 11:00:00 UTC",
             "last poll: 2026-10-01 12:00:00 UTC",
@@ -170,6 +171,65 @@ fn with_webhooks_on_and_no_delivery_yet_none_is_shown_accepted() {
     assert_eq!(
         lines[4..],
         ["last delivery accepted: none yet", "deliveries refused: 0"]
+    );
+}
+
+#[test]
+fn each_run_in_flight_follows_the_linewright_section_with_how_long_it_has_run_and_been_quiet() {
+    let view = View {
+        in_flight: vec![
+            in_flight("43/triage-1", "2026-10-01T12:05:00Z", None),
+            in_flight(
+                "42/rework-2",
+                "2026-10-01T11:00:00Z",
+                Some("2026-10-01T11:40:00Z"),
+            ),
+            in_flight(
+                "weekly/3",
+                "2026-10-01T12:00:00Z",
+                Some("2026-10-01T12:04:59Z"),
+            ),
+        ],
+        ..view(vec![ready_issue()])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:05:00Z"),
+        [
+            "42/rework-2: #42 rework, running for 1h 5m, quiet for 25m",
+            "weekly/3: workflow weekly, running for 5m, quiet for 1s",
+            "43/triage-1: #43 triage, running for 0s, no session yet",
+            "",
+            "#7: ready to claim — Do the thing",
+        ]
+    );
+}
+
+#[test]
+fn an_item_with_a_run_in_flight_shows_as_its_run_not_among_the_other_items() {
+    let busy = Issue {
+        number: Number(9),
+        title: "Do another thing".into(),
+        assignees: vec![Login::new("factory")],
+        ..ready_issue()
+    };
+    let view = View {
+        live: vec![implementing(9)],
+        in_flight: vec![in_flight(
+            "9/implement-1",
+            "2026-10-01T12:00:00Z",
+            Some("2026-10-01T12:00:10Z"),
+        )],
+        ..view(vec![ready_issue(), busy])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:00:30Z"),
+        [
+            "9/implement-1: #9 implement, running for 30s, quiet for 20s",
+            "",
+            "#7: ready to claim — Do the thing",
+        ]
     );
 }
 
@@ -379,6 +439,14 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
     let view = View {
         workflows: files(&[("weekly", "0 6 * * 1")], &[("x.md", "bad")]),
         last_runs: last_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
+        in_flight: vec![
+            in_flight(
+                "42/rework-2",
+                "2026-10-01T11:00:00Z",
+                Some("2026-10-01T11:40:00Z"),
+            ),
+            in_flight("weekly/3", "2026-10-01T12:09:00Z", None),
+        ],
         ..view(vec![ready_issue()])
     };
     let answer = status(
@@ -398,6 +466,18 @@ fn the_json_names_each_fact() {
     let view = View {
         workflows: files(&[("weekly", "0 6 * * 1")], &[]),
         last_runs: last_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
+        live: vec![LiveRun {
+            subject: Subject::Issue(Number(42)),
+            kind: WorkKind::Rework,
+        }],
+        in_flight: vec![
+            in_flight(
+                "42/rework-2",
+                "2026-10-01T11:00:00Z",
+                Some("2026-10-01T11:40:00Z"),
+            ),
+            in_flight("weekly/3", "2026-10-01T12:09:00Z", None),
+        ],
         ..view(vec![ready_issue()])
     };
     let answer = status(&serving(), None, Some(&view), at("2026-10-01T12:10:00Z"));
@@ -412,10 +492,27 @@ fn the_json_names_each_fact() {
                     "next": "2026-10-01T12:01:00Z",
                 },
                 "usage_limit_resets_at": null,
-                "runs_in_flight": 0,
+                "runs_in_flight": 2,
                 "max_runs": 4,
                 "webhooks": null,
             },
+            "runs": [
+                {
+                    "id": "42/rework-2",
+                    "item": 42,
+                    "stage": "rework",
+                    "started_at": "2026-10-01T11:00:00Z",
+                    "duration_seconds": 4200,
+                    "quiet_seconds": 1800,
+                },
+                {
+                    "id": "weekly/3",
+                    "workflow": "weekly",
+                    "started_at": "2026-10-01T12:09:00Z",
+                    "duration_seconds": 60,
+                    "quiet_seconds": null,
+                },
+            ],
             "items": [
                 {
                     "number": 7,

@@ -27,7 +27,7 @@ use crate::results::{
     WorkflowIssueLabel, WorkflowResult,
 };
 use crate::runs::{Ending, Running, Runs};
-use crate::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
+use crate::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::spec_gap;
 use crate::store::{
     Categories, Identity, NewIssue, NewPull, PushError, PushMode, RepoSettings, Store,
@@ -588,8 +588,9 @@ fn session_spec(
     prompt: String,
     timeout: std::time::Duration,
 ) -> Result<SessionSpec, Failure> {
-    let record = record_dir(shell, &purpose, shell.clock.now())?;
-    ctx.run.session(&record);
+    let now = shell.clock.now();
+    let record = record_dir(shell, &purpose, now)?;
+    ctx.run.session(&record, now);
     Ok(SessionSpec {
         record,
         purpose,
@@ -598,6 +599,7 @@ fn session_spec(
         plugin: ws.plugin.clone(),
         prompt,
         deadline: tokio::time::Instant::now() + timeout,
+        output: OutputWatch::new(ctx.run.activity().clone(), shell.clock.clone()),
     })
 }
 

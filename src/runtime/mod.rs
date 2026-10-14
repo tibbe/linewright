@@ -5,12 +5,15 @@
 pub mod claude;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::clock::Clock;
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
+use crate::runs::Activity;
 use crate::workflow::WorkflowName;
 
 /// What a session is for.
@@ -39,6 +42,36 @@ pub struct SessionSpec {
     /// When the session times out, across all its turns. A run that waits
     /// out the usage limit moves it on by the wait.
     pub deadline: tokio::time::Instant,
+    /// Told of each piece of output the agent produces.
+    pub output: OutputWatch,
+}
+
+/// Notes when a session's agent produces output, for its run's quiet time
+/// (`docs/specs/monitoring.md`, "status").
+#[derive(Clone)]
+pub struct OutputWatch {
+    activity: Activity,
+    clock: Arc<dyn Clock>,
+}
+
+impl OutputWatch {
+    /// Notes output in `activity` at the time `clock` reads.
+    pub fn new(activity: Activity, clock: Arc<dyn Clock>) -> OutputWatch {
+        OutputWatch { activity, clock }
+    }
+
+    /// Notes that the agent produced a piece of output, now.
+    pub fn heard(&self) {
+        self.activity.note(self.clock.now());
+    }
+}
+
+impl std::fmt::Debug for OutputWatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutputWatch")
+            .field("activity", &self.activity)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The end of one turn of a session: its final message.

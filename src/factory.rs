@@ -28,7 +28,7 @@ use crate::reconcile::{
     Action, FailedMerge, LiveRun, Memory, Policy, Subject, Work, Workflows, hold_note, reconcile,
 };
 use crate::run::{self, Shell, WorkflowEnd};
-use crate::runs::{RunOf, Runs};
+use crate::runs::{self, RunOf, Runs, Watched};
 use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
@@ -67,14 +67,16 @@ pub struct FactoryConfig {
     pub waits_out_usage_limit: bool,
 }
 
-/// What a run in flight works on.
+/// What a run in flight works on: a stage on an item, or a workflow, whose
+/// name its run ID holds.
 enum Running {
     Work(LiveRun),
-    Workflow(WorkflowName),
+    Workflow,
 }
 
 struct LiveEntry {
     running: Running,
+    watched: Watched,
     cancel: CancellationToken,
 }
 
@@ -327,17 +329,24 @@ impl Factory {
     /// The factory's view, with the next poll at `next_poll`, and its store:
     /// `None` until a poll has taken a snapshot.
     fn served(&self, next_poll: Timestamp) -> Option<Served> {
-        Some(Served {
-            view: self.view(next_poll)?,
-            store: self.shell.store.clone(),
-        })
+        let runs = self.live.values().map(|entry| entry.watched.clone());
+        Some(Served::new(
+            self.view(next_poll)?,
+            self.shell.store.clone(),
+            runs.collect(),
+        ))
     }
 
     /// The factory's view, with the next poll at `next_poll`: `None` until
     /// a poll has taken a snapshot.
     fn view(&self, next_poll: Timestamp) -> Option<View> {
         let kept = self.kept.as_ref()?;
-        let (live, workflows_in_flight) = self.in_flight();
+        let live = self.live_runs();
+        let in_flight = self
+            .live
+            .values()
+            .map(|entry| entry.watched.read())
+            .collect();
         Some(View {
             snapshot: kept.snapshot.clone(),
             read_at: kept.read_at.clone(),
@@ -348,25 +357,32 @@ impl Factory {
             },
             memory: self.memory.clone(),
             live,
-            workflows_in_flight,
+            in_flight,
             workflows: self.workflow_files.clone(),
             last_runs: self.last_runs.clone(),
         })
     }
 
-    /// The runs in flight as the reconcile step takes them: the pipeline's,
-    /// and the workflows with one. A cut that ended since the snapshot was
-    /// taken counts as in flight: the snapshot may miss what it wrote.
-    fn in_flight(&self) -> (Vec<LiveRun>, Vec<WorkflowName>) {
-        let mut live: Vec<LiveRun> = self.ended.clone();
-        let mut in_flight: Vec<WorkflowName> = vec![];
-        for entry in self.live.values() {
-            match &entry.running {
-                Running::Work(run) => live.push(*run),
-                Running::Workflow(name) => in_flight.push(name.clone()),
-            }
-        }
-        (live, in_flight)
+    /// The pipeline's runs in flight as the reconcile step takes them. A
+    /// cut that ended since the snapshot was taken counts as in flight: the
+    /// snapshot may miss what it wrote.
+    fn live_runs(&self) -> Vec<LiveRun> {
+        let in_flight = self.live.values().filter_map(|entry| match entry.running {
+            Running::Work(run) => Some(run),
+            Running::Workflow => None,
+        });
+        self.ended.iter().copied().chain(in_flight).collect()
+    }
+
+    /// The workflows with a run in flight.
+    fn workflows_in_flight(&self) -> Vec<WorkflowName> {
+        self.live
+            .values()
+            .filter_map(|entry| match &entry.watched.id.of {
+                RunOf::Workflow { workflow } => Some(workflow.clone()),
+                RunOf::Work { .. } => None,
+            })
+            .collect()
     }
 
     /// Keeps `kept`, reconciles its snapshot with the runs in flight and the
@@ -382,11 +398,11 @@ impl Factory {
         if let Some(resets_at) = self.memory.lift_usage_limit(now) {
             info!(%resets_at, "usage limit reset; sessions start again");
         }
-        let (live, in_flight) = self.in_flight();
+        let live = self.live_runs();
         let workflows = Workflows {
             defined,
             last_runs: self.last_runs.clone(),
-            in_flight,
+            in_flight: self.workflows_in_flight(),
         };
         self.memory.retain_open(snapshot);
         let actions = reconcile(
@@ -424,9 +440,14 @@ impl Factory {
             .with_context(|| format!("there is no workflow `{name}`: `{branch}` has no {path}"))?;
         let workflow =
             workflow::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
-        run_and_log(shell, &workflow, self.stopping.clone())
-            .await
-            .with_context(|| format!("the run of the workflow `{name}` failed"))
+        run_and_log(
+            shell,
+            &workflow,
+            begin_workflow(shell, name)?,
+            self.stopping.clone(),
+        )
+        .await
+        .with_context(|| format!("the run of the workflow `{name}` failed"))
     }
 
     /// The workflows on the default branch whose files parse, when polls
@@ -540,6 +561,7 @@ impl Factory {
                     shell.clock.now(),
                 )?;
                 let id = running.id().to_string();
+                let watched = running.watched();
                 let cancel = CancellationToken::new();
                 let handle = self.runs.spawn(run::run(
                     shell.clone(),
@@ -557,6 +579,7 @@ impl Factory {
                             subject: work.subject(),
                             kind: work.kind(),
                         }),
+                        watched,
                         cancel,
                     },
                 );
@@ -664,19 +687,22 @@ impl Factory {
                 last_runs.save(&self.shell.work_dir)?;
             }
             Action::RunWorkflow(workflow) => {
+                let running = begin_workflow(&self.shell, &workflow.name)?;
+                let watched = running.watched();
                 let cancel = CancellationToken::new();
                 let shell = self.shell.clone();
                 let handle = self.runs.spawn({
                     let (workflow, cancel) = (workflow.clone(), cancel.clone());
                     // A run that fails is logged; there is nothing to hand back.
                     async move {
-                        let _ = run_and_log(&shell, &workflow, cancel).await;
+                        let _ = run_and_log(&shell, &workflow, running, cancel).await;
                     }
                 });
                 self.live.insert(
                     handle.id(),
                     LiveEntry {
-                        running: Running::Workflow(workflow.name.clone()),
+                        running: Running::Workflow,
+                        watched,
                         cancel,
                     },
                 );
@@ -686,11 +712,9 @@ impl Factory {
     }
 }
 
-/// Runs `workflow` once, recorded, files the issues its result returns and
-/// logs how it went: by hand or on its schedule.
-async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationToken) -> Result<()> {
-    let name = &workflow.name;
-    let running = shell
+/// Records the start of a run of the workflow `name`, now.
+fn begin_workflow(shell: &Shell, name: &WorkflowName) -> Result<runs::Running> {
+    shell
         .runs
         .begin(
             RunOf::Workflow {
@@ -698,9 +722,18 @@ async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationTok
             },
             shell.clock.now(),
         )
-        .inspect_err(|e| {
-            error!(workflow = %name, error = format!("{e:#}"), "recording the workflow run failed");
-        })?;
+        .with_context(|| format!("recording the run of the workflow `{name}`"))
+}
+
+/// Runs `workflow` once, recorded as `running`, files the issues its result
+/// returns and logs how it went: by hand or on its schedule.
+async fn run_and_log(
+    shell: &Shell,
+    workflow: &Workflow,
+    running: runs::Running,
+    cancel: CancellationToken,
+) -> Result<()> {
+    let name = &workflow.name;
     info!(workflow = %name, run = %running.id(), "workflow run started");
     match run::workflow(shell, workflow, running, cancel).await {
         Ok(WorkflowEnd::Finished(result)) => {

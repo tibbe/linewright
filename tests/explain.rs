@@ -7,9 +7,10 @@ mod views;
 
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
+use linewright::runs::{Ending, Recorded, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
-use views::{at, implementing, limited_until, ticket, view};
+use views::{at, implementing, in_flight, limited_until, ticket, view};
 
 /// Linewright's draft pull request #`number` for #`closes`, pushed at 11:58
 /// with its checks `checks`.
@@ -43,7 +44,7 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
 const NOW: &str = "2026-10-01T12:00:30Z";
 
 fn text(view: &View, number: u64) -> Vec<String> {
-    let answer = explain(view, Number(number), at(NOW)).expect("a tracked item");
+    let answer = explain(view, &[], Number(number), at(NOW)).expect("a tracked item");
     render(&answer, false).lines().map(str::to_string).collect()
 }
 
@@ -171,6 +172,182 @@ fn linewrights_pull_request_is_explained_as_the_issue_it_is_for() {
     );
 }
 
+/// The run `id` as its record shows it, started at `started` and in `state`.
+fn recorded(id: &str, started: &str, state: State) -> Recorded {
+    Recorded {
+        id: id.parse().unwrap(),
+        started_at: at(started),
+        state,
+        sessions: vec![],
+    }
+}
+
+fn ended(at_: &str, ending: Ending) -> State {
+    State::Ended {
+        at: at(at_),
+        ending,
+    }
+}
+
+/// #42's runs, its second implement run in flight, beside one of #7's.
+fn runs_of_42() -> Vec<Recorded> {
+    vec![
+        recorded(
+            "42/triage-1",
+            "2026-10-01T09:00:00Z",
+            ended("2026-10-01T09:05:00Z", Ending::Done),
+        ),
+        recorded("42/implement-1", "2026-10-01T10:00:00Z", State::Interrupted),
+        recorded("42/implement-2", "2026-10-01T11:30:00Z", State::InFlight),
+        recorded(
+            "7/triage-1",
+            "2026-10-01T11:00:00Z",
+            ended("2026-10-01T11:01:00Z", Ending::Done),
+        ),
+    ]
+}
+
+/// #42 claimed, with its second implement run in flight, its agent last
+/// heard at 11:50.
+fn implementing_42(pulls: Vec<Pull>) -> View {
+    let claimed = Issue {
+        assignees: vec![Login::new("factory")],
+        ..ticket(42, "Add invoices")
+    };
+    View {
+        live: vec![implementing(42)],
+        in_flight: vec![in_flight(
+            "42/implement-2",
+            "2026-10-01T11:30:00Z",
+            Some("2026-10-01T11:50:00Z"),
+        )],
+        ..view(vec![claimed], pulls)
+    }
+}
+
+/// The lines of the text about #`number` that are about its runs.
+fn run_lines(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| line.starts_with("run in flight: ") || line.starts_with("past run: "))
+        .collect()
+}
+
+#[test]
+fn explain_shows_the_run_in_flight_with_its_quiet_time_then_the_past_runs_as_runs_lists_them() {
+    let answer = explain(&implementing_42(vec![]), &runs_of_42(), Number(42), at(NOW)).unwrap();
+
+    assert_eq!(
+        run_lines(&render(&answer, false)),
+        [
+            "run in flight: 42/implement-2: #42 implement, running for 30m 30s, quiet for 10m 30s",
+            "past run: 42/implement-1: interrupted — #42 implement, started 2026-10-01 10:00:00 UTC",
+            "past run: 42/triage-1: done — #42 triage, started 2026-10-01 09:00:00 UTC, ran 5m",
+        ]
+    );
+}
+
+#[test]
+fn a_run_that_has_just_ended_shows_once_as_still_in_flight() {
+    let mut runs = runs_of_42();
+    runs[2].state = ended("2026-10-01T12:00:29Z", Ending::Done);
+
+    let answer = explain(&implementing_42(vec![]), &runs, Number(42), at(NOW)).unwrap();
+
+    assert_eq!(
+        run_lines(&render(&answer, false))
+            .iter()
+            .filter(|line| line.contains("42/implement-2"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn an_item_with_no_runs_shows_none() {
+    let answer = explain(
+        &view(vec![ticket(42, "Add invoices")], vec![]),
+        &runs_of_42()[3..],
+        Number(42),
+        at(NOW),
+    )
+    .unwrap();
+
+    assert_eq!(run_lines(&render(&answer, false)), Vec::<&str>::new());
+}
+
+#[test]
+fn linewrights_pull_request_shows_the_runs_of_the_issue_it_is_for() {
+    let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
+    let answer = explain(&view, &runs_of_42(), Number(43), at(NOW)).unwrap();
+
+    assert_eq!(run_lines(&render(&answer, false)).len(), 3);
+}
+
+#[test]
+fn an_item_left_alone_shows_its_past_runs_too() {
+    let closed = Issue {
+        open: false,
+        ..ticket(42, "Add invoices")
+    };
+    let answer = explain_read(
+        &view(vec![], vec![]),
+        &runs_of_42()[..2],
+        &AnyItem::LeftOutIssue(Box::new(closed)),
+        at(NOW),
+    );
+
+    assert_eq!(
+        run_lines(&render_answer(&answer, false)),
+        [
+            "past run: 42/implement-1: interrupted — #42 implement, started 2026-10-01 10:00:00 UTC",
+            "past run: 42/triage-1: done — #42 triage, started 2026-10-01 09:00:00 UTC, ran 5m",
+        ]
+    );
+}
+
+#[test]
+fn the_json_names_the_run_in_flight_and_the_past_runs() {
+    let answer = Answer::Tracked(
+        explain(&implementing_42(vec![]), &runs_of_42(), Number(42), at(NOW)).unwrap(),
+    );
+
+    let json = serde_json::to_value(&answer).unwrap();
+
+    assert_eq!(
+        json["run_in_flight"],
+        serde_json::json!({
+            "id": "42/implement-2",
+            "item": 42,
+            "stage": "implement",
+            "started_at": "2026-10-01T11:30:00Z",
+            "duration_seconds": 1830,
+            "quiet_seconds": 630,
+        })
+    );
+    assert_eq!(
+        json["past_runs"],
+        serde_json::json!([
+            {
+                "id": "42/implement-1",
+                "item": 42,
+                "stage": "implement",
+                "started_at": "2026-10-01T10:00:00Z",
+                "duration_seconds": null,
+                "outcome": "interrupted",
+            },
+            {
+                "id": "42/triage-1",
+                "item": 42,
+                "stage": "triage",
+                "started_at": "2026-10-01T09:00:00Z",
+                "duration_seconds": 300,
+                "outcome": "done",
+            },
+        ])
+    );
+    assert_eq!(serde_json::from_value::<Answer>(json).unwrap(), answer);
+}
+
 #[test]
 fn an_item_linewright_does_not_track_has_no_explanation() {
     let untracked = Issue {
@@ -179,10 +356,13 @@ fn an_item_linewright_does_not_track_has_no_explanation() {
     };
 
     assert_eq!(
-        explain(&view(vec![untracked], vec![]), Number(42), at(NOW)),
+        explain(&view(vec![untracked], vec![]), &[], Number(42), at(NOW)),
         None
     );
-    assert_eq!(explain(&view(vec![], vec![]), Number(7), at(NOW)), None);
+    assert_eq!(
+        explain(&view(vec![], vec![]), &[], Number(7), at(NOW)),
+        None
+    );
 }
 
 #[test]
@@ -195,7 +375,7 @@ fn the_json_names_each_fact() {
         }],
         ..ticket(42, "Add invoices")
     };
-    let answer = explain(&view(vec![claimed], vec![]), Number(42), at(NOW)).unwrap();
+    let answer = explain(&view(vec![claimed], vec![]), &[], Number(42), at(NOW)).unwrap();
 
     assert_eq!(
         serde_json::to_value(&answer).unwrap(),
@@ -205,6 +385,8 @@ fn the_json_names_each_fact() {
             "state": "claimed",
             "last_read": "2026-10-01T12:00:00Z",
             "waiting_for": [{"wait": "blocker", "issue": 40}],
+            "run_in_flight": null,
+            "past_runs": [],
         })
     );
     assert_eq!(
@@ -220,7 +402,7 @@ fn the_json_of_linewrights_pull_request_names_the_issue_it_is_for() {
         ..ticket(42, "Add invoices")
     };
     let view = view(vec![claimed], vec![draft(43, 42, &[CheckState::Pending])]);
-    let answer = explain(&view, Number(43), at(NOW)).unwrap();
+    let answer = explain(&view, &[], Number(43), at(NOW)).unwrap();
 
     assert_eq!(
         serde_json::to_value(&answer).unwrap(),
@@ -233,6 +415,8 @@ fn the_json_of_linewrights_pull_request_names_the_issue_it_is_for() {
             "ci": "running",
             "last_read": "2026-10-01T12:00:00Z",
             "waiting_for": [{"wait": "ci", "pull_request": 43}],
+            "run_in_flight": null,
+            "past_runs": [],
         })
     );
     assert_eq!(
@@ -250,7 +434,7 @@ fn an_issue_of_linewrights_own_labeled_needs_triage_is_not_tracked() {
     };
 
     assert_eq!(
-        explain(&view(vec![filed], vec![]), Number(42), at(NOW)),
+        explain(&view(vec![filed], vec![]), &[], Number(42), at(NOW)),
         None
     );
 }
@@ -267,14 +451,14 @@ fn a_tracking_issue_with_no_tickets_and_no_cut_in_flight_is_not_tracked() {
     };
 
     assert_eq!(
-        explain(&view(vec![tracking], vec![]), Number(42), at(NOW)),
+        explain(&view(vec![tracking], vec![]), &[], Number(42), at(NOW)),
         None
     );
 }
 
 /// The answer about an item `serve` read from GitHub, as text.
 fn left_alone_text(view: &View, read: AnyItem) -> Vec<String> {
-    let answer = explain_read(view, &read, at(NOW));
+    let answer = explain_read(view, &[], &read, at(NOW));
     render_answer(&answer, false)
         .lines()
         .map(str::to_string)
@@ -580,6 +764,7 @@ fn a_merged_pull_request_without_the_required_label_names_it() {
 fn a_spec_change_the_read_finds_is_explained_as_waiting_for_tickets() {
     let answer = explain_read(
         &view(vec![], vec![]),
+        &[],
         &AnyItem::Merged(merged(&[])),
         at(NOW),
     );
@@ -598,6 +783,7 @@ fn a_spec_change_the_read_finds_is_explained_as_waiting_for_tickets() {
 fn the_json_of_an_item_left_alone_names_why() {
     let answer = explain_read(
         &view(vec![], vec![]),
+        &[],
         &AnyItem::Merged(MergedPull {
             files: vec!["src/main.rs".into()],
             ..merged(&[])
@@ -617,6 +803,8 @@ fn the_json_of_an_item_left_alone_names_why() {
                 "reason": "no-spec-file",
                 "spec_glob": "docs/**/*.md",
             },
+            "run_in_flight": null,
+            "past_runs": [],
         })
     );
     assert_eq!(
@@ -630,6 +818,7 @@ fn a_tracked_answer_reads_back_as_one() {
     let answer = Answer::Tracked(
         explain(
             &view(vec![ticket(42, "Add invoices")], vec![]),
+            &[],
             Number(42),
             at(NOW),
         )
@@ -689,11 +878,13 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
     };
     let held = explain_read(
         &view(vec![], vec![]),
+        &[],
         &AnyItem::HeldIssue(Box::new(unlabeled.clone())),
         at(NOW),
     );
     let left_out = explain_read(
         &view(vec![], vec![]),
+        &[],
         &AnyItem::LeftOutIssue(Box::new(unlabeled)),
         at(NOW),
     );
@@ -708,6 +899,8 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
                 "state": "open",
                 "last_read": "2026-10-01T12:00:30Z",
                 "left_alone": {"reason": reason},
+                "run_in_flight": null,
+                "past_runs": [],
             })
         );
         assert_eq!(

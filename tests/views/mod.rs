@@ -8,6 +8,7 @@ use std::sync::Arc;
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
 use linewright::reconcile::{LiveRun, Memory, Policy, Subject, WorkKind};
+use linewright::runs::InFlight;
 use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{Polls, View};
@@ -64,6 +65,16 @@ pub fn implementing(issue: u64) -> LiveRun {
     }
 }
 
+/// The run `id`, started at `started`, whose agent last produced output at
+/// `heard`, or that has started no session.
+pub fn in_flight(id: &str, started: &str, heard: Option<&str>) -> InFlight {
+    InFlight {
+        id: id.parse().unwrap(),
+        started_at: at(started),
+        last_output: heard.map(at),
+    }
+}
+
 /// What the factory remembers with the usage limit in force until
 /// `resets_at`.
 pub fn limited_until(resets_at: &str) -> Memory {
@@ -93,7 +104,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
         },
         memory: Memory::default(),
         live: vec![],
-        workflows_in_flight: vec![],
+        in_flight: vec![],
         workflows: WorkflowFiles::default(),
         last_runs: LastRuns::default(),
     }

@@ -252,6 +252,7 @@ impl ClaudeCode {
             let mut refusal = None;
             let mut underway = false;
             while let Ok(Some(line)) = lines.next_line().await {
+                spec.output.heard();
                 if let Some(file) = output.as_mut() {
                     let _ = file.write_all(format!("{line}\n").as_bytes()).await;
                 }

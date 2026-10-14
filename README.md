@@ -23,21 +23,22 @@ linewright --repo owner/name serve
   `.linewright/workflows/NAME.md` once, now. One `serve` runs per repository
   on a host.
 - `status` asks the running `serve` of the repository what it is doing: since
-  when it has run, its polls, the usage limit while one is in force, the runs
-  in flight, the deliveries with webhooks on, the items it tracks, where
-  each is and what Linewright waits for on it, and each workflow with its
-  last and next run and any workflow file that does not parse. `explain N`
-  asks it where issue or pull request #N stands, when it last read it and
-  each thing Linewright waits for before it acts on it next, such as a free
-  run, the usage limit, CI or the maintainer. For an item it does not track,
-  `serve` reads #N from GitHub and `explain` says why Linewright leaves it
-  alone, such as a missing label, a closed item, someone else's pull request
-  or a merged one that is no spec change; it exits 4 when there is no #N.
-  `--json` prints `serve`'s answer as JSON. Both exit 3 when no `serve` runs
-  for the repository.
-  `serve` answers on a Unix socket only its user can open, under
-  `$XDG_RUNTIME_DIR/linewright/`, or `linewright-<uid>/` in the temporary
-  directory without it.
+  when it has run, its polls, the usage limit while one is in force, how many
+  runs are in flight, the deliveries with webhooks on, each run in flight with
+  how long it has run and its quiet time, how long since its agent last produced
+  output, the items it tracks, where each is and what Linewright waits for on
+  it, and each workflow with its last and next run and any workflow file that
+  does not parse. `explain N` asks it where issue or pull request #N stands,
+  when it last read it, each thing Linewright waits for before it acts on it
+  next, such as a free run, the usage limit, CI or the maintainer, its run in
+  flight with its quiet time and its past runs as `runs N` lists them. For an
+  item it does not track, `serve` reads #N from GitHub and `explain` says why
+  Linewright leaves it alone, such as a missing label, a closed item, someone
+  else's pull request or a merged one that is no spec change; it exits 4 when
+  there is no #N. `--json` prints `serve`'s answer as JSON. Both exit 3 when no
+  `serve` runs for the repository. `serve` answers on a Unix socket only its
+  user can open, under `$XDG_RUNTIME_DIR/linewright/`, or `linewright-<uid>/` in
+  the temporary directory without it.
 - `runs [N]` lists the runs, newest first, or issue or pull request #N's:
   each run's ID (`42/rework-2`, the second rework run on #42, or
   `weekly/3` for a workflow's), its item, stage, start, duration and outcome,

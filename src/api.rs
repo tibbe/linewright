@@ -28,7 +28,7 @@ use crate::clock::Clock;
 use crate::domain::Number;
 use crate::explain;
 use crate::logs::{self, LogsError, NoSuchRun};
-use crate::runs::{self, ListError, RepoWorkDir};
+use crate::runs::{self, ListError, RepoWorkDir, Runs, Watched};
 use crate::status::{self, Serving, View};
 use crate::store::Store;
 use crate::webhook::Tally;
@@ -144,8 +144,27 @@ fn private_dir(dir: &Path) -> Result<()> {
 /// reads the items it does not track from.
 #[derive(Clone)]
 pub struct Served {
-    pub view: View,
-    pub store: Arc<dyn Store>,
+    /// Read only through [`Served::view_now`].
+    view: View,
+    store: Arc<dyn Store>,
+    /// The runs in flight, whose activity goes on after the view was taken.
+    runs: Vec<Watched>,
+}
+
+impl Served {
+    /// The factory's `view`, with its runs in flight `runs`, and its store.
+    pub fn new(view: View, store: Arc<dyn Store>, runs: Vec<Watched>) -> Served {
+        Served { view, store, runs }
+    }
+
+    /// The view with the runs in flight as they stand now, so that their
+    /// quiet time counts from their latest output.
+    pub fn view_now(&self) -> View {
+        View {
+            in_flight: self.runs.iter().map(Watched::read).collect(),
+            ..self.view.clone()
+        }
+    }
 }
 
 /// What the API answers from.
@@ -224,11 +243,11 @@ impl Api {
 
 async fn answer_status(State(sources): State<Sources>) -> Response {
     let webhooks = sources.deliveries.as_ref().map(Tally::get);
-    let served = sources.served.borrow().clone();
+    let view = sources.served.borrow().as_ref().map(Served::view_now);
     let answer = status::status(
         &sources.serving,
         webhooks,
-        served.as_ref().map(|served| &served.view),
+        view.as_ref(),
         sources.clock.now(),
     );
     json_response(StatusCode::OK, &answer)
@@ -303,25 +322,36 @@ fn answer(answer: Result<impl serde::Serialize, impl Into<Unanswered>>) -> Respo
 }
 
 /// The answer to `explain N`: from the view for an item Linewright tracks,
-/// or else from #N read from the store; not found for a number with no item,
-/// and unavailable before the first poll.
+/// or else from #N read from the store, with its runs read from their
+/// records; not found for a number with no item, and unavailable before the
+/// first poll.
 async fn answer_item(
     State(sources): State<Sources>,
     Resource(number): Resource<Number>,
 ) -> Response {
     let served = sources.served.borrow().clone();
-    let Some(Served { view, store }) = served else {
+    let Some(served) = served else {
         return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "`serve` has not polled yet: ask again after its first poll",
         );
     };
+    let (view, store) = (served.view_now(), served.store);
+    let recorded = match Runs::new(&sources.work_dir.resolve()).read() {
+        Ok(recorded) => recorded,
+        Err(e) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"));
+        }
+    };
     let now = sources.clock.now();
-    if let Some(answer) = explain::explain(&view, number, now) {
+    if let Some(answer) = explain::explain(&view, &recorded, number, now) {
         return json_response(StatusCode::OK, &explain::Answer::Tracked(answer));
     }
     match store.any_item(number).await {
-        Ok(Some(read)) => json_response(StatusCode::OK, &explain::explain_read(&view, &read, now)),
+        Ok(Some(read)) => json_response(
+            StatusCode::OK,
+            &explain::explain_read(&view, &recorded, &read, now),
+        ),
         Ok(None) => json_response(
             StatusCode::NOT_FOUND,
             &ErrorAnswer {

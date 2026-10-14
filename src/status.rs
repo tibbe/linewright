@@ -17,6 +17,7 @@ use crate::reconcile::{
     Decisions, LiveRun, Memory, NextRun, Policy, Relabel, Wait, Workflows, decisions, next_run,
     open_pull_request, pending_spec_changes,
 };
+use crate::runs::{InFlight, RunInFlight, RunOf};
 use crate::webhook::Received;
 use crate::workflow::{LastRuns, WorkflowFiles, WorkflowName};
 
@@ -40,10 +41,11 @@ pub struct View {
     /// What the factory remembers between polls, with the usage limit last
     /// refused for, whether or not it has reset.
     pub memory: Memory,
-    /// The pipeline's runs in flight, as the reconcile step counts them.
+    /// The pipeline's runs in flight, as the reconcile step counts them: a
+    /// cut that ended since the snapshot was taken counts too.
     pub live: Vec<LiveRun>,
-    /// The workflows with a run in flight.
-    pub workflows_in_flight: Vec<WorkflowName>,
+    /// The runs in flight, the pipeline's and the workflows'.
+    pub in_flight: Vec<InFlight>,
     /// The workflow files the last poll read.
     pub workflows: WorkflowFiles,
     pub last_runs: LastRuns,
@@ -56,7 +58,7 @@ impl View {
         let workflows = Workflows {
             defined: self.workflows.parsed.clone(),
             last_runs: self.last_runs.clone(),
-            in_flight: self.workflows_in_flight.clone(),
+            in_flight: self.workflows_in_flight().collect(),
         };
         decisions(
             &self.snapshot,
@@ -70,7 +72,22 @@ impl View {
 
     /// The runs in flight, the pipeline's and the workflows'.
     pub fn runs_in_flight(&self) -> usize {
-        self.live.len() + self.workflows_in_flight.len()
+        self.live.len() + self.workflows_in_flight().count()
+    }
+
+    /// The workflows with a run in flight.
+    fn workflows_in_flight(&self) -> impl Iterator<Item = WorkflowName> {
+        self.in_flight.iter().filter_map(|run| match &run.id.of {
+            RunOf::Workflow { workflow } => Some(workflow.clone()),
+            RunOf::Work { .. } => None,
+        })
+    }
+
+    /// Whether #`number` has a run in flight.
+    fn has_run_in_flight(&self, number: Number) -> bool {
+        self.in_flight
+            .iter()
+            .any(|run| run.id.of.item() == Some(number))
     }
 }
 
@@ -79,6 +96,9 @@ impl View {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
     pub linewright: Linewright,
+    /// The runs in flight, oldest first.
+    pub runs: Vec<RunInFlight>,
+    /// The other items Linewright tracks: those with no run in flight.
     pub items: Vec<Tracked>,
     pub workflows: Vec<WorkflowRuns>,
     pub unparsed_workflows: Vec<UnparsedWorkflow>,
@@ -215,7 +235,8 @@ pub struct UnparsedWorkflow {
 }
 
 /// The answer at `now`: Linewright itself, with the deliveries `webhooks`
-/// counts with them on, then the items it tracks, then the workflows by name
+/// counts with them on, then the runs in flight, then the other items it
+/// tracks, then the workflows by name
 /// and the workflow files that do not parse. Before the first poll, `view` is
 /// `None` and there are no items or workflows.
 pub fn status(
@@ -238,6 +259,7 @@ pub fn status(
     let Some(view) = view else {
         return Status {
             linewright,
+            runs: vec![],
             items: vec![],
             workflows: vec![],
             unparsed_workflows: vec![],
@@ -270,9 +292,15 @@ pub fn status(
         })
         .collect();
     unparsed_workflows.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut runs: Vec<RunInFlight> = view.in_flight.iter().map(|run| run.at(now)).collect();
+    runs.sort_by_key(|run| (run.started_at, run.id.to_string()));
     Status {
         linewright,
-        items: tracked(view, now),
+        runs,
+        items: tracked(view, now)
+            .into_iter()
+            .filter(|item| !view.has_run_in_flight(item.number))
+            .collect(),
         workflows,
         unparsed_workflows,
     }
@@ -378,6 +406,7 @@ pub fn render(status: &Status, colour: bool) -> String {
     let paint = Paint(colour);
     let sections = [
         linewright_lines(&status.linewright, paint),
+        status.runs.iter().map(|run| run.render(paint)).collect(),
         status
             .items
             .iter()

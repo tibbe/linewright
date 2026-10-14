@@ -6,7 +6,7 @@
 use std::fmt::{self, Write as _};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,16 @@ use crate::workflow::WorkflowName;
 pub enum RunOf {
     Work { item: Number, stage: WorkKind },
     Workflow { workflow: WorkflowName },
+}
+
+impl RunOf {
+    /// The item a stage's run is on; `None` for a workflow's.
+    pub fn item(&self) -> Option<Number> {
+        match self {
+            RunOf::Work { item, .. } => Some(*item),
+            RunOf::Workflow { .. } => None,
+        }
+    }
 }
 
 /// A run's ID: `<item>/<stage>-<n>` for the `n`th run of that stage on that
@@ -176,6 +186,7 @@ impl Runs {
                 end: None,
                 sessions: vec![],
             }),
+            activity: Activity::default(),
             _lock: lock,
         };
         running.save()?;
@@ -232,6 +243,151 @@ fn entries(dir: &Path) -> Result<Vec<PathBuf>> {
     }
 }
 
+/// When a run's agent last produced output, noted as `serve` hears it while
+/// the run is in flight: `None` until the run starts a session, whose start
+/// counts as its first.
+#[derive(Clone, Debug, Default)]
+pub struct Activity(Arc<Mutex<Option<Timestamp>>>);
+
+impl Activity {
+    /// Notes output at `at`, unless later output has been noted.
+    pub fn note(&self, at: Timestamp) {
+        let mut last = self.0.lock().unwrap();
+        *last = Some(last.map_or(at, |last| last.max(at)));
+    }
+
+    pub fn last(&self) -> Option<Timestamp> {
+        *self.0.lock().unwrap()
+    }
+}
+
+/// A run in flight as `serve` holds it, its activity noted as it goes.
+#[derive(Clone, Debug)]
+pub struct Watched {
+    pub id: RunId,
+    pub started_at: Timestamp,
+    pub activity: Activity,
+}
+
+impl Watched {
+    /// The run as it stands now, its last output read afresh.
+    pub fn read(&self) -> InFlight {
+        InFlight {
+            id: self.id.clone(),
+            started_at: self.started_at,
+            last_output: self.activity.last(),
+        }
+    }
+}
+
+/// A run in flight, as of a reading of its activity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InFlight {
+    pub id: RunId,
+    pub started_at: Timestamp,
+    /// When its agent last produced output: `None` until it starts a
+    /// session, whose start counts as its first.
+    pub last_output: Option<Timestamp>,
+}
+
+impl InFlight {
+    /// The run as `status` and `explain` answer it at `now`.
+    pub fn at(&self, now: Timestamp) -> RunInFlight {
+        RunInFlight {
+            id: self.id.clone(),
+            started_at: self.started_at,
+            duration_seconds: (now - self.started_at).num_seconds(),
+            quiet_seconds: self
+                .last_output
+                .map(|last| (now - last).num_seconds().max(0)),
+        }
+    }
+}
+
+/// A run in flight as `status` and `explain` answer it: how long it has run
+/// and its quiet time, how long since its agent last produced output
+/// (`docs/specs/monitoring.md`, "status").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "RunInFlightAnswer", try_from = "RunInFlightAnswer")]
+pub struct RunInFlight {
+    pub id: RunId,
+    pub started_at: Timestamp,
+    pub duration_seconds: i64,
+    /// `None` until it starts a session.
+    pub quiet_seconds: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RunInFlightAnswer {
+    id: String,
+    #[serde(flatten)]
+    of: RunOf,
+    started_at: Timestamp,
+    duration_seconds: i64,
+    quiet_seconds: Option<i64>,
+}
+
+impl From<RunInFlight> for RunInFlightAnswer {
+    fn from(run: RunInFlight) -> RunInFlightAnswer {
+        RunInFlightAnswer {
+            id: run.id.to_string(),
+            of: run.id.of,
+            started_at: run.started_at,
+            duration_seconds: run.duration_seconds,
+            quiet_seconds: run.quiet_seconds,
+        }
+    }
+}
+
+impl TryFrom<RunInFlightAnswer> for RunInFlight {
+    type Error = String;
+
+    fn try_from(answer: RunInFlightAnswer) -> Result<RunInFlight, String> {
+        let id: RunId = answer.id.parse()?;
+        if id.of != answer.of {
+            return Err(format!("the run {id} is not of what the answer says"));
+        }
+        Ok(RunInFlight {
+            id,
+            started_at: answer.started_at,
+            duration_seconds: answer.duration_seconds,
+            quiet_seconds: answer.quiet_seconds,
+        })
+    }
+}
+
+impl RunInFlight {
+    /// The run as text: its run ID, what it is of, how long it has run and
+    /// its quiet time, coloured with `paint`.
+    pub(crate) fn render(&self, paint: Paint) -> String {
+        let quiet = self
+            .quiet_seconds
+            .map_or("no session yet".into(), |seconds| {
+                format!("quiet for {}", duration(seconds))
+            });
+        format!(
+            "{}: {}, running for {}, {quiet}",
+            paint.bold(&self.id.to_string()),
+            describe_of(&self.id.of),
+            duration(self.duration_seconds)
+        )
+    }
+}
+
+/// What a run is of, as text: `#42 rework` or `workflow weekly`.
+fn describe_of(of: &RunOf) -> String {
+    match of {
+        RunOf::Work { item, stage } => format!("{item} {}", stage.name()),
+        RunOf::Workflow { workflow } => format!("workflow {workflow}"),
+    }
+}
+
+/// `seconds` as text, such as `1h 5m 3s`.
+fn duration(seconds: i64) -> String {
+    let duration = std::time::Duration::from_secs(seconds.max(0).unsigned_abs());
+    humantime::format_duration(duration).to_string()
+}
+
 /// A run in flight, its record kept up to date until it ends. A run
 /// dropped without ending, as when its process dies, reads as interrupted.
 pub(crate) struct Running {
@@ -240,6 +396,7 @@ pub(crate) struct Running {
     lock_path: PathBuf,
     work_dir: PathBuf,
     record: Mutex<Record>,
+    activity: Activity,
     /// Locked while the run is in flight. The kernel releases the lock when
     /// the process ends however it ends.
     _lock: File,
@@ -250,8 +407,24 @@ impl Running {
         &self.id
     }
 
-    /// Links the session whose record is in `dir` to the run.
-    pub fn session(&self, dir: &Path) {
+    /// The run as `serve` holds it while in flight.
+    pub fn watched(&self) -> Watched {
+        Watched {
+            id: self.id.clone(),
+            started_at: self.record.lock().unwrap().started_at,
+            activity: self.activity.clone(),
+        }
+    }
+
+    /// When the run's agent last produced output.
+    pub fn activity(&self) -> &Activity {
+        &self.activity
+    }
+
+    /// Links the session whose record is in `dir`, started at `now`, to the
+    /// run. Its quiet time counts from the start.
+    pub fn session(&self, dir: &Path, now: Timestamp) {
+        self.activity.note(now);
         let dir = dir.strip_prefix(&self.work_dir).unwrap_or(dir);
         self.record.lock().unwrap().sessions.push(dir.to_path_buf());
         self.save_or_log();
@@ -465,7 +638,7 @@ pub fn list(recorded: Vec<Recorded>, query: &Query, now: Timestamp) -> Result<Li
         Some(number) => {
             let of_item: Vec<Recorded> = recorded
                 .into_iter()
-                .filter(|run| matches!(run.id.of, RunOf::Work { item, .. } if item == number))
+                .filter(|run| run.id.of.item() == Some(number))
                 .collect();
             if of_item.is_empty() {
                 return Err(NoRuns(number));
@@ -480,39 +653,46 @@ pub fn list(recorded: Vec<Recorded>, query: &Query, now: Timestamp) -> Result<Li
             .is_none_or(|wanted| matches!(run.id.of, RunOf::Work { stage, .. } if stage == wanted))
             && query.since.is_none_or(|since| run.started_at >= since)
     });
-    runs.sort_by(|a, b| {
-        (b.started_at, b.id.n)
-            .cmp(&(a.started_at, a.id.n))
-            .then_with(|| b.id.to_string().cmp(&a.id.to_string()))
-    });
+    sort_newest_first(&mut runs);
     let left_out = query
         .limit
         .map_or(0, |limit| runs.len().saturating_sub(limit));
     runs.truncate(runs.len() - left_out);
     Ok(Listing {
-        runs: runs
-            .into_iter()
-            .map(|run| {
-                let seconds = |until: Timestamp| (until - run.started_at).num_seconds();
-                let outcome = match run.state {
-                    State::Ended { at, ending } => Outcome::Ended {
-                        ending,
-                        seconds: seconds(at),
-                    },
-                    State::InFlight => Outcome::InFlight {
-                        seconds: seconds(now),
-                    },
-                    State::Interrupted => Outcome::Interrupted,
-                };
-                Run {
-                    id: run.id,
-                    started_at: run.started_at,
-                    outcome,
-                }
-            })
-            .collect(),
+        runs: runs.into_iter().map(|run| run.at(now)).collect(),
         left_out,
     })
+}
+
+/// Sorts `runs` newest first, as `runs` lists them.
+pub(crate) fn sort_newest_first(runs: &mut [Recorded]) {
+    runs.sort_by(|a, b| {
+        (b.started_at, b.id.n)
+            .cmp(&(a.started_at, a.id.n))
+            .then_with(|| b.id.to_string().cmp(&a.id.to_string()))
+    });
+}
+
+impl Recorded {
+    /// The run as `runs` answers it at `now`.
+    pub(crate) fn at(self, now: Timestamp) -> Run {
+        let seconds = |until: Timestamp| (until - self.started_at).num_seconds();
+        let outcome = match self.state {
+            State::Ended { at, ending } => Outcome::Ended {
+                ending,
+                seconds: seconds(at),
+            },
+            State::InFlight => Outcome::InFlight {
+                seconds: seconds(now),
+            },
+            State::Interrupted => Outcome::Interrupted,
+        };
+        Run {
+            id: self.id,
+            started_at: self.started_at,
+            outcome,
+        }
+    }
 }
 
 /// The answer as text, one run per line, coloured if `colour`, ending with
@@ -522,34 +702,7 @@ pub fn render(listing: &Listing, colour: bool) -> String {
     let paint = Paint(colour);
     let mut text = String::new();
     for run in &listing.runs {
-        let what = match &run.id.of {
-            RunOf::Work { item, stage } => format!("{item} {}", stage.name()),
-            RunOf::Workflow { workflow } => format!("workflow {workflow}"),
-        };
-        let (outcome, seconds) = match run.outcome {
-            Outcome::Ended { ending, seconds } => {
-                let ending = match ending {
-                    Ending::Done => "done".into(),
-                    Ending::HandedBack => paint.red("handed back"),
-                    Ending::Cancelled => "cancelled".into(),
-                    Ending::UsageLimit => paint.yellow("ended for the usage limit"),
-                    Ending::Failed => paint.red("failed"),
-                };
-                (ending, Some(seconds))
-            }
-            Outcome::InFlight { seconds } => (paint.bold("in flight"), Some(seconds)),
-            Outcome::Interrupted => (paint.yellow("interrupted"), None),
-        };
-        let ran = seconds.map_or(String::new(), |seconds| {
-            let duration = std::time::Duration::from_secs(seconds.max(0).unsigned_abs());
-            format!(", ran {}", humantime::format_duration(duration))
-        });
-        let _ = writeln!(
-            text,
-            "{}: {outcome} — {what}, started {}{ran}",
-            paint.bold(&run.id.to_string()),
-            utc(run.started_at)
-        );
+        let _ = writeln!(text, "{}", render_run(run, paint));
     }
     if listing.left_out > 0 {
         let shown = listing.runs.len() + listing.left_out;
@@ -561,6 +714,33 @@ pub fn render(listing: &Listing, colour: bool) -> String {
         );
     }
     text
+}
+
+/// A run as `runs` lists it, coloured with `paint`.
+pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
+    let (outcome, seconds) = match run.outcome {
+        Outcome::Ended { ending, seconds } => {
+            let ending = match ending {
+                Ending::Done => "done".into(),
+                Ending::HandedBack => paint.red("handed back"),
+                Ending::Cancelled => "cancelled".into(),
+                Ending::UsageLimit => paint.yellow("ended for the usage limit"),
+                Ending::Failed => paint.red("failed"),
+            };
+            (ending, Some(seconds))
+        }
+        Outcome::InFlight { seconds } => (paint.bold("in flight"), Some(seconds)),
+        Outcome::Interrupted => (paint.yellow("interrupted"), None),
+    };
+    let ran = seconds.map_or(String::new(), |seconds| {
+        format!(", ran {}", duration(seconds))
+    });
+    format!(
+        "{}: {outcome} — {}, started {}{ran}",
+        paint.bold(&run.id.to_string()),
+        describe_of(&run.id.of),
+        utc(run.started_at)
+    )
 }
 
 /// Why `runs` has no listing to give.

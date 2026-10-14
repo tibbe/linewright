@@ -99,7 +99,7 @@ pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRu
         Which::Item(number) => {
             let mut runs: Vec<Recorded> = recorded
                 .into_iter()
-                .filter(|run| matches!(run.id.of, RunOf::Work { item, .. } if item == *number))
+                .filter(|run| run.id.of.item() == Some(*number))
                 .collect();
             runs.sort_by_key(|run| (run.started_at, run.id.n));
             let in_flight = runs.iter().rposition(|run| run.state == State::InFlight);

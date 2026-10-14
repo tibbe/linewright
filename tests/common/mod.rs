@@ -118,6 +118,19 @@ pub struct ScriptedRuntime {
     started: std::sync::atomic::AtomicUsize,
     /// How long the next turn runs, in the runtime's time.
     turn_time: Mutex<std::time::Duration>,
+    /// What the next turn says while held open, until it is let end.
+    held: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<()>>>,
+}
+
+/// The agent of a turn held open: it says something each time it is told
+/// to, and ends its turn when dropped.
+pub struct HeldTurn(tokio::sync::mpsc::UnboundedSender<()>);
+
+impl HeldTurn {
+    /// Has the agent produce a piece of output.
+    pub fn says(&self) {
+        self.0.send(()).unwrap();
+    }
 }
 
 impl ScriptedRuntime {
@@ -150,6 +163,14 @@ impl ScriptedRuntime {
         *self.turn_time.lock().unwrap() = time;
     }
 
+    /// Holds the next turn open, its agent producing output as the turn
+    /// returned tells it to, until that is dropped.
+    pub fn hold(&self) -> HeldTurn {
+        let (says, said) = tokio::sync::mpsc::unbounded_channel();
+        *self.held.lock().unwrap() = Some(said);
+        HeldTurn(says)
+    }
+
     /// Every prompt sessions of `kind` were given, follow-ups included.
     pub fn prompts(&self, kind: WorkKind) -> Vec<String> {
         self.prompts_for(ScriptKey::Work(kind))
@@ -180,6 +201,12 @@ impl ScriptedRuntime {
         if !time.is_zero() {
             tokio::time::sleep(time).await;
         }
+        let held = self.held.lock().unwrap().take();
+        if let Some(mut said) = held {
+            while said.recv().await.is_some() {
+                spec.output.heard();
+            }
+        }
         let key = ScriptKey::of(spec);
         self.prompts
             .lock()
@@ -190,6 +217,7 @@ impl ScriptedRuntime {
             "{\"type\":\"scripted\"}\n",
         )
         .unwrap();
+        spec.output.heard();
         let script = self.scripts.lock().unwrap().get(&key).cloned();
         let script = script.ok_or_else(|| SessionError::Failed {
             reason: format!("no script for {key:?}"),
