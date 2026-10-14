@@ -44,8 +44,8 @@ brief an implementer works from.
 - The category is the repository's issue type (Bug, Feature, Task) where the
   repository has issue types, and the `bug` or `enhancement` label otherwise.
 - Triage leaves issues open and repository files as they are.
-- An answer in the thread is picked up: when anyone other than the machine
-  user comments on a `needs-info` or `ready-for-human` issue after
+- An answer in the thread is picked up: when anyone other than Linewright
+  comments on a `needs-info` or `ready-for-human` issue after
   Linewright's last triage comment, and that is its last comment on the
   issue, the issue is triaged again. The labels say who must answer, the
   reporter or the maintainer; either may answer by commenting, because that
