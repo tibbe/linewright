@@ -25,10 +25,10 @@ what the factory makes of it now, until it does better.
 
 - A **case** is a directory holding the repository at a commit and the
   event: a spec change (the PR's title, body and the commits it merged) or an
-  issue (its text and comments). `linewright capture <repo>#<N> DIR` writes
+  issue (its text and comments). `lw capture <repo>#<N> DIR` writes
   one from GitHub; run on the factory's machine it includes the transcripts of
   the sessions that handled it.
-- `linewright replay CASE --out DIR` runs the pipeline end to end against a
+- `lw replay CASE --out DIR` runs the pipeline end to end against a
   **local store** seeded from the case: the same reconcile loop as `serve`,
   run until nothing is left to do rather than on a timer, ending when every
   pull request is ready for review (with `--auto-merge`, merged) or every

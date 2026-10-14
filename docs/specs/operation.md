@@ -26,7 +26,7 @@ from Linewright's base image with the project's toolchain added.
 
 ## Decisions
 
-- The binary is `linewright`, with these commands:
+- The command is `lw`, with these commands:
 
   | command | what it does |
   |---|---|

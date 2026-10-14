@@ -52,7 +52,7 @@ test. The pipeline then works those issues like any other.
   workflow was in flight, collapse into one run. A workflow seen for the
   first time counts as run then, so adding one does not start it at once.
   Linewright records each workflow's last run under the work directory.
-- `linewright workflow run NAME` runs one workflow now and exits, and
+- `lw workflow run NAME` runs one workflow now and exits, and
   leaves its schedule as it was.
 - A run is one agent session in a fresh clone of the default branch, counted
   against the ceiling on simultaneous runs. The agent does what its

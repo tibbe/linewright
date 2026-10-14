@@ -75,7 +75,7 @@ later.
 - **Identity is a user account**: a token for a GitHub user dedicated to
   Linewright, whose assignments are its claims.
 - **Runs on a host or in a container the operator builds.** A published base
-  image (`linewright`, the agent runtime, and the tools coding agents expect:
+  image (`lw`, the agent runtime, and the tools coding agents expect:
   `git`, `gh`, `python3`) is the starting point for the operator's image.
 - **Configuration is layered**: flags, `LINEWRIGHT_*` environment variables,
   a TOML file, defaults, parsed once into one typed value. Credentials come
@@ -86,7 +86,7 @@ later.
 `serve` answers questions about itself through a local API: its view of the
 repository, its runs and their transcripts. The monitoring commands are its
 clients. The API must also be able to serve a web UI, reached from a browser
-through `ssh -L` to the socket, and an MCP server, a `linewright mcp`
+through `ssh -L` to the socket, and an MCP server, a `lw mcp`
 subcommand on stdio that is a client of the socket.
 
 | aspect | decision |

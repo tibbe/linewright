@@ -4,8 +4,8 @@ Monitoring lets the operator or an agent see what a running Linewright is
 doing and why, as `serve` itself sees it.
 
 For example, the operator wonders why #42 has not moved in an hour.
-`linewright explain 42` shows a rework run on it whose agent has been quiet
-for 25 minutes, and `linewright logs 42 --follow` shows the agent waiting on a
+`lw explain 42` shows a rework run on it whose agent has been quiet
+for 25 minutes, and `lw logs 42 --follow` shows the agent waiting on a
 test that hangs.
 
 ## User Stories
