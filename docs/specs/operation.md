@@ -80,6 +80,8 @@ from Linewright's base image with the project's toolchain added.
   and structured (JSON lines) for machines, by the `log-format` setting.
   With webhooks on, that includes the address it listens on, each delivery
   and what it names, and each delivery refused and why.
+- `--version` and the server's first log line name the version and the
+  commit it was built from.
 - Agents run without permission prompts; the container is the isolation
   when one is used.
 - Unix-like systems: Linux is the deployment target, macOS a development
