@@ -10,9 +10,13 @@ true | 1) fix=false ;;
 *) fix=true ;;
 esac
 
-# rumdl (https://github.com/rvben/rumdl) is fetched from its release and
-# checked against these hashes, so this is the one place its version is set.
+# The tools below are fetched from their releases and checked against these
+# hashes, so this is the one place their versions are set: rumdl
+# (https://github.com/rvben/rumdl) and Docker Compose
+# (https://github.com/docker/compose), which validates a compose file without
+# a Docker daemon.
 rumdl_version=0.2.79
+compose_version=5.6.0
 
 has_sha256() {
   local actual
@@ -23,29 +27,22 @@ has_sha256() {
   fi
 }
 
-fetch_rumdl() {
-  local dir=$1 target sha archive tmp
-  case "$(uname -sm)" in
-  "Darwin arm64") target=aarch64-apple-darwin sha=8c0ecf93a61bf612df5f6c6f22813d066a6f51a5680f3c12da49b93ed892aebb ;;
-  "Darwin x86_64") target=x86_64-apple-darwin sha=09cca63968f9a3f35faab71ac8d09bda1a96ba4e0e38cac54bfb7b544523075f ;;
-  "Linux aarch64" | "Linux arm64") target=aarch64-unknown-linux-musl sha=f2ccb236a6b62b9980711a2f54c1e0d8d91ceaea5d7313d0b1a615237b3130bf ;;
-  "Linux x86_64") target=x86_64-unknown-linux-musl sha=a85ae77c6880616118e10dda1e36292df59815bcfbf767201736ff6971213cf3 ;;
-  *)
-    echo "rumdl $rumdl_version has no release for $(uname -sm)"
-    return 1
-    ;;
-  esac
-  archive="rumdl-v$rumdl_version-$target.tar.gz"
+# Installs the download at `url`, if it has sha256 `sha`, as `dir/name`: the
+# file `member` in it when it is a tar.gz, or the download itself.
+install_tool() {
+  local dir=$1 name=$2 url=$3 sha=$4 member=${5:-} tmp
   tmp="$(mktemp -d)"
   # Renamed into place, so a check running at the same time never sees half
   # a binary.
-  if curl -fsSL -o "$tmp/$archive" \
-    "https://github.com/rvben/rumdl/releases/download/v$rumdl_version/$archive" &&
-    has_sha256 "$tmp/$archive" "$sha" &&
-    tar -xzf "$tmp/$archive" -C "$tmp" &&
+  if curl -fsSL -o "$tmp/download" "$url" &&
+    has_sha256 "$tmp/download" "$sha" &&
+    if [ -n "$member" ]; then
+      tar -xzf "$tmp/download" -C "$tmp" && mv "$tmp/$member" "$tmp/download"
+    fi &&
+    chmod +x "$tmp/download" &&
     mkdir -p "$dir" &&
-    mv "$tmp/rumdl" "$dir/rumdl.$$" &&
-    mv -f "$dir/rumdl.$$" "$dir/rumdl"; then
+    mv "$tmp/download" "$dir/$name.$$" &&
+    mv -f "$dir/$name.$$" "$dir/$name"; then
     rm -rf "$tmp"
   else
     rm -rf "$tmp"
@@ -53,10 +50,44 @@ fetch_rumdl() {
   fi
 }
 
+no_release() {
+  echo "$1 has no release for $(uname -sm)"
+  return 1
+}
+
 rumdl() {
-  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/linewright/rumdl-$rumdl_version"
-  if [ ! -x "$dir/rumdl" ]; then fetch_rumdl "$dir" || return 1; fi
+  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/linewright/rumdl-$rumdl_version" target sha archive
+  if [ ! -x "$dir/rumdl" ]; then
+    case "$(uname -sm)" in
+    "Darwin arm64") target=aarch64-apple-darwin sha=8c0ecf93a61bf612df5f6c6f22813d066a6f51a5680f3c12da49b93ed892aebb ;;
+    "Darwin x86_64") target=x86_64-apple-darwin sha=09cca63968f9a3f35faab71ac8d09bda1a96ba4e0e38cac54bfb7b544523075f ;;
+    "Linux aarch64" | "Linux arm64") target=aarch64-unknown-linux-musl sha=f2ccb236a6b62b9980711a2f54c1e0d8d91ceaea5d7313d0b1a615237b3130bf ;;
+    "Linux x86_64") target=x86_64-unknown-linux-musl sha=a85ae77c6880616118e10dda1e36292df59815bcfbf767201736ff6971213cf3 ;;
+    *) no_release "rumdl $rumdl_version" || return 1 ;;
+    esac
+    archive="rumdl-v$rumdl_version-$target.tar.gz"
+    install_tool "$dir" rumdl \
+      "https://github.com/rvben/rumdl/releases/download/v$rumdl_version/$archive" \
+      "$sha" rumdl || return 1
+  fi
   "$dir/rumdl" "$@"
+}
+
+compose() {
+  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/linewright/compose-$compose_version" target sha
+  if [ ! -x "$dir/docker-compose" ]; then
+    case "$(uname -sm)" in
+    "Darwin arm64") target=darwin-aarch64 sha=bd714a42b46e51757fc1121085b3096b9064e3f80d3ca5a991e33f44df4f43c9 ;;
+    "Darwin x86_64") target=darwin-x86_64 sha=c76e3abf5fde1aeb3bd7c7306ff15bef2246afc1f9e54832a0a050dd7cdfb2f8 ;;
+    "Linux aarch64" | "Linux arm64") target=linux-aarch64 sha=733ec76717ceb59052a9609b9dadfb523b2df8eab57a54212872d10a58078ea2 ;;
+    "Linux x86_64") target=linux-x86_64 sha=40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a ;;
+    *) no_release "Docker Compose $compose_version" || return 1 ;;
+    esac
+    install_tool "$dir" docker-compose \
+      "https://github.com/docker/compose/releases/download/v$compose_version/docker-compose-$target" \
+      "$sha" || return 1
+  fi
+  "$dir/docker-compose" "$@"
 }
 
 check_fmt() {
@@ -72,11 +103,16 @@ check_markdown() {
   fi
 }
 
+# The deployment's compose file against the compose specification: its keys,
+# types and references between services, networks and volumes. Its `.env`
+# and override are the host's, so neither is read.
+check_compose() { compose -f deploy/compose.yaml config --quiet --no-env-resolution; }
+
 check_clippy() { cargo clippy --all-targets --locked --quiet; }
 check_test() { cargo test --locked --quiet; }
 check_doc() { cargo doc --no-deps --locked --quiet; }
 
-stages=("fmt markdown" "clippy" "test doc")
+stages=("fmt markdown compose" "clippy" "test doc")
 
 usage() {
   echo "usage: scripts/check [NAME...]"
