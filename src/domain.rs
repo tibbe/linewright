@@ -570,8 +570,26 @@ impl fmt::Display for MergeMethods {
 pub struct CheckFailure {
     pub name: String,
     pub summary: String,
-    /// The end of the check's log, where the store has one.
-    pub log_tail: String,
+    /// Its log, where it has one: a commit status has none.
+    pub log: Option<CheckLog>,
+}
+
+/// What a fix session is given of a failing check's log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckLog {
+    /// The end of the log.
+    pub tail: String,
+    /// Where to read the whole log, where the store can tell.
+    pub full: Option<JobLog>,
+}
+
+/// The log of a GitHub Actions job, which `gh run view --job <job> --log`
+/// reads (<https://cli.github.com/manual/gh_run_view>).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobLog {
+    /// The job's repository, as `owner/name`.
+    pub repo: String,
+    pub job: u64,
 }
 
 /// The issues a pull request body closes when merged: GitHub's closing

@@ -18,9 +18,10 @@ use super::{
 };
 use crate::clock::Clock;
 use crate::domain::{
-    Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
-    Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, closing_references,
+    Check, CheckFailure, CheckLog, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login,
+    MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
+    Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp,
+    closing_references,
 };
 use crate::git;
 
@@ -1155,7 +1156,11 @@ impl Store for LocalStore {
             .map(|c| CheckFailure {
                 name: c.name,
                 summary: String::new(),
-                log_tail: c.log,
+                // The local store keeps no full logs.
+                log: Some(CheckLog {
+                    tail: c.log,
+                    full: None,
+                }),
             })
             .collect())
     }

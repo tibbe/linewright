@@ -157,11 +157,19 @@ pub fn pull_work(
             for failure in *failures {
                 let _ = writeln!(
                     task,
-                    "#### `{}`\n\n{}\n\n```\n{}\n```\n",
+                    "#### `{}`\n\n{}\n",
                     failure.name,
-                    or_none(&failure.summary),
-                    failure.log_tail.trim_end()
+                    or_none(&failure.summary)
                 );
+                let Some(log) = &failure.log else { continue };
+                let _ = writeln!(task, "```\n{}\n```\n", log.tail.trim_end());
+                if let Some(full) = &log.full {
+                    let _ = writeln!(
+                        task,
+                        "The full log: `gh run view --job {} --repo {} --log`\n",
+                        full.job, full.repo
+                    );
+                }
             }
         }
         PullTask::Update => {}

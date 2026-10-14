@@ -20,9 +20,9 @@ use super::{
     Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode, RepoSettings, Store,
 };
 use crate::domain::{
-    Check, CheckFailure, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod,
-    Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement,
-    Review, ReviewState, Snapshot, Thread, Timestamp, label,
+    Check, CheckFailure, CheckLog, CheckState, Comment, Filed, Issue, IssueEvent, JobLog, Linked,
+    Login, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
+    Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, label,
 };
 use crate::git;
 
@@ -1556,7 +1556,7 @@ impl Store for GitHub {
                     contexts(first: 100) {
                       nodes {
                         __typename
-                        ... on CheckRun { name databaseId title summary text }
+                        ... on CheckRun { name databaseId title summary text checkSuite { app { slug } } }
                         ... on StatusContext { context description targetUrl }
                       }
                     }
@@ -1586,10 +1586,18 @@ impl Store for GitHub {
                 continue;
             }
             let failure = if node["__typename"] == "CheckRun" {
-                // A GitHub Actions check run's id is its job's id.
-                let log_tail = match node["databaseId"].as_u64() {
-                    Some(job) => self.job_log_tail(job).await.unwrap_or_default(),
-                    None => String::new(),
+                // A GitHub Actions check run's id is its job's id. Other
+                // apps' check runs have no log Linewright can read.
+                let actions = node["checkSuite"]["app"]["slug"] == "github-actions";
+                let log = match node["databaseId"].as_u64().filter(|_| actions) {
+                    Some(job) => Some(CheckLog {
+                        tail: self.job_log_tail(job).await.unwrap_or_default(),
+                        full: Some(JobLog {
+                            repo: self.full_name(),
+                            job,
+                        }),
+                    }),
+                    None => None,
                 };
                 CheckFailure {
                     name,
@@ -1602,7 +1610,7 @@ impl Store for GitHub {
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<_>>()
                     .join("\n\n"),
-                    log_tail,
+                    log,
                 }
             } else {
                 CheckFailure {
@@ -1612,7 +1620,7 @@ impl Store for GitHub {
                         text(&node["description"]),
                         text(&node["targetUrl"])
                     ),
-                    log_tail: String::new(),
+                    log: None,
                 }
             };
             failures.push(failure);
