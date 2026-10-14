@@ -14,7 +14,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::{
-    Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode, RepoSettings, Store,
+    AnyItem, Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode,
+    RepoSettings, Store,
 };
 use crate::clock::Clock;
 use crate::domain::{
@@ -942,6 +943,24 @@ impl State {
 }
 
 impl PullRecord {
+    /// The pull request as a merged one, into `default_branch`: `None` when
+    /// it is not merged.
+    fn merged(&self, default_branch: &str) -> Option<MergedPull> {
+        let PullState::Merged { at } = self.state else {
+            return None;
+        };
+        Some(MergedPull {
+            number: self.number,
+            title: self.title.clone(),
+            body: self.body.clone(),
+            author: self.author.clone(),
+            merged_at: at,
+            base_ref: default_branch.to_string(),
+            labels: self.labels.clone(),
+            files: self.files.clone(),
+        })
+    }
+
     fn new(
         number: Number,
         title: &str,
@@ -1078,6 +1097,24 @@ impl Store for LocalStore {
         self.pull_view(number).await
     }
 
+    async fn any_item(&self, number: Number) -> Result<Option<AnyItem>> {
+        self.read_item()?;
+        {
+            let state = self.state();
+            // A snapshot of the local store holds every issue.
+            if let Some(record) = state.issues.get(&number) {
+                return Ok(Some(AnyItem::HeldIssue(Box::new(state.issue_view(record)))));
+            }
+            let Some(record) = state.pulls.get(&number) else {
+                return Ok(None);
+            };
+            if let Some(merged) = record.merged(&state.default_branch) {
+                return Ok(Some(AnyItem::Merged(merged)));
+            }
+        }
+        Ok(Some(AnyItem::Pull(Box::new(self.pull_view(number).await?))))
+    }
+
     async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>> {
         self.read_item()?;
         let by_linewright = {
@@ -1103,20 +1140,9 @@ impl Store for LocalStore {
         let Some(record) = state.pulls.get(&number) else {
             return Ok(None);
         };
-        let default_branch = state.default_branch.clone();
-        Ok(match record.state {
-            PullState::Merged { at } if at >= merged_since => Some(MergedPull {
-                number,
-                title: record.title.clone(),
-                body: record.body.clone(),
-                author: record.author.clone(),
-                merged_at: at,
-                base_ref: default_branch,
-                labels: record.labels.clone(),
-                files: record.files.clone(),
-            }),
-            _ => None,
-        })
+        Ok(record
+            .merged(&state.default_branch)
+            .filter(|merged| merged.merged_at >= merged_since))
     }
 
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String> {

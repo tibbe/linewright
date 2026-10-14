@@ -17,6 +17,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use crate::api::Served;
 use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::domain::{
@@ -279,14 +280,14 @@ impl Factory {
     /// deliveries add to `pending`, until stopping. A refresh never races a
     /// poll: one still running when the poll falls due finishes first. A
     /// failed poll or refresh is logged and left for the next poll to catch
-    /// up on (`docs/specs/webhooks.md`). Its view goes to `view` after each
-    /// poll and refresh, and as runs end and are refused for the usage
-    /// limit, once a poll has taken a snapshot.
+    /// up on (`docs/specs/webhooks.md`). Its view goes to `served`, with its
+    /// store, after each poll and refresh, and as runs end and are refused
+    /// for the usage limit, once a poll has taken a snapshot.
     pub async fn serve(
         &mut self,
         poll_interval: Duration,
         pending: &Pending,
-        view: &tokio::sync::watch::Sender<Option<View>>,
+        served: &tokio::sync::watch::Sender<Option<Served>>,
     ) {
         let stopping = self.stopping.clone();
         while !stopping.is_cancelled() {
@@ -297,7 +298,7 @@ impl Factory {
             }
             let next_poll = Instant::now() + poll_interval;
             let next_poll_at = self.shell.clock.now() + poll_interval;
-            view.send_replace(self.view(next_poll_at));
+            served.send_replace(self.served(next_poll_at));
             loop {
                 tokio::select! {
                     () = tokio::time::sleep_until(next_poll) => break,
@@ -318,9 +319,18 @@ impl Factory {
                     }
                     Some(limit) = self.refusals.recv() => self.refused(limit),
                 }
-                view.send_replace(self.view(next_poll_at));
+                served.send_replace(self.served(next_poll_at));
             }
         }
+    }
+
+    /// The factory's view, with the next poll at `next_poll`, and its store:
+    /// `None` until a poll has taken a snapshot.
+    fn served(&self, next_poll: Timestamp) -> Option<Served> {
+        Some(Served {
+            view: self.view(next_poll)?,
+            store: self.shell.store.clone(),
+        })
     }
 
     /// The factory's view, with the next poll at `next_poll`: `None` until

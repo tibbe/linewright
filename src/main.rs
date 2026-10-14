@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use linewright::api::{self, Api, RequestError, Sources};
+use linewright::api::{self, Api, RequestError, Served, Sources};
 use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
@@ -95,11 +95,9 @@ async fn ask<T: serde::de::DeserializeOwned>(
             eprintln!("linewright: {e}");
             return ExitCode::from(NOT_SERVING);
         }
-        // Neither `/status` nor `/items/N` answers that an item does not
-        // exist.
         Err(e @ RequestError::NotFound(_)) => {
             eprintln!("linewright: {e}");
-            return ExitCode::FAILURE;
+            return ExitCode::from(NO_SUCH_ITEM);
         }
         Err(RequestError::Other(e)) => {
             eprintln!("linewright: {e:#}");
@@ -219,7 +217,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         Command::Explain { number, json } => {
             let resource = format!("/items/{number}");
             let what = "an explanation";
-            return Ok(ask(&config, &resource, what, json, explain::render).await);
+            return Ok(ask(&config, &resource, what, json, explain::render_answer).await);
         }
         Command::Runs {
             item,
@@ -258,7 +256,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 }
                 None => None,
             };
-            let (view, viewed) = tokio::sync::watch::channel(None);
+            let (served, answered_from) = tokio::sync::watch::channel(None);
             let api = Api::serve(
                 claimed,
                 Sources {
@@ -266,18 +264,18 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                         since,
                         max_runs: config.max_workers,
                     },
-                    view: viewed,
+                    served: answered_from,
                     deliveries: listener.as_ref().map(Listener::tally),
                     clock,
                     work_dir,
                 },
             );
-            let served = serve(&config, signals, &pending, &view).await;
+            let stopped = serve(&config, signals, &pending, &served).await;
             if let Some(listener) = listener {
                 listener.stop().await;
             }
             api.stop().await;
-            served
+            stopped
         }
         Command::Once => {
             let mut factory = start(&config, OnUsageLimit::End).await?;
@@ -335,7 +333,7 @@ async fn serve(
     config: &Config,
     mut signals: StopSignals,
     pending: &Pending,
-    view: &tokio::sync::watch::Sender<Option<status::View>>,
+    served: &tokio::sync::watch::Sender<Option<Served>>,
 ) -> Result<()> {
     let mut factory = tokio::select! {
         factory = start(config, OnUsageLimit::Wait) => factory?,
@@ -360,7 +358,7 @@ async fn serve(
             std::process::exit(128 + second.kind().as_raw_value());
         }
     });
-    factory.serve(config.poll_interval, pending, view).await;
+    factory.serve(config.poll_interval, pending, served).await;
     info!("stopping: cancelling the runs in flight");
     factory.stop().await;
     Ok(())

@@ -16,7 +16,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::{
-    Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode, RepoSettings, Store,
+    AnyItem, Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode,
+    RepoSettings, Store,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
@@ -406,7 +407,12 @@ impl GitHub {
         if pr.base_ref_name != base {
             return Ok(None);
         }
-        Ok(Some(MergedPull {
+        Ok(Some(self.merged_of(pr, merged_at).await?))
+    }
+
+    /// `pr`, merged at `merged_at`, as a merged pull request.
+    async fn merged_of(&self, pr: GqlMerged, merged_at: Timestamp) -> Result<MergedPull> {
+        Ok(MergedPull {
             number: Number(pr.number),
             title: pr.title,
             body: pr.body,
@@ -420,7 +426,7 @@ impl GitHub {
                 }
                 _ => self.all_files(pr.number).await?,
             },
-        }))
+        })
     }
 
     /// Pushes to the branch, oldest first, from the repository's activity
@@ -464,6 +470,28 @@ impl GitHub {
         #[serde(rename_all = "camelCase")]
         struct One {
             pull_request: GqlPull,
+        }
+        let data: Option<RepoData<One>> = self
+            .graphql_found(
+                &query,
+                json!({"owner": self.owner, "name": self.name, "number": number.0}),
+            )
+            .await?;
+        Ok(data.map(|d| d.repository.pull_request))
+    }
+
+    /// The pull request with the fields a merged one is read with.
+    async fn gql_merged(&self, number: Number) -> Result<Option<GqlMerged>> {
+        let query = format!(
+            "query($owner: String!, $name: String!, $number: Int!) {{
+              repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{ ...MergedFields }} }}
+            }}
+            {MERGED_FIELDS}"
+        );
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct One {
+            pull_request: GqlMerged,
         }
         let data: Option<RepoData<One>> = self
             .graphql_found(
@@ -811,17 +839,9 @@ enum GqlEvent {
     },
 }
 
-/// The labels of the open issues a snapshot reads, besides those assigned to
-/// or opened by Linewright.
-const IN_VIEW_LABELS: [&str; 3] = [
-    label::NEEDS_TRIAGE,
-    label::NEEDS_INFO,
-    label::READY_FOR_AGENT,
-];
-
 impl GqlIssue {
     /// Whether a snapshot reads the issue: open, and labeled one of
-    /// `IN_VIEW_LABELS`, assigned to Linewright or opened by it, as the
+    /// `label::IN_VIEW`, assigned to Linewright or opened by it, as the
     /// snapshot's filters select issues.
     fn in_view(&self, linewright: &str) -> bool {
         self.state == "OPEN"
@@ -829,7 +849,7 @@ impl GqlIssue {
                 .labels
                 .nodes
                 .iter()
-                .any(|l| IN_VIEW_LABELS.contains(&l.name.as_str()))
+                .any(|l| label::IN_VIEW.contains(&l.name.as_str()))
                 || self.assignees.nodes.iter().any(|a| a.login == linewright)
                 || self.author.as_ref().is_some_and(|a| a.login == linewright))
     }
@@ -1369,7 +1389,7 @@ impl Store for GitHub {
         let mut issues: BTreeMap<u64, GqlIssue> = BTreeMap::new();
         // As `GqlIssue::in_view` reads one issue.
         for filter in [
-            json!({"states": ["OPEN"], "labels": IN_VIEW_LABELS}),
+            json!({"states": ["OPEN"], "labels": label::IN_VIEW}),
             json!({"states": ["OPEN"], "assignee": linewright}),
             json!({"states": ["OPEN"], "createdBy": linewright}),
         ] {
@@ -1416,6 +1436,35 @@ impl Store for GitHub {
         let pr = self.gql_pull(number).await?;
         self.pull_view(pr.with_context(|| format!("there is no pull request {number}"))?)
             .await
+    }
+
+    async fn any_item(&self, number: Number) -> Result<Option<AnyItem>> {
+        // GitHub resolves no issue for a pull request's number.
+        if let Some(issue) = self.gql_issue(number).await? {
+            let held = issue.in_view(&self.viewer.login);
+            let issue = Box::new(issue.into_issue(&self.linewright()));
+            return Ok(Some(if held {
+                AnyItem::HeldIssue(issue)
+            } else {
+                AnyItem::LeftOutIssue(issue)
+            }));
+        }
+        let Some(pr) = self.gql_pull(number).await? else {
+            return Ok(None);
+        };
+        if pr.state != "MERGED" {
+            return Ok(Some(AnyItem::Pull(Box::new(self.pull_view(pr).await?))));
+        }
+        let merged = self
+            .gql_merged(number)
+            .await?
+            .with_context(|| format!("there is no pull request {number}"))?;
+        let merged_at = merged
+            .merged_at
+            .with_context(|| format!("GitHub gives merged pull request {number} no merge time"))?;
+        Ok(Some(AnyItem::Merged(
+            self.merged_of(merged, merged_at).await?,
+        )))
     }
 
     async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>> {

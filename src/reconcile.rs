@@ -1398,14 +1398,69 @@ pub fn pending_spec_changes<'a>(
 /// on every poll, so one applied after the merge counts; `cancel_reason` does
 /// not look at it, so a cut under way survives its removal.
 fn is_spec_change(pr: &MergedPull, snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> bool {
-    pr.base_ref == snapshot.default_branch
-        && pr.merged_at >= now - policy.spec_lookback
-        && pr.author != policy.linewright
-        && !pr.has_label(label::SPEC_PROCESSED)
-        && !pr.has_label(label::READY_FOR_HUMAN)
-        && policy
-            .require_label
-            .as_ref()
-            .is_none_or(|l| pr.has_label(l))
-        && pr.files.iter().any(|f| policy.spec_glob.matches(f))
+    not_a_spec_change(pr, &snapshot.default_branch, now, policy).is_none()
+}
+
+/// Why a merged pull request is no spec change (`docs/specs/sources_of_work.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
+pub enum NotSpecChange {
+    /// Linewright opened it.
+    Linewrights,
+    /// It was merged into `base`, not the default branch.
+    OtherBranch { base: String },
+    /// It touched no file matching `spec_glob`.
+    NoSpecFile { spec_glob: String },
+    /// It is labeled `linewright:spec-processed`.
+    Processed,
+    /// It is labeled `ready-for-human`.
+    HandedBack,
+    /// It was merged at `merged_at`, before the lookback window opened at
+    /// `window_opened`.
+    BeforeLookback {
+        merged_at: Timestamp,
+        window_opened: Timestamp,
+    },
+    /// It lacks the required label `label`.
+    RequiredLabel { label: String },
+}
+
+/// Why `pr`, merged, is no spec change at `now` where the default branch is
+/// `default_branch`: the first rule of a spec change it fails, those
+/// that hold for good first. `None` for a spec change.
+pub fn not_a_spec_change(
+    pr: &MergedPull,
+    default_branch: &str,
+    now: Timestamp,
+    policy: &Policy,
+) -> Option<NotSpecChange> {
+    let window_opened = now - policy.spec_lookback;
+    let unlabeled = policy.require_label.as_ref().filter(|l| !pr.has_label(l));
+    let because = if pr.author == policy.linewright {
+        NotSpecChange::Linewrights
+    } else if pr.base_ref != default_branch {
+        NotSpecChange::OtherBranch {
+            base: pr.base_ref.clone(),
+        }
+    } else if !pr.files.iter().any(|f| policy.spec_glob.matches(f)) {
+        NotSpecChange::NoSpecFile {
+            spec_glob: policy.spec_glob.pattern().to_string(),
+        }
+    } else if pr.has_label(label::SPEC_PROCESSED) {
+        NotSpecChange::Processed
+    } else if pr.has_label(label::READY_FOR_HUMAN) {
+        NotSpecChange::HandedBack
+    } else if pr.merged_at < window_opened {
+        NotSpecChange::BeforeLookback {
+            merged_at: pr.merged_at,
+            window_opened,
+        }
+    } else {
+        // The last rule: without the required label it is none, and with it
+        // or none required, a spec change.
+        return unlabeled.map(|label| NotSpecChange::RequiredLabel {
+            label: label.clone(),
+        });
+    };
+    Some(because)
 }

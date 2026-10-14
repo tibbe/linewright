@@ -293,15 +293,10 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
         });
     }
     for issue in snapshot.issues.iter().filter(|i| i.open) {
-        let Some(state) = issue_state(issue, snapshot, &view.policy) else {
+        let waiting_for = waits.remove(&issue.number).unwrap_or_default();
+        let Ok(state) = standing(issue, snapshot, &view.policy, &waiting_for) else {
             continue;
         };
-        let waiting_for = waits.remove(&issue.number).unwrap_or_default();
-        // A tracking issue with no tickets and no cut in flight is left
-        // alone.
-        if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
-            continue;
-        }
         items.push(Tracked {
             number: issue.number,
             title: issue.title.clone(),
@@ -312,10 +307,44 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
     items
 }
 
+/// Why Linewright leaves an open issue alone: the fact or setting that keeps
+/// it out of the pipeline (`docs/specs/monitoring.md`, "explain").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
+pub enum IssueExclusion {
+    /// It has none of the labels that place it in the pipeline.
+    NoPipelineLabel,
+    /// It is Linewright's own, labeled `needs-triage`, and Linewright never
+    /// triages its own issues.
+    OwnIssueForTriage,
+    /// It is a tracking issue with no tickets and no cut in flight.
+    NoTickets,
+}
+
+/// Where the open `issue` is in the pipeline, waiting for `waiting_for`, or
+/// why Linewright leaves it alone.
+pub(crate) fn standing(
+    issue: &Issue,
+    snapshot: &Snapshot,
+    policy: &Policy,
+    waiting_for: &[Wait],
+) -> Result<ItemState, IssueExclusion> {
+    let state = issue_state(issue, snapshot, policy)?;
+    // A tracking issue with no tickets and no cut in flight is left alone.
+    if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
+        return Err(IssueExclusion::NoTickets);
+    }
+    Ok(state)
+}
+
 /// Where the open `issue` is in the pipeline, if its labels place it there.
 /// An issue of Linewright's own is never triaged, so `needs-triage` places
 /// it nowhere.
-fn issue_state(issue: &Issue, snapshot: &Snapshot, policy: &Policy) -> Option<ItemState> {
+fn issue_state(
+    issue: &Issue,
+    snapshot: &Snapshot,
+    policy: &Policy,
+) -> Result<ItemState, IssueExclusion> {
     let state = if matches!(issue.filed, Some(Filed::Tracking { .. })) {
         ItemState::Tracking {
             tickets_closed: issue.sub_issues.iter().filter(|t| !t.open).count(),
@@ -323,7 +352,7 @@ fn issue_state(issue: &Issue, snapshot: &Snapshot, policy: &Policy) -> Option<It
         }
     } else if issue.has_label(label::NEEDS_TRIAGE) {
         if !policy.triages(issue) {
-            return None;
+            return Err(IssueExclusion::OwnIssueForTriage);
         }
         ItemState::WaitingForTriage
     } else if issue.has_label(label::NEEDS_INFO) {
@@ -337,9 +366,9 @@ fn issue_state(issue: &Issue, snapshot: &Snapshot, policy: &Policy) -> Option<It
             None => ItemState::ReadyToClaim,
         }
     } else {
-        return None;
+        return Err(IssueExclusion::NoPipelineLabel);
     };
-    Some(state)
+    Ok(state)
 }
 
 /// The answer as text: one fact per line as `label: value`, a blank line

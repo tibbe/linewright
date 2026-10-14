@@ -1,16 +1,31 @@
 //! `linewright explain N`: where issue or pull request #N stands and what
-//! Linewright waits for before it acts on it next
-//! (`docs/specs/monitoring.md`, "explain"). `serve` answers it from its own
-//! view, with the waits the reconcile step derives; the command prints the
+//! Linewright waits for before it acts on it next, or why Linewright leaves
+//! it alone (`docs/specs/monitoring.md`, "explain"). `serve` answers it from
+//! its own view, with the waits the reconcile step derives, and for an item
+//! it does not track from #N read from the store; the command prints the
 //! answer.
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{Item, Number, Timestamp};
-use crate::reconcile::Wait;
-use crate::status::{InReview, ItemState, Paint, View, describe, describe_wait, tracked, utc};
+use crate::domain::{Item, Login, Number, Pull, Timestamp, label};
+use crate::reconcile::{NotSpecChange, Wait, not_a_spec_change};
+use crate::status::{
+    InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, standing, tracked,
+    utc,
+};
+use crate::store::AnyItem;
+
+/// The answer to `explain N`, as the local API sends it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Answer {
+    // First, so that only an answer naming why reads as one.
+    LeftAlone(LeftAlone),
+    Tracked(Explanation),
+}
 
 /// The answer to `explain N`, as the local API sends it. Its fields keep
 /// their names and meanings (`docs/specs/monitoring.md`, "Output").
@@ -73,6 +88,342 @@ pub fn explain(view: &View, number: Number, now: Timestamp) -> Option<Explanatio
         }),
         _ => None,
     })
+}
+
+/// An item Linewright leaves alone, and why. Its fields keep their names and
+/// meanings (`docs/specs/monitoring.md`, "Output").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeftAlone {
+    pub number: Number,
+    pub title: String,
+    #[serde(flatten)]
+    pub item: LeftAloneItem,
+    /// When `serve` read #N.
+    pub last_read: Timestamp,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "item", rename_all = "kebab-case")]
+pub enum LeftAloneItem {
+    Issue(LeftAloneIssue),
+    PullRequest(LeftAlonePull),
+}
+
+/// An issue Linewright leaves alone: closed, or open and kept out by
+/// `left_alone`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum LeftAloneIssue {
+    Closed,
+    Open { left_alone: OpenIssueExclusion },
+}
+
+/// Why Linewright leaves an open issue alone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
+pub enum OpenIssueExclusion {
+    /// A snapshot does not read it: it has none of the labels that bring an
+    /// issue in, and Linewright neither opened it nor is assigned to it.
+    NotInView,
+    /// A snapshot reads it, and the rules that place an issue in the
+    /// pipeline keep it out.
+    #[serde(untagged)]
+    Held(IssueExclusion),
+}
+
+/// A pull request Linewright leaves alone: closed without merging, open and
+/// kept out by `left_alone`, or merged and no spec change.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum LeftAlonePull {
+    Closed,
+    Open { left_alone: PullExclusion },
+    Merged { left_alone: NotSpecChange },
+}
+
+/// Why Linewright leaves an open pull request alone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
+pub enum PullExclusion {
+    /// Someone other than Linewright, `author`, opened it.
+    NotLinewrights { author: Login },
+    /// It is Linewright's, closing no issue.
+    ClosesNoIssue,
+    /// It is Linewright's for `issue`, which Linewright works on through its
+    /// newer pull request `by`.
+    Superseded { issue: Number, by: Number },
+    /// It is Linewright's for `issue`, which Linewright tracks in
+    /// `issue_state`, not in review.
+    IssueNotInReview {
+        issue: Number,
+        issue_state: ItemState,
+    },
+    /// It is Linewright's for `issues`, none of which Linewright tracks.
+    ForIssuesLeftAlone { issues: Vec<Number> },
+}
+
+/// The answer about `read`, #N as `serve` read it from the store at `now`
+/// because its view tracks no such item: where #N stands if the read places
+/// it in the pipeline after all, as a label applied since the last poll
+/// does, or else why Linewright leaves it alone, by the rules that decide
+/// what it tracks.
+pub fn explain_read(view: &View, read: &AnyItem, now: Timestamp) -> Answer {
+    let mut fresh = view.clone();
+    let linewright = &view.policy.linewright;
+    // As a poll taking a snapshot now would hold #N.
+    let held = Arc::make_mut(&mut fresh.snapshot);
+    match read {
+        AnyItem::HeldIssue(issue) => held.put_issue(issue.as_ref().clone()),
+        AnyItem::Pull(pull) if &pull.author == linewright => held.put_pull(pull.as_ref().clone()),
+        AnyItem::Merged(merged) => held.put_merged(merged.clone()),
+        AnyItem::LeftOutIssue(_) | AnyItem::Pull(_) => {}
+    }
+    fresh.read_at.insert(read.item(), now);
+    let number = read.number();
+    let mut waits = fresh.decisions(now).waits;
+    let mut take_waits = || waits.remove(&number).unwrap_or_default();
+    let tracked_as = |title: &str, state: ItemState, waiting_for: Vec<Wait>| {
+        Answer::Tracked(Explanation {
+            number,
+            title: title.to_string(),
+            standing: Standing::Item(state),
+            last_read: now,
+            waiting_for,
+        })
+    };
+    let (title, item) = match read {
+        AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) if !issue.open => {
+            (&issue.title, LeftAloneItem::Issue(LeftAloneIssue::Closed))
+        }
+        AnyItem::LeftOutIssue(issue) => (
+            &issue.title,
+            LeftAloneItem::Issue(LeftAloneIssue::Open {
+                left_alone: OpenIssueExclusion::NotInView,
+            }),
+        ),
+        AnyItem::HeldIssue(issue) => {
+            let waiting_for = take_waits();
+            match standing(issue, &fresh.snapshot, &fresh.policy, &waiting_for) {
+                Ok(state) => return tracked_as(&issue.title, state, waiting_for),
+                Err(exclusion) => (
+                    &issue.title,
+                    LeftAloneItem::Issue(LeftAloneIssue::Open {
+                        left_alone: OpenIssueExclusion::Held(exclusion),
+                    }),
+                ),
+            }
+        }
+        AnyItem::Merged(merged) => {
+            let default_branch = &fresh.snapshot.default_branch;
+            match not_a_spec_change(merged, default_branch, now, &fresh.policy) {
+                None => {
+                    let state = ItemState::WaitingForTickets;
+                    return tracked_as(&merged.title, state, take_waits());
+                }
+                Some(left_alone) => (
+                    &merged.title,
+                    LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }),
+                ),
+            }
+        }
+        AnyItem::Pull(pull) if !pull.is_open() => (
+            &pull.title,
+            LeftAloneItem::PullRequest(LeftAlonePull::Closed),
+        ),
+        AnyItem::Pull(pull) => match pull_standing(&fresh, pull, now) {
+            Ok(explanation) => return Answer::Tracked(explanation),
+            Err(left_alone) => (
+                &pull.title,
+                LeftAloneItem::PullRequest(LeftAlonePull::Open { left_alone }),
+            ),
+        },
+    };
+    Answer::LeftAlone(LeftAlone {
+        number,
+        title: title.clone(),
+        item,
+        last_read: now,
+    })
+}
+
+/// Where the open pull request `pull` stands in `view` at `now`, as
+/// Linewright's pull request for an issue in review, or why Linewright
+/// leaves it alone.
+fn pull_standing(view: &View, pull: &Pull, now: Timestamp) -> Result<Explanation, PullExclusion> {
+    if pull.author != view.policy.linewright {
+        return Err(PullExclusion::NotLinewrights {
+            author: pull.author.clone(),
+        });
+    }
+    if pull.closes.is_empty() {
+        return Err(PullExclusion::ClosesNoIssue);
+    }
+    let tracked = tracked(view, now);
+    let Some(issue) = tracked
+        .into_iter()
+        .find(|t| pull.closes.contains(&t.number))
+    else {
+        return Err(PullExclusion::ForIssuesLeftAlone {
+            issues: pull.closes.clone(),
+        });
+    };
+    match issue.state {
+        ItemState::InReview(review) if review.pull_request == pull.number => Ok(Explanation {
+            number: pull.number,
+            title: pull.title.clone(),
+            standing: Standing::PullRequest {
+                pull_request_for: issue.number,
+                review,
+            },
+            last_read: now,
+            waiting_for: issue.waiting_for,
+        }),
+        ItemState::InReview(review) => Err(PullExclusion::Superseded {
+            issue: issue.number,
+            by: review.pull_request,
+        }),
+        issue_state => Err(PullExclusion::IssueNotInReview {
+            issue: issue.number,
+            issue_state,
+        }),
+    }
+}
+
+/// The answer as text, as [`render`] gives a tracked item's, and for an item
+/// Linewright leaves alone: where it is and why.
+pub fn render_answer(answer: &Answer, colour: bool) -> String {
+    let left_alone = match answer {
+        Answer::Tracked(explanation) => return render(explanation, colour),
+        Answer::LeftAlone(left_alone) => left_alone,
+    };
+    let paint = Paint(colour);
+    let closed = || "it is closed".to_string();
+    let (state, why) = match &left_alone.item {
+        LeftAloneItem::Issue(LeftAloneIssue::Closed) => ("closed issue", closed()),
+        LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }) => {
+            ("open issue", describe_issue_exclusion(left_alone))
+        }
+        LeftAloneItem::PullRequest(LeftAlonePull::Closed) => ("closed pull request", closed()),
+        LeftAloneItem::PullRequest(LeftAlonePull::Open { left_alone }) => {
+            ("open pull request", describe_pull_exclusion(left_alone))
+        }
+        LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }) => (
+            "merged pull request",
+            format!(
+                "it is no spec change: {}",
+                describe_not_spec_change(left_alone)
+            ),
+        ),
+    };
+    let lines = [
+        format!(
+            "{}: {}",
+            paint.bold(&left_alone.number.to_string()),
+            left_alone.title
+        ),
+        format!("state: {state}"),
+        format!("last read: {}", utc(left_alone.last_read)),
+        format!("left alone: {why}"),
+    ];
+    let mut text = String::new();
+    for line in lines {
+        let _ = writeln!(text, "{line}");
+    }
+    text
+}
+
+/// The labels `names`, quoted, as "`a`, `b` or `c`".
+fn one_of(names: &[&str]) -> String {
+    let names: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+    match names.as_slice() {
+        [rest @ .., last] if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
+        _ => names.concat(),
+    }
+}
+
+/// Why Linewright leaves an open issue alone, as a phrase after "left
+/// alone:".
+fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> String {
+    let exclusion = match exclusion {
+        OpenIssueExclusion::NotInView => {
+            return format!(
+                "it is labeled none of {}, and Linewright neither opened it nor is assigned to it",
+                one_of(&label::IN_VIEW)
+            );
+        }
+        OpenIssueExclusion::Held(exclusion) => exclusion,
+    };
+    match exclusion {
+        IssueExclusion::NoPipelineLabel => {
+            format!("it is labeled none of {}", one_of(&label::STATES))
+        }
+        IssueExclusion::OwnIssueForTriage => format!(
+            "Linewright opened it and triages no issue of its own, though it is labeled `{}`",
+            label::NEEDS_TRIAGE
+        ),
+        IssueExclusion::NoTickets => {
+            "it is a tracking issue with no tickets, and none are being cut".into()
+        }
+    }
+}
+
+/// Why Linewright leaves an open pull request alone, as a phrase after
+/// "left alone:".
+fn describe_pull_exclusion(exclusion: &PullExclusion) -> String {
+    match exclusion {
+        PullExclusion::NotLinewrights { author } => {
+            format!("{author} opened it, and Linewright works only on its own pull requests")
+        }
+        PullExclusion::ClosesNoIssue => {
+            "it is Linewright's, and closes no issue Linewright could work on".into()
+        }
+        PullExclusion::Superseded { issue, by } => {
+            format!("it is Linewright's for {issue}, which it works on through {by}")
+        }
+        PullExclusion::IssueNotInReview { issue, issue_state } => format!(
+            "it is Linewright's for {issue}, which is not in review but {}",
+            describe(issue_state)
+        ),
+        PullExclusion::ForIssuesLeftAlone { issues } => {
+            let issues: Vec<String> = issues.iter().map(Number::to_string).collect();
+            format!(
+                "it is Linewright's for {}, which Linewright does not work on",
+                issues.join(", ")
+            )
+        }
+    }
+}
+
+/// Why a merged pull request is no spec change, as a phrase.
+fn describe_not_spec_change(because: &NotSpecChange) -> String {
+    match because {
+        NotSpecChange::Linewrights => "Linewright opened it".into(),
+        NotSpecChange::OtherBranch { base } => {
+            format!("it was merged into `{base}`, not the default branch")
+        }
+        NotSpecChange::NoSpecFile { spec_glob } => {
+            format!("it touches no file matching `{spec_glob}`, the spec-glob")
+        }
+        NotSpecChange::Processed => format!(
+            "it is labeled `{}`: cut into tickets already",
+            label::SPEC_PROCESSED
+        ),
+        NotSpecChange::HandedBack => format!(
+            "it is labeled `{}`: handed to the maintainer",
+            label::READY_FOR_HUMAN
+        ),
+        NotSpecChange::BeforeLookback {
+            merged_at,
+            window_opened,
+        } => format!(
+            "it was merged {}, before the spec-lookback window opened {}",
+            utc(*merged_at),
+            utc(*window_opened)
+        ),
+        NotSpecChange::RequiredLabel { label } => {
+            format!("it is not labeled `{label}`, the required label")
+        }
+    }
 }
 
 /// The answer as text: one fact per line as `label: value`, coloured if

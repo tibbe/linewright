@@ -14,8 +14,8 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, Issue, Login, MergeMethod, MergeMethods, MergedPull, Number, Pull, Snapshot,
-    Timestamp, UpdateMethod, UpdateRule,
+    CheckFailure, Issue, Item, Login, MergeMethod, MergeMethods, MergedPull, Number, Pull,
+    Snapshot, Timestamp, UpdateMethod, UpdateRule,
 };
 
 /// Who Linewright acts as.
@@ -154,6 +154,36 @@ pub enum IssueRead {
     Gone,
 }
 
+/// An issue or pull request, whichever #N is, as a read of it on its own
+/// sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AnyItem {
+    /// An issue a snapshot taken now holds.
+    HeldIssue(Box<Issue>),
+    /// An issue a snapshot taken now leaves out.
+    LeftOutIssue(Box<Issue>),
+    /// A pull request open, or closed without merging.
+    Pull(Box<Pull>),
+    Merged(MergedPull),
+}
+
+impl AnyItem {
+    pub fn number(&self) -> Number {
+        match self {
+            AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => issue.number,
+            AnyItem::Pull(pull) => pull.number,
+            AnyItem::Merged(merged) => merged.number,
+        }
+    }
+
+    pub fn item(&self) -> Item {
+        match self {
+            AnyItem::HeldIssue(_) | AnyItem::LeftOutIssue(_) => Item::Issue(self.number()),
+            AnyItem::Pull(_) | AnyItem::Merged(_) => Item::Pull(self.number()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewIssue {
     pub title: String,
@@ -185,6 +215,9 @@ pub trait Store: Send + Sync {
     /// The issue as a snapshot taken now sees it.
     async fn issue(&self, number: Number) -> Result<IssueRead>;
     async fn pull(&self, number: Number) -> Result<Pull>;
+    /// The issue or pull request #`number`, open or not, whoever opened it:
+    /// `None` when the store has neither.
+    async fn any_item(&self, number: Number) -> Result<Option<AnyItem>>;
     /// The pull request as a snapshot taken now holds it among Linewright's pull
     /// requests: `None` when the snapshot leaves it out, as it does anyone else's
     /// and one the store does not have.

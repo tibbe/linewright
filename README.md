@@ -29,8 +29,12 @@ linewright --repo owner/name serve
   last and next run and any workflow file that does not parse. `explain N`
   asks it where issue or pull request #N stands, when it last read it and
   each thing Linewright waits for before it acts on it next, such as a free
-  run, the usage limit, CI or the maintainer. `--json` prints `serve`'s
-  answer as JSON. Both exit 3 when no `serve` runs for the repository.
+  run, the usage limit, CI or the maintainer. For an item it does not track,
+  `serve` reads #N from GitHub and `explain` says why Linewright leaves it
+  alone, such as a missing label, a closed item, someone else's pull request
+  or a merged one that is no spec change; it exits 4 when there is no #N.
+  `--json` prints `serve`'s answer as JSON. Both exit 3 when no `serve` runs
+  for the repository.
   `serve` answers on a Unix socket only its user can open, under
   `$XDG_RUNTIME_DIR/linewright/`, or `linewright-<uid>/` in the temporary
   directory without it.

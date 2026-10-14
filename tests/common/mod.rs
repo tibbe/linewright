@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
+use linewright::api::Served;
 use linewright::briefs::Briefs;
 use linewright::clock::Clock;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
@@ -18,7 +19,6 @@ use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::spec_glob::SpecGlob;
-use linewright::status::View;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::{Address, Listener, Pending, Secret, Webhooks};
 use serde_json::Value;
@@ -695,8 +695,8 @@ pub async fn eventually_async<F: Future<Output = bool>>(done: impl Fn() -> F) {
 pub struct Serving {
     stopping: CancellationToken,
     handle: JoinHandle<()>,
-    /// The view it sends the local API.
-    pub view: tokio::sync::watch::Receiver<Option<View>>,
+    /// The view and store it sends the local API.
+    pub served: tokio::sync::watch::Receiver<Option<Served>>,
 }
 
 impl Serving {
@@ -708,7 +708,7 @@ impl Serving {
         pending: Pending,
     ) -> Serving {
         let stopping = factory.stopping();
-        let (sender, view) = tokio::sync::watch::channel(None);
+        let (sender, served) = tokio::sync::watch::channel(None);
         let handle = tokio::spawn(async move {
             factory.serve(poll_interval, &pending, &sender).await;
             factory.stop().await;
@@ -716,7 +716,7 @@ impl Serving {
         Serving {
             stopping,
             handle,
-            view,
+            served,
         }
     }
 

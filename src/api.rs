@@ -29,6 +29,7 @@ use crate::domain::Number;
 use crate::explain;
 use crate::runs::{self, ListError, RepoWorkDir};
 use crate::status::{self, Serving, View};
+use crate::store::Store;
 use crate::webhook::Tally;
 
 /// The per-user directory the sockets are in: `linewright` under the user's
@@ -138,12 +139,20 @@ fn private_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// What `serve` answers from once it has polled: its view, and the store it
+/// reads the items it does not track from.
+#[derive(Clone)]
+pub struct Served {
+    pub view: View,
+    pub store: Arc<dyn Store>,
+}
+
 /// What the API answers from.
 #[derive(Clone)]
 pub struct Sources {
     pub serving: Serving,
-    /// The factory's view, `None` until its first poll.
-    pub view: watch::Receiver<Option<View>>,
+    /// The factory's view and store, `None` until its first poll.
+    pub served: watch::Receiver<Option<Served>>,
     /// Set with webhooks on.
     pub deliveries: Option<Tally>,
     pub clock: Arc<dyn Clock>,
@@ -213,11 +222,11 @@ impl Api {
 
 async fn answer_status(State(sources): State<Sources>) -> Response {
     let webhooks = sources.deliveries.as_ref().map(Tally::get);
-    let view = sources.view.borrow().clone();
+    let served = sources.served.borrow().clone();
     let answer = status::status(
         &sources.serving,
         webhooks,
-        view.as_ref(),
+        served.as_ref().map(|served| &served.view),
         sources.clock.now(),
     );
     json_response(StatusCode::OK, &answer)
@@ -241,25 +250,34 @@ async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Q
     }
 }
 
-/// The answer to `explain N`: not found for a number Linewright does not
-/// track, and unavailable before the first poll.
+/// The answer to `explain N`: from the view for an item Linewright tracks,
+/// or else from #N read from the store; not found for a number with no item,
+/// and unavailable before the first poll.
 async fn answer_item(
     State(sources): State<Sources>,
     Resource(number): Resource<Number>,
 ) -> Response {
-    let view = sources.view.borrow().clone();
-    let Some(view) = view else {
+    let served = sources.served.borrow().clone();
+    let Some(Served { view, store }) = served else {
         return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "`serve` has not polled yet: ask again after its first poll",
         );
     };
-    match explain::explain(&view, number, sources.clock.now()) {
-        Some(answer) => json_response(StatusCode::OK, &answer),
-        None => error_response(
+    let now = sources.clock.now();
+    if let Some(answer) = explain::explain(&view, number, now) {
+        return json_response(StatusCode::OK, &explain::Answer::Tracked(answer));
+    }
+    match store.any_item(number).await {
+        Ok(Some(read)) => json_response(StatusCode::OK, &explain::explain_read(&view, &read, now)),
+        Ok(None) => json_response(
             StatusCode::NOT_FOUND,
-            &format!("{number} is not an item Linewright tracks"),
+            &ErrorAnswer {
+                error: format!("there is no issue or pull request {number}"),
+                missing: Some(Missing::Item),
+            },
         ),
+        Err(e) => error_response(StatusCode::BAD_GATEWAY, &format!("reading {number}: {e:#}")),
     }
 }
 

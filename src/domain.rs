@@ -66,6 +66,10 @@ pub mod label {
     /// handed from one state to another loses all the others.
     pub const STATES: [&str; 4] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT, READY_FOR_HUMAN];
 
+    /// The labels that bring an open issue into the store's snapshot,
+    /// besides being assigned to or opened by Linewright.
+    pub const IN_VIEW: [&str; 3] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT];
+
     /// Every label Linewright creates at startup, with its description.
     pub const ALL: [(&str, &str); 7] = [
         (NEEDS_TRIAGE, "New, not yet assessed"),

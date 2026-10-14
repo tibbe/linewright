@@ -62,7 +62,7 @@ impl Answering {
             claimed,
             Sources {
                 serving: linewright::status::Serving { since, max_runs: 4 },
-                view: serving.view.clone(),
+                served: serving.served.clone(),
                 deliveries: listener.as_ref().map(Listener::tally),
                 clock,
                 work_dir: linewright::runs::RepoWorkDir {
@@ -71,8 +71,8 @@ impl Answering {
                 },
             },
         );
-        let mut view = serving.view.clone();
-        tokio::time::timeout(Duration::from_secs(10), view.wait_for(Option::is_some))
+        let mut served = serving.served.clone();
+        tokio::time::timeout(Duration::from_secs(10), served.wait_for(Option::is_some))
             .await
             .expect("the first poll")
             .unwrap();
@@ -628,12 +628,34 @@ async fn explain_json_prints_the_api_answer_as_it_is() {
 }
 
 #[tokio::test]
-async fn explain_of_an_item_linewright_does_not_track_fails_saying_so() {
+async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_now() {
+    let world = with_ticket_and_workflow().await;
+    let closed = world
+        .store
+        .open_issue("maintainer", "Old idea", "Maybe.", &["ready-for-agent"]);
+    world.store.close_issue_as(closed).unwrap();
+    let answering = Answering::start(world, false).await;
+
+    let output = answering
+        .linewright(&["explain", &closed.0.to_string()])
+        .await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let lines: Vec<&str> = output.stdout.lines().collect();
+    assert_eq!(lines.len(), 4, "{}", output.stdout);
+    assert_eq!(lines[0], format!("{closed}: Old idea"));
+    assert_eq!(lines[1], "state: closed issue");
+    assert_eq!(lines[3], "left alone: it is closed");
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
     let answering = Answering::start(World::new().await, false).await;
 
     let output = answering.linewright(&["explain", "7"]).await;
 
-    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert_eq!(output.stdout, "");
     assert!(output.stderr.contains("#7"), "{}", output.stderr);
     answering.stop().await;

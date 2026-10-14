@@ -583,7 +583,13 @@ impl Served {
 
     /// The usage limit in `serve`'s view.
     fn usage_limit(&self) -> Option<UsageLimit> {
-        self.serving.view.borrow().as_ref()?.memory.usage_limit
+        self.serving
+            .served
+            .borrow()
+            .as_ref()?
+            .view
+            .memory
+            .usage_limit
     }
 
     async fn stop(self) -> World {
