@@ -22,12 +22,17 @@ on:
 concurrency:
   group: docker-${{ github.event_name == 'push' && github.ref || github.run_id }}
 
+# The code a pull request builds is not yet reviewed, and a pull request from
+# a branch of this repository gets the permissions its job asks for, so only
+# a push to `main` builds with a token that can push images. That job does
+# not leave the token in the checkout, where the build could read it, and
+# logs in only after building.
 jobs:
   build:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
     env:
       LINEWRIGHT_COMMIT: ${{ github.sha }}
     steps:
@@ -38,14 +43,29 @@ jobs:
       - run: >-
           touch deploy/.env &&
           docker compose -f deploy/compose.yaml -f deploy/compose.build.yaml build
-      - if: github.event_name == 'push'
-        uses: docker/login-action@v3
+
+  publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      LINEWRIGHT_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: echo "LINEWRIGHT_TAG=sha-${LINEWRIGHT_COMMIT::7}" >> "$GITHUB_ENV"
+      - run: >-
+          touch deploy/.env &&
+          docker compose -f deploy/compose.yaml -f deploy/compose.build.yaml build
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - if: github.event_name == 'push'
-        run: |
+      - run: |
           for name in linewright-proxy linewright-self linewright-webhook-relay; do
             image="ghcr.io/tibbe/$name"
             docker tag "$image:$LINEWRIGHT_TAG" "$image:main"
