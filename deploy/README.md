@@ -10,20 +10,22 @@ connect.
 CI builds its images from each commit on `main` and pushes them to GHCR, tagged
 `main` and `sha-` with the commit's first seven characters; a host pulls them;
 `compose.build.yaml` builds them. The agents run as uid 10001 in the group
-`users` (100). Run the commands here from `deploy/`; to run it on another
-machine, point Docker at it with a
-[context](https://docs.docker.com/engine/manage-resources/contexts/).
+`users` (100). Run the commands here from `deploy/` in a clone of this
+repository on the host, which keeps the host's `.env` and
+`compose.override.yaml`; from another machine, run them there over SSH.
 
-1. Copy `.env.example` to `.env` and fill it in: `GH_TOKEN`, the token of
+1. Copy `.env.example` to `.env`, readable by its owner alone
+   (`chmod 600`), and fill it in: `GH_TOKEN`, the token of
    the factory's GitHub user, either `ANTHROPIC_API_KEY` or a
    `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and, for webhooks,
    `LINEWRIGHT_WEBHOOK_SECRET` (see [Webhooks](#webhooks)).
 
 2. Optionally, set what this host needs in `compose.override.yaml`, such as a
    directory of the host's for the work directory, in place of a volume, owned
-   by the agents' user (`chown 10001:100`), and limits. If Docker runs on
-   another machine, name its context in `CLAUDE.local.md` at the repository's
-   root, so coding agents deploy and watch it there too.
+   by the agents' user (`chown 10001:100`), and limits. If you work on
+   another machine, name the host and the clone's directory in
+   `CLAUDE.local.md` at the root of your checkout there, so coding agents
+   deploy and watch it over SSH too.
 
    ```yaml
    services:
@@ -71,12 +73,13 @@ attach NPM's container to it, as an external network in NPM's own
 
 ## Deploying and watching it
 
-With Docker on another machine, pass its context to each command:
-`docker --context NAME compose ...`.
+From another machine, run each command in the host's clone:
+`ssh HOST 'cd DIR/deploy && docker compose ...'`.
 
-- Deploy another version: rerun step 3 once CI has pushed its images, with
-  `LINEWRIGHT_TAG=sha-...` for a commit other than the latest on `main`. A
-  restart drops the runs in flight. Check `linewright status` first.
+- Deploy another version: once CI has pushed its images, `git pull`, so
+  `compose.yaml` matches them, and rerun step 3. For a commit other than the
+  latest on `main`, check it out and set `LINEWRIGHT_TAG=sha-...`. A restart
+  drops the runs in flight. Check `linewright status` first.
 - The commit it runs, from its image's labels:
 
   ```sh
