@@ -312,7 +312,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 Sources {
                     serving: status::Serving {
                         since,
-                        max_runs: config.max_workers,
+                        max_runs: config.max_runs,
                     },
                     served: answered_from,
                     deliveries: listener.as_ref().map(Listener::tally),
@@ -455,7 +455,7 @@ fn factory_config(
     Ok(FactoryConfig {
         spec_glob: config.spec_glob.clone(),
         spec_lookback: config.spec_lookback,
-        max_workers: config.max_workers,
+        max_runs: config.max_runs,
         ci_grace: config.ci_grace,
         ci_timeout: config.ci_timeout,
         ci_attempts: config.ci_attempts,

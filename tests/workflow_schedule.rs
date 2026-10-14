@@ -111,7 +111,7 @@ async fn a_workflow_file_that_does_not_parse_is_skipped_and_the_others_still_run
 
 #[tokio::test]
 async fn a_workflow_run_waits_for_room_under_the_ceiling_beside_the_pipelines_runs() {
-    let mut world = World::with(|config| config.max_workers = 1).await;
+    let mut world = World::with(|config| config.max_runs = 1).await;
     add_workflow(&world, "hourly", HOURLY).await;
     world.runtime.on_workflow(|_| finished());
     world.poll().await;

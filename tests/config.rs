@@ -43,16 +43,16 @@ fn resolve_blaming(
 
 #[test]
 fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
-    let file = "repo = \"acme/file\"\nmax-workers = 2\npoll-interval = \"5m\"\nci-attempts = 7\n";
+    let file = "repo = \"acme/file\"\nmax-runs = 2\npoll-interval = \"5m\"\nci-attempts = 7\n";
     let env = [
         ("LINEWRIGHT_REPO", "acme/env"),
-        ("LINEWRIGHT_MAX_WORKERS", "3"),
+        ("LINEWRIGHT_MAX_RUNS", "3"),
     ];
 
     let config = resolve(&["--repo", "acme/flag"], &env, Some(file)).unwrap();
 
     assert_eq!(config.repo.as_deref(), Some("acme/flag"));
-    assert_eq!(config.max_workers, 3);
+    assert_eq!(config.max_runs, 3);
     assert_eq!(config.poll_interval, Duration::from_secs(300));
     assert_eq!(config.ci_attempts, 7);
     assert_eq!(config.session_timeout, Duration::from_secs(30 * 60));
@@ -65,7 +65,7 @@ fn defaults_follow_the_spec() {
 
     assert_eq!(config.poll_interval, Duration::from_secs(60));
     assert_eq!(config.spec_lookback, chrono::TimeDelta::days(7));
-    assert_eq!(config.max_workers, 4);
+    assert_eq!(config.max_runs, 4);
     assert_eq!(config.result_retries, 1);
     assert_eq!(config.ci_grace, chrono::TimeDelta::minutes(5));
     assert_eq!(config.ci_timeout, chrono::TimeDelta::hours(6));
@@ -79,9 +79,9 @@ fn defaults_follow_the_spec() {
 #[test]
 fn a_bad_value_or_an_unknown_key_is_an_error_naming_the_setting() {
     assert!(
-        resolve(&["--max-workers", "many"], &[], None)
+        resolve(&["--max-runs", "many"], &[], None)
             .unwrap_err()
-            .contains("max-workers")
+            .contains("max-runs")
     );
     assert!(
         resolve(&[], &[("LINEWRIGHT_UPDATE_BRANCH", "squash")], None)
@@ -108,11 +108,7 @@ fn blames_the_command_line(args: &[&str], env: &[(&str, &str)], file: Option<&st
 fn a_wrong_value_is_blamed_on_the_command_line_only_when_a_flag_gave_it() {
     let bad_env = [("LINEWRIGHT_UPDATE_BRANCH", "squash")];
 
-    assert!(blames_the_command_line(
-        &["--max-workers", "many"],
-        &[],
-        None
-    ));
+    assert!(blames_the_command_line(&["--max-runs", "many"], &[], None));
     assert!(blames_the_command_line(
         &["--ci-grace", "10m"],
         &[("LINEWRIGHT_CI_TIMEOUT", "5m")],
@@ -122,10 +118,10 @@ fn a_wrong_value_is_blamed_on_the_command_line_only_when_a_flag_gave_it() {
     assert!(!blames_the_command_line(
         &[],
         &[],
-        Some("max-workers = \"many\"\n")
+        Some("max-runs = \"many\"\n")
     ));
     assert!(!blames_the_command_line(
-        &["--max-workers", "2"],
+        &["--max-runs", "2"],
         &bad_env,
         None
     ));
@@ -150,6 +146,11 @@ fn a_config_file_the_command_line_names_that_cannot_be_read_is_blamed_on_it() {
     let resolved = Config::resolve(&cli.settings, dir.path(), &|_| None, false);
 
     assert!(matches!(resolved, Err(ResolveError::CommandLine(_))));
+}
+
+#[test]
+fn max_workers_is_no_longer_a_flag() {
+    assert!(Cli::try_parse_from(["linewright", "--max-workers", "2", "status"]).is_err());
 }
 
 #[test]

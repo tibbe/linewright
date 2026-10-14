@@ -30,7 +30,7 @@ machine, point Docker at it with a
      linewright:
        volumes: ["/srv/linewright:/data"]
        mem_limit: 8g
-       environment: {LINEWRIGHT_MAX_WORKERS: 2}
+       environment: {LINEWRIGHT_MAX_RUNS: 2}
    ```
 
 3. Pull and start it, and follow its log:

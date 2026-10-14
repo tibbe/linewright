@@ -41,7 +41,7 @@ use crate::workflow::{self, LastRuns, Workflow, WorkflowFiles, WorkflowName};
 pub struct FactoryConfig {
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
-    pub max_workers: usize,
+    pub max_runs: usize,
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
@@ -168,7 +168,7 @@ impl Factory {
                 linewright: identity.login.clone(),
                 spec_glob: config.spec_glob,
                 spec_lookback: config.spec_lookback,
-                max_workers: config.max_workers,
+                max_runs: config.max_runs,
                 ci_grace: config.ci_grace,
                 ci_timeout: config.ci_timeout,
                 ci_attempts: config.ci_attempts,

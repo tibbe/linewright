@@ -25,7 +25,7 @@ pub struct Policy {
     pub linewright: Login,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
-    pub max_workers: usize,
+    pub max_runs: usize,
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
@@ -547,10 +547,10 @@ pub fn decisions(
     let (room, held) = match memory.usage_limit.filter(|_| memory.holds_starts(now)) {
         Some(UsageLimit { resets_at }) => (0, Held::UsageLimit { resets_at }),
         None => (
-            policy.max_workers.saturating_sub(in_flight),
+            policy.max_runs.saturating_sub(in_flight),
             Held::Ceiling {
                 in_flight,
-                max_runs: policy.max_workers,
+                max_runs: policy.max_runs,
             },
         ),
     };

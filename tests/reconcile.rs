@@ -23,7 +23,7 @@ fn policy() -> Policy {
         linewright: Login::new(LINEWRIGHT),
         spec_glob: SpecGlob::default(),
         spec_lookback: TimeDelta::days(7),
-        max_workers: 4,
+        max_runs: 4,
         ci_grace: TimeDelta::minutes(5),
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
@@ -1984,7 +1984,7 @@ fn under_usage_limit_until(resets_at: i64) -> Memory {
 fn under_usage_limit(resets_at: i64) -> Vec<Action> {
     let (world, live, workflows) = work_of_every_kind();
     let policy = Policy {
-        max_workers: 10,
+        max_runs: 10,
         ..policy()
     };
     let memory = under_usage_limit_until(resets_at);

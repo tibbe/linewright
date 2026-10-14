@@ -515,10 +515,10 @@ async fn a_stop_during_the_wait_drops_the_run() {
 }
 
 #[tokio::test]
-async fn a_waiting_run_counts_against_max_workers_and_is_not_started_again() {
+async fn a_waiting_run_counts_against_max_runs_and_is_not_started_again() {
     let mut world = World::with(|config| {
         config.waits_out_usage_limit = true;
-        config.max_workers = 2;
+        config.max_runs = 2;
     })
     .await;
     // A reset that has passed holds no starts back, so only the ceiling

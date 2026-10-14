@@ -207,9 +207,9 @@ pub struct Settings {
     /// How far back merged spec changes are picked up [default: 7d]
     #[arg(long, global = true)]
     pub spec_lookback: Option<String>,
-    /// The ceiling on simultaneous runs [default: 4]
+    /// The ceiling on runs in flight [default: 4]
     #[arg(long, global = true)]
-    pub max_workers: Option<String>,
+    pub max_runs: Option<String>,
     /// Where clones and session traces go [default: linewright/ under the user's data directory]
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
@@ -266,7 +266,7 @@ pub struct Config {
     pub webhooks: Option<Webhooks>,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
-    pub max_workers: usize,
+    pub max_runs: usize,
     pub work_dir: PathBuf,
     pub model: Option<String>,
     pub briefs: Option<PathBuf>,
@@ -290,7 +290,7 @@ impl Settings {
             ("webhook-address", &self.webhook_address),
             ("spec-glob", &self.spec_glob),
             ("spec-lookback", &self.spec_lookback),
-            ("max-workers", &self.max_workers),
+            ("max-runs", &self.max_runs),
             ("work-dir", &self.work_dir),
             ("model", &self.model),
             ("briefs", &self.briefs),
@@ -317,7 +317,7 @@ const KEYS: [&str; 19] = [
     "webhook-address",
     "spec-glob",
     "spec-lookback",
-    "max-workers",
+    "max-runs",
     "work-dir",
     "model",
     "briefs",
@@ -489,7 +489,7 @@ impl Config {
             webhooks,
             spec_glob,
             spec_lookback: delta("spec-lookback", "7d")?,
-            max_workers: number("max-workers", "4")? as usize,
+            max_runs: number("max-runs", "4")? as usize,
             work_dir,
             model: get("model"),
             briefs: get("briefs").map(PathBuf::from),
