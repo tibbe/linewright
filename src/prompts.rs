@@ -162,7 +162,7 @@ pub fn pull_work(
                     or_none(&failure.summary)
                 );
                 let Some(log) = &failure.log else { continue };
-                let _ = writeln!(task, "```\n{}\n```\n", log.tail.trim_end());
+                let _ = writeln!(task, "```\n{}\n```\n", log.step_output.trim_end());
                 if let Some(full) = &log.full {
                     let _ = writeln!(
                         task,

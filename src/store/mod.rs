@@ -4,6 +4,7 @@
 //! and tests.
 
 pub mod github;
+mod job_log;
 pub mod local;
 pub mod rate_limit;
 

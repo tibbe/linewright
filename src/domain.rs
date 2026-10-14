@@ -577,8 +577,8 @@ pub struct CheckFailure {
 /// What a fix session is given of a failing check's log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckLog {
-    /// The end of the log.
-    pub tail: String,
+    /// The end of the output of the check's failed step.
+    pub step_output: String,
     /// Where to read the whole log, where the store can tell.
     pub full: Option<JobLog>,
 }

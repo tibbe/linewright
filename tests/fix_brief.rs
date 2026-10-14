@@ -78,7 +78,7 @@ fn a_failing_actions_check_gives_its_report_its_output_and_the_command_for_its_f
         name: "test".into(),
         summary: "Process completed with exit code 101.".into(),
         log: Some(CheckLog {
-            tail: "assertion failed: widgets == 2\n".into(),
+            step_output: "assertion failed: widgets == 2\n".into(),
             full: Some(JobLog {
                 repo: "tibbe/linewright".into(),
                 job: 52_896_412_311,
@@ -124,7 +124,7 @@ fn a_check_whose_full_log_cannot_be_read_gives_its_output_without_a_pointer() {
         name: "test".into(),
         summary: String::new(),
         log: Some(CheckLog {
-            tail: "assertion failed: widgets == 2".into(),
+            step_output: "assertion failed: widgets == 2".into(),
             full: None,
         }),
     }];

@@ -15,10 +15,10 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use super::rate_limit;
 use super::{
     Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode, RepoSettings, Store,
 };
+use super::{job_log, rate_limit};
 use crate::domain::{
     Check, CheckFailure, CheckLog, CheckState, Comment, Filed, Issue, IssueEvent, JobLog, Linked,
     Login, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
@@ -592,7 +592,8 @@ impl GitHub {
         protection.is_ok_and(|p| p["required_linear_history"]["enabled"] == json!(true))
     }
 
-    async fn job_log_tail(&self, job: u64) -> Option<String> {
+    /// The end of the output of the step that failed in job `job`'s log.
+    async fn failed_step_output(&self, job: u64) -> Option<String> {
         let response = self
             .send(
                 Method::GET,
@@ -604,9 +605,7 @@ impl GitHub {
         if !response.status().is_success() {
             return None;
         }
-        let text = response.text().await.ok()?;
-        let lines: Vec<&str> = text.lines().collect();
-        Some(lines[lines.len().saturating_sub(200)..].join("\n"))
+        Some(job_log::failed_step_output(&response.text().await.ok()?))
     }
 }
 
@@ -1591,7 +1590,7 @@ impl Store for GitHub {
                 let actions = node["checkSuite"]["app"]["slug"] == "github-actions";
                 let log = match node["databaseId"].as_u64().filter(|_| actions) {
                     Some(job) => Some(CheckLog {
-                        tail: self.job_log_tail(job).await.unwrap_or_default(),
+                        step_output: self.failed_step_output(job).await.unwrap_or_default(),
                         full: Some(JobLog {
                             repo: self.full_name(),
                             job,

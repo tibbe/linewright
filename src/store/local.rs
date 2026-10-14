@@ -1158,7 +1158,7 @@ impl Store for LocalStore {
                 summary: String::new(),
                 // The local store keeps no full logs.
                 log: Some(CheckLog {
-                    tail: c.log,
+                    step_output: c.log,
                     full: None,
                 }),
             })
