@@ -1,11 +1,14 @@
 name: Docker
 
-# Builds the images when what they are built from changes: the agents cannot
-# build images, as they run without a Docker daemon, and the image workflow
-# builds only on a release tag. Only pull requests that touch these paths run
-# it, so no branch protection may require it: a required check that never
-# runs never passes.
+# Builds the deployment's images, the base image among them, from each commit
+# on `main` and pushes them to GHCR, where the hosts pull them; and from pull
+# requests that touch what they are built from, as the agents cannot build
+# images: they run without a Docker daemon. Only pull requests that touch
+# these paths run it, so no branch protection may require it: a required
+# check that never runs never passes.
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - Dockerfile
@@ -15,11 +18,37 @@ on:
       - deploy/**
       - .github/workflows/docker.yml
 
+# One push at a time, so `main` ends on the latest commit's images.
+concurrency:
+  group: docker-${{ github.event_name == 'push' && github.ref || github.run_id }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      LINEWRIGHT_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
-      # The deployment's images, the base image among them. Its `.env` holds
-      # the host's secrets, which a build does not read but compose requires.
-      - run: touch deploy/.env && docker compose -f deploy/compose.yaml build
+      - run: echo "LINEWRIGHT_TAG=sha-${LINEWRIGHT_COMMIT::7}" >> "$GITHUB_ENV"
+      # Its `.env` holds the host's secrets, which a build does not read but
+      # compose requires.
+      - run: >-
+          touch deploy/.env &&
+          docker compose -f deploy/compose.yaml -f deploy/compose.build.yaml build
+      - if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - if: github.event_name == 'push'
+        run: |
+          for name in linewright-proxy linewright-self linewright-webhook-relay; do
+            image="ghcr.io/tibbe/$name"
+            docker tag "$image:$LINEWRIGHT_TAG" "$image:main"
+            docker push "$image:$LINEWRIGHT_TAG"
+            docker push "$image:main"
+          done

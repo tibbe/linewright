@@ -1,29 +1,11 @@
 name: linewright
 
+# The images CI builds from `main` with `compose.build.yaml`, each tagged
+# `main` and `sha-` with the commit's first seven characters;
+# `LINEWRIGHT_TAG` picks one, `main` by default.
 services:
-  runtime:
-    build:
-      context: ..
-      target: runtime
-    image: linewright:runtime
-    scale: 0
-  base:
-    build: ..
-    image: linewright:base
-    scale: 0
-
   proxy:
-    build:
-      # Built from source, as the image Stripe publishes,
-      # ghcr.io/stripe/smokescreen, is not public.
-      dockerfile_inline: |
-        FROM golang:1.26-alpine AS build
-        ARG SMOKESCREEN_VERSION=v0.1.0
-        RUN CGO_ENABLED=0 go install github.com/stripe/smokescreen@$${SMOKESCREEN_VERSION}
-        FROM gcr.io/distroless/static:nonroot
-        COPY --from=build /go/bin/smokescreen /smokescreen
-        ENTRYPOINT ["/smokescreen"]
-    image: linewright:proxy
+    image: ghcr.io/tibbe/linewright-proxy:${LINEWRIGHT_TAG:-main}
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -31,13 +13,7 @@ services:
     networks: [fenced, default]
 
   linewright:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-      additional_contexts:
-        runtime: service:runtime
-        base: service:base
-    image: linewright:self
+    image: ghcr.io/tibbe/linewright-self:${LINEWRIGHT_TAG:-main}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -72,13 +48,7 @@ services:
   # webhook-address, 0.0.0.0:8080, and nowhere else, so it opens no way out
   # of `fenced`.
   webhook-relay:
-    build:
-      dockerfile_inline: |
-        FROM alpine:3.22
-        RUN apk add --no-cache socat
-        USER nobody
-        ENTRYPOINT ["socat"]
-    image: linewright:webhook-relay
+    image: ghcr.io/tibbe/linewright-webhook-relay:${LINEWRIGHT_TAG:-main}
     command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:linewright:8080"]
     restart: unless-stopped
     cap_drop: [ALL]

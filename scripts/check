@@ -103,10 +103,16 @@ check_markdown() {
   fi
 }
 
-# The deployment's compose file against the compose specification: its keys,
-# types and references between services, networks and volumes. Its `.env`
-# and override are the host's, so neither is read.
-check_compose() { compose -f deploy/compose.yaml config --quiet --no-env-resolution; }
+# The deployment's compose files against the compose specification: their
+# keys, types and references between services, networks and volumes, alone
+# as a host runs them and with the builds CI runs. Its `.env` and override
+# are the host's, so neither is read, and the commit CI builds from is not
+# set, so the build file is not interpolated.
+check_compose() {
+  compose -f deploy/compose.yaml config --quiet --no-env-resolution &&
+    compose -f deploy/compose.yaml -f deploy/compose.build.yaml config \
+      --quiet --no-env-resolution --no-interpolate
+}
 
 check_clippy() { cargo clippy --all-targets --locked --quiet; }
 check_test() { cargo test --locked --quiet; }

@@ -6,6 +6,9 @@ FROM rust:1-slim-${DEBIAN_RELEASE} AS build
 WORKDIR /src
 COPY rust-toolchain.toml ./
 RUN rustup toolchain install
+# The commit the binary is built from, which it reports: the build context
+# has no `.git` to read it from.
+ARG LINEWRIGHT_COMMIT
 RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
     --mount=type=bind,source=src,target=src \

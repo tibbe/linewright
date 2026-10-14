@@ -7,38 +7,36 @@ private addresses, so they get the public internet but not the host, the LAN,
 or other containers. Tools that ignore `https_proxy`, or use SSH, cannot
 connect.
 
-Run the commands here from `deploy/`; to run it on another machine, point
-Docker at it with a
-[context](https://docs.docker.com/engine/manage-resources/contexts/), and the
-image is built there.
+CI builds its images from each commit on `main` and pushes them to GHCR, tagged
+`main` and `sha-` with the commit's first seven characters; a host pulls them;
+`compose.build.yaml` builds them. The agents run as uid 10001 in the group
+`users` (100). Run the commands here from `deploy/`; to run it on another
+machine, point Docker at it with a
+[context](https://docs.docker.com/engine/manage-resources/contexts/).
 
 1. Copy `.env.example` to `.env` and fill it in: `GH_TOKEN`, the token of
    the factory's GitHub user, either `ANTHROPIC_API_KEY` or a
    `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and, for webhooks,
    `LINEWRIGHT_WEBHOOK_SECRET` (see [Webhooks](#webhooks)).
 
-2. Optionally, set what this host needs in `compose.override.yaml`, such as
-   a directory of the host's for the work directory, in place of a volume,
-   owned by the agents' user, and limits. If Docker runs on another machine,
-   name its context in `CLAUDE.local.md` at the repository's root, so coding
-   agents deploy and watch it there too.
+2. Optionally, set what this host needs in `compose.override.yaml`, such as a
+   directory of the host's for the work directory, in place of a volume, owned
+   by the agents' user (`chown 10001:100`), and limits. If Docker runs on
+   another machine, name its context in `CLAUDE.local.md` at the repository's
+   root, so coding agents deploy and watch it there too.
 
    ```yaml
-   x-user: &user
-     args: {LINEWRIGHT_UID: "1500", LINEWRIGHT_GID: "1500"}
    services:
-     runtime: {build: *user}
-     base: {build: *user}
      linewright:
        volumes: ["/srv/linewright:/data"]
        mem_limit: 8g
        environment: {LINEWRIGHT_MAX_WORKERS: 2}
    ```
 
-3. Build and start it, and follow its log:
+3. Pull and start it, and follow its log:
 
    ```sh
-   docker compose up -d --build
+   docker compose pull && docker compose up -d
    docker compose logs -f
    ```
 
@@ -76,9 +74,15 @@ attach NPM's container to it, as an external network in NPM's own
 With Docker on another machine, pass its context to each command:
 `docker --context NAME compose ...`.
 
-- Deploy another version: check it out, such as by pulling `main`, and rerun
-  step 3. A restart drops the runs in flight. Check `linewright status`
-  first.
+- Deploy another version: rerun step 3 once CI has pushed its images, with
+  `LINEWRIGHT_TAG=sha-...` for a commit other than the latest on `main`. A
+  restart drops the runs in flight. Check `linewright status` first.
+- The commit it runs, from its image's labels:
+
+  ```sh
+  docker inspect linewright-linewright-1 \
+    -f '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+  ```
 - The server's log, a JSON line for each decision and action:
   `docker compose logs -f linewright`.
 - The work in flight: `docker compose exec linewright linewright status`.
