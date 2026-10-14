@@ -77,8 +77,8 @@ With Docker on another machine, pass its context to each command:
 `docker --context NAME compose ...`.
 
 - Deploy another version: check it out, such as by pulling `main`, and rerun
-  step 3. The image is built from the working tree, uncommitted changes
-  included.
+  step 3. A restart drops the runs in flight. Check `linewright status`
+  first.
 - The server's log, a JSON line for each decision and action:
   `docker compose logs -f linewright`.
 - The work in flight: `docker compose exec linewright linewright status`.
