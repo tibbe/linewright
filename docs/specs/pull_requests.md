@@ -37,6 +37,12 @@ to review again; the maintainer approves and merges.
   to complete (default 6 h, then `ready-for-human` naming the checks still
   running). A failure starts a fix session, at most 2 attempts, then
   `ready-for-human` naming the failing check.
+  - The fix session is given, for each failing check, its name, what it
+    reports about the failure, the end of the output of the step that failed
+    (at most its last 50 lines, without timestamps) and where to read its
+    full log. Where the log does not show which step failed, the end of the
+    whole log stands in for the step's output. A check with no log, such as
+    a commit status, gives its description and its link instead.
 - Green: the PR is marked ready for review.
 - **Auto-merge**: with `--auto-merge`, Linewright merges each green PR it
   opened, with the `merge-method` setting: by default a rebase
