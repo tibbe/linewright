@@ -361,7 +361,7 @@ pub fn purpose_name(purpose: &Purpose) -> String {
     }
 }
 
-/// A new directory for a session's record: its brief, results and trace,
+/// A new directory for a session's record: its brief, results and transcript,
 /// kept under the work directory after the run ends.
 fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBuf, Failure> {
     let parent = shell.work_dir.join("sessions").join(purpose_name(purpose));

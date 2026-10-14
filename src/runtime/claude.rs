@@ -291,7 +291,7 @@ impl ClaudeCode {
         })
         .await;
         let session = session.id().to_string();
-        copy_transcript(&session, &spec.record.join("trace.jsonl")).await;
+        copy_transcript(&session, &spec.record.join("transcript.jsonl")).await;
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
         let Ok((result, refusal, underway, status)) = outcome else {

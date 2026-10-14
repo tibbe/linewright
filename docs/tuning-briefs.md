@@ -10,4 +10,4 @@ linewright --briefs briefs/ replay case/ --out run-1/
 
 `run-1/` holds the issues and pull requests the run produced (`issues/`,
 `pulls/`, as JSON, Markdown and diffs) and every session's brief, result and
-trace (`sessions/`).
+transcript (`sessions/`).

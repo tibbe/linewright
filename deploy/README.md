@@ -98,7 +98,7 @@ With Docker on another machine, pass its context to each command:
   and in it one for each session, named by its start time (UTC) and kind:
   - `brief.md`: what the session was asked, and `followup-N.md` after it;
   - `output.jsonl`: its output, written as it runs;
-  - `result.json`, `trace.jsonl` (the full transcript) and `stderr.log`,
+  - `result.json`, `transcript.jsonl` and `stderr.log`,
     written when it ends.
 
   For example, the latest session for issue 3:

@@ -254,7 +254,7 @@ async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_
 }
 
 #[tokio::test]
-async fn a_workflow_runs_kept_its_brief_result_and_trace_under_the_work_directory() {
+async fn a_workflow_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
     let world = with_workflow("weekly", WEEKLY).await;
     world.runtime.on_workflow(|_| finished());
 
@@ -268,7 +268,7 @@ async fn a_workflow_runs_kept_its_brief_result_and_trace_under_the_work_director
     let records: Vec<_> = std::fs::read_dir(&sessions).unwrap().collect();
     assert_eq!(records.len(), 1);
     let record = records[0].as_ref().unwrap().path();
-    for file in ["brief.md", "result.json", "trace.jsonl"] {
+    for file in ["brief.md", "result.json", "transcript.jsonl"] {
         assert!(record.join(file).exists(), "{file} in {}", record.display());
     }
 }

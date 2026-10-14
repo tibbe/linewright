@@ -210,7 +210,7 @@ pub struct Settings {
     /// The ceiling on runs in flight [default: 4]
     #[arg(long, global = true)]
     pub max_runs: Option<String>,
-    /// Where clones and session traces go [default: linewright/ under the user's data directory]
+    /// Where clones and session transcripts go [default: linewright/ under the user's data directory]
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
     /// The model for every stage [default: the agent runtime's]

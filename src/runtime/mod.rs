@@ -31,7 +31,7 @@ pub struct SessionSpec {
     /// The session's own scratch directory, its temporary directory for
     /// every turn: sessions running at once never share one.
     pub scratch: PathBuf,
-    /// Where the session's record goes: brief, results and trace.
+    /// Where the session's record goes: brief, results and transcript.
     pub record: PathBuf,
     /// The plugin that gives the session the skills its brief calls.
     pub plugin: PathBuf,

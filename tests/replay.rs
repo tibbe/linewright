@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use chrono::TimeDelta;
 use common::*;
-use linewright::case::{Case, Event, replay};
+use linewright::case::{Case, Event, copy_sessions, replay};
 use linewright::domain::{Login, MergeMethod, Number, UpdateMethod};
-use linewright::reconcile::WorkKind;
+use linewright::reconcile::{Subject, WorkKind};
 use serde_json::json;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -143,7 +143,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
         .unwrap()
         .collect();
     let session = sessions[0].as_ref().unwrap().path();
-    for file in ["brief.md", "result.json", "trace.jsonl"] {
+    for file in ["brief.md", "result.json", "transcript.jsonl"] {
         assert!(
             session.join(file).exists(),
             "{file} in {}",
@@ -153,22 +153,23 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     assert!(out.join("sessions/issue-3").is_dir());
 }
 
-#[test]
-fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_holds() {
-    let dir = tempfile::tempdir().unwrap();
-    spec_change_case(dir.path(), &[]);
-    let bin = dir.path().join("bin");
+/// Replays a spec change case in `dir` with the real binary and the real
+/// Claude Code runtime, `fake_claude` standing in for `claude` with `env` on
+/// top of the operator's environment. Returns the fake's directory, which is
+/// also Claude Code's config directory.
+fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathBuf {
+    spec_change_case(dir, &[]);
+    let bin = dir.join("bin");
     std::fs::create_dir(&bin).unwrap();
     fake_claude(&bin, r#"{"tickets": [], "comment": "Nothing to build."}"#);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
     let output = Command::new(env!("CARGO_BIN_EXE_linewright"))
         .args(["replay", "case", "--out", "out"])
-        .current_dir(dir.path())
+        .current_dir(dir)
         .env("PATH", path)
-        .env("CLAUDE_CONFIG_DIR", dir.path())
-        .env("GH_TOKEN", "operator-token")
-        .env("GITHUB_TOKEN", "operator-token")
+        .env("CLAUDE_CONFIG_DIR", &bin)
+        .envs(env.iter().copied())
         .output()
         .unwrap();
 
@@ -177,6 +178,21 @@ fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_ho
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    bin
+}
+
+#[test]
+fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_holds() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let bin = replay_with_fake_claude(
+        dir.path(),
+        &[
+            ("GH_TOKEN", "operator-token"),
+            ("GITHUB_TOKEN", "operator-token"),
+        ],
+    );
+
     assert_eq!(
         std::fs::read_to_string(bin.join("tokens.log")).unwrap(),
         "GH_TOKEN= GITHUB_TOKEN=\n"
@@ -186,27 +202,12 @@ fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_ho
 #[test]
 fn a_replayed_session_runs_its_commands_in_bash_whatever_the_operators_shell() {
     let dir = tempfile::tempdir().unwrap();
-    spec_change_case(dir.path(), &[]);
-    let bin = dir.path().join("bin");
-    std::fs::create_dir(&bin).unwrap();
-    fake_claude(&bin, r#"{"tickets": [], "comment": "Nothing to build."}"#);
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_linewright"))
-        .args(["replay", "case", "--out", "out"])
-        .current_dir(dir.path())
-        .env("PATH", path)
-        .env("CLAUDE_CONFIG_DIR", dir.path())
-        .env("SHELL", "/bin/zsh")
-        .env("CLAUDE_CODE_SHELL", "/bin/zsh")
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    let bin = replay_with_fake_claude(
+        dir.path(),
+        &[("SHELL", "/bin/zsh"), ("CLAUDE_CODE_SHELL", "/bin/zsh")],
     );
+
     let shell = std::fs::read_to_string(bin.join("shell.log")).unwrap();
     let shell = Path::new(shell.trim_end());
     let version = Command::new(shell).arg("--version").output().unwrap();
@@ -323,4 +324,44 @@ async fn a_replay_with_auto_merge_refuses_a_merge_method_the_case_repository_doe
     .unwrap_err();
 
     assert!(format!("{error:#}").contains("only `rebase`"), "{error:#}");
+}
+
+#[test]
+fn a_replayed_sessions_record_keeps_its_transcript() {
+    let dir = tempfile::tempdir().unwrap();
+
+    replay_with_fake_claude(dir.path(), &[]);
+
+    let sessions: Vec<_> = std::fs::read_dir(dir.path().join("out/sessions/pr-1"))
+        .unwrap()
+        .collect();
+    let session = sessions[0].as_ref().unwrap().path();
+    assert_eq!(
+        std::fs::read_to_string(session.join("transcript.jsonl")).unwrap(),
+        "{\"type\":\"said\"}\n"
+    );
+    assert!(!session.join("trace.jsonl").exists());
+}
+
+#[test]
+fn a_captured_case_keeps_the_transcripts_of_the_sessions_that_handled_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let sessions = dir.path().join("sessions");
+    let session = sessions.join("issue-3/20260101T000000Z-triage");
+    std::fs::create_dir_all(&session).unwrap();
+    std::fs::write(session.join("transcript.jsonl"), "{\"type\":\"said\"}\n").unwrap();
+    std::fs::create_dir_all(sessions.join("issue-4/20260101T000000Z-triage")).unwrap();
+    let case = dir.path().join("case");
+
+    copy_sessions(&[Subject::Issue(Number(3))], &sessions, &case).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(
+            case.join("transcripts/issue-3/20260101T000000Z-triage/transcript.jsonl")
+        )
+        .unwrap(),
+        "{\"type\":\"said\"}\n"
+    );
+    assert!(!case.join("transcripts/issue-4").exists());
+    assert!(!case.join("traces").exists());
 }

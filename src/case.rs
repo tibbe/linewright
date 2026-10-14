@@ -5,7 +5,7 @@
 //! A case directory holds `case.json` (the repository's facts and the event),
 //! `repo.bundle` (the repository at the event's base commit, and the merge
 //! of a spec change) and, when captured on the factory's machine,
-//! `traces/<subject>/` with the sessions that handled it.
+//! `transcripts/<subject>/` with the sessions that handled it.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ const BASE_REF: &str = "refs/heads/linewright-base";
 const MERGE_REF: &str = "refs/heads/linewright-merge";
 
 /// Writes the case of `number` (a merged spec change or an issue) to `dir`,
-/// with the traces of the sessions that handled it from `sessions`.
+/// with the transcripts of the sessions that handled it from `sessions`.
 pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Path) -> Result<()> {
     if dir.exists() && std::fs::read_dir(dir)?.next().is_some() {
         bail!("{} is not empty", dir.display());
@@ -189,11 +189,17 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
         event,
     };
     std::fs::write(dir.join("case.json"), serde_json::to_string_pretty(&case)?)?;
-    for subject in handled {
-        let name = subject_name(subject);
+    copy_sessions(&handled, sessions, dir)
+}
+
+/// Copies the records of the sessions that handled `subjects`, transcripts
+/// and all, from `sessions` to `transcripts/<subject>/` in the case `dir`.
+pub fn copy_sessions(subjects: &[Subject], sessions: &Path, dir: &Path) -> Result<()> {
+    for subject in subjects {
+        let name = subject_name(*subject);
         let from = sessions.join(&name);
         if from.is_dir() {
-            copy_dir(&from, &dir.join("traces").join(&name))?;
+            copy_dir(&from, &dir.join("transcripts").join(&name))?;
         }
     }
     Ok(())
