@@ -1,7 +1,7 @@
 //! Under `serve` a session refused for the usage limit waits for the reset
 //! and carries on, and no session starts until then, end to end at the
 //! operator's level: a runtime that refuses sessions and a fake clock in,
-//! the issues, sessions, log and the limit `status` reads out, against the
+//! the issues, sessions, log and the limit in `serve`'s view out, against the
 //! local store (`docs/specs/operation.md`, "Usage limit").
 
 mod common;
@@ -19,7 +19,6 @@ use linewright::marker::{Stage, marked};
 use linewright::reconcile::{Action, Subject, WorkKind};
 use linewright::runtime::{SessionError, UsageLimit};
 use linewright::store::Store;
-use linewright::usage_limit;
 use linewright::webhook::Pending;
 use serde_json::json;
 
@@ -279,7 +278,7 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
         world.clock.clone(),
         linewright::factory::FactoryConfig {
             waits_out_usage_limit: true,
-            ..config(&work_dir(&world))
+            ..config(&world.dir.path().join("work"))
         },
     )
     .await
@@ -556,7 +555,7 @@ async fn once_ends_the_refused_run_without_waiting() {
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
 }
 
-// What `status` reads of the usage limit.
+// What `status` shows of the usage limit: `serve`'s own.
 
 /// A world's factory serving, polling every few milliseconds.
 struct Served {
@@ -573,7 +572,7 @@ impl Served {
             world.clock.clone(),
             linewright::factory::FactoryConfig {
                 waits_out_usage_limit: true,
-                ..config(&work_dir(&world))
+                ..config(&world.dir.path().join("work"))
             },
         )
         .await
@@ -582,19 +581,15 @@ impl Served {
         Served { world, serving }
     }
 
-    /// The usage limit `status` reads.
+    /// The usage limit in `serve`'s view.
     fn usage_limit(&self) -> Option<UsageLimit> {
-        usage_limit::load(&work_dir(&self.world))
+        self.serving.view.borrow().as_ref()?.usage_limit
     }
 
     async fn stop(self) -> World {
         self.serving.stop().await;
         self.world
     }
-}
-
-fn work_dir(world: &World) -> PathBuf {
-    world.dir.path().join("work")
 }
 
 fn the_usage_limit() -> Option<UsageLimit> {
@@ -604,7 +599,7 @@ fn the_usage_limit() -> Option<UsageLimit> {
 }
 
 #[tokio::test]
-async fn while_serve_waits_out_the_limit_status_reads_it_until_the_reset() {
+async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
     let world = World::new().await;
     world
         .runtime
@@ -623,43 +618,4 @@ async fn while_serve_waits_out_the_limit_status_reads_it_until_the_reset() {
 
     eventually(|| served.usage_limit().is_none()).await;
     served.stop().await;
-}
-
-#[tokio::test]
-async fn serve_starts_with_no_usage_limit_for_status_to_read() {
-    let world = World::new().await;
-    usage_limit::record(&work_dir(&world), the_usage_limit()).unwrap();
-
-    let served = Served::start(world).await;
-    let polled = served.world.store.snapshots_taken();
-    eventually(|| served.world.store.snapshots_taken() > polled).await;
-
-    assert_eq!(served.usage_limit(), None);
-    served.stop().await;
-}
-
-#[tokio::test]
-async fn once_leaves_no_usage_limit_for_status_to_read() {
-    let mut world = World::new().await;
-    implement_turns(&world, vec![|_| refused_for_the_usage_limit()]);
-    open_ticket(&world, "Do the thing");
-
-    world.poll().await;
-
-    assert_eq!(usage_limit::load(&work_dir(&world)), None);
-}
-
-#[tokio::test]
-async fn a_workflow_run_by_hand_leaves_no_usage_limit_for_status_to_read() {
-    let world = World::new().await;
-    with_hourly_workflow(&world).await;
-    world.runtime.on_workflow(|_| refused_for_the_usage_limit());
-
-    world
-        .factory
-        .run_workflow(&"hourly".parse().unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(usage_limit::load(&work_dir(&world)), None);
 }

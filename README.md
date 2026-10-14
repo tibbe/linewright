@@ -19,10 +19,17 @@ linewright --repo owner/name serve
 
 - `linewright serve` polls until stopped; `once` runs one poll cycle and the
   runs it starts; each poll also runs the workflows in `.linewright/workflows/`
-  that are due on their schedule. `status` lists the work in flight, each
-  workflow with its last and next run, and any workflow file that does not
-  parse; `workflow run NAME` runs the workflow in
-  `.linewright/workflows/NAME.md` once, now.
+  that are due on their schedule. `workflow run NAME` runs the workflow in
+  `.linewright/workflows/NAME.md` once, now. One `serve` runs per repository
+  on a host.
+- `status` asks the running `serve` of the repository what it is doing: since
+  when it has run, its polls, the usage limit while one is in force, the runs
+  in flight, the deliveries with webhooks on, the items it tracks and where
+  each is, and each workflow with its last and next run and any workflow
+  file that does not parse. `--json` prints `serve`'s answer as JSON. It
+  exits 3 when no `serve` runs for the repository. `serve` answers on a Unix
+  socket only its user can open, under `$XDG_RUNTIME_DIR/linewright/`, or
+  `linewright-<uid>/` in the temporary directory without it.
 - Agent sessions ignore your user-level Claude Code setup: its settings,
   skills, plugins, MCP servers, `CLAUDE.md` and claude.ai connectors, and the
   `CLAUDE.md` files in directories above their clones. They read the

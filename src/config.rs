@@ -33,8 +33,12 @@ pub enum Command {
     Serve,
     /// Run one poll cycle and the runs it starts, then exit.
     Once,
-    /// List the work in flight, read from GitHub.
-    Status,
+    /// Show what the running `serve` is doing and what holds it back.
+    Status {
+        /// Print `serve`'s answer as JSON, as it sent it.
+        #[arg(long)]
+        json: bool,
+    },
     /// Workflows: `workflow run NAME` runs one now, then exits.
     Workflow {
         #[command(subcommand)]
@@ -210,14 +214,20 @@ const KEYS: [&str; 19] = [
 ];
 
 impl Config {
+    /// The repository, which every command but `replay` needs.
+    pub fn required_repo(&self) -> Result<&str> {
+        self.repo.as_deref().context("set `repo` (owner/name)")
+    }
+
     /// Merges the layers: `settings` (flags), `env`, the config file
-    /// (relative to `cwd` by default), and the defaults.
+    /// (relative to `cwd` by default), and the defaults. A value that is
+    /// wrong is blamed on the layer it came from.
     pub fn resolve(
         settings: &Settings,
         cwd: &Path,
         env: &dyn Fn(&str) -> Option<String>,
         on_terminal: bool,
-    ) -> Result<Config> {
+    ) -> Result<Config, ResolveError> {
         let file = read_file(settings.config.as_deref(), cwd)?;
         let flags = settings.flags();
         let get = |key: &str| -> Option<String> {
@@ -228,48 +238,69 @@ impl Config {
                 .or_else(|| env(&variable))
                 .or_else(|| file.get(key).cloned())
         };
+        // The error that the settings `keys` hold a wrong value, blamed on
+        // the command line if it gave any of them.
+        let blame = |keys: &[&str], error: anyhow::Error| {
+            if keys.iter().any(|key| flags.contains_key(key)) {
+                ResolveError::CommandLine(error)
+            } else {
+                ResolveError::Elsewhere(error)
+            }
+        };
         // Each setting is parsed once, into its type, naming the setting
         // when its value is not one.
-        fn parsed<T, E: Into<anyhow::Error>>(
-            key: &str,
-            value: Option<String>,
-            default: &str,
-            parse: impl Fn(&str) -> Result<T, E>,
-        ) -> Result<T> {
-            let value = value.unwrap_or_else(|| default.to_string());
-            parse(&value)
-                .map_err(Into::into)
-                .with_context(|| format!("the setting `{key}` is {value:?}"))
-        }
-        let duration =
-            |key: &str, default: &str| parsed(key, get(key), default, humantime::parse_duration);
-        let delta = |key: &str, default: &str| -> Result<TimeDelta> {
-            Ok(TimeDelta::from_std(duration(key, default)?)?)
+        let not_one = |key: &str, value: &str, error: anyhow::Error| {
+            blame(
+                &[key],
+                error.context(format!("the setting `{key}` is {value:?}")),
+            )
         };
-        let number = |key: &str, default: &str| parsed(key, get(key), default, str::parse::<u32>);
-        let glob = get("spec-glob").unwrap_or_else(|| "docs/**/*.md".into());
-        let spec_glob =
-            SpecGlob::new(&glob).with_context(|| format!("the setting `spec-glob` is {glob:?}"))?;
+        let wrong = |key: &str, error: String| blame(&[key], anyhow!(error));
+        let value = |key: &str, default: &str| get(key).unwrap_or_else(|| default.to_string());
+        let duration = |key: &str, default: &str| {
+            let value = value(key, default);
+            humantime::parse_duration(&value).map_err(|e| not_one(key, &value, e.into()))
+        };
+        let delta = |key: &str, default: &str| -> Result<TimeDelta, ResolveError> {
+            TimeDelta::from_std(duration(key, default)?).map_err(|e| blame(&[key], e.into()))
+        };
+        let number = |key: &str, default: &str| {
+            let value = value(key, default);
+            value
+                .parse::<u32>()
+                .map_err(|e| not_one(key, &value, e.into()))
+        };
+        let glob = value("spec-glob", "docs/**/*.md");
+        let spec_glob = SpecGlob::new(&glob).map_err(|e| not_one("spec-glob", &glob, e.into()))?;
         let update_branch = match get("update-branch").as_deref() {
             None => None,
             Some("rebase") => Some(UpdateMethod::Rebase),
             Some("merge") => Some(UpdateMethod::Merge),
             Some(other) => {
-                bail!("the setting `update-branch` is {other:?}: it is `rebase` or `merge`")
+                return Err(wrong(
+                    "update-branch",
+                    format!("the setting `update-branch` is {other:?}: it is `rebase` or `merge`"),
+                ));
             }
         };
         let auto_merge = match get("auto-merge").as_deref() {
             None | Some("false") => false,
             Some("true") => true,
             Some(other) => {
-                bail!("the setting `auto-merge` is {other:?}: it is `true` or `false`")
+                return Err(wrong(
+                    "auto-merge",
+                    format!("the setting `auto-merge` is {other:?}: it is `true` or `false`"),
+                ));
             }
         };
         let merge_method = match get("merge-method") {
             None => None,
             Some(name) => Some(name.parse::<MergeMethod>().map_err(|()| {
-                anyhow!(
-                    "the setting `merge-method` is {name:?}: it is `merge`, `squash` or `rebase`"
+                wrong(
+                    "merge-method",
+                    format!(
+                        "the setting `merge-method` is {name:?}: it is `merge`, `squash` or `rebase`"
+                    ),
                 )
             })?),
         };
@@ -278,35 +309,51 @@ impl Config {
             None => LogFormat::Json,
             Some("text") => LogFormat::Text,
             Some("json") => LogFormat::Json,
-            Some(other) => bail!("the setting `log-format` is {other:?}: it is `text` or `json`"),
+            Some(other) => {
+                return Err(wrong(
+                    "log-format",
+                    format!("the setting `log-format` is {other:?}: it is `text` or `json`"),
+                ));
+            }
         };
         let work_dir = match get("work-dir") {
             Some(dir) => PathBuf::from(dir),
             None => dirs::data_dir()
-                .context("no data directory for the default `work-dir`; set it")?
+                .ok_or_else(|| {
+                    wrong(
+                        "work-dir",
+                        "no data directory for the default `work-dir`; set it".into(),
+                    )
+                })?
                 .join("linewright"),
         };
         let webhook_address = get("webhook-address");
         let webhooks = match env(webhook::SECRET_VARIABLE).and_then(webhook::Secret::new) {
-            Some(secret) => Some(Webhooks {
-                address: parsed(
-                    "webhook-address",
-                    webhook_address,
-                    "0.0.0.0:8080",
-                    str::parse,
-                )?,
-                secret,
-            }),
-            None if webhook_address.is_some() => bail!(
-                "the setting `webhook-address` is set, but `{}` is not: set it to the \
-                 webhook's secret to turn webhooks on",
-                webhook::SECRET_VARIABLE
-            ),
+            Some(secret) => {
+                let address = webhook_address.unwrap_or_else(|| "0.0.0.0:8080".into());
+                Some(Webhooks {
+                    address: address
+                        .parse()
+                        .map_err(|e| not_one("webhook-address", &address, e))?,
+                    secret,
+                })
+            }
+            None if webhook_address.is_some() => {
+                // What is missing is the environment's.
+                return Err(ResolveError::Elsewhere(anyhow!(
+                    "the setting `webhook-address` is set, but `{}` is not: set it to the \
+                         webhook's secret to turn webhooks on",
+                    webhook::SECRET_VARIABLE
+                )));
+            }
             None => None,
         };
         let (ci_grace, ci_timeout) = (delta("ci-grace", "5m")?, delta("ci-timeout", "6h")?);
         if ci_timeout <= ci_grace {
-            bail!("the setting `ci-timeout` must be longer than `ci-grace`");
+            return Err(blame(
+                &["ci-grace", "ci-timeout"],
+                anyhow!("the setting `ci-timeout` must be longer than `ci-grace`"),
+            ));
         }
         Ok(Config {
             repo: get("repo"),
@@ -332,9 +379,24 @@ impl Config {
     }
 }
 
+/// Why the settings do not resolve, by the layer the wrong value came from.
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveError {
+    /// A flag, or the file `--config` names, which cannot be read.
+    #[error("{0:#}")]
+    CommandLine(anyhow::Error),
+    /// The environment or the config file's contents.
+    #[error("{0:#}")]
+    Elsewhere(anyhow::Error),
+}
+
 /// The config file's settings, as strings. An explicit `--config` must
-/// exist; the default `linewright.toml` may not.
-fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<BTreeMap<String, String>> {
+/// exist and be readable, or the command line is wrong; the default
+/// `linewright.toml` may not exist.
+fn read_file(
+    explicit: Option<&Path>,
+    cwd: &Path,
+) -> Result<BTreeMap<String, String>, ResolveError> {
     let path = explicit
         .map(Path::to_path_buf)
         .unwrap_or_else(|| cwd.join("linewright.toml"));
@@ -343,8 +405,19 @@ fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<BTreeMap<String, Str
         Err(e) if explicit.is_none() && e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(BTreeMap::new());
         }
-        Err(e) => return Err(anyhow!(e).context(format!("reading {}", path.display()))),
+        Err(e) => {
+            let error = anyhow!(e).context(format!("reading {}", path.display()));
+            return Err(match explicit {
+                Some(_) => ResolveError::CommandLine(error),
+                None => ResolveError::Elsewhere(error),
+            });
+        }
     };
+    settings_in(&path, &text).map_err(ResolveError::Elsewhere)
+}
+
+/// The settings in `text`, the contents of the config file at `path`.
+fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
     let table: toml::Table = text
         .parse()
         .with_context(|| format!("parsing {}", path.display()))?;

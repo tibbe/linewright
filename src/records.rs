@@ -36,13 +36,3 @@ pub(crate) fn save(path: &Path, value: &impl Serialize, what: &str) -> Result<()
         .with_context(|| format!("writing {what}"))?;
     Ok(())
 }
-
-/// Removes the record at `path`; one that is missing is already removed.
-pub(crate) fn remove(path: &Path, what: &str) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            Err(e).with_context(|| format!("removing {what}"))
-        }
-        _ => Ok(()),
-    }
-}

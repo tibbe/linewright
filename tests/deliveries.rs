@@ -42,9 +42,13 @@ async fn serve(world: World, poll_interval: Duration) -> Served {
         ..
     } = world;
     let pending = Pending::default();
-    let listener = Listener::bind(&webhooks("127.0.0.1:0"), pending.clone())
-        .await
-        .unwrap();
+    let listener = Listener::bind(
+        &webhooks("127.0.0.1:0"),
+        pending.clone(),
+        std::sync::Arc::new(linewright::clock::SystemClock),
+    )
+    .await
+    .unwrap();
     let polled = store.snapshots_taken();
     let serving = Serving::start(factory, poll_interval, pending);
     eventually(|| store.snapshots_taken() > polled).await;

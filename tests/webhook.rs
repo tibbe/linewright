@@ -8,9 +8,13 @@ use common::*;
 use linewright::webhook::{Listener, Pending};
 
 async fn listen() -> Listener {
-    Listener::bind(&webhooks("127.0.0.1:0"), Pending::default())
-        .await
-        .unwrap()
+    Listener::bind(
+        &webhooks("127.0.0.1:0"),
+        Pending::default(),
+        std::sync::Arc::new(linewright::clock::SystemClock),
+    )
+    .await
+    .unwrap()
 }
 
 #[tokio::test]

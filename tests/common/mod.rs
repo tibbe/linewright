@@ -18,6 +18,7 @@ use linewright::factory::{Factory, FactoryConfig};
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::spec_glob::SpecGlob;
+use linewright::status::View;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::{Address, Listener, Pending, Secret, Webhooks};
 use serde_json::Value;
@@ -694,6 +695,8 @@ pub async fn eventually_async<F: Future<Output = bool>>(done: impl Fn() -> F) {
 pub struct Serving {
     stopping: CancellationToken,
     handle: JoinHandle<()>,
+    /// The view it sends the local API.
+    pub view: tokio::sync::watch::Receiver<Option<View>>,
 }
 
 impl Serving {
@@ -705,11 +708,16 @@ impl Serving {
         pending: Pending,
     ) -> Serving {
         let stopping = factory.stopping();
+        let (sender, view) = tokio::sync::watch::channel(None);
         let handle = tokio::spawn(async move {
-            factory.serve(poll_interval, &pending).await;
+            factory.serve(poll_interval, &pending, &sender).await;
             factory.stop().await;
         });
-        Serving { stopping, handle }
+        Serving {
+            stopping,
+            handle,
+            view,
+        }
     }
 
     /// Stops serving, as a stop signal does, and waits for it to stop.

@@ -81,7 +81,7 @@ With Docker on another machine, pass its context to each command:
   included.
 - The server's log, a JSON line for each decision and action:
   `docker compose logs -f linewright`.
-- The work in flight: `docker compose exec linewright linewright status`.
+- What Linewright is doing: `docker compose exec linewright linewright status`.
 - What each agent session did: its record, under
   `/data/OWNER/NAME/sessions/` in the container. There is a directory for
   each issue (`issue-N`), spec PR (`pr-N`) and workflow (`workflow-NAME`),

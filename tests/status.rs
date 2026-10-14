@@ -1,13 +1,17 @@
-//! `linewright status`, end to end on its data model: a snapshot, the
-//! workflow files, their last runs, the usage limit and the clock in, the report out
-//! (`CODING_STANDARDS.md`, "Where tests go").
+//! `linewright status`, end to end on its data model: what `serve` knows of
+//! itself and its view of the repository, and the clock in, the answer and
+//! its text out (`CODING_STANDARDS.md`, "Where tests go";
+//! `docs/specs/monitoring.md`, "status").
+
+use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
 use linewright::reconcile::Policy;
 use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
-use linewright::status::report;
+use linewright::status::{Polls, Serving, Status, View, render, status};
+use linewright::webhook::Received;
 use linewright::workflow::{LastRuns, Unparsed, WorkflowFiles};
 
 /// 2026-10-01 is a Thursday.
@@ -91,205 +95,353 @@ fn last_runs(runs: &[(&str, &str)]) -> LastRuns {
         .collect()
 }
 
-#[test]
-fn a_workflow_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
-    let workflows = files(&[("weekly", "0 6 * * 1")], &[]);
-    let runs = last_runs(&[("weekly", "2026-09-28T06:00:02Z")]);
+/// A `serve` running since 11:00.
+fn serving() -> Serving {
+    Serving {
+        since: at("2026-10-01T11:00:00Z"),
+        max_runs: 4,
+    }
+}
 
-    assert_eq!(
-        report(
-            &snapshot(vec![]),
-            &workflows,
-            &runs,
-            None,
-            at("2026-10-01T12:00:00Z"),
-            &policy()
-        ),
-        vec!["workflow weekly: last run 2026-09-28 06:00 UTC, next run 2026-10-05 06:00 UTC"]
-    );
+/// The view of a poll at 12:00 that saw `issues`, with no run in flight, no
+/// usage limit and no workflows.
+fn view(issues: Vec<Issue>) -> View {
+    View {
+        snapshot: Arc::new(snapshot(issues)),
+        policy: policy(),
+        polls: Polls {
+            last: at("2026-10-01T12:00:00Z"),
+            next: at("2026-10-01T12:01:00Z"),
+        },
+        usage_limit: None,
+        runs_in_flight: 0,
+        workflows: WorkflowFiles::default(),
+        last_runs: LastRuns::default(),
+    }
+}
+
+/// The text of the answer, without webhooks and without colour.
+fn text(view: Option<&View>, now: &str) -> Vec<String> {
+    text_with(None, view, now)
+}
+
+/// The text of the answer with the deliveries `webhooks`, without colour.
+fn text_with(webhooks: Option<Received>, view: Option<&View>, now: &str) -> Vec<String> {
+    let answer = status(&serving(), webhooks, view, at(now));
+    render(&answer, false).lines().map(str::to_string).collect()
+}
+
+/// The lines of the text after the Linewright section.
+fn after_linewright(view: &View, now: &str) -> Vec<String> {
+    let lines = text(Some(view), now);
+    let blank = lines
+        .iter()
+        .position(String::is_empty)
+        .expect("a blank line");
+    lines[blank + 1..].to_vec()
 }
 
 #[test]
-fn a_workflow_whose_schedule_ticked_since_its_last_run_is_due_now() {
-    let workflows = files(&[("hourly", "0 * * * *")], &[]);
-    let runs = last_runs(&[("hourly", "2026-10-01T11:30:00Z")]);
+fn the_linewright_section_says_since_when_serve_runs_its_polls_and_the_runs_in_flight() {
+    let view = View {
+        runs_in_flight: 3,
+        ..view(vec![])
+    };
 
     assert_eq!(
-        report(
-            &snapshot(vec![]),
-            &workflows,
-            &runs,
-            None,
-            at("2026-10-01T12:10:00Z"),
-            &policy()
-        ),
-        vec!["workflow hourly: last run 2026-10-01 11:30 UTC, next run due now"]
-    );
-}
-
-#[test]
-fn a_workflow_whose_schedule_never_ticks_again_has_no_next_run() {
-    let workflows = files(&[("leap", "0 0 30 2 *")], &[]);
-    let runs = last_runs(&[("leap", "2026-09-28T06:00:00Z")]);
-
-    assert_eq!(
-        report(
-            &snapshot(vec![]),
-            &workflows,
-            &runs,
-            None,
-            at("2026-10-01T12:00:00Z"),
-            &policy()
-        ),
-        vec![
-            "workflow leap: last run 2026-09-28 06:00 UTC, no next run, its schedule ticks no more"
+        text(Some(&view), "2026-10-01T12:00:30Z"),
+        [
+            "serving since: 2026-10-01 11:00:00 UTC",
+            "last poll: 2026-10-01 12:00:00 UTC",
+            "next poll: 2026-10-01 12:01:00 UTC",
+            "runs in flight: 3 of 4",
         ]
     );
 }
 
 #[test]
-fn a_workflow_with_no_recorded_run_is_shown_as_not_run_yet() {
-    let workflows = files(&[("hourly", "0 * * * *")], &[]);
-
+fn before_the_first_poll_there_is_no_last_poll_and_the_next_is_due_now() {
     assert_eq!(
-        report(
-            &snapshot(vec![]),
-            &workflows,
-            &LastRuns::default(),
-            None,
-            at("2026-10-01T12:10:00Z"),
-            &policy()
-        ),
-        vec!["workflow hourly: not run yet, its schedule starts when a poll first sees it"]
-    );
-}
-
-#[test]
-fn a_workflow_file_that_does_not_parse_is_listed_with_the_reason() {
-    let workflows = files(
-        &[],
-        &[(
-            ".linewright/workflows/broken.md",
-            "`on.schedule` is \"every hour\", not a cron expression",
-        )],
-    );
-
-    assert_eq!(
-        report(
-            &snapshot(vec![]),
-            &workflows,
-            &LastRuns::default(),
-            None,
-            at("2026-10-01T12:10:00Z"),
-            &policy()
-        ),
-        vec![
-            ".linewright/workflows/broken.md: does not parse: `on.schedule` is \"every hour\", not a cron expression"
+        text(None, "2026-10-01T11:00:05Z"),
+        [
+            "serving since: 2026-10-01 11:00:00 UTC",
+            "last poll: none yet",
+            "next poll: due now",
+            "runs in flight: 0 of 4",
         ]
     );
 }
 
 #[test]
-fn the_work_in_flight_comes_first_then_the_workflows_by_name_then_the_files_that_do_not_parse() {
-    let workflows = files(
-        &[("weekly", "0 6 * * 1"), ("hourly", "0 * * * *")],
-        &[(".linewright/workflows/broken.md", "no front matter")],
-    );
-    let runs = last_runs(&[
-        ("weekly", "2026-09-28T06:00:00Z"),
-        ("hourly", "2026-10-01T12:00:00Z"),
-    ]);
+fn a_usage_limit_in_force_is_shown_with_its_reset() {
+    let view = View {
+        usage_limit: Some(UsageLimit {
+            resets_at: at("2026-10-01T14:30:00Z"),
+        }),
+        ..view(vec![])
+    };
+
+    let lines = text(Some(&view), "2026-10-01T12:00:30Z");
 
     assert_eq!(
-        report(
-            &snapshot(vec![ready_issue()]),
-            &workflows,
-            &runs,
-            None,
-            at("2026-10-01T12:10:00Z"),
-            &policy()
-        ),
-        vec![
-            "#7 Do the thing: ready to claim",
-            "workflow hourly: last run 2026-10-01 12:00 UTC, next run 2026-10-01 13:00 UTC",
-            "workflow weekly: last run 2026-09-28 06:00 UTC, next run 2026-10-05 06:00 UTC",
-            ".linewright/workflows/broken.md: does not parse: no front matter",
-        ]
-    );
-}
-
-#[test]
-fn nothing_in_flight_shows_when_there_is_neither_work_nor_a_workflow() {
-    assert_eq!(
-        report(
-            &snapshot(vec![]),
-            &files(&[], &[]),
-            &LastRuns::default(),
-            None,
-            at("2026-10-01T12:10:00Z"),
-            &policy()
-        ),
-        vec!["Nothing in flight."]
-    );
-}
-
-#[test]
-fn a_usage_limit_in_force_is_shown_first_with_its_reset_in_utc() {
-    let workflows = files(&[("weekly", "0 6 * * 1")], &[]);
-    let runs = last_runs(&[("weekly", "2026-09-28T06:00:00Z")]);
-
-    assert_eq!(
-        report(
-            &snapshot(vec![ready_issue()]),
-            &workflows,
-            &runs,
-            Some(UsageLimit {
-                resets_at: at("2026-10-01T14:30:00Z")
-            }),
-            at("2026-10-01T12:10:00Z"),
-            &policy()
-        ),
-        vec![
-            "usage limit in force: no session starts until it resets 2026-10-01 14:30 UTC",
-            "#7 Do the thing: ready to claim",
-            "workflow weekly: last run 2026-09-28 06:00 UTC, next run 2026-10-05 06:00 UTC",
-        ]
-    );
-}
-
-#[test]
-fn a_usage_limit_in_force_with_nothing_in_flight_still_says_nothing_is_in_flight() {
-    assert_eq!(
-        report(
-            &snapshot(vec![]),
-            &files(&[], &[]),
-            &LastRuns::default(),
-            Some(UsageLimit {
-                resets_at: at("2026-10-01T14:30:00Z")
-            }),
-            at("2026-10-01T12:10:00Z"),
-            &policy()
-        ),
-        vec![
-            "usage limit in force: no session starts until it resets 2026-10-01 14:30 UTC",
-            "Nothing in flight.",
+        lines[3..],
+        [
+            "usage limit: in force until 2026-10-01 14:30:00 UTC",
+            "runs in flight: 0 of 4",
         ]
     );
 }
 
 #[test]
 fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
+    let view = View {
+        usage_limit: Some(UsageLimit {
+            resets_at: at("2026-10-01T12:00:10Z"),
+        }),
+        ..view(vec![])
+    };
+
+    let answer = status(&serving(), None, Some(&view), at("2026-10-01T12:00:30Z"));
+
+    assert_eq!(answer.linewright.usage_limit_resets_at, None);
+}
+
+#[test]
+fn with_webhooks_on_the_last_accepted_delivery_and_the_refused_ones_are_shown() {
+    let webhooks = Received {
+        last_accepted: Some(at("2026-10-01T11:59:00Z")),
+        refused: 2,
+    };
+
+    let lines = text_with(Some(webhooks), Some(&view(vec![])), "2026-10-01T12:00:30Z");
+
     assert_eq!(
-        report(
-            &snapshot(vec![ready_issue()]),
-            &files(&[], &[]),
-            &LastRuns::default(),
-            Some(UsageLimit {
-                resets_at: at("2026-10-01T12:00:00Z")
-            }),
-            at("2026-10-01T12:10:00Z"),
-            &policy()
+        lines[4..],
+        [
+            "last delivery accepted: 2026-10-01 11:59:00 UTC",
+            "deliveries refused: 2",
+        ]
+    );
+}
+
+#[test]
+fn with_webhooks_on_and_no_delivery_yet_none_is_shown_accepted() {
+    let lines = text_with(
+        Some(Received::default()),
+        Some(&view(vec![])),
+        "2026-10-01T12:00:30Z",
+    );
+
+    assert_eq!(
+        lines[4..],
+        ["last delivery accepted: none yet", "deliveries refused: 0"]
+    );
+}
+
+#[test]
+fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_it_is() {
+    let blocked = Issue {
+        number: Number(8),
+        title: "Do the next thing".into(),
+        blocked_by: vec![Linked {
+            number: Number(7),
+            open: true,
+        }],
+        ..ready_issue()
+    };
+    let claimed = Issue {
+        number: Number(9),
+        title: "Do another thing".into(),
+        assignees: vec![Login::new("factory")],
+        ..ready_issue()
+    };
+    let triage = Issue {
+        number: Number(10),
+        title: "It broke".into(),
+        labels: vec!["needs-triage".into()],
+        ..ready_issue()
+    };
+    let view = view(vec![ready_issue(), blocked, claimed, triage]);
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:00:30Z"),
+        [
+            "#7: ready to claim — Do the thing",
+            "#8: blocked by #7 — Do the next thing",
+            "#9: claimed: being implemented — Do another thing",
+            "#10: waiting for triage — It broke",
+        ]
+    );
+}
+
+#[test]
+fn a_workflow_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
+    let view = View {
+        workflows: files(&[("weekly", "0 6 * * 1")], &[]),
+        last_runs: last_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
+        ..view(vec![])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:00:30Z"),
+        [
+            "workflow weekly last run: 2026-09-28 06:00:02 UTC",
+            "workflow weekly next run: 2026-10-05 06:00:00 UTC",
+        ]
+    );
+}
+
+#[test]
+fn a_workflow_whose_schedule_ticked_since_its_last_run_is_due_now() {
+    let view = View {
+        workflows: files(&[("hourly", "0 * * * *")], &[]),
+        last_runs: last_runs(&[("hourly", "2026-10-01T11:30:00Z")]),
+        ..view(vec![])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:10:00Z"),
+        [
+            "workflow hourly last run: 2026-10-01 11:30:00 UTC",
+            "workflow hourly next run: due now",
+        ]
+    );
+}
+
+#[test]
+fn a_workflow_whose_schedule_never_ticks_again_has_no_next_run() {
+    let view = View {
+        workflows: files(&[("leap", "0 0 30 2 *")], &[]),
+        last_runs: last_runs(&[("leap", "2026-09-28T06:00:00Z")]),
+        ..view(vec![])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:10:00Z"),
+        [
+            "workflow leap last run: 2026-09-28 06:00:00 UTC",
+            "workflow leap next run: none, its schedule ticks no more",
+        ]
+    );
+}
+
+#[test]
+fn a_workflow_with_no_recorded_run_is_shown_as_not_run_yet() {
+    let view = View {
+        workflows: files(&[("hourly", "0 * * * *")], &[]),
+        ..view(vec![])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:10:00Z"),
+        ["workflow hourly last run: none yet, its schedule starts when a poll first sees it"]
+    );
+}
+
+#[test]
+fn the_items_come_before_the_workflows_by_name_then_the_files_that_do_not_parse() {
+    let view = View {
+        workflows: files(
+            &[("weekly", "0 6 * * 1"), ("hourly", "0 * * * *")],
+            &[(".linewright/workflows/broken.md", "no front matter")],
         ),
-        vec!["#7 Do the thing: ready to claim"]
+        last_runs: last_runs(&[
+            ("weekly", "2026-09-28T06:00:00Z"),
+            ("hourly", "2026-10-01T12:00:00Z"),
+        ]),
+        ..view(vec![ready_issue()])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:10:00Z"),
+        [
+            "#7: ready to claim — Do the thing",
+            "",
+            "workflow hourly last run: 2026-10-01 12:00:00 UTC",
+            "workflow hourly next run: 2026-10-01 13:00:00 UTC",
+            "workflow weekly last run: 2026-09-28 06:00:00 UTC",
+            "workflow weekly next run: 2026-10-05 06:00:00 UTC",
+            ".linewright/workflows/broken.md: does not parse: no front matter",
+        ]
+    );
+}
+
+#[test]
+fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
+    let view = View {
+        workflows: files(
+            &[],
+            &[(".linewright/workflows/broken.md", "no front matter")],
+        ),
+        ..view(vec![ready_issue()])
+    };
+    let answer = status(&serving(), None, Some(&view), at("2026-10-01T12:10:00Z"));
+
+    let coloured = render(&answer, true);
+    let plain = render(&answer, false);
+
+    assert!(coloured.contains('\x1b'), "{coloured}");
+    assert!(!plain.contains('\x1b'), "{plain}");
+}
+
+#[test]
+fn the_answer_reads_back_from_its_json_as_it_was() {
+    let webhooks = Received {
+        last_accepted: Some(at("2026-10-01T11:59:00Z")),
+        refused: 2,
+    };
+    let view = View {
+        workflows: files(&[("weekly", "0 6 * * 1")], &[("x.md", "bad")]),
+        last_runs: last_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
+        ..view(vec![ready_issue()])
+    };
+    let answer = status(
+        &serving(),
+        Some(webhooks),
+        Some(&view),
+        at("2026-10-01T12:10:00Z"),
+    );
+
+    let json = serde_json::to_string(&answer).unwrap();
+
+    assert_eq!(serde_json::from_str::<Status>(&json).unwrap(), answer);
+}
+
+#[test]
+fn the_json_names_each_fact() {
+    let view = View {
+        workflows: files(&[("weekly", "0 6 * * 1")], &[]),
+        last_runs: last_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
+        ..view(vec![ready_issue()])
+    };
+    let answer = status(&serving(), None, Some(&view), at("2026-10-01T12:10:00Z"));
+
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap(),
+        serde_json::json!({
+            "linewright": {
+                "serving_since": "2026-10-01T11:00:00Z",
+                "polls": {
+                    "last": "2026-10-01T12:00:00Z",
+                    "next": "2026-10-01T12:01:00Z",
+                },
+                "usage_limit_resets_at": null,
+                "runs_in_flight": 0,
+                "max_runs": 4,
+                "webhooks": null,
+            },
+            "items": [
+                {"number": 7, "title": "Do the thing", "state": "ready-to-claim"},
+            ],
+            "workflows": [
+                {
+                    "name": "weekly",
+                    "schedule": "scheduled",
+                    "last_run": "2026-09-28T06:00:00Z",
+                    "next_run": "2026-10-05T06:00:00Z",
+                },
+            ],
+            "unparsed_workflows": [],
+        })
     );
 }

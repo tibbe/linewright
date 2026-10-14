@@ -6,10 +6,19 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use clap::{CommandFactory, Parser};
-use linewright::config::{Cli, Config, LogFormat};
+use linewright::config::{Cli, Config, LogFormat, ResolveError};
 use linewright::domain::MergeMethod;
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
+    resolve_blaming(args, env, file).map_err(|e| e.to_string())
+}
+
+/// Resolves the settings as [`resolve`] does, keeping the error's layer.
+fn resolve_blaming(
+    args: &[&str],
+    env: &[(&str, &str)],
+    file: Option<&str>,
+) -> Result<Config, ResolveError> {
     let dir = tempfile::tempdir().unwrap();
     let mut argv = vec!["linewright"];
     argv.extend(args);
@@ -30,7 +39,6 @@ fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Co
         &|key| env.get(key).cloned(),
         false,
     )
-    .map_err(|e| format!("{e:#}"))
 }
 
 #[test]
@@ -85,6 +93,63 @@ fn a_bad_value_or_an_unknown_key_is_an_error_naming_the_setting() {
             .unwrap_err()
             .contains("max-wokers")
     );
+}
+
+/// Whether resolving with `args`, `env` and `file` blames the command line.
+fn blames_the_command_line(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> bool {
+    match resolve_blaming(args, env, file) {
+        Err(ResolveError::CommandLine(_)) => true,
+        Err(ResolveError::Elsewhere(_)) => false,
+        Ok(_) => panic!("{args:?}, {env:?} and {file:?} resolve"),
+    }
+}
+
+#[test]
+fn a_wrong_value_is_blamed_on_the_command_line_only_when_a_flag_gave_it() {
+    let bad_env = [("LINEWRIGHT_UPDATE_BRANCH", "squash")];
+
+    assert!(blames_the_command_line(
+        &["--max-workers", "many"],
+        &[],
+        None
+    ));
+    assert!(blames_the_command_line(
+        &["--ci-grace", "10m"],
+        &[("LINEWRIGHT_CI_TIMEOUT", "5m")],
+        None
+    ));
+    assert!(!blames_the_command_line(&[], &bad_env, None));
+    assert!(!blames_the_command_line(
+        &[],
+        &[],
+        Some("max-workers = \"many\"\n")
+    ));
+    assert!(!blames_the_command_line(
+        &["--max-workers", "2"],
+        &bad_env,
+        None
+    ));
+    assert!(
+        !blames_the_command_line(&["--webhook-address", "127.0.0.1:9000"], &[], None),
+        "the secret is missing from the environment"
+    );
+}
+
+#[test]
+fn a_config_file_the_command_line_names_that_cannot_be_read_is_blamed_on_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("missing.toml");
+    let cli = Cli::try_parse_from([
+        "linewright",
+        "--config",
+        missing.to_str().unwrap(),
+        "status",
+    ])
+    .unwrap();
+
+    let resolved = Config::resolve(&cli.settings, dir.path(), &|_| None, false);
+
+    assert!(matches!(resolved, Err(ResolveError::CommandLine(_))));
 }
 
 #[test]

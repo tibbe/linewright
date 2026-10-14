@@ -13,13 +13,15 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderMap, StatusCode};
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, info_span, warn};
 
-use crate::domain::{Item, Number, Snapshot};
+use crate::clock::Clock;
+use crate::domain::{Item, Number, Snapshot, Timestamp};
 
 /// The environment variable the webhook's secret comes from. The secret is a
 /// credential, so it is never a flag or a key in the config file.
@@ -326,7 +328,6 @@ impl Format {
 /// What a JSON payload of `event` names, from the parts of its payload that
 /// say which item changed.
 fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
-    use serde::Deserialize;
     use serde_json::from_slice;
     #[derive(Deserialize)]
     struct Numbered {
@@ -432,9 +433,39 @@ impl Pending {
     }
 }
 
+/// The deliveries received since `serve` started: when the last one was
+/// accepted, which it is unless refused, and how many were refused.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Received {
+    pub last_accepted: Option<Timestamp>,
+    pub refused: u64,
+}
+
+/// The deliveries received, as the listener counts them.
+#[derive(Clone)]
+pub struct Tally {
+    received: Arc<Mutex<Received>>,
+    clock: Arc<dyn Clock>,
+}
+
+impl Tally {
+    pub fn get(&self) -> Received {
+        *self.received.lock().unwrap()
+    }
+
+    fn accepted(&self) {
+        self.received.lock().unwrap().last_accepted = Some(self.clock.now());
+    }
+
+    fn refused(&self) {
+        self.received.lock().unwrap().refused += 1;
+    }
+}
+
 /// The HTTP server `serve` runs with webhooks on, until stopped.
 pub struct Listener {
     address: SocketAddr,
+    tally: Tally,
     stop: CancellationToken,
     task: JoinHandle<()>,
 }
@@ -445,16 +476,36 @@ const PAYLOAD_CAP: usize = 25 * 1024 * 1024;
 
 impl Listener {
     /// Listens on `webhooks.address`, or refuses when it cannot, adding what
-    /// accepted deliveries name to `pending`.
-    pub async fn bind(webhooks: &Webhooks, pending: Pending) -> anyhow::Result<Listener> {
+    /// accepted deliveries name to `pending` and counting the deliveries
+    /// received by `clock`.
+    pub async fn bind(
+        webhooks: &Webhooks,
+        pending: Pending,
+        clock: Arc<dyn Clock>,
+    ) -> anyhow::Result<Listener> {
         let address = &webhooks.address;
         let socket = TcpListener::bind((address.host(), address.port()))
             .await
             .with_context(|| format!("listening on the setting `webhook-address`, {address}"))?;
         let local = socket.local_addr()?;
         let secret = webhooks.secret.clone();
+        let tally = Tally {
+            received: Arc::default(),
+            clock,
+        };
         let router = Router::new()
-            .fallback(move |headers, body| answer(secret.clone(), pending.clone(), headers, body))
+            .fallback({
+                let tally = tally.clone();
+                move |headers, body| {
+                    answer(
+                        secret.clone(),
+                        pending.clone(),
+                        tally.clone(),
+                        headers,
+                        body,
+                    )
+                }
+            })
             .layer(DefaultBodyLimit::max(PAYLOAD_CAP));
         let stop = CancellationToken::new();
         let task = tokio::spawn({
@@ -471,6 +522,7 @@ impl Listener {
         info!(address = %local, "listening for webhook deliveries");
         Ok(Listener {
             address: local,
+            tally,
             stop,
             task,
         })
@@ -479,6 +531,11 @@ impl Listener {
     /// The address it listens on, with the port the system chose for port 0.
     pub fn local_address(&self) -> SocketAddr {
         self.address
+    }
+
+    /// The deliveries received, as they are counted from now on.
+    pub fn tally(&self) -> Tally {
+        self.tally.clone()
     }
 
     /// Stops listening, once the deliveries being received are answered.
@@ -492,6 +549,7 @@ impl Listener {
 async fn answer(
     secret: Secret,
     pending: Pending,
+    tally: Tally,
     headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, String) {
@@ -516,8 +574,10 @@ async fn answer(
         Ok(Delivery::Ignored) => info!("ignored: not a change Linewright acts on"),
         Err(refusal) => {
             warn!(reason = %refusal, "refused");
+            tally.refused();
             return refusal.response();
         }
     }
+    tally.accepted();
     (StatusCode::ACCEPTED, String::new())
 }

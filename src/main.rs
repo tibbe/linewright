@@ -6,24 +6,26 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use linewright::api::{self, Api, RequestError, Sources};
 use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
-use linewright::config::{Cli, Command, Config, LogFormat, WorkflowCommand};
-use linewright::domain::{MergeMethods, Number, UpdateMethod, UpdateRule};
+use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, WorkflowCommand};
+use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig};
-use linewright::reconcile::Policy;
 use linewright::runtime::claude::ClaudeCode;
 use linewright::status;
-use linewright::store::Store;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
-use linewright::usage_limit;
 use linewright::webhook::{Listener, Pending};
-use linewright::workflow::{self, LastRuns, WorkflowFiles};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
 
 const RUNTIME: &str = "claude";
+
+/// The exit statuses beyond success and failure (`docs/specs/monitoring.md`,
+/// "Output"). Clap exits with 2 too for a command line it cannot parse.
+const WRONG_COMMAND_LINE: u8 = 2;
+const NOT_SERVING: u8 = 3;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -37,13 +39,16 @@ async fn main() -> ExitCode {
     ) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("linewright: {e:#}");
-            return ExitCode::FAILURE;
+            eprintln!("linewright: {e}");
+            return match e {
+                ResolveError::CommandLine(_) => ExitCode::from(WRONG_COMMAND_LINE),
+                ResolveError::Elsewhere(_) => ExitCode::FAILURE,
+            };
         }
     };
     init_logging(config.log_format);
     match run(cli.command, config).await {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             error!(error = format!("{e:#}"), "exiting");
             ExitCode::FAILURE
@@ -63,54 +68,108 @@ fn init_logging(format: LogFormat) {
     }
 }
 
-async fn run(command: Command, config: Config) -> Result<()> {
-    match command {
+/// `linewright status`: asks the `serve` of the configured repository and
+/// prints its answer, as text or, with `json`, as it came. Errors go to
+/// standard error, without the log's decoration.
+async fn status(config: &Config, json: bool) -> ExitCode {
+    let repo = match config.required_repo() {
+        Ok(repo) => repo,
+        Err(e) => {
+            eprintln!("linewright: {e:#}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let body = match api::get_answer(&socket_dir(), repo, "/status").await {
+        Ok(body) => body,
+        Err(e @ RequestError::NotServing { .. }) => {
+            eprintln!("linewright: {e}");
+            return ExitCode::from(NOT_SERVING);
+        }
+        Err(RequestError::Other(e)) => {
+            eprintln!("linewright: {e:#}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let text = if json {
+        String::from_utf8_lossy(&body).into_owned()
+    } else {
+        match serde_json::from_slice::<status::Status>(&body) {
+            Ok(answer) => status::render(&answer, colour()),
+            Err(e) => {
+                eprintln!("linewright: `serve`'s answer does not read as a status: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
+    print!("{text}");
+    if json && !text.ends_with('\n') {
+        println!();
+    }
+    ExitCode::SUCCESS
+}
+
+/// Whether to colour what goes to standard output: only on a terminal.
+fn colour() -> bool {
+    std::io::stdout().is_terminal()
+}
+
+/// The directory the local API's sockets are in, for this process's user
+/// and environment.
+fn socket_dir() -> PathBuf {
+    api::socket_dir(
+        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
+        &std::env::temp_dir(),
+        rustix::process::getuid().as_raw(),
+    )
+}
+
+async fn run(command: Command, config: Config) -> Result<ExitCode> {
+    let done = match command {
+        // Its errors go to standard error as they are, not to the log.
+        Command::Status { json } => return Ok(status(&config, json).await),
         Command::Serve => {
             // Listening before startup, which talks to GitHub: in a container
             // `linewright` can be PID 1, which the kernel sends no signal it
             // has no handler for.
             let signals = StopSignals::new().context("listening for stop signals")?;
+            let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+            let since = clock.now();
+            // Before anything else, so that a second `serve` for the
+            // repository stops at once.
+            let claimed = api::claim(&socket_dir(), config.required_repo()?)?;
             // `once` and the other commands never listen
             // (`docs/specs/webhooks.md`).
             let pending = Pending::default();
             let listener = match &config.webhooks {
-                Some(webhooks) => Some(Listener::bind(webhooks, pending.clone()).await?),
+                Some(webhooks) => {
+                    Some(Listener::bind(webhooks, pending.clone(), clock.clone()).await?)
+                }
                 None => None,
             };
-            let served = serve(&config, signals, &pending).await;
+            let (view, viewed) = tokio::sync::watch::channel(None);
+            let api = Api::serve(
+                claimed,
+                Sources {
+                    serving: status::Serving {
+                        since,
+                        max_runs: config.max_workers,
+                    },
+                    view: viewed,
+                    deliveries: listener.as_ref().map(Listener::tally),
+                    clock,
+                },
+            );
+            let served = serve(&config, signals, &pending, &view).await;
             if let Some(listener) = listener {
                 listener.stop().await;
             }
+            api.stop().await;
             served
         }
         Command::Once => {
             let mut factory = start(&config, OnUsageLimit::End).await?;
             factory.cycle().await?;
             factory.settle().await;
-            Ok(())
-        }
-        Command::Status => {
-            let github = connect(&config, token()?).await?;
-            let clock = SystemClock;
-            let now = clock.now();
-            let snapshot = github.snapshot(now - config.spec_lookback).await?;
-            // As a poll does, list the work in flight even when the
-            // workflows cannot be listed.
-            let workflows = workflow::read(&github, &snapshot.default_branch)
-                .await
-                .unwrap_or_else(|e| {
-                    error!(error = format!("{e:#}"), "listing the workflows failed");
-                    WorkflowFiles::default()
-                });
-            let work_dir = work_dir(&config, &github);
-            let last_runs = LastRuns::load(&work_dir);
-            let usage_limit = usage_limit::load(&work_dir);
-            let policy = policy(&config, &github);
-            let lines =
-                status::report(&snapshot, &workflows, &last_runs, usage_limit, now, &policy);
-            for line in lines {
-                println!("{line}");
-            }
             Ok(())
         }
         Command::Workflow {
@@ -152,12 +211,19 @@ async fn run(command: Command, config: Config) -> Result<()> {
             println!("Replayed {} into {}", case_dir.display(), out.display());
             Ok(())
         }
-    }
+    };
+    done.map(|()| ExitCode::SUCCESS)
 }
 
 /// Starts the factory and serves, polling and reading again the items
-/// deliveries add to `pending`, until a stop signal.
-async fn serve(config: &Config, mut signals: StopSignals, pending: &Pending) -> Result<()> {
+/// deliveries add to `pending` and sending its view to `view`, until a stop
+/// signal.
+async fn serve(
+    config: &Config,
+    mut signals: StopSignals,
+    pending: &Pending,
+    view: &tokio::sync::watch::Sender<Option<status::View>>,
+) -> Result<()> {
     let mut factory = tokio::select! {
         factory = start(config, OnUsageLimit::Wait) => factory?,
         signal = signals.next() => {
@@ -181,7 +247,7 @@ async fn serve(config: &Config, mut signals: StopSignals, pending: &Pending) -> 
             std::process::exit(128 + second.kind().as_raw_value());
         }
     });
-    factory.serve(config.poll_interval, pending).await;
+    factory.serve(config.poll_interval, pending, view).await;
     info!("stopping: cancelling the runs in flight");
     factory.stop().await;
     Ok(())
@@ -196,33 +262,13 @@ fn token() -> Result<String> {
 }
 
 async fn connect(config: &Config, token: String) -> Result<GitHub> {
-    let repo = config.repo.as_deref().context("set `repo` (owner/name)")?;
-    GitHub::connect(repo, token).await
+    GitHub::connect(config.required_repo()?, token).await
 }
 
-/// The repository's work directory: its clones, session records, the
-/// workflows' last runs and the usage limit `serve` waits out.
+/// The repository's work directory: its clones, session records and the
+/// workflows' last runs.
 fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
-}
-
-/// The policy the status report derives the work in flight with. The report
-/// reads neither how pull requests merge nor how they are updated, so the
-/// repository's settings are not read for them.
-fn policy(config: &Config, github: &GitHub) -> Policy {
-    Policy {
-        linewright: github.linewright(),
-        spec_glob: config.spec_glob.clone(),
-        spec_lookback: config.spec_lookback,
-        max_workers: config.max_workers,
-        ci_grace: config.ci_grace,
-        ci_timeout: config.ci_timeout,
-        ci_attempts: config.ci_attempts,
-        auto_merge: None,
-        update_rule: UpdateRule::Always(UpdateMethod::Merge),
-        allowed_merge_methods: MergeMethods::all(),
-        require_label: config.require_label.clone(),
-    }
 }
 
 /// The agent runtime, its sessions given `github_token`: the token of

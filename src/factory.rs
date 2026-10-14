@@ -29,10 +29,10 @@ use crate::reconcile::{
 use crate::run::{self, Shell, WorkflowEnd};
 use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
+use crate::status::{Polls, View};
 use crate::store::{CloseReason, IssueRead, Store};
-use crate::usage_limit;
 use crate::webhook::{self, Pending};
-use crate::workflow::{self, LastRuns, Workflow, WorkflowName};
+use crate::workflow::{self, LastRuns, Workflow, WorkflowFiles, WorkflowName};
 
 /// The settings a factory runs with.
 #[derive(Clone, Debug)]
@@ -54,8 +54,7 @@ pub struct FactoryConfig {
     /// Start work only on issues with this label, which is never created.
     pub require_label: Option<String>,
     pub briefs: Briefs,
-    /// Where clones, session records, the workflows' last runs and, under
-    /// `serve`, the usage limit go.
+    /// Where clones, session records and the workflows' last runs go.
     pub work_dir: PathBuf,
     /// Whether each poll also starts the workflows that are due. Replay does
     /// not: workflows are not captured or replayed.
@@ -86,6 +85,8 @@ pub struct Factory {
     stopping: CancellationToken,
     schedule_workflows: bool,
     last_runs: LastRuns,
+    /// The workflow files the last poll read.
+    workflow_files: WorkflowFiles,
     /// What it remembers between polls, of pull requests still open.
     memory: Memory,
     /// The last poll's snapshot, with what refreshes read into it since:
@@ -96,14 +97,6 @@ pub struct Factory {
     /// The items Linewright's actions and runs changed since the kept
     /// snapshot last read them.
     written: BTreeSet<Item>,
-}
-
-/// What the usage limit `serve` last recorded for `status` says.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Recorded {
-    /// Not yet recorded, or recording it failed.
-    Unknown,
-    As(Option<UsageLimit>),
 }
 
 /// The snapshot kept between polls, with what refreshes read into it.
@@ -202,6 +195,7 @@ impl Factory {
             stopping: CancellationToken::new(),
             schedule_workflows: config.schedule_workflows,
             last_runs,
+            workflow_files: WorkflowFiles::default(),
             memory: Memory::default(),
             kept: None,
             ended: vec![],
@@ -283,20 +277,25 @@ impl Factory {
     /// deliveries add to `pending`, until stopping. A refresh never races a
     /// poll: one still running when the poll falls due finishes first. A
     /// failed poll or refresh is logged and left for the next poll to catch
-    /// up on (`docs/specs/webhooks.md`). After each, the usage limit is
-    /// recorded for `status` as it then holds; it holds none at the start.
-    pub async fn serve(&mut self, poll_interval: Duration, pending: &Pending) {
+    /// up on (`docs/specs/webhooks.md`). Its view goes to `view` after each
+    /// poll and refresh, and as runs end and are refused for the usage
+    /// limit, once a poll has taken a snapshot.
+    pub async fn serve(
+        &mut self,
+        poll_interval: Duration,
+        pending: &Pending,
+        view: &tokio::sync::watch::Sender<Option<View>>,
+    ) {
         let stopping = self.stopping.clone();
-        let mut recorded = Recorded::Unknown;
-        self.record_usage_limit(&mut recorded);
         while !stopping.is_cancelled() {
             // The poll reads what deliveries named before it as well.
             pending.take();
             if let Err(e) = self.cycle().await {
                 error!(error = format!("{e:#}"), "poll failed");
             }
-            self.record_usage_limit(&mut recorded);
             let next_poll = Instant::now() + poll_interval;
+            let next_poll_at = self.shell.clock.now() + poll_interval;
+            view.send_replace(self.view(next_poll_at));
             loop {
                 tokio::select! {
                     () = tokio::time::sleep_until(next_poll) => break,
@@ -308,31 +307,36 @@ impl Factory {
                                 "acting on deliveries failed; the next poll catches up"
                             );
                         }
-                        self.record_usage_limit(&mut recorded);
                     }
+                    // Taken as they come, as the next poll would take them,
+                    // so the view counts the runs in flight and the usage
+                    // limit as they are.
+                    Some(result) = self.runs.join_next_with_id(), if !self.runs.is_empty() => {
+                        self.finished(result);
+                    }
+                    Some(limit) = self.refusals.recv() => self.refused(limit),
                 }
+                view.send_replace(self.view(next_poll_at));
             }
         }
     }
 
-    /// Records the usage limit the factory holds for `status` to read,
-    /// unless `recorded` already says so. A failure is logged and tried
-    /// again next time.
-    fn record_usage_limit(&self, recorded: &mut Recorded) {
-        let held = self.memory.usage_limit;
-        if *recorded == Recorded::As(held) {
-            return;
-        }
-        match usage_limit::record(&self.shell.work_dir, held) {
-            Ok(()) => *recorded = Recorded::As(held),
-            Err(e) => {
-                *recorded = Recorded::Unknown;
-                error!(
-                    error = format!("{e:#}"),
-                    "recording the usage limit for `status` failed"
-                );
-            }
-        }
+    /// The factory's view, with the next poll at `next_poll`: `None` until
+    /// a poll has taken a snapshot.
+    fn view(&self, next_poll: Timestamp) -> Option<View> {
+        let kept = self.kept.as_ref()?;
+        Some(View {
+            snapshot: kept.snapshot.clone(),
+            policy: self.shell.policy.clone(),
+            polls: Polls {
+                last: kept.taken_at,
+                next: next_poll,
+            },
+            usage_limit: self.memory.usage_limit,
+            runs_in_flight: self.live.len(),
+            workflows: self.workflow_files.clone(),
+            last_runs: self.last_runs.clone(),
+        })
     }
 
     /// Keeps `kept`, reconciles its snapshot with the runs in flight and the
@@ -406,27 +410,27 @@ impl Factory {
 
     /// The workflows on the default branch whose files parse, when polls
     /// schedule them. A file that does not parse is logged and skipped.
-    async fn workflows(&self) -> Vec<Workflow> {
+    /// The files read are kept for the view.
+    async fn workflows(&mut self) -> Vec<Workflow> {
         if !self.schedule_workflows {
             return vec![];
         }
         let branch = &self.shell.settings.default_branch;
-        match workflow::read(self.shell.store.as_ref(), branch).await {
-            Ok(files) => {
-                for file in files.unparsed {
-                    warn!(
-                        path = file.path,
-                        error = file.reason,
-                        "skipping a workflow file"
-                    );
-                }
-                files.parsed
-            }
+        self.workflow_files = match workflow::read(self.shell.store.as_ref(), branch).await {
+            Ok(files) => files,
             Err(e) => {
                 error!(error = format!("{e:#}"), "listing the workflows failed");
-                vec![]
+                WorkflowFiles::default()
             }
+        };
+        for file in &self.workflow_files.unparsed {
+            warn!(
+                path = file.path,
+                error = file.reason,
+                "skipping a workflow file"
+            );
         }
+        self.workflow_files.parsed.clone()
     }
 
     pub fn is_idle(&self) -> bool {
@@ -459,10 +463,15 @@ impl Factory {
         while let Some(result) = self.runs.try_join_next_with_id() {
             self.finished(result);
         }
-        while let Ok(UsageLimit { resets_at }) = self.refusals.try_recv() {
-            if self.memory.hold_until(resets_at) {
-                info!(%resets_at, "usage limit in force; no session starts until it resets");
-            }
+        while let Ok(limit) = self.refusals.try_recv() {
+            self.refused(limit);
+        }
+    }
+
+    /// Holds starts back for a run refused for the usage limit `limit`.
+    fn refused(&mut self, UsageLimit { resets_at }: UsageLimit) {
+        if self.memory.hold_until(resets_at) {
+            info!(%resets_at, "usage limit in force; no session starts until it resets");
         }
     }
 
