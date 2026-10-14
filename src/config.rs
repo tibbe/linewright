@@ -19,7 +19,11 @@ use crate::webhook::{self, Webhooks};
 use crate::workflow::WorkflowName;
 
 #[derive(Parser, Debug)]
-#[command(name = "linewright", version, about = "A spec-driven software factory")]
+#[command(
+    name = "linewright",
+    version = crate::VERSION_AND_COMMIT,
+    about = "A spec-driven software factory"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,

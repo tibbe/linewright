@@ -17,6 +17,7 @@ use linewright::runtime::claude::ClaudeCode;
 use linewright::status;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
 use linewright::webhook::{Listener, Pending};
+use linewright::{COMMIT, VERSION};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
 
@@ -128,6 +129,8 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         // Its errors go to standard error as they are, not to the log.
         Command::Status { json } => return Ok(status(&config, json).await),
         Command::Serve => {
+            // First, so a log names the build it came from.
+            info!(version = %VERSION, commit = %COMMIT, "starting");
             // Listening before startup, which talks to GitHub: in a container
             // `linewright` can be PID 1, which the kernel sends no signal it
             // has no handler for.

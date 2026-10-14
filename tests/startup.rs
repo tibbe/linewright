@@ -100,13 +100,16 @@ async fn without_auto_merge_neither_the_merge_method_nor_update_branch_is_checke
 }
 
 /// Runs `linewright` with `args`, `env` and only `path` on the path, and
-/// returns whether it succeeded and what it wrote to stderr.
+/// returns whether it succeeded and what it wrote to stderr. It gets a runtime
+/// directory of its own, so that `serve`s run by tests at the same time don't
+/// claim the same socket.
 fn linewright(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
     let dir = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
         .args(args)
         .current_dir(dir.path())
         .env("PATH", path)
+        .env("XDG_RUNTIME_DIR", dir.path())
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .envs(env.iter().copied())
         .output()
@@ -200,4 +203,100 @@ fn once_does_not_listen_even_with_the_secret() {
     // It goes on to the startup checks, which fail here for want of `git`.
     assert!(!succeeded, "{error}");
     assert!(error.contains("`git` is not on the path"), "{error}");
+}
+
+/// The version `Cargo.toml` gives the package.
+fn version() -> String {
+    let manifest: toml::Table =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+    manifest["package"]["version"].as_str().unwrap().to_owned()
+}
+
+/// Whether `commit` names the commit this checkout's `HEAD` points to: 12 hex
+/// digits it starts with.
+fn names_head(commit: &str) -> bool {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    commit.len() == 12
+        && commit.chars().all(|c| c.is_ascii_hexdigit())
+        && String::from_utf8(output.stdout)
+            .unwrap()
+            .starts_with(commit)
+}
+
+/// What `serve` logs, in `format`, when it stops for want of `git`.
+fn serve_log(format: &str) -> String {
+    let empty = tempfile::tempdir().unwrap();
+    let (_, log) = linewright(
+        empty.path(),
+        &[
+            "--repo",
+            "owner/name",
+            "--webhook-address",
+            "127.0.0.1:0",
+            "--log-format",
+            format,
+            "serve",
+        ],
+        &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")],
+    );
+    log
+}
+
+/// `text` without the colors the text log format adds.
+fn without_colors(text: &str) -> String {
+    text.split('\x1b')
+        .map(|part| part.split_once('m').map_or(part, |(_, rest)| rest))
+        .collect()
+}
+
+#[test]
+fn version_names_the_version_and_the_commit_built_from() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_linewright"))
+        .arg("--version")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let printed = String::from_utf8(output.stdout).unwrap();
+    let commit = printed
+        .strip_prefix(&format!("linewright {} (", version()))
+        .and_then(|rest| rest.strip_suffix(")\n"));
+    assert!(commit.is_some_and(names_head), "{printed}");
+}
+
+#[test]
+fn serve_first_logs_the_version_and_the_commit() {
+    let log = serve_log("json");
+
+    let lines: Vec<serde_json::Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let fields = &lines[0]["fields"];
+    assert_eq!(fields["version"], version().as_str(), "{log}");
+    assert!(fields["commit"].as_str().is_some_and(names_head), "{log}");
+    assert_eq!(
+        lines[1]["fields"]["message"], "listening for webhook deliveries",
+        "{log}"
+    );
+}
+
+#[test]
+fn serve_first_logs_the_version_and_the_commit_as_text_too() {
+    let log = without_colors(&serve_log("text"));
+
+    let first = log.lines().next().unwrap_or_default();
+    assert!(first.contains(&format!("version={}", version())), "{log}");
+    let commit = first
+        .split_once("commit=")
+        .and_then(|(_, rest)| rest.split_whitespace().next());
+    assert!(commit.is_some_and(names_head), "{log}");
 }

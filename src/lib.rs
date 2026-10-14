@@ -1,3 +1,16 @@
+/// The version Linewright is built as.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The commit Linewright is built from, abbreviated, or `unknown` (see
+/// `build.rs`).
+pub const COMMIT: &str = env!("LINEWRIGHT_COMMIT");
+/// The version and the commit, as `--version` names them.
+pub const VERSION_AND_COMMIT: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("LINEWRIGHT_COMMIT"),
+    ")"
+);
+
 pub mod api;
 pub mod briefs;
 pub mod case;
