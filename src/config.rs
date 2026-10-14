@@ -90,6 +90,10 @@ pub enum Command {
         /// Print one JSON object per transcript entry and line.
         #[arg(long)]
         json: bool,
+        /// Show the transcript so far, then each entry as it happens, until
+        /// the run ends.
+        #[arg(long)]
+        follow: bool,
     },
     /// Workflows: `workflow run NAME` runs one now, then exits.
     Workflow {

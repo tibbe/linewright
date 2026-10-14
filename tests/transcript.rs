@@ -2,7 +2,7 @@
 //! session recorded from Claude Code, rendered compact, in full and as JSON
 //! (`docs/specs/monitoring.md`, "logs").
 
-use linewright::transcript::{self, SessionRecord, Transcript, Verbosity};
+use linewright::transcript::{self, After, Follower, SessionRecord, Transcript, Verbosity};
 use serde_json::json;
 
 /// A recorded implement session, trimmed: its first turn, and a second that a
@@ -22,6 +22,7 @@ fn recorded() -> SessionRecord {
 fn of(sessions: Vec<SessionRecord>) -> Transcript {
     Transcript {
         run: "105/implement-1".parse().unwrap(),
+        in_flight: None,
         sessions: sessions.iter().map(transcript::parse).collect(),
     }
 }
@@ -228,5 +229,254 @@ session 1: started 2026-10-13 10:00:00 UTC
          session 1: started 2026-10-13 10:00:00 UTC\n \
          0:02  Read(a.png) → 0 lines\n \
          0:02  Read(b.txt) → 2 lines\n"
+    );
+}
+
+// Following a run's transcript as its sessions write it.
+
+/// `record` as far as its first `bytes` bytes of output.
+fn written(record: &SessionRecord, bytes: usize) -> SessionRecord {
+    SessionRecord {
+        output: record.output[..bytes].to_string(),
+        ..record.clone()
+    }
+}
+
+/// The text of `lines`.
+fn text(lines: &[transcript::FollowedLine]) -> String {
+    lines
+        .iter()
+        .map(|followed| transcript::render_line(&followed.line, false))
+        .collect()
+}
+
+#[test]
+fn following_shows_each_entry_once_it_is_written_and_each_tool_call_when_made_and_when_it_returns()
+{
+    let record = recorded();
+    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
+    let mut shown = vec![];
+    let mut at_each_line = vec![];
+
+    for (end, _) in record.output.match_indices('\n') {
+        let lines = follower.update(&[written(&record, end + 1)]);
+        at_each_line.push(text(&lines));
+        shown.extend(lines);
+    }
+    shown.extend(follower.end(&[record]));
+
+    // The first Bash call, written on the third line, shows as running,
+    // then again once its result is written, on the fourth.
+    assert_eq!(
+        at_each_line[..4],
+        [
+            "run: 105/implement-1\nsession 1: started 2026-10-13 10:09:08 UTC\n",
+            "",
+            " 0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → running\n",
+            " 0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines\n",
+        ]
+    );
+    assert_eq!(
+        text(&shown),
+        r###"run: 105/implement-1
+session 1: started 2026-10-13 10:09:08 UTC
+ 0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i "im…) → running
+ 0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i "im…) → exit 0, 19 lines
+ 0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → running
+ 0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2
+ 0:15  Skill(linewright:tdd) → running
+ 0:15  Skill(linewright:tdd) → loaded
+ 0:18  Can't build images here (no Docker), and the repo has no test seam for the Dockerfile, so I'll make the Dockerfile and README changes and check them by hand.
+ 0:27  Read(Dockerfile) → running
+ 0:27  Read(Dockerfile) → 16 lines
+ 0:35  Edit(Dockerfile) → running
+ 0:36  Edit(Dockerfile) → edited
+ 2:00  Agent(Standards review) → running
+ 2:02    Bash(git diff origin/main...HEAD --stat && git diff origin/main...HEAD && git log -1…) → running
+ 2:02    Bash(git diff origin/main...HEAD --stat && git diff origin/main...HEAD && git log -1…) → exit 0, 7 lines
+ 2:16  Agent(Standards review) → done, 2 tool uses, 16s
+ 2:45  Both reviews came back clean. One optional fix: the README and the image label use the serial comma differently. Making them match.
+ 2:59  {"outcome":"done","pr_title":"Ship gh and python3 in the base image","pr_body":"## Summary\n\nThe base image's `runtime` stage now installs `gh` from GitHub's apt repository and `python3` from Debian. `gh`'s keyring is checked against a pin
+ 3:22  follow-up: Your answer did not parse as the result. …
+ 3:25  Bash(git commit -qam "Ship gh and python3 in the base image…) → running
+ 3:25  Bash(git commit -qam "Ship gh and python3 in the base image…) → exit 0, 1 line
+ 3:28  {"outcome":"done","pr_title":"Ship gh and python3 in the base image","pr_body":"## Summary\n\nThe base image's `runtime` stage now installs `gh` from GitHub's apt repository and `python3` from Debian. `gh`'s keyring is checked against a pin
+"###
+    );
+}
+
+#[test]
+fn following_shows_the_same_lines_whatever_pieces_the_output_is_written_in() {
+    let record = recorded();
+    let follow = |ends: Vec<usize>| {
+        let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Full, None);
+        let mut shown = vec![];
+        for end in ends {
+            shown.extend(follower.update(&[written(&record, end)]));
+        }
+        shown.extend(follower.end(std::slice::from_ref(&record)));
+        shown
+    };
+    let by_line = record.output.match_indices('\n').map(|(end, _)| end + 1);
+    let by_chars = record.output.char_indices().map(|(i, _)| i).step_by(7);
+
+    let at_once = follow(vec![]);
+    let read_by_line = follow(by_line.collect());
+    let read_by_chars = follow(by_chars.collect());
+
+    assert_eq!(read_by_line, at_once);
+    assert_eq!(read_by_chars, at_once);
+    assert!(text(&at_once).contains(" 0:04  thinking: The listing has a Dockerfile.\n"));
+    for transcript::FollowedLine { line, .. } in &at_once {
+        let json = transcript::json_line(line);
+        assert_eq!(
+            &serde_json::from_str::<transcript::Line>(&json).unwrap(),
+            line,
+            "{json}"
+        );
+    }
+}
+
+#[test]
+fn following_after_a_line_gives_the_lines_after_it() {
+    let record = recorded();
+    let follow = |after| {
+        let mut follower = Follower::new(
+            "105/implement-1".parse().unwrap(),
+            Verbosity::Compact,
+            after,
+        );
+        follower.end(std::slice::from_ref(&record))
+    };
+    let all = follow(None);
+    let at = |session, line| transcript::ReadTo { session, line };
+
+    let after_the_third = follow(Some(After::Line(all[2].made)));
+    let after_line_3 = follow(Some(After::Read(at(1, 3))));
+
+    assert_eq!(after_the_third, all[3..]);
+    assert_eq!(
+        text(&after_line_3[..1]),
+        " 0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines\n"
+    );
+}
+
+#[test]
+fn following_a_run_that_ends_shows_each_of_its_sessions_as_logs_does() {
+    let record = recorded();
+    let wrote_nothing = SessionRecord::default();
+    let sessions = [wrote_nothing.clone(), record, wrote_nothing];
+    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
+
+    let mut shown = follower.update(&sessions[..1]);
+    shown.extend(follower.update(&sessions[..2]));
+    shown.extend(follower.end(&sessions));
+
+    let headers = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|line| line.starts_with("run:") || line.starts_with("session "))
+            .map(str::to_string)
+            .collect()
+    };
+    let logs = transcript::render(&of(sessions.to_vec()), Verbosity::Compact, false);
+
+    assert_eq!(
+        headers(&text(&shown)),
+        [
+            "run: 105/implement-1",
+            "session 1",
+            "session 2: started 2026-10-13 10:09:08 UTC",
+            "session 3",
+        ]
+    );
+    assert_eq!(headers(&text(&shown)), headers(&logs));
+}
+
+#[test]
+fn following_shows_a_tool_call_as_running_as_soon_as_it_is_made() {
+    let events = |events: &[serde_json::Value]| SessionRecord {
+        output: events.iter().map(|event| format!("{event}\n")).collect(),
+        ..SessionRecord::default()
+    };
+    let first = events(&[
+        json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-13T10:00:02Z",
+            "message": {"content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cargo test"}},
+            ]},
+        }),
+    ]);
+    let second = events(&[
+        json!({"type": "linewright-turn", "started_at": "2026-10-13T11:00:00Z", "started_by": "brief"}),
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-13T11:00:05Z",
+            "message": {"content": [{"type": "text", "text": "Starting over."}]},
+        }),
+    ]);
+    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
+
+    let one = text(&follower.update(std::slice::from_ref(&first)));
+    let two = text(&follower.update(&[first, second.clone()]));
+    let mut nothing = Follower::new("105/update-1".parse().unwrap(), Verbosity::Compact, None);
+
+    assert_eq!(
+        one,
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:02  Bash(cargo test) → running\n"
+    );
+    assert_eq!(
+        two,
+        "session 2: started 2026-10-13 11:00:00 UTC\n \
+         0:05  Starting over.\n"
+    );
+    assert_eq!(text(&nothing.update(&[])), "");
+    assert_eq!(
+        text(&nothing.end(&[])),
+        "run: 105/update-1 (it started no session)\n"
+    );
+}
+
+#[test]
+fn following_shows_a_tool_call_again_once_it_ends_in_the_background() {
+    let record = SessionRecord {
+        output: [
+            json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-13T10:00:02Z",
+                "message": {"content": [
+                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cargo test"}},
+                ]},
+            }),
+            json!({
+                "type": "user",
+                "timestamp": "2026-10-13T10:00:04Z",
+                "message": {"content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "Moved to the background."},
+                ]},
+                "tool_use_result": {"backgroundTaskId": "b1"},
+            }),
+            json!({"type": "system", "subtype": "task_notification", "tool_use_id": "t1", "status": "completed"}),
+        ]
+        .iter()
+        .map(|event| format!("{event}\n"))
+        .collect(),
+        ..SessionRecord::default()
+    };
+    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
+
+    let shown = text(&follower.end(&[record]));
+
+    assert_eq!(
+        shown,
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:02  Bash(cargo test) → running\n \
+         0:04  Bash(cargo test) → moved to the background\n \
+         0:04  Bash(cargo test) → completed in the background\n"
     );
 }

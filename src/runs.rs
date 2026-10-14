@@ -193,6 +193,16 @@ impl Runs {
         Ok(running)
     }
 
+    /// The run `id`, if it is recorded. A record that does not read is
+    /// logged and taken as missing.
+    pub fn read_run(&self, id: &RunId) -> Option<Recorded> {
+        let path = self
+            .dir_of(&id.of)
+            .join(format!("{}{}.json", file_prefix(&id.of), id.n));
+        let record = records::load::<Record>(&path, "a run's record")?;
+        Some(Recorded::of(record, &path, &self.work_dir))
+    }
+
     /// Every run recorded. A record that does not read is logged and
     /// skipped.
     pub fn read(&self) -> Result<Vec<Recorded>> {
@@ -757,11 +767,6 @@ pub enum ListError {
 pub fn answer(work_dir: &RepoWorkDir, query: &Query, now: Timestamp) -> Result<Listing, ListError> {
     let recorded = Runs::new(&work_dir.resolve()).read()?;
     Ok(list(recorded, query, now)?)
-}
-
-/// `query` as the query string of a request for it.
-pub fn query_string(query: &Query) -> String {
-    serde_urlencoded::to_string(query).expect("a query serializes")
 }
 
 /// A repository's work directory, as a monitoring command finds it from

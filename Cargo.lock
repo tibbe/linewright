@@ -921,6 +921,7 @@ dependencies = [
  "croner",
  "dirs",
  "form_urlencoded",
+ "futures-util",
  "globset",
  "hex",
  "hmac",

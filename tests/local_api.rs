@@ -825,3 +825,413 @@ async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_
     assert_eq!(ended["runs"], serde_json::json!([]));
     answering.stop().await;
 }
+
+/// `lw --repo owner/widgets` run with `args` in the background, as
+/// the operator would on this host, what it prints to standard output and
+/// error gathered as it prints it.
+struct Watching {
+    child: tokio::process::Child,
+    stdout: std::sync::Arc<std::sync::Mutex<String>>,
+    stderr: std::sync::Arc<std::sync::Mutex<String>>,
+}
+
+impl Watching {
+    fn start(runtime_dir: &Path, args: &[&str]) -> Watching {
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
+            .args(["--repo", REPO])
+            .args(args)
+            .env("XDG_RUNTIME_DIR", runtime_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdout = gathered(child.stdout.take().unwrap());
+        let stderr = gathered(child.stderr.take().unwrap());
+        Watching {
+            child,
+            stdout,
+            stderr,
+        }
+    }
+
+    fn shown(&self) -> String {
+        self.stdout.lock().unwrap().clone()
+    }
+
+    /// Waits until it has shown `text`.
+    async fn shows(&self, text: &str) {
+        let shown = || self.shown().contains(text);
+        let waited = tokio::time::timeout(Duration::from_secs(10), async {
+            while !shown() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(waited.is_ok(), "{text:?} not in\n{}", self.shown());
+    }
+
+    /// Waits for it to exit, and gives its exit status and what it printed
+    /// to standard output and error.
+    async fn exits(mut self) -> (Option<i32>, String, String) {
+        let status = tokio::time::timeout(Duration::from_secs(10), self.child.wait())
+            .await
+            .expect("it exits")
+            .unwrap();
+        // What it printed last.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let stderr = self.stderr.lock().unwrap().clone();
+        (status.code(), self.shown(), stderr)
+    }
+}
+
+/// What `from` gives, gathered as it gives it.
+fn gathered(
+    mut from: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+) -> std::sync::Arc<std::sync::Mutex<String>> {
+    use tokio::io::AsyncReadExt;
+    let gathered = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    tokio::spawn({
+        let gathered = gathered.clone();
+        async move {
+            let mut buffer = [0; 4096];
+            while let Ok(n @ 1..) = from.read(&mut buffer).await {
+                let read = String::from_utf8_lossy(&buffer[..n]).into_owned();
+                gathered.lock().unwrap().push_str(&read);
+            }
+        }
+    });
+    gathered
+}
+
+/// The recorded session's first turn, line by line.
+fn turn_1() -> Vec<String> {
+    include_str!("fixtures/transcript/turn-1.jsonl")
+        .lines()
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+#[tokio::test]
+async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_produces_it() {
+    let world = with_issue_for_triage().await;
+    let agent = world.runtime.hold();
+    let answering = Answering::start(world, false).await;
+    let turn = turn_1();
+    // The marker, the start event and the first Bash call, with its result.
+    agent.writes(&turn[..4].concat());
+    eventually_async(|| async {
+        answering
+            .lw(&["logs", "1"])
+            .await
+            .stdout
+            .contains("Bash(ls;")
+    })
+    .await;
+
+    let follow = Watching::start(answering.runtime_dir.path(), &["logs", "1", "--follow"]);
+    follow.shows("→ exit 0, 19 lines\n").await;
+    let so_far = follow.shown();
+    // The second Bash call, its result still to come.
+    agent.writes(&turn[4..6].concat());
+    follow.shows("2>&1) → running\n").await;
+    let before_its_result = follow.shown();
+    agent.writes(&turn[6]);
+    follow.shows("2>&1) → exit 2\n").await;
+    agent.writes(&turn[7..].concat());
+    follow.shows(" 2:59  {\"outcome\"").await;
+    drop(agent);
+    let (code, shown, _) = follow.exits().await;
+
+    // So far as `logs` shows it.
+    assert_eq!(
+        so_far,
+        "run: 1/triage-1\n\
+         session 1: started 2026-10-13 10:09:08 UTC\n \
+         0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines\n"
+    );
+    assert_eq!(
+        before_its_result,
+        format!(
+            "{so_far} 0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → running\n"
+        )
+    );
+    assert_eq!(code, Some(0));
+    assert_eq!(shown.lines().count(), 18, "{shown}");
+    assert!(
+        shown.contains("\n 2:16  Agent(Standards review) → done, 2 tool uses, 16s\n"),
+        "{shown}"
+    );
+    answering.stop().await;
+}
+
+/// Asks the `serve` in `runtime_dir` for `resource` as server-sent events,
+/// after the event `last_id` if one is given, and reads the first `wanted`
+/// events, or all of them when `None`, until the stream ends.
+async fn events(
+    runtime_dir: &Path,
+    resource: &str,
+    last_id: Option<&str>,
+    wanted: Option<usize>,
+) -> Vec<api::ServerEvent> {
+    let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let reading = tokio::spawn({
+        let dir = socket_dir(runtime_dir);
+        let resource = resource.to_string();
+        let last_id = last_id.map(str::to_string);
+        async move {
+            api::get_events(&dir, REPO, &resource, last_id.as_deref(), |event| {
+                let _ = sent.send(event);
+            })
+            .await
+            .unwrap();
+        }
+    });
+    let mut read = vec![];
+    let collecting = async {
+        while wanted.is_none_or(|wanted| read.len() < wanted)
+            && let Some(event) = received.recv().await
+        {
+            read.push(event);
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), collecting)
+        .await
+        .expect("the events");
+    reading.abort();
+    read
+}
+
+/// An event of a transcript's stream.
+fn event(id: Option<&str>, event: &str, data: &str) -> api::ServerEvent {
+    api::ServerEvent {
+        id: id.map(str::to_string),
+        event: event.to_string(),
+        data: data.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_id() {
+    let world = with_issue_for_triage().await;
+    let agent = world.runtime.hold();
+    let answering = Answering::start(world, false).await;
+    let runtime_dir = answering.runtime_dir.path();
+    let turn = turn_1();
+    agent.writes(&turn[..4].concat());
+    eventually_async(|| async {
+        answering
+            .lw(&["logs", "1"])
+            .await
+            .stdout
+            .contains("Bash(ls;")
+    })
+    .await;
+
+    let first = events(runtime_dir, "/logs/follow?item=1", None, Some(2)).await;
+    agent.writes(&turn[4..].concat());
+    drop(agent);
+    let resumed = events(
+        runtime_dir,
+        "/logs/follow?item=1",
+        first[1].id.as_deref(),
+        None,
+    )
+    .await;
+    let whole = events(runtime_dir, "/logs/follow?item=1", None, None).await;
+
+    assert_eq!(
+        first,
+        [
+            event(
+                Some("1/triage-1:1.0.1"),
+                "line",
+                r#"{"type":"run","run":"1/triage-1","sessions":1}"#
+            ),
+            event(
+                Some("1/triage-1:1.1.1"),
+                "line",
+                r#"{"type":"session","session":1,"started_at":"2026-10-13T10:09:08Z"}"#
+            ),
+        ]
+    );
+    assert_eq!(resumed[0].id.as_deref(), Some("1/triage-1:1.3.1"));
+    assert_eq!([&first[..], &resumed[..]].concat(), whole);
+    let (end, lines) = whole.split_last().unwrap();
+    assert_eq!(lines.len(), 19);
+    assert_eq!(*end, event(None, "end", r#"{"run":"1/triage-1"}"#));
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn logs_follow_json_verbose_carries_on_from_the_records_once_serve_stops() {
+    let world = with_issue_for_triage().await;
+    let agent = world.runtime.hold();
+    let answering = Answering::start(world, false).await;
+    let turn = turn_1();
+    agent.writes(&turn[..6].concat());
+    eventually_async(|| async {
+        answering
+            .lw(&["logs", "1"])
+            .await
+            .stdout
+            .contains("Bash(ls;")
+    })
+    .await;
+
+    let work_dir = answering._dir.path().join("work");
+    let follow = Watching::start(
+        answering.runtime_dir.path(),
+        &[
+            "--work-dir",
+            work_dir.to_str().unwrap(),
+            "logs",
+            "1",
+            "--follow",
+            "--json",
+            "--verbose",
+        ],
+    );
+    follow.shows(r#""type":"thinking""#).await;
+    let Answering {
+        serving, api, _dir, ..
+    } = answering;
+    api.stop().await;
+    agent.writes(&turn[6]);
+    follow.shows(r#""account":"exit 2""#).await;
+    drop(agent);
+    serving.stop().await;
+    let (code, shown, _) = follow.exits().await;
+
+    assert_eq!(code, Some(0));
+    let lines: Vec<serde_json::Value> = shown
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let types: Vec<&str> = lines
+        .iter()
+        .map(|line| line["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "run", "session", "brief", "event", "tool", "thinking", "tool", "tool"
+        ],
+        "{shown}"
+    );
+    assert_eq!(
+        lines[4]["result"].as_str().map(|r| r.lines().count()),
+        Some(19)
+    );
+}
+
+/// The files under `dir` whose paths end in `name`.
+fn files_named(dir: &Path, name: &str) -> Vec<std::path::PathBuf> {
+    let mut found = vec![];
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(files_named(&path, name));
+        } else if path.ends_with(name) {
+            found.push(path);
+        }
+    }
+    found
+}
+
+#[tokio::test]
+async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
+    let world = with_issue_for_triage().await;
+    let agent = world.runtime.hold();
+    let answering = Answering::start(world, false).await;
+    let turn = turn_1();
+    agent.writes(&turn[..4].concat());
+    eventually_async(|| async {
+        answering
+            .lw(&["logs", "1"])
+            .await
+            .stdout
+            .contains("Bash(ls;")
+    })
+    .await;
+    let follow = Watching::start(answering.runtime_dir.path(), &["logs", "1", "--follow"]);
+    follow.shows("→ exit 0, 19 lines\n").await;
+
+    let [record] = &files_named(answering._dir.path(), "items/1/triage-1.json")[..] else {
+        panic!("one record of 1/triage-1");
+    };
+    std::fs::write(record, "not a record").unwrap();
+    let (code, _, stderr) = follow.exits().await;
+
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("reading the record of 1/triage-1"),
+        "{stderr}"
+    );
+    drop(agent);
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn logs_of_a_session_yet_to_write_anything_counts_it_as_started() {
+    let world = with_issue_for_triage().await;
+    let agent = world.runtime.hold();
+    let answering = Answering::start(world, false).await;
+    // Its session started, its output still to come.
+    let has_a_session = || {
+        files_named(answering._dir.path(), "items/1/triage-1.json")
+            .iter()
+            .any(|record| {
+                let record = std::fs::read_to_string(record).unwrap_or_default();
+                serde_json::from_str::<serde_json::Value>(&record).is_ok_and(|record| {
+                    record["sessions"].as_array().is_some_and(|s| !s.is_empty())
+                })
+            })
+    };
+    eventually(has_a_session).await;
+
+    let text = answering.lw(&["logs", "1"]).await;
+    let json = answering.lw(&["logs", "1", "--json"]).await;
+
+    assert_eq!(text.stdout, "run: 1/triage-1\n");
+    assert_eq!(
+        json.stdout,
+        "{\"type\":\"run\",\"run\":\"1/triage-1\",\"sessions\":1}\n"
+    );
+    drop(agent);
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn logs_follow_of_a_session_yet_to_write_anything_shows_its_header_once() {
+    let world = with_issue_for_triage().await;
+    let agent = world.runtime.hold();
+    let answering = Answering::start(world, false).await;
+    // Its session started, its output still to come.
+    let has_a_session = || {
+        files_named(answering._dir.path(), "items/1/triage-1.json")
+            .iter()
+            .any(|record| {
+                let record = std::fs::read_to_string(record).unwrap_or_default();
+                serde_json::from_str::<serde_json::Value>(&record).is_ok_and(|record| {
+                    record["sessions"].as_array().is_some_and(|s| !s.is_empty())
+                })
+            })
+    };
+    eventually(has_a_session).await;
+
+    let follow = Watching::start(answering.runtime_dir.path(), &["logs", "1", "--follow"]);
+    follow.shows("run: 1/triage-1\n").await;
+    agent.writes(&turn_1()[..4].concat());
+    follow.shows("→ exit 0, 19 lines\n").await;
+
+    assert_eq!(
+        follow.shown(),
+        "run: 1/triage-1\n\
+         session 1: started 2026-10-13 10:09:08 UTC\n \
+         0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → running\n \
+         0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines\n"
+    );
+    drop(agent);
+    answering.stop().await;
+}

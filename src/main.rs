@@ -1,23 +1,23 @@
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write as _};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use linewright::api::{self, Api, RequestError, Served, Sources, Unanswered};
+use linewright::api::{self, Api, EventId, RequestError, Resume, Served, Sources, Unanswered};
 use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, Since, WorkflowCommand};
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig};
-use linewright::logs::{self, Which};
+use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::runs::{self, Query, RepoWorkDir};
 use linewright::runtime::claude::ClaudeCode;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
-use linewright::transcript::{self, Verbosity};
+use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::webhook::{Listener, Pending};
 use linewright::{COMMAND, COMMIT, VERSION};
 use linewright::{explain, status};
@@ -92,25 +92,11 @@ async fn ask<T: serde::de::DeserializeOwned>(
 ) -> ExitCode {
     let repo = match config.required_repo() {
         Ok(repo) => repo,
-        Err(e) => {
-            complain(format_args!("{e:#}"));
-            return ExitCode::FAILURE;
-        }
+        Err(e) => return print_answer(Err(failed(e))),
     };
     let body = match api::get_answer(&socket_dir(), repo, resource).await {
         Ok(body) => body,
-        Err(e @ RequestError::NotServing { .. }) => {
-            complain(e);
-            return ExitCode::from(NOT_SERVING);
-        }
-        Err(e @ RequestError::NotFound(_)) => {
-            complain(e);
-            return ExitCode::from(NO_SUCH_ITEM);
-        }
-        Err(RequestError::Other(e)) => {
-            complain(format_args!("{e:#}"));
-            return ExitCode::FAILURE;
-        }
+        Err(e) => return print_answer(Err(refused(e))),
     };
     let text = if json {
         String::from_utf8_lossy(&body).into_owned()
@@ -118,10 +104,8 @@ async fn ask<T: serde::de::DeserializeOwned>(
         match serde_json::from_slice::<T>(&body) {
             Ok(answer) => render(&answer, colour()),
             Err(e) => {
-                complain(format_args!(
-                    "`serve`'s answer does not read as {what}: {e}"
-                ));
-                return ExitCode::FAILURE;
+                let error = anyhow!("`serve`'s answer does not read as {what}: {e}");
+                return print_answer(Err(failed(error)));
             }
         }
     };
@@ -136,7 +120,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
 /// configured repository or, with none running, from the records it keeps,
 /// printed as text or, with `json`, as JSON.
 async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
-    let resource = format!("/runs?{}", runs::query_string(query));
+    let resource = format!("/runs?{}", api::query_string(query));
     let answer = ask_or_read(config, &resource, "runs", |work_dir| {
         runs::answer(work_dir, query, SystemClock.now())
     })
@@ -144,23 +128,164 @@ async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
     print_answer(answer.map(|answer| answer.text(json)))
 }
 
+/// How `logs` prints a transcript.
+#[derive(Clone, Copy)]
+struct Printing {
+    verbosity: Verbosity,
+    format: Format,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Format {
+    /// Text, coloured on a terminal.
+    Text,
+    /// A JSON object per line.
+    Json,
+}
+
+impl Printing {
+    fn transcript(self, transcript: &transcript::Transcript) -> String {
+        match self.format {
+            Format::Text => transcript::render(transcript, self.verbosity, colour()),
+            Format::Json => transcript::json_lines(transcript, self.verbosity),
+        }
+    }
+
+    /// Prints `line` of a followed transcript at once.
+    fn line(self, line: &transcript::Line) {
+        match self.format {
+            Format::Text => print!("{}", transcript::render_line(line, colour())),
+            Format::Json => print!("{}", transcript::json_line(line)),
+        }
+        let _ = std::io::stdout().flush();
+    }
+}
+
 /// `lw logs`: the transcript of the run `which` names, from the
 /// `serve` of the configured repository or, with none running, from the
-/// records it keeps, printed as text or, with `json`, as JSON lines.
-async fn show_logs(config: &Config, which: &Which, verbosity: Verbosity, json: bool) -> ExitCode {
-    let resource = format!("/logs?{}", which.query_string());
+/// records it keeps, printed as `printing` says. With `follow`, a run in
+/// flight's is followed until the run ends.
+async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: bool) -> ExitCode {
+    let resource = format!("/logs?{}", api::query_string(which));
     let answer = ask_or_read(config, &resource, "a transcript", |work_dir| {
         logs::answer(work_dir, which)
     })
     .await;
-    print_answer(answer.map(|answer| {
-        let transcript = answer.value();
-        if json {
-            transcript::json_lines(transcript, verbosity)
-        } else {
-            transcript::render(transcript, verbosity, colour())
+    if follow
+        && let Ok(answer) = &answer
+        && let transcript = answer.value()
+        && let Some(in_flight) = transcript.in_flight
+    {
+        let query = FollowQuery {
+            which: Which::Run {
+                id: transcript.run.clone(),
+                item: which.item(),
+            },
+            verbosity: printing.verbosity,
+        };
+        // So far as `logs` shows it, unless no session has written yet.
+        let after = match in_flight {
+            InFlight::Unread => None,
+            InFlight::ReadTo(read) => {
+                print!("{}", printing.transcript(transcript));
+                Some(Resume {
+                    run: transcript.run.clone(),
+                    after: After::Read(read),
+                })
+            }
+        };
+        return follow_logs(config, query, after, printing).await;
+    }
+    print_answer(answer.map(|answer| printing.transcript(answer.value())))
+}
+
+/// How long `logs --follow` waits before asking `serve` again when its
+/// stream breaks off.
+const RESUME_AFTER: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// `lw logs --follow` of the run in flight `query` names: each line of its
+/// transcript after `after`, or from the first, as it is written,
+/// until the run ends, from the `serve` of the configured repository,
+/// resumed after the last line read when its stream breaks off, or, with
+/// none running, from the records it keeps.
+async fn follow_logs(
+    config: &Config,
+    query: FollowQuery,
+    mut after: Option<Resume>,
+    printing: Printing,
+) -> ExitCode {
+    let work_dir = match config.repo_work_dir() {
+        Ok(work_dir) => work_dir,
+        Err(e) => return print_answer(Err(failed(e))),
+    };
+    let resource = format!("/logs/follow?{}", api::query_string(&query));
+    loop {
+        let mut ended = false;
+        let mut unread = None;
+        let last_id = after.as_ref().map(Resume::to_string);
+        let followed = api::get_events(
+            &socket_dir(),
+            &work_dir.repo,
+            &resource,
+            last_id.as_deref(),
+            |event| match event.event.as_str() {
+                api::LINE_EVENT => {
+                    let line = serde_json::from_str::<transcript::Line>(&event.data);
+                    let id = event.id.as_deref().map(str::parse::<EventId>);
+                    match (line, id) {
+                        (Ok(line), Some(Ok(id))) => {
+                            printing.line(&line);
+                            after = Some(id.into());
+                        }
+                        _ => unread = Some(event),
+                    }
+                }
+                api::END_EVENT => ended = true,
+                _ => {}
+            },
+        )
+        .await;
+        if let Some(event) = unread {
+            let error = anyhow!("`serve`'s event does not read as a transcript line: {event:?}");
+            return print_answer(Err(failed(error)));
         }
-    }))
+        match followed {
+            Ok(()) if ended => return ExitCode::SUCCESS,
+            // Broken off: asked again, after the last line read.
+            Ok(()) => tokio::time::sleep(RESUME_AFTER).await,
+            Err(RequestError::NotServing { .. }) => {
+                let after = after.map(|resume| resume.after);
+                return follow_records(&work_dir, &query, after, printing).await;
+            }
+            Err(e) => return print_answer(Err(refused(e))),
+        }
+    }
+}
+
+/// Follows the transcript of the run `query` names in the records in
+/// `work_dir`, printing each line after `after`, or from the first, as it
+/// is written, until the run ends.
+async fn follow_records(
+    work_dir: &RepoWorkDir,
+    query: &FollowQuery,
+    after: Option<After>,
+    printing: Printing,
+) -> ExitCode {
+    let mut following = match Following::start(work_dir, &query.which, query.verbosity, after) {
+        Ok(following) => following,
+        Err(e) => return print_answer(Err(unanswered(e.into()))),
+    };
+    loop {
+        match following.next().await {
+            Ok(Some(lines)) => {
+                for followed in &lines {
+                    printing.line(&followed.line);
+                }
+            }
+            Ok(None) => return ExitCode::SUCCESS,
+            Err(e) => return print_answer(Err(failed(e))),
+        }
+    }
 }
 
 /// Prints `answer`, or its error to standard error, without the log's
@@ -187,7 +312,6 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
     what: &str,
     read: impl FnOnce(&RepoWorkDir) -> Result<T, E>,
 ) -> Result<Answer<T>, (u8, String)> {
-    let failed = |e: anyhow::Error| (1, format!("{e:#}"));
     let work_dir = config.repo_work_dir().map_err(failed)?;
     match api::get_answer(&socket_dir(), &work_dir.repo, resource).await {
         Ok(body) => {
@@ -197,11 +321,31 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
         }
         Err(RequestError::NotServing { .. }) => match read(&work_dir).map_err(Into::into) {
             Ok(value) => Ok(Answer::Read(value)),
-            Err(Unanswered::NoSuch { error, .. }) => Err((NO_SUCH_ITEM, error)),
-            Err(Unanswered::Failed(e)) => Err(failed(e)),
+            Err(e) => Err(unanswered(e)),
         },
-        Err(e @ RequestError::NotFound(_)) => Err((NO_SUCH_ITEM, e.to_string())),
-        Err(RequestError::Other(e)) => Err(failed(e)),
+        Err(e) => Err(refused(e)),
+    }
+}
+
+/// The exit status and message of `e`.
+fn failed(e: anyhow::Error) -> (u8, String) {
+    (1, format!("{e:#}"))
+}
+
+/// The exit status and message of an answer the records do not give.
+fn unanswered(e: Unanswered) -> (u8, String) {
+    match e {
+        Unanswered::NoSuch { error, .. } => (NO_SUCH_ITEM, error),
+        Unanswered::Failed(e) => failed(e),
+    }
+}
+
+/// The exit status and message of an answer `serve` does not give.
+fn refused(e: RequestError) -> (u8, String) {
+    match e {
+        RequestError::NotServing { .. } => (NOT_SERVING, e.to_string()),
+        RequestError::NotFound(_) => (NO_SUCH_ITEM, e.to_string()),
+        RequestError::Other(e) => failed(e),
     }
 }
 
@@ -284,13 +428,13 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             which,
             verbose,
             json,
+            follow,
         } => {
-            let verbosity = if verbose {
-                Verbosity::Full
-            } else {
-                Verbosity::Compact
+            let printing = Printing {
+                verbosity: Verbosity::of(verbose),
+                format: if json { Format::Json } else { Format::Text },
             };
-            return Ok(show_logs(&config, &which, verbosity, json).await);
+            return Ok(show_logs(&config, &which, printing, follow).await);
         }
         Command::Serve => {
             // First, so a log names the build it came from.

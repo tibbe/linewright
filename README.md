@@ -54,9 +54,13 @@ lw --repo owner/name serve
   after the first marked with the follow-up that started it. `--verbose`
   shows everything the transcript holds, also the agent's thinking, each
   tool's full input and result, and the brief and follow-ups. `--json`
-  prints one JSON object per entry and line. Like `runs`, it asks the
-  running `serve` or reads the records without one, and exits 4 when #N has
-  no runs or the run ID names none.
+  prints one JSON object per entry and line. `--follow` shows a run in
+  flight's transcript so far, then each entry as it happens, a tool call as
+  running once it is made and again once it returns, and exits when the run
+  ends. Like `runs`, it asks the running `serve` or reads the records
+  without one, and exits 4 when #N has no runs or the run ID names none.
+  `serve` streams a followed transcript at `/logs/follow` as server-sent
+  events, which a reader resumes by `Last-Event-ID`.
 - Agent sessions ignore your user-level Claude Code setup: its settings,
   skills, plugins, MCP servers, `CLAUDE.md` and claude.ai connectors, and the
   `CLAUDE.md` files in directories above their clones. They read the

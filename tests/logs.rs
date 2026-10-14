@@ -302,3 +302,21 @@ async fn an_unknown_item_or_run_exits_4_saying_so() {
     }
     assert_eq!(neither.code, Some(2), "{}", neither.stderr);
 }
+
+#[tokio::test]
+async fn following_a_run_that_has_ended_shows_its_transcript_and_exits() {
+    let (_world, work_dir) = implemented_as_recorded().await;
+
+    for way in [
+        &[][..],
+        &["--verbose"],
+        &["--json"],
+        &["--verbose", "--json"],
+    ] {
+        let shown = lw(work_dir.path(), &[&["logs", "1"], way].concat()).await;
+        let followed = lw(work_dir.path(), &[&["logs", "1", "--follow"], way].concat()).await;
+
+        assert_eq!(followed.code, Some(0), "{}", followed.stderr);
+        assert_eq!(followed.stdout, shown.stdout, "{way:?}");
+    }
+}

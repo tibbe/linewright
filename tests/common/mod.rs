@@ -119,17 +119,23 @@ pub struct ScriptedRuntime {
     /// How long the next turn runs, in the runtime's time.
     turn_time: Mutex<std::time::Duration>,
     /// What the next turn says while held open, until it is let end.
-    held: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<()>>>,
+    held: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Option<String>>>>,
 }
 
 /// The agent of a turn held open: it says something each time it is told
 /// to, and ends its turn when dropped.
-pub struct HeldTurn(tokio::sync::mpsc::UnboundedSender<()>);
+pub struct HeldTurn(tokio::sync::mpsc::UnboundedSender<Option<String>>);
 
 impl HeldTurn {
     /// Has the agent produce a piece of output.
     pub fn says(&self) {
-        self.0.send(()).unwrap();
+        self.0.send(None).unwrap();
+    }
+
+    /// Has the runtime stream `output` to the session's record, as the
+    /// agent produces it.
+    pub fn writes(&self, output: &str) {
+        self.0.send(Some(output.to_string())).unwrap();
     }
 }
 
@@ -164,7 +170,7 @@ impl ScriptedRuntime {
     }
 
     /// Holds the next turn open, its agent producing output as the turn
-    /// returned tells it to, until that is dropped.
+    /// returned tells it to, over time, until that is dropped.
     pub fn hold(&self) -> HeldTurn {
         let (says, said) = tokio::sync::mpsc::unbounded_channel();
         *self.held.lock().unwrap() = Some(said);
@@ -203,8 +209,17 @@ impl ScriptedRuntime {
         }
         let held = self.held.lock().unwrap().take();
         if let Some(mut said) = held {
-            while said.recv().await.is_some() {
+            while let Some(output) = said.recv().await {
                 spec.output.heard();
+                if let Some(output) = output {
+                    let path = spec.record.join(linewright::transcript::OUTPUT);
+                    let mut file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .unwrap();
+                    std::io::Write::write_all(&mut file, output.as_bytes()).unwrap();
+                }
             }
         }
         let key = ScriptKey::of(spec);

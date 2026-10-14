@@ -1,12 +1,16 @@
 //! `lw logs`: which run's transcript to show, and the transcript as
 //! the sessions' records keep it (`docs/specs/monitoring.md`, "logs").
 
+use std::time::Duration;
+
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::Number;
 use crate::runs::{Recorded, RepoWorkDir, RunId, RunOf, Runs, State};
-use crate::transcript::{self, SessionRecord, Transcript};
+use crate::transcript::{
+    self, After, FollowedLine, Follower, InFlight, ReadTo, SessionRecord, Transcript, Verbosity,
+};
 
 /// Which run's transcript to show.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,9 +66,12 @@ impl Which {
         }
     }
 
-    /// `self` as the query string of a request for it.
-    pub fn query_string(&self) -> String {
-        serde_urlencoded::to_string(self).expect("a query serializes")
+    /// The item it names, if any.
+    pub fn item(&self) -> Option<Number> {
+        match self {
+            Which::Item(item) => Some(*item),
+            Which::Run { item, .. } => *item,
+        }
     }
 }
 
@@ -128,17 +135,153 @@ pub enum LogsError {
 pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsError> {
     let recorded = Runs::new(&work_dir.resolve()).read()?;
     let run = pick(recorded, which)?;
-    let sessions = run
+    let mut records = run
         .sessions
         .iter()
         .map(|dir| {
             SessionRecord::read(dir)
-                .map(|record| transcript::parse(&record))
                 .with_context(|| format!("reading the session in {}", dir.display()))
         })
-        .collect::<anyhow::Result<_>>()?;
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    // Of a run in flight, its last session's whole lines, so that following
+    // it carries on from the line after them.
+    let in_flight = (run.state == State::InFlight).then(|| {
+        if let Some(last) = records.last_mut() {
+            last.output
+                .truncate(transcript::whole_lines(&last.output).len());
+        }
+        let written = records.iter().rposition(|record| !record.output.is_empty());
+        written.map_or(InFlight::Unread, |i| {
+            InFlight::ReadTo(ReadTo {
+                session: i + 1,
+                line: records[i].output.lines().count(),
+            })
+        })
+    });
     Ok(Transcript {
         run: run.id,
-        sessions,
+        in_flight,
+        sessions: records.iter().map(transcript::parse).collect(),
     })
+}
+
+/// What to follow: the run `which` names, its transcript shown as
+/// `verbosity` says.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "FollowQueryString", into = "FollowQueryString")]
+pub struct FollowQuery {
+    pub which: Which,
+    pub verbosity: Verbosity,
+}
+
+/// [`FollowQuery`] as the query string of a request for it.
+#[derive(Serialize, Deserialize)]
+struct FollowQueryString {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    item: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    run: Option<RunId>,
+    #[serde(default)]
+    verbose: bool,
+}
+
+impl From<FollowQuery> for FollowQueryString {
+    fn from(query: FollowQuery) -> FollowQueryString {
+        let QueryString { item, run } = query.which.into();
+        FollowQueryString {
+            item,
+            run,
+            verbose: query.verbosity == Verbosity::Full,
+        }
+    }
+}
+
+impl TryFrom<FollowQueryString> for FollowQuery {
+    type Error = &'static str;
+
+    fn try_from(query: FollowQueryString) -> Result<FollowQuery, &'static str> {
+        Ok(FollowQuery {
+            which: Which::new(query.item, query.run)?,
+            verbosity: Verbosity::of(query.verbose),
+        })
+    }
+}
+
+/// How long a followed run's records rest between readings.
+const FOLLOW_EVERY: Duration = Duration::from_millis(100);
+
+/// The transcript of a run followed in its records as its sessions write
+/// them (`docs/specs/monitoring.md`, "logs").
+pub struct Following {
+    runs: Runs,
+    run: RunId,
+    follower: Follower,
+    sessions: Vec<SessionRecord>,
+    ended: bool,
+}
+
+impl Following {
+    /// Follows the run `which` names in the records in `work_dir`, its
+    /// transcript shown as `verbosity` says, giving the lines after `after`
+    /// if one is given.
+    pub fn start(
+        work_dir: &RepoWorkDir,
+        which: &Which,
+        verbosity: Verbosity,
+        after: Option<After>,
+    ) -> Result<Following, LogsError> {
+        let runs = Runs::new(&work_dir.resolve());
+        let run = pick(runs.read()?, which)?.id;
+        Ok(Following {
+            runs,
+            follower: Follower::new(run.clone(), verbosity, after),
+            run,
+            sessions: vec![],
+            ended: false,
+        })
+    }
+
+    /// The run followed.
+    pub fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    /// The next lines to show, each with where it was made, once there are
+    /// some or the run has ended; `None` once it has and every line has
+    /// been given.
+    pub async fn next(&mut self) -> anyhow::Result<Option<Vec<FollowedLine>>> {
+        if self.ended {
+            return Ok(None);
+        }
+        loop {
+            let lines = self.read()?;
+            if !lines.is_empty() || self.ended {
+                return Ok(Some(lines));
+            }
+            tokio::time::sleep(FOLLOW_EVERY).await;
+        }
+    }
+
+    fn read(&mut self) -> anyhow::Result<Vec<FollowedLine>> {
+        // Its state before its sessions' output, so that the output of a
+        // run that has ended is read whole.
+        let recorded = self
+            .runs
+            .read_run(&self.run)
+            .with_context(|| format!("reading the record of {}", self.run))?;
+        self.ended = recorded.state != State::InFlight;
+        for (i, dir) in recorded.sessions.iter().enumerate() {
+            if i == self.sessions.len() {
+                self.sessions.push(SessionRecord::default());
+            }
+            self.sessions[i]
+                .read_more(dir)
+                .with_context(|| format!("reading the session in {}", dir.display()))?;
+        }
+        Ok(if self.ended {
+            self.follower.end(&self.sessions)
+        } else {
+            self.follower.update(&self.sessions)
+        })
+    }
 }
