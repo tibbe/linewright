@@ -77,6 +77,26 @@ test that hangs.
   that started at or after a time (`2026-10-14T12:00:00Z`), a date, taken as
   midnight UTC (`2026-10-14`), or a duration ago, written as the duration
   settings are (`2h`).
+- A run's outcome, with its name in JSON, is one of:
+  - **done** (`done`): it did its work, or found none left to do. A triage
+    run is done whatever it decides, including `ready-for-human` or
+    `needs-info`.
+  - **handed back** (`handed-back`): it could not finish its work and handed
+    the item to the maintainer: labeled `ready-for-human`, with a comment
+    saying why.
+  - **cancelled** (`cancelled`): its item stopped asking for the work, or
+    `serve` was stopped.
+  - **ended for the usage limit** (`usage-limit`): the agent runtime refused
+    its session for the usage limit under `once` or `workflow run`, which do
+    not wait it out.
+  - **failed** (`failed`): it could not finish its work, and nothing on GitHub
+    says so.
+  - **in flight** (`in-flight`): it has not ended, including while it waits
+    out the usage limit.
+  - **interrupted** (`interrupted`): the process running it stopped before it
+    ended, such as by a crash or a kill.
+- A run's duration is how long it ran, or for a run in flight how long it has
+  run so far. An interrupted run has none: in JSON, `duration_seconds` is null.
 - A run ID is `<item>/<stage>-<n>`, the `n`th run of that stage on that item,
   such as `42/rework-2`, or `<workflow>/<n>` for a workflow's runs. The stages
   in IDs are `triage`, `tickets`, `implement`, `rework`, `fix-ci` and `update`.
