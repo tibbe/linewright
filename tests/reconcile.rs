@@ -2087,3 +2087,356 @@ fn the_usage_limit_is_lifted_once_its_reset_passes() {
     assert!(!memory.holds_starts(t(79)));
     assert_eq!(memory.lift_usage_limit(t(81)), None);
 }
+
+/// What Linewright waits for on each item, as the reconcile step derives it
+/// beside its actions (`docs/specs/monitoring.md`, "explain").
+fn waits(
+    world: &Snapshot,
+    live: &[LiveRun],
+    memory: &Memory,
+    minute: i64,
+    policy: &Policy,
+) -> std::collections::BTreeMap<Number, Vec<Wait>> {
+    decisions(
+        world,
+        live,
+        memory,
+        &Workflows::default(),
+        t(minute),
+        policy,
+    )
+    .waits
+}
+
+fn waits_on(world: &Snapshot, number: u64) -> Vec<Wait> {
+    waits(world, &[], &Memory::default(), 10, &policy())
+        .remove(&Number(number))
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_blocked_ticket_waits_for_each_open_blocker() {
+    let world = snapshot(vec![blocked_by(
+        blocked_by(blocked_by(ticket(4), 1, true), 2, false),
+        3,
+        true,
+    )]);
+
+    assert_eq!(
+        waits_on(&world, 4),
+        [
+            Wait::Blocker { issue: Number(1) },
+            Wait::Blocker { issue: Number(3) },
+        ]
+    );
+}
+
+#[test]
+fn work_beyond_the_ceiling_waits_for_a_free_run_with_the_runs_in_flight_counted() {
+    let world = snapshot(vec![
+        claimed(ticket(1)),
+        claimed(ticket(2)),
+        claimed(ticket(3)),
+        claimed(ticket(9)),
+    ]);
+    let busy = [live(9, WorkKind::Implement), live(8, WorkKind::Rework)];
+
+    let waits = waits(&world, &busy, &Memory::default(), 10, &policy());
+
+    assert_eq!(
+        waits.get(&Number(3)).map(Vec::as_slice),
+        Some(
+            &[Wait::FreeRun {
+                in_flight: 4,
+                max_runs: 4
+            }][..]
+        )
+    );
+    assert!(!waits.contains_key(&Number(1)), "{waits:?}");
+    assert!(!waits.contains_key(&Number(2)), "{waits:?}");
+}
+
+#[test]
+fn under_the_usage_limit_work_waits_for_its_reset() {
+    let world = snapshot(vec![claimed(ticket(1))]);
+    let mut memory = Memory::default();
+    memory.hold_until(t(150));
+
+    assert_eq!(
+        waits(&world, &[], &memory, 10, &policy()).remove(&Number(1)),
+        Some(vec![Wait::UsageLimit { resets_at: t(150) }])
+    );
+}
+
+#[test]
+fn a_spec_change_beyond_the_ceiling_waits_for_a_free_run_too() {
+    let mut world = snapshot(vec![]);
+    world.merged = vec![merged(5, &["docs/spec.md"])];
+    let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
+
+    assert_eq!(
+        waits(&world, &busy, &Memory::default(), 10, &policy()).remove(&Number(5)),
+        Some(vec![Wait::FreeRun {
+            in_flight: 4,
+            max_runs: 4
+        }])
+    );
+}
+
+#[test]
+fn an_item_with_a_run_in_flight_waits_for_it() {
+    let mut world = snapshot(vec![
+        claimed(ticket(2)),
+        labeled(issue(3), label::NEEDS_TRIAGE),
+    ]);
+    world.merged = vec![merged(5, &["docs/spec.md"])];
+    let runs = [
+        live(2, WorkKind::Rework),
+        live(3, WorkKind::Triage),
+        LiveRun {
+            subject: Subject::SpecChange(Number(5)),
+            kind: WorkKind::Tickets,
+        },
+    ];
+
+    let waits = waits(&world, &runs, &Memory::default(), 10, &policy());
+
+    assert_eq!(
+        waits,
+        [
+            (2, WorkKind::Rework),
+            (3, WorkKind::Triage),
+            (5, WorkKind::Tickets)
+        ]
+        .map(|(n, stage)| (Number(n), vec![Wait::Run { stage }]))
+        .into()
+    );
+}
+
+#[test]
+fn a_pull_request_waits_for_ci_while_its_checks_run_or_before_any_report() {
+    let mut running = pull(20, 2);
+    running.checks = vec![check("test", CheckState::Pending)];
+    let silent = pull(20, 2);
+
+    for (world, minute) in [(in_review(running), 10), (in_review(silent), 5)] {
+        assert_eq!(
+            waits(&world, &[], &Memory::default(), minute, &policy()).remove(&Number(2)),
+            Some(vec![Wait::Ci {
+                pull_request: Number(20)
+            }])
+        );
+    }
+}
+
+#[test]
+fn an_issue_labeled_for_the_maintainer_or_the_reporter_waits_for_them() {
+    let world = snapshot(vec![
+        labeled(issue(1), label::READY_FOR_HUMAN),
+        labeled(issue(2), label::NEEDS_INFO),
+    ]);
+
+    assert_eq!(waits_on(&world, 1), [Wait::Maintainer]);
+    assert_eq!(waits_on(&world, 2), [Wait::Reporter]);
+}
+
+#[test]
+fn a_pull_request_ready_for_review_waits_for_the_maintainers_review() {
+    let world = in_review(ready(pull(20, 2)));
+
+    assert_eq!(
+        waits_on(&world, 2),
+        [Wait::Review {
+            pull_request: Number(20)
+        }]
+    );
+}
+
+#[test]
+fn with_auto_merge_a_pull_request_a_person_holds_waits_for_their_review() {
+    let mut pr = ready(pull(20, 2));
+    pr.comments = vec![comment("maintainer", 5, "Hmm.")];
+    pr.pushes[0].at = t(6);
+
+    assert_eq!(
+        waits(
+            &in_review(pr),
+            &[],
+            &Memory::default(),
+            10,
+            &merging_by(MergeMethod::Merge)
+        )
+        .remove(&Number(2)),
+        Some(vec![Wait::Review {
+            pull_request: Number(20)
+        }])
+    );
+}
+
+#[test]
+fn with_auto_merge_a_pull_request_held_for_what_github_requires_waits_for_it() {
+    let mut pr = ready(pull(20, 2));
+    pr.mergeability = Mergeability::Blocked {
+        requires: code_owner_review(),
+    };
+    pr.comments = vec![held_for_a_code_owner(5)];
+
+    assert_eq!(
+        waits(
+            &in_review(pr),
+            &[],
+            &Memory::default(),
+            10,
+            &merging_by(MergeMethod::Merge)
+        )
+        .remove(&Number(2)),
+        Some(vec![Wait::Requirements {
+            pull_request: Number(20),
+            requires: code_owner_review(),
+        }])
+    );
+}
+
+#[test]
+fn with_auto_merge_a_pull_request_whose_merge_state_is_not_known_waits_for_github() {
+    let mut pr = ready(pull(20, 2));
+    pr.mergeability = Mergeability::Unknown;
+
+    assert_eq!(
+        waits(
+            &in_review(pr),
+            &[],
+            &Memory::default(),
+            10,
+            &merging_by(MergeMethod::Merge)
+        )
+        .remove(&Number(2)),
+        Some(vec![Wait::MergeState {
+            pull_request: Number(20)
+        }])
+    );
+}
+
+#[test]
+fn a_tracking_issue_waits_for_its_open_tickets() {
+    let tracking = tracking(10, 5, &[(11, false), (12, true), (13, true)]);
+
+    assert_eq!(
+        waits_on(&snapshot(vec![tracking]), 10),
+        [Wait::Tickets {
+            open: vec![Number(12), Number(13)]
+        }]
+    );
+}
+
+#[test]
+fn an_issue_without_the_required_label_waits_for_the_maintainer_to_apply_it() {
+    let required = Policy {
+        require_label: Some("linewright".into()),
+        ..policy()
+    };
+    let world = snapshot(vec![
+        labeled(issue(1), label::NEEDS_TRIAGE),
+        labeled(issue(2), label::READY_FOR_AGENT),
+        labeled(issue(3), label::NEEDS_INFO),
+        labeled(issue(4), label::READY_FOR_HUMAN),
+    ]);
+    let required_label = Wait::RequiredLabel {
+        label: "linewright".into(),
+    };
+
+    let waits = waits(&world, &[], &Memory::default(), 10, &required);
+
+    assert_eq!(
+        waits,
+        [
+            (1, vec![required_label.clone()]),
+            (2, vec![required_label.clone()]),
+            (3, vec![Wait::Reporter, required_label.clone()]),
+            (4, vec![Wait::Maintainer, required_label]),
+        ]
+        .map(|(n, on)| (Number(n), on))
+        .into()
+    );
+}
+
+#[test]
+fn an_issue_of_linewrights_own_labeled_needs_triage_waits_for_nothing() {
+    let mut filed = labeled(issue(1), label::NEEDS_TRIAGE);
+    filed.author = Login::new(LINEWRIGHT);
+
+    assert_eq!(decide(&snapshot(vec![filed.clone()])), vec![]);
+    assert_eq!(waits_on(&snapshot(vec![filed]), 1), []);
+}
+
+#[test]
+fn a_ticket_linewright_was_unassigned_from_waits_for_ready_for_agent_again() {
+    let stopped = unassigned_by(
+        labeled_at(ticket(2), label::READY_FOR_AGENT, 1),
+        "maintainer",
+        2,
+    );
+
+    assert_eq!(
+        waits_on(&snapshot(vec![stopped]), 2),
+        [Wait::Relabel {
+            since: Relabel::Unassigned
+        }]
+    );
+}
+
+#[test]
+fn a_ticket_whose_pull_request_merged_waits_for_ready_for_agent_again() {
+    let mut pr = ready(pull(20, 2));
+    pr.state = PullState::Merged { at: t(5) };
+
+    assert_eq!(
+        waits_on(&in_review(pr), 2),
+        [Wait::Relabel {
+            since: Relabel::Merged {
+                pull_request: Number(20)
+            }
+        }]
+    );
+}
+
+#[test]
+fn a_tracking_issue_whose_spec_change_is_being_cut_waits_for_the_cut() {
+    let mut world = snapshot(vec![tracking(10, 5, &[(11, true)])]);
+    world.merged = vec![merged(5, &["docs/spec.md"])];
+    let cut = [LiveRun {
+        subject: Subject::SpecChange(Number(5)),
+        kind: WorkKind::Tickets,
+    }];
+
+    assert_eq!(
+        waits(&world, &cut, &Memory::default(), 10, &policy()).remove(&Number(10)),
+        Some(vec![Wait::Run {
+            stage: WorkKind::Tickets
+        }])
+    );
+}
+
+#[test]
+fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_nothing() {
+    let mut world = snapshot(vec![tracking(10, 5, &[(11, true)])]);
+    world.merged = vec![merged(5, &["docs/spec.md"])];
+
+    let decided = decisions(
+        &world,
+        &[],
+        &Memory::default(),
+        &Workflows::default(),
+        t(10),
+        &policy(),
+    );
+
+    assert_eq!(
+        decided.actions,
+        [Action::DiscardTickets {
+            tracking: Number(10),
+            tickets: vec![Number(11)],
+        }]
+    );
+    assert_eq!(decided.waits.get(&Number(10)), None);
+}

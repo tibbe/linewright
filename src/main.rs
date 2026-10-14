@@ -15,10 +15,10 @@ use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig};
 use linewright::runs::{self, ListError, Query};
 use linewright::runtime::claude::ClaudeCode;
-use linewright::status;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
 use linewright::webhook::{Listener, Pending};
 use linewright::{COMMIT, VERSION};
+use linewright::{explain, status};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
 
@@ -71,10 +71,17 @@ fn init_logging(format: LogFormat) {
     }
 }
 
-/// `linewright status`: asks the `serve` of the configured repository and
-/// prints its answer, as text or, with `json`, as it came. Errors go to
-/// standard error, without the log's decoration.
-async fn status(config: &Config, json: bool) -> ExitCode {
+/// A monitoring command: asks the `serve` of the configured repository for
+/// `resource` and prints its answer, a `what`, as text by `render` or, with
+/// `json`, as it came. Errors go to standard error, without the log's
+/// decoration.
+async fn ask<T: serde::de::DeserializeOwned>(
+    config: &Config,
+    resource: &str,
+    what: &str,
+    json: bool,
+    render: fn(&T, bool) -> String,
+) -> ExitCode {
     let repo = match config.required_repo() {
         Ok(repo) => repo,
         Err(e) => {
@@ -82,13 +89,14 @@ async fn status(config: &Config, json: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let body = match api::get_answer(&socket_dir(), repo, "/status").await {
+    let body = match api::get_answer(&socket_dir(), repo, resource).await {
         Ok(body) => body,
         Err(e @ RequestError::NotServing { .. }) => {
             eprintln!("linewright: {e}");
             return ExitCode::from(NOT_SERVING);
         }
-        // `/status` is always there.
+        // Neither `/status` nor `/items/N` answers that an item does not
+        // exist.
         Err(e @ RequestError::NotFound(_)) => {
             eprintln!("linewright: {e}");
             return ExitCode::FAILURE;
@@ -101,10 +109,10 @@ async fn status(config: &Config, json: bool) -> ExitCode {
     let text = if json {
         String::from_utf8_lossy(&body).into_owned()
     } else {
-        match serde_json::from_slice::<status::Status>(&body) {
-            Ok(answer) => status::render(&answer, colour()),
+        match serde_json::from_slice::<T>(&body) {
+            Ok(answer) => render(&answer, colour()),
             Err(e) => {
-                eprintln!("linewright: `serve`'s answer does not read as a status: {e}");
+                eprintln!("linewright: `serve`'s answer does not read as {what}: {e}");
                 return ExitCode::FAILURE;
             }
         }
@@ -204,7 +212,15 @@ fn socket_dir() -> PathBuf {
 async fn run(command: Command, config: Config) -> Result<ExitCode> {
     let done = match command {
         // Its errors go to standard error as they are, not to the log.
-        Command::Status { json } => return Ok(status(&config, json).await),
+        Command::Status { json } => {
+            let resource = "/status";
+            return Ok(ask(&config, resource, "a status", json, status::render).await);
+        }
+        Command::Explain { number, json } => {
+            let resource = format!("/items/{number}");
+            let what = "an explanation";
+            return Ok(ask(&config, &resource, what, json, explain::render).await);
+        }
         Command::Runs {
             item,
             stage,

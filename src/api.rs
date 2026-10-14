@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{Query, Request, State};
+use axum::extract::{Path as Resource, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -25,6 +25,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::clock::Clock;
+use crate::domain::Number;
+use crate::explain;
 use crate::runs::{self, ListError, RepoWorkDir};
 use crate::status::{self, Serving, View};
 use crate::webhook::Tally;
@@ -169,6 +171,7 @@ impl Api {
         let router = Router::new()
             .route("/status", get(answer_status))
             .route("/runs", get(answer_runs))
+            .route("/items/{number}", get(answer_item))
             .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
             .layer(middleware::from_fn(local_only))
             .with_state(sources);
@@ -235,6 +238,28 @@ async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Q
         Err(ListError::Other(e)) => {
             error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"))
         }
+    }
+}
+
+/// The answer to `explain N`: not found for a number Linewright does not
+/// track, and unavailable before the first poll.
+async fn answer_item(
+    State(sources): State<Sources>,
+    Resource(number): Resource<Number>,
+) -> Response {
+    let view = sources.view.borrow().clone();
+    let Some(view) = view else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "`serve` has not polled yet: ask again after its first poll",
+        );
+    };
+    match explain::explain(&view, number, sources.clock.now()) {
+        Some(answer) => json_response(StatusCode::OK, &answer),
+        None => error_response(
+            StatusCode::NOT_FOUND,
+            &format!("{number} is not an item Linewright tracks"),
+        ),
     }
 }
 
@@ -339,18 +364,20 @@ async fn request(stream: UnixStream, resource: &str) -> Result<Bytes, RequestErr
         .await
         .context("reading `serve`'s answer")?
         .to_bytes();
+    let answer = serde_json::from_slice::<ErrorAnswer>(&body);
     if let Ok(ErrorAnswer {
         error,
         missing: Some(_),
-    }) = serde_json::from_slice(&body)
+    }) = answer
     {
         return Err(RequestError::NotFound(error));
     }
     if !status.is_success() {
-        Err(anyhow::anyhow!(
-            "`serve` answered {status}: {}",
-            String::from_utf8_lossy(&body)
-        ))?;
+        let message = match answer {
+            Ok(ErrorAnswer { error, .. }) => error,
+            Err(_) => String::from_utf8_lossy(&body).into_owned(),
+        };
+        Err(anyhow::anyhow!("`serve` answered {status}: {message}"))?;
     }
     Ok(body)
 }

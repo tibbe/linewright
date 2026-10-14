@@ -67,6 +67,15 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Show where issue or pull request #N stands and what Linewright waits
+    /// for before it acts on it next.
+    Explain {
+        #[arg(value_name = "N")]
+        number: u64,
+        /// Print `serve`'s answer as JSON, as it sent it.
+        #[arg(long)]
+        json: bool,
+    },
     /// Workflows: `workflow run NAME` runs one now, then exits.
     Workflow {
         #[command(subcommand)]

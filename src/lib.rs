@@ -17,6 +17,7 @@ pub mod case;
 pub mod clock;
 pub mod config;
 pub mod domain;
+pub mod explain;
 pub mod factory;
 pub mod git;
 pub mod marker;

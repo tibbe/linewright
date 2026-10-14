@@ -1,18 +1,24 @@
 //! `linewright status`: what `serve` is doing and what holds it back
 //! (`docs/specs/monitoring.md`, "status"). `serve` answers it from its own
-//! view, deriving the tracked items and the workflows' next runs the way the
-//! reconcile step derives them; the command prints the answer.
+//! view, deriving the tracked items, what Linewright waits for on them and
+//! the workflows' next runs the way the reconcile step derives them; the
+//! command prints the answer.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{CheckState, Filed, Number, PullState, Snapshot, Timestamp, label};
-use crate::reconcile::{NextRun, Policy, next_run, pending_spec_changes};
-use crate::runtime::UsageLimit;
+use crate::domain::{
+    CheckState, Filed, Issue, Item, Number, Pull, PullState, Snapshot, Timestamp, label,
+};
+use crate::reconcile::{
+    Decisions, LiveRun, Memory, NextRun, Policy, Relabel, Wait, Workflows, decisions, next_run,
+    open_pull_request, pending_spec_changes,
+};
 use crate::webhook::Received;
-use crate::workflow::{LastRuns, WorkflowFiles};
+use crate::workflow::{LastRuns, WorkflowFiles, WorkflowName};
 
 /// What `serve` knows of itself from its start.
 #[derive(Clone, Debug)]
@@ -26,14 +32,46 @@ pub struct Serving {
 pub struct View {
     /// The last poll's snapshot, with what refreshes read into it since.
     pub snapshot: Arc<Snapshot>,
+    /// When refreshes read the items they read into the snapshot; the
+    /// others were read by the last poll.
+    pub read_at: HashMap<Item, Timestamp>,
     pub policy: Policy,
     pub polls: Polls,
-    /// The usage limit last refused for, whether or not it has reset.
-    pub usage_limit: Option<UsageLimit>,
-    pub runs_in_flight: usize,
+    /// What the factory remembers between polls, with the usage limit last
+    /// refused for, whether or not it has reset.
+    pub memory: Memory,
+    /// The pipeline's runs in flight, as the reconcile step counts them.
+    pub live: Vec<LiveRun>,
+    /// The workflows with a run in flight.
+    pub workflows_in_flight: Vec<WorkflowName>,
     /// The workflow files the last poll read.
     pub workflows: WorkflowFiles,
     pub last_runs: LastRuns,
+}
+
+impl View {
+    /// The decisions the reconcile step takes on the view at `now`, and so
+    /// what it waits for on each item.
+    pub fn decisions(&self, now: Timestamp) -> Decisions {
+        let workflows = Workflows {
+            defined: self.workflows.parsed.clone(),
+            last_runs: self.last_runs.clone(),
+            in_flight: self.workflows_in_flight.clone(),
+        };
+        decisions(
+            &self.snapshot,
+            &self.live,
+            &self.memory,
+            &workflows,
+            now,
+            &self.policy,
+        )
+    }
+
+    /// The runs in flight, the pipeline's and the workflows'.
+    pub fn runs_in_flight(&self) -> usize {
+        self.live.len() + self.workflows_in_flight.len()
+    }
 }
 
 /// The answer to `status`, as the local API sends it. Its fields keep their
@@ -66,13 +104,15 @@ pub struct Polls {
     pub next: Timestamp,
 }
 
-/// An open item Linewright tracks, and where it is in the pipeline.
+/// An open item Linewright tracks, where it is in the pipeline and what
+/// Linewright waits for before it acts on it next.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tracked {
     pub number: Number,
     pub title: String,
     #[serde(flatten)]
     pub state: ItemState,
+    pub waiting_for: Vec<Wait>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,16 +127,52 @@ pub enum ItemState {
     WaitingForTriage,
     WaitingOnTheReporter,
     WithTheMaintainer,
-    InReview {
-        pull_request: Number,
-        draft: bool,
-        ci: Ci,
-    },
-    BlockedBy {
-        blockers: Vec<Number>,
-    },
+    InReview(InReview),
     Claimed,
     ReadyToClaim,
+}
+
+/// Linewright's pull request for an issue in review.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InReview {
+    pub pull_request: Number,
+    pub draft: bool,
+    pub ci: Ci,
+}
+
+impl InReview {
+    fn of(pr: &Pull) -> InReview {
+        let has = |state| pr.checks.iter().any(|c| c.state == state);
+        InReview {
+            pull_request: pr.number,
+            draft: matches!(pr.state, PullState::Open { draft: true }),
+            ci: if pr.checks.is_empty() {
+                Ci::NoChecks
+            } else if has(CheckState::Failed) {
+                Ci::Failing
+            } else if has(CheckState::Pending) {
+                Ci::Running
+            } else {
+                Ci::Green
+            },
+        }
+    }
+
+    /// Where the item is: its pull request, draft or not, and its CI.
+    pub(crate) fn describe(&self) -> String {
+        let stage = if self.draft {
+            "draft"
+        } else {
+            "ready for review"
+        };
+        let ci = match self.ci {
+            Ci::NoChecks => "no checks",
+            Ci::Failing => "CI failing",
+            Ci::Running => "CI running",
+            Ci::Green => "CI green",
+        };
+        format!("in review: {} ({stage}, {ci})", self.pull_request)
+    }
 }
 
 /// CI on a pull request, as its checks report it.
@@ -152,10 +228,10 @@ pub fn status(
         serving_since: serving.since,
         polls: view.map(|v| v.polls),
         usage_limit_resets_at: view
-            .and_then(|v| v.usage_limit)
+            .and_then(|v| v.memory.usage_limit)
             .map(|limit| limit.resets_at)
             .filter(|resets_at| now < *resets_at),
-        runs_in_flight: view.map_or(0, |v| v.runs_in_flight),
+        runs_in_flight: view.map_or(0, View::runs_in_flight),
         max_runs: serving.max_runs,
         webhooks,
     };
@@ -196,72 +272,74 @@ pub fn status(
     unparsed_workflows.sort_by(|a, b| a.path.cmp(&b.path));
     Status {
         linewright,
-        items: tracked(&view.snapshot, now, &view.policy),
+        items: tracked(view, now),
         workflows,
         unparsed_workflows,
     }
 }
 
-fn tracked(snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> Vec<Tracked> {
-    let linewright = &policy.linewright;
+/// The open items Linewright tracks at `now`: the spec changes waiting for
+/// tickets, then the issues whose labels place them in the pipeline.
+pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
+    let snapshot = &view.snapshot;
+    let mut waits = view.decisions(now).waits;
     let mut items = vec![];
-    for pr in pending_spec_changes(snapshot, now, policy) {
+    for pr in pending_spec_changes(snapshot, now, &view.policy) {
         items.push(Tracked {
             number: pr.number,
             title: pr.title.clone(),
             state: ItemState::WaitingForTickets,
+            waiting_for: waits.remove(&pr.number).unwrap_or_default(),
         });
     }
     for issue in snapshot.issues.iter().filter(|i| i.open) {
-        let state = if matches!(issue.filed, Some(Filed::Tracking { .. })) {
-            ItemState::Tracking {
-                tickets_closed: issue.sub_issues.iter().filter(|t| !t.open).count(),
-                tickets: issue.sub_issues.len(),
-            }
-        } else if issue.has_label(label::NEEDS_TRIAGE) {
-            ItemState::WaitingForTriage
-        } else if issue.has_label(label::NEEDS_INFO) {
-            ItemState::WaitingOnTheReporter
-        } else if issue.has_label(label::READY_FOR_HUMAN) {
-            ItemState::WithTheMaintainer
-        } else if issue.has_label(label::READY_FOR_AGENT) {
-            let pr = snapshot.pulls.iter().find(|p| {
-                p.is_open() && &p.author == linewright && p.closes.contains(&issue.number)
-            });
-            let blockers: Vec<Number> = issue
-                .blocked_by
-                .iter()
-                .filter(|b| b.open)
-                .map(|b| b.number)
-                .collect();
-            match pr {
-                Some(pr) => ItemState::InReview {
-                    pull_request: pr.number,
-                    draft: matches!(pr.state, PullState::Open { draft: true }),
-                    ci: if pr.checks.is_empty() {
-                        Ci::NoChecks
-                    } else if pr.checks.iter().any(|c| c.state == CheckState::Failed) {
-                        Ci::Failing
-                    } else if pr.checks.iter().any(|c| c.state == CheckState::Pending) {
-                        Ci::Running
-                    } else {
-                        Ci::Green
-                    },
-                },
-                None if !blockers.is_empty() => ItemState::BlockedBy { blockers },
-                None if issue.is_assigned(linewright) => ItemState::Claimed,
-                None => ItemState::ReadyToClaim,
-            }
-        } else {
+        let Some(state) = issue_state(issue, snapshot, &view.policy) else {
             continue;
         };
+        let waiting_for = waits.remove(&issue.number).unwrap_or_default();
+        // A tracking issue with no tickets and no cut in flight is left
+        // alone.
+        if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
+            continue;
+        }
         items.push(Tracked {
             number: issue.number,
             title: issue.title.clone(),
             state,
+            waiting_for,
         });
     }
     items
+}
+
+/// Where the open `issue` is in the pipeline, if its labels place it there.
+/// An issue of Linewright's own is never triaged, so `needs-triage` places
+/// it nowhere.
+fn issue_state(issue: &Issue, snapshot: &Snapshot, policy: &Policy) -> Option<ItemState> {
+    let state = if matches!(issue.filed, Some(Filed::Tracking { .. })) {
+        ItemState::Tracking {
+            tickets_closed: issue.sub_issues.iter().filter(|t| !t.open).count(),
+            tickets: issue.sub_issues.len(),
+        }
+    } else if issue.has_label(label::NEEDS_TRIAGE) {
+        if !policy.triages(issue) {
+            return None;
+        }
+        ItemState::WaitingForTriage
+    } else if issue.has_label(label::NEEDS_INFO) {
+        ItemState::WaitingOnTheReporter
+    } else if issue.has_label(label::READY_FOR_HUMAN) {
+        ItemState::WithTheMaintainer
+    } else if issue.has_label(label::READY_FOR_AGENT) {
+        match open_pull_request(issue, snapshot, &policy.linewright) {
+            Some(pr) => ItemState::InReview(InReview::of(pr)),
+            None if issue.is_assigned(&policy.linewright) => ItemState::Claimed,
+            None => ItemState::ReadyToClaim,
+        }
+    } else {
+        return None;
+    };
+    Some(state)
 }
 
 /// The answer as text: one fact per line as `label: value`, a blank line
@@ -275,8 +353,14 @@ pub fn render(status: &Status, colour: bool) -> String {
             .items
             .iter()
             .map(|item| {
+                let waits = if item.waiting_for.is_empty() {
+                    String::new()
+                } else {
+                    let waits: Vec<String> = item.waiting_for.iter().map(describe_wait).collect();
+                    format!(" — waiting for {}", waits.join("; "))
+                };
                 format!(
-                    "{}: {} — {}",
+                    "{}: {}{waits} — {}",
                     paint.bold(&item.number.to_string()),
                     describe(&item.state),
                     item.title
@@ -378,7 +462,7 @@ fn workflow_lines(status: &Status, paint: Paint) -> Vec<String> {
     runs.chain(unparsed).collect()
 }
 
-fn describe(state: &ItemState) -> String {
+pub(crate) fn describe(state: &ItemState) -> String {
     match state {
         ItemState::WaitingForTickets => "spec change waiting for tickets".into(),
         ItemState::Tracking {
@@ -388,26 +472,58 @@ fn describe(state: &ItemState) -> String {
         ItemState::WaitingForTriage => "waiting for triage".into(),
         ItemState::WaitingOnTheReporter => "waiting on the reporter".into(),
         ItemState::WithTheMaintainer => "with the maintainer".into(),
-        ItemState::InReview {
-            pull_request,
-            draft,
-            ci,
-        } => {
-            let stage = if *draft { "draft" } else { "ready for review" };
-            let ci = match ci {
-                Ci::NoChecks => "no checks",
-                Ci::Failing => "CI failing",
-                Ci::Running => "CI running",
-                Ci::Green => "CI green",
-            };
-            format!("in review: {pull_request} ({stage}, {ci})")
-        }
-        ItemState::BlockedBy { blockers } => {
-            let blockers: Vec<String> = blockers.iter().map(Number::to_string).collect();
-            format!("blocked by {}", blockers.join(", "))
-        }
+        ItemState::InReview(review) => review.describe(),
         ItemState::Claimed => "claimed: being implemented".into(),
         ItemState::ReadyToClaim => "ready to claim".into(),
+    }
+}
+
+/// What Linewright waits for, as a phrase after "waiting for".
+pub(crate) fn describe_wait(wait: &Wait) -> String {
+    match wait {
+        Wait::Run { stage } => format!("its {} run, in flight", stage.name()),
+        Wait::FreeRun {
+            in_flight,
+            max_runs,
+        } => format!("a free run: {in_flight} of {max_runs} in flight"),
+        Wait::UsageLimit { resets_at } => format!("the usage limit, until {}", utc(*resets_at)),
+        Wait::Blocker { issue } => format!("{issue}, which blocks it"),
+        Wait::Ci { pull_request } => format!("CI on {pull_request}"),
+        Wait::MergeState { pull_request } => {
+            format!("GitHub to work out whether {pull_request} can merge")
+        }
+        Wait::Tickets { open } => {
+            let open: Vec<String> = open.iter().map(Number::to_string).collect();
+            format!("its tickets: {} open", open.join(", "))
+        }
+        Wait::Reporter => format!("the reporter: labeled `{}`", label::NEEDS_INFO),
+        Wait::Maintainer => format!("the maintainer: labeled `{}`", label::READY_FOR_HUMAN),
+        Wait::RequiredLabel { label } => {
+            format!("the maintainer: to label it `{label}`, the required label")
+        }
+        Wait::Relabel { since } => {
+            let since = match since {
+                Relabel::Unassigned => "Linewright was unassigned".to_string(),
+                Relabel::Merged { pull_request } => format!("{pull_request} merged"),
+            };
+            format!(
+                "the maintainer: to label it `{}` again, since {since}",
+                label::READY_FOR_AGENT
+            )
+        }
+        Wait::Review { pull_request } => format!("the maintainer: to review {pull_request}"),
+        Wait::Requirements {
+            pull_request,
+            requires,
+        } => {
+            let names: Vec<String> = requires.iter().map(ToString::to_string).collect();
+            let required = match names.as_slice() {
+                [] => "what the default branch's rules require".to_string(),
+                [one] => one.clone(),
+                [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+            };
+            format!("{required}, before {pull_request} merges")
+        }
     }
 }
 

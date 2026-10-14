@@ -327,18 +327,36 @@ impl Factory {
     /// a poll has taken a snapshot.
     fn view(&self, next_poll: Timestamp) -> Option<View> {
         let kept = self.kept.as_ref()?;
+        let (live, workflows_in_flight) = self.in_flight();
         Some(View {
             snapshot: kept.snapshot.clone(),
+            read_at: kept.read_at.clone(),
             policy: self.shell.policy.clone(),
             polls: Polls {
                 last: kept.taken_at,
                 next: next_poll,
             },
-            usage_limit: self.memory.usage_limit,
-            runs_in_flight: self.live.len(),
+            memory: self.memory.clone(),
+            live,
+            workflows_in_flight,
             workflows: self.workflow_files.clone(),
             last_runs: self.last_runs.clone(),
         })
+    }
+
+    /// The runs in flight as the reconcile step takes them: the pipeline's,
+    /// and the workflows with one. A cut that ended since the snapshot was
+    /// taken counts as in flight: the snapshot may miss what it wrote.
+    fn in_flight(&self) -> (Vec<LiveRun>, Vec<WorkflowName>) {
+        let mut live: Vec<LiveRun> = self.ended.clone();
+        let mut in_flight: Vec<WorkflowName> = vec![];
+        for entry in self.live.values() {
+            match &entry.running {
+                Running::Work(run) => live.push(*run),
+                Running::Workflow(name) => in_flight.push(name.clone()),
+            }
+        }
+        (live, in_flight)
     }
 
     /// Keeps `kept`, reconciles its snapshot with the runs in flight and the
@@ -354,16 +372,7 @@ impl Factory {
         if let Some(resets_at) = self.memory.lift_usage_limit(now) {
             info!(%resets_at, "usage limit reset; sessions start again");
         }
-        // A cut that ended since the snapshot was taken counts as in flight:
-        // the snapshot may miss what it wrote.
-        let mut live: Vec<LiveRun> = self.ended.clone();
-        let mut in_flight: Vec<WorkflowName> = vec![];
-        for entry in self.live.values() {
-            match &entry.running {
-                Running::Work(run) => live.push(*run),
-                Running::Workflow(name) => in_flight.push(name.clone()),
-            }
-        }
+        let (live, in_flight) = self.in_flight();
         let workflows = Workflows {
             defined,
             last_runs: self.last_runs.clone(),

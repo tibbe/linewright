@@ -4,11 +4,13 @@
 //! shell"). The rules are the product spec's: `docs/specs/product.md` and the
 //! areas it lists.
 
+use std::collections::BTreeMap;
+
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    CheckState, Comment, Filed, Issue, IssueEvent, Item, Login, MergeMethod, MergeMethods,
+    CheckState, Comment, Filed, Issue, IssueEvent, Item, Linked, Login, MergeMethod, MergeMethods,
     Mergeability, MergedPull, Number, Pull, PullState, Rebaseability, Requirement, Review,
     ReviewState, Snapshot, Thread, Timestamp, UpdateMethod, UpdateRule, label,
 };
@@ -40,6 +42,12 @@ pub struct Policy {
 }
 
 impl Policy {
+    /// Whether Linewright triages `issue`: not one of its own, which it
+    /// files already briefed.
+    pub fn triages(&self, issue: &Issue) -> bool {
+        issue.author != self.linewright
+    }
+
     /// Whether Linewright may start work on `issue`: unless a label is
     /// required and the issue lacks it.
     fn may_start_on(&self, issue: &Issue) -> bool {
@@ -93,6 +101,15 @@ pub enum Work {
         issue: Number,
         pr: Number,
     },
+}
+
+impl Subject {
+    /// The issue or pull request the subject is.
+    pub fn number(self) -> Number {
+        match self {
+            Subject::Issue(number) | Subject::SpecChange(number) => number,
+        }
+    }
 }
 
 impl Work {
@@ -349,6 +366,62 @@ pub enum Action {
     RunWorkflow(Box<Workflow>),
 }
 
+/// Something Linewright waits for before it acts on an item next
+/// (`docs/specs/monitoring.md`, "explain").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "wait", rename_all = "kebab-case")]
+pub enum Wait {
+    /// Its run in flight, of `stage`.
+    Run { stage: WorkKind },
+    /// A free run: `in_flight` of the `max_runs` that may run at once are,
+    /// counting those the poll starts.
+    FreeRun { in_flight: usize, max_runs: usize },
+    /// The usage limit, in force until `resets_at`.
+    UsageLimit { resets_at: Timestamp },
+    /// An issue that blocks it, still open.
+    Blocker { issue: Number },
+    /// CI on its pull request: checks still running, or none reported yet.
+    Ci { pull_request: Number },
+    /// GitHub, to work out whether its pull request can merge.
+    MergeState { pull_request: Number },
+    /// Its tickets still open, as its tracking issue.
+    Tickets { open: Vec<Number> },
+    /// The reporter, as `needs-info` says.
+    Reporter,
+    /// The maintainer, as `ready-for-human` says.
+    Maintainer,
+    /// The maintainer, to apply the required label `label`.
+    RequiredLabel { label: String },
+    /// The maintainer, to label it `ready-for-agent` again.
+    Relabel { since: Relabel },
+    /// The maintainer, to review its pull request.
+    Review { pull_request: Number },
+    /// What the default branch's rules require before its pull request
+    /// merges.
+    Requirements {
+        pull_request: Number,
+        requires: Vec<Requirement>,
+    },
+}
+
+/// Why only labeling a ticket `ready-for-agent` again asks for more work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "kebab-case")]
+pub enum Relabel {
+    /// A person unassigned Linewright.
+    Unassigned,
+    /// Its pull request merged.
+    Merged { pull_request: Number },
+}
+
+/// One poll's decisions: the actions to take, and for each item it does not
+/// act on yet, what it waits for.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Decisions {
+    pub actions: Vec<Action>,
+    pub waits: BTreeMap<Number, Vec<Wait>>,
+}
+
 pub fn reconcile(
     snapshot: &Snapshot,
     live: &[LiveRun],
@@ -357,12 +430,30 @@ pub fn reconcile(
     now: Timestamp,
     policy: &Policy,
 ) -> Vec<Action> {
+    decisions(snapshot, live, memory, workflows, now, policy).actions
+}
+
+/// The decisions [`reconcile`] takes, with what each item it does not act on
+/// waits for.
+pub fn decisions(
+    snapshot: &Snapshot,
+    live: &[LiveRun],
+    memory: &Memory,
+    workflows: &Workflows,
+    now: Timestamp,
+    policy: &Policy,
+) -> Decisions {
     let mut plan = Plan {
         now,
         actions: vec![],
         starts: vec![],
+        waits: BTreeMap::new(),
     };
-    let is_live = |subject: Subject| live.iter().any(|run| run.subject == subject);
+    let running = |subject: Subject| {
+        live.iter()
+            .find(|run| run.subject == subject)
+            .map(|run| run.kind)
+    };
 
     for run in live {
         if let Some(reason) = cancel_reason(run, snapshot, policy) {
@@ -373,12 +464,11 @@ pub fn reconcile(
         }
     }
 
-    for pr in snapshot
-        .merged
-        .iter()
-        .filter(|pr| is_spec_change(pr, snapshot, now, policy))
-    {
-        if is_live(Subject::SpecChange(pr.number)) {
+    let spec_changes = pending_spec_changes(snapshot, now, policy);
+    let pending: Vec<Number> = spec_changes.iter().map(|pr| pr.number).collect();
+    for pr in spec_changes {
+        if let Some(stage) = running(Subject::SpecChange(pr.number)) {
+            plan.wait(pr.number, Wait::Run { stage });
             continue;
         }
         // The pull request is labeled processed last, so a tracking issue
@@ -406,11 +496,26 @@ pub fn reconcile(
 
     for issue in snapshot.issues.iter().filter(|i| i.open) {
         let subject = Subject::Issue(issue.number);
-        let is_tracking = matches!(issue.filed, Some(Filed::Tracking { .. }));
-        if is_tracking && !issue.sub_issues.is_empty() && issue.sub_issues.iter().all(|t| !t.open) {
-            plan.act(Action::CloseTracking {
-                issue: issue.number,
-            });
+        let tracks = match issue.filed {
+            Some(Filed::Tracking { spec_change }) => Some(spec_change),
+            _ => None,
+        };
+        // While its spec change is cut into tickets, a tracking issue waits
+        // for the cut; one that stopped part way is discarded above.
+        let cut = tracks.and_then(|spec_change| running(Subject::SpecChange(spec_change)));
+        if let Some(stage) = cut {
+            plan.wait(issue.number, Wait::Run { stage });
+        }
+        let cutting = cut.is_some() || tracks.is_some_and(|sc| pending.contains(&sc));
+        if tracks.is_some() && !cutting && !issue.sub_issues.is_empty() {
+            let open = open_numbers(&issue.sub_issues);
+            if open.is_empty() {
+                plan.act(Action::CloseTracking {
+                    issue: issue.number,
+                });
+            } else {
+                plan.wait(issue.number, Wait::Tickets { open });
+            }
         }
         let answered = answered_label(issue, policy);
         if let Some(waiting) = answered {
@@ -421,29 +526,37 @@ pub fn reconcile(
             });
         }
         if answered.is_some() || wants_triage(issue, policy) {
-            if !is_live(subject) {
-                plan.start(Work::Triage {
+            match running(subject) {
+                Some(stage) => plan.wait(issue.number, Wait::Run { stage }),
+                None => plan.start(Work::Triage {
                     issue: issue.number,
-                });
+                }),
             }
         } else if issue.has_label(label::READY_FOR_AGENT) && !issue.has_label(label::NEEDS_TRIAGE) {
-            let running = is_live(subject);
-            implementation(issue, snapshot, running, memory, policy, &mut plan);
+            implementation(issue, snapshot, running(subject), memory, policy, &mut plan);
+        } else {
+            for wait in labeled_waits(issue, policy) {
+                plan.wait(issue.number, wait);
+            }
         }
     }
 
     // Workflow runs count against the ceiling beside the pipeline's. Under
     // the usage limit there is no room: a due workflow stays due.
-    let room = if memory.holds_starts(now) {
-        0
-    } else {
-        policy
-            .max_workers
-            .saturating_sub(live.len() + workflows.in_flight.len())
+    let in_flight = live.len() + workflows.in_flight.len();
+    let (room, held) = match memory.usage_limit.filter(|_| memory.holds_starts(now)) {
+        Some(UsageLimit { resets_at }) => (0, Held::UsageLimit { resets_at }),
+        None => (
+            policy.max_workers.saturating_sub(in_flight),
+            Held::Ceiling {
+                in_flight,
+                max_runs: policy.max_workers,
+            },
+        ),
     };
-    let (mut actions, room) = plan.into_actions(room);
-    actions.extend(schedule(workflows, now, room));
-    actions
+    let (mut decisions, room) = plan.into_decisions(room, held);
+    decisions.actions.extend(schedule(workflows, now, room));
+    decisions
 }
 
 /// When a workflow runs next, by the due rule.
@@ -544,6 +657,19 @@ struct Plan {
     now: Timestamp,
     actions: Vec<Action>,
     starts: Vec<Start>,
+    waits: BTreeMap<Number, Vec<Wait>>,
+}
+
+/// Why runs beyond the room are held back.
+enum Held {
+    UsageLimit {
+        resets_at: Timestamp,
+    },
+    /// `in_flight` of `max_runs` were in flight before the poll.
+    Ceiling {
+        in_flight: usize,
+        max_runs: usize,
+    },
 }
 
 struct Start {
@@ -557,6 +683,16 @@ struct Start {
 impl Plan {
     fn act(&mut self, action: Action) {
         self.actions.push(action);
+    }
+
+    fn wait(&mut self, item: Number, wait: Wait) {
+        self.waits.entry(item).or_default().push(wait);
+    }
+
+    fn wait_for(&mut self, item: Number, wait: Option<Wait>) {
+        if let Some(wait) = wait {
+            self.wait(item, wait);
+        }
     }
 
     fn start(&mut self, work: Work) {
@@ -585,11 +721,26 @@ impl Plan {
 
     /// Every action, then as many runs as there is room for, work closest to
     /// a person first: pull requests, then triage, then tickets, then fresh
-    /// implementations, each oldest first. Also returns the room left.
-    fn into_actions(self, room: usize) -> (Vec<Action>, usize) {
-        let mut starts = self.starts;
+    /// implementations, each oldest first, the rest waiting as `held` says.
+    /// Also returns the room left.
+    fn into_decisions(mut self, room: usize, held: Held) -> (Decisions, usize) {
+        let mut starts = std::mem::take(&mut self.starts);
         starts.sort_by_key(|s| (rank(s.work.kind()), s.work.subject()));
         let room_left = room.saturating_sub(starts.len());
+        let started = starts.len().min(room);
+        let wait = match held {
+            Held::UsageLimit { resets_at } => Wait::UsageLimit { resets_at },
+            Held::Ceiling {
+                in_flight,
+                max_runs,
+            } => Wait::FreeRun {
+                in_flight: in_flight + started,
+                max_runs,
+            },
+        };
+        for start in starts.iter().skip(room) {
+            self.wait(start.work.subject().number(), wait.clone());
+        }
         let mut actions = self.actions;
         for start in starts.into_iter().take(room) {
             if let Some(issue) = start.claim {
@@ -600,7 +751,11 @@ impl Plan {
             }
             actions.push(Action::Start(start.work));
         }
-        (actions, room_left)
+        let decisions = Decisions {
+            actions,
+            waits: self.waits,
+        };
+        (decisions, room_left)
     }
 }
 
@@ -613,29 +768,70 @@ fn rank(kind: WorkKind) -> u8 {
     }
 }
 
+/// What an issue Linewright starts nothing on waits for, as its labels
+/// say: the person a label hands it to, and the required label when it
+/// lacks it, without which an answer starts nothing either. An issue of
+/// Linewright's own labeled `needs-triage` waits for nothing: it is never
+/// triaged.
+fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
+    let handed_to = if issue.has_label(label::NEEDS_TRIAGE) {
+        if !policy.triages(issue) {
+            return vec![];
+        }
+        None
+    } else if issue.has_label(label::NEEDS_INFO) {
+        Some(Wait::Reporter)
+    } else if issue.has_label(label::READY_FOR_HUMAN) {
+        Some(Wait::Maintainer)
+    } else {
+        return vec![];
+    };
+    let unlabeled = required_label(policy).filter(|_| !policy.may_start_on(issue));
+    handed_to.into_iter().chain(unlabeled).collect()
+}
+
+/// The numbers of the linked issues still open.
+fn open_numbers(linked: &[Linked]) -> Vec<Number> {
+    linked.iter().filter(|l| l.open).map(|l| l.number).collect()
+}
+
+/// The wait for the maintainer to apply the required label, if one is set.
+fn required_label(policy: &Policy) -> Option<Wait> {
+    policy
+        .require_label
+        .as_ref()
+        .map(|label| Wait::RequiredLabel {
+            label: label.clone(),
+        })
+}
+
 /// An issue labeled `ready-for-agent`: claim it when it is unblocked, and
 /// drive it to a pull request that is green and ready for review.
 fn implementation(
     issue: &Issue,
     snapshot: &Snapshot,
-    live: bool,
+    live: Option<WorkKind>,
     memory: &Memory,
     policy: &Policy,
     plan: &mut Plan,
 ) {
     let claimed = issue.is_assigned(&policy.linewright);
-    if live || (!claimed && (stopped_by_unassign(issue, policy) || !policy.may_start_on(issue))) {
-        return;
+    if let Some(stage) = live {
+        return plan.wait(issue.number, Wait::Run { stage });
     }
-    let mut pulls = snapshot
-        .pulls
-        .iter()
-        .filter(|p| p.author == policy.linewright && p.closes.contains(&issue.number));
-    if let Some(pr) = pulls
-        .clone()
-        .filter(|p| p.is_open())
-        .max_by_key(|p| p.number)
-    {
+    if !claimed && stopped_by_unassign(issue, policy) {
+        return plan.wait(
+            issue.number,
+            Wait::Relabel {
+                since: Relabel::Unassigned,
+            },
+        );
+    }
+    if !claimed && !policy.may_start_on(issue) {
+        return plan.wait_for(issue.number, required_label(policy));
+    }
+    let mut pulls = linewright_pulls(issue, snapshot, &policy.linewright);
+    if let Some(pr) = open_pull_request(issue, snapshot, &policy.linewright) {
         if !claimed {
             plan.act(Action::Claim {
                 issue: issue.number,
@@ -646,11 +842,18 @@ fn implementation(
     // GitHub closes the issue shortly after the merge; until then, or after a
     // reopen, only applying the label again asks for more work.
     let relabeled_since = |at| last_labeled(issue, label::READY_FOR_AGENT).is_some_and(|l| l > at);
-    if pulls
+    if let Some(merged) = pulls
         .clone()
-        .any(|p| matches!(p.state, PullState::Merged { at } if !relabeled_since(at)))
+        .find(|p| matches!(p.state, PullState::Merged { at } if !relabeled_since(at)))
     {
-        return;
+        return plan.wait(
+            issue.number,
+            Wait::Relabel {
+                since: Relabel::Merged {
+                    pull_request: merged.number,
+                },
+            },
+        );
     }
     // Still claimed after a merge, the issue was reopened, and more work on
     // it is a start.
@@ -658,7 +861,7 @@ fn implementation(
         .clone()
         .any(|p| matches!(p.state, PullState::Merged { .. }));
     if reopened && !policy.may_start_on(issue) {
-        return;
+        return plan.wait_for(issue.number, required_label(policy));
     }
     if claimed {
         let closed = pulls
@@ -671,7 +874,11 @@ fn implementation(
             });
         }
     }
-    if issue.blocked_by.iter().any(|b| b.open) {
+    let blockers = open_numbers(&issue.blocked_by);
+    if !blockers.is_empty() {
+        for blocker in blockers {
+            plan.wait(issue.number, Wait::Blocker { issue: blocker });
+        }
         return;
     }
     if claimed {
@@ -681,6 +888,30 @@ fn implementation(
     } else {
         plan.claim_and_implement(issue.number);
     }
+}
+
+/// Linewright's pull requests that close `issue`, open or ended.
+fn linewright_pulls<'a>(
+    issue: &Issue,
+    snapshot: &'a Snapshot,
+    linewright: &Login,
+) -> impl Iterator<Item = &'a Pull> + Clone {
+    let number = issue.number;
+    snapshot
+        .pulls
+        .iter()
+        .filter(move |p| &p.author == linewright && p.closes.contains(&number))
+}
+
+/// The pull request Linewright works on for `issue`: its newest open one.
+pub fn open_pull_request<'a>(
+    issue: &Issue,
+    snapshot: &'a Snapshot,
+    linewright: &Login,
+) -> Option<&'a Pull> {
+    linewright_pulls(issue, snapshot, linewright)
+        .filter(|p| p.is_open())
+        .max_by_key(|p| p.number)
 }
 
 fn last_linewright_comment(issue: &Issue, linewright: &Login) -> Option<Timestamp> {
@@ -746,8 +977,11 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
         .max()
         .unwrap_or(pr.created_at);
     let now = plan.now;
+    let ci = Wait::Ci {
+        pull_request: pr_number,
+    };
     if pr.checks.is_empty() && now < pushed + policy.ci_grace {
-        return;
+        return plan.wait(issue_number, ci);
     }
     // A ticket given back to the maintainer and labeled again waits a full
     // timeout again.
@@ -764,6 +998,8 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
                     code_list(&pending)
                 ),
             });
+        } else {
+            plan.wait(issue_number, ci);
         }
         return;
     }
@@ -809,9 +1045,19 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
         _ => {
             if draft {
                 plan.act(Action::MarkReady { pr: pr_number });
+            } else {
+                plan.wait(
+                    issue_number,
+                    Wait::Review {
+                        pull_request: pr_number,
+                    },
+                );
             }
             return;
         }
+    };
+    let merge_state = Wait::MergeState {
+        pull_request: pr_number,
     };
     // Behind and conflicting were brought up to date above, and so was not
     // rebaseable, once at each head.
@@ -827,7 +1073,7 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
                 ),
             }),
             // Not computed yet: a later poll merges it.
-            Rebaseability::Unknown => {}
+            Rebaseability::Unknown => plan.wait(issue_number, merge_state),
         },
         Mergeability::Clean => merge(issue_number, pr, draft, method, memory, plan),
         // Held for review again only when what GitHub requires changes.
@@ -838,11 +1084,20 @@ fn in_review(issue: &Issue, pr: &Pull, memory: &Memory, policy: &Policy, plan: &
                 requires: requires.clone(),
             })
         }
+        Mergeability::Blocked { requires } => plan.wait(
+            issue_number,
+            Wait::Requirements {
+                pull_request: pr_number,
+                requires: requires.clone(),
+            },
+        ),
         Mergeability::Unknown if draft => {
             plan.act(Action::MarkReadyForMergeState { pr: pr_number })
         }
         // A merge state not computed yet waits for the next poll.
-        _ => {}
+        Mergeability::Unknown => plan.wait(issue_number, merge_state),
+        // Brought up to date above.
+        Mergeability::Behind | Mergeability::Conflicting => {}
     }
 }
 
@@ -1086,9 +1341,7 @@ fn last_labeled(issue: &Issue, name: &str) -> Option<Timestamp> {
 /// Triage runs on `needs-triage` issues not authored by Linewright:
 /// tickets Linewright creates are already briefed.
 fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
-    issue.has_label(label::NEEDS_TRIAGE)
-        && issue.author != policy.linewright
-        && policy.may_start_on(issue)
+    issue.has_label(label::NEEDS_TRIAGE) && policy.triages(issue) && policy.may_start_on(issue)
 }
 
 /// An answer in the thread (`docs/specs/triage.md`): the label of
@@ -1099,7 +1352,7 @@ fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
 /// comment.
 fn answered_label(issue: &Issue, policy: &Policy) -> Option<&'static str> {
     let linewright = &policy.linewright;
-    if issue.author == *linewright
+    if !policy.triages(issue)
         || !policy.may_start_on(issue)
         || [label::READY_FOR_AGENT, label::NEEDS_TRIAGE]
             .into_iter()

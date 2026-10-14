@@ -3,67 +3,13 @@
 //! its text out (`CODING_STANDARDS.md`, "Where tests go";
 //! `docs/specs/monitoring.md`, "status").
 
-use std::sync::Arc;
+mod views;
 
-use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
-use linewright::reconcile::Policy;
-use linewright::runtime::UsageLimit;
-use linewright::spec_glob::SpecGlob;
-use linewright::status::{Polls, Serving, Status, View, render, status};
+use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
 use linewright::workflow::{LastRuns, Unparsed, WorkflowFiles};
-
-/// 2026-10-01 is a Thursday.
-fn at(time: &str) -> Timestamp {
-    DateTime::parse_from_rfc3339(time)
-        .unwrap()
-        .with_timezone(&Utc)
-}
-
-fn policy() -> Policy {
-    Policy {
-        linewright: Login::new("factory"),
-        spec_glob: SpecGlob::default(),
-        spec_lookback: TimeDelta::days(7),
-        max_workers: 4,
-        ci_grace: TimeDelta::minutes(5),
-        ci_timeout: TimeDelta::hours(6),
-        ci_attempts: 2,
-        auto_merge: None,
-        update_rule: UpdateRule::RebaseOnConflict,
-        allowed_merge_methods: MergeMethods::all(),
-        require_label: None,
-    }
-}
-
-fn snapshot(issues: Vec<Issue>) -> Snapshot {
-    Snapshot {
-        default_branch: "main".into(),
-        issues,
-        pulls: vec![],
-        merged: vec![],
-    }
-}
-
-fn ready_issue() -> Issue {
-    Issue {
-        number: Number(7),
-        title: "Do the thing".into(),
-        body: String::new(),
-        author: Login::new("maintainer"),
-        open: true,
-        created_at: at("2026-09-30T09:00:00Z"),
-        labels: vec!["ready-for-agent".into()],
-        assignees: vec![],
-        comments: vec![],
-        blocked_by: vec![],
-        sub_issues: vec![],
-        parent: None,
-        events: vec![],
-        filed: None,
-    }
-}
+use views::{at, implementing, limited_until, ticket};
 
 /// The workflows, each a name and a cron expression, and the files that do
 /// not parse.
@@ -103,21 +49,13 @@ fn serving() -> Serving {
     }
 }
 
-/// The view of a poll at 12:00 that saw `issues`, with no run in flight, no
-/// usage limit and no workflows.
+/// The view of a poll at 12:00 that saw `issues`.
 fn view(issues: Vec<Issue>) -> View {
-    View {
-        snapshot: Arc::new(snapshot(issues)),
-        policy: policy(),
-        polls: Polls {
-            last: at("2026-10-01T12:00:00Z"),
-            next: at("2026-10-01T12:01:00Z"),
-        },
-        usage_limit: None,
-        runs_in_flight: 0,
-        workflows: WorkflowFiles::default(),
-        last_runs: LastRuns::default(),
-    }
+    views::view(issues, vec![])
+}
+
+fn ready_issue() -> Issue {
+    ticket(7, "Do the thing")
 }
 
 /// The text of the answer, without webhooks and without colour.
@@ -144,7 +82,8 @@ fn after_linewright(view: &View, now: &str) -> Vec<String> {
 #[test]
 fn the_linewright_section_says_since_when_serve_runs_its_polls_and_the_runs_in_flight() {
     let view = View {
-        runs_in_flight: 3,
+        live: [1, 2].map(implementing).to_vec(),
+        workflows_in_flight: vec!["weekly".parse().unwrap()],
         ..view(vec![])
     };
 
@@ -175,9 +114,7 @@ fn before_the_first_poll_there_is_no_last_poll_and_the_next_is_due_now() {
 #[test]
 fn a_usage_limit_in_force_is_shown_with_its_reset() {
     let view = View {
-        usage_limit: Some(UsageLimit {
-            resets_at: at("2026-10-01T14:30:00Z"),
-        }),
+        memory: limited_until("2026-10-01T14:30:00Z"),
         ..view(vec![])
     };
 
@@ -195,9 +132,7 @@ fn a_usage_limit_in_force_is_shown_with_its_reset() {
 #[test]
 fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
     let view = View {
-        usage_limit: Some(UsageLimit {
-            resets_at: at("2026-10-01T12:00:10Z"),
-        }),
+        memory: limited_until("2026-10-01T12:00:10Z"),
         ..view(vec![])
     };
 
@@ -267,9 +202,60 @@ fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
             "#7: ready to claim — Do the thing",
-            "#8: blocked by #7 — Do the next thing",
+            "#8: ready to claim — waiting for #7, which blocks it — Do the next thing",
             "#9: claimed: being implemented — Do another thing",
             "#10: waiting for triage — It broke",
+        ]
+    );
+}
+
+#[test]
+fn each_tracked_item_says_in_one_line_what_linewright_waits_for_on_it() {
+    let blocked_and_held = Issue {
+        number: Number(8),
+        title: "Do the next thing".into(),
+        blocked_by: vec![
+            Linked {
+                number: Number(5),
+                open: true,
+            },
+            Linked {
+                number: Number(6),
+                open: true,
+            },
+        ],
+        ..ready_issue()
+    };
+    let busy = Issue {
+        number: Number(9),
+        title: "Do another thing".into(),
+        assignees: vec![Login::new("factory")],
+        ..ready_issue()
+    };
+    let with_the_maintainer = Issue {
+        number: Number(10),
+        title: "It broke".into(),
+        labels: vec!["ready-for-human".into()],
+        ..ready_issue()
+    };
+    let view = View {
+        memory: limited_until("2026-10-01T14:30:00Z"),
+        live: vec![implementing(9)],
+        ..view(vec![
+            ready_issue(),
+            blocked_and_held,
+            busy,
+            with_the_maintainer,
+        ])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:00:30Z"),
+        [
+            "#7: ready to claim — waiting for the usage limit, until 2026-10-01 14:30:00 UTC — Do the thing",
+            "#8: ready to claim — waiting for #5, which blocks it; #6, which blocks it — Do the next thing",
+            "#9: claimed: being implemented — waiting for its implement run, in flight — Do another thing",
+            "#10: with the maintainer — waiting for the maintainer: labeled `ready-for-human` — It broke",
         ]
     );
 }
@@ -431,7 +417,12 @@ fn the_json_names_each_fact() {
                 "webhooks": null,
             },
             "items": [
-                {"number": 7, "title": "Do the thing", "state": "ready-to-claim"},
+                {
+                    "number": 7,
+                    "title": "Do the thing",
+                    "state": "ready-to-claim",
+                    "waiting_for": [],
+                },
             ],
             "workflows": [
                 {

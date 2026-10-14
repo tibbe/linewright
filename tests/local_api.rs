@@ -212,7 +212,10 @@ async fn status_shows_linewright_then_the_tracked_items_then_the_workflows() {
         output.stdout
     );
     assert_eq!(lines[3], "runs in flight: 0 of 4");
-    assert_eq!(lines[5], "#1: with the maintainer — Do the thing");
+    assert_eq!(
+        lines[5],
+        "#1: with the maintainer — waiting for the maintainer: labeled `ready-for-human` — Do the thing"
+    );
     answering.stop().await;
 }
 
@@ -578,4 +581,71 @@ async fn a_resource_serve_does_not_have_is_an_error_not_a_missing_item() {
         answer.err()
     );
     answering.stop().await;
+}
+
+#[tokio::test]
+async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewright_waits_for() {
+    let answering = Answering::start(with_ticket_and_workflow().await, false).await;
+
+    let output = answering.linewright(&["explain", "1"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let lines: Vec<&str> = output.stdout.lines().collect();
+    assert_eq!(lines.len(), 4, "{}", output.stdout);
+    assert_eq!(lines[0], "#1: Do the thing");
+    assert_eq!(lines[1], "state: with the maintainer");
+    assert!(
+        lines[2]
+            .strip_prefix("last read: 2026-10-01 ")
+            .is_some_and(|rest| rest.ends_with(" UTC")),
+        "{}",
+        output.stdout
+    );
+    assert_eq!(
+        lines[3],
+        "waiting for: the maintainer: labeled `ready-for-human`"
+    );
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn explain_json_prints_the_api_answer_as_it_is() {
+    let answering = Answering::start(with_ticket_and_workflow().await, false).await;
+    let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/items/1").await;
+
+    let output = answering.linewright(&["explain", "1", "--json"]).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert_eq!(output.stdout, format!("{answer}\n"));
+    let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
+    assert_eq!(json["state"], "with-the-maintainer");
+    assert_eq!(
+        json["waiting_for"],
+        serde_json::json!([{"wait": "maintainer"}])
+    );
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn explain_of_an_item_linewright_does_not_track_fails_saying_so() {
+    let answering = Answering::start(World::new().await, false).await;
+
+    let output = answering.linewright(&["explain", "7"]).await;
+
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert_eq!(output.stdout, "");
+    assert!(output.stderr.contains("#7"), "{}", output.stderr);
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn explain_without_serve_running_exits_3_saying_so() {
+    let runtime_dir = tempfile::tempdir().unwrap();
+
+    let output = linewright(runtime_dir.path(), &["explain", "1"]).await;
+
+    assert_eq!(output.code, Some(3));
+    assert_eq!(output.stdout, "");
+    assert!(output.stderr.contains("not running"), "{}", output.stderr);
 }

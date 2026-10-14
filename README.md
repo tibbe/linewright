@@ -24,12 +24,16 @@ linewright --repo owner/name serve
   on a host.
 - `status` asks the running `serve` of the repository what it is doing: since
   when it has run, its polls, the usage limit while one is in force, the runs
-  in flight, the deliveries with webhooks on, the items it tracks and where
-  each is, and each workflow with its last and next run and any workflow
-  file that does not parse. `--json` prints `serve`'s answer as JSON. It
-  exits 3 when no `serve` runs for the repository. `serve` answers on a Unix
-  socket only its user can open, under `$XDG_RUNTIME_DIR/linewright/`, or
-  `linewright-<uid>/` in the temporary directory without it.
+  in flight, the deliveries with webhooks on, the items it tracks, where
+  each is and what Linewright waits for on it, and each workflow with its
+  last and next run and any workflow file that does not parse. `explain N`
+  asks it where issue or pull request #N stands, when it last read it and
+  each thing Linewright waits for before it acts on it next, such as a free
+  run, the usage limit, CI or the maintainer. `--json` prints `serve`'s
+  answer as JSON. Both exit 3 when no `serve` runs for the repository.
+  `serve` answers on a Unix socket only its user can open, under
+  `$XDG_RUNTIME_DIR/linewright/`, or `linewright-<uid>/` in the temporary
+  directory without it.
 - `runs [N]` lists the runs, newest first, or issue or pull request #N's:
   each run's ID (`42/rework-2`, the second rework run on #42, or
   `weekly/3` for a workflow's), its item, stage, start, duration and outcome,
