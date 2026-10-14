@@ -21,10 +21,30 @@ Someone who files an issue, such as a customer.
 _Avoid_: customer, author
 
 **Agent**:
-A coding-agent session Linewright runs.
-_Avoid_: bot, model, worker
+A program that works on code on its own, such as Claude Code.
+_Avoid_: bot, worker
+
+**Session**:
+An agent's work in one context, from its first prompt to its last.
+_Avoid_: conversation, task
+
+**Transcript**:
+The record of everything a session said and did.
+_Avoid_: trace, session log, trajectory
 
 ### Work
+
+**Item**:
+An issue or pull request.
+_Avoid_: issuable
+
+**Run**:
+Work toward one outcome, on one item or for one workflow.
+_Avoid_: job, task, build, execution
+
+**Stage**:
+A part of the pipeline that a run does, such as triage.
+_Avoid_: phase, step
 
 **Workflow**:
 Instructions for an agent, paired with a trigger that says when they run.

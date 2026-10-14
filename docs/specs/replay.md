@@ -16,9 +16,8 @@ what the factory makes of it now, until it does better.
    on disk, so that I can run it again.
 2. As an operator, I want to run a case through the whole pipeline on my machine
    with GitHub out of the loop, so that a change to a brief is tried in minutes.
-3. As an operator, I want a run's results, the tickets, pull requests, comments
-   and every agent session's trace, as files, so that a coding agent can read
-   them, judge them and change the briefs.
+3. As an operator, I want a replay's whole output as files, so that a coding
+   agent can read it, judge it and change the briefs.
 4. As an operator, I want to edit the briefs between runs without rebuilding
    Linewright, so that iterating is editing a file.
 
@@ -27,8 +26,8 @@ what the factory makes of it now, until it does better.
 - A **case** is a directory holding the repository at a commit and the
   event: a spec change (the PR's title, body and the commits it merged) or an
   issue (its text and comments). `linewright capture <repo>#<N> DIR` writes
-  one from GitHub; run on the factory's machine it includes the traces of the
-  sessions that handled it.
+  one from GitHub; run on the factory's machine it includes the transcripts of
+  the sessions that handled it.
 - `linewright replay CASE --out DIR` runs the pipeline end to end against a
   **local store** seeded from the case: the same reconcile loop as `serve`,
   run until nothing is left to do rather than on a timer, ending when every
@@ -37,11 +36,9 @@ what the factory makes of it now, until it does better.
   `--auto-merge` every green pull request merges and the tickets it blocked
   run in turn. The implementer's own run of the repository's checks stands in
   for CI.
-- The output directory holds the store's final state as files (issues with
-  their labels and comments, pull requests with their diffs and comments) and
-  each session's brief, result and full trace, in plain formats (JSON,
-  Markdown, diffs) a coding agent reads directly.
-- Replay runs the whole pipeline; what a stage did is read from its trace.
+- The output directory holds everything the replay produced, as plain files a
+  coding agent reads directly.
+- Replay runs the whole pipeline; what a stage did is read from its transcript.
 - Agents see only the case: a session reads issues, comments and spec diffs
   from its brief and hands back tickets, comments and PR bodies in its
   result, and the manager alone writes to the store. In replay agents get no
@@ -50,6 +47,6 @@ what the factory makes of it now, until it does better.
   captured or replayed.
 - Briefs are files Linewright reads at startup from the `briefs` directory
   setting, so a change needs no rebuild.
-- In production every session's trace is kept under the work directory,
+- In production every session's transcript is kept under the work directory,
   outliving the run and the process, so a case can be captured with its
-  traces later.
+  transcripts later.

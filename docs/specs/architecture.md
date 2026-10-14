@@ -10,7 +10,7 @@ later.
   and a webhook delivery reads the items it names into it again and
   reconciles. Machine state is derived from the store's facts (assignee,
   linked PR, review and check state), never written as labels. Linewright may
-  keep bookkeeping no person reads or sets under the work directory. A local
+  keep bookkeeping no person sets under the work directory. A local
   store of plain files serves replay and tests.
 - **Functional core, imperative shell.** The reconcile step is a pure
   function from a snapshot, the live runs and the clock to a list of actions.
@@ -50,8 +50,9 @@ later.
   person takes part in a session: a decision an original puts to a person is
   made by an agent or handed back as an outcome, and judging an agent's own
   work, as review does, falls to agents in fresh contexts.
-- **Every session's trace is kept**: the runtime's own transcript, copied
-  beside the session's brief and result under the work directory.
+- **Every session's transcript is kept**: the runtime's own record of the
+  session, copied beside the session's brief and result under the work
+  directory.
 - **Rust, with GitHub's REST and GraphQL APIs in-process.**
 - **Workflows sit beside the pipeline, not under one trigger model.** The
   pipeline is Linewright's responsibility and its entry conditions are fixed
@@ -79,3 +80,23 @@ later.
 - **Configuration is layered**: flags, `LINEWRIGHT_*` environment variables,
   a TOML file, defaults, parsed once into one typed value. Credentials come
   from the environment only.
+
+## The local API
+
+`serve` answers questions about itself through a local API: its view of the
+repository, its runs and their transcripts. The monitoring commands are its
+clients. The API must also be able to serve a web UI, reached from a browser
+through `ssh -L` to the socket, and an MCP server, a `linewright mcp`
+subcommand on stdio that is a client of the socket.
+
+| aspect | decision |
+|---|---|
+| Transport | HTTP on a Unix socket |
+| Bodies | JSON; a monitoring command's `--json` prints the response as it is |
+| A transcript being followed | server-sent events, which a reader resumes by event id |
+| Access | file permissions: only `serve`'s user can open the socket |
+| The socket's path | derived from the repository, in a short per-user directory such as `$XDG_RUNTIME_DIR` |
+| Requests answered | only those whose `Host` is local |
+
+A Unix socket rather than a loopback TCP port, so that file permissions are
+the access control and two instances cannot collide on a port.

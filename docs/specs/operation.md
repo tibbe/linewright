@@ -4,8 +4,7 @@ Linewright is one self-contained server the operator runs where they choose,
 directly on a machine or in a container for isolation.
 
 For example, the operator runs Linewright on a server, in a container built
-from Linewright's base image with the project's toolchain added, and checks
-at any time what it is working on with `linewright status`.
+from Linewright's base image with the project's toolchain added.
 
 ## User Stories
 
@@ -33,7 +32,10 @@ at any time what it is working on with `linewright status`.
   |---|---|
   | `serve` | poll until stopped |
   | `once` | one poll cycle, then exit |
-  | `status` | show what Linewright is doing |
+  | `status` | show what Linewright is doing (see [Monitoring](monitoring.md)) |
+  | `explain N` | show where an item stands and why (see [Monitoring](monitoring.md)) |
+  | `runs [N]` | list the runs (see [Monitoring](monitoring.md)) |
+  | `logs N` | show a run's transcript (see [Monitoring](monitoring.md)) |
   | `workflow run NAME` | run one workflow now (see [Workflows](workflows.md)) |
   | `capture` | write a case from GitHub (see [Replay](replay.md)) |
   | `replay` | run a case against a local store (see [Replay](replay.md)) |
@@ -54,7 +56,7 @@ at any time what it is working on with `linewright status`.
   | `webhook-address` | `0.0.0.0:8080` |
   | `spec-glob` | `docs/**/*.md` |
   | `spec-lookback` | 7d |
-  | `max-workers` | 4 |
+  | `max-runs` | 4 |
   | `work-dir` | `linewright/` under the user's data directory |
   | `model` | one model for every stage |
   | `briefs` (a directory) | the briefs Linewright ships |
@@ -77,8 +79,7 @@ at any time what it is working on with `linewright status`.
 - The server logs each decision and action, readable for a person tailing it
   and structured (JSON lines) for machines, by the `log-format` setting.
   With webhooks on, that includes the address it listens on, each delivery
-  and what it names, and each delivery refused and why; `status` shows none
-  of it.
+  and what it names, and each delivery refused and why.
 - Agents run without permission prompts; the container is the isolation
   when one is used.
 - Unix-like systems: Linux is the deployment target, macOS a development
@@ -101,8 +102,7 @@ at any time what it is working on with `linewright status`.
   resets, and end the refused run without handing it back.
 - A restart forgets the limit and drops the waiting runs, as it drops any run
   in flight.
-- `status` shows the usage limit while one is in force, and when it resets.
-  The log records each refusal, wait and resume.
+- The log records each refusal, wait and resume.
 
 ## Out of scope
 

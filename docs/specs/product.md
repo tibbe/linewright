@@ -44,11 +44,9 @@ request that is reviewed, green and ready for a person.
   maintainer.
 - **Reviewed before a person sees it.** Agent review, the repository's own
   checks and CI all pass before a PR is marked ready.
-- **Everything shows in GitHub.** Every state a person reads or changes is a
-  label, an assignee or a pull request, so GitHub's UI shows what the factory
-  is doing and lets a person change it, and a comment on the issue or PR
-  records every outcome. Its labels, branches and comments are ones a person
-  could have written, with no data only the factory reads, such as run ids.
+- **The work shows in GitHub.** The state of the work lives in GitHub, kept
+  as a person would keep it, so that people work in the repository together
+  with the factory.
 - **Each stage is a fresh agent session with a brief**, and work is cut so
   that every session stays in its smart zone, the part of its context window
   where it still works at full quality.
@@ -58,8 +56,8 @@ request that is reviewed, green and ready for a person.
   on a trigger with instructions the maintainer writes, and may hand work to
   the pipeline.
 - **Runs again on request.** A spec change the factory handled can be
-  captured as a case and run through the whole pipeline on a machine, with
-  every agent's trace kept, so the briefs are tuned against real cases.
+  captured as a case and run through the whole pipeline again, so the briefs
+  are tuned against real cases.
 
 A maintainer merges a pull request that adds invoices to the spec. Linewright
 implements the change, has agents review the work and delivers it as pull
@@ -99,7 +97,8 @@ flowchart LR
 | [Workflows](workflows.md) | Running agents on a trigger with the maintainer's instructions. |
 | [Implementation](implementation.md) | Turning spec changes and tickets into reviewed, committed branches. |
 | [Pull requests](pull_requests.md) | Taking the work from a pull request to a merge. |
-| [Operation](operation.md) | Running Linewright and seeing what it is doing. |
+| [Operation](operation.md) | Running Linewright. |
+| [Monitoring](monitoring.md) | Seeing what Linewright is doing and why. |
 | [Replay](replay.md) | Running a captured case through the pipeline again to tune the briefs. |
 
 ## Out of scope

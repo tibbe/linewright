@@ -95,7 +95,8 @@ When Linewright cannot finish it, a comment on the issue says why.
   branch rebase-mergeable); with webhooks on, `serve` can listen on
   `webhook-address`; and `webhook-address` is not set without the webhook
   secret. Otherwise Linewright exits with an error.
-- One Linewright per repository.
+- One Linewright per repository. A `serve` started for a repository whose
+  `serve` already runs on the same host exits with an error saying so.
 
 The lifecycle of an issue. `triage` and `work` each group several states,
 drawn under [Triage](triage.md) and [Pull requests](pull_requests.md);
