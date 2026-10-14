@@ -60,6 +60,7 @@ services:
     volumes:
       - data:/data
       - cargo-registry:/usr/local/cargo/registry
+      - sccache:/var/cache/sccache
       - rustup:/usr/local/rustup
       - claude-config:/home/linewright/.claude
     depends_on: [proxy]
@@ -105,5 +106,6 @@ networks:
 volumes:
   data:
   cargo-registry:
+  sccache:
   rustup:
   claude-config:
