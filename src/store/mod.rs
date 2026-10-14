@@ -130,6 +130,48 @@ pub enum PushMode {
     Lease { expected: String },
 }
 
+/// Why a push failed.
+#[derive(Debug, thiserror::Error)]
+pub enum PushError {
+    /// GitHub refused it because Linewright's token lacks a permission, for
+    /// `reason`, in GitHub's words: no retry can change that.
+    #[error("GitHub refused the push for a missing permission: {reason}")]
+    MissingPermission { reason: String },
+    /// Anything else, such as the network or a lease the branch moved past.
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
+}
+
+impl PushError {
+    /// The failure of a `git push`, from what the remote said in `error`.
+    pub fn from_git(error: anyhow::Error) -> PushError {
+        match missing_permission(&format!("{error:#}")) {
+            Some(reason) => PushError::MissingPermission { reason },
+            None => PushError::Failed(error),
+        }
+    }
+}
+
+/// GitHub's reason in the output of a `git push` it refused because the
+/// token lacks a permission: a protected file such as a workflow, reported as
+/// ` ! [remote rejected] <ref> -> <branch> (refusing to allow … without …)`,
+/// or no write access to the repository, reported as `remote: Permission to
+/// <repo> denied to <user>.`. Refusals that do not name a missing permission
+/// are not recognized.
+fn missing_permission(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        if let Some(at) = line.find("[remote rejected] ") {
+            let (_, reason) = line[at..].split_once(" (")?;
+            let reason = reason.trim_end().strip_suffix(')').unwrap_or(reason);
+            return (reason.starts_with("refusing to allow ") && reason.contains(" without "))
+                .then(|| reason.to_string());
+        }
+        let at = line.find("remote: Permission to ")?;
+        let reason = line[at..].strip_prefix("remote: ")?.trim_end();
+        reason.contains(" denied to ").then(|| reason.to_string())
+    })
+}
+
 /// Why an issue is closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseReason {
@@ -244,7 +286,7 @@ pub trait Store: Send + Sync {
     /// Clones the repository into `dir`, with `branch` checked out.
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
     /// Pushes `HEAD` of the clone in `dir` to `branch`.
-    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<()>;
+    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;
 
     async fn add_label(&self, number: Number, label: &str) -> Result<()>;
     /// Removes the label if the issue or pull request has it.

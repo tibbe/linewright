@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::{
-    AnyItem, Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode,
+    AnyItem, Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
     RepoSettings, Store,
 };
 use crate::clock::Clock;
@@ -62,6 +62,9 @@ struct State {
     /// Why snapshots and reads of issues and pull requests fail, while they
     /// do.
     unreadable: Option<String>,
+    /// What `git push` reports for every push GitHub refuses, while it
+    /// refuses them.
+    pushes_refused: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -140,6 +143,7 @@ impl LocalStore {
                 snapshots_taken: 0,
                 items_read: 0,
                 unreadable: None,
+                pushes_refused: None,
             }),
         })
     }
@@ -499,6 +503,13 @@ impl LocalStore {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.refused = Some(reason.to_string());
         }
+    }
+
+    /// Makes every push fail as GitHub refusing it would, `git push`
+    /// reporting `output`, such as GitHub's message for a permission
+    /// Linewright's token lacks.
+    pub fn refuse_pushes(&self, output: &str) {
+        self.state().pushes_refused = Some(output.to_string());
     }
 
     /// Lifts [`LocalStore::refuse_merges`].
@@ -1228,7 +1239,13 @@ impl Store for LocalStore {
         git::clone(&self.url(), dir, branch, &[]).await
     }
 
-    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<()> {
+    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
+        let refused = self.state().pushes_refused.clone();
+        if let Some(output) = refused {
+            return Err(PushError::from_git(anyhow::anyhow!(
+                "git push failed: {output}"
+            )));
+        }
         let refspec = format!("HEAD:refs/heads/{branch}");
         let lease;
         let mut args = vec!["push", "--quiet", "origin", &refspec];
@@ -1239,7 +1256,7 @@ impl Store for LocalStore {
                 args.push(&lease);
             }
         }
-        git::git(dir, &args).await?;
+        git::git(dir, &args).await.map_err(PushError::from_git)?;
         let linewright = self.state().linewright.clone();
         self.record_push(branch, &linewright);
         Ok(())

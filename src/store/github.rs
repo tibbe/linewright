@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::{
-    AnyItem, Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushMode,
+    AnyItem, Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
     RepoSettings, Store,
 };
 use super::{job_log, rate_limit};
@@ -1764,7 +1764,7 @@ impl Store for GitHub {
         git::clone(&url, dir, branch, &self.git_env()).await
     }
 
-    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<()> {
+    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
         let refspec = format!("HEAD:refs/heads/{branch}");
         let lease = match &mode {
             PushMode::Replace => "--force".to_string(),
@@ -1777,7 +1777,8 @@ impl Store for GitHub {
             &["push", "--quiet", "origin", &refspec, &lease],
             &self.git_env(),
         )
-        .await?;
+        .await
+        .map_err(PushError::from_git)?;
         Ok(())
     }
 

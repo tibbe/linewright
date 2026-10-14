@@ -29,7 +29,9 @@ use crate::results::{
 use crate::runs::{Ending, Running, Runs};
 use crate::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::spec_gap;
-use crate::store::{Categories, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
+use crate::store::{
+    Categories, Identity, NewIssue, NewPull, PushError, PushMode, RepoSettings, Store,
+};
 use crate::tracking;
 use crate::transcript;
 use crate::workflow::Workflow;
@@ -114,6 +116,30 @@ struct Ctx {
 
 fn infra(error: anyhow::Error) -> Failure {
     Failure::Infrastructure(error)
+}
+
+/// A failed push of `branch`: one GitHub refused for a missing permission
+/// goes straight back to the maintainer, as no retry can change it
+/// (`docs/specs/implementation.md`, "Runs").
+fn push_failure(branch: &str, error: PushError) -> Failure {
+    match error {
+        PushError::MissingPermission { reason } => Failure::HandBack {
+            reason: refused_push(branch, &reason),
+            log_tail: None,
+        },
+        PushError::Failed(e) => infra(e),
+    }
+}
+
+/// What a hand-back says of a push of `branch` GitHub refused for a missing
+/// permission, for `reason`.
+fn refused_push(branch: &str, reason: &str) -> String {
+    format!(
+        "GitHub refused to push the branch `{branch}` because Linewright's token lacks a \
+         permission. GitHub's reason: {reason}\n\nThe work was not kept. Grant the permission \
+         and apply `{}` again, or make the change yourself.",
+        label::READY_FOR_AGENT
+    )
 }
 
 fn stage_of(kind: WorkKind) -> Stage {
@@ -813,11 +839,13 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
         if !has_commits {
             return Ok(String::new());
         }
-        store
-            .push(&ws.dir, &branch, PushMode::Replace)
-            .await
-            .map_err(Failure::Apply)?;
-        Ok(format!("\n\nThe work so far is on the branch `{branch}`."))
+        match store.push(&ws.dir, &branch, PushMode::Replace).await {
+            Ok(()) => Ok(format!("\n\nThe work so far is on the branch `{branch}`.")),
+            Err(PushError::MissingPermission { reason }) => {
+                Ok(format!("\n\n{}", refused_push(&branch, &reason)))
+            }
+            Err(PushError::Failed(e)) => Err(Failure::Apply(e)),
+        }
     };
     match result {
         ImplementResult::Done {
@@ -828,7 +856,7 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
             store
                 .push(&ws.dir, &branch, PushMode::Replace)
                 .await
-                .map_err(infra)?;
+                .map_err(|e| push_failure(&branch, e))?;
             let pr = store
                 .open_pull(NewPull {
                     head: branch.clone(),
@@ -984,7 +1012,7 @@ async fn pull_work(
         return store
             .push(&ws.dir, &pr.head_ref, lease)
             .await
-            .map_err(infra);
+            .map_err(|e| push_failure(&pr.head_ref, e));
     }
     let failures = match task {
         Task::FixCi(names) => store
@@ -1070,7 +1098,7 @@ async fn pull_work(
                 store
                     .push(&ws.dir, &pr.head_ref, lease)
                     .await
-                    .map_err(infra)?;
+                    .map_err(|e| push_failure(&pr.head_ref, e))?;
             }
             if let Some(body) = pr_body {
                 store

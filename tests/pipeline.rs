@@ -1848,3 +1848,204 @@ async fn a_session_that_fails_on_its_infrastructure_is_retried_once_then_handed_
         last_comment(&issue)
     );
 }
+
+/// GitHub's reason for refusing a push that changes a workflow file, when
+/// Linewright's token lacks the workflow permission.
+const WORKFLOW_REFUSAL: &str = "refusing to allow a Personal Access Token to create or update \
+     workflow `.github/workflows/ci.yml` without `workflow` scope";
+
+#[tokio::test]
+async fn a_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once_with_the_remedies() {
+    let (world, ticket) = implemented_with_pushes_refused(&rejected(WORKFLOW_REFUSAL)).await;
+
+    let issue = world.issue(ticket);
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Implement).len(),
+        1,
+        "not retried"
+    );
+    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
+    assert_eq!(issue.comments.len(), 1, "{:#?}", issue.comments);
+    assert_eq!(
+        last_comment(&issue),
+        format!(
+            "> *Linewright, implementation*\n\nGitHub refused to push the branch \
+             `{}-do-the-thing` because Linewright's token lacks a permission. GitHub's \
+             reason: {WORKFLOW_REFUSAL}\n\nThe work was not kept. Grant the permission and \
+             apply `ready-for-agent` again, or make the change yourself.",
+            ticket.0
+        )
+    );
+    assert!(world.store.pulls().is_empty());
+}
+
+/// A ticket implemented while every push fails, `git push` reporting
+/// `output`, after the poll that works it.
+async fn implemented_with_pushes_refused(output: &str) -> (World, linewright::domain::Number) {
+    let mut world = World::new().await;
+    implement(&world);
+    world.store.refuse_pushes(output);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world.poll().await;
+    (world, ticket)
+}
+
+#[tokio::test]
+async fn other_pushes_refused_for_a_missing_permission_are_handed_back_at_once_with_githubs_reason()
+{
+    for (output, reason) in [
+        (
+            rejected(
+                "refusing to allow a GitHub App to create or update workflow \
+                 `.github/workflows/ci.yml` without `workflows` permission",
+            ),
+            "refusing to allow a GitHub App to create or update workflow \
+             `.github/workflows/ci.yml` without `workflows` permission",
+        ),
+        (
+            "remote: Permission to acme/widgets.git denied to linewright-bot.\n\
+             fatal: unable to access 'https://github.com/acme/widgets.git/': The requested \
+             URL returned error: 403"
+                .to_string(),
+            "Permission to acme/widgets.git denied to linewright-bot.",
+        ),
+    ] {
+        let (world, ticket) = implemented_with_pushes_refused(&output).await;
+
+        let issue = world.issue(ticket);
+        assert_eq!(
+            world.runtime.prompts(WorkKind::Implement).len(),
+            1,
+            "not retried"
+        );
+        assert_eq!(labels(&issue), ["ready-for-human"]);
+        assert!(
+            last_comment(&issue).contains(&format!(
+                "GitHub's reason: {reason}\n\nThe work was not kept."
+            )),
+            "{}",
+            last_comment(&issue)
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_push_refused_for_a_reason_not_recognized_is_retried_once_then_handed_back() {
+    for output in [
+        rejected("pre-receive hook declined"),
+        "To https://github.com/acme/widgets.git\n ! [rejected] HEAD -> branch (stale info)\n\
+         error: failed to push some refs to 'https://github.com/acme/widgets.git'"
+            .to_string(),
+        "fatal: unable to access 'https://github.com/acme/widgets.git/': Could not resolve \
+         host: github.com"
+            .to_string(),
+    ] {
+        let (world, ticket) = implemented_with_pushes_refused(&output).await;
+
+        let issue = world.issue(ticket);
+        assert_eq!(
+            world.runtime.prompts(WorkKind::Implement).len(),
+            2,
+            "{output}"
+        );
+        assert_eq!(labels(&issue), ["ready-for-human"]);
+        let comment = last_comment(&issue);
+        assert!(
+            comment.contains("The run failed twice on its infrastructure")
+                && !comment.contains("The work was not kept"),
+            "{comment}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_blocked_run_whose_work_is_refused_for_a_missing_permission_asks_its_question_and_says_the_work_was_not_kept()
+ {
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Implement, |call| {
+        commit_in(&call.spec.dir, &[("src/partial.txt", "half\n")], "Start");
+        json(json!({"outcome": "blocked", "question": "Should gadgets expire?"}))
+    });
+    world.store.refuse_pushes(&rejected(WORKFLOW_REFUSAL));
+    let ticket = world
+        .store
+        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Implement).len(),
+        1,
+        "not retried"
+    );
+    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(
+        last_comment(&issue),
+        format!(
+            "> *Linewright, implementation*\n\nBlocked on a question the spec cannot decide:\n\n\
+             Should gadgets expire?\n\nGitHub refused to push the branch `{}-gadgets` because \
+             Linewright's token lacks a permission. GitHub's reason: {WORKFLOW_REFUSAL}\n\nThe \
+             work was not kept. Grant the permission and apply `ready-for-agent` again, or make \
+             the change yourself.",
+            ticket.0
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_rework_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    let head = world.store.snapshot_pull(pr).await.head_ref;
+    world
+        .store
+        .review_as(
+            "maintainer",
+            pr,
+            ReviewState::ChangesRequested,
+            "Add CI.",
+            &[],
+        )
+        .unwrap();
+    world.runtime.on(WorkKind::Rework, |call| {
+        commit_in(
+            &call.spec.dir,
+            &[(".github/workflows/ci.yml", "on: push\n")],
+            "Add CI",
+        );
+        json(json!({"outcome": "done", "comment": "Added CI."}))
+    });
+    world.store.refuse_pushes(&rejected(WORKFLOW_REFUSAL));
+
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Rework).len(),
+        1,
+        "not retried"
+    );
+    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
+    assert_eq!(
+        last_comment(&issue),
+        format!(
+            "> *Linewright, rework*\n\nGitHub refused to push the branch `{head}` because \
+             Linewright's token lacks a permission. GitHub's reason: {WORKFLOW_REFUSAL}\n\nThe \
+             work was not kept. Grant the permission and apply `ready-for-agent` again, or make \
+             the change yourself."
+        )
+    );
+    assert_eq!(
+        world.store.snapshot_pull(pr).await.comments.len(),
+        0,
+        "nothing is posted on the pull request"
+    );
+}

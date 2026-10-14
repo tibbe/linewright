@@ -747,3 +747,11 @@ impl Serving {
         let _ = self.handle.await;
     }
 }
+
+/// What `git push` reports when GitHub rejects the push for `reason`.
+pub fn rejected(reason: &str) -> String {
+    format!(
+        "To https://github.com/acme/widgets.git\n ! [remote rejected] HEAD -> branch ({reason})\n\
+         error: failed to push some refs to 'https://github.com/acme/widgets.git'"
+    )
+}

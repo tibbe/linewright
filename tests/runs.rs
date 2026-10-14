@@ -236,6 +236,30 @@ async fn a_run_handed_back_says_so() {
 }
 
 #[tokio::test]
+async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
+    let (mut world, work_dir) = world().await;
+    implement(&world);
+    world.store.refuse_pushes(&rejected(
+        "refusing to allow a Personal Access Token to create or update workflow \
+         `.github/workflows/ci.yml` without `workflow` scope",
+    ));
+    world
+        .store
+        .open_issue("maintainer", "Do it", "Please.", &["ready-for-agent"]);
+    world.poll().await;
+
+    let output = linewright(work_dir.path(), &["runs", "1"]).await;
+
+    assert!(
+        output
+            .stdout
+            .starts_with("1/implement-1: handed back — #1 implement, "),
+        "{}",
+        output.stdout
+    );
+}
+
+#[tokio::test]
 async fn runs_of_an_item_with_none_exits_4_saying_so() {
     let (mut world, work_dir) = world().await;
     triage_ready(&world);
