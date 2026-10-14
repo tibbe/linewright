@@ -10,9 +10,10 @@ use linewright::api::{self, Api, RequestError, Sources};
 use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
-use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, WorkflowCommand};
+use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, Since, WorkflowCommand};
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig};
+use linewright::runs::{self, ListError, Query};
 use linewright::runtime::claude::ClaudeCode;
 use linewright::status;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
@@ -26,6 +27,7 @@ const RUNTIME: &str = "claude";
 /// "Output"). Clap exits with 2 too for a command line it cannot parse.
 const WRONG_COMMAND_LINE: u8 = 2;
 const NOT_SERVING: u8 = 3;
+const NO_SUCH_ITEM: u8 = 4;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -85,6 +87,11 @@ async fn status(config: &Config, json: bool) -> ExitCode {
             eprintln!("linewright: {e}");
             return ExitCode::from(NOT_SERVING);
         }
+        // `/status` is always there.
+        Err(e @ RequestError::NotFound(_)) => {
+            eprintln!("linewright: {e}");
+            return ExitCode::FAILURE;
+        }
         Err(RequestError::Other(e)) => {
             eprintln!("linewright: {e:#}");
             return ExitCode::FAILURE;
@@ -108,6 +115,76 @@ async fn status(config: &Config, json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `linewright runs`: the runs `query` asks for, from the `serve` of the
+/// configured repository or, with none running, from the records it keeps,
+/// printed as text or, with `json`, as JSON. Errors go to standard error,
+/// without the log's decoration.
+async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
+    match answer_runs(config, query).await {
+        Ok(answer) => {
+            print!("{}", answer.text(json));
+            ExitCode::SUCCESS
+        }
+        Err((code, message)) => {
+            eprintln!("linewright: {message}");
+            ExitCode::from(code)
+        }
+    }
+}
+
+/// The answer to `query`, or the exit status and the error.
+async fn answer_runs(config: &Config, query: &Query) -> Result<Answer, (u8, String)> {
+    let failed = |e: anyhow::Error| (1, format!("{e:#}"));
+    let work_dir = config.repo_work_dir().map_err(failed)?;
+    let resource = format!("/runs?{}", runs::query_string(query));
+    match api::get_answer(&socket_dir(), &work_dir.repo, &resource).await {
+        Ok(body) => {
+            let listing = serde_json::from_slice(&body)
+                .map_err(|e| (1, format!("`serve`'s answer does not read as runs: {e}")))?;
+            Ok(Answer::Served { body, listing })
+        }
+        Err(RequestError::NotServing { .. }) => {
+            match runs::answer(&work_dir, query, SystemClock.now()) {
+                Ok(listing) => Ok(Answer::Read(listing)),
+                Err(e @ ListError::NoRuns(_)) => Err((NO_SUCH_ITEM, e.to_string())),
+                Err(ListError::Other(e)) => Err(failed(e)),
+            }
+        }
+        Err(e @ RequestError::NotFound(_)) => Err((NO_SUCH_ITEM, e.to_string())),
+        Err(RequestError::Other(e)) => Err(failed(e)),
+    }
+}
+
+/// The answer to `runs`: `serve`'s, or one read with no `serve` running.
+enum Answer {
+    Served {
+        body: axum::body::Bytes,
+        listing: runs::Listing,
+    },
+    Read(runs::Listing),
+}
+
+impl Answer {
+    /// The answer as text or, with `json`, as JSON: `serve`'s as it sent it
+    /// (`docs/specs/architecture.md`, "The local API").
+    fn text(&self, json: bool) -> String {
+        match (self, json) {
+            (Answer::Served { body, .. }, true) => {
+                format!("{}\n", String::from_utf8_lossy(body))
+            }
+            (Answer::Read(listing), true) => {
+                format!(
+                    "{}\n",
+                    serde_json::to_string(listing).expect("the answers serialize")
+                )
+            }
+            (Answer::Served { listing, .. } | Answer::Read(listing), false) => {
+                runs::render(listing, colour())
+            }
+        }
+    }
+}
+
 /// Whether to colour what goes to standard output: only on a terminal.
 fn colour() -> bool {
     std::io::stdout().is_terminal()
@@ -127,6 +204,21 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
     let done = match command {
         // Its errors go to standard error as they are, not to the log.
         Command::Status { json } => return Ok(status(&config, json).await),
+        Command::Runs {
+            item,
+            stage,
+            since,
+            limit,
+            json,
+        } => {
+            let query = Query {
+                item: item.map(Number),
+                stage,
+                since: since.map(|since: Since| since.at(SystemClock.now())),
+                limit,
+            };
+            return Ok(list_runs(&config, &query, json).await);
+        }
         Command::Serve => {
             // Listening before startup, which talks to GitHub: in a container
             // `linewright` can be PID 1, which the kernel sends no signal it
@@ -136,7 +228,8 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             let since = clock.now();
             // Before anything else, so that a second `serve` for the
             // repository stops at once.
-            let claimed = api::claim(&socket_dir(), config.required_repo()?)?;
+            let work_dir = config.repo_work_dir()?;
+            let claimed = api::claim(&socket_dir(), &work_dir.repo)?;
             // `once` and the other commands never listen
             // (`docs/specs/webhooks.md`).
             let pending = Pending::default();
@@ -157,6 +250,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                     view: viewed,
                     deliveries: listener.as_ref().map(Listener::tally),
                     clock,
+                    work_dir,
                 },
             );
             let served = serve(&config, signals, &pending, &view).await;

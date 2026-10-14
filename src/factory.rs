@@ -27,6 +27,7 @@ use crate::reconcile::{
     Action, FailedMerge, LiveRun, Memory, Policy, Subject, Work, Workflows, hold_note, reconcile,
 };
 use crate::run::{self, Shell, WorkflowEnd};
+use crate::runs::{RunOf, Runs};
 use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
@@ -183,6 +184,7 @@ impl Factory {
             settings,
             result_retries: config.result_retries,
             session_timeout: config.session_timeout,
+            runs: Runs::new(&config.work_dir),
             work_dir: config.work_dir,
             waits_out_usage_limit: config.waits_out_usage_limit,
             report_refusal,
@@ -507,15 +509,28 @@ impl Factory {
         let snapshot = &kept.snapshot;
         match action {
             Action::Start(work) => {
+                let shell = &self.shell;
+                let item = match work.subject() {
+                    Subject::Issue(number) | Subject::SpecChange(number) => number,
+                };
+                let running = shell.runs.begin(
+                    RunOf::Work {
+                        item,
+                        stage: work.kind(),
+                    },
+                    shell.clock.now(),
+                )?;
+                let id = running.id().to_string();
                 let cancel = CancellationToken::new();
                 let handle = self.runs.spawn(run::run(
-                    self.shell.clone(),
+                    shell.clone(),
                     work.clone(),
                     snapshot.clone(),
                     kept.as_of(work),
+                    running,
                     cancel.clone(),
                 ));
-                info!(subject = ?work.subject(), kind = ?work.kind(), "run started");
+                info!(run = id, subject = ?work.subject(), kind = ?work.kind(), "run started");
                 self.live.insert(
                     handle.id(),
                     LiveEntry {
@@ -652,12 +667,23 @@ impl Factory {
     }
 }
 
-/// Runs `workflow` once, files the issues its result returns and logs how
-/// it went: by hand or on its schedule.
+/// Runs `workflow` once, recorded, files the issues its result returns and
+/// logs how it went: by hand or on its schedule.
 async fn run_and_log(shell: &Shell, workflow: &Workflow, cancel: CancellationToken) -> Result<()> {
     let name = &workflow.name;
-    info!(workflow = %name, "workflow run started");
-    match run::workflow(shell, workflow, cancel).await {
+    let running = shell
+        .runs
+        .begin(
+            RunOf::Workflow {
+                workflow: name.clone(),
+            },
+            shell.clock.now(),
+        )
+        .inspect_err(|e| {
+            error!(workflow = %name, error = format!("{e:#}"), "recording the workflow run failed");
+        })?;
+    info!(workflow = %name, run = %running.id(), "workflow run started");
+    match run::workflow(shell, workflow, running, cancel).await {
         Ok(WorkflowEnd::Finished(result)) => {
             info!(workflow = %name, summary = result.summary, "workflow run finished");
             Ok(())

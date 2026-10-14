@@ -12,6 +12,7 @@ pub mod reconcile;
 mod records;
 pub mod results;
 pub mod run;
+pub mod runs;
 pub mod runtime;
 pub mod spec_gap;
 pub mod spec_glob;

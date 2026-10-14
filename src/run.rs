@@ -26,6 +26,7 @@ use crate::results::{
     self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
     WorkflowIssueLabel, WorkflowResult,
 };
+use crate::runs::{Ending, Running, Runs};
 use crate::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::spec_gap;
 use crate::store::{Categories, Identity, NewIssue, NewPull, PushMode, RepoSettings, Store};
@@ -44,6 +45,8 @@ pub(crate) struct Shell {
     pub result_retries: u32,
     pub session_timeout: std::time::Duration,
     pub work_dir: PathBuf,
+    /// The records of the runs, in the work directory.
+    pub runs: Runs,
     /// Whether a session turn refused for the usage limit waits for the
     /// reset and carries on, as under `serve`, rather than ending its run.
     pub waits_out_usage_limit: bool,
@@ -100,11 +103,12 @@ enum Failure {
     UsageLimit(UsageLimit),
 }
 
-/// What a run knows beyond the shell: when its snapshot was taken, and
-/// whether it is still wanted.
+/// What a run knows beyond the shell: when its snapshot was taken, whether
+/// it is still wanted, and its record.
 struct Ctx {
     as_of: Timestamp,
     cancel: CancellationToken,
+    run: Running,
 }
 
 fn infra(error: anyhow::Error) -> Failure {
@@ -122,18 +126,21 @@ fn stage_of(kind: WorkKind) -> Stage {
     }
 }
 
-/// Runs `work` to its end.
+/// Runs `work`, recorded as `run`, to its end.
 pub(crate) async fn run(
     shell: Arc<Shell>,
     work: Work,
     snapshot: Arc<Snapshot>,
     as_of: Timestamp,
+    run: Running,
     cancel: CancellationToken,
 ) {
-    drive(&shell, &work, &snapshot, &Ctx { as_of, cancel }).await
+    let ctx = Ctx { as_of, cancel, run };
+    let ending = drive(&shell, &work, &snapshot, &ctx).await;
+    ctx.run.end(shell.clock.now(), ending);
 }
 
-async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
+async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Ending {
     let subject = work.subject();
     let run_stage = stage_of(work.kind());
     let mut retried = false;
@@ -141,7 +148,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
         match attempt(shell, work, snapshot, ctx).await {
             Ok(()) => {
                 info!(subject = ?subject, kind = ?work.kind(), "run finished");
-                return;
+                return Ending::Done;
             }
             Err(Failure::Infrastructure(e)) if !retried => {
                 warn!(subject = ?subject, error = format!("{e:#}"), "infrastructure failure; retrying once");
@@ -155,7 +162,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
             }
             Err(Failure::Cancelled) => {
                 info!(subject = ?subject, "run cancelled; its branch is kept");
-                return;
+                return Ending::Cancelled;
             }
             Err(Failure::UsageLimit(limit)) => {
                 warn!(
@@ -163,7 +170,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
                     resets_at = %limit.resets_at,
                     "run ended for the usage limit; its claim and branch are kept"
                 );
-                return;
+                return Ending::UsageLimit;
             }
             Err(Failure::Apply(e)) => {
                 break (format!("Recording the run's outcome failed: {e:#}"), None);
@@ -184,8 +191,12 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
             hand_back_spec_change(shell, pr, &reason, log_tail.as_deref()).await
         }
     };
-    if let Err(e) = handed {
-        warn!(subject = ?subject, error = format!("{e:#}"), "handing back failed");
+    match handed {
+        Ok(()) => Ending::HandedBack,
+        Err(e) => {
+            warn!(subject = ?subject, error = format!("{e:#}"), "handing back failed");
+            Ending::Failed
+        }
     }
 }
 
@@ -357,7 +368,7 @@ fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBu
         .context("creating the sessions directory")
         .map_err(infra)?;
     let kind = match purpose {
-        Purpose::Work { kind, .. } => kind_name(*kind),
+        Purpose::Work { kind, .. } => kind.name(),
         Purpose::Workflow(_) => "workflow",
     };
     let base = format!("{}-{kind}", now.format("%Y%m%dT%H%M%SZ"));
@@ -374,17 +385,6 @@ fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBu
         }
     }
     unreachable!()
-}
-
-fn kind_name(kind: WorkKind) -> &'static str {
-    match kind {
-        WorkKind::Triage => "triage",
-        WorkKind::Tickets => "tickets",
-        WorkKind::Implement => "implement",
-        WorkKind::Rework => "rework",
-        WorkKind::FixCi => "fix-ci",
-        WorkKind::Update => "update",
-    }
 }
 
 /// Why a session's answer is not accepted.
@@ -557,16 +557,19 @@ fn tail(text: &str, lines: usize) -> String {
     all[all.len().saturating_sub(lines)..].join("\n")
 }
 
-/// A session that times out after `timeout`.
+/// A session that times out after `timeout`, its record linked to the run.
 fn session_spec(
     shell: &Shell,
+    ctx: &Ctx,
     purpose: Purpose,
     ws: &Workspace,
     prompt: String,
     timeout: std::time::Duration,
 ) -> Result<SessionSpec, Failure> {
+    let record = record_dir(shell, &purpose, shell.clock.now())?;
+    ctx.run.session(&record);
     Ok(SessionSpec {
-        record: record_dir(shell, &purpose, shell.clock.now())?,
+        record,
         purpose,
         dir: ws.dir.clone(),
         scratch: ws.scratch.clone(),
@@ -586,7 +589,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
     let prompt = prompts::triage(&shell.repo(), issue, &categories);
-    let mut spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let categories = &categories;
     let (result, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         results::parse_triage(&message, categories).map_err(parse_retry)
@@ -658,7 +661,7 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
         .await
         .map_err(infra)?;
     let prompt = prompts::tickets(&shell.repo(), pr, &diff);
-    let mut spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let (tickets, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         results::parse_tickets(&message).map_err(parse_retry)
     })
@@ -769,7 +772,7 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
     git::create_branch(&ws.dir, &branch).await.map_err(infra)?;
     let upstream = shell.upstream();
     let prompt = prompts::implement(&shell.repo(), ticket, &branch);
-    let mut spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let (dir, base) = (&ws.dir, &upstream);
     let conversation = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         let result: ImplementResult = results::parse(&message).map_err(parse_retry)?;
@@ -1002,7 +1005,7 @@ async fn pull_work(
         Task::Update => PullTask::Update,
     };
     let prompt = prompts::pull_work(&shell.repo(), ticket, pr, &pull_task, conflict.as_ref());
-    let mut spec = session_spec(shell, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
     let dir = &ws.dir;
     let accept = |message: String, pr_threads: Vec<String>| async move {
@@ -1206,24 +1209,26 @@ pub(crate) enum WorkflowEnd {
     UsageLimit(UsageLimit),
 }
 
-/// Runs `workflow` once: one session on a fresh clone of the default branch,
-/// then files the issues its result returns. A workflow run has no issue to
-/// hand back, so a run that fails is an error.
+/// Runs `workflow` once, recorded as `run`: one session on a fresh clone of
+/// the default branch, then files the issues its result returns. A workflow
+/// run has no issue to hand back, so a run that fails is an error.
 pub(crate) async fn workflow(
     shell: &Shell,
     workflow: &Workflow,
+    run: Running,
     cancel: CancellationToken,
 ) -> Result<WorkflowEnd> {
     let ctx = Ctx {
         as_of: shell.clock.now(),
         cancel,
+        run,
     };
     let session = async {
         let purpose = Purpose::Workflow(workflow.name.clone());
         let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
         let prompt = prompts::workflow(&shell.briefs, &shell.repo(), workflow);
         let timeout = workflow.timeout.unwrap_or(shell.session_timeout);
-        let mut spec = session_spec(shell, purpose, &ws, prompt, timeout)?;
+        let mut spec = session_spec(shell, &ctx, purpose, &ws, prompt, timeout)?;
         let (result, _) = converse(shell, &ctx, &mut spec, Step::Start, |message| async move {
             results::parse(&message).map_err(parse_retry)
         })
@@ -1233,7 +1238,17 @@ pub(crate) async fn workflow(
             .map_err(Failure::Apply)?;
         Ok(result)
     };
-    match session.await {
+    let ended = session.await;
+    let ending = match &ended {
+        Ok(_) => Ending::Done,
+        Err(Failure::UsageLimit(_)) => Ending::UsageLimit,
+        Err(Failure::Cancelled) => Ending::Cancelled,
+        Err(Failure::Infrastructure(_) | Failure::Apply(_) | Failure::HandBack { .. }) => {
+            Ending::Failed
+        }
+    };
+    ctx.run.end(shell.clock.now(), ending);
+    match ended {
         Ok(result) => Ok(WorkflowEnd::Finished(result)),
         Err(Failure::UsageLimit(limit)) => Ok(WorkflowEnd::UsageLimit(limit)),
         Err(Failure::Infrastructure(e) | Failure::Apply(e)) => Err(e),

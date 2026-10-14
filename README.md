@@ -30,6 +30,13 @@ linewright --repo owner/name serve
   exits 3 when no `serve` runs for the repository. `serve` answers on a Unix
   socket only its user can open, under `$XDG_RUNTIME_DIR/linewright/`, or
   `linewright-<uid>/` in the temporary directory without it.
+- `runs [N]` lists the runs, newest first, or issue or pull request #N's:
+  each run's ID (`42/rework-2`, the second rework run on #42, or
+  `weekly/3` for a workflow's), its item, stage, start, duration and outcome,
+  including runs that started no session. `--stage`, `--since` and `--limit`
+  narrow the list, and `--json` prints it as JSON. It asks the running
+  `serve` or, with none running, reads the records `serve` keeps under the
+  work directory, and exits 4 when #N has no runs.
 - Agent sessions ignore your user-level Claude Code setup: its settings,
   skills, plugins, MCP servers, `CLAUDE.md` and claude.ai connectors, and the
   `CLAUDE.md` files in directories above their clones. They read the

@@ -299,7 +299,7 @@ pub fn render(status: &Status, colour: bool) -> String {
 
 /// Colours text with ANSI escapes, if it is on.
 #[derive(Clone, Copy)]
-struct Paint(bool);
+pub(crate) struct Paint(pub bool);
 
 impl Paint {
     fn with(self, code: &str, text: &str) -> String {
@@ -310,15 +310,15 @@ impl Paint {
         }
     }
 
-    fn bold(self, text: &str) -> String {
+    pub(crate) fn bold(self, text: &str) -> String {
         self.with("1", text)
     }
 
-    fn yellow(self, text: &str) -> String {
+    pub(crate) fn yellow(self, text: &str) -> String {
         self.with("33", text)
     }
 
-    fn red(self, text: &str) -> String {
+    pub(crate) fn red(self, text: &str) -> String {
         self.with("31", text)
     }
 }
@@ -411,6 +411,6 @@ fn describe(state: &ItemState) -> String {
     }
 }
 
-fn utc(time: Timestamp) -> String {
+pub(crate) fn utc(time: Timestamp) -> String {
     time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
 }

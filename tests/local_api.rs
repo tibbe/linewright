@@ -55,6 +55,8 @@ impl Answering {
             ..
         } = world;
         let since = clock.now();
+        // As `common::config` has it.
+        let work_dir = dir.path().join("work");
         let serving = Serving::start(factory, Duration::from_secs(3600), pending);
         let api = Api::serve(
             claimed,
@@ -63,6 +65,10 @@ impl Answering {
                 view: serving.view.clone(),
                 deliveries: listener.as_ref().map(Listener::tally),
                 clock,
+                work_dir: linewright::runs::RepoWorkDir {
+                    base: work_dir,
+                    repo: REPO.into(),
+                },
             },
         );
         let mut view = serving.view.clone();
@@ -413,4 +419,163 @@ async fn a_wrong_setting_outside_the_command_line_exits_1() {
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
     assert!(output.stderr.contains("poll-interval"), "{}", output.stderr);
+}
+
+/// A world whose factory records its runs where `serve` and
+/// `linewright --work-dir <dir>/work` look for those of `owner/widgets`,
+/// with an issue for triage, which triage readies.
+async fn with_issue_for_triage() -> World {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world
+        .runtime
+        .on(linewright::reconcile::WorkKind::Triage, |_| {
+            json(serde_json::json!({
+                "outcome": "ready-for-agent",
+                "category": "bug",
+                "comment": "## Agent Brief\n\n**Summary:** It crashes."
+            }))
+        });
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    world
+}
+
+#[tokio::test]
+async fn runs_gives_the_same_answer_with_serve_running_and_without() {
+    let answering = Answering::start(with_issue_for_triage().await, false).await;
+    let work_dir = answering._dir.path().join("work");
+    let work_dir = work_dir.to_str().unwrap();
+    let args = ["--work-dir", work_dir, "runs", "1"];
+    eventually_async(|| async { answering.linewright(&args).await.stdout.contains("done") }).await;
+
+    let served = [
+        answering.linewright(&args).await,
+        answering
+            .linewright(&[&args[..], &["--json"]].concat())
+            .await,
+    ];
+    let Answering {
+        serving,
+        api,
+        runtime_dir,
+        _dir,
+        ..
+    } = answering;
+    api.stop().await;
+    serving.stop().await;
+    let read = [
+        linewright(runtime_dir.path(), &args).await,
+        linewright(runtime_dir.path(), &[&args[..], &["--json"]].concat()).await,
+    ];
+
+    for (from_serve, from_records) in served.iter().zip(&read) {
+        assert_eq!(from_serve.code, Some(0), "{}", from_serve.stderr);
+        assert_eq!(from_records.code, Some(0), "{}", from_records.stderr);
+        assert_eq!(from_serve.stdout, from_records.stdout);
+    }
+    assert!(
+        read[0]
+            .stdout
+            .starts_with("1/triage-1: done — #1 triage, started "),
+        "{}",
+        read[0].stdout
+    );
+}
+
+#[tokio::test]
+async fn a_run_in_flight_is_listed_so_and_once_a_stop_cancels_it_as_cancelled() {
+    let world = with_issue_for_triage().await;
+    world.runtime.takes(Duration::from_secs(60));
+    let answering = Answering::start(world, false).await;
+    let work_dir = answering._dir.path().join("work");
+    let work_dir = work_dir.to_str().unwrap();
+    let args = ["--work-dir", work_dir, "runs"];
+    eventually_async(|| async { !answering.linewright(&args).await.stdout.is_empty() }).await;
+
+    let in_flight = answering.linewright(&args).await;
+    let Answering {
+        serving,
+        api,
+        runtime_dir,
+        _dir,
+        ..
+    } = answering;
+    api.stop().await;
+    serving.stop().await;
+    let stopped = linewright(runtime_dir.path(), &args).await;
+
+    assert!(
+        in_flight
+            .stdout
+            .starts_with("1/triage-1: in flight — #1 triage, started "),
+        "{}",
+        in_flight.stdout
+    );
+    assert!(
+        stopped
+            .stdout
+            .starts_with("1/triage-1: cancelled — #1 triage, started "),
+        "{}",
+        stopped.stdout
+    );
+}
+
+#[tokio::test]
+async fn runs_of_an_item_with_none_exits_4_with_serve_running() {
+    let answering = Answering::start(World::new().await, false).await;
+
+    let output = answering.linewright(&["runs", "7"]).await;
+
+    assert_eq!(output.code, Some(4), "{}", output.stderr);
+    assert!(
+        output.stderr.contains("#7 has no runs"),
+        "{}",
+        output.stderr
+    );
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn a_run_whose_serve_died_is_listed_as_interrupted() {
+    let world = with_issue_for_triage().await;
+    world.runtime.takes(Duration::from_secs(60));
+    let answering = Answering::start(world, false).await;
+    let work_dir = answering._dir.path().join("work");
+    let work_dir = work_dir.to_str().unwrap();
+    let args = ["--work-dir", work_dir, "runs"];
+    eventually_async(|| async { !answering.linewright(&args).await.stdout.is_empty() }).await;
+    let Answering {
+        serving,
+        api,
+        runtime_dir,
+        _dir,
+        ..
+    } = answering;
+
+    serving.kill().await;
+    api.stop().await;
+
+    let output = linewright(runtime_dir.path(), &args).await;
+    let line = output.stdout.lines().next().unwrap_or_default();
+    assert!(
+        line.starts_with("1/triage-1: interrupted — #1 triage, started 2026-10-01 12:00:"),
+        "{}",
+        output.stdout
+    );
+    assert!(line.ends_with(" UTC"), "no duration: {line}");
+}
+
+#[tokio::test]
+async fn a_resource_serve_does_not_have_is_an_error_not_a_missing_item() {
+    let answering = Answering::start(World::new().await, false).await;
+
+    let answer = api::get_answer(&socket_dir(answering.runtime_dir.path()), REPO, "/nope").await;
+
+    assert!(
+        matches!(answer, Err(api::RequestError::Other(_))),
+        "{:?}",
+        answer.err()
+    );
+    answering.stop().await;
 }

@@ -725,4 +725,10 @@ impl Serving {
         self.stopping.cancel();
         self.handle.await.unwrap();
     }
+
+    /// Ends serving at once, its runs with it, as when its process dies.
+    pub async fn kill(self) {
+        self.handle.abort();
+        let _ = self.handle.await;
+    }
 }

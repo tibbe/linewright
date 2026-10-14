@@ -82,6 +82,9 @@ With Docker on another machine, pass its context to each command:
 - The server's log, a JSON line for each decision and action:
   `docker compose logs -f linewright`.
 - What Linewright is doing: `docker compose exec linewright linewright status`.
+- What Linewright did: `docker compose exec linewright linewright runs`, or
+  `runs N` for issue or pull request #N's runs. Each run's record, with the
+  sessions it started, is under `/data/OWNER/NAME/runs/` in the container.
 - What each agent session did: its record, under
   `/data/OWNER/NAME/sessions/` in the container. There is a directory for
   each issue (`issue-N`), spec PR (`pr-N`) and workflow (`workflow-NAME`),

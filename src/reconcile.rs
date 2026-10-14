@@ -5,6 +5,7 @@
 //! areas it lists.
 
 use chrono::TimeDelta;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::{
     CheckState, Comment, Filed, Issue, IssueEvent, Item, Login, MergeMethod, MergeMethods,
@@ -130,7 +131,10 @@ impl Work {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// The stage a run does, named in its run ID and in JSON by
+/// [`WorkKind::name`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(into = "&'static str", try_from = "String")]
 pub enum WorkKind {
     Triage,
     Tickets,
@@ -138,6 +142,57 @@ pub enum WorkKind {
     Rework,
     FixCi,
     Update,
+}
+
+impl WorkKind {
+    pub const ALL: [WorkKind; 6] = [
+        WorkKind::Triage,
+        WorkKind::Tickets,
+        WorkKind::Implement,
+        WorkKind::Rework,
+        WorkKind::FixCi,
+        WorkKind::Update,
+    ];
+
+    /// The stage's name in run IDs (`docs/specs/monitoring.md`, "runs").
+    pub fn name(self) -> &'static str {
+        match self {
+            WorkKind::Triage => "triage",
+            WorkKind::Tickets => "tickets",
+            WorkKind::Implement => "implement",
+            WorkKind::Rework => "rework",
+            WorkKind::FixCi => "fix-ci",
+            WorkKind::Update => "update",
+        }
+    }
+}
+
+impl From<WorkKind> for &'static str {
+    fn from(kind: WorkKind) -> &'static str {
+        kind.name()
+    }
+}
+
+impl TryFrom<String> for WorkKind {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<WorkKind, String> {
+        name.parse()
+    }
+}
+
+impl std::str::FromStr for WorkKind {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<WorkKind, String> {
+        WorkKind::ALL
+            .into_iter()
+            .find(|kind| kind.name() == name)
+            .ok_or_else(|| {
+                let names: Vec<&str> = WorkKind::ALL.map(WorkKind::name).to_vec();
+                format!("{name:?} is not a stage: one of {}", names.join(", "))
+            })
+    }
 }
 
 /// A run in flight.

@@ -13,7 +13,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::TimeDelta;
 use clap::{Args, Parser, Subcommand};
 
-use crate::domain::{MergeMethod, UpdateMethod};
+use crate::domain::{MergeMethod, Timestamp, UpdateMethod};
+use crate::reconcile::WorkKind;
+use crate::runs::RepoWorkDir;
 use crate::spec_glob::SpecGlob;
 use crate::webhook::{self, Webhooks};
 use crate::workflow::WorkflowName;
@@ -39,6 +41,28 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// List the runs, newest first: all of them, or issue or pull request
+    /// #N's.
+    Runs {
+        /// Only the runs on issue or pull request #N.
+        #[arg(value_name = "N")]
+        item: Option<u64>,
+        /// Only the runs of this stage: triage, tickets, implement, rework,
+        /// fix-ci or update.
+        #[arg(long)]
+        stage: Option<WorkKind>,
+        /// Only the runs started since this time, as RFC 3339
+        /// (2026-10-14T12:00:00Z) or a date (2026-10-14) in UTC, or this
+        /// long ago (2h).
+        #[arg(long, value_parser = parse_since)]
+        since: Option<Since>,
+        /// At most this many runs, the newest.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Workflows: `workflow run NAME` runs one now, then exits.
     Workflow {
         #[command(subcommand)]
@@ -52,6 +76,38 @@ pub enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+}
+
+/// Where `runs --since` starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Since {
+    At(Timestamp),
+    Ago(Duration),
+}
+
+impl Since {
+    /// The time it names, at `now`.
+    pub fn at(self, now: Timestamp) -> Timestamp {
+        match self {
+            Since::At(at) => at,
+            Since::Ago(ago) => TimeDelta::from_std(ago)
+                .ok()
+                .and_then(|ago| now.checked_sub_signed(ago))
+                .unwrap_or(Timestamp::MIN_UTC),
+        }
+    }
+}
+
+fn parse_since(value: &str) -> Result<Since, String> {
+    if let Ok(at) = chrono::DateTime::parse_from_rfc3339(value) {
+        return Ok(Since::At(at.to_utc()));
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return Ok(Since::At(date.and_time(chrono::NaiveTime::MIN).and_utc()));
+    }
+    humantime::parse_duration(value).map(Since::Ago).map_err(|_| {
+        format!("{value:?} is not a time (2026-10-14T12:00:00Z), a date (2026-10-14) or a duration (2h)")
+    })
 }
 
 #[derive(Subcommand, Debug)]
@@ -217,6 +273,14 @@ impl Config {
     /// The repository, which every command but `replay` needs.
     pub fn required_repo(&self) -> Result<&str> {
         self.repo.as_deref().context("set `repo` (owner/name)")
+    }
+
+    /// The repository's work directory, as the monitoring commands find it.
+    pub fn repo_work_dir(&self) -> Result<RepoWorkDir> {
+        Ok(RepoWorkDir {
+            base: self.work_dir.clone(),
+            repo: self.required_repo()?.to_string(),
+        })
     }
 
     /// Merges the layers: `settings` (flags), `env`, the config file

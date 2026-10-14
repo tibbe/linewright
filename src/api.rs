@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{Request, State};
+use axum::extract::{Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::clock::Clock;
+use crate::runs::{self, ListError, RepoWorkDir};
 use crate::status::{self, Serving, View};
 use crate::webhook::Tally;
 
@@ -144,6 +145,8 @@ pub struct Sources {
     /// Set with webhooks on.
     pub deliveries: Option<Tally>,
     pub clock: Arc<dyn Clock>,
+    /// Where the repository's runs are recorded.
+    pub work_dir: RepoWorkDir,
 }
 
 /// The API's server, until stopped.
@@ -165,6 +168,7 @@ impl Api {
         } = claimed;
         let router = Router::new()
             .route("/status", get(answer_status))
+            .route("/runs", get(answer_runs))
             .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
             .layer(middleware::from_fn(local_only))
             .with_state(sources);
@@ -216,6 +220,24 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
     json_response(StatusCode::OK, &answer)
 }
 
+/// The runs the query asks for, read from their records as `runs` reads
+/// them with no `serve` running, so that the answer is the same.
+async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Query>) -> Response {
+    match runs::answer(&sources.work_dir, &query, sources.clock.now()) {
+        Ok(listing) => json_response(StatusCode::OK, &listing),
+        Err(ListError::NoRuns(no_runs)) => json_response(
+            StatusCode::NOT_FOUND,
+            &ErrorAnswer {
+                error: no_runs.to_string(),
+                missing: Some(Missing::Item),
+            },
+        ),
+        Err(ListError::Other(e)) => {
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"))
+        }
+    }
+}
+
 /// Refuses a request whose `Host` is not local, such as one a web page
 /// sends through a tunnel to the socket under a name it controls.
 async fn local_only(request: Request, next: Next) -> Response {
@@ -253,7 +275,13 @@ fn json_response(status: StatusCode, body: &impl serde::Serialize) -> Response {
 }
 
 fn error_response(status: StatusCode, message: &str) -> Response {
-    json_response(status, &serde_json::json!({ "error": message }))
+    json_response(
+        status,
+        &ErrorAnswer {
+            error: message.to_string(),
+            missing: None,
+        },
+    )
 }
 
 /// Why a monitoring command got no answer.
@@ -261,6 +289,10 @@ fn error_response(status: StatusCode, message: &str) -> Response {
 pub enum RequestError {
     #[error("`serve` is not running for {repo} on this host: nothing listens on {path}")]
     NotServing { repo: String, path: String },
+    /// `serve` has no such item or run, as its answer says
+    /// (`docs/specs/monitoring.md`, "Output").
+    #[error("{0}")]
+    NotFound(String),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -284,10 +316,10 @@ pub async fn get_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes,
         }
         Err(e) => Err(e).with_context(|| format!("connecting to {}", path.display()))?,
     };
-    Ok(request(stream, resource).await?)
+    request(stream, resource).await
 }
 
-async fn request(stream: UnixStream, resource: &str) -> Result<Bytes> {
+async fn request(stream: UnixStream, resource: &str) -> Result<Bytes, RequestError> {
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
         .context("talking to `serve`")?;
@@ -307,11 +339,35 @@ async fn request(stream: UnixStream, resource: &str) -> Result<Bytes> {
         .await
         .context("reading `serve`'s answer")?
         .to_bytes();
+    if let Ok(ErrorAnswer {
+        error,
+        missing: Some(_),
+    }) = serde_json::from_slice(&body)
+    {
+        return Err(RequestError::NotFound(error));
+    }
     if !status.is_success() {
-        bail!(
+        Err(anyhow::anyhow!(
             "`serve` answered {status}: {}",
             String::from_utf8_lossy(&body)
-        );
+        ))?;
     }
     Ok(body)
+}
+
+/// The body of an answer that is an error.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ErrorAnswer {
+    error: String,
+    /// Set when the item or run asked about does not exist: unlike a
+    /// resource that does not, such as one a newer client asks of an older
+    /// `serve`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    missing: Option<Missing>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Missing {
+    Item,
 }
