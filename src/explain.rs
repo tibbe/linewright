@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{self, Filed, Issue, Item, Login, MergedPull, Number, Pull, Timestamp, label};
-use crate::reconcile::{NotSpecChange, Wait, not_a_spec_change};
+use crate::reconcile::{NotSpecChange, OpenedFor, Wait, not_a_spec_change};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
     InReview, IssueExclusion, ItemState, Paint, Tracked, View, describe, describe_wait, standing,
@@ -204,30 +204,27 @@ impl Family {
         }
     }
 
-    /// The family of the pull request `pull`, as `view` places it at `now`
-    /// and the runs `recorded` link to it: when Linewright opened it, the
-    /// issue it is for.
-    fn of_pull(view: &View, recorded: &[Recorded], pull: PullFor, now: Timestamp) -> Family {
+    /// The family of the pull request `pull`, as `view` places it at
+    /// `now`: when Linewright opened it, the issue it is for.
+    fn of_pull(view: &View, pull: PullFor, now: Timestamp) -> Family {
         if pull.author != &view.policy.linewright {
             return Family::default();
         }
-        Family::pull_request_for(issue_for(view, recorded, pull, now))
+        Family::pull_request_for(issue_for(view, pull, now))
     }
 
     /// The family of the merged pull request `pull`, as `view` places it at
-    /// `now` and the runs `recorded` link to it, with the tracking issues
-    /// Linewright filed for it `tracking_issues`: when Linewright opened it,
-    /// the issue it is for; when it is a spec change cut into tickets, its
-    /// tracking issue, the newest, since a cut discarded part way leaves an
-    /// older one.
+    /// `now`, with the tracking issues Linewright filed for it
+    /// `tracking_issues`: when Linewright opened it, the issue it is for;
+    /// when it is a spec change cut into tickets, its tracking issue, the
+    /// newest, since a cut discarded part way leaves an older one.
     fn of_merged(
         view: &View,
-        recorded: &[Recorded],
         pull: &MergedPull,
         tracking_issues: &[Number],
         now: Timestamp,
     ) -> Family {
-        let mut family = Family::of_pull(view, recorded, pull.into(), now);
+        let mut family = Family::of_pull(view, pull.into(), now);
         if pull.has_label(label::SPEC_PROCESSED) {
             family
                 .children
@@ -401,9 +398,10 @@ enum IssuesFor<'a> {
 }
 
 impl<'a> IssuesFor<'a> {
-    /// The issues `pull` may be for, by the runs `recorded`.
-    fn of(recorded: &[Recorded], pull: PullFor<'a>) -> IssuesFor<'a> {
-        match runs::opened_for(recorded, pull.number) {
+    /// The issues `pull` may be for, by which issue each pull request was
+    /// opened for `opened_for`.
+    fn of(opened_for: &OpenedFor, pull: PullFor<'a>) -> IssuesFor<'a> {
+        match opened_for.issue(pull.number) {
             Some(issue) => IssuesFor::OpenedFor(issue),
             None => IssuesFor::Closes(pull.closes),
         }
@@ -424,11 +422,11 @@ impl<'a> IssuesFor<'a> {
     }
 }
 
-/// The issue Linewright's pull request `pull` is for, by the runs
-/// `recorded`: the one [`tracked_for`] finds in `view` at `now`, or else
-/// the only one it may be for.
-fn issue_for(view: &View, recorded: &[Recorded], pull: PullFor, now: Timestamp) -> Option<Number> {
-    match tracked_for(view, recorded, pull, now) {
+/// The issue Linewright's pull request `pull` is for: the one
+/// [`tracked_for`] finds in `view` at `now`, or else the only one it may be
+/// for.
+fn issue_for(view: &View, pull: PullFor, now: Timestamp) -> Option<Number> {
+    match tracked_for(view, pull, now) {
         Ok(tracked) => Some(tracked.number),
         Err(IssuesFor::OpenedFor(issue) | IssuesFor::Closes(&[issue])) => Some(issue),
         Err(IssuesFor::Closes(_)) => None,
@@ -436,16 +434,16 @@ fn issue_for(view: &View, recorded: &[Recorded], pull: PullFor, now: Timestamp) 
 }
 
 /// The issue Linewright's pull request `pull` is for, as `view` tracks it at
-/// `now`: of the issues it may be for by the runs `recorded`, the one in
-/// review with it, or else the first Linewright tracks. `Err` with those
-/// issues when Linewright tracks none of them.
+/// `now`: of the issues it may be for by the view's record of which issue
+/// each was opened for, the one in review with it, or else the first
+/// Linewright tracks. `Err` with those issues when Linewright tracks none of
+/// them.
 fn tracked_for<'a>(
     view: &View,
-    recorded: &[Recorded],
     pull: PullFor<'a>,
     now: Timestamp,
 ) -> Result<Tracked, IssuesFor<'a>> {
-    let issues = IssuesFor::of(recorded, pull);
+    let issues = IssuesFor::of(&view.opened_for, pull);
     let (in_review_with_it, others): (Vec<Tracked>, Vec<Tracked>) = tracked(view, now)
         .into_iter()
         .filter(|t| issues.contains(t.number))
@@ -472,15 +470,16 @@ pub enum Standing {
 }
 
 /// The answer about #`number` at `now`, with its runs among those
-/// `recorded` as `runs N` lists them: an item Linewright tracks, or
-/// Linewright's open pull request for one in review with it. `None` for any
-/// other number.
+/// `recorded` as `runs N` lists them, and which issue each pull request was
+/// opened for as they record it: an item Linewright tracks, or Linewright's
+/// open pull request for one in review with it. `None` for any other number.
 pub fn explain(
     view: &View,
     recorded: &[Recorded],
     number: Number,
     now: Timestamp,
 ) -> Option<Explanation> {
+    let view = &recording(view, recorded);
     let items = tracked(view, now);
     let last_read = |item: Item| view.read_at.get(&item).copied().unwrap_or(view.polls.last);
     if let Some(tracked) = items.iter().find(|t| t.number == number) {
@@ -506,6 +505,15 @@ pub fn explain(
         last_read: last_read(Item::Pull(number)),
         ..explanation
     })
+}
+
+/// `view` with which issue each pull request was opened for as the runs
+/// `recorded` record it, so that an answer reads it from them alone.
+fn recording(view: &View, recorded: &[Recorded]) -> View {
+    View {
+        opened_for: runs::opened_for_each(recorded),
+        ..view.clone()
+    }
 }
 
 /// An item Linewright leaves alone, and why. Its fields keep their names and
@@ -588,10 +596,10 @@ pub enum PullExclusion {
 /// because its view tracks no such item: where #N stands if the read places
 /// it in the pipeline after all, as a label applied since the last poll
 /// does, or else why Linewright leaves it alone, by the rules that decide
-/// what it tracks; with its runs among those `recorded`, as [`explain`]
-/// shows them.
+/// what it tracks; with its runs among those `recorded`, and which issue each
+/// pull request was opened for as they record it, as [`explain`] shows them.
 pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Timestamp) -> Answer {
-    let mut fresh = view.clone();
+    let mut fresh = recording(view, recorded);
     let linewright = &view.policy.linewright;
     // As a poll taking a snapshot now would hold #N.
     let held = Arc::make_mut(&mut fresh.snapshot);
@@ -617,11 +625,11 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
         ))
     };
     let family = match read {
-        AnyItem::Pull(pull) => Family::of_pull(&fresh, recorded, pull.as_ref().into(), now),
+        AnyItem::Pull(pull) => Family::of_pull(&fresh, pull.as_ref().into(), now),
         AnyItem::Merged {
             pull,
             tracking_issues,
-        } => Family::of_merged(&fresh, recorded, pull, tracking_issues, now),
+        } => Family::of_merged(&fresh, pull, tracking_issues, now),
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => Family::of_issue(issue),
     };
     let (title, item) = match read {
@@ -636,7 +644,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
         ),
         AnyItem::HeldIssue(issue) => {
             let waiting_for = take_waits();
-            match standing(issue, &fresh.snapshot, &fresh.policy, &waiting_for) {
+            match standing(issue, fresh.facts(), &fresh.policy, &waiting_for) {
                 Ok(state) => return tracked_as(Some(issue), &issue.title, state, waiting_for),
                 Err(exclusion) => (
                     &issue.title,
@@ -698,7 +706,7 @@ fn pull_standing(
     if pull.closes.is_empty() {
         return Err(PullExclusion::ClosesNoIssue);
     }
-    let issue = tracked_for(view, recorded, pull.into(), now).map_err(|issues| {
+    let issue = tracked_for(view, pull.into(), now).map_err(|issues| {
         PullExclusion::ForIssuesLeftAlone {
             issues: issues.to_vec(),
         }

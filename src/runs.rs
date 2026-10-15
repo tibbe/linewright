@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::domain::{Number, Timestamp};
-use crate::reconcile::WorkKind;
+use crate::reconcile::{OpenedFor, WorkKind};
 use crate::records;
 use crate::status::{Paint, utc};
 use crate::workflow::WorkflowName;
@@ -668,7 +668,8 @@ pub struct OfItem {
 /// request a run worked on or opened for an issue, the issue's, all of them
 /// (`docs/specs/monitoring.md`, "Commands").
 pub fn of_item(recorded: &[Recorded], number: Number) -> OfItem {
-    let recorded_under = opened_for(recorded, number)
+    let recorded_under = opened_for_each(recorded)
+        .issue(number)
         .or_else(|| {
             recorded
                 .iter()
@@ -692,18 +693,18 @@ pub fn of_item(recorded: &[Recorded], number: Number) -> OfItem {
     }
 }
 
-/// The issue a run among `recorded` opened the pull request #`pr` for: the
-/// item of the implement run that records it, the only stage that opens one.
-/// `None` when no run's record links to it, as for records written before
-/// runs kept their pull request.
-pub fn opened_for(recorded: &[Recorded], pr: Number) -> Option<Number> {
-    recorded.iter().find_map(|run| match run.id.of {
+/// Which issue the runs `recorded` opened each pull request for: the item
+/// of the implement run that records it, the only stage that opens one. A
+/// pull request no run's record links to, as for records written before runs
+/// kept their pull request, is for none.
+pub fn opened_for_each(recorded: &[Recorded]) -> OpenedFor {
+    OpenedFor::new(recorded.iter().filter_map(|run| match run.id.of {
         RunOf::Work {
             item,
             stage: WorkKind::Implement,
-        } if run.pr == Some(pr) => Some(item),
+        } => run.pr.map(|pr| (pr, item)),
         _ => None,
-    })
+    }))
 }
 
 /// The runs of `recorded` that `query` asks for at `now`, newest first.

@@ -753,6 +753,88 @@ async fn a_ticket_is_claimed_and_implemented_once_a_persons_pull_request_closing
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
 }
 
+/// A ticket the factory implemented in a pull request that also closes
+/// another issue, which the maintainer then labels `ready-for-agent`, with
+/// the pull request's CI failing: the ticket, the other issue and the pull
+/// request.
+async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Number, Number) {
+    let other = world
+        .store
+        .open_issue("maintainer", "Old invoices", "Please.", &[]);
+    world.runtime.on(WorkKind::Implement, move |call| {
+        let file = format!("src/{}.txt", subject_file(call));
+        commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
+        let body = format!("Does it.\n\nCloses {other}");
+        json(json!({"outcome": "done", "pr_title": "Do it", "pr_body": body}))
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world.poll().await;
+    let pr = *world
+        .store
+        .pulls()
+        .last()
+        .expect("a pull request was opened");
+    world.store.label_as(other, "ready-for-agent").unwrap();
+    world
+        .store
+        .set_checks(pr, vec![check("test", CheckState::Failed, "boom")])
+        .await
+        .unwrap();
+    world.runtime.on(WorkKind::FixCi, |_| {
+        json(json!({"outcome": "done", "comment": "Fixed."}))
+    });
+    (ticket, other, pr)
+}
+
+#[tokio::test]
+async fn a_pull_request_handed_back_with_its_ticket_is_not_worked_for_another_issue_it_closes() {
+    let mut world = World::new().await;
+    let (ticket, other, _) = pull_request_closing_another_issue(&mut world).await;
+    world.store.unlabel_as(ticket, "ready-for-agent").unwrap();
+    world.store.label_as(ticket, "ready-for-human").unwrap();
+
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::FixCi).len(), 0);
+    assert_eq!(world.issue(other).assignees, []);
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+}
+
+#[tokio::test]
+async fn a_pull_request_is_worked_for_its_ticket_while_another_issue_it_closes_waits() {
+    let mut world = World::new().await;
+    let (ticket, other, _) = pull_request_closing_another_issue(&mut world).await;
+
+    world.poll().await;
+
+    let fixes = world.runtime.prompts(WorkKind::FixCi);
+    assert_eq!(fixes.len(), 1);
+    assert!(fixes[0].contains(&ticket.to_string()), "{}", fixes[0]);
+    assert_eq!(world.issue(other).assignees, []);
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+}
+
+#[tokio::test]
+async fn a_pull_request_closed_unmerged_hands_back_its_ticket_and_another_issue_it_closed_goes_on()
+{
+    let mut world = World::new().await;
+    let (ticket, other, pr) = pull_request_closing_another_issue(&mut world).await;
+    world.poll().await;
+    world.store.close_pull_as(pr).unwrap();
+
+    world.poll().await;
+
+    assert!(labels(&world.issue(ticket)).contains(&"ready-for-human"));
+    assert_eq!(labels(&world.issue(other)), ["ready-for-agent"]);
+    assert_eq!(world.issue(other).assignees, [Login::new(LINEWRIGHT)]);
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+}
+
 #[tokio::test]
 async fn a_run_whose_pull_request_closes_while_it_works_pushes_and_records_nothing() {
     let mut world = World::new().await;

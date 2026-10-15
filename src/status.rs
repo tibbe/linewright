@@ -14,8 +14,8 @@ use crate::domain::{
     CheckState, Filed, Issue, Item, Number, Pull, PullState, Snapshot, Timestamp, label,
 };
 use crate::reconcile::{
-    Decisions, LiveRun, Memory, NextRun, Policy, Relabel, Wait, Workflows, decisions, next_run,
-    open_pull_request, pending_spec_changes,
+    Decisions, Facts, LiveRun, Memory, NextRun, OpenedFor, Policy, Relabel, Wait, Workflows,
+    decisions, next_run, pending_spec_changes,
 };
 use crate::runs::{InFlight, RunInFlight, RunOf};
 use crate::webhook::Received;
@@ -33,6 +33,9 @@ pub struct Serving {
 pub struct View {
     /// The last poll's snapshot, with what refreshes read into it since.
     pub snapshot: Arc<Snapshot>,
+    /// Which issue each of Linewright's pull requests was opened for, as the
+    /// reconcile step last read it with the snapshot.
+    pub opened_for: OpenedFor,
     /// When refreshes read the items they read into the snapshot; the
     /// others were read by the last poll.
     pub read_at: HashMap<Item, Timestamp>,
@@ -61,13 +64,21 @@ impl View {
             in_flight: self.workflows_in_flight().collect(),
         };
         decisions(
-            &self.snapshot,
+            self.facts(),
             &self.live,
             &self.memory,
             &workflows,
             now,
             &self.policy,
         )
+    }
+
+    /// The facts the reconcile step takes its decisions on.
+    pub fn facts(&self) -> Facts<'_> {
+        Facts {
+            snapshot: &self.snapshot,
+            opened_for: &self.opened_for,
+        }
     }
 
     /// The runs in flight, the pipeline's and the workflows'.
@@ -322,7 +333,7 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
     }
     for issue in snapshot.issues.iter().filter(|i| i.open) {
         let waiting_for = waits.remove(&issue.number).unwrap_or_default();
-        let Ok(state) = standing(issue, snapshot, &view.policy, &waiting_for) else {
+        let Ok(state) = standing(issue, view.facts(), &view.policy, &waiting_for) else {
             continue;
         };
         items.push(Tracked {
@@ -353,11 +364,11 @@ pub enum IssueExclusion {
 /// why Linewright leaves it alone.
 pub(crate) fn standing(
     issue: &Issue,
-    snapshot: &Snapshot,
+    facts: Facts,
     policy: &Policy,
     waiting_for: &[Wait],
 ) -> Result<ItemState, IssueExclusion> {
-    let state = issue_state(issue, snapshot, policy)?;
+    let state = issue_state(issue, facts, policy)?;
     // A tracking issue with no tickets and no cut in flight is left alone.
     if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
         return Err(IssueExclusion::NoTickets);
@@ -368,11 +379,7 @@ pub(crate) fn standing(
 /// Where the open `issue` is in the pipeline, if its labels place it there.
 /// An issue of Linewright's own is never triaged, so `needs-triage` places
 /// it nowhere.
-fn issue_state(
-    issue: &Issue,
-    snapshot: &Snapshot,
-    policy: &Policy,
-) -> Result<ItemState, IssueExclusion> {
+fn issue_state(issue: &Issue, facts: Facts, policy: &Policy) -> Result<ItemState, IssueExclusion> {
     let state = if matches!(issue.filed, Some(Filed::Tracking { .. })) {
         ItemState::Tracking {
             tickets_closed: issue.sub_issues.iter().filter(|t| !t.open).count(),
@@ -388,7 +395,7 @@ fn issue_state(
     } else if issue.has_label(label::READY_FOR_HUMAN) {
         ItemState::WithTheMaintainer
     } else if issue.has_label(label::READY_FOR_AGENT) {
-        match open_pull_request(issue, snapshot, &policy.linewright) {
+        match facts.open_pull_for(issue.number, &policy.linewright) {
             Some(pr) => ItemState::InReview(InReview::of(pr)),
             None if issue.is_assigned(&policy.linewright) => ItemState::Claimed,
             None => ItemState::ReadyToClaim,

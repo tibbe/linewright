@@ -119,6 +119,53 @@ async fn a_ticket_a_persons_pull_request_opened_since_the_poll_closes_waits_for_
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ticket_linewrights_pull_request_for_another_opened_since_the_poll_closes_waits_for_it_once_refreshed()
+ {
+    let mut world = World::with(|config| config.max_runs = 1).await;
+    world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    let other = world.store.open_issue(
+        "maintainer",
+        "Old invoices",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    world.runtime.on(WorkKind::Implement, move |call| {
+        released.lock().unwrap().recv().unwrap();
+        let file = format!("src/{}.txt", subject_file(call));
+        commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
+        let body = format!("Does it.\n\nCloses {other}");
+        json(serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": body}))
+    });
+    // The ticket's implement run takes the only free run, so the other waits
+    // for one.
+    world.factory.cycle().await.unwrap();
+    release.send(()).unwrap();
+    world.factory.settle().await;
+    let pr = *world
+        .store
+        .pulls()
+        .last()
+        .expect("a pull request was opened");
+
+    let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
+
+    assert!(
+        !actions.iter().any(|action| matches!(
+            action,
+            Action::Claim { issue } | Action::Start(Work::Implement { issue }) if *issue == other
+        )),
+        "{actions:?}"
+    );
+}
+
 #[tokio::test]
 async fn refreshing_linewrights_own_pull_request_reads_not_the_issue_it_closes() {
     let mut world = World::new().await;

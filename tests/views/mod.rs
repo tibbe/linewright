@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
-use linewright::reconcile::{LiveRun, Memory, Policy, Subject, WorkKind};
+use linewright::reconcile::{LiveRun, Memory, OpenedFor, Policy, Subject, WorkKind};
 use linewright::runs::InFlight;
 use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
@@ -108,6 +108,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
             pulls,
             merged: vec![],
         }),
+        opened_for: OpenedFor::default(),
         read_at: Default::default(),
         policy: policy(),
         polls: Polls {

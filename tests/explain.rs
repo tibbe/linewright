@@ -1777,12 +1777,16 @@ fn linewrights_pull_request_left_alone_names_the_issue_it_was_opened_for_whateve
     }
 }
 
-/// #12 and #42, both claimed, listed in that order.
+/// #12 and #42, both claimed and closed by Linewright's open pull request
+/// #43, listed in that order.
 fn claimed_12_and_42() -> Vec<Issue> {
     [12, 42]
-        .map(|number| Issue {
-            assignees: vec![Login::new("factory")],
-            ..ticket(number, "Add invoices")
+        .map(|number| {
+            let claimed = Issue {
+                assignees: vec![Login::new("factory")],
+                ..ticket(number, "Add invoices")
+            };
+            closed_by(claimed, 43, "factory")
         })
         .into()
 }
@@ -1830,14 +1834,33 @@ fn linewrights_pull_request_the_read_places_in_review_with_two_issues_is_for_the
 }
 
 #[test]
-fn each_issue_in_review_with_linewrights_pull_request_names_it_as_its_current_one() {
+fn linewrights_pull_request_is_the_current_one_only_of_the_issue_it_was_opened_for() {
+    let view = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
+
+    let for_42 = explain(&view, &opened_43_for_42(), Number(42), at(NOW)).unwrap();
+    assert_eq!(
+        family_lines(&lines_of(&render(&for_42, false))),
+        ["child: #43, its current pull request"]
+    );
+    let for_12 = explain(&view, &opened_43_for_42(), Number(12), at(NOW)).unwrap();
+    assert_eq!(
+        lines_of(&render(&for_12, false))[1..],
+        [
+            "state: claimed: being implemented",
+            "last read: 2026-10-01 12:00:00 UTC",
+            "waiting for: #43, which closes it",
+        ]
+    );
+}
+
+#[test]
+fn linewrights_pull_request_no_run_links_to_is_the_current_one_of_each_issue_it_closes() {
     let view = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
 
     for issue in [12, 42] {
-        let answer = explain(&view, &opened_43_for_42(), Number(issue), at(NOW)).unwrap();
-        let lines = lines_of(&render(&answer, false));
+        let answer = explain(&view, &[], Number(issue), at(NOW)).unwrap();
         assert_eq!(
-            family_lines(&lines),
+            family_lines(&lines_of(&render(&answer, false))),
             ["child: #43, its current pull request"]
         );
     }

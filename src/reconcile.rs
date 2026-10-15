@@ -276,6 +276,68 @@ impl Memory {
     }
 }
 
+/// Which issue each of Linewright's pull requests was opened for, as the
+/// runs that opened them record it under the work directory: the one fact of
+/// machine state Linewright keeps rather than reads from the store
+/// (`docs/specs/repository.md`, "Labels and state").
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpenedFor(BTreeMap<Number, Number>);
+
+impl OpenedFor {
+    /// The record of each pull request `pr` opened for the issue `issue`, as
+    /// `(pr, issue)`.
+    pub fn new(opened: impl IntoIterator<Item = (Number, Number)>) -> OpenedFor {
+        OpenedFor(opened.into_iter().collect())
+    }
+
+    /// The issue the pull request #`pr` was opened for: `None` when no record
+    /// links to it, as for one opened before runs kept their pull request.
+    pub fn issue(&self, pr: Number) -> Option<Number> {
+        self.0.get(&pr).copied()
+    }
+
+    /// Whether Linewright's pull request `pull` is for the issue #`issue`:
+    /// the one it was opened for or, when no record links to it, any it
+    /// closes.
+    pub fn is_for(&self, pull: &Pull, issue: Number) -> bool {
+        self.issue(pull.number).map_or_else(
+            || pull.closes.contains(&issue),
+            |opened_for| opened_for == issue,
+        )
+    }
+}
+
+/// What the decisions are taken on: the store's snapshot, with which issue
+/// each of Linewright's pull requests in it was opened for.
+#[derive(Clone, Copy)]
+pub struct Facts<'a> {
+    pub snapshot: &'a Snapshot,
+    pub opened_for: &'a OpenedFor,
+}
+
+impl<'a> Facts<'a> {
+    /// Linewright's pull requests for the issue #`issue`, open or ended.
+    fn pulls_for(
+        self,
+        issue: Number,
+        linewright: &'a Login,
+    ) -> impl Iterator<Item = &'a Pull> + Clone {
+        let opened_for = self.opened_for;
+        self.snapshot
+            .pulls
+            .iter()
+            .filter(move |p| &p.author == linewright && opened_for.is_for(p, issue))
+    }
+
+    /// The pull request Linewright works on for the issue #`issue`, which
+    /// is in review while it is open: its newest open one.
+    pub fn open_pull_for(self, issue: Number, linewright: &'a Login) -> Option<&'a Pull> {
+        self.pulls_for(issue, linewright)
+            .filter(|p| p.is_open())
+            .max_by_key(|p| p.number)
+    }
+}
+
 /// A merge of `pr` the store refused, for `reason`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailedMerge {
@@ -389,7 +451,8 @@ pub enum Wait {
     UsageLimit { resets_at: Timestamp },
     /// An issue that blocks it, still open.
     Blocker { issue: Number },
-    /// An open pull request someone else opened that closes it.
+    /// An open pull request not opened for it that closes it, whoever opened
+    /// it.
     ClosingPullRequest { pull_request: Number },
     /// CI on its pull request: checks still running, or none reported yet.
     Ci { pull_request: Number },
@@ -434,26 +497,27 @@ pub struct Decisions {
 }
 
 pub fn reconcile(
-    snapshot: &Snapshot,
+    facts: Facts,
     live: &[LiveRun],
     memory: &Memory,
     workflows: &Workflows,
     now: Timestamp,
     policy: &Policy,
 ) -> Vec<Action> {
-    decisions(snapshot, live, memory, workflows, now, policy).actions
+    decisions(facts, live, memory, workflows, now, policy).actions
 }
 
 /// The decisions [`reconcile`] takes, with what each item it does not act on
 /// waits for.
 pub fn decisions(
-    snapshot: &Snapshot,
+    facts: Facts,
     live: &[LiveRun],
     memory: &Memory,
     workflows: &Workflows,
     now: Timestamp,
     policy: &Policy,
 ) -> Decisions {
+    let snapshot = facts.snapshot;
     let mut plan = Plan {
         now,
         actions: vec![],
@@ -544,7 +608,7 @@ pub fn decisions(
                 }),
             }
         } else if issue.has_label(label::READY_FOR_AGENT) && !issue.has_label(label::NEEDS_TRIAGE) {
-            implementation(issue, snapshot, running(subject), memory, policy, &mut plan);
+            implementation(issue, facts, running(subject), memory, policy, &mut plan);
         } else {
             for wait in labeled_waits(issue, policy) {
                 plan.wait(issue.number, wait);
@@ -820,7 +884,7 @@ fn required_label(policy: &Policy) -> Option<Wait> {
 /// drive it to a pull request that is green and ready for review.
 fn implementation(
     issue: &Issue,
-    snapshot: &Snapshot,
+    facts: Facts,
     live: Option<WorkKind>,
     memory: &Memory,
     policy: &Policy,
@@ -841,8 +905,8 @@ fn implementation(
     if !claimed && !policy.may_start_on(issue) {
         return plan.wait_for(issue.number, required_label(policy));
     }
-    let mut pulls = linewright_pulls(issue, snapshot, &policy.linewright);
-    if let Some(pr) = open_pull_request(issue, snapshot, &policy.linewright) {
+    let own = facts.pulls_for(issue.number, &policy.linewright);
+    if let Some(pr) = facts.open_pull_for(issue.number, &policy.linewright) {
         if !claimed {
             plan.act(Action::Claim {
                 issue: issue.number,
@@ -853,7 +917,7 @@ fn implementation(
     // GitHub closes the issue shortly after the merge; until then, or after a
     // reopen, only applying the label again asks for more work.
     let relabeled_since = |at| last_labeled(issue, label::READY_FOR_AGENT).is_some_and(|l| l > at);
-    if let Some(merged) = pulls
+    if let Some(merged) = own
         .clone()
         .find(|p| matches!(p.state, PullState::Merged { at } if !relabeled_since(at)))
     {
@@ -868,14 +932,15 @@ fn implementation(
     }
     // Still claimed after a merge, the issue was reopened, and more work on
     // it is a start.
-    let reopened = pulls
+    let reopened = own
         .clone()
         .any(|p| matches!(p.state, PullState::Merged { .. }));
     if reopened && !policy.may_start_on(issue) {
         return plan.wait_for(issue.number, required_label(policy));
     }
     if claimed {
-        let closed = pulls
+        let closed = own
+            .clone()
             .find(|p| matches!(p.state, PullState::Closed { at } if !linewright_commented_since(issue, at, policy)));
         if let Some(closed) = closed {
             return plan.act(Action::HandBack {
@@ -885,13 +950,14 @@ fn implementation(
             });
         }
     }
-    // Someone else's pull request that closes the ticket would do its work
-    // twice (`docs/specs/implementation.md`, "Tickets"). Linewright's own
-    // are worked above.
+    // A pull request not opened for the ticket that closes it, whoever
+    // opened it, would do its work twice (`docs/specs/implementation.md`,
+    // "Tickets"). Linewright's own for it are none of them: those open are
+    // worked above.
     let closing = issue
         .closed_by
         .iter()
-        .filter(|p| p.author != policy.linewright)
+        .filter(|p| !own.clone().any(|pull| pull.number == p.number))
         .map(|p| Wait::ClosingPullRequest {
             pull_request: p.number,
         });
@@ -912,30 +978,6 @@ fn implementation(
     } else {
         plan.claim_and_implement(issue.number);
     }
-}
-
-/// Linewright's pull requests that close `issue`, open or ended.
-fn linewright_pulls<'a>(
-    issue: &Issue,
-    snapshot: &'a Snapshot,
-    linewright: &Login,
-) -> impl Iterator<Item = &'a Pull> + Clone {
-    let number = issue.number;
-    snapshot
-        .pulls
-        .iter()
-        .filter(move |p| &p.author == linewright && p.closes.contains(&number))
-}
-
-/// The pull request Linewright works on for `issue`: its newest open one.
-pub fn open_pull_request<'a>(
-    issue: &Issue,
-    snapshot: &'a Snapshot,
-    linewright: &Login,
-) -> Option<&'a Pull> {
-    linewright_pulls(issue, snapshot, linewright)
-        .filter(|p| p.is_open())
-        .max_by_key(|p| p.number)
 }
 
 fn last_linewright_comment(issue: &Issue, linewright: &Login) -> Option<Timestamp> {

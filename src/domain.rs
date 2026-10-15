@@ -459,12 +459,15 @@ impl Snapshot {
             .collect()
     }
 
-    /// The issues the snapshot holds that the open pull request `number`
-    /// closes, as they were last read.
-    pub fn issues_closed_by(&self, number: Number) -> Vec<Number> {
+    /// The issues the snapshot holds that the pull request `number` closes,
+    /// `closes` as it reads now, or closed while open, as the issues were
+    /// last read.
+    pub fn issues_closing(&self, number: Number, closes: &[Number]) -> Vec<Number> {
         self.issues
             .iter()
-            .filter(|i| i.closed_by.iter().any(|p| p.number == number))
+            .filter(|i| {
+                closes.contains(&i.number) || i.closed_by.iter().any(|p| p.number == number)
+            })
             .map(|i| i.number)
             .collect()
     }
