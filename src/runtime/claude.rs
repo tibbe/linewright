@@ -2,7 +2,7 @@
 //! turn, without permission prompts, streaming JSON events. Docs:
 //! <https://code.claude.com/docs/en/headless>.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -95,7 +95,10 @@ impl RateLimitEvent {
 /// The settings also leave out what Claude Code bundles that no brief uses,
 /// so it does not fill the context of every session and sub-agent, nor
 /// compete with the plugin's skills. A tool is left out only by denying it
-/// by its bare name: <https://code.claude.com/docs/en/permissions>.
+/// by its bare name: <https://code.claude.com/docs/en/permissions>. A skill
+/// is left out by turning it off in `skillOverrides`, which takes it out of
+/// the listing a session sees, where a `Skill(name)` deny rule leaves it
+/// listed: <https://code.claude.com/docs/en/skills>.
 fn isolation_args(clone: &Path) -> [String; 4] {
     let mut excludes = Vec::new();
     for dir in clone.ancestors().skip(1) {
@@ -114,6 +117,7 @@ fn isolation_args(clone: &Path) -> [String; 4] {
         "disableWorkflows": true,
         "disableRemoteControl": true,
         "disableArtifact": true,
+        "skillOverrides": BTreeMap::from(UNUSED_SKILLS.map(|skill| (skill, "off"))),
         "permissions": { "deny": UNUSED_TOOLS },
     });
     [
@@ -123,6 +127,10 @@ fn isolation_args(clone: &Path) -> [String; 4] {
         settings.to_string(),
     ]
 }
+
+/// The skills Claude Code ships that `disableBundledSkills` keeps and no brief
+/// uses.
+const UNUSED_SKILLS: [&str; 3] = ["design", "doctor", "plugin-authoring"];
 
 /// The tools no session uses: they ask a person, plan, schedule, message or
 /// switch worktrees, none of which a headless session in its own clone does.

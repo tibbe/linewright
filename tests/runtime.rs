@@ -257,6 +257,35 @@ async fn every_turn_leaves_out_what_no_brief_uses() {
 }
 
 #[tokio::test]
+async fn every_turn_leaves_out_the_skills_the_runtime_ships() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_without_token(dir.path());
+
+    runtime.start(&triage_session(dir.path())).await.unwrap();
+
+    let overrides = &settings(&turn_args(dir.path())[0])["skillOverrides"];
+    // The skills Claude Code ships that turning off bundled skills keeps.
+    assert_eq!(
+        overrides,
+        &json!({ "design": "off", "doctor": "off", "plugin-authoring": "off" })
+    );
+    // Linewright's skills and this repository's own.
+    assert_eq!(
+        [
+            "linewright:triage",
+            "linewright:to-tickets",
+            "linewright:implement",
+            "linewright:code-review",
+            "linewright:pr",
+            "linewright:tdd",
+            "prior-art"
+        ]
+        .map(|skill| overrides.get(skill).is_some()),
+        [false; 7]
+    );
+}
+
+#[tokio::test]
 async fn agent_instructions_above_the_clone_do_not_reach_a_session() {
     let dir = tempfile::Builder::new()
         .prefix("work [a]{b}*?")
