@@ -646,6 +646,70 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
 }
 
 #[tokio::test]
+async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_its_tickets() {
+    let mut world = World::new().await;
+    world.runtime.on(linewright::reconcile::WorkKind::Tickets, |_| {
+        json(serde_json::json!({
+            "tickets": [
+                {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
+            ],
+            "comment": "One slice.",
+        }))
+    });
+    let spec_change = world
+        .store
+        .merge_change(
+            "maintainer",
+            "Gadgets",
+            "Adds gadgets.",
+            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
+        )
+        .await
+        .unwrap();
+    world.poll().await;
+    let issues = world.store.issues();
+    let [tracking, ticket] = &issues[..] else {
+        panic!("expected a tracking issue and a ticket, got {issues:#?}");
+    };
+    let (tracking, ticket) = (tracking.number, ticket.number);
+    let answering = Answering::start(world, false).await;
+
+    let spec_change_says = answering.lw(&["explain", &spec_change.0.to_string()]).await;
+    let tracking_says = answering.lw(&["explain", &tracking.0.to_string()]).await;
+    let json = answering
+        .lw(&["explain", &spec_change.0.to_string(), "--json"])
+        .await;
+
+    let spec_change_lines: Vec<&str> = spec_change_says.stdout.lines().collect();
+    assert_eq!(
+        spec_change_lines[..3],
+        [
+            &format!("{spec_change}: Gadgets"),
+            &format!("child: {tracking}, its tracking issue"),
+            "state: merged pull request",
+        ],
+        "{}",
+        spec_change_says.stderr
+    );
+    let tracking_lines: Vec<&str> = tracking_says.stdout.lines().collect();
+    assert_eq!(
+        tracking_lines[1..3],
+        [
+            &format!("parent: {spec_change}, the spec change it tracks"),
+            &format!("child: {ticket}, one of its tickets"),
+        ],
+        "{}",
+        tracking_says.stderr
+    );
+    let json: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(
+        json["children"],
+        serde_json::json!([{"number": tracking.0, "role": "tracking-issue"}])
+    );
+    answering.stop().await;
+}
+
+#[tokio::test]
 async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
     let answering = Answering::start(World::new().await, false).await;
 

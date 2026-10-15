@@ -8,9 +8,9 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
-use crate::domain::{Item, Login, Number, Pull, Timestamp, label};
+use crate::domain::{self, Filed, Issue, Item, Login, MergedPull, Number, Pull, Timestamp, label};
 use crate::reconcile::{NotSpecChange, Wait, not_a_spec_change};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
@@ -29,12 +29,13 @@ pub enum Answer {
 }
 
 /// The answer to `explain N`, as the local API sends it. Its fields keep
-/// their names and meanings (`docs/specs/monitoring.md`, "Output"), and
-/// beside them it gives #N's family, which its standing settles.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+/// their names and meanings (`docs/specs/monitoring.md`, "Output").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Explanation {
     pub number: Number,
     pub title: String,
+    #[serde(flatten)]
+    pub family: Family,
     #[serde(flatten)]
     pub standing: Standing,
     /// When `serve` last read #N.
@@ -44,41 +45,33 @@ pub struct Explanation {
     pub runs: ItemRuns,
 }
 
-impl Serialize for Explanation {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        #[derive(Serialize)]
-        struct WithFamily<'a> {
-            number: Number,
-            title: &'a str,
-            #[serde(flatten)]
-            family: Family,
-            #[serde(flatten)]
-            standing: &'a Standing,
-            last_read: Timestamp,
-            waiting_for: &'a [Wait],
-            #[serde(flatten)]
-            runs: &'a ItemRuns,
-        }
-        // Destructured, so that a field added to `Explanation` must be
-        // added here too.
-        let Explanation {
+impl Explanation {
+    /// The answer about #`number`, the issue `issue` if it is one, in
+    /// `standing`, with the family they give it.
+    fn new(
+        number: Number,
+        title: String,
+        issue: Option<&Issue>,
+        standing: Standing,
+        last_read: Timestamp,
+        waiting_for: Vec<Wait>,
+        runs: ItemRuns,
+    ) -> Explanation {
+        let family = match &standing {
+            Standing::PullRequest {
+                pull_request_for, ..
+            } => Family::pull_request_for(Some(*pull_request_for)),
+            Standing::Item(state) => Family::of_tracked(issue, state),
+        };
+        Explanation {
             number,
             title,
+            family,
             standing,
             last_read,
             waiting_for,
             runs,
-        } = self;
-        WithFamily {
-            number: *number,
-            title,
-            family: standing.family(),
-            standing,
-            last_read: *last_read,
-            waiting_for,
-            runs,
         }
-        .serialize(serializer)
     }
 }
 
@@ -221,6 +214,79 @@ impl Family {
         Family::pull_request_for(issue_for(view, closes, now))
     }
 
+    /// The family of the merged pull request `pull`, as `view` places it at
+    /// `now`, with the tracking issues Linewright filed for it
+    /// `tracking_issues`: when Linewright opened it, the issue it is for;
+    /// when it is a spec change cut into tickets, its tracking issue, the
+    /// newest, since a cut discarded part way leaves an older one.
+    fn of_merged(
+        view: &View,
+        pull: &MergedPull,
+        tracking_issues: &[Number],
+        now: Timestamp,
+    ) -> Family {
+        let mut family = Family::of_pull(view, &pull.author, &pull.closes, now);
+        if pull.has_label(label::SPEC_PROCESSED) {
+            family
+                .children
+                .extend(tracking_issues.iter().max().map(|&number| Child {
+                    number,
+                    role: ChildRole::TrackingIssue,
+                }));
+        }
+        family
+    }
+
+    /// The family of the issue `issue`: a ticket's tracking issue, or a
+    /// tracking issue's spec change and tickets.
+    fn of_issue(issue: &Issue) -> Family {
+        if let Some(Filed::Tracking { spec_change }) = issue.filed {
+            return Family {
+                parent: Some(Parent {
+                    number: spec_change,
+                    role: ParentRole::SpecChange,
+                }),
+                children: issue
+                    .sub_issues
+                    .iter()
+                    .map(|ticket| Child {
+                        number: ticket.number,
+                        role: ChildRole::Ticket,
+                    })
+                    .collect(),
+            };
+        }
+        Family {
+            parent: issue.parent.and_then(|parent| match parent {
+                // Only a tracking issue knows its spec change.
+                domain::Parent {
+                    number,
+                    spec_change: Some(_),
+                } => Some(Parent {
+                    number,
+                    role: ParentRole::TrackingIssue,
+                }),
+                domain::Parent {
+                    spec_change: None, ..
+                } => None,
+            }),
+            children: vec![],
+        }
+    }
+
+    /// The family of tracked #N, the issue `issue` if it is one, in
+    /// `state`: an issue's own, with its pull request in review.
+    fn of_tracked(issue: Option<&Issue>, state: &ItemState) -> Family {
+        let mut family = issue.map(Family::of_issue).unwrap_or_default();
+        if let ItemState::InReview(review) = state {
+            family.children.push(Child {
+                number: review.pull_request,
+                role: ChildRole::CurrentPullRequest,
+            });
+        }
+        family
+    }
+
     /// The parent and children as text, one per line.
     fn lines(&self) -> Vec<String> {
         let parent = self
@@ -247,6 +313,10 @@ pub struct Parent {
 pub enum ParentRole {
     /// The issue Linewright's pull request #N is for.
     IssueItIsFor,
+    /// The tracking issue of ticket #N.
+    TrackingIssue,
+    /// The spec change tracking issue #N tracks.
+    SpecChange,
 }
 
 impl ParentRole {
@@ -254,6 +324,8 @@ impl ParentRole {
     fn describe(self) -> &'static str {
         match self {
             ParentRole::IssueItIsFor => "the issue it is for",
+            ParentRole::TrackingIssue => "its tracking issue",
+            ParentRole::SpecChange => "the spec change it tracks",
         }
     }
 }
@@ -270,6 +342,10 @@ pub struct Child {
 pub enum ChildRole {
     /// Linewright's pull request for issue #N, in review.
     CurrentPullRequest,
+    /// One of tracking issue #N's tickets.
+    Ticket,
+    /// The tracking issue of spec change #N.
+    TrackingIssue,
 }
 
 impl ChildRole {
@@ -277,6 +353,8 @@ impl ChildRole {
     fn describe(self) -> &'static str {
         match self {
             ChildRole::CurrentPullRequest => "its current pull request",
+            ChildRole::Ticket => "one of its tickets",
+            ChildRole::TrackingIssue => "its tracking issue",
         }
     }
 }
@@ -313,26 +391,6 @@ pub enum Standing {
     Item(ItemState),
 }
 
-impl Standing {
-    /// #N's parent and children: the issue a pull request is for, or an
-    /// issue's pull request in review.
-    pub fn family(&self) -> Family {
-        match self {
-            Standing::PullRequest {
-                pull_request_for, ..
-            } => Family::pull_request_for(Some(*pull_request_for)),
-            Standing::Item(ItemState::InReview(review)) => Family {
-                parent: None,
-                children: vec![Child {
-                    number: review.pull_request,
-                    role: ChildRole::CurrentPullRequest,
-                }],
-            },
-            Standing::Item(_) => Family::default(),
-        }
-    }
-}
-
 /// The answer about #`number` at `now`, with its runs among those
 /// `recorded` as `runs N` lists them: an item Linewright tracks, or
 /// Linewright's open pull request for one in review with it. `None` for any
@@ -352,27 +410,29 @@ pub fn explain(
         } else {
             Item::Pull(number)
         };
-        return Some(Explanation {
+        return Some(Explanation::new(
             number,
-            title: tracked.title.clone(),
-            standing: Standing::Item(tracked.state.clone()),
-            last_read: last_read(read),
-            waiting_for: tracked.waiting_for.clone(),
-            runs: ItemRuns::of(view, recorded, number, now),
-        });
+            tracked.title.clone(),
+            view.snapshot.issue(number),
+            Standing::Item(tracked.state.clone()),
+            last_read(read),
+            tracked.waiting_for.clone(),
+            ItemRuns::of(view, recorded, number, now),
+        ));
     }
     items.into_iter().find_map(|tracked| match tracked.state {
-        ItemState::InReview(review) if review.pull_request == number => Some(Explanation {
+        ItemState::InReview(review) if review.pull_request == number => Some(Explanation::new(
             number,
-            title: view.snapshot.pull(number)?.title.clone(),
-            standing: Standing::PullRequest {
+            view.snapshot.pull(number)?.title.clone(),
+            None,
+            Standing::PullRequest {
                 pull_request_for: tracked.number,
                 review,
             },
-            last_read: last_read(Item::Pull(number)),
-            waiting_for: tracked.waiting_for,
-            runs: ItemRuns::of(view, recorded, number, now),
-        }),
+            last_read(Item::Pull(number)),
+            tracked.waiting_for,
+            ItemRuns::of(view, recorded, number, now),
+        )),
         _ => None,
     })
 }
@@ -467,27 +527,31 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
     match read {
         AnyItem::HeldIssue(issue) => held.put_issue(issue.as_ref().clone()),
         AnyItem::Pull(pull) if &pull.author == linewright => held.put_pull(pull.as_ref().clone()),
-        AnyItem::Merged(merged) => held.put_merged(merged.clone()),
+        AnyItem::Merged { pull, .. } => held.put_merged(pull.as_ref().clone()),
         AnyItem::LeftOutIssue(_) | AnyItem::Pull(_) => {}
     }
     fresh.read_at.insert(read.item(), now);
     let number = read.number();
     let mut waits = fresh.decisions(now).waits;
     let mut take_waits = || waits.remove(&number).unwrap_or_default();
-    let tracked_as = |title: &str, state: ItemState, waiting_for: Vec<Wait>| {
-        Answer::Tracked(Explanation {
+    let tracked_as = |issue: Option<&Issue>, title: &str, state: ItemState, waiting_for| {
+        Answer::Tracked(Explanation::new(
             number,
-            title: title.to_string(),
-            standing: Standing::Item(state),
-            last_read: now,
+            title.to_string(),
+            issue,
+            Standing::Item(state),
+            now,
             waiting_for,
-            runs: ItemRuns::of(view, recorded, number, now),
-        })
+            ItemRuns::of(view, recorded, number, now),
+        ))
     };
     let family = match read {
         AnyItem::Pull(pull) => Family::of_pull(&fresh, &pull.author, &pull.closes, now),
-        AnyItem::Merged(merged) => Family::of_pull(&fresh, &merged.author, &merged.closes, now),
-        AnyItem::HeldIssue(_) | AnyItem::LeftOutIssue(_) => Family::default(),
+        AnyItem::Merged {
+            pull,
+            tracking_issues,
+        } => Family::of_merged(&fresh, pull, tracking_issues, now),
+        AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => Family::of_issue(issue),
     };
     let (title, item) = match read {
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) if !issue.open => {
@@ -502,7 +566,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
         AnyItem::HeldIssue(issue) => {
             let waiting_for = take_waits();
             match standing(issue, &fresh.snapshot, &fresh.policy, &waiting_for) {
-                Ok(state) => return tracked_as(&issue.title, state, waiting_for),
+                Ok(state) => return tracked_as(Some(issue), &issue.title, state, waiting_for),
                 Err(exclusion) => (
                     &issue.title,
                     LeftAloneItem::Issue(LeftAloneIssue::Open {
@@ -511,12 +575,12 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
                 ),
             }
         }
-        AnyItem::Merged(merged) => {
+        AnyItem::Merged { pull: merged, .. } => {
             let default_branch = &fresh.snapshot.default_branch;
             match not_a_spec_change(merged, default_branch, now, &fresh.policy) {
                 None => {
                     let state = ItemState::WaitingForTickets;
-                    return tracked_as(&merged.title, state, take_waits());
+                    return tracked_as(None, &merged.title, state, take_waits());
                 }
                 Some(left_alone) => (
                     &merged.title,
@@ -569,17 +633,18 @@ fn pull_standing(
         });
     };
     match issue.state {
-        ItemState::InReview(review) if review.pull_request == pull.number => Ok(Explanation {
-            number: pull.number,
-            title: pull.title.clone(),
-            standing: Standing::PullRequest {
+        ItemState::InReview(review) if review.pull_request == pull.number => Ok(Explanation::new(
+            pull.number,
+            pull.title.clone(),
+            None,
+            Standing::PullRequest {
                 pull_request_for: issue.number,
                 review,
             },
-            last_read: now,
-            waiting_for: issue.waiting_for,
-            runs: ItemRuns::of(view, recorded, pull.number, now),
-        }),
+            now,
+            issue.waiting_for,
+            ItemRuns::of(view, recorded, pull.number, now),
+        )),
         ItemState::InReview(review) => Err(PullExclusion::Superseded {
             issue: issue.number,
             by: review.pull_request,
@@ -740,7 +805,7 @@ pub fn render(explanation: &Explanation, colour: bool) -> String {
         paint.bold(&explanation.number.to_string()),
         explanation.title
     )];
-    lines.extend(explanation.standing.family().lines());
+    lines.extend(explanation.family.lines());
     let state = match &explanation.standing {
         Standing::PullRequest { review, .. } => review.describe(),
         Standing::Item(state) => describe(state),

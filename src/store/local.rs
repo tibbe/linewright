@@ -902,6 +902,17 @@ impl State {
         }
     }
 
+    /// The tracking issues Linewright filed for the spec change
+    /// `spec_change`.
+    fn tracking_issues_of(&self, spec_change: Number) -> Vec<Number> {
+        self.issues
+            .values()
+            .map(|record| &record.issue)
+            .filter(|issue| self.filed(issue) == Some(Filed::Tracking { spec_change }))
+            .map(|issue| issue.number)
+            .collect()
+    }
+
     fn filed(&self, issue: &Issue) -> Option<Filed> {
         Filed::read(&issue.author, &issue.title, &issue.body, &self.linewright)
     }
@@ -1121,7 +1132,10 @@ impl Store for LocalStore {
                 return Ok(None);
             };
             if let Some(merged) = record.merged(&state.default_branch) {
-                return Ok(Some(AnyItem::Merged(merged)));
+                return Ok(Some(AnyItem::Merged {
+                    pull: Box::new(merged),
+                    tracking_issues: state.tracking_issues_of(number),
+                }));
             }
         }
         Ok(Some(AnyItem::Pull(Box::new(self.pull_view(number).await?))))

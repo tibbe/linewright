@@ -206,7 +206,11 @@ pub enum AnyItem {
     LeftOutIssue(Box<Issue>),
     /// A pull request open, or closed without merging.
     Pull(Box<Pull>),
-    Merged(MergedPull),
+    Merged {
+        pull: Box<MergedPull>,
+        /// The tracking issues Linewright filed for it as a spec change.
+        tracking_issues: Vec<Number>,
+    },
 }
 
 impl AnyItem {
@@ -214,14 +218,14 @@ impl AnyItem {
         match self {
             AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => issue.number,
             AnyItem::Pull(pull) => pull.number,
-            AnyItem::Merged(merged) => merged.number,
+            AnyItem::Merged { pull, .. } => pull.number,
         }
     }
 
     pub fn item(&self) -> Item {
         match self {
             AnyItem::HeldIssue(_) | AnyItem::LeftOutIssue(_) => Item::Issue(self.number()),
-            AnyItem::Pull(_) | AnyItem::Merged(_) => Item::Pull(self.number()),
+            AnyItem::Pull(_) | AnyItem::Merged { .. } => Item::Pull(self.number()),
         }
     }
 }

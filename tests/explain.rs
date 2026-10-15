@@ -500,7 +500,10 @@ fn linewrights_merged_pull_request_shows_the_runs_of_the_issue_it_is_for() {
     let answer = explain_read(
         &implementing_42(vec![]),
         &runs_of_42_opening_43(),
-        &AnyItem::Merged(merged),
+        &AnyItem::Merged {
+            pull: Box::new(merged),
+            tracking_issues: vec![],
+        },
         at(NOW),
     );
 
@@ -908,8 +911,13 @@ fn a_tracking_issue_with_no_tickets_is_left_alone_as_such() {
         left_alone_text(
             &view(vec![tracking.clone()], vec![]),
             AnyItem::HeldIssue(Box::new(tracking))
-        )[3],
-        "left alone: it is a tracking issue with no tickets, and none are being cut"
+        )[1..],
+        [
+            "parent: #5, the spec change it tracks",
+            "state: open issue",
+            "last read: 2026-10-01 12:00:30 UTC",
+            "left alone: it is a tracking issue with no tickets, and none are being cut",
+        ]
     );
 }
 
@@ -1038,7 +1046,13 @@ fn merged(labels: &[&str]) -> MergedPull {
 }
 
 fn merged_text(view: &View, pull: MergedPull) -> String {
-    let lines = left_alone_text(view, AnyItem::Merged(pull));
+    let lines = left_alone_text(
+        view,
+        AnyItem::Merged {
+            pull: Box::new(pull),
+            tracking_issues: vec![],
+        },
+    );
     assert_eq!(lines[1], "state: merged pull request");
     lines[3].clone()
 }
@@ -1117,7 +1131,10 @@ fn a_spec_change_the_read_finds_is_explained_as_waiting_for_tickets() {
     let answer = explain_read(
         &view(vec![], vec![]),
         &[],
-        &AnyItem::Merged(merged(&[])),
+        &AnyItem::Merged {
+            pull: Box::new(merged(&[])),
+            tracking_issues: vec![],
+        },
         at(NOW),
     );
 
@@ -1136,10 +1153,13 @@ fn the_json_of_an_item_left_alone_names_why() {
     let answer = explain_read(
         &view(vec![], vec![]),
         &[],
-        &AnyItem::Merged(MergedPull {
-            files: vec!["src/main.rs".into()],
-            ..merged(&[])
-        }),
+        &AnyItem::Merged {
+            pull: Box::new(MergedPull {
+                files: vec!["src/main.rs".into()],
+                ..merged(&[])
+            }),
+            tracking_issues: vec![],
+        },
         at(NOW),
     );
 
@@ -1326,7 +1346,13 @@ fn linewrights_merged_pull_request_names_the_issue_it_is_for() {
         ..merged(&[])
     };
 
-    let lines = left_alone_text(&view(vec![], vec![]), AnyItem::Merged(done));
+    let lines = left_alone_text(
+        &view(vec![], vec![]),
+        AnyItem::Merged {
+            pull: Box::new(done),
+            tracking_issues: vec![],
+        },
+    );
 
     assert_eq!(
         lines[..3],
@@ -1360,7 +1386,10 @@ fn a_pull_request_not_linewrights_has_no_parent() {
     };
 
     for read in [
-        AnyItem::Merged(someones_merged),
+        AnyItem::Merged {
+            pull: Box::new(someones_merged),
+            tracking_issues: vec![],
+        },
         AnyItem::Pull(Box::new(someones_closed)),
         AnyItem::Pull(Box::new(someones_open)),
     ] {
@@ -1438,4 +1467,206 @@ fn linewrights_pull_request_closing_several_issues_is_for_the_one_linewright_tra
         ["parent: #42, the issue it is for"]
     );
     assert_eq!(family_lines(&lines(vec![untracked])), Vec::<&str>::new());
+}
+
+/// Ticket #42, cut from the spec change #5 and a sub-issue of its tracking
+/// issue #40.
+fn ticket_of_40() -> Issue {
+    Issue {
+        parent: Some(Parent {
+            number: Number(40),
+            spec_change: Some(Number(5)),
+        }),
+        ..ticket(42, "Add invoices")
+    }
+}
+
+#[test]
+fn a_ticket_names_its_tracking_issue() {
+    let view = view(vec![ticket_of_40()], vec![]);
+
+    assert_eq!(
+        family_lines(&text(&view, 42)),
+        ["parent: #40, its tracking issue"]
+    );
+}
+
+/// Tracking issue #40 of the spec change #5, with its tickets #41, closed,
+/// and #42.
+fn tracking_40() -> Issue {
+    Issue {
+        author: Login::new("factory"),
+        labels: vec![],
+        sub_issues: vec![
+            Linked {
+                number: Number(41),
+                open: false,
+            },
+            Linked {
+                number: Number(42),
+                open: true,
+            },
+        ],
+        filed: Some(Filed::Tracking {
+            spec_change: Number(5),
+        }),
+        ..ticket(40, "Spec change: Add invoices")
+    }
+}
+
+#[test]
+fn a_tracking_issue_names_its_spec_change_and_each_of_its_tickets() {
+    let view = view(vec![tracking_40(), ticket_of_40()], vec![]);
+
+    assert_eq!(
+        family_lines(&text(&view, 40)),
+        [
+            "parent: #5, the spec change it tracks",
+            "child: #41, one of its tickets",
+            "child: #42, one of its tickets",
+        ]
+    );
+}
+
+#[test]
+fn a_ticket_in_review_names_its_tracking_issue_and_its_current_pull_request() {
+    let claimed = Issue {
+        assignees: vec![Login::new("factory")],
+        ..ticket_of_40()
+    };
+    let view = view(vec![claimed], vec![draft(43, 42, &[CheckState::Pending])]);
+
+    assert_eq!(
+        family_lines(&text(&view, 42)),
+        [
+            "parent: #40, its tracking issue",
+            "child: #43, its current pull request",
+        ]
+    );
+}
+
+#[test]
+fn a_closed_ticket_names_its_tracking_issue() {
+    let closed = Issue {
+        open: false,
+        ..ticket_of_40()
+    };
+
+    for read in [
+        AnyItem::HeldIssue(Box::new(closed.clone())),
+        AnyItem::LeftOutIssue(Box::new(closed)),
+    ] {
+        assert_eq!(
+            family_lines(&left_alone_text(&view(vec![], vec![]), read)),
+            ["parent: #40, its tracking issue"]
+        );
+    }
+}
+
+#[test]
+fn an_issue_whose_parent_is_no_tracking_issue_names_no_parent() {
+    let sub_issue = Issue {
+        parent: Some(Parent {
+            number: Number(40),
+            spec_change: None,
+        }),
+        ..ticket(42, "Add invoices")
+    };
+    let view = view(vec![sub_issue], vec![]);
+
+    assert_eq!(family_lines(&text(&view, 42)), Vec::<&str>::new());
+}
+
+#[test]
+fn the_json_of_a_tracking_issue_names_its_spec_change_and_tickets_by_role() {
+    let view = view(vec![tracking_40(), ticket_of_40()], vec![]);
+    let answer = explain(&view, &[], Number(40), at(NOW)).unwrap();
+    let json = serde_json::to_value(&answer).unwrap();
+
+    assert_eq!(
+        json["parent"],
+        serde_json::json!({"number": 5, "role": "spec-change"})
+    );
+    assert_eq!(
+        json["children"],
+        serde_json::json!([
+            {"number": 41, "role": "ticket"},
+            {"number": 42, "role": "ticket"},
+        ])
+    );
+    assert_eq!(json["state"], "tracking");
+}
+
+#[test]
+fn the_json_of_a_ticket_names_its_tracking_issue_by_role() {
+    let view = view(vec![ticket_of_40()], vec![]);
+    let answer = explain(&view, &[], Number(42), at(NOW)).unwrap();
+    let json = serde_json::to_value(&answer).unwrap();
+
+    assert_eq!(
+        json["parent"],
+        serde_json::json!({"number": 40, "role": "tracking-issue"})
+    );
+    assert_eq!(json["children"], serde_json::json!([]));
+}
+
+#[test]
+fn a_spec_change_cut_into_tickets_names_its_tracking_issue() {
+    let processed = AnyItem::Merged {
+        pull: Box::new(merged(&["linewright:spec-processed"])),
+        tracking_issues: vec![Number(40)],
+    };
+
+    let lines = left_alone_text(&view(vec![], vec![]), processed);
+
+    assert_eq!(
+        lines[..3],
+        [
+            "#5: Add invoices to the spec",
+            "child: #40, its tracking issue",
+            "state: merged pull request",
+        ]
+    );
+}
+
+#[test]
+fn the_json_of_a_spec_change_cut_into_tickets_names_its_tracking_issue_by_role() {
+    let processed = AnyItem::Merged {
+        pull: Box::new(merged(&["linewright:spec-processed"])),
+        tracking_issues: vec![Number(40)],
+    };
+    let answer = explain_read(&view(vec![], vec![]), &[], &processed, at(NOW));
+    let json = serde_json::to_value(&answer).unwrap();
+
+    assert_eq!(json["parent"], serde_json::Value::Null);
+    assert_eq!(
+        json["children"],
+        serde_json::json!([{"number": 40, "role": "tracking-issue"}])
+    );
+}
+
+#[test]
+fn a_spec_change_cut_again_names_its_newest_tracking_issue() {
+    let processed = AnyItem::Merged {
+        pull: Box::new(merged(&["linewright:spec-processed"])),
+        tracking_issues: vec![Number(44), Number(40)],
+    };
+
+    assert_eq!(
+        family_lines(&left_alone_text(&view(vec![], vec![]), processed)),
+        ["child: #44, its tracking issue"]
+    );
+}
+
+#[test]
+fn a_spec_change_not_cut_names_no_tracking_issue_from_a_cut_discarded_part_way() {
+    let handed_back = AnyItem::Merged {
+        pull: Box::new(merged(&["ready-for-human"])),
+        tracking_issues: vec![Number(40)],
+    };
+
+    assert_eq!(
+        family_lines(&left_alone_text(&view(vec![], vec![]), handed_back)),
+        Vec::<&str>::new()
+    );
 }

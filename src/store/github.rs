@@ -503,6 +503,40 @@ impl GitHub {
         Ok(data.map(|d| d.repository.pull_request))
     }
 
+    /// The tracking issues of the spec change #`spec_change`, as
+    /// [`tracking_issues_among`] finds them.
+    async fn tracking_issues_of(&self, spec_change: Number) -> Result<Vec<Number>> {
+        let query = format!(
+            "query($owner: String!, $name: String!, $number: Int!) {{
+              repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{
+                {CROSS_REFERENCES_FIELD}
+              }} }}
+            }}"
+        );
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct References {
+            timeline_items: Nodes<CrossReference>,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct One {
+            pull_request: References,
+        }
+        let data: RepoData<One> = self
+            .graphql(
+                &query,
+                json!({"owner": self.owner, "name": self.name, "number": spec_change.0}),
+            )
+            .await?;
+        let references = data.repository.pull_request.timeline_items;
+        Ok(tracking_issues_among(
+            references,
+            spec_change,
+            &self.linewright(),
+        ))
+    }
+
     async fn gql_issue(&self, number: Number) -> Result<Option<GqlIssue>> {
         let query = format!(
             "query($owner: String!, $name: String!, $number: Int!) {{
@@ -771,19 +805,72 @@ fn linked(nodes: Option<Nodes<LinkedNode>>) -> Vec<Linked> {
         .collect()
 }
 
+/// An issue another item links to, read with what Linewright filed it for.
 #[derive(Deserialize)]
-struct ParentNode {
+struct LinkedIssueNode {
     number: u64,
     title: String,
     body: String,
     author: Option<Actor>,
 }
 
-impl ParentNode {
-    fn into_parent(self, linewright: &Login) -> Parent {
+impl LinkedIssueNode {
+    fn number_and_filed(self, linewright: &Login) -> (Number, Option<Filed>) {
         let filed = Filed::read(&login(self.author), &self.title, &self.body, linewright);
-        Parent::new(Number(self.number), filed)
+        (Number(self.number), filed)
     }
+
+    fn into_parent(self, linewright: &Login) -> Parent {
+        let (number, filed) = self.number_and_filed(linewright);
+        Parent::new(number, filed)
+    }
+}
+
+/// The field that reads the items that mention a pull request, for
+/// [`tracking_issues_among`]: a tracking issue mentions its spec change.
+const CROSS_REFERENCES_FIELD: &str =
+    "timelineItems(last: 100, itemTypes: [CROSS_REFERENCED_EVENT]) {
+    nodes {
+      ... on CrossReferencedEvent {
+        isCrossRepository
+        source { __typename ... on Issue { number title body author { __typename login } } }
+      }
+    }
+  }";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrossReference {
+    is_cross_repository: bool,
+    source: ReferenceSource,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum ReferenceSource {
+    Issue(LinkedIssueNode),
+    PullRequest,
+}
+
+/// The tracking issues of `spec_change` among the items that mention it,
+/// `references`: those Linewright, `linewright`, filed for it in this
+/// repository.
+fn tracking_issues_among(
+    references: Nodes<CrossReference>,
+    spec_change: Number,
+    linewright: &Login,
+) -> Vec<Number> {
+    references
+        .nodes
+        .into_iter()
+        .filter(|reference| !reference.is_cross_repository)
+        .filter_map(|reference| match reference.source {
+            ReferenceSource::Issue(issue) => Some(issue.number_and_filed(linewright)),
+            ReferenceSource::PullRequest => None,
+        })
+        .filter(|(_, filed)| *filed == Some(Filed::Tracking { spec_change }))
+        .map(|(number, _)| number)
+        .collect()
 }
 
 const ISSUE_FIELDS: &str = "fragment IssueFields on Issue {
@@ -822,7 +909,7 @@ struct GqlIssue {
     assignees: Nodes<LoginNode>,
     comments: Nodes<GqlComment>,
     sub_issues: Option<Nodes<LinkedNode>>,
-    parent: Option<ParentNode>,
+    parent: Option<LinkedIssueNode>,
     blocked_by: Option<Nodes<LinkedNode>>,
     closed_by_pull_requests_references: Option<Nodes<ClosingPull>>,
     timeline_items: Nodes<GqlEvent>,
@@ -1497,9 +1584,10 @@ impl Store for GitHub {
         let merged_at = merged
             .merged_at
             .with_context(|| format!("GitHub gives merged pull request {number} no merge time"))?;
-        Ok(Some(AnyItem::Merged(
-            self.merged_of(merged, merged_at).await?,
-        )))
+        Ok(Some(AnyItem::Merged {
+            pull: Box::new(self.merged_of(merged, merged_at).await?),
+            tracking_issues: self.tracking_issues_of(number).await?,
+        }))
     }
 
     async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>> {
@@ -2252,5 +2340,47 @@ mod tests {
     #[test]
     fn a_ticket_without_a_parent_has_none() {
         assert_eq!(ticket_with_parent(Value::Null).parent, None);
+    }
+
+    /// A cross-reference to #5 from issue #`number`, opened by `author` with
+    /// `title` and `body`, in this repository or another.
+    fn referenced_by(number: u64, author: &str, title: &str, body: &str, cross: bool) -> Value {
+        json!({
+            "isCrossRepository": cross,
+            "source": {
+                "__typename": "Issue", "number": number, "title": title, "body": body,
+                "author": {"__typename": "Bot", "login": author},
+            },
+        })
+    }
+
+    #[test]
+    fn a_spec_changes_tracking_issues_are_the_issues_linewright_filed_for_it_here() {
+        let tracking = |number| {
+            referenced_by(
+                number,
+                "linewright",
+                "Spec change: Add invoices",
+                "Tickets for the spec change in #5.\n\n- #9 Store invoices\n",
+                false,
+            )
+        };
+        let references: Nodes<CrossReference> = serde_json::from_value(json!({"nodes": [
+            tracking(8),
+            {"isCrossRepository": false, "source": {"__typename": "PullRequest"}},
+            referenced_by(14, "maintainer", "Spec change: Add invoices",
+                "Tickets for the spec change in #5.", false),
+            referenced_by(15, "linewright", "Spec change: Add invoices",
+                "Tickets for the spec change in #6.", false),
+            referenced_by(16, "linewright", "Spec change: Add invoices",
+                "Tickets for the spec change in #5.", true),
+            tracking(12),
+        ]}))
+        .unwrap();
+
+        assert_eq!(
+            tracking_issues_among(references, Number(5), &Login::new("linewright[bot]")),
+            [Number(8), Number(12)]
+        );
     }
 }
