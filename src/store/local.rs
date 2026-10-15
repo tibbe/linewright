@@ -968,6 +968,7 @@ impl PullRecord {
             merged_at: at,
             base_ref: default_branch.to_string(),
             labels: self.labels.clone(),
+            closes: closing_references(&self.body),
             files: self.files.clone(),
         })
     }

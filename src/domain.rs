@@ -370,6 +370,8 @@ pub struct MergedPull {
     pub merged_at: Timestamp,
     pub base_ref: String,
     pub labels: Vec<String>,
+    /// The issues the pull request closes when merged (`Closes #N`).
+    pub closes: Vec<Number>,
     /// The paths the pull request touched.
     pub files: Vec<String>,
 }

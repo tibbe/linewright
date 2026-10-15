@@ -118,6 +118,7 @@ fn an_item_in_review_waits_for_ci_on_its_pull_request() {
     assert_eq!(
         text(&view, 42)[1..],
         [
+            "child: #43, its current pull request",
             "state: in review: #43 (draft, CI running)",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: CI on #43",
@@ -164,7 +165,7 @@ fn linewrights_pull_request_is_explained_as_the_issue_it_is_for() {
         text(&view, 43),
         [
             "#43: Do #42",
-            "pull request for: #42",
+            "parent: #42, the issue it is for",
             "state: in review: #43 (draft, CI running)",
             "last read: 2026-10-01 12:00:20 UTC",
             "waiting for: CI on #43",
@@ -542,6 +543,8 @@ fn the_json_names_each_fact() {
         serde_json::json!({
             "number": 42,
             "title": "Add invoices",
+            "parent": null,
+            "children": [],
             "state": "claimed",
             "last_read": "2026-10-01T12:00:00Z",
             "waiting_for": [{"wait": "blocker", "issue": 40}],
@@ -571,6 +574,8 @@ fn the_json_of_linewrights_pull_request_names_the_issue_it_is_for() {
         serde_json::json!({
             "number": 43,
             "title": "Do #42",
+            "parent": {"number": 42, "role": "issue-it-is-for"},
+            "children": [],
             "pull_request_for": 42,
             "pull_request": 43,
             "draft": true,
@@ -587,6 +592,24 @@ fn the_json_of_linewrights_pull_request_names_the_issue_it_is_for() {
         serde_json::from_value::<Explanation>(serde_json::to_value(&answer).unwrap()).unwrap(),
         answer
     );
+}
+
+#[test]
+fn the_json_of_an_issue_in_review_names_its_current_pull_request_as_its_child() {
+    let claimed = Issue {
+        assignees: vec![Login::new("factory")],
+        ..ticket(42, "Add invoices")
+    };
+    let view = view(vec![claimed], vec![draft(43, 42, &[CheckState::Pending])]);
+    let answer = explain(&view, &[], Number(42), at(NOW)).unwrap();
+    let json = serde_json::to_value(&answer).unwrap();
+
+    assert_eq!(json["parent"], serde_json::Value::Null);
+    assert_eq!(
+        json["children"],
+        serde_json::json!([{"number": 43, "role": "current-pull-request"}])
+    );
+    assert_eq!(json["pull_request"], 43);
 }
 
 #[test]
@@ -771,6 +794,7 @@ fn a_closed_pull_request_is_left_alone_as_closed() {
     assert_eq!(
         left_alone_text(&view(vec![], vec![]), AnyItem::Pull(Box::new(closed)))[1..],
         [
+            "parent: #42, the issue it is for",
             "state: closed pull request",
             "last read: 2026-10-01 12:00:30 UTC",
             "left alone: it is closed",
@@ -814,7 +838,7 @@ fn linewrights_pull_request_for_no_issue_it_works_on_says_so() {
         left_alone_text(
             &view(vec![untracked], vec![]),
             AnyItem::Pull(Box::new(for_untracked))
-        )[3],
+        )[4],
         "left alone: it is Linewright's for #42, which Linewright does not work on"
     );
 }
@@ -829,7 +853,7 @@ fn linewrights_older_pull_request_for_an_issue_names_the_one_it_works_through() 
     let view = view(vec![claimed], vec![older.clone(), draft(44, 42, &[])]);
 
     assert_eq!(
-        left_alone_text(&view, AnyItem::Pull(Box::new(older)))[3],
+        left_alone_text(&view, AnyItem::Pull(Box::new(older)))[4],
         "left alone: it is Linewright's for #42, which it works on through #44"
     );
 }
@@ -845,6 +869,7 @@ fn merged(labels: &[&str]) -> MergedPull {
         merged_at: at("2026-10-01T09:00:00Z"),
         base_ref: "main".into(),
         labels: labels.iter().map(|l| l.to_string()).collect(),
+        closes: vec![],
         files: vec!["docs/specs/invoices.md".into()],
     }
 }
@@ -960,6 +985,8 @@ fn the_json_of_an_item_left_alone_names_why() {
         serde_json::json!({
             "number": 5,
             "title": "Add invoices to the spec",
+            "parent": null,
+            "children": [],
             "item": "pull-request",
             "state": "merged",
             "last_read": "2026-10-01T12:00:30Z",
@@ -1012,7 +1039,7 @@ fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issues
         ),
         [
             "#43: Do #42",
-            "pull request for: #42",
+            "parent: #42, the issue it is for",
             "state: in review: #43 (draft, CI running)",
             "last read: 2026-10-01 12:00:30 UTC",
             "waiting for: CI on #43",
@@ -1031,7 +1058,7 @@ fn linewrights_pull_request_for_an_issue_elsewhere_in_the_pipeline_names_where()
     let view = view(vec![handed_back], vec![open.clone()]);
 
     assert_eq!(
-        left_alone_text(&view, AnyItem::Pull(Box::new(open)))[3],
+        left_alone_text(&view, AnyItem::Pull(Box::new(open)))[4],
         "left alone: it is Linewright's for #42, which is not in review but with the maintainer"
     );
 }
@@ -1061,6 +1088,8 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
             serde_json::json!({
                 "number": 42,
                 "title": "Add invoices",
+                "parent": null,
+                "children": [],
                 "item": "issue",
                 "state": "open",
                 "last_read": "2026-10-01T12:00:30Z",
@@ -1076,4 +1105,174 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
             answer
         );
     }
+}
+
+/// The lines of `lines` that name a parent or a child.
+fn family_lines(lines: &[String]) -> Vec<&str> {
+    lines
+        .iter()
+        .map(String::as_str)
+        .filter(|line| line.starts_with("parent: ") || line.starts_with("child: "))
+        .collect()
+}
+
+#[test]
+fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_is_for() {
+    let claimed = Issue {
+        assignees: vec![Login::new("factory")],
+        ..ticket(42, "Add invoices")
+    };
+    let older = draft(43, 42, &[]);
+    let superseded = view(vec![claimed], vec![older.clone(), draft(44, 42, &[])]);
+    let handed_back = view(
+        vec![Issue {
+            labels: vec!["ready-for-human".into()],
+            assignees: vec![Login::new("factory")],
+            ..ticket(42, "Add invoices")
+        }],
+        vec![older.clone()],
+    );
+    let untracked = view(
+        vec![Issue {
+            labels: vec![],
+            ..ticket(42, "Add invoices")
+        }],
+        vec![],
+    );
+
+    for view in [superseded, handed_back, untracked] {
+        assert_eq!(
+            family_lines(&left_alone_text(
+                &view,
+                AnyItem::Pull(Box::new(older.clone()))
+            )),
+            ["parent: #42, the issue it is for"]
+        );
+    }
+}
+
+#[test]
+fn linewrights_merged_pull_request_names_the_issue_it_is_for() {
+    let done = MergedPull {
+        number: Number(43),
+        title: "Do #42".into(),
+        body: "Adds invoices.\n\nCloses #42".into(),
+        closes: vec![Number(42)],
+        author: Login::new("factory"),
+        files: vec!["src/invoices.rs".into()],
+        ..merged(&[])
+    };
+
+    let lines = left_alone_text(&view(vec![], vec![]), AnyItem::Merged(done));
+
+    assert_eq!(
+        lines[..3],
+        [
+            "#43: Do #42",
+            "parent: #42, the issue it is for",
+            "state: merged pull request",
+        ]
+    );
+}
+
+#[test]
+fn a_pull_request_not_linewrights_has_no_parent() {
+    let someones_merged = MergedPull {
+        body: "Closes #42".into(),
+        closes: vec![Number(42)],
+        files: vec!["src/main.rs".into()],
+        ..merged(&[])
+    };
+    let someones_closed = Pull {
+        body: "Closes #42".into(),
+        closes: vec![Number(42)],
+        state: PullState::Closed {
+            at: at("2026-10-01T11:00:00Z"),
+        },
+        ..someones_pull(43)
+    };
+    let someones_open = Pull {
+        closes: vec![Number(42)],
+        ..someones_pull(43)
+    };
+
+    for read in [
+        AnyItem::Merged(someones_merged),
+        AnyItem::Pull(Box::new(someones_closed)),
+        AnyItem::Pull(Box::new(someones_open)),
+    ] {
+        assert_eq!(
+            family_lines(&left_alone_text(&view(vec![], vec![]), read)),
+            Vec::<&str>::new()
+        );
+    }
+}
+
+#[test]
+fn the_json_of_linewrights_pull_request_left_alone_names_the_issue_it_is_for() {
+    let closed = Pull {
+        state: PullState::Closed {
+            at: at("2026-10-01T11:00:00Z"),
+        },
+        ..draft(43, 42, &[])
+    };
+    let answer = explain_read(
+        &view(vec![], vec![]),
+        &[],
+        &AnyItem::Pull(Box::new(closed)),
+        at(NOW),
+    );
+
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap(),
+        serde_json::json!({
+            "number": 43,
+            "title": "Do #42",
+            "parent": {"number": 42, "role": "issue-it-is-for"},
+            "children": [],
+            "item": "pull-request",
+            "state": "closed",
+            "last_read": "2026-10-01T12:00:30Z",
+            "runs_of": 43,
+            "run_in_flight": null,
+            "past_runs": [],
+            "past_runs_left_out": 0,
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<Answer>(serde_json::to_value(&answer).unwrap()).unwrap(),
+        answer
+    );
+}
+
+#[test]
+fn linewrights_pull_request_closing_several_issues_is_for_the_one_linewright_tracks() {
+    let claimed = Issue {
+        assignees: vec![Login::new("factory")],
+        ..ticket(42, "Add invoices")
+    };
+    let untracked = Issue {
+        labels: vec![],
+        ..ticket(50, "Old invoices")
+    };
+    let closed = Pull {
+        body: "Closes #50 and closes #42".into(),
+        closes: vec![Number(50), Number(42)],
+        state: PullState::Closed {
+            at: at("2026-10-01T11:00:00Z"),
+        },
+        ..draft(43, 42, &[])
+    };
+    let lines = |issues| {
+        left_alone_text(
+            &view(issues, vec![]),
+            AnyItem::Pull(Box::new(closed.clone())),
+        )
+    };
+
+    assert_eq!(
+        family_lines(&lines(vec![untracked.clone(), claimed])),
+        ["parent: #42, the issue it is for"]
+    );
+    assert_eq!(family_lines(&lines(vec![untracked])), Vec::<&str>::new());
 }

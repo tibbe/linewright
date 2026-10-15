@@ -420,6 +420,7 @@ impl GitHub {
             merged_at,
             base_ref: pr.base_ref_name,
             labels: pr.labels.nodes.into_iter().map(|l| l.name).collect(),
+            closes: closes(pr.closing_issues_references),
             files: match pr.files {
                 Some(files) if !files.page_info.has_next_page => {
                     files.nodes.into_iter().map(|f| f.path).collect()
@@ -913,11 +914,21 @@ impl GqlIssue {
     }
 }
 
-const PULL_FIELDS: &str = "fragment PullFields on PullRequest {
+/// The field that reads the issues a pull request closes, for [`closes`].
+macro_rules! closes_field {
+    () => {
+        "closingIssuesReferences(first: 20) { nodes { number } }"
+    };
+}
+
+const PULL_FIELDS: &str = concat!(
+    "fragment PullFields on PullRequest {
   number title body createdAt baseRefName headRefName headRefOid isDraft state mergedAt closedAt
   mergeable mergeStateStatus canBeRebased reviewDecision
   author { __typename login }
-  closingIssuesReferences(first: 20) { nodes { number } }
+  ",
+    closes_field!(),
+    "
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
   reviews(last: 100) { nodes { author { __typename login } state body submittedAt } }
   reviewRequests(first: 20) {
@@ -935,7 +946,8 @@ const PULL_FIELDS: &str = "fragment PullFields on PullRequest {
       }
     }
   }
-}";
+}"
+);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -967,6 +979,14 @@ struct GqlPull {
 #[derive(Deserialize)]
 struct NumberNode {
     number: u64,
+}
+
+/// The issues a pull request closes, from its `closingIssuesReferences`,
+/// which [`closes_field!`] reads.
+fn closes(references: Option<Nodes<NumberNode>>) -> Vec<Number> {
+    references
+        .map(|n| n.nodes.into_iter().map(|n| Number(n.number)).collect())
+        .unwrap_or_default()
 }
 
 #[derive(Deserialize)]
@@ -1169,10 +1189,7 @@ impl GqlPull {
             head_ref: self.head_ref_name,
             head_sha: self.head_ref_oid,
             state,
-            closes: self
-                .closing_issues_references
-                .map(|n| n.nodes.into_iter().map(|n| Number(n.number)).collect())
-                .unwrap_or_default(),
+            closes: closes(self.closing_issues_references),
             pushes,
             mergeability,
             rebaseability,
@@ -1215,12 +1232,17 @@ impl GqlPull {
     }
 }
 
-const MERGED_FIELDS: &str = "fragment MergedFields on PullRequest {
+const MERGED_FIELDS: &str = concat!(
+    "fragment MergedFields on PullRequest {
   number title body mergedAt updatedAt baseRefName
   author { __typename login }
+  ",
+    closes_field!(),
+    "
   labels(first: 50) { nodes { name } }
   files(first: 100) { pageInfo { hasNextPage } nodes { path } }
-}";
+}"
+);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1233,6 +1255,7 @@ struct GqlMerged {
     base_ref_name: String,
     author: Option<Actor>,
     labels: Nodes<Name>,
+    closing_issues_references: Option<Nodes<NumberNode>>,
     files: Option<FilesPage>,
 }
 

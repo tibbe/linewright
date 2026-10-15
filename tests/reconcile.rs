@@ -222,6 +222,7 @@ fn merged(number: u64, files: &[&str]) -> MergedPull {
         merged_at: t(0),
         base_ref: "main".into(),
         labels: vec![],
+        closes: vec![],
         files: files.iter().map(|f| f.to_string()).collect(),
     }
 }
