@@ -543,6 +543,23 @@ fn a_pull_requests_runs_are_its_issues_all_of_them() {
 }
 
 #[test]
+fn a_pull_requests_runs_are_those_of_the_issue_it_was_opened_for() {
+    let recorded = vec![
+        on_pull(3, work(2, WorkKind::Rework, 1, "08:00:00")),
+        work(1, WorkKind::Triage, 1, "08:30:00"),
+        on_pull(3, work(1, WorkKind::Implement, 1, "09:00:00")),
+    ];
+    let query = Query {
+        item: Some(Number(3)),
+        ..Query::default()
+    };
+
+    let listing = runs::list(recorded, &query, at("13:00:00")).unwrap();
+
+    assert_eq!(ids(&listing), ["1/implement-1", "1/triage-1"]);
+}
+
+#[test]
 fn a_pull_requests_runs_narrow_as_its_issues_do() {
     let query = Query {
         item: Some(Number(4)),

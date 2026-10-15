@@ -668,10 +668,13 @@ pub struct OfItem {
 /// request a run worked on or opened for an issue, the issue's, all of them
 /// (`docs/specs/monitoring.md`, "Commands").
 pub fn of_item(recorded: &[Recorded], number: Number) -> OfItem {
-    let recorded_under = recorded
-        .iter()
-        .find(|run| run.pr == Some(number))
-        .and_then(|run| run.id.of.item())
+    let recorded_under = opened_for(recorded, number)
+        .or_else(|| {
+            recorded
+                .iter()
+                .find(|run| run.pr == Some(number))
+                .and_then(|run| run.id.of.item())
+        })
         .unwrap_or(number);
     let runs = recorded
         .iter()
@@ -687,6 +690,20 @@ pub fn of_item(recorded: &[Recorded], number: Number) -> OfItem {
         recorded_under,
         runs,
     }
+}
+
+/// The issue a run among `recorded` opened the pull request #`pr` for: the
+/// item of the implement run that records it, the only stage that opens one.
+/// `None` when no run's record links to it, as for records written before
+/// runs kept their pull request.
+pub fn opened_for(recorded: &[Recorded], pr: Number) -> Option<Number> {
+    recorded.iter().find_map(|run| match run.id.of {
+        RunOf::Work {
+            item,
+            stage: WorkKind::Implement,
+        } if run.pr == Some(pr) => Some(item),
+        _ => None,
+    })
 }
 
 /// The runs of `recorded` that `query` asks for at `now`, newest first.
