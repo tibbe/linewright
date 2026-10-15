@@ -7,7 +7,7 @@ mod views;
 
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
-use linewright::runs::{Ending, Recorded, State};
+use linewright::runs::{Ending, Recorded, RunId, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
 use views::{at, implementing, in_flight, limited_until, ticket, view};
@@ -330,7 +330,8 @@ fn explain_shows_three_past_runs_and_leaves_none_out() {
 #[test]
 fn linewrights_pull_request_points_to_the_runs_of_the_issue_it_is_for() {
     let view = implementing_42_again(vec![draft(43, 42, &[CheckState::Pending])]);
-    let answer = explain(&view, &five_past_runs_of_42(), Number(43), at(NOW)).unwrap();
+    let runs = opening_43(five_past_runs_of_42());
+    let answer = explain(&view, &runs, Number(43), at(NOW)).unwrap();
 
     assert_eq!(
         run_lines(&render(&answer, false)).last(),
@@ -435,12 +436,173 @@ fn an_item_with_no_runs_shows_none() {
     assert_eq!(run_lines(&render(&answer, false)), Vec::<&str>::new());
 }
 
-#[test]
-fn linewrights_pull_request_shows_the_runs_of_the_issue_it_is_for() {
-    let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
-    let answer = explain(&view, &runs_of_42(), Number(43), at(NOW)).unwrap();
+/// `runs` with #42's first implement run having opened #43.
+fn opening_43(mut runs: Vec<Recorded>) -> Vec<Recorded> {
+    let first: RunId = "42/implement-1".parse().unwrap();
+    for run in runs.iter_mut().filter(|run| run.id == first) {
+        run.pr = Some(Number(43));
+    }
+    runs
+}
 
-    assert_eq!(run_lines(&render(&answer, false)).len(), 3);
+/// #42's runs as [`runs_of_42`] has them, its first implement run having
+/// opened #43.
+fn runs_of_42_opening_43() -> Vec<Recorded> {
+    opening_43(runs_of_42())
+}
+
+/// The IDs of the runs `answer` shows, as its JSON names them, the run in
+/// flight first.
+fn shown(answer: &Answer) -> Vec<String> {
+    let json = serde_json::to_value(answer).unwrap();
+    let in_flight = json["run_in_flight"]["id"].as_str().map(str::to_string);
+    let past = json["past_runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["id"].as_str().unwrap().to_string());
+    in_flight.into_iter().chain(past).collect()
+}
+
+/// That `answer` about #43 shows #42's run in flight and past runs, as text
+/// and as JSON, as `runs 43` lists them among [`runs_of_42_opening_43`].
+fn assert_shows_the_runs_of_42(answer: &Answer) {
+    assert_eq!(
+        run_lines(&render_answer(answer, false)),
+        [
+            "run in flight: 42/implement-2: #42 implement, running for 30m 30s, quiet for 10m 30s",
+            "past run: 42/implement-1: interrupted — #42 implement, started 2026-10-01 10:00:00 UTC",
+            "past run: 42/triage-1: done — #42 triage, started 2026-10-01 09:00:00 UTC, ran 5m",
+        ]
+    );
+    assert_eq!(
+        shown(answer),
+        ["42/implement-2", "42/implement-1", "42/triage-1"]
+    );
+}
+
+/// That `answer` about #43 shows no runs, as text or as JSON, as `runs 43`
+/// lists none among [`runs_of_42`].
+fn assert_shows_no_runs(answer: &Answer) {
+    assert_eq!(run_lines(&render_answer(answer, false)), Vec::<&str>::new());
+    assert_eq!(shown(answer), Vec::<String>::new());
+}
+
+#[test]
+fn linewrights_merged_pull_request_shows_the_runs_of_the_issue_it_is_for() {
+    let merged = MergedPull {
+        number: Number(43),
+        title: "Do #42".into(),
+        author: Login::new("factory"),
+        ..merged(&[])
+    };
+    let answer = explain_read(
+        &implementing_42(vec![]),
+        &runs_of_42_opening_43(),
+        &AnyItem::Merged(merged),
+        at(NOW),
+    );
+
+    assert_shows_the_runs_of_42(&answer);
+}
+
+#[test]
+fn linewrights_closed_pull_request_shows_the_runs_of_the_issue_it_is_for() {
+    let closed = Pull {
+        state: PullState::Closed {
+            at: at("2026-10-01T11:00:00Z"),
+        },
+        ..draft(43, 42, &[])
+    };
+    let answer = explain_read(
+        &implementing_42(vec![]),
+        &runs_of_42_opening_43(),
+        &AnyItem::Pull(Box::new(closed)),
+        at(NOW),
+    );
+
+    assert_shows_the_runs_of_42(&answer);
+}
+
+#[test]
+fn linewrights_superseded_pull_request_shows_the_runs_of_the_issue_it_is_for() {
+    let older = draft(43, 42, &[]);
+    let view = implementing_42(vec![older.clone(), draft(44, 42, &[])]);
+    let answer = explain_read(
+        &view,
+        &runs_of_42_opening_43(),
+        &AnyItem::Pull(Box::new(older)),
+        at(NOW),
+    );
+
+    assert_shows_the_runs_of_42(&answer);
+}
+
+#[test]
+fn linewrights_pull_request_for_an_issue_not_in_review_shows_the_runs_of_the_issue() {
+    let handed_back = Issue {
+        labels: vec!["ready-for-human".into()],
+        assignees: vec![Login::new("factory")],
+        ..ticket(42, "Add invoices")
+    };
+    let open = draft(43, 42, &[]);
+    let view = View {
+        in_flight: implementing_42(vec![]).in_flight,
+        ..view(vec![handed_back], vec![open.clone()])
+    };
+    let answer = explain_read(
+        &view,
+        &runs_of_42_opening_43(),
+        &AnyItem::Pull(Box::new(open)),
+        at(NOW),
+    );
+
+    assert_shows_the_runs_of_42(&answer);
+}
+
+#[test]
+fn linewrights_pull_request_in_review_shows_the_runs_of_the_issue_it_is_for_as_runs_lists_them() {
+    let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
+    let answer =
+        Answer::Tracked(explain(&view, &runs_of_42_opening_43(), Number(43), at(NOW)).unwrap());
+
+    assert_shows_the_runs_of_42(&answer);
+}
+
+#[test]
+fn linewrights_pull_request_in_review_shows_no_runs_when_no_run_links_to_it() {
+    let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
+    let answer = Answer::Tracked(explain(&view, &runs_of_42(), Number(43), at(NOW)).unwrap());
+
+    assert_shows_no_runs(&answer);
+}
+
+#[test]
+fn a_pull_request_someone_else_opened_shows_no_runs() {
+    let answer = explain_read(
+        &implementing_42(vec![]),
+        &runs_of_42(),
+        &AnyItem::Pull(Box::new(someones_pull(43))),
+        at(NOW),
+    );
+
+    assert_shows_no_runs(&answer);
+}
+
+#[test]
+fn linewrights_pull_request_closing_no_issue_shows_no_runs() {
+    let for_nothing = Pull {
+        closes: vec![],
+        ..draft(43, 42, &[])
+    };
+    let answer = explain_read(
+        &implementing_42(vec![]),
+        &runs_of_42(),
+        &AnyItem::Pull(Box::new(for_nothing)),
+        at(NOW),
+    );
+
+    assert_shows_no_runs(&answer);
 }
 
 #[test]
@@ -558,7 +720,8 @@ fn the_json_names_each_fact() {
 }
 
 #[test]
-fn the_json_of_linewrights_pull_request_names_the_issue_it_is_for() {
+fn the_json_of_linewrights_pull_request_no_run_links_to_names_the_issue_it_is_for_and_itself_as_runs_of()
+ {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
@@ -580,7 +743,7 @@ fn the_json_of_linewrights_pull_request_names_the_issue_it_is_for() {
             "run_in_flight": null,
             "past_runs": [],
             "past_runs_left_out": 0,
-            "runs_of": 42,
+            "runs_of": 43,
         })
     );
     assert_eq!(

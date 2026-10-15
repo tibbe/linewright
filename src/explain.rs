@@ -103,30 +103,29 @@ impl TryFrom<ItemRunsAnswer> for ItemRuns {
 pub const PAST_RUNS_SHOWN: usize = 3;
 
 impl ItemRuns {
-    /// The runs of #`item` at `now`: the one in flight in `view`, and the
-    /// others of those `recorded`.
+    /// The runs of #`item` at `now`, those `runs N` lists for it among
+    /// `recorded`: the one in flight in `view`, and the others.
     fn of(view: &View, recorded: &[Recorded], item: Number, now: Timestamp) -> ItemRuns {
+        let runs::OfItem {
+            recorded_under,
+            runs: of_item,
+        } = runs::of_item(recorded, item);
         let run_in_flight = view
             .in_flight
             .iter()
-            .find(|run| run.id.of.item() == Some(item))
+            .find(|run| of_item.iter().any(|of| of.id == run.id))
             .map(|run| run.at(now));
         // A run that has just ended may still be in flight in the view.
         let in_flight = run_in_flight.as_ref().map(|run| &run.id);
-        let mut past: Vec<Recorded> = recorded
-            .iter()
-            .filter(|run| {
-                run.id.of.item() == Some(item)
-                    && run.state != State::InFlight
-                    && Some(&run.id) != in_flight
-            })
-            .cloned()
+        let mut past: Vec<Recorded> = of_item
+            .into_iter()
+            .filter(|run| run.state != State::InFlight && Some(&run.id) != in_flight)
             .collect();
         runs::sort_newest_first(&mut past);
         let past_runs_left_out = past.len().saturating_sub(PAST_RUNS_SHOWN);
         past.truncate(PAST_RUNS_SHOWN);
         ItemRuns {
-            runs_of: item,
+            runs_of: recorded_under,
             run_in_flight,
             past_runs: past.into_iter().map(|run| run.at(now)).collect(),
             past_runs_left_out,
@@ -168,9 +167,9 @@ pub enum Standing {
 }
 
 /// The answer about #`number` at `now`, with its runs among those
-/// `recorded`: an item Linewright tracks, or Linewright's open pull request
-/// for one, which shows the runs of the issue it is for, as the runs on it
-/// are recorded under the issue. `None` for any other number.
+/// `recorded` as `runs N` lists them: an item Linewright tracks, or
+/// Linewright's open pull request for one in review with it. `None` for any
+/// other number.
 pub fn explain(
     view: &View,
     recorded: &[Recorded],
@@ -205,7 +204,7 @@ pub fn explain(
             },
             last_read: last_read(Item::Pull(number)),
             waiting_for: tracked.waiting_for,
-            runs: ItemRuns::of(view, recorded, tracked.number, now),
+            runs: ItemRuns::of(view, recorded, number, now),
         }),
         _ => None,
     })
@@ -408,7 +407,7 @@ fn pull_standing(
             },
             last_read: now,
             waiting_for: issue.waiting_for,
-            runs: ItemRuns::of(view, recorded, issue.number, now),
+            runs: ItemRuns::of(view, recorded, pull.number, now),
         }),
         ItemState::InReview(review) => Err(PullExclusion::Superseded {
             issue: issue.number,

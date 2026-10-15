@@ -97,7 +97,7 @@ pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRu
                 .cloned()
                 .ok_or_else(|| NoSuchRun::NoRun(id.clone()))?;
             match item {
-                Some(item) if !runs::of_item(recorded, *item).contains(&run) => {
+                Some(item) if !runs::of_item(&recorded, *item).runs.contains(&run) => {
                     Err(NoSuchRun::NotOf {
                         run: run.id,
                         item: *item,
@@ -107,7 +107,7 @@ pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRu
             }
         }
         Which::Item(number) => {
-            let mut runs = runs::of_item(recorded, *number);
+            let mut runs = runs::of_item(&recorded, *number).runs;
             runs.sort_by_key(|run| (run.started_at, run.id.n));
             let in_flight = runs.iter().rposition(|run| run.state == State::InFlight);
             let with_session = || runs.iter().rposition(|run| !run.sessions.is_empty());
