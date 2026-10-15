@@ -35,6 +35,7 @@ fn run(id: &str, start: &str, sessions: usize) -> Recorded {
         sessions: (0..sessions)
             .map(|n| PathBuf::from(format!("sessions/{id}/{n}")))
             .collect(),
+        pr: None,
     }
 }
 
@@ -110,6 +111,43 @@ fn a_named_run_is_the_one_shown() {
         Err(NoSuchRun::NotOf {
             run: "1/rework-1".parse().unwrap(),
             item: Number(2),
+        })
+    );
+}
+
+/// #1's runs, the later on its pull request #3, the latest in flight.
+fn on_a_pull() -> Vec<Recorded> {
+    let on_pull = |run: Recorded| Recorded {
+        pr: Some(Number(3)),
+        ..run
+    };
+    let mut in_flight = on_pull(run("1/rework-1", "11:00:00", 1));
+    in_flight.state = State::InFlight;
+    vec![
+        run("1/triage-1", "09:00:00", 1),
+        on_pull(run("1/implement-1", "10:00:00", 1)),
+        in_flight,
+        run("2/triage-1", "12:00:00", 1),
+    ]
+}
+
+#[test]
+fn a_pull_requests_run_is_its_issues() {
+    let named = |id: &str| Which::Run {
+        id: id.parse::<RunId>().unwrap(),
+        item: Some(Number(3)),
+    };
+
+    assert_eq!(picked(on_a_pull(), item(3)).unwrap(), "1/rework-1");
+    assert_eq!(
+        picked(on_a_pull(), named("1/triage-1")).unwrap(),
+        "1/triage-1"
+    );
+    assert_eq!(
+        picked(on_a_pull(), named("2/triage-1")),
+        Err(NoSuchRun::NotOf {
+            run: "2/triage-1".parse().unwrap(),
+            item: Number(3),
         })
     );
 }
@@ -297,13 +335,13 @@ async fn an_unknown_item_or_run_exits_4_saying_so() {
 
     let no_item = lw(work_dir.path(), &["logs", "7"]).await;
     let no_run = lw(work_dir.path(), &["logs", "1", "--run", "1/rework-1"]).await;
-    let other_item = lw(work_dir.path(), &["logs", "2", "--run", "1/implement-1"]).await;
+    let other_item = lw(work_dir.path(), &["logs", "7", "--run", "1/implement-1"]).await;
     let neither = lw(work_dir.path(), &["logs"]).await;
 
     for (output, error) in [
         (&no_item, "#7 has no runs"),
         (&no_run, "there is no run 1/rework-1"),
-        (&other_item, "1/implement-1 is not a run on #2"),
+        (&other_item, "1/implement-1 is not a run on #7"),
     ] {
         assert_eq!(output.code, Some(4), "{}", output.stderr);
         assert_eq!(output.stdout, "");

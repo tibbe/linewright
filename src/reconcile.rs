@@ -136,6 +136,15 @@ impl Work {
         }
     }
 
+    /// The pull request for its issue it is given to work on, if any. A
+    /// spec change's pull request is its subject instead.
+    pub fn pr(&self) -> Option<Number> {
+        match self {
+            Work::Rework { pr, .. } | Work::FixCi { pr, .. } | Work::Update { pr, .. } => Some(*pr),
+            Work::Triage { .. } | Work::Tickets { .. } | Work::Implement { .. } => None,
+        }
+    }
+
     pub fn kind(&self) -> WorkKind {
         match self {
             Work::Triage { .. } => WorkKind::Triage,

@@ -7,7 +7,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::Number;
-use crate::runs::{Recorded, RepoWorkDir, RunId, RunOf, Runs, State};
+use crate::runs::{self, Recorded, RepoWorkDir, RunId, Runs, State};
 use crate::transcript::{
     self, After, FollowedLine, Follower, InFlight, ReadTo, SessionRecord, Transcript, Verbosity,
 };
@@ -86,28 +86,28 @@ pub enum NoSuchRun {
     NotOf { run: RunId, item: Number },
 }
 
-/// The run of `recorded` that `which` names.
+/// The run of `recorded` that `which` names. An item's runs are those
+/// `runs N` lists for it.
 pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRun> {
     match which {
         Which::Run { id, item } => {
             let run = recorded
-                .into_iter()
+                .iter()
                 .find(|run| run.id == *id)
+                .cloned()
                 .ok_or_else(|| NoSuchRun::NoRun(id.clone()))?;
-            match (item, &run.id.of) {
-                (Some(item), RunOf::Work { item: of, .. }) if of == item => Ok(run),
-                (Some(item), _) => Err(NoSuchRun::NotOf {
-                    run: run.id,
-                    item: *item,
-                }),
-                (None, _) => Ok(run),
+            match item {
+                Some(item) if !runs::of_item(recorded, *item).contains(&run) => {
+                    Err(NoSuchRun::NotOf {
+                        run: run.id,
+                        item: *item,
+                    })
+                }
+                _ => Ok(run),
             }
         }
         Which::Item(number) => {
-            let mut runs: Vec<Recorded> = recorded
-                .into_iter()
-                .filter(|run| run.id.of.item() == Some(*number))
-                .collect();
+            let mut runs = runs::of_item(recorded, *number);
             runs.sort_by_key(|run| (run.started_at, run.id.n));
             let in_flight = runs.iter().rposition(|run| run.state == State::InFlight);
             let with_session = || runs.iter().rposition(|run| !run.sessions.is_empty());

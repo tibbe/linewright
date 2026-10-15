@@ -965,6 +965,113 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     answering.stop().await;
 }
 
+/// A world whose factory records its runs where `serve` and
+/// `lw --work-dir <dir>/work` look for those of `owner/widgets`, with
+/// ticket #1 implemented as the pull request #2, which has a comment for
+/// rework to answer.
+async fn with_pull_request_for_rework() -> World {
+    let mut world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    let (_, pr) = world.ticket_in_review().await;
+    assert_eq!(pr, linewright::domain::Number(2));
+    world.rework_asked(pr);
+    world
+}
+
+#[tokio::test]
+async fn a_pull_requests_runs_and_logs_are_its_issues_with_serve_running_and_without() {
+    let world = with_pull_request_for_rework().await;
+    let agent = world.runtime.hold();
+    agent.writes(&turn_1().concat());
+    drop(agent);
+    let answering = Answering::start(world, false).await;
+    let work_dir = answering._dir.path().join("work");
+    let work_dir = work_dir.to_str().unwrap();
+    let runs = ["--work-dir", work_dir, "runs", "2"];
+    eventually_async(|| async { answering.lw(&runs).await.stdout.contains("rework-1: done") })
+        .await;
+    let ways = |item: &'static str| -> [Vec<&str>; 4] {
+        [
+            vec!["runs", item],
+            vec!["runs", item, "--json"],
+            vec!["logs", item],
+            vec!["logs", item, "--run", "1/implement-1", "--json"],
+        ]
+    };
+    let commands: Vec<Vec<&str>> = [ways("2"), ways("1")]
+        .concat()
+        .into_iter()
+        .map(|way| [&["--work-dir", work_dir][..], &way].concat())
+        .collect();
+
+    let mut served = vec![];
+    for command in &commands {
+        served.push(answering.lw(command).await);
+    }
+    let Answering {
+        serving,
+        api,
+        runtime_dir,
+        _dir,
+        ..
+    } = answering;
+    api.stop().await;
+    serving.stop().await;
+    let mut read = vec![];
+    for command in &commands {
+        read.push(lw(runtime_dir.path(), command).await);
+    }
+
+    let (of_pr, of_issue) = served.split_at(4);
+    for answers in [of_issue, &read[..4], &read[4..]] {
+        for (expected, answer) in of_pr.iter().zip(answers) {
+            assert_eq!(answer.code, Some(0), "{}", answer.stderr);
+            assert_eq!(answer.stdout, expected.stdout);
+        }
+    }
+    let listed: Vec<&str> = of_pr[0]
+        .stdout
+        .lines()
+        .map(|line| line.split_once(':').unwrap().0)
+        .collect();
+    assert_eq!(listed, ["1/rework-1", "1/implement-1"]);
+    assert!(
+        of_pr[2]
+            .stdout
+            .starts_with("run: 1/rework-1\nsession 1: started 2026-10-13 10:09:08 UTC\n"),
+        "{}",
+        of_pr[2].stdout
+    );
+}
+
+#[tokio::test]
+async fn logs_follow_of_a_pull_request_follows_its_issues_run_in_flight() {
+    let world = with_pull_request_for_rework().await;
+    let agent = world.runtime.hold();
+    let answering = Answering::start(world, false).await;
+    let turn = turn_1();
+    agent.writes(&turn[..4].concat());
+    eventually_async(|| async {
+        answering
+            .lw(&["logs", "1"])
+            .await
+            .stdout
+            .contains("Bash(ls;")
+    })
+    .await;
+
+    let follow = Watching::start(answering.runtime_dir.path(), &["logs", "2", "--follow"]);
+    follow.shows("→ exit 0, 19 lines\n").await;
+    agent.writes(&turn[4..].concat());
+    follow.shows(" 2:59  {\"outcome\"").await;
+    drop(agent);
+    let (code, shown, stderr) = follow.exits().await;
+
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(shown.starts_with("run: 1/rework-1\n"), "{shown}");
+    assert_eq!(shown.lines().count(), 18, "{shown}");
+    answering.stop().await;
+}
+
 /// Asks the `serve` in `runtime_dir` for `resource` as server-sent events,
 /// after the event `last_id` if one is given, and reads the first `wanted`
 /// events, or all of them when `None`, until the stream ends.

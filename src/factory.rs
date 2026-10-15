@@ -558,6 +558,7 @@ impl Factory {
                         item,
                         stage: work.kind(),
                     },
+                    work.pr(),
                     shell.clock.now(),
                 )?;
                 let id = running.id().to_string();
@@ -720,6 +721,7 @@ fn begin_workflow(shell: &Shell, name: &WorkflowName) -> Result<runs::Running> {
             RunOf::Workflow {
                 workflow: name.clone(),
             },
+            None,
             shell.clock.now(),
         )
         .with_context(|| format!("recording the run of the workflow `{name}`"))

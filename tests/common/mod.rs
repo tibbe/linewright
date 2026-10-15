@@ -564,6 +564,22 @@ impl World {
             .expect("a pull request was opened");
         (ticket, pr)
     }
+
+    /// A comment on the pull request `pr` asking for a change, which rework
+    /// makes.
+    pub fn rework_asked(&self, pr: Number) {
+        self.store
+            .comment_as("maintainer", pr, "Rename it.")
+            .unwrap();
+        self.runtime.on(WorkKind::Rework, |call| {
+            commit_in(
+                &call.spec.dir,
+                &[("src/renamed.txt", "renamed\n")],
+                "Rename",
+            );
+            json(serde_json::json!({"outcome": "done", "comment": "Renamed."}))
+        });
+    }
 }
 
 /// A stand-in for the `claude` program, written to `dir`: every turn answers

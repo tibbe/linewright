@@ -867,6 +867,7 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
                 })
                 .await
                 .map_err(Failure::Apply)?;
+            ctx.run.opened(pr);
             if let Some(required) = shell.creation_label().await.map_err(Failure::Apply)? {
                 store
                     .add_label(pr, &required)
