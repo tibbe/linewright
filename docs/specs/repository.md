@@ -78,9 +78,11 @@ When Linewright cannot finish it, a comment on the issue says why.
   puts the label on every issue and pull request it creates. Workflows run
   on their schedule either way. Unset, every issue and pull request is
   Linewright's to work.
-- Machine state is derived from GitHub, never labeled. An issue is
-  **claimed** when Linewright is among its assignees, and **in review** when
-  an open pull request by Linewright closes it.
+- Machine state is derived from GitHub, never labeled, except which issue
+  Linewright opened a pull request for, which Linewright records when it
+  opens it. An issue is **claimed** when Linewright is among its assignees,
+  and **in review** while the pull request Linewright opened for it is open.
+  Other issues that pull request closes are not in review with it.
 - Linewright comments at every outcome: a triage result, tickets created (on
   the tracking issue and the spec PR), a ticket handed back and why, a PR
   made ready, a rework done. Every comment opens with the marker line

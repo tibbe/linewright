@@ -51,6 +51,9 @@ requests that have already been through review.
 - A decomposition interrupted part way (the tracking issue exists, the PR is
   not labeled) is discarded, its tracking issue and tickets closed as not
   planned with a comment, and the spec change is cut again.
+- Linewright does not work on a ticket while an open pull request that was
+  not opened for it closes it, whoever opened that pull request: merging
+  closes the ticket, and closing it unmerged lets the ticket's work go on.
 - A ticket is claimable when every issue blocking it is closed. Linewright
   closes the tracking issue when all its sub-issues are closed.
 - The decomposition is Linewright's responsibility: it runs from a merged

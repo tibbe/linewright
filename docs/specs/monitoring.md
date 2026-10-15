@@ -74,8 +74,8 @@ test that hangs.
   - its latest three past runs, as `runs N` lists them.
 - The parent of Linewright's pull request is the issue Linewright opened it
   for, whatever state the pull request is in and whatever issues it closes.
-  `explain` names no other issue it closes as family. Each issue in review
-  with it shows it as its current pull request.
+  `explain` names no other issue it closes as family, and it is no other
+  issue's child.
 - For an item Linewright does not act on, `serve` reads #N from GitHub and
   `explain` says why Linewright leaves it, naming the fact or setting that keeps
   it out.
