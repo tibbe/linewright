@@ -106,17 +106,22 @@ test that hangs.
 
 - `logs N` shows the transcript of #N's run in flight, or else of its latest run
   that started a session. `--run ID` picks another run.
+- `logs` shows a session as the agent itself shows it, as far as text that
+  only ever grows allows, and `logs --json` gives what the agent gives about
+  it, following the agent's own JSON output. The decisions below settle where
+  that leaves a choice.
 - The transcript shows each of the run's sessions in order, and marks each turn
   after the first with the follow-up that started it.
 - Each line starts with the time since its session started. The agent's
   messages show in full. Each tool call shows on one line: the tool, its main
   argument and a short account of its result, such as the lines read or the
-  exit status. A sub-agent's work shows indented under the call that started
-  it.
+  exit status, or `running` while the call has not returned. A sub-agent's
+  work shows indented under the call that started it.
 - `--verbose` shows everything the transcript holds, including the agent's
   thinking, each tool's full input and result, and the brief and follow-ups.
 - `--follow` shows the transcript so far, then each entry as it happens, and
-  ends when the run ends.
+  ends when the run ends. A tool call shows once it is made, and again with
+  its account, at the time, once it returns or ends in the background.
 - For a run that started no session, `logs` says so.
 
 ### Output
@@ -127,8 +132,10 @@ test that hangs.
 - A list cut to a limit ends with a line saying how many entries it left out
   and how to show them.
 - `--json` prints the same answer as JSON; `logs --json` prints one JSON object
-  per transcript entry and line. A field, once printed, keeps its name and
-  meaning; new fields may be added.
+  per transcript entry and line. Each of a tool call's objects carries the ID
+  the agent gives the call, and a sub-agent's objects carry the ID of the call
+  that started it. A field, once printed, keeps its name and meaning; new
+  fields may be added.
 - Errors go to standard error. The exit status is:
 
   | status | meaning |
