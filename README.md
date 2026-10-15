@@ -74,7 +74,11 @@ lw --repo owner/name serve
   in `linewright.toml`; `lw --help` lists them with their defaults.
 - The `Dockerfile` builds the base image: `lw`, Claude Code,
   `git`, `gh`, and `python3` on Debian, without Node.js. Build your own image
-  from it with your project's toolchain added. It runs as the user
+  from it with your project's toolchain added. It is published for
+  `linux/amd64` and `linux/arm64` under one tag, which pulls the host's
+  architecture; if your image downloads tools built for one architecture,
+  pick the download by the `TARGETARCH` build argument, as
+  `deploy/Dockerfile` does for sccache. It runs as the user
   `linewright`, uid and gid 1000; to give a work directory on the host another
   owner, build it with the `LINEWRIGHT_UID` and `LINEWRIGHT_GID` build
   arguments. `deploy/` runs Linewright on itself in a locked-down container.
