@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{Read as _, Seek as _, SeekFrom};
+use std::num::NonZeroUsize;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -588,7 +589,7 @@ pub enum Line {
     /// What the lines after it are of.
     Header(Header),
     /// A line of a session, at a time in it.
-    Entry(Stamped),
+    Entry(Box<Stamped>),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -613,15 +614,79 @@ pub struct Stamped {
     what: EntryLine,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Stamp {
     /// The session's number in the run, from 1.
     session: usize,
     at: Option<Timestamp>,
     /// Since the session started.
     elapsed_seconds: Option<i64>,
+    #[serde(flatten)]
+    under: Under,
+}
+
+/// Whose work a line is of: the session's own, or that of a sub-agent
+/// `depth` deep, started by the call with the ID `parent`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "UnderFields", into = "UnderFields")]
+enum Under {
+    Session,
+    SubAgent { depth: NonZeroUsize, parent: String },
+}
+
+impl Under {
+    /// How many sub-agents deep it is.
+    fn depth(&self) -> usize {
+        match self {
+            Under::Session => 0,
+            Under::SubAgent { depth, .. } => depth.get(),
+        }
+    }
+
+    /// The work of the sub-agent that the call with the ID `call`, made in
+    /// this work, started.
+    fn sub_agent(&self, call: &str) -> Under {
+        Under::SubAgent {
+            depth: NonZeroUsize::MIN.saturating_add(self.depth()),
+            parent: call.to_string(),
+        }
+    }
+}
+
+/// [`Under`] as a line's fields.
+#[derive(Serialize, Deserialize)]
+struct UnderFields {
     /// How many sub-agents deep it is.
     depth: usize,
+    /// The ID of the call that started the sub-agent it is of, named as
+    /// Claude Code's stream names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
+}
+
+impl From<Under> for UnderFields {
+    fn from(under: Under) -> UnderFields {
+        UnderFields {
+            depth: under.depth(),
+            parent_tool_use_id: match under {
+                Under::Session => None,
+                Under::SubAgent { parent, .. } => Some(parent),
+            },
+        }
+    }
+}
+
+impl TryFrom<UnderFields> for Under {
+    type Error = &'static str;
+
+    fn try_from(fields: UnderFields) -> Result<Under, &'static str> {
+        match (NonZeroUsize::new(fields.depth), fields.parent_tool_use_id) {
+            (None, None) => Ok(Under::Session),
+            (Some(depth), Some(parent)) => Ok(Under::SubAgent { depth, parent }),
+            (None, Some(_)) => Err("a line of the session's own work must have no parent call"),
+            (Some(_), None) => Err("a line of a sub-agent's work must have a parent call"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -651,6 +716,9 @@ enum EntryLine {
         other: Value,
     },
     Tool {
+        /// The ID the agent gave the call, named as Claude Code's stream
+        /// names it.
+        tool_use_id: String,
         tool: String,
         argument: String,
         account: String,
@@ -684,11 +752,11 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
         lines.push(stamper.header());
         for turn in &session.turns {
             if let Some(what) = prompt_line(turn, verbosity) {
-                lines.push(stamper.line(turn.started_at, 0, what));
+                lines.push(stamper.line(turn.started_at, Under::Session, what));
             }
             entry_lines(
                 &turn.entries,
-                0,
+                &Under::Session,
                 session,
                 verbosity,
                 &mut stamper,
@@ -699,11 +767,11 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
     lines
 }
 
-/// Adds the lines of `entries`, `depth` sub-agents deep in `session`, to
+/// Adds the lines of `entries`, the work `under` says in `session`, to
 /// `lines`.
 fn entry_lines(
     entries: &[Entry],
-    depth: usize,
+    under: &Under,
     session: &Session,
     verbosity: Verbosity,
     stamper: &mut Stamper,
@@ -711,10 +779,18 @@ fn entry_lines(
 ) {
     for entry in entries {
         if let Some(what) = entry_line(entry, session, verbosity) {
-            lines.push(stamper.line(entry.at, depth, what));
+            lines.push(stamper.line(entry.at, under.clone(), what));
         }
         if let What::Tool(call) = &entry.what {
-            entry_lines(&call.entries, depth + 1, session, verbosity, stamper, lines);
+            let sub_agent = under.sub_agent(&call.id);
+            entry_lines(
+                &call.entries,
+                &sub_agent,
+                session,
+                verbosity,
+                stamper,
+                lines,
+            );
         }
     }
 }
@@ -744,7 +820,9 @@ impl Stamper {
         })
     }
 
-    fn line(&mut self, at: Option<Timestamp>, depth: usize, what: EntryLine) -> Line {
+    /// The line of `what`, of the work `under` says, at `at` if it has a
+    /// time.
+    fn line(&mut self, at: Option<Timestamp>, under: Under, what: EntryLine) -> Line {
         let at = at.or(self.last);
         self.last = at;
         let stamp = Stamp {
@@ -753,9 +831,9 @@ impl Stamper {
             elapsed_seconds: at
                 .zip(self.started_at)
                 .map(|(at, started)| (at - started).num_seconds()),
-            depth,
+            under,
         };
-        Line::Entry(Stamped { stamp, what })
+        Line::Entry(Box::new(Stamped { stamp, what }))
     }
 }
 
@@ -789,6 +867,7 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
         What::Tool(call) => {
             let shown = call.result.as_ref().filter(|_| full);
             EntryLine::Tool {
+                tool_use_id: call.id.clone(),
                 tool: call.tool.name().to_string(),
                 argument: argument(call, session.dir.as_deref()),
                 account: account(call),
@@ -1009,22 +1088,21 @@ impl Followed {
         let session = &self.parser.session;
         for touch in std::mem::take(&mut self.parser.touched) {
             let stamper = open(&mut self.stamper, self.number, session, lines);
-            let (at, time) = match touch {
+            let (at, ended_at) = match touch {
                 Touch::Turn(turn) => {
                     let turn = &session.turns[turn];
                     if let Some(what) = prompt_line(turn, verbosity) {
-                        lines.push(stamper.line(turn.started_at, 0, what));
+                        lines.push(stamper.line(turn.started_at, Under::Session, what));
                     }
                     continue;
                 }
-                Touch::Added(at) => {
-                    let time = entry_at(session, &at).at;
-                    (at, time)
-                }
-                Touch::Ended(at, time) => (at, time),
+                Touch::Added(at) => (at, None),
+                Touch::Ended(at, ended_at) => (at, Some(ended_at)),
             };
-            if let Some(what) = entry_line(entry_at(session, &at), session, verbosity) {
-                lines.push(stamper.line(time, at.path.len() - 1, what));
+            let (entry, under) = entry_at(session, &at);
+            let time = ended_at.unwrap_or(entry.at);
+            if let Some(what) = entry_line(entry, session, verbosity) {
+                lines.push(stamper.line(time, under, what));
             }
         }
     }
@@ -1053,17 +1131,19 @@ fn started_at(session: &Session) -> Option<Timestamp> {
     })
 }
 
-/// The entry at `at` in `session`.
-fn entry_at<'a>(session: &'a Session, at: &EntryAt) -> &'a Entry {
+/// The entry at `at` in `session`, and whose work it is of.
+fn entry_at<'a>(session: &'a Session, at: &EntryAt) -> (&'a Entry, Under) {
     let mut entries = &session.turns[at.turn].entries;
+    let mut under = Under::Session;
     let (last, holders) = at.path.split_last().expect("an entry's path is not empty");
     for &i in holders {
         let What::Tool(call) = &entries[i].what else {
             unreachable!("a path leads through calls only")
         };
         entries = &call.entries;
+        under = under.sub_agent(&call.id);
     }
-    &entries[*last]
+    (&entries[*last], under)
 }
 
 /// The longest a tool's argument shows, in characters.
@@ -1212,10 +1292,10 @@ pub fn render_line(line: &Line, colour: bool) -> String {
             };
             return shown;
         }
-        Line::Entry(stamped) => stamped,
+        Line::Entry(stamped) => &**stamped,
     };
     let time = stamp.elapsed_seconds.map_or(String::new(), elapsed);
-    let indent = "  ".repeat(stamp.depth);
+    let indent = "  ".repeat(stamp.under.depth());
     let (first, rest): (String, Vec<String>) = match what {
         EntryLine::Message { text } => block("", text),
         EntryLine::Thinking { text } => block(&paint.yellow("thinking: "), text),
@@ -1228,6 +1308,7 @@ pub fn render_line(line: &Line, colour: bool) -> String {
         } => block("follow-up: ", text),
         EntryLine::FollowUp { summary, .. } => (format!("follow-up: {summary}"), vec![]),
         EntryLine::Tool {
+            tool_use_id: _,
             tool,
             argument,
             account,

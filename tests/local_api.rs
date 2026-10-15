@@ -1123,6 +1123,11 @@ async fn logs_follow_json_verbose_carries_on_from_the_records_once_serve_stops()
         lines[4]["result"].as_str().map(|r| r.lines().count()),
         Some(19)
     );
+    // The call shown running through `serve`, and again with its account
+    // from the records.
+    assert_eq!(lines[6]["account"], "running");
+    assert_eq!(lines[6]["tool_use_id"], "toolu_01WZp27kcvbZoQtwuKJUvLUt");
+    assert_eq!(lines[7]["tool_use_id"], "toolu_01WZp27kcvbZoQtwuKJUvLUt");
 }
 
 /// The files under `dir` whose paths end in `name`.

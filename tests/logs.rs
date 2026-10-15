@@ -252,6 +252,15 @@ async fn logs_json_prints_one_object_per_line() {
         json!({"type": "run", "run": "1/implement-1", "sessions": 1})
     );
     assert_eq!(lines[14]["type"], "message");
+    let first_sub_agent_line = lines.iter().find(|line| line["depth"] == 1).unwrap();
+    assert_eq!(
+        first_sub_agent_line["tool_use_id"],
+        "toolu_01LBDfAEHMPeecSbXMbfKv6Z"
+    );
+    assert_eq!(
+        first_sub_agent_line["parent_tool_use_id"],
+        "toolu_01T5JmkDxVfWvgdZeKR3KCjP"
+    );
 }
 
 #[tokio::test]

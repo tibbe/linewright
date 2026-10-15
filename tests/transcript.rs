@@ -130,11 +130,26 @@ fn json_prints_one_object_per_entry_and_line() {
             "at": "2026-10-13T10:11:10.102Z",
             "elapsed_seconds": 122,
             "depth": 1,
+            "parent_tool_use_id": "toolu_01T5JmkDxVfWvgdZeKR3KCjP",
+            "tool_use_id": "toolu_01LBDfAEHMPeecSbXMbfKv6Z",
             "tool": "Bash",
             "argument": "git diff origin/main...HEAD --stat && git diff origin/main...HEAD && git log -1…",
             "account": "exit 0, 7 lines",
             "error": false,
         })
+    );
+    assert_eq!(compact[8]["tool_use_id"], "toolu_01T5JmkDxVfWvgdZeKR3KCjP");
+    assert_eq!(compact[8].get("parent_tool_use_id"), None);
+    assert_eq!(compact[11]["type"], "message");
+    assert_eq!(compact[11].get("tool_use_id"), None);
+    assert_eq!(compact[11].get("parent_tool_use_id"), None);
+    let sub_agents_prompt = full
+        .iter()
+        .find(|line| line["type"] == "context" && line["depth"] == 1)
+        .unwrap();
+    assert_eq!(
+        sub_agents_prompt["parent_tool_use_id"],
+        "toolu_01T5JmkDxVfWvgdZeKR3KCjP"
     );
     assert_eq!(
         compact[12]["summary"],
@@ -247,6 +262,14 @@ fn text(lines: &[transcript::FollowedLine]) -> String {
     lines
         .iter()
         .map(|followed| transcript::render_line(&followed.line, false))
+        .collect()
+}
+
+/// `lines` as JSON objects.
+fn json(lines: &[transcript::FollowedLine]) -> Vec<serde_json::Value> {
+    lines
+        .iter()
+        .map(|followed| serde_json::from_str(&transcript::json_line(&followed.line)).unwrap())
         .collect()
 }
 
@@ -469,7 +492,12 @@ fn following_shows_a_tool_call_again_once_it_ends_in_the_background() {
     };
     let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
 
-    let shown = text(&follower.end(&[record]));
+    let lines = follower.end(&[record]);
+    let shown = text(&lines);
+    let ids: Vec<serde_json::Value> = json(&lines[2..])
+        .into_iter()
+        .map(|line| line["tool_use_id"].clone())
+        .collect();
 
     assert_eq!(
         shown,
@@ -478,5 +506,146 @@ fn following_shows_a_tool_call_again_once_it_ends_in_the_background() {
          0:02  Bash(cargo test) → running\n \
          0:04  Bash(cargo test) → moved to the background\n \
          0:04  Bash(cargo test) → completed in the background\n"
+    );
+    assert_eq!(ids, [json!("t1"), json!("t1"), json!("t1")]);
+}
+
+#[test]
+fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
+    let tool_use = |id: &str, name: &str, input: serde_json::Value| json!({"type": "tool_use", "id": id, "name": name, "input": input});
+    let result =
+        |id: &str, text: &str| json!({"type": "tool_result", "tool_use_id": id, "content": text});
+    let message = |kind: &str, parent: Option<&str>, content: Vec<serde_json::Value>| {
+        json!({
+            "type": kind,
+            "timestamp": "2026-10-13T10:00:01Z",
+            "parent_tool_use_id": parent,
+            "message": {"content": content},
+        })
+    };
+    let assistant = |parent, content| message("assistant", parent, content);
+    let user = |parent, content| message("user", parent, content);
+    // A sub-agent and a command started in parallel; the sub-agent starts
+    // one of its own, and the results come back out of order.
+    let events = [
+        json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+        assistant(
+            None,
+            vec![
+                tool_use("a1", "Agent", json!({"description": "Review"})),
+                tool_use("b1", "Bash", json!({"command": "cargo test"})),
+            ],
+        ),
+        user(
+            Some("a1"),
+            vec![json!({"type": "text", "text": "Review it."})],
+        ),
+        assistant(
+            Some("a1"),
+            vec![tool_use(
+                "a2",
+                "Agent",
+                json!({"description": "Look deeper"}),
+            )],
+        ),
+        assistant(
+            Some("a2"),
+            vec![
+                json!({"type": "text", "text": "Reading."}),
+                tool_use("r1", "Read", json!({"file_path": "a.rs"})),
+            ],
+        ),
+        user(None, vec![result("b1", "ok")]),
+        user(Some("a2"), vec![result("r1", "one")]),
+        user(Some("a1"), vec![result("a2", "Fine.")]),
+        user(None, vec![result("a1", "Clean.")]),
+    ];
+    let record = SessionRecord {
+        output: events.iter().map(|event| format!("{event}\n")).collect(),
+        ..SessionRecord::default()
+    };
+    let summaries = |lines: Vec<serde_json::Value>| -> Vec<String> {
+        lines
+            .iter()
+            .filter(|line| line.get("depth").is_some())
+            .map(|line| {
+                let field = |name| line.get(name).and_then(|id| id.as_str()).unwrap_or("-");
+                format!(
+                    "{} {} {} {}",
+                    line["type"].as_str().unwrap(),
+                    field("tool_use_id"),
+                    field("parent_tool_use_id"),
+                    field("account"),
+                )
+            })
+            .collect()
+    };
+    let whole = |verbosity| {
+        summaries(
+            transcript::json_lines(&of(vec![record.clone()]), verbosity)
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect(),
+        )
+    };
+    let followed = |verbosity| {
+        let mut follower = Follower::new("105/implement-1".parse().unwrap(), verbosity, None);
+        let mut shown = vec![];
+        for (end, _) in record.output.match_indices('\n') {
+            shown.extend(follower.update(&[written(&record, end + 1)]));
+        }
+        shown.extend(follower.end(std::slice::from_ref(&record)));
+        summaries(json(&shown))
+    };
+
+    assert_eq!(
+        whole(Verbosity::Compact),
+        [
+            "tool a1 - Clean.",
+            "tool a2 a1 Fine.",
+            "message - a2 -",
+            "tool r1 a2 1 line",
+            "tool b1 - exit 0, 1 line",
+        ]
+    );
+    assert_eq!(
+        whole(Verbosity::Full),
+        [
+            "tool a1 - Clean.",
+            "context - a1 -",
+            "tool a2 a1 Fine.",
+            "message - a2 -",
+            "tool r1 a2 1 line",
+            "tool b1 - exit 0, 1 line",
+        ]
+    );
+    assert_eq!(
+        followed(Verbosity::Compact),
+        [
+            "tool a1 - running",
+            "tool b1 - running",
+            "tool a2 a1 running",
+            "message - a2 -",
+            "tool r1 a2 running",
+            "tool b1 - exit 0, 1 line",
+            "tool r1 a2 1 line",
+            "tool a2 a1 Fine.",
+            "tool a1 - Clean.",
+        ]
+    );
+    assert_eq!(
+        followed(Verbosity::Full),
+        [
+            "tool a1 - running",
+            "tool b1 - running",
+            "context - a1 -",
+            "tool a2 a1 running",
+            "message - a2 -",
+            "tool r1 a2 running",
+            "tool b1 - exit 0, 1 line",
+            "tool r1 a2 1 line",
+            "tool a2 a1 Fine.",
+            "tool a1 - Clean.",
+        ]
     );
 }
