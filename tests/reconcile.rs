@@ -50,6 +50,7 @@ fn issue(number: u64) -> Issue {
         parent: None,
         events: vec![],
         filed: None,
+        closed_by: vec![],
     }
 }
 
@@ -2129,6 +2130,66 @@ fn a_blocked_ticket_waits_for_each_open_blocker() {
             Wait::Blocker { issue: Number(1) },
             Wait::Blocker { issue: Number(3) },
         ]
+    );
+}
+
+/// `issue`, which an open pull request #`pr` by `author` closes.
+fn closed_by(mut issue: Issue, pr: u64, author: &str) -> Issue {
+    issue.closed_by.push(ClosingPull {
+        number: Number(pr),
+        author: Login::new(author),
+    });
+    issue
+}
+
+#[test]
+fn a_ticket_someone_elses_open_pull_request_closes_is_not_claimed_and_waits_for_it() {
+    let world = snapshot(vec![closed_by(ticket(2), 43, "alice")]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(
+        waits_on(&world, 2),
+        [Wait::ClosingPullRequest {
+            pull_request: Number(43)
+        }]
+    );
+}
+
+#[test]
+fn a_claimed_ticket_someone_elses_open_pull_request_closes_starts_no_run() {
+    let world = snapshot(vec![closed_by(claimed(ticket(2)), 43, "renovate[bot]")]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(
+        waits_on(&world, 2),
+        [Wait::ClosingPullRequest {
+            pull_request: Number(43)
+        }]
+    );
+}
+
+#[test]
+fn a_ticket_waits_for_blockers_and_closing_pull_requests_alike() {
+    let world = snapshot(vec![closed_by(blocked_by(ticket(4), 1, true), 43, "alice")]);
+
+    assert_eq!(
+        waits_on(&world, 4),
+        [
+            Wait::ClosingPullRequest {
+                pull_request: Number(43)
+            },
+            Wait::Blocker { issue: Number(1) },
+        ]
+    );
+}
+
+#[test]
+fn linewrights_own_open_pull_request_closing_a_ticket_is_no_wait() {
+    let world = snapshot(vec![closed_by(ticket(2), 43, LINEWRIGHT)]);
+
+    assert_eq!(
+        decide(&world),
+        vec![Action::Claim { issue: Number(2) }, implement(2)]
     );
 }
 

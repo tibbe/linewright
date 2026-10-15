@@ -135,6 +135,17 @@ pub struct Issue {
     /// What the issue is for, if Linewright filed it.
     #[serde(default)]
     pub filed: Option<Filed>,
+    /// The open pull requests that close the issue when merged, whoever
+    /// opened them.
+    #[serde(default)]
+    pub closed_by: Vec<ClosingPull>,
+}
+
+/// An open pull request that closes an issue when merged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClosingPull {
+    pub number: Number,
+    pub author: Login,
 }
 
 /// What an issue Linewright filed is for. A store reads it from the issue's
@@ -445,6 +456,16 @@ impl Snapshot {
             .iter()
             .filter(|p| !p.is_open() && p.closes.contains(&number))
             .map(|p| p.number)
+            .collect()
+    }
+
+    /// The issues the snapshot holds that the open pull request `number`
+    /// closes, as they were last read.
+    pub fn issues_closed_by(&self, number: Number) -> Vec<Number> {
+        self.issues
+            .iter()
+            .filter(|i| i.closed_by.iter().any(|p| p.number == number))
+            .map(|i| i.number)
             .collect()
     }
 

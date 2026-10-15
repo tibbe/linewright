@@ -10,7 +10,7 @@ use linewright::explain::{Answer, Explanation, explain, explain_read, render, re
 use linewright::runs::{Ending, Recorded, RunId, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
-use views::{at, implementing, in_flight, limited_until, ticket, view};
+use views::{at, closed_by, implementing, in_flight, limited_until, ticket, view};
 
 /// Linewright's draft pull request #`number` for #`closes`, pushed at 11:58
 /// with its checks `checks`.
@@ -83,6 +83,32 @@ fn explain_shows_where_the_item_is_when_serve_last_read_it_and_each_wait() {
             "waiting for: #40, which blocks it",
             "waiting for: #41, which blocks it",
         ]
+    );
+}
+
+#[test]
+fn a_ticket_someone_elses_open_pull_request_closes_waits_for_it() {
+    let ticket = closed_by(ticket(42, "Add invoices"), 43, "alice");
+
+    assert_eq!(
+        text(&view(vec![ticket], vec![]), 42),
+        [
+            "#42: Add invoices",
+            "state: ready to claim",
+            "last read: 2026-10-01 12:00:00 UTC",
+            "waiting for: #43, which closes it",
+        ]
+    );
+}
+
+#[test]
+fn the_json_names_the_pull_request_that_closes_it() {
+    let ticket = closed_by(ticket(42, "Add invoices"), 43, "alice");
+    let answer = explain(&view(vec![ticket], vec![]), &[], Number(42), at(NOW)).unwrap();
+
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap()["waiting_for"],
+        serde_json::json!([{"wait": "closing-pull-request", "pull_request": 43}])
     );
 }
 

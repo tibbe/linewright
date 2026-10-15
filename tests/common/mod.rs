@@ -565,6 +565,20 @@ impl World {
         (ticket, pr)
     }
 
+    /// A person's open pull request that closes `issue`.
+    pub async fn persons_pull_closing(&self, issue: Number) -> Number {
+        self.store
+            .open_pull_as(
+                "alice",
+                &format!("alice-closes-{}", issue.0),
+                "Do the thing",
+                &format!("Closes {issue}"),
+                &[("src/thing.txt", "thing\n")],
+            )
+            .await
+            .unwrap()
+    }
+
     /// A comment on the pull request `pr` asking for a change, which rework
     /// makes.
     pub fn rework_asked(&self, pr: Number) {

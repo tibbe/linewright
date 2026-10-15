@@ -19,9 +19,9 @@ use super::{
 };
 use crate::clock::Clock;
 use crate::domain::{
-    Check, CheckFailure, CheckLog, CheckState, Comment, Filed, Issue, IssueEvent, Linked, Login,
-    MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
-    Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp,
+    Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent,
+    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull,
+    PullState, Push, Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp,
     closing_references,
 };
 use crate::git;
@@ -241,6 +241,7 @@ impl LocalStore {
                     sub_issues: vec![],
                     parent: None,
                     filed: None,
+                    closed_by: vec![],
                     events: labels
                         .iter()
                         .map(|l| IssueEvent::Labeled {
@@ -517,6 +518,30 @@ impl LocalStore {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.refused = None;
         }
+    }
+
+    /// A pull request `author` opens from the new branch `branch`, holding
+    /// `files` (path, contents), as a person or another bot does.
+    pub async fn open_pull_as(
+        &self,
+        author: &str,
+        branch: &str,
+        title: &str,
+        body: &str,
+        files: &[(&str, &str)],
+    ) -> Result<Number> {
+        self.commit(author, branch, files, title).await?;
+        let now = self.now();
+        let mut state = self.state();
+        let number = state.take_number();
+        state.pulls.insert(
+            number,
+            PullRecord {
+                state: PullState::Open { draft: false },
+                ..PullRecord::new(number, title, body, Login::new(author), branch, now)
+            },
+        );
+        Ok(number)
     }
 
     pub fn close_pull_as(&self, pr: Number) -> Result<()> {
@@ -898,6 +923,15 @@ impl State {
                 .find(|r| r.sub_issues.contains(&issue.number))
                 .map(|r| Parent::new(r.issue.number, self.filed(&r.issue))),
             filed: self.filed(issue),
+            closed_by: self
+                .pulls
+                .values()
+                .filter(|p| p.is_open() && p.closes(issue.number))
+                .map(|p| ClosingPull {
+                    number: p.number,
+                    author: p.author.clone(),
+                })
+                .collect(),
             ..issue.clone()
         }
     }
@@ -965,6 +999,15 @@ impl State {
 }
 
 impl PullRecord {
+    fn is_open(&self) -> bool {
+        matches!(self.state, PullState::Open { .. })
+    }
+
+    /// Whether the pull request closes the issue `number` when merged.
+    fn closes(&self, number: Number) -> bool {
+        closing_references(&self.body).contains(&number)
+    }
+
     /// The pull request as a merged one, into `default_branch`: `None` when
     /// it is not merged.
     fn merged(&self, default_branch: &str) -> Option<MergedPull> {
@@ -1099,9 +1142,7 @@ impl Store for LocalStore {
             let pulls: Vec<Number> = state
                 .pulls
                 .values()
-                .filter(|p| {
-                    &p.author == linewright && closing_references(&p.body).contains(&number)
-                })
+                .filter(|p| &p.author == linewright && p.closes(number))
                 .map(|p| p.number)
                 .collect();
             (issue, pulls)
@@ -1154,6 +1195,17 @@ impl Store for LocalStore {
             return Ok(None);
         }
         Ok(Some(self.pull_view(number).await?))
+    }
+
+    async fn open_pull_closes(&self, number: Number) -> Result<Vec<Number>> {
+        self.read_item()?;
+        let state = self.state();
+        Ok(state
+            .pulls
+            .get(&number)
+            .filter(|p| p.is_open())
+            .map(|p| closing_references(&p.body))
+            .unwrap_or_default())
     }
 
     async fn merged_pull(

@@ -65,6 +65,74 @@ async fn refreshing_an_issue_closed_since_the_poll_cancels_its_run() {
 }
 
 #[tokio::test]
+async fn a_ticket_waiting_for_a_persons_pull_request_is_implemented_once_a_refresh_reads_it_closed()
+{
+    let mut world = World::new().await;
+    implement(&world);
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    let theirs = world.persons_pull_closing(issue).await;
+    world.poll().await;
+
+    world.store.close_pull_as(theirs).unwrap();
+    let actions = world.factory.refresh([Item::Pull(theirs)]).await.unwrap();
+
+    assert_eq!(
+        actions,
+        [
+            Action::Claim { issue },
+            Action::Start(Work::Implement { issue })
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ticket_a_persons_pull_request_opened_since_the_poll_closes_waits_for_it_once_refreshed()
+{
+    let mut world = World::with(|config| config.max_runs = 1).await;
+    implement(&world);
+    let release = gated(&world, WorkKind::Triage);
+    world
+        .store
+        .open_issue("reporter", "It broke", "It crashes.", &["needs-triage"]);
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    // The triage run takes the only free run, so the ticket waits for one.
+    world.factory.cycle().await.unwrap();
+    let theirs = world.persons_pull_closing(issue).await;
+    release.send(()).unwrap();
+    world.factory.settle().await;
+
+    let actions = world.factory.refresh([Item::Pull(theirs)]).await.unwrap();
+
+    assert!(
+        !actions.contains(&Action::Start(Work::Implement { issue })),
+        "{actions:?}"
+    );
+}
+
+#[tokio::test]
+async fn refreshing_linewrights_own_pull_request_reads_not_the_issue_it_closes() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.poll().await;
+    let read = world.store.items_read();
+
+    world.factory.refresh([Item::Pull(pr)]).await.unwrap();
+
+    // The pull request, as Linewright's and as a merged one.
+    assert_eq!(world.store.items_read(), read + 2);
+}
+
+#[tokio::test]
 async fn a_spec_change_merged_since_the_poll_and_refreshed_is_cut_into_tickets() {
     let mut world = World::new().await;
     world.poll().await;

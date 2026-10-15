@@ -54,6 +54,18 @@ pub fn ticket(number: u64, title: &str) -> Issue {
         parent: None,
         events: vec![],
         filed: None,
+        closed_by: vec![],
+    }
+}
+
+/// `issue`, which an open pull request #`pr` by `author` closes.
+pub fn closed_by(issue: Issue, pr: u64, author: &str) -> Issue {
+    Issue {
+        closed_by: vec![ClosingPull {
+            number: Number(pr),
+            author: Login::new(author),
+        }],
+        ..issue
     }
 }
 

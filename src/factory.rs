@@ -785,7 +785,9 @@ async fn read_all(
 /// Reads `item` again into `snapshot`, as a snapshot taken now holds it,
 /// with pull requests merged since `merged_since`. Returns the items read:
 /// an issue's pull requests are read with it, and so are the ended ones a
-/// snapshot may hold only for the issues it holds.
+/// snapshot may hold only for the issues it holds. So are the issues the
+/// snapshot holds that someone else's pull request closes, or closed while
+/// open, since it holds their work back while it is open.
 async fn read_into(
     snapshot: &mut Snapshot,
     shell: &Shell,
@@ -793,47 +795,66 @@ async fn read_into(
     merged_since: Timestamp,
 ) -> Result<Vec<Item>> {
     let store = &shell.store;
-    let mut read = vec![item];
     match item {
-        Item::Issue(number) => {
-            let left = match store.issue(number).await? {
-                IssueRead::Held { issue, pulls } => {
-                    snapshot.relink(number, issue.open);
-                    snapshot.put_issue(*issue);
-                    for pull in pulls {
-                        read.push(Item::Pull(pull.number));
-                        snapshot.put_pull(pull);
-                    }
-                    false
-                }
-                IssueRead::LeftOut { open } => {
-                    snapshot.relink(number, open);
-                    true
-                }
-                IssueRead::Gone => {
-                    snapshot.unlink(number);
-                    true
-                }
-            };
-            if left {
-                snapshot.remove_issue(number);
-                for pr in snapshot.ended_pulls_closing(number) {
-                    read.push(Item::Pull(pr));
-                    match store.linewright_pull(pr).await? {
-                        Some(pull) => snapshot.put_pull(pull),
-                        None => snapshot.remove_pull(pr),
-                    }
-                }
-            }
-        }
+        Item::Issue(number) => read_issue_into(snapshot, shell, number).await,
         Item::Pull(number) => {
+            let mut closing = BTreeSet::new();
             match store.linewright_pull(number).await? {
                 Some(pull) => snapshot.put_pull(pull),
-                None => snapshot.remove_pull(number),
+                None => {
+                    snapshot.remove_pull(number);
+                    closing.extend(snapshot.issues_closed_by(number));
+                    let closes = store.open_pull_closes(number).await?;
+                    closing.extend(closes.into_iter().filter(|&i| snapshot.issue(i).is_some()));
+                }
             }
             match store.merged_pull(number, merged_since).await? {
                 Some(merged) => snapshot.put_merged(merged),
                 None => snapshot.remove_merged(number),
+            }
+            let mut read = vec![item];
+            for issue in closing {
+                read.extend(read_issue_into(snapshot, shell, issue).await?);
+            }
+            Ok(read)
+        }
+    }
+}
+
+/// Reads the issue `number` again into `snapshot`, as [`read_into`] does.
+async fn read_issue_into(
+    snapshot: &mut Snapshot,
+    shell: &Shell,
+    number: Number,
+) -> Result<Vec<Item>> {
+    let store = &shell.store;
+    let mut read = vec![Item::Issue(number)];
+    let left = match store.issue(number).await? {
+        IssueRead::Held { issue, pulls } => {
+            snapshot.relink(number, issue.open);
+            snapshot.put_issue(*issue);
+            for pull in pulls {
+                read.push(Item::Pull(pull.number));
+                snapshot.put_pull(pull);
+            }
+            false
+        }
+        IssueRead::LeftOut { open } => {
+            snapshot.relink(number, open);
+            true
+        }
+        IssueRead::Gone => {
+            snapshot.unlink(number);
+            true
+        }
+    };
+    if left {
+        snapshot.remove_issue(number);
+        for pr in snapshot.ended_pulls_closing(number) {
+            read.push(Item::Pull(pr));
+            match store.linewright_pull(pr).await? {
+                Some(pull) => snapshot.put_pull(pull),
+                None => snapshot.remove_pull(pr),
             }
         }
     }

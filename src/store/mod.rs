@@ -268,6 +268,10 @@ pub trait Store: Send + Sync {
     /// requests: `None` when the snapshot leaves it out, as it does anyone else's
     /// and one the store does not have.
     async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>>;
+    /// The issues the pull request #`number` closes while it is open,
+    /// whoever opened it: none when it is not open, or the store has no such
+    /// pull request.
+    async fn open_pull_closes(&self, number: Number) -> Result<Vec<Number>>;
     /// The pull request as a snapshot taken now, with pull requests merged
     /// since `merged_since`, holds it among the merged ones: `None` when the
     /// snapshot leaves it out of them, as it does one the store does not

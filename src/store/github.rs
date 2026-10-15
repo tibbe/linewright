@@ -21,9 +21,9 @@ use super::{
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
-    Check, CheckFailure, CheckLog, CheckState, Comment, Filed, Issue, IssueEvent, JobLog, Linked,
-    Login, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
-    Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, label,
+    Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent,
+    JobLog, Linked, Login, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState,
+    Push, Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, label,
 };
 use crate::git;
 
@@ -873,6 +873,9 @@ fn tracking_issues_among(
         .collect()
 }
 
+// `orderByState` lists the open pull requests that close an issue before the
+// closed and merged ones, so that these do not crowd them out of the first
+// page.
 const ISSUE_FIELDS: &str = "fragment IssueFields on Issue {
   number title body createdAt state
   author { __typename login }
@@ -882,7 +885,7 @@ const ISSUE_FIELDS: &str = "fragment IssueFields on Issue {
   subIssues(first: 100) { nodes { number state } }
   parent { number title body author { __typename login } }
   blockedBy(first: 50) { nodes { number state } }
-  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state author { __typename login } } }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state author { __typename login } } }
   timelineItems(last: 100, itemTypes: [LABELED_EVENT, UNASSIGNED_EVENT]) {
     nodes {
       __typename
@@ -911,12 +914,12 @@ struct GqlIssue {
     sub_issues: Option<Nodes<LinkedNode>>,
     parent: Option<LinkedIssueNode>,
     blocked_by: Option<Nodes<LinkedNode>>,
-    closed_by_pull_requests_references: Option<Nodes<ClosingPull>>,
+    closed_by_pull_requests_references: Option<Nodes<GqlClosingPull>>,
     timeline_items: Nodes<GqlEvent>,
 }
 
 #[derive(Deserialize)]
-struct ClosingPull {
+struct GqlClosingPull {
     number: u64,
     state: String,
     author: Option<Actor>,
@@ -997,6 +1000,17 @@ impl GqlIssue {
             parent: i.parent.map(|p| p.into_parent(linewright)),
             events,
             filed,
+            closed_by: i
+                .closed_by_pull_requests_references
+                .map(|n| n.nodes)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| p.state == "OPEN")
+                .map(|p| ClosingPull {
+                    number: Number(p.number),
+                    author: login(p.author),
+                })
+                .collect(),
         }
     }
 }
@@ -1645,6 +1659,38 @@ impl Store for GitHub {
         })
     }
 
+    async fn open_pull_closes(&self, number: Number) -> Result<Vec<Number>> {
+        let query = concat!(
+            "query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) { pullRequest(number: $number) { state ",
+            closes_field!(),
+            " } }
+            }"
+        );
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Closing {
+            state: String,
+            closing_issues_references: Option<Nodes<NumberNode>>,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct One {
+            pull_request: Closing,
+        }
+        let data: Option<RepoData<One>> = self
+            .graphql_found(
+                query,
+                json!({"owner": self.owner, "name": self.name, "number": number.0}),
+            )
+            .await?;
+        Ok(data
+            .map(|d| d.repository.pull_request)
+            .filter(|pr| pr.state == "OPEN")
+            .map(|pr| closes(pr.closing_issues_references))
+            .unwrap_or_default())
+    }
+
     async fn merged_pull(
         &self,
         number: Number,
@@ -2286,6 +2332,12 @@ mod tests {
 
     /// A ticket as the snapshot query returns it, with `parent` its parent.
     fn ticket_with_parent(parent: Value) -> Issue {
+        ticket(parent, json!([]))
+    }
+
+    /// A ticket as the snapshot query returns it, with `parent` its parent
+    /// and `closing` the pull requests that close it.
+    fn ticket(parent: Value, closing: Value) -> Issue {
         let issue: GqlIssue = serde_json::from_value(json!({
             "number": 12, "title": "Store gadgets", "body": "Gadgets persist.",
             "createdAt": "2026-10-09T12:00:00Z", "state": "OPEN",
@@ -2296,11 +2348,43 @@ mod tests {
             "subIssues": {"nodes": []},
             "parent": parent,
             "blockedBy": {"nodes": []},
-            "closedByPullRequestsReferences": {"nodes": []},
+            "closedByPullRequestsReferences": {"nodes": closing},
             "timelineItems": {"nodes": []},
         }))
         .unwrap();
         issue.into_issue(&Login::new("linewright"))
+    }
+
+    #[test]
+    fn a_ticket_is_closed_by_its_open_pull_requests_whoever_opened_them() {
+        let issue = ticket(
+            Value::Null,
+            json!([
+                {"number": 40, "state": "CLOSED", "author": {"__typename": "User", "login": "alice"}},
+                {"number": 41, "state": "MERGED", "author": {"__typename": "User", "login": "alice"}},
+                {"number": 43, "state": "OPEN", "author": {"__typename": "User", "login": "alice"}},
+                {"number": 44, "state": "OPEN", "author": {"__typename": "Bot", "login": "renovate"}},
+                {"number": 45, "state": "OPEN", "author": {"__typename": "User", "login": "linewright"}},
+            ]),
+        );
+
+        assert_eq!(
+            issue.closed_by,
+            [
+                ClosingPull {
+                    number: Number(43),
+                    author: Login::new("alice"),
+                },
+                ClosingPull {
+                    number: Number(44),
+                    author: Login::new("renovate[bot]"),
+                },
+                ClosingPull {
+                    number: Number(45),
+                    author: Login::new("linewright"),
+                },
+            ]
+        );
     }
 
     #[test]

@@ -546,6 +546,7 @@ pub(crate) fn describe_wait(wait: &Wait) -> String {
         } => format!("a free run: {in_flight} of {max_runs} in flight"),
         Wait::UsageLimit { resets_at } => format!("the usage limit, until {}", utc(*resets_at)),
         Wait::Blocker { issue } => format!("{issue}, which blocks it"),
+        Wait::ClosingPullRequest { pull_request } => format!("{pull_request}, which closes it"),
         Wait::Ci { pull_request } => format!("CI on {pull_request}"),
         Wait::MergeState { pull_request } => {
             format!("GitHub to work out whether {pull_request} can merge")

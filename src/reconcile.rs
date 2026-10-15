@@ -389,6 +389,8 @@ pub enum Wait {
     UsageLimit { resets_at: Timestamp },
     /// An issue that blocks it, still open.
     Blocker { issue: Number },
+    /// An open pull request someone else opened that closes it.
+    ClosingPullRequest { pull_request: Number },
     /// CI on its pull request: checks still running, or none reported yet.
     Ci { pull_request: Number },
     /// GitHub, to work out whether its pull request can merge.
@@ -883,10 +885,23 @@ fn implementation(
             });
         }
     }
-    let blockers = open_numbers(&issue.blocked_by);
-    if !blockers.is_empty() {
-        for blocker in blockers {
-            plan.wait(issue.number, Wait::Blocker { issue: blocker });
+    // Someone else's pull request that closes the ticket would do its work
+    // twice (`docs/specs/implementation.md`, "Tickets"). Linewright's own
+    // are worked above.
+    let closing = issue
+        .closed_by
+        .iter()
+        .filter(|p| p.author != policy.linewright)
+        .map(|p| Wait::ClosingPullRequest {
+            pull_request: p.number,
+        });
+    let blockers = open_numbers(&issue.blocked_by)
+        .into_iter()
+        .map(|blocker| Wait::Blocker { issue: blocker });
+    let waits: Vec<Wait> = closing.chain(blockers).collect();
+    if !waits.is_empty() {
+        for wait in waits {
+            plan.wait(issue.number, wait);
         }
         return;
     }

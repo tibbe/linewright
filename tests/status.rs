@@ -10,7 +10,7 @@ use linewright::reconcile::{LiveRun, Subject, WorkKind};
 use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
 use linewright::workflow::{LastRuns, Unparsed, WorkflowFiles};
-use views::{at, implementing, in_flight, limited_until, ticket};
+use views::{at, closed_by, implementing, in_flight, limited_until, ticket};
 
 /// The workflows, each a name and a cron expression, and the files that do
 /// not parse.
@@ -230,6 +230,16 @@ fn an_item_with_a_run_in_flight_shows_as_its_run_not_among_the_other_items() {
             "",
             "#7: ready to claim — Do the thing",
         ]
+    );
+}
+
+#[test]
+fn a_ticket_someone_elses_open_pull_request_closes_waits_for_it() {
+    let closed = closed_by(ready_issue(), 43, "alice");
+
+    assert_eq!(
+        after_linewright(&view(vec![closed]), "2026-10-01T12:00:30Z"),
+        ["#7: ready to claim — waiting for #43, which closes it — Do the thing"]
     );
 }
 

@@ -503,7 +503,7 @@ async fn sessions_on_a_tickets_pull_request_are_briefed_with_its_parent_issue() 
     );
 }
 
-use linewright::domain::{CheckState, Login, ReviewState};
+use linewright::domain::{CheckState, Login, Number, ReviewState};
 #[tokio::test]
 async fn a_green_pull_request_is_marked_ready_for_review_with_no_one_asked_to_review_it() {
     let mut world = World::new().await;
@@ -699,6 +699,58 @@ async fn a_rework_that_makes_the_description_out_of_date_rewrites_it() {
 
     let view = world.store.snapshot_pull(pr).await;
     assert_eq!(view.body, format!("Does it, renamed.\n\nCloses {ticket}"));
+}
+
+/// A ticket for the factory, `claimed` or not, and a person's open pull
+/// request that closes it.
+async fn ticket_a_persons_pull_request_closes(world: &World, claimed: bool) -> (Number, Number) {
+    implement(world);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    if claimed {
+        world.store.assign_as(ticket, LINEWRIGHT).unwrap();
+    }
+    let theirs = world.persons_pull_closing(ticket).await;
+    (ticket, theirs)
+}
+
+#[tokio::test]
+async fn a_ticket_a_persons_open_pull_request_closes_is_neither_claimed_nor_implemented() {
+    let mut world = World::new().await;
+    let (ticket, _) = ticket_a_persons_pull_request_closes(&world, false).await;
+
+    world.poll().await;
+
+    assert_eq!(world.issue(ticket).assignees, []);
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 0);
+}
+
+#[tokio::test]
+async fn a_claimed_ticket_a_persons_open_pull_request_closes_is_not_implemented() {
+    let mut world = World::new().await;
+    ticket_a_persons_pull_request_closes(&world, true).await;
+
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 0);
+}
+
+#[tokio::test]
+async fn a_ticket_is_claimed_and_implemented_once_a_persons_pull_request_closing_it_is_closed_unmerged()
+ {
+    let mut world = World::new().await;
+    let (ticket, theirs) = ticket_a_persons_pull_request_closes(&world, false).await;
+    world.poll().await;
+
+    world.store.close_pull_as(theirs).unwrap();
+    world.poll().await;
+
+    assert_eq!(world.issue(ticket).assignees, [Login::new(LINEWRIGHT)]);
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
 }
 
 #[tokio::test]

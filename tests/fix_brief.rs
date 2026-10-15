@@ -22,6 +22,7 @@ fn issue() -> Issue {
         parent: None,
         events: vec![],
         filed: None,
+        closed_by: vec![],
     }
 }
 
