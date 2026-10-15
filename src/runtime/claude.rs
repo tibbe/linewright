@@ -91,6 +91,11 @@ impl RateLimitEvent {
 /// so the settings turn those off too. Docs:
 /// <https://code.claude.com/docs/en/agent-sdk/claude-code-features#what-settingsources-does-not-control>,
 /// <https://code.claude.com/docs/en/memory>.
+///
+/// The settings also leave out what Claude Code bundles that no brief uses,
+/// so it does not fill the context of every session and sub-agent, nor
+/// compete with the plugin's skills. A tool is left out only by denying it
+/// by its bare name: <https://code.claude.com/docs/en/permissions>.
 fn isolation_args(clone: &Path) -> [String; 4] {
     let mut excludes = Vec::new();
     for dir in clone.ancestors().skip(1) {
@@ -105,6 +110,11 @@ fn isolation_args(clone: &Path) -> [String; 4] {
         "autoMemoryEnabled": false,
         "disableClaudeAiConnectors": true,
         "claudeMdExcludes": excludes,
+        "disableBundledSkills": true,
+        "disableWorkflows": true,
+        "disableRemoteControl": true,
+        "disableArtifact": true,
+        "permissions": { "deny": UNUSED_TOOLS },
     });
     [
         "--setting-sources".into(),
@@ -113,6 +123,28 @@ fn isolation_args(clone: &Path) -> [String; 4] {
         settings.to_string(),
     ]
 }
+
+/// The tools no session uses: they ask a person, plan, schedule, message or
+/// switch worktrees, none of which a headless session in its own clone does.
+const UNUSED_TOOLS: [&str; 17] = [
+    "AskUserQuestion",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterPlanMode",
+    "EnterWorktree",
+    "ExitPlanMode",
+    "ExitWorktree",
+    "ListAgents",
+    "NotebookEdit",
+    "PushNotification",
+    "RemoteTrigger",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "ShareOnboardingGuide",
+];
 
 /// `path` as a glob that matches it alone. Claude Code's globs treat
 /// parentheses as special too, so `globset::escape` won't do.

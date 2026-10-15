@@ -210,6 +210,53 @@ async fn every_turn_reads_only_the_repositorys_configuration_and_keeps_no_memory
 }
 
 #[tokio::test]
+async fn every_turn_leaves_out_what_no_brief_uses() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_without_token(dir.path());
+
+    runtime.start(&triage_session(dir.path())).await.unwrap();
+
+    let passed = settings(&turn_args(dir.path())[0]);
+    assert_eq!(
+        [
+            "disableBundledSkills",
+            "disableWorkflows",
+            "disableRemoteControl",
+            "disableArtifact"
+        ]
+        .map(|key| passed[key].clone()),
+        [json!(true), json!(true), json!(true), json!(true)]
+    );
+    let denied = passed["permissions"]["deny"].as_array().unwrap();
+    assert_eq!(
+        [
+            "AskUserQuestion",
+            "EnterPlanMode",
+            "CronCreate",
+            "SendMessage"
+        ]
+        .map(|tool| denied.contains(&json!(tool))),
+        [true, true, true, true]
+    );
+    // What the briefs work with: sub-agents, their skills, the clone and the web.
+    assert_eq!(
+        [
+            "Task",
+            "Agent",
+            "Skill",
+            "Bash",
+            "Read",
+            "Edit",
+            "Write",
+            "WebFetch",
+            "WebSearch"
+        ]
+        .map(|tool| denied.contains(&json!(tool))),
+        [false; 9]
+    );
+}
+
+#[tokio::test]
 async fn agent_instructions_above_the_clone_do_not_reach_a_session() {
     let dir = tempfile::Builder::new()
         .prefix("work [a]{b}*?")
