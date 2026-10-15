@@ -40,6 +40,8 @@ test that hangs.
 
 - The commands talk to the `serve` of the configured `repo` on the same host.
   `status` and `explain` need it running; `runs` and `logs` work either way.
+- Given a pull request Linewright opened for an issue, open or not, the
+  commands show the issue's runs as the pull request's.
 
 ### status
 
@@ -56,7 +58,12 @@ test that hangs.
 
 ### explain
 
+`explain N` brings together what Linewright knows about #N, and points to
+`runs` and `logs` for the detail.
+
 - `explain N` shows, for issue or pull request #N:
+  - its parent and its children in the pipeline, such as the issue a pull
+    request is for, or a ticket's current pull request;
   - where it is in the pipeline, in the states of the issue lifecycle under
     [Repository](repository.md), and when `serve` last read it;
   - each thing Linewright waits for before it acts on #N next, with the
@@ -64,7 +71,7 @@ test that hangs.
     until 14:30 UTC", "CI on #43", "#40, which blocks it" or "the maintainer:
     labeled `ready-for-human`";
   - its run in flight, with its quiet time;
-  - its past runs, as `runs N` lists them.
+  - its latest three past runs, as `runs N` lists them.
 - For an item Linewright does not act on, `serve` reads #N from GitHub and
   `explain` says why Linewright leaves it, naming the fact or setting that keeps
   it out.
