@@ -38,3 +38,4 @@ Before working in one of these areas, read its guide:
 
 - [Commits](./docs/commits.md)
 - [Tuning the briefs](./docs/tuning-briefs.md)
+- [Releasing](./docs/releasing.md)
