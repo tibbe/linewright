@@ -228,7 +228,11 @@ fn implementing_42(pulls: Vec<Pull>) -> View {
 /// The lines of the text about #`number` that are about its runs.
 fn run_lines(text: &str) -> Vec<&str> {
     text.lines()
-        .filter(|line| line.starts_with("run in flight: ") || line.starts_with("past run: "))
+        .filter(|line| {
+            ["run in flight: ", "past run: ", "left out: "]
+                .iter()
+                .any(|label| line.starts_with(label))
+        })
         .collect()
 }
 
@@ -244,6 +248,161 @@ fn explain_shows_the_run_in_flight_with_its_quiet_time_then_the_past_runs_as_run
             "past run: 42/triage-1: done — #42 triage, started 2026-10-01 09:00:00 UTC, ran 5m",
         ]
     );
+}
+
+/// #42's five past implement runs, an hour apart from 07:00, and its sixth
+/// in flight, as [`implementing_42_again`] shows it.
+fn five_past_runs_of_42() -> Vec<Recorded> {
+    let mut runs: Vec<Recorded> = (1..=5)
+        .map(|n| {
+            recorded(
+                &format!("42/implement-{n}"),
+                &format!("2026-10-01T{:02}:00:00Z", 6 + n),
+                ended(&format!("2026-10-01T{:02}:01:00Z", 6 + n), Ending::Failed),
+            )
+        })
+        .collect();
+    runs.push(recorded(
+        "42/implement-6",
+        "2026-10-01T11:30:00Z",
+        State::InFlight,
+    ));
+    runs
+}
+
+/// #42 claimed, with its sixth implement run in flight, its agent last
+/// heard at 11:50.
+fn implementing_42_again(pulls: Vec<Pull>) -> View {
+    View {
+        in_flight: vec![in_flight(
+            "42/implement-6",
+            "2026-10-01T11:30:00Z",
+            Some("2026-10-01T11:50:00Z"),
+        )],
+        ..implementing_42(pulls)
+    }
+}
+
+#[test]
+fn explain_shows_the_latest_three_past_runs_and_points_to_runs_for_the_rest() {
+    let answer = explain(
+        &implementing_42_again(vec![]),
+        &five_past_runs_of_42(),
+        Number(42),
+        at(NOW),
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_lines(&render(&answer, false)),
+        [
+            "run in flight: 42/implement-6: #42 implement, running for 30m 30s, quiet for 10m 30s",
+            "past run: 42/implement-5: failed — #42 implement, started 2026-10-01 11:00:00 UTC, ran 1m",
+            "past run: 42/implement-4: failed — #42 implement, started 2026-10-01 10:00:00 UTC, ran 1m",
+            "past run: 42/implement-3: failed — #42 implement, started 2026-10-01 09:00:00 UTC, ran 1m",
+            "left out: 2 earlier runs; show them with lw runs 42",
+        ]
+    );
+}
+
+#[test]
+fn explain_shows_three_past_runs_and_leaves_none_out() {
+    let answer = explain(
+        &implementing_42_again(vec![]),
+        &five_past_runs_of_42()[2..],
+        Number(42),
+        at(NOW),
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_lines(&render(&answer, false)),
+        [
+            "run in flight: 42/implement-6: #42 implement, running for 30m 30s, quiet for 10m 30s",
+            "past run: 42/implement-5: failed — #42 implement, started 2026-10-01 11:00:00 UTC, ran 1m",
+            "past run: 42/implement-4: failed — #42 implement, started 2026-10-01 10:00:00 UTC, ran 1m",
+            "past run: 42/implement-3: failed — #42 implement, started 2026-10-01 09:00:00 UTC, ran 1m",
+        ]
+    );
+}
+
+#[test]
+fn linewrights_pull_request_points_to_the_runs_of_the_issue_it_is_for() {
+    let view = implementing_42_again(vec![draft(43, 42, &[CheckState::Pending])]);
+    let answer = explain(&view, &five_past_runs_of_42(), Number(43), at(NOW)).unwrap();
+
+    assert_eq!(
+        run_lines(&render(&answer, false)).last(),
+        Some(&"left out: 2 earlier runs; show them with lw runs 42")
+    );
+}
+
+#[test]
+fn an_item_left_alone_points_to_runs_for_the_past_runs_left_out() {
+    let closed = Issue {
+        open: false,
+        ..ticket(42, "Add invoices")
+    };
+    let answer = explain_read(
+        &view(vec![], vec![]),
+        &five_past_runs_of_42()[1..5],
+        &AnyItem::LeftOutIssue(Box::new(closed)),
+        at(NOW),
+    );
+
+    assert_eq!(
+        run_lines(&render_answer(&answer, false)),
+        [
+            "past run: 42/implement-5: failed — #42 implement, started 2026-10-01 11:00:00 UTC, ran 1m",
+            "past run: 42/implement-4: failed — #42 implement, started 2026-10-01 10:00:00 UTC, ran 1m",
+            "past run: 42/implement-3: failed — #42 implement, started 2026-10-01 09:00:00 UTC, ran 1m",
+            "left out: 1 earlier run; show them with lw runs 42",
+        ]
+    );
+}
+
+#[test]
+fn the_json_names_the_latest_three_past_runs_and_how_many_it_left_out() {
+    let answer = Answer::Tracked(
+        explain(
+            &implementing_42_again(vec![]),
+            &five_past_runs_of_42(),
+            Number(42),
+            at(NOW),
+        )
+        .unwrap(),
+    );
+
+    let json = serde_json::to_value(&answer).unwrap();
+
+    let ids: Vec<&serde_json::Value> = json["past_runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| &run["id"])
+        .collect();
+    assert_eq!(ids, ["42/implement-5", "42/implement-4", "42/implement-3"]);
+    assert_eq!(json["past_runs_left_out"], 2);
+    assert_eq!(json["runs_of"], 42);
+    assert_eq!(json["run_in_flight"]["id"], "42/implement-6");
+    assert_eq!(serde_json::from_value::<Answer>(json).unwrap(), answer);
+}
+
+#[test]
+fn json_that_leaves_past_runs_out_before_showing_three_does_not_read_as_an_answer() {
+    let answer = Answer::Tracked(
+        explain(
+            &implementing_42_again(vec![]),
+            &five_past_runs_of_42(),
+            Number(42),
+            at(NOW),
+        )
+        .unwrap(),
+    );
+    let mut json = serde_json::to_value(&answer).unwrap();
+    json["past_runs"].as_array_mut().unwrap().truncate(1);
+
+    assert!(serde_json::from_value::<Answer>(json).is_err());
 }
 
 #[test]
@@ -387,6 +546,8 @@ fn the_json_names_each_fact() {
             "waiting_for": [{"wait": "blocker", "issue": 40}],
             "run_in_flight": null,
             "past_runs": [],
+            "past_runs_left_out": 0,
+            "runs_of": 42,
         })
     );
     assert_eq!(
@@ -417,6 +578,8 @@ fn the_json_of_linewrights_pull_request_names_the_issue_it_is_for() {
             "waiting_for": [{"wait": "ci", "pull_request": 43}],
             "run_in_flight": null,
             "past_runs": [],
+            "past_runs_left_out": 0,
+            "runs_of": 42,
         })
     );
     assert_eq!(
@@ -805,6 +968,8 @@ fn the_json_of_an_item_left_alone_names_why() {
             },
             "run_in_flight": null,
             "past_runs": [],
+            "past_runs_left_out": 0,
+            "runs_of": 5,
         })
     );
     assert_eq!(
@@ -901,6 +1066,8 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
                 "left_alone": {"reason": reason},
                 "run_in_flight": null,
                 "past_runs": [],
+                "past_runs_left_out": 0,
+                "runs_of": 42,
             })
         );
         assert_eq!(

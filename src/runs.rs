@@ -718,12 +718,19 @@ pub fn render(listing: &Listing, colour: bool) -> String {
         let shown = listing.runs.len() + listing.left_out;
         let _ = writeln!(
             text,
-            "left out: {} earlier {}; show them with --limit {shown}",
-            listing.left_out,
-            if listing.left_out == 1 { "run" } else { "runs" },
+            "{}",
+            render_left_out(listing.left_out, &format!("--limit {shown}"))
         );
     }
     text
+}
+
+/// The line ending a list of runs cut to a limit: how many earlier runs,
+/// `left_out`, it left out, and `how` to show them
+/// (`docs/specs/monitoring.md`, "Output").
+pub(crate) fn render_left_out(left_out: usize, how: &str) -> String {
+    let runs = if left_out == 1 { "run" } else { "runs" };
+    format!("left out: {left_out} earlier {runs}; show them with {how}")
 }
 
 /// A run as `runs` lists it, coloured with `paint`.

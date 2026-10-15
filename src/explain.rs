@@ -43,14 +43,64 @@ pub struct Explanation {
     pub runs: ItemRuns,
 }
 
-/// An item's runs: its run in flight, with its quiet time, and its past
-/// runs as `runs N` lists them (`docs/specs/monitoring.md`, "explain").
+/// An item's runs: its run in flight, with its quiet time, and its latest
+/// [`PAST_RUNS_SHOWN`] past runs as `runs N` lists them
+/// (`docs/specs/monitoring.md`, "explain"). Its fields are private so
+/// that only `ItemRuns::of`, which cuts the past runs to the limit, and a
+/// read of its JSON that checks the cut make one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "ItemRunsAnswer", try_from = "ItemRunsAnswer")]
 pub struct ItemRuns {
-    pub run_in_flight: Option<RunInFlight>,
-    /// Newest first.
-    pub past_runs: Vec<Run>,
+    runs_of: Number,
+    run_in_flight: Option<RunInFlight>,
+    past_runs: Vec<Run>,
+    past_runs_left_out: usize,
 }
+
+#[derive(Serialize, Deserialize)]
+struct ItemRunsAnswer {
+    /// The item the runs are recorded under, which `runs N` lists them for.
+    runs_of: Number,
+    run_in_flight: Option<RunInFlight>,
+    /// Newest first.
+    past_runs: Vec<Run>,
+    /// How many earlier past runs the limit left out.
+    past_runs_left_out: usize,
+}
+
+impl From<ItemRuns> for ItemRunsAnswer {
+    fn from(runs: ItemRuns) -> ItemRunsAnswer {
+        ItemRunsAnswer {
+            runs_of: runs.runs_of,
+            run_in_flight: runs.run_in_flight,
+            past_runs: runs.past_runs,
+            past_runs_left_out: runs.past_runs_left_out,
+        }
+    }
+}
+
+impl TryFrom<ItemRunsAnswer> for ItemRuns {
+    type Error = String;
+
+    fn try_from(answer: ItemRunsAnswer) -> Result<ItemRuns, String> {
+        let shown = answer.past_runs.len();
+        if shown > PAST_RUNS_SHOWN || (answer.past_runs_left_out > 0 && shown < PAST_RUNS_SHOWN) {
+            return Err(format!(
+                "{shown} past runs shown and {} left out is no cut to the latest {PAST_RUNS_SHOWN}",
+                answer.past_runs_left_out
+            ));
+        }
+        Ok(ItemRuns {
+            runs_of: answer.runs_of,
+            run_in_flight: answer.run_in_flight,
+            past_runs: answer.past_runs,
+            past_runs_left_out: answer.past_runs_left_out,
+        })
+    }
+}
+
+/// How many past runs `explain` shows.
+pub const PAST_RUNS_SHOWN: usize = 3;
 
 impl ItemRuns {
     /// The runs of #`item` at `now`: the one in flight in `view`, and the
@@ -73,13 +123,18 @@ impl ItemRuns {
             .cloned()
             .collect();
         runs::sort_newest_first(&mut past);
+        let past_runs_left_out = past.len().saturating_sub(PAST_RUNS_SHOWN);
+        past.truncate(PAST_RUNS_SHOWN);
         ItemRuns {
+            runs_of: item,
             run_in_flight,
             past_runs: past.into_iter().map(|run| run.at(now)).collect(),
+            past_runs_left_out,
         }
     }
 
-    /// The runs as text, one per line, coloured with `paint`.
+    /// The runs as text, one per line, coloured with `paint`, ending with
+    /// how many past runs the limit left out and how to show them.
     fn lines(&self, paint: Paint) -> Vec<String> {
         let in_flight = self
             .run_in_flight
@@ -89,7 +144,11 @@ impl ItemRuns {
             .past_runs
             .iter()
             .map(|run| format!("past run: {}", runs::render_run(run, paint)));
-        in_flight.chain(past).collect()
+        let left_out = (self.past_runs_left_out > 0).then(|| {
+            let how = format!("lw runs {}", self.runs_of.0);
+            runs::render_left_out(self.past_runs_left_out, &how)
+        });
+        in_flight.chain(past).chain(left_out).collect()
     }
 }
 
