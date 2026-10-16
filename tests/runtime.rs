@@ -504,14 +504,13 @@ async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it
 
 #[tokio::test]
 async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     // Says one thing, then waits to be let finish.
     let program = dir.path().join("claude");
     let go = dir.path().join("go");
-    std::fs::write(
+    write_program(
         &program,
-        format!(
+        &format!(
             "#!/bin/sh\n\
              cat > /dev/null\n\
              echo '{}'\n\
@@ -521,9 +520,7 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
             go.display(),
             json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let runtime = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),

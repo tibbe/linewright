@@ -635,8 +635,6 @@ pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
 /// The stand-in `claude` of [`fake_claude`], whose every turn streams
 /// `events` instead.
 pub fn fake_claude_streaming(dir: &Path, events: &[Value]) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
     let stream: Vec<String> = events.iter().map(Value::to_string).collect();
     let stream = stream.join("\n");
     let program = dir.join("claude");
@@ -663,9 +661,24 @@ pub fn fake_claude_streaming(dir: &Path, events: &[Value]) -> std::path::PathBuf
         args = dir.join("args.log").display(),
         projects = dir.join("projects/repo").display(),
     );
-    std::fs::write(&program, script).unwrap();
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_program(&program, &script);
     program
+}
+
+/// Writes the program `path` with `script` in it. A child process writes
+/// it, as Linux refuses to run a program that is open for writing
+/// (`ETXTBSY`), and a process another test starts holds open each file the
+/// tests' process has open until it starts its own program.
+pub fn write_program(path: &Path, script: &str) {
+    let source = path.with_extension("source");
+    std::fs::write(&source, script).unwrap();
+    let status = Command::new("install")
+        .args(["-m", "755"])
+        .arg(&source)
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success(), "install {} failed", path.display());
 }
 
 /// The secret the tests' webhook and listener share.
