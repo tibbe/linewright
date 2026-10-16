@@ -543,3 +543,47 @@ fn the_json_names_each_fact() {
         })
     );
 }
+
+#[test]
+fn linewrights_pull_request_is_tracked_with_its_own_waits_and_its_ticket_waits_for_it() {
+    let pr = Pull {
+        number: Number(43),
+        title: "Do #7".into(),
+        body: "Closes #7".into(),
+        author: Login::new("factory"),
+        created_at: at("2026-10-01T11:58:00Z"),
+        head_ref: "7-do".into(),
+        head_sha: "abc123".into(),
+        state: PullState::Open { draft: true },
+        closes: vec![Number(7)],
+        pushes: vec![],
+        mergeability: Mergeability::Unknown,
+        rebaseability: Rebaseability::Unknown,
+        checks: vec![Check {
+            name: "test".into(),
+            state: CheckState::Failed,
+        }],
+        comments: vec![],
+        reviews: vec![],
+        threads: vec![],
+        labels: vec!["ready-for-human".into()],
+        label_events: vec![],
+    };
+    let unlabeled = Issue {
+        labels: vec![],
+        ..ready_issue()
+    };
+
+    assert_eq!(
+        after_linewright(
+            &views::view(vec![unlabeled], vec![pr]),
+            "2026-10-01T12:00:30Z"
+        ),
+        [
+            "#7: in review: #43 (draft, CI failing) — waiting for #43, its pull request, until it \
+             is merged or closed — Do the thing",
+            "#43: in review: #43 (draft, CI failing) — waiting for the maintainer: labeled \
+             `ready-for-human`, until they remove it — Do #7",
+        ]
+    );
+}

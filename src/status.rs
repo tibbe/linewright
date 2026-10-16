@@ -172,7 +172,7 @@ pub struct InReview {
 }
 
 impl InReview {
-    fn of(pr: &Pull) -> InReview {
+    pub(crate) fn of(pr: &Pull) -> InReview {
         let has = |state| pr.checks.iter().any(|c| c.state == state);
         InReview {
             pull_request: pr.number,
@@ -318,7 +318,8 @@ pub fn status(
 }
 
 /// The open items Linewright tracks at `now`: the spec changes waiting for
-/// tickets, then the issues whose labels place them in the pipeline.
+/// tickets, then the issues whose labels or pull requests place them in the
+/// pipeline, then the pull requests it works on.
 pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
     let snapshot = &view.snapshot;
     let mut waits = view.decisions(now).waits;
@@ -341,6 +342,14 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
             title: issue.title.clone(),
             state,
             waiting_for,
+        });
+    }
+    for (pr, _) in view.facts().worked_pulls(&view.policy.linewright) {
+        items.push(Tracked {
+            number: pr.number,
+            title: pr.title.clone(),
+            state: ItemState::InReview(InReview::of(pr)),
+            waiting_for: waits.remove(&pr.number).unwrap_or_default(),
         });
     }
     items
@@ -376,15 +385,19 @@ pub(crate) fn standing(
     Ok(state)
 }
 
-/// Where the open `issue` is in the pipeline, if its labels place it there.
-/// An issue of Linewright's own is never triaged, so `needs-triage` places
-/// it nowhere.
+/// Where the open `issue` is in the pipeline, if its labels or Linewright's
+/// open pull request for it place it there: in review while that pull
+/// request is open, whatever its other labels. An issue of Linewright's own
+/// is never triaged, so `needs-triage` places it nowhere.
 fn issue_state(issue: &Issue, facts: Facts, policy: &Policy) -> Result<ItemState, IssueExclusion> {
+    let open_pull = facts.open_pull_for(issue.number, &policy.linewright);
     let state = if matches!(issue.filed, Some(Filed::Tracking { .. })) {
         ItemState::Tracking {
             tickets_closed: issue.sub_issues.iter().filter(|t| !t.open).count(),
             tickets: issue.sub_issues.len(),
         }
+    } else if let Some(pr) = open_pull {
+        ItemState::InReview(InReview::of(pr))
     } else if issue.has_label(label::NEEDS_TRIAGE) {
         if !policy.triages(issue) {
             return Err(IssueExclusion::OwnIssueForTriage);
@@ -395,10 +408,10 @@ fn issue_state(issue: &Issue, facts: Facts, policy: &Policy) -> Result<ItemState
     } else if issue.has_label(label::READY_FOR_HUMAN) {
         ItemState::WithTheMaintainer
     } else if issue.has_label(label::READY_FOR_AGENT) {
-        match facts.open_pull_for(issue.number, &policy.linewright) {
-            Some(pr) => ItemState::InReview(InReview::of(pr)),
-            None if issue.is_assigned(&policy.linewright) => ItemState::Claimed,
-            None => ItemState::ReadyToClaim,
+        if issue.is_assigned(&policy.linewright) {
+            ItemState::Claimed
+        } else {
+            ItemState::ReadyToClaim
         }
     } else {
         return Err(IssueExclusion::NoPipelineLabel);
@@ -554,6 +567,9 @@ pub(crate) fn describe_wait(wait: &Wait) -> String {
         Wait::UsageLimit { resets_at } => format!("the usage limit, until {}", utc(*resets_at)),
         Wait::Blocker { issue } => format!("{issue}, which blocks it"),
         Wait::ClosingPullRequest { pull_request } => format!("{pull_request}, which closes it"),
+        Wait::PullRequest { pull_request } => {
+            format!("{pull_request}, its pull request, until it is merged or closed")
+        }
         Wait::Ci { pull_request } => format!("CI on {pull_request}"),
         Wait::MergeState { pull_request } => {
             format!("GitHub to work out whether {pull_request} can merge")
@@ -568,6 +584,10 @@ pub(crate) fn describe_wait(wait: &Wait) -> String {
             label::ANSWERS
                 .map(|(answer, _)| format!("`{answer}`"))
                 .join(" or ")
+        ),
+        Wait::HandedBack => format!(
+            "the maintainer: labeled `{}`, until they remove it",
+            label::READY_FOR_HUMAN
         ),
         Wait::RequiredLabel { label } => {
             format!("the maintainer: to label it `{label}`, the required label")

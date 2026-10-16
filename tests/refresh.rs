@@ -584,3 +584,72 @@ async fn a_push_to_the_default_branch_names_every_open_pull_request_of_linewrigh
         ]
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ticket_losing_its_label_or_linewright_while_its_pull_request_is_worked_cancels_nothing()
+{
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Rename it.")
+        .unwrap();
+    let release = gated(&world, WorkKind::Rework);
+    world.factory.cycle().await.unwrap();
+
+    world.store.unlabel_as(ticket, "ready-for-agent").unwrap();
+    world
+        .store
+        .unassign_as("maintainer", ticket, "factory")
+        .unwrap();
+    let actions = world.factory.refresh([Item::Issue(ticket)]).await.unwrap();
+
+    assert_eq!(actions, []);
+    release.send(()).unwrap();
+    world.factory.settle().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn labeling_a_pull_request_ready_for_human_cancels_its_run_and_its_work_until_removed() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Rename it.")
+        .unwrap();
+    let release = gated(&world, WorkKind::Rework);
+    world.factory.cycle().await.unwrap();
+
+    world.store.label_as(pr, "ready-for-human").unwrap();
+    let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
+
+    assert_eq!(
+        actions,
+        [Action::Cancel {
+            subject: Subject::Pull(pr),
+            reason: format!("{pr} was labeled `ready-for-human`"),
+        }]
+    );
+    release.send(()).unwrap();
+    world.factory.settle().await;
+    world.poll().await;
+    // A turn's prompt is recorded once it returns: the cancelled one never
+    // did, and no other started.
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 0);
+    assert!(
+        !world
+            .store
+            .snapshot_pull(pr)
+            .await
+            .comments
+            .iter()
+            .any(|c| c.author.as_str() == "factory"),
+        "the cancelled run posts nothing"
+    );
+    assert_eq!(world.issue(ticket).comments, []);
+
+    world.rework_asked(pr);
+    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.poll().await;
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+}

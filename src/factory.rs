@@ -553,6 +553,9 @@ impl Factory {
             Subject::Issue(issue) => {
                 self.written.insert(Item::Issue(issue));
             }
+            Subject::Pull(pr) => {
+                self.written.insert(Item::Pull(pr));
+            }
             // A cut writes issues the kept snapshot may lack, such as a
             // tracking issue it left part way.
             Subject::SpecChange(_) => self.ended.push(run),
@@ -617,12 +620,12 @@ impl Factory {
                 store.add_label(*issue, add).await?;
             }
             Action::HandBack {
-                issue,
+                item,
                 stage,
                 reason,
             } => {
-                info!(issue = issue.0, stage = %stage, reason, "handing back");
-                run::hand_back(&self.shell, *issue, *stage, reason, None).await?;
+                info!(%item, stage = %stage, reason, "handing back");
+                run::hand_back(&self.shell, *item, *stage, reason, None).await?;
             }
             Action::MarkReady { pr } => {
                 info!(pr = pr.0, "marking ready for review");
@@ -647,16 +650,15 @@ impl Factory {
                 if let Err(e) = store.merge(*pr, head, *method).await {
                     let reason = format!("{e:#}");
                     warn!(pr = pr.0, reason, "merge failed");
-                    self.memory
-                        .failed_merges
-                        .push(FailedMerge { pr: *pr, reason });
+                    self.memory.failed_merges.push(FailedMerge {
+                        pr: *pr,
+                        reason,
+                        at: self.shell.clock.now(),
+                    });
                 }
             }
             Action::RememberRebase(rebase) => {
                 self.memory.tried_rebases.push(rebase.clone());
-            }
-            Action::ForgetFailedMerges { pr } => {
-                self.memory.failed_merges.retain(|f| f.pr != *pr);
             }
             Action::MarkReadyForMergeState { pr } => {
                 info!(pr = pr.0, "marking ready for its merge state");
@@ -928,7 +930,6 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
     match action {
         Action::Claim { issue }
         | Action::Relabel { issue, .. }
-        | Action::HandBack { issue, .. }
         | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
         Action::DiscardTickets { tracking, tickets } => tickets
             .iter()
@@ -945,10 +946,10 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         Action::MarkReady { pr }
         | Action::MarkReadyForMergeState { pr }
         | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
+        Action::HandBack { item, .. } => vec![*item],
         Action::Start(_)
         | Action::Cancel { .. }
         | Action::RememberRebase(_)
-        | Action::ForgetFailedMerges { .. }
         | Action::DeleteBranch { .. }
         | Action::RecordLastRuns(_)
         | Action::RunWorkflow(_) => vec![],

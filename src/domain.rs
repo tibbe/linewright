@@ -415,6 +415,10 @@ impl Pull {
     pub fn is_open(&self) -> bool {
         matches!(self.state, PullState::Open { .. })
     }
+
+    pub fn has_label(&self, label: &str) -> bool {
+        self.labels.iter().any(|l| l == label)
+    }
 }
 
 /// An issue or pull request the store holds. GitHub numbers both from

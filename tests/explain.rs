@@ -147,7 +147,7 @@ fn work_held_back_waits_for_a_free_run_or_the_usage_limit() {
 }
 
 #[test]
-fn an_item_in_review_waits_for_ci_on_its_pull_request() {
+fn an_item_in_review_waits_for_its_pull_request() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
@@ -163,7 +163,7 @@ fn an_item_in_review_waits_for_ci_on_its_pull_request() {
             "child: #43, a pull request that closes it",
             "state: in review: #43 (draft, CI running)",
             "last read: 2026-10-01 12:00:00 UTC",
-            "waiting for: CI on #43",
+            "waiting for: #43, its pull request, until it is merged or closed",
         ]
     );
 }
@@ -597,7 +597,7 @@ fn linewrights_superseded_pull_request_shows_its_own_runs() {
 }
 
 #[test]
-fn linewrights_pull_request_for_an_issue_not_in_review_shows_its_own_runs() {
+fn linewrights_pull_request_whose_issue_was_handed_back_shows_its_own_runs() {
     let handed_back = Issue {
         labels: vec!["ready-for-human".into()],
         assignees: vec![Login::new("factory")],
@@ -1066,27 +1066,15 @@ fn a_pull_request_linewright_did_not_open_names_who_did() {
 }
 
 #[test]
-fn linewrights_pull_request_for_no_issue_it_works_on_says_so() {
+fn linewrights_pull_request_closing_no_issue_says_so() {
     let for_nothing = Pull {
         closes: vec![],
         ..draft(43, 42, &[])
-    };
-    let for_untracked = draft(43, 42, &[]);
-    let untracked = Issue {
-        labels: vec![],
-        ..ticket(42, "Add invoices")
     };
 
     assert_eq!(
         left_alone_text(&view(vec![], vec![]), AnyItem::Pull(Box::new(for_nothing)))[3],
         "left alone: it is Linewright's, and closes no issue Linewright could work on"
-    );
-    assert_eq!(
-        left_alone_text(
-            &view(vec![untracked], vec![]),
-            AnyItem::Pull(Box::new(for_untracked))
-        )[4],
-        "left alone: it is Linewright's for #42, which Linewright does not work on"
     );
 }
 
@@ -1308,18 +1296,57 @@ fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issue(
 }
 
 #[test]
-fn linewrights_pull_request_for_an_issue_elsewhere_in_the_pipeline_names_where() {
+fn linewrights_pull_request_is_worked_whatever_the_labels_of_the_issue_it_is_for() {
     let handed_back = Issue {
         labels: vec!["ready-for-human".into()],
-        assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
     };
-    let open = draft(43, 42, &[]);
-    let view = view(vec![handed_back], vec![open.clone()]);
+    let unlabeled = Issue {
+        labels: vec![],
+        ..ticket(42, "Add invoices")
+    };
+    let open = draft(43, 42, &[CheckState::Pending]);
+
+    for issue in [handed_back, unlabeled] {
+        assert_eq!(
+            left_alone_text(
+                &view(vec![issue], vec![]),
+                AnyItem::Pull(Box::new(open.clone()))
+            ),
+            [
+                "#43: Do #42",
+                "parent: #42, an issue it closes",
+                "state: in review: #43 (draft, CI running)",
+                "last read: 2026-10-01 12:00:30 UTC",
+                "waiting for: CI on #43",
+            ]
+        );
+    }
+}
+
+#[test]
+fn linewrights_pull_request_labeled_ready_for_human_waits_for_the_maintainer() {
+    let open = Pull {
+        labels: vec!["ready-for-human".into()],
+        ..draft(43, 42, &[CheckState::Failed])
+    };
+    let view = view(
+        vec![closed_by(ticket(42, "Add invoices"), 43, "factory")],
+        vec![open],
+    );
 
     assert_eq!(
-        left_alone_text(&view, AnyItem::Pull(Box::new(open)))[4],
-        "left alone: it is Linewright's for #42, which is not in review but with the maintainer"
+        text(&view, 43)[4..],
+        ["waiting for: the maintainer: labeled `ready-for-human`, until they remove it"]
+    );
+    let answer = explain(&view, &[], Number(43), at(NOW)).unwrap();
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap()["waiting_for"],
+        serde_json::json!([{"wait": "handed-back"}])
+    );
+    assert_eq!(
+        text(&view, 42)[4..],
+        ["waiting for: #43, its pull request, until it is merged or closed"]
     );
 }
 
@@ -1385,31 +1412,14 @@ fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_closes() {
     };
     let older = draft(43, 42, &[]);
     let superseded = view(vec![claimed], vec![older.clone(), draft(44, 42, &[])]);
-    let handed_back = view(
-        vec![Issue {
-            labels: vec!["ready-for-human".into()],
-            assignees: vec![Login::new("factory")],
-            ..ticket(42, "Add invoices")
-        }],
-        vec![older.clone()],
-    );
-    let untracked = view(
-        vec![Issue {
-            labels: vec![],
-            ..ticket(42, "Add invoices")
-        }],
-        vec![],
-    );
 
-    for view in [superseded, handed_back, untracked] {
-        assert_eq!(
-            family_lines(&left_alone_text(
-                &view,
-                AnyItem::Pull(Box::new(older.clone()))
-            )),
-            ["parent: #42, an issue it closes"]
-        );
-    }
+    assert_eq!(
+        family_lines(&left_alone_text(
+            &superseded,
+            AnyItem::Pull(Box::new(older))
+        )),
+        ["parent: #42, an issue it closes"]
+    );
 }
 
 #[test]
@@ -1865,6 +1875,39 @@ fn linewrights_pull_request_is_a_child_of_each_issue_it_closes_whatever_issue_it
             ["child: #43, a pull request that closes it"]
         );
     }
+}
+
+#[test]
+fn linewrights_pull_request_whose_issue_was_handed_back_is_explained_for_that_issue() {
+    let handed_back = Issue {
+        labels: vec!["ready-for-human".into()],
+        assignees: vec![Login::new("factory")],
+        ..ticket(42, "Add invoices")
+    };
+    let claimed_12 = Issue {
+        assignees: vec![Login::new("factory")],
+        ..ticket(12, "Old invoices")
+    };
+    let view = view(
+        vec![claimed_12, handed_back],
+        vec![open_43_closing_12_and_42()],
+    );
+
+    let answer = explain(&view, &opened_43_for_42(), Number(43), at(NOW)).unwrap();
+    assert_eq!(
+        lines_of(&render(&answer, false))[1..],
+        [
+            "parent: #12, an issue it closes",
+            "parent: #42, an issue it closes",
+            "state: in review: #43 (draft, CI running)",
+            "last read: 2026-10-01 12:00:00 UTC",
+            "waiting for: CI on #43",
+        ]
+    );
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap()["pull_request_for"],
+        42
+    );
 }
 
 #[test]

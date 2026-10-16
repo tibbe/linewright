@@ -3,6 +3,7 @@
 //! from and write only through the store; their decisions come from the
 //! reconcile step and the session's result.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -14,7 +15,7 @@ use tracing::{info, warn};
 use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::domain::{
-    Issue, Login, MergedPull, Number, Pull, Snapshot, Timestamp, closing_references, label,
+    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, Timestamp, closing_references, label,
 };
 use crate::git::{self, Updated};
 use crate::marker::{Stage, marked, workflow_marked};
@@ -30,7 +31,7 @@ use crate::runs::{Ending, Running, Runs};
 use crate::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::spec_gap;
 use crate::store::{
-    Categories, Identity, NewIssue, NewPull, PushError, PushMode, RepoSettings, Store,
+    AnyItem, Categories, Identity, NewIssue, NewPull, PushError, PushMode, RepoSettings, Store,
 };
 use crate::tracking;
 use crate::transcript;
@@ -120,25 +121,42 @@ fn infra(error: anyhow::Error) -> Failure {
 
 /// A failed push of `branch`: one GitHub refused for a missing permission
 /// goes straight back to the maintainer, as no retry can change it
-/// (`docs/specs/implementation.md`, "Runs").
-fn push_failure(branch: &str, error: PushError) -> Failure {
+/// (`docs/specs/runs.md`, "Ending"). What the maintainer then does to try
+/// again depends on what the run is on.
+fn push_failure(branch: &str, error: PushError, again: TryAgain) -> Failure {
     match error {
         PushError::MissingPermission { reason } => Failure::HandBack {
-            reason: refused_push(branch, &reason),
+            reason: refused_push(branch, &reason, again),
             log_tail: None,
         },
         PushError::Failed(e) => infra(e),
     }
 }
 
+/// How the maintainer asks for the work again once they have handled a
+/// hand-back.
+#[derive(Clone, Copy)]
+enum TryAgain {
+    /// Apply `ready-for-agent` to the ticket again.
+    Relabel,
+    /// Remove `ready-for-human` from the pull request, as its hand-back
+    /// comment ends by saying.
+    Unlabel,
+}
+
 /// What a hand-back says of a push of `branch` GitHub refused for a missing
 /// permission, for `reason`.
-fn refused_push(branch: &str, reason: &str) -> String {
+fn refused_push(branch: &str, reason: &str, again: TryAgain) -> String {
+    let remedy = match again {
+        TryAgain::Relabel => format!(
+            "Grant the permission and apply `{}` again, or make the change yourself.",
+            label::READY_FOR_AGENT
+        ),
+        TryAgain::Unlabel => "Grant the permission, or make the change yourself.".to_string(),
+    };
     format!(
         "GitHub refused to push the branch `{branch}` because Linewright's token lacks a \
-         permission. GitHub's reason: {reason}\n\nThe work was not kept. Grant the permission \
-         and apply `{}` again, or make the change yourself.",
-        label::READY_FOR_AGENT
+         permission. GitHub's reason: {reason}\n\nThe work was not kept. {remedy}"
     )
 }
 
@@ -205,18 +223,36 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             Err(Failure::HandBack { reason, log_tail }) => break (reason, log_tail),
         }
     };
+    // A cancelled run posts nothing more, and neither does one whose pull
+    // request was merged or closed while it worked (`docs/specs/runs.md`,
+    // "Ending").
+    if ctx.cancel.is_cancelled() {
+        info!(subject = ?subject, reason, "run cancelled; not handed back");
+        return Ending::Cancelled;
+    }
+    if let Subject::Pull(pr) = subject {
+        match still_open(shell, pr).await {
+            Ok(true) => {}
+            Ok(false) => return Ending::Cancelled,
+            Err(e) => warn!(
+                pr = pr.0,
+                error = format!("{e:#}"),
+                "reading the pull request failed"
+            ),
+        }
+    }
     // Comments hold only what belongs to the repository.
     let work_dir = shell.work_dir.to_string_lossy().into_owned();
     let reason = reason.replace(&work_dir, "<work-dir>");
     let log_tail = log_tail.map(|t| t.replace(&work_dir, "<work-dir>"));
     info!(subject = ?subject, reason, "handing back");
+    let log_tail = log_tail.as_deref();
     let handed = match subject {
         Subject::Issue(issue) => {
-            hand_back(shell, issue, run_stage, &reason, log_tail.as_deref()).await
+            hand_back(shell, Item::Issue(issue), run_stage, &reason, log_tail).await
         }
-        Subject::SpecChange(pr) => {
-            hand_back_spec_change(shell, pr, &reason, log_tail.as_deref()).await
-        }
+        Subject::Pull(pr) => hand_back(shell, Item::Pull(pr), run_stage, &reason, log_tail).await,
+        Subject::SpecChange(pr) => hand_back_spec_change(shell, pr, &reason, log_tail).await,
     };
     match handed {
         Ok(()) => Ending::HandedBack,
@@ -245,39 +281,87 @@ async fn attempt(
             .with_context(|| format!("{n} is not in the snapshot"))
             .map_err(infra)
     };
-    let ticket = |n: Number| -> Result<Ticket, Failure> {
-        Ok(Ticket {
-            issue: issue(n)?,
-            filed_gaps: spec_gap::filed_for(snapshot, n),
-        })
-    };
-    match work {
-        Work::Triage { issue: n } => triage(shell, ctx, issue(*n)?).await,
+    let (n, pr, task) = match work {
+        Work::Triage { issue: n } => return triage(shell, ctx, issue(*n)?).await,
         Work::Tickets { pr } => {
             let pr = snapshot
                 .merged_pull(*pr)
                 .with_context(|| format!("{pr} is not in the snapshot"))
                 .map_err(infra)?;
-            tickets(shell, ctx, pr).await
+            return tickets(shell, ctx, pr).await;
         }
-        Work::Implement { issue: n } => implement(shell, ctx, &ticket(*n)?).await,
-        Work::Rework { issue: n, pr } => {
-            pull_work(shell, ctx, &ticket(*n)?, pull(*pr)?, Task::Rework).await
+        Work::Implement { issue: n } => {
+            return implement(shell, ctx, &ticket_of(snapshot, issue(*n)?)).await;
         }
+        Work::Rework { issue: n, pr } => (n, pr, Task::Rework),
         Work::FixCi {
             issue: n,
             pr,
             failing,
-        } => pull_work(shell, ctx, &ticket(*n)?, pull(*pr)?, Task::FixCi(failing)).await,
-        Work::Update { issue: n, pr } => {
-            pull_work(shell, ctx, &ticket(*n)?, pull(*pr)?, Task::Update).await
-        }
+        } => (n, pr, Task::FixCi(failing)),
+        Work::Update { issue: n, pr } => (n, pr, Task::Update),
+    };
+    let held = pull_ticket(shell, snapshot, *n).await?;
+    pull_work(shell, ctx, &ticket_of(snapshot, &held), pull(*pr)?, task).await
+}
+
+/// The ticket #`number` a pull request is worked for, as the snapshot holds
+/// it or else read from the store: the pull request is worked whatever its
+/// ticket's labels and assignees, so the snapshot may leave the ticket out.
+async fn pull_ticket<'a>(
+    shell: &Shell,
+    snapshot: &'a Snapshot,
+    number: Number,
+) -> Result<Cow<'a, Issue>, Failure> {
+    if let Some(issue) = snapshot.issue(number) {
+        return Ok(Cow::Borrowed(issue));
+    }
+    match shell.store.any_item(number).await.map_err(infra)? {
+        Some(AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue)) => Ok(Cow::Owned(*issue)),
+        _ => Err(infra(anyhow::anyhow!("there is no issue {number}"))),
+    }
+}
+
+/// `issue` as a ticket, with the spec gaps `snapshot` holds filed for it.
+fn ticket_of<'a>(snapshot: &'a Snapshot, issue: &'a Issue) -> Ticket<'a> {
+    Ticket {
+        issue,
+        filed_gaps: spec_gap::filed_for(snapshot, issue.number),
+    }
+}
+
+/// Whether the pull request #`pr` is still open, as the store reads it now.
+/// A run on one merged or closed while it worked pushes and posts nothing
+/// (`docs/specs/runs.md`, "Ending").
+async fn still_open(shell: &Shell, pr: Number) -> Result<bool> {
+    let open = shell.store.pull(pr).await?.is_open();
+    if !open {
+        info!(
+            pr = pr.0,
+            "the pull request closed while the run worked; nothing pushed or posted"
+        );
+    }
+    Ok(open)
+}
+
+/// Gives `item` to the maintainer, as [`hand_back_issue`] or
+/// [`hand_back_pull`] does.
+pub(crate) async fn hand_back(
+    shell: &Shell,
+    item: Item,
+    stage: Stage,
+    reason: &str,
+    log_tail: Option<&str>,
+) -> Result<()> {
+    match item {
+        Item::Issue(issue) => hand_back_issue(shell, issue, stage, reason, log_tail).await,
+        Item::Pull(pr) => hand_back_pull(shell, pr, stage, reason, log_tail).await,
     }
 }
 
 /// Gives the issue to the maintainer: `ready-for-human`, unassigned, and a
 /// comment with the reason and the tail of the log.
-pub(crate) async fn hand_back(
+async fn hand_back_issue(
     shell: &Shell,
     issue: Number,
     stage: Stage,
@@ -296,6 +380,25 @@ pub(crate) async fn hand_back(
     store
         .comment(issue, &marked(stage, &with_log(reason, log_tail)))
         .await
+}
+
+/// Gives Linewright's pull request to the maintainer: `ready-for-human` and
+/// a comment with the reason, the tail of the log and how to try again. Its
+/// ticket stays as it is (`docs/specs/pull_requests.md`, "The pull request").
+async fn hand_back_pull(
+    shell: &Shell,
+    pr: Number,
+    stage: Stage,
+    reason: &str,
+    log_tail: Option<&str>,
+) -> Result<()> {
+    shell.store.add_label(pr, label::READY_FOR_HUMAN).await?;
+    let body = format!(
+        "{}\n\nRemove `{}` from this pull request to try again.",
+        with_log(reason, log_tail),
+        label::READY_FOR_HUMAN
+    );
+    shell.store.comment(pr, &marked(stage, &body)).await
 }
 
 async fn hand_back_spec_change(
@@ -375,6 +478,7 @@ pub fn subject_name(subject: Subject) -> String {
     match subject {
         Subject::Issue(n) => format!("issue-{}", n.0),
         Subject::SpecChange(n) => format!("pr-{}", n.0),
+        Subject::Pull(n) => format!("pull-{}", n.0),
     }
 }
 
@@ -821,9 +925,10 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
         }
         match store.push(&ws.dir, &branch, PushMode::Replace).await {
             Ok(()) => Ok(format!("\n\nThe work so far is on the branch `{branch}`.")),
-            Err(PushError::MissingPermission { reason }) => {
-                Ok(format!("\n\n{}", refused_push(&branch, &reason)))
-            }
+            Err(PushError::MissingPermission { reason }) => Ok(format!(
+                "\n\n{}",
+                refused_push(&branch, &reason, TryAgain::Relabel)
+            )),
             Err(PushError::Failed(e)) => Err(Failure::Apply(e)),
         }
     };
@@ -836,7 +941,7 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
             store
                 .push(&ws.dir, &branch, PushMode::Replace)
                 .await
-                .map_err(|e| push_failure(&branch, e))?;
+                .map_err(|e| push_failure(&branch, e, TryAgain::Relabel))?;
             let pr = store
                 .open_pull(NewPull {
                     head: branch.clone(),
@@ -951,6 +1056,7 @@ async fn pull_work(
     pr: &Pull,
     task: Task<'_>,
 ) -> Result<(), Failure> {
+    // The sessions are kept with the ticket's, as a case captures them.
     let subject = Subject::Issue(ticket.issue.number);
     let kind = match task {
         Task::Rework => WorkKind::Rework,
@@ -983,6 +1089,13 @@ async fn pull_work(
             return Ok(());
         }
         let fresh = store.pull(pr.number).await.map_err(infra)?;
+        if !fresh.is_open() {
+            info!(
+                pr = pr.number.0,
+                "the pull request closed while the run worked; nothing pushed"
+            );
+            return Ok(());
+        }
         if !late(&new_feedback(&fresh, linewright), ctx.as_of).is_empty() {
             info!(
                 pr = pr.number.0,
@@ -993,7 +1106,7 @@ async fn pull_work(
         return store
             .push(&ws.dir, &pr.head_ref, lease)
             .await
-            .map_err(|e| push_failure(&pr.head_ref, e));
+            .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Unlabel));
     }
     let failures = match task {
         Task::FixCi(names) => store
@@ -1079,7 +1192,7 @@ async fn pull_work(
                 store
                     .push(&ws.dir, &pr.head_ref, lease)
                     .await
-                    .map_err(|e| push_failure(&pr.head_ref, e))?;
+                    .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Unlabel))?;
             }
             if let Some(body) = pr_body {
                 store
@@ -1111,7 +1224,7 @@ async fn pull_work(
         }
         PullWorkResult::GaveUp { reason } => Err(Failure::HandBack {
             reason: format!(
-                "The implementer handed the ticket back:\n\n{}",
+                "The implementer handed the pull request back:\n\n{}",
                 reason.trim()
             ),
             log_tail: Some(turn.log_tail),

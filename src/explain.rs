@@ -13,11 +13,11 @@ use serde::{Deserialize, Serialize};
 use crate::domain::{
     self, ClosingPull, Filed, Issue, Item, Login, MergedPull, Number, Pull, Timestamp, label,
 };
-use crate::reconcile::{NotSpecChange, Wait, not_a_spec_change};
+use crate::reconcile::{NotSpecChange, NotWorked, Wait, not_a_spec_change};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
-    InReview, IssueExclusion, ItemState, Paint, Tracked, View, describe, describe_wait, standing,
-    tracked, utc,
+    InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, standing, tracked,
+    utc,
 };
 use crate::store::AnyItem;
 
@@ -378,21 +378,6 @@ impl ChildRole {
     }
 }
 
-/// The issue Linewright's open pull request `pull` is for, as `view` tracks
-/// it at `now`: of the issues it closes, the one in review with it, or else
-/// the first Linewright tracks. `Err` with those issues when Linewright
-/// tracks none of them.
-fn tracked_for(view: &View, pull: &Pull, now: Timestamp) -> Result<Tracked, Vec<Number>> {
-    let (in_review_with_it, others): (Vec<Tracked>, Vec<Tracked>) = tracked(view, now)
-        .into_iter()
-        .filter(|t| pull.closes.contains(&t.number))
-        .partition(|t| {
-            matches!(&t.state, ItemState::InReview(review) if review.pull_request == pull.number)
-        });
-    let found = in_review_with_it.into_iter().chain(others).next();
-    found.ok_or_else(|| pull.closes.clone())
-}
-
 /// Where #N is in the pipeline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -408,18 +393,26 @@ pub enum Standing {
     Item(ItemState),
 }
 
-/// The answer about #`number` at `now`, with its runs among those
-/// `recorded` as `runs N` lists them: an item Linewright tracks, or
-/// Linewright's open pull request for one in review with it. `None` for any
-/// other number.
+/// The answer about #`number` at `now`: an item Linewright tracks, or
+/// Linewright's open pull request it works on. `None` for any other number.
+/// Its runs are those `recorded` as `runs N` lists them, and the issue each
+/// pull request was opened for is read from `recorded` too.
 pub fn explain(
     view: &View,
     recorded: &[Recorded],
     number: Number,
     now: Timestamp,
 ) -> Option<Explanation> {
-    let items = tracked(view, now);
+    let view = &recording(view, recorded);
     let last_read = |item: Item| view.read_at.get(&item).copied().unwrap_or(view.polls.last);
+    if let Some(pull) = view.snapshot.pull(number).filter(|p| p.is_open()) {
+        let explanation = pull_standing(view, recorded, pull, now).ok()?;
+        return Some(Explanation {
+            last_read: last_read(Item::Pull(number)),
+            ..explanation
+        });
+    }
+    let items = tracked(view, now);
     if let Some(tracked) = items.iter().find(|t| t.number == number) {
         // A tracked spec change is a merged pull request, not yet cut into
         // tickets; the rest are issues.
@@ -443,12 +436,16 @@ pub fn explain(
             ItemRuns::of(view, recorded, number, now),
         ));
     }
-    let pull = view.snapshot.pull(number)?;
-    let explanation = pull_standing(view, recorded, pull, now).ok()?;
-    Some(Explanation {
-        last_read: last_read(Item::Pull(number)),
-        ..explanation
-    })
+    None
+}
+
+/// `view` with which issue each pull request was opened for as the runs
+/// `recorded` record it, so that an answer reads it from them alone.
+fn recording(view: &View, recorded: &[Recorded]) -> View {
+    View {
+        opened_for: runs::opened_for_each(recorded),
+        ..view.clone()
+    }
 }
 
 /// An item Linewright leaves alone, and why. Its fields keep their names and
@@ -517,24 +514,16 @@ pub enum PullExclusion {
     /// It is Linewright's for `issue`, which Linewright works on through its
     /// newer pull request `by`.
     Superseded { issue: Number, by: Number },
-    /// It is Linewright's for `issue`, which Linewright tracks in
-    /// `issue_state`, not in review.
-    IssueNotInReview {
-        issue: Number,
-        issue_state: ItemState,
-    },
-    /// It is Linewright's for `issues`, none of which Linewright tracks.
-    ForIssuesLeftAlone { issues: Vec<Number> },
 }
 
 /// The answer about `read`, #N as `serve` read it from the store at `now`
 /// because its view tracks no such item: where #N stands if the read places
 /// it in the pipeline after all, as a label applied since the last poll
 /// does, or else why Linewright leaves it alone, by the rules that decide
-/// what it tracks; with its runs among those `recorded`, as [`explain`]
-/// shows them.
+/// what it tracks. Its runs, and the issue each pull request was opened for,
+/// are read from `recorded`, as [`explain`] reads them.
 pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Timestamp) -> Answer {
-    let mut fresh = view.clone();
+    let mut fresh = recording(view, recorded);
     let linewright = &view.policy.linewright;
     // As a poll taking a snapshot now would hold #N.
     let held = Arc::make_mut(&mut fresh.snapshot);
@@ -625,46 +614,38 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
 }
 
 /// Where the open pull request `pull`, read at `now`, stands in `view`, as
-/// Linewright's pull request for an issue in review, or why Linewright
-/// leaves it alone.
+/// Linewright's pull request it works on, with what it waits for, or why
+/// Linewright leaves it alone. It is worked because it is open, whatever
+/// the issue it is for (`docs/specs/pull_requests.md`, "The pull request").
 fn pull_standing(
     view: &View,
     recorded: &[Recorded],
     pull: &Pull,
     now: Timestamp,
 ) -> Result<Explanation, PullExclusion> {
-    if pull.author != view.policy.linewright {
-        return Err(PullExclusion::NotLinewrights {
-            author: pull.author.clone(),
-        });
-    }
-    if pull.closes.is_empty() {
-        return Err(PullExclusion::ClosesNoIssue);
-    }
-    let issue = tracked_for(view, pull, now)
-        .map_err(|issues| PullExclusion::ForIssuesLeftAlone { issues })?;
-    match issue.state {
-        ItemState::InReview(review) if review.pull_request == pull.number => Ok(Explanation::new(
-            pull.number,
-            pull.title.clone(),
-            Family::of_pull(&pull.closes),
-            Standing::PullRequest {
-                pull_request_for: issue.number,
-                review,
+    let ticket = view
+        .facts()
+        .worked_ticket(pull, &view.policy.linewright)
+        .map_err(|not_worked| match not_worked {
+            NotWorked::NotLinewrights => PullExclusion::NotLinewrights {
+                author: pull.author.clone(),
             },
-            now,
-            issue.waiting_for,
-            ItemRuns::of(view, recorded, pull.number, now),
-        )),
-        ItemState::InReview(review) => Err(PullExclusion::Superseded {
-            issue: issue.number,
-            by: review.pull_request,
-        }),
-        issue_state => Err(PullExclusion::IssueNotInReview {
-            issue: issue.number,
-            issue_state,
-        }),
-    }
+            NotWorked::ForNoIssue => PullExclusion::ClosesNoIssue,
+            NotWorked::Superseded { ticket, by } => PullExclusion::Superseded { issue: ticket, by },
+        })?;
+    let waiting_for = view.decisions(now).waits.remove(&pull.number);
+    Ok(Explanation::new(
+        pull.number,
+        pull.title.clone(),
+        Family::of_pull(&pull.closes),
+        Standing::PullRequest {
+            pull_request_for: ticket,
+            review: InReview::of(pull),
+        },
+        now,
+        waiting_for.unwrap_or_default(),
+        ItemRuns::of(view, recorded, pull.number, now),
+    ))
 }
 
 /// The answer as text, as [`render`] gives a tracked item's, and for an item
@@ -760,17 +741,6 @@ fn describe_pull_exclusion(exclusion: &PullExclusion) -> String {
         }
         PullExclusion::Superseded { issue, by } => {
             format!("it is Linewright's for {issue}, which it works on through {by}")
-        }
-        PullExclusion::IssueNotInReview { issue, issue_state } => format!(
-            "it is Linewright's for {issue}, which is not in review but {}",
-            describe(issue_state)
-        ),
-        PullExclusion::ForIssuesLeftAlone { issues } => {
-            let issues: Vec<String> = issues.iter().map(Number::to_string).collect();
-            format!(
-                "it is Linewright's for {}, which Linewright does not work on",
-                issues.join(", ")
-            )
         }
     }
 }

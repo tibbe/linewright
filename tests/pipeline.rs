@@ -799,16 +799,23 @@ async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Numbe
 }
 
 #[tokio::test]
-async fn a_pull_request_handed_back_with_its_ticket_is_not_worked_for_another_issue_it_closes() {
+async fn a_pull_request_whose_ticket_is_unlabeled_and_unassigned_is_still_worked_for_it_alone() {
     let mut world = World::new().await;
     let (ticket, other, _) = pull_request_closing_another_issue(&mut world).await;
     world.store.unlabel_as(ticket, "ready-for-agent").unwrap();
-    world.store.label_as(ticket, "ready-for-human").unwrap();
+    world
+        .store
+        .unassign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
 
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::FixCi).len(), 0);
+    let fixes = world.runtime.prompts(WorkKind::FixCi);
+    assert_eq!(fixes.len(), 1);
+    assert!(fixes[0].contains("Do the thing"), "{}", fixes[0]);
     assert_eq!(world.issue(other).assignees, []);
+    assert_eq!(world.issue(ticket).assignees, []);
+    assert_eq!(labels(&world.issue(ticket)), Vec::<&str>::new());
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
 }
 
@@ -976,12 +983,144 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
     }
     world.poll().await;
 
-    let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
-    assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        "> *Linewright, CI*\n\n`test` still failing after 2 fix attempts.\n\nRemove \
+         `ready-for-human` from this pull request to try again.",
+    )
+    .await;
+
+    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.poll().await;
+
     assert_eq!(
-        last_comment(&issue),
-        "> *Linewright, CI*\n\n`test` still failing after 2 fix attempts."
+        world.runtime.prompts(WorkKind::FixCi).len(),
+        3,
+        "removing the label gives fresh fix attempts"
+    );
+}
+
+/// Checks that Linewright's pull request `pr` was handed back with the
+/// comment `comment`, and its ticket left as it was: labeled
+/// `ready-for-agent` and assigned to Linewright.
+async fn assert_handed_back(world: &World, ticket: Number, pr: Number, comment: &str) {
+    assert_eq!(world.store.pull_labels(pr), ["ready-for-human"]);
+    assert_eq!(
+        world
+            .store
+            .snapshot_pull(pr)
+            .await
+            .comments
+            .last()
+            .unwrap()
+            .body,
+        comment
+    );
+    let issue = world.issue(ticket);
+    assert_eq!(labels(&issue), ["ready-for-agent"]);
+    assert!(issue.is_assigned(&Login::new(LINEWRIGHT)));
+    assert!(
+        !issue
+            .comments
+            .iter()
+            .any(|c| c.author == Login::new(LINEWRIGHT)),
+        "nothing is posted on the ticket"
+    );
+}
+
+#[tokio::test]
+async fn ci_that_does_not_complete_in_time_hands_the_pull_request_back_and_unlabeling_waits_again()
+{
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .set_checks(pr, vec![check("e2e", CheckState::Pending, "")])
+        .await
+        .unwrap();
+
+    world
+        .clock
+        .advance(chrono::TimeDelta::hours(6) + chrono::TimeDelta::minutes(1));
+    world.poll().await;
+
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        "> *Linewright, CI*\n\nCI did not complete within 6h: `e2e` still running.\n\nRemove \
+         `ready-for-human` from this pull request to try again.",
+    )
+    .await;
+
+    world.clock.advance(chrono::TimeDelta::hours(1));
+    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.clock.advance(chrono::TimeDelta::hours(5));
+    world.poll().await;
+
+    assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
+    world
+        .clock
+        .advance(chrono::TimeDelta::hours(1) + chrono::TimeDelta::minutes(1));
+    world.poll().await;
+    assert_eq!(world.store.pull_labels(pr), ["ready-for-human"]);
+}
+
+#[tokio::test]
+async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    world.runtime.on(WorkKind::Rework, |_| {
+        Err(linewright::runtime::SessionError::Failed {
+            reason: "the session timed out".into(),
+            log_tail: String::new(),
+        })
+    });
+
+    world.poll().await;
+
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        "> *Linewright, rework*\n\nThe session ended unexpectedly: the session timed out\n\n\
+         Remove `ready-for-human` from this pull request to try again.",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_pull_request_closed_while_its_run_works_gets_no_hand_back() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    let store = world.store.clone();
+    world.runtime.on(WorkKind::Rework, move |_| {
+        store.close_pull_as(pr).unwrap();
+        json(json!({"outcome": "gave-up", "reason": "Cannot rename it."}))
+    });
+
+    world.poll().await;
+
+    assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
+    assert!(
+        !world
+            .store
+            .snapshot_pull(pr)
+            .await
+            .comments
+            .iter()
+            .any(|c| c.author == Login::new(LINEWRIGHT))
+    );
+    assert!(
+        !world
+            .issue(ticket)
+            .comments
+            .iter()
+            .any(|c| c.body.contains("Cannot rename it."))
     );
 }
 
@@ -1907,7 +2046,8 @@ async fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_a
 }
 
 #[tokio::test]
-async fn with_auto_merge_a_merge_that_fails_twice_hands_the_ticket_back_and_relabeling_merges_it() {
+async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_and_unlabeling_merges_it()
+ {
     use linewright::domain::PullState;
 
     let (log, _guard) = Log::capture();
@@ -1932,31 +2072,31 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_ticket_back_and_rela
     world.poll().await;
     world.poll().await;
 
-    let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
-    assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
-    assert_eq!(
-        last_comment(&issue),
-        format!(
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        &format!(
             "> *Linewright, review*\n\nMerging {pr} failed twice. GitHub's reason: \
-             Head branch was modified. Review and try the merge again."
-        )
-    );
+             Head branch was modified. Review and try the merge again.\n\nRemove \
+             `ready-for-human` from this pull request to try again."
+        ),
+    )
+    .await;
     assert_eq!(
         world.store.snapshot_pull(pr).await.state,
         PullState::Open { draft: false }
     );
 
-    world.store.unlabel_as(ticket, "ready-for-human").unwrap();
-    world.store.label_as(ticket, "ready-for-agent").unwrap();
+    world.clock.advance(chrono::TimeDelta::minutes(1));
+    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.clock.advance(chrono::TimeDelta::minutes(1));
     world.poll().await;
 
-    let reclaimed = world.issue(ticket);
-    assert!(reclaimed.is_assigned(&Login::new(LINEWRIGHT)), "reclaimed");
     assert_eq!(
-        labels(&reclaimed),
-        ["ready-for-agent"],
-        "a failure after the relabel is retried, not handed back"
+        world.store.pull_labels(pr),
+        Vec::<String>::new(),
+        "a failure after the label is removed is retried, not handed back"
     );
 
     world.store.accept_merges(pr);
@@ -2262,7 +2402,7 @@ async fn a_blocked_run_whose_work_is_refused_for_a_missing_permission_asks_its_q
 }
 
 #[tokio::test]
-async fn a_rework_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once() {
+async fn a_rework_push_refused_for_a_missing_permission_hands_the_pull_request_back_at_once() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
     let head = world.store.snapshot_pull(pr).await.head_ref;
@@ -2288,26 +2428,43 @@ async fn a_rework_push_refused_for_a_missing_permission_hands_the_ticket_back_at
 
     world.poll().await;
 
-    let issue = world.issue(ticket);
     assert_eq!(
         world.runtime.prompts(WorkKind::Rework).len(),
         1,
         "not retried"
     );
-    assert_eq!(labels(&issue), ["ready-for-human"]);
-    assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
-    assert_eq!(
-        last_comment(&issue),
-        format!(
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        &format!(
             "> *Linewright, rework*\n\nGitHub refused to push the branch `{head}` because \
              Linewright's token lacks a permission. GitHub's reason: {WORKFLOW_REFUSAL}\n\nThe \
-             work was not kept. Grant the permission and apply `ready-for-agent` again, or make \
-             the change yourself."
-        )
-    );
-    assert_eq!(
-        world.store.snapshot_pull(pr).await.comments.len(),
-        0,
-        "nothing is posted on the pull request"
-    );
+             work was not kept. Grant the permission, or make the change yourself.\n\nRemove \
+             `ready-for-human` from this pull request to try again."
+        ),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_blocking_spec_gap_in_a_pull_request_run_hands_the_pull_request_back() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    world.runtime.on(WorkKind::Rework, |_| {
+        json(json!({"outcome": "blocked", "question": "Should renamed widgets keep their old name?"}))
+    });
+
+    world.poll().await;
+
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        "> *Linewright, rework*\n\nBlocked on a question the spec cannot decide:\n\nShould \
+         renamed widgets keep their old name?\n\nRemove `ready-for-human` from this pull request \
+         to try again.",
+    )
+    .await;
 }
