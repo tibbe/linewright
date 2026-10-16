@@ -97,6 +97,7 @@ flowchart LR
 | [Workflows](workflows.md) | Running agents on a trigger with the maintainer's instructions. |
 | [Implementation](implementation.md) | Turning spec changes and tickets into reviewed, committed branches. |
 | [Pull requests](pull_requests.md) | Taking the work from a pull request to a merge. |
+| [Runs](runs.md) | What holds for every piece of work Linewright does, whatever its stage. |
 | [Operation](operation.md) | Running Linewright. |
 | [Monitoring](monitoring.md) | Seeing what Linewright is doing and why. |
 | [Replay](replay.md) | Running a captured case through the pipeline again to tune the briefs. |

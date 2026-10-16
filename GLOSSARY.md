@@ -17,7 +17,7 @@ The person who owns the repository.
 _Avoid_: owner, reviewer, human
 
 **Reporter**:
-Someone who files an issue, such as a customer.
+A GitHub user who files an issue.
 _Avoid_: customer, author
 
 **Agent**:

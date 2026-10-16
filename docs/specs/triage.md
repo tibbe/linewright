@@ -1,10 +1,8 @@
 # Triage
 
-Triage does the first reading of an issue that would otherwise fall to the
-maintainer, and establishes the facts before anyone decides. It does the
-research and leaves the decisions to people: it asks the reporter for what is
-missing, makes clear issues into work, and hands every decision to the
-maintainer with a recommendation.
+Triage is the first reading of a new issue: it establishes the facts, so that
+the people who decide don't have to do the research. The decisions stay
+theirs.
 
 For example, a bug report without steps to reproduce gets a comment asking
 the reporter for them. When the reporter answers in the thread, the issue is
@@ -18,8 +16,8 @@ brief an implementer works from.
 2. As an operator, I want reporters asked for what is missing and their answers
    picked up, so that I am not the go-between.
 3. As an operator, I want an issue that needs my decision handed to me with a
-   recommendation and my answer in the thread picked up, so that my part is a
-   decision, not research or bookkeeping.
+   recommendation, so that my part is a decision, not research or
+   bookkeeping.
 4. As an operator, I want duplicates and already-fixed issues flagged rather
    than closed, so that no reporter is turned away by a machine.
 
@@ -44,14 +42,17 @@ brief an implementer works from.
 - The category is the repository's issue type (Bug, Feature, Task) where the
   repository has issue types, and the `bug` or `enhancement` label otherwise.
 - Triage leaves issues open and repository files as they are.
-- An answer in the thread is picked up: when anyone other than Linewright
-  comments on a `needs-info` or `ready-for-human` issue after
-  Linewright's last triage comment, and that is its last comment on the
-  issue, the issue is triaged again. The labels say who must answer, the
-  reporter or the maintainer; either may answer by commenting, because that
-  is where the question was asked. The maintainer may also hand an issue back
-  with a label: `ready-for-agent` (implement as decided) or `needs-triage`
-  (triage again).
+
+### Answers
+
+The label says who must answer, and how.
+
+- `needs-info`: the reporter answers in the thread. A reply, a comment from
+  anyone other than Linewright posted after its question, triages the issue
+  again.
+- `ready-for-human`, whoever handed the issue back: the maintainer answers
+  with a label, `ready-for-agent` to implement as decided or `needs-triage`
+  to triage again.
 
 The `triage` states of the issue lifecycle; both are labels.
 

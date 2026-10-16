@@ -47,6 +47,5 @@ what the factory makes of it now, until it does better.
   captured or replayed.
 - Briefs are files Linewright reads at startup from the `briefs` directory
   setting, so a change needs no rebuild.
-- In production every session's transcript is kept under the work directory,
-  outliving the run and the process, so a case can be captured with its
-  transcripts later.
+- Linewright keeps every run's transcripts (see [Runs](runs.md)), so a case
+  can be captured with its transcripts later.

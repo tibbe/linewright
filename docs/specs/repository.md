@@ -57,7 +57,7 @@ When Linewright cannot finish it, a comment on the issue says why.
   | `needs-triage` | new, not yet assessed | reporter's issue template, maintainer |
   | `needs-info` | waiting on the reporter | Linewright |
   | `ready-for-agent` | actionable: Linewright may claim it | maintainer, Linewright |
-  | `ready-for-human` | the maintainer must act or decide | Linewright |
+  | `ready-for-human` | the maintainer must act or decide | Linewright, maintainer on Linewright's pull requests |
   | `bug`, `enhancement` | category, in repositories without issue types | Linewright (triage), maintainer |
   | `linewright:spec-processed` | this merged PR's spec changes have been ticketed | Linewright |
   | the required label, named by `require-label` | Linewright may start work on this item | maintainer, Linewright |
@@ -67,7 +67,8 @@ When Linewright cannot finish it, a comment on the issue says why.
   label: every merged pull request that touches the spec is picked up.
   Removing `ready-for-agent`, unassigning Linewright or closing the
   issue stops its work; after an unassignment, applying `ready-for-agent`
-  again restarts it.
+  again restarts it. Linewright's pull requests are steered on the pull
+  request, as under [Pull requests](pull_requests.md).
 - With `require-label` set, Linewright starts work only on issues and pull
   requests that carry the **required label**. It checks the label each time
   it starts something: triaging an issue, also again after a comment;
@@ -78,17 +79,17 @@ When Linewright cannot finish it, a comment on the issue says why.
   puts the label on every issue and pull request it creates. Workflows run
   on their schedule either way. Unset, every issue and pull request is
   Linewright's to work.
-- Machine state is derived from GitHub, never labeled, except which issue
-  Linewright opened a pull request for, which Linewright records when it
-  opens it. An issue is **claimed** when Linewright is among its assignees,
-  and **in review** while the pull request Linewright opened for it is open.
-  Other issues that pull request closes are not in review with it.
+- Machine state is derived from GitHub, never labeled. An issue is
+  **claimed** when Linewright is among its assignees, and **in review**
+  while an open pull request closes it. Linewright's pull requests are the
+  ones its account opened.
 - Linewright comments at every outcome: a triage result, tickets created (on
   the tracking issue and the spec PR), a ticket handed back and why, a PR
-  made ready, a rework done. Every comment opens with the marker line
-  `> *Linewright, <stage>*` so people and the manager can tell its comments
-  from others. Claims, PRs and merges need no comment: the assignee, the PR
-  and the merge are the record.
+  made ready, a rework done. Claims, PRs and merges need no comment: the
+  assignee, the PR and the merge are the record.
+- A comment is for people. Linewright decides nothing from what its own
+  comments say: that it wrote one is the comment's author, and what it
+  waits for is in the labels, assignees, pushes and pull requests.
 - Comments contain only what belongs to the repository: no run ids, hosts or
   links to the factory.
 - Startup checks: the token can push to the repository and, with
@@ -110,7 +111,7 @@ stateDiagram-v2
     [*] --> ready_for_agent: maintainer labels, or Linewright creates a ticket
     triage --> ready_for_agent: clear and within the spec
     triage --> ready_for_human: maintainer must decide
-    ready_for_human --> triage: a person comments after triage, or maintainer labels needs-triage
+    ready_for_human --> triage: maintainer labels needs-triage
     ready_for_human --> ready_for_agent: maintainer labels
     ready_for_agent --> work: unblocked, Linewright assigned
     work --> ready_for_human: cannot finish, or PR closed unmerged

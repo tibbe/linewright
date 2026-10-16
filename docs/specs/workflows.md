@@ -58,9 +58,8 @@ test. The pipeline then works those issues like any other.
   against the ceiling on simultaneous runs. The agent does what its
   instructions say. Its brief carries nothing of earlier runs: a workflow
   that looks back says how far in its instructions.
-- A run may hand the pipeline work: issues it returns in its result, which
-  the manager files, each opening with the marker line
-  `> *Linewright, workflow <name>*`:
+- A run may hand the pipeline work by filing issues, each saying which
+  workflow filed it:
   - `ready-for-agent`, for work an agent can do: what to build and its
     acceptance criteria, like a ticket.
   - `ready-for-human`, when a person must decide or help.
@@ -69,7 +68,6 @@ test. The pipeline then works those issues like any other.
   is already open. Issues beyond `max-issues` are dropped and logged.
   Workflow issues skip triage, like tickets: triage passes over issues
   Linewright authored.
-- A run that fails is logged, like any failure of Linewright's own.
 
 ## Out of scope
 

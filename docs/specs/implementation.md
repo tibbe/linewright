@@ -26,10 +26,6 @@ requests that have already been through review.
    been through review.
 6. As an operator, I want the spec left as it is by agents, so that it stays
    mine.
-7. As an operator, I want an agent that cannot finish to hand the ticket back
-   with the reason, so that nothing stalls silently.
-8. As an operator, I want several tickets worked at once up to a ceiling I set,
-   so that throughput is mine to choose.
 
 ## Decisions
 
@@ -45,26 +41,24 @@ requests that have already been through review.
   blocked by with GitHub's issue dependencies.
 - The PR is labeled `linewright:spec-processed` once its tickets exist, also
   when there are none, in which case no tracking issue is created.
-- A decomposition that cannot finish hands the spec change back: the PR is
-  labeled `ready-for-human` with a comment that says why, and removing the
-  label tries again.
+- A decomposition that cannot finish hands the spec change back (see
+  [Runs](runs.md)), and removing `ready-for-human` from it tries again.
 - A decomposition interrupted part way (the tracking issue exists, the PR is
   not labeled) is discarded, its tracking issue and tickets closed as not
   planned with a comment, and the spec change is cut again.
-- Linewright does not work on a ticket while an open pull request that was
-  not opened for it closes it, whoever opened that pull request: merging
-  closes the ticket, and closing it unmerged lets the ticket's work go on.
+- Linewright does not work on a ticket while an open pull request closes it.
 - A ticket is claimable when every issue blocking it is closed. Linewright
   closes the tracking issue when all its sub-issues are closed.
 - The decomposition is Linewright's responsibility: it runs from a merged
   spec change to the ready PRs with no human step, and a wrong set of tickets
   from a good spec is a defect in Linewright.
 
-### Runs
+### Working a ticket
 
-- Claiming is adding Linewright as an assignee. A **fresh run** (no
-  open pull request for the ticket) starts from a fresh clone of the default
-  branch on a new branch for the ticket, replacing any earlier one.
+- Claiming is adding Linewright as an assignee. A run on a ticket starts
+  from a fresh clone of the default branch on a new branch for the ticket,
+  replacing any earlier one. Once its pull request is open, the work is the
+  pull request's (see [Pull requests](pull_requests.md)).
 - The implementer reads the ticket and its comments (the triage brief, earlier
   handbacks). Its brief names the ticket's parent issue, and for a ticket cut
   from a spec change, the spec change: pointers, not their content. The
@@ -77,31 +71,18 @@ requests that have already been through review.
   cannot build from is a spec gap, below. Linewright does not check the
   branch for spec changes: they show in the PR's diff, and a maintainer who
   wants a guarantee requires review of spec files in GitHub.
-- A spec gap that blocks the ticket (the spec cannot decide it) sends the
-  ticket to `ready-for-human` with the question; the branch is kept. A gap
-  that does not block it becomes a separate `ready-for-human` issue
-  describing the needed spec change, and the ticket continues. A gap already
-  filed for the ticket and still open is not filed again.
-- A session's result the manager cannot parse goes back to the session with
-  the parse error, so it can answer again (default once).
-- Any unexpected end (crash, timeout, the agent giving up, a result that
-  still does not parse) sends the ticket to `ready-for-human` with the
-  reason and the tail of the log. Infrastructure failures are retried once
-  first. A session refused for the usage limit has not failed: it waits the
-  limit out (see [Operation](operation.md)).
-- A push GitHub refuses because Linewright's token lacks a permission, such
-  as changing a workflow file without the workflow permission, is not
-  retried: the ticket goes to `ready-for-human` with GitHub's reason, and the
-  comment says the work was not kept and that the maintainer can grant the
-  permission and apply `ready-for-agent` again, or make the change
-  themselves.
-- Removing `ready-for-agent`, unassigning Linewright or closing the
-  issue cancels its run; the branch is kept. A run on a PR that is merged or
-  closed while it works pushes and posts nothing.
-- After a restart, a claimed ticket with no open or merged PR and no live
-  run starts a fresh run.
-- Concurrency is a ceiling on simultaneous runs (default 4); each agent
-  session has a timeout (default 30 min) on the time it runs.
+- A spec gap that blocks the run (the spec cannot decide it) sends its item
+  to `ready-for-human` with the question. A gap that does not block it
+  becomes a separate `ready-for-human` issue describing the needed spec
+  change, and the run continues. A gap already filed for the item and still
+  open is not filed again.
+- Removing `ready-for-agent`, unassigning Linewright or closing the ticket
+  cancels its run.
+- A run on a ticket that ends without opening its pull request pushes the work
+  so far to the ticket's branch, and a hand-back names the branch, so the
+  maintainer can see what was tried. The ticket's next run replaces it. When a
+  ticket is closed with no pull request open for it, Linewright deletes its
+  branch.
 
 ## Out of scope
 

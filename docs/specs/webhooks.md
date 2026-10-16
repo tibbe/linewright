@@ -43,22 +43,13 @@ requests, the rework starts within seconds.
   on is what it read, never the delivery's own account of the change, so a
   delivery that arrives late, twice or out of order changes nothing a poll
   would not.
-- The webhook sends these events, and Linewright accepts any other and ignores
-  it:
-
-  | event | what it changes |
-  |---|---|
-  | `issues` | labels, assignees, closing and reopening |
-  | `issue_comment` | answers to triage, feedback on a pull request |
-  | `pull_request` | merged spec changes, Linewright's pull requests merged or closed, labels |
-  | `pull_request_review`, `pull_request_review_comment` | feedback and approvals |
-  | `check_run`, `check_suite`, `status` | CI on Linewright's pull requests |
-  | `push` | Linewright's pull requests falling behind the default branch |
-
+- The webhook sends the events about what a poll reads, and only those:
+  issues, pull requests, their comments and reviews, CI and pushes.
+  Linewright accepts any other event and ignores it.
 - Linewright reads a delivery in either content type GitHub offers,
   `application/json` or `application/x-www-form-urlencoded`, as its
   `Content-Type` header says. A signed delivery that names no event, or one of
-  an event in the table from which Linewright cannot tell what it names, is
+  an event Linewright acts on from which it cannot tell what it names, is
   refused and logged, and its response says why, so the webhook's Recent
   Deliveries on GitHub shows the reason.
 - A delivery seen before is not refused: a repeat costs a read of what it

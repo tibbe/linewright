@@ -20,9 +20,6 @@ from Linewright's base image with the project's toolchain added.
    and coding agents can drive and debug it.
 6. As an operator, I want the server's log to say what it is doing and why, so
    that I can debug it without GitHub.
-7. As an operator, I want Linewright to wait out the usage limit and carry on
-   where it stopped, so that hitting the limit costs no work and needs no
-   person.
 
 ## Decisions
 
@@ -71,6 +68,11 @@ from Linewright's base image with the project's toolchain added.
   | `require-label` | none: every issue and pull request |
   | `log-format` (`text`, `json`) | `text` on a terminal, `json` otherwise |
 
+- Every time and duration given to Linewright, as a setting or as a
+  command's argument, takes the same forms: a time in RFC 3339
+  (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC (`2026-10-14`),
+  and a duration as the settings' defaults write one, such as `90s`, `30m`,
+  `6h` or `7d`.
 - Linewright runs wherever `git`, `bash`, the agent runtime and the project's
   toolchain are on the path: directly on a machine, or in a container whose
   image the operator builds with those in it. Linewright publishes a base
@@ -88,28 +90,7 @@ from Linewright's base image with the project's toolchain added.
 - Unix-like systems: Linux is the deployment target, macOS a development
   host.
 
-### Usage limit
-
-- When the agent runtime refuses a session for the usage limit and says when
-  the limit resets, Linewright starts no session, for any stage, until then.
-  It claims no tickets and takes on no new issues, and workflows that come
-  due wait. Work that needs no session goes on.
-- The refused session waits in its clone and, once the limit resets, resumes
-  as the same session with the time it had left.
-- The wait lasts until the reset, however long that is.
-- A session refused again at the reset waits until the new reset time; one
-  whose reset time has passed waits a short time.
-- A refusal that does not say when the limit resets is an infrastructure
-  failure.
-- Only `serve` waits. `once` and `workflow run` log the limit and when it
-  resets, and end the refused run without handing it back.
-- A restart forgets the limit and drops the waiting runs, as it drops any run
-  in flight.
-- The log records each refusal, wait and resume.
-
 ## Out of scope
 
 - One container per run, instead of agents as processes beside the manager.
-- Resuming, after a restart, a session that was waiting out the usage limit.
-- Slowing down as the usage limit approaches, before a session is refused.
 - Base images for architectures other than `linux/amd64` and `linux/arm64`.

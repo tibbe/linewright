@@ -40,8 +40,6 @@ test that hangs.
 
 - The commands talk to the `serve` of the configured `repo` on the same host.
   `status` and `explain` need it running; `runs` and `logs` work either way.
-- Given a pull request Linewright opened for an issue, open or not, the
-  commands show the issue's runs as the pull request's.
 
 ### status
 
@@ -62,20 +60,14 @@ test that hangs.
 `runs` and `logs` for the detail.
 
 - `explain N` shows, for issue or pull request #N:
-  - its parent and its children in the pipeline, such as the issue a pull
-    request is for, or a ticket's current pull request;
+  - its parents and its children in the pipeline, such as the issues a pull
+    request closes, or the pull requests that close a ticket;
   - where it is in the pipeline, in the states of the issue lifecycle under
     [Repository](repository.md), and when `serve` last read it;
-  - each thing Linewright waits for before it acts on #N next, with the
-    particulars, such as "a free run: 4 of 4 in flight", "the usage limit,
-    until 14:30 UTC", "CI on #43", "#40, which blocks it" or "the maintainer:
-    labeled `ready-for-human`";
+  - each thing Linewright waits for before it acts on #N next, naming what
+    ends the wait, such as "the usage limit, until 14:30 UTC";
   - its run in flight, with its quiet time;
   - its latest three past runs, as `runs N` lists them.
-- The parent of Linewright's pull request is the issue Linewright opened it
-  for, whatever state the pull request is in and whatever issues it closes.
-  `explain` names no other issue it closes as family, and it is no other
-  issue's child.
 - For an item Linewright does not act on, `serve` reads #N from GitHub and
   `explain` says why Linewright leaves it, naming the fact or setting that keeps
   it out.
@@ -85,33 +77,14 @@ test that hangs.
 - `runs` lists every run, newest first, including runs that started no session:
   its run ID, item, stage, start, duration and outcome. `runs N` lists #N's.
   `--stage`, `--since` and `--limit` narrow the list. `--since` keeps the runs
-  that started at or after a time (`2026-10-14T12:00:00Z`), a date, taken as
-  midnight UTC (`2026-10-14`), or a duration ago, written as the duration
-  settings are (`2h`).
-- A run's outcome, with its name in JSON, is one of:
-  - **done** (`done`): it did its work, or found none left to do. A triage
-    run is done whatever it decides, including `ready-for-human` or
-    `needs-info`.
-  - **handed back** (`handed-back`): it could not finish its work and handed
-    the item to the maintainer: labeled `ready-for-human`, with a comment
-    saying why.
-  - **cancelled** (`cancelled`): its item stopped asking for the work, or
-    `serve` was stopped.
-  - **ended for the usage limit** (`usage-limit`): the agent runtime refused
-    its session for the usage limit under `once` or `workflow run`, which do
-    not wait it out.
-  - **failed** (`failed`): it could not finish its work, and nothing on GitHub
-    says so.
-  - **in flight** (`in-flight`): it has not ended, including while it waits
-    out the usage limit.
-  - **interrupted** (`interrupted`): the process running it stopped before it
-    ended, such as by a crash or a kill.
+  that started at or after a time, or a duration ago.
+- A run's outcome is one of those under [Runs](runs.md), by its name, and in
+  JSON by its name in JSON.
 - A run's duration is how long it ran, or for a run in flight how long it has
   run so far. An interrupted run has none: in JSON, `duration_seconds` is null.
 - A run ID is `<item>/<stage>-<n>`, the `n`th run of that stage on that item,
-  such as `42/rework-2`, or `<workflow>/<n>` for a workflow's runs. The stages
-  in IDs are `triage`, `tickets`, `implement`, `rework`, `fix-ci` and `update`.
-- Runs are kept across restarts, with their transcripts.
+  such as `43/rework-2`, or `<workflow>/<n>` for a workflow's runs, with the
+  stages under [Runs](runs.md).
 
 ### logs
 
