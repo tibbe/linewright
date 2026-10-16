@@ -199,15 +199,11 @@ async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: b
     print_answer(answer.map(|answer| printing.transcript(answer.value())))
 }
 
-/// How long `logs --follow` waits before asking `serve` again when its
-/// stream breaks off.
-const RESUME_AFTER: std::time::Duration = std::time::Duration::from_millis(100);
-
 /// `lw logs --follow` of the run in flight `query` names: each line of its
 /// transcript after `after`, or from the first, as it is written,
 /// until the run ends, from the `serve` of the configured repository,
-/// resumed after the last line read when its stream breaks off, or, with
-/// none running, from the records it keeps.
+/// resumed after the last line read when its stream breaks off or it hangs
+/// up, or, with none running, from the records it keeps.
 async fn follow_logs(
     config: &Config,
     query: FollowQuery,
@@ -219,29 +215,34 @@ async fn follow_logs(
         Err(e) => return print_answer(Err(failed(e))),
     };
     let resource = format!("/logs/follow?{}", api::query_string(&query));
+    let mut hang_ups = api::HangUps::default();
     loop {
         let mut ended = false;
         let mut unread = None;
+        let mut sent = false;
         let last_id = after.as_ref().map(Resume::to_string);
         let followed = api::get_events(
             &socket_dir(),
             &work_dir.repo,
             &resource,
             last_id.as_deref(),
-            |event| match event.event.as_str() {
-                api::LINE_EVENT => {
-                    let line = serde_json::from_str::<transcript::Line>(&event.data);
-                    let id = event.id.as_deref().map(str::parse::<EventId>);
-                    match (line, id) {
-                        (Ok(line), Some(Ok(id))) => {
-                            printing.line(&line);
-                            after = Some(id.into());
+            |event| {
+                sent = true;
+                match event.event.as_str() {
+                    api::LINE_EVENT => {
+                        let line = serde_json::from_str::<transcript::Line>(&event.data);
+                        let id = event.id.as_deref().map(str::parse::<EventId>);
+                        match (line, id) {
+                            (Ok(line), Some(Ok(id))) => {
+                                printing.line(&line);
+                                after = Some(id.into());
+                            }
+                            _ => unread = Some(event),
                         }
-                        _ => unread = Some(event),
                     }
+                    api::END_EVENT => ended = true,
+                    _ => {}
                 }
-                api::END_EVENT => ended = true,
-                _ => {}
             },
         )
         .await;
@@ -249,10 +250,21 @@ async fn follow_logs(
             let error = anyhow!("`serve`'s event does not read as a transcript line: {event:?}");
             return print_answer(Err(failed(error)));
         }
+        if sent {
+            hang_ups.sent();
+        }
         match followed {
             Ok(()) if ended => return ExitCode::SUCCESS,
             // Broken off: asked again, after the last line read.
-            Ok(()) => tokio::time::sleep(RESUME_AFTER).await,
+            Ok(()) => tokio::time::sleep(api::ASK_AGAIN_AFTER).await,
+            // Hung up on, as when `serve` stops as it is asked: asked again,
+            // after the last line read, as `api::get_answer` asks.
+            Err(RequestError::HungUp(e)) => {
+                if !hang_ups.ask_again() {
+                    return print_answer(Err(failed(e)));
+                }
+                tokio::time::sleep(api::ASK_AGAIN_AFTER).await;
+            }
             Err(RequestError::NotServing { .. }) => {
                 let after = after.map(|resume| resume.after);
                 return follow_records(&work_dir, &query, after, printing).await;
@@ -345,7 +357,7 @@ fn refused(e: RequestError) -> (u8, String) {
     match e {
         RequestError::NotServing { .. } => (NOT_SERVING, e.to_string()),
         RequestError::NotFound(_) => (NO_SUCH_ITEM, e.to_string()),
-        RequestError::Other(e) => failed(e),
+        RequestError::HungUp(e) | RequestError::Other(e) => failed(e),
     }
 }
 

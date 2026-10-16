@@ -13,6 +13,7 @@ use common::*;
 use linewright::api::{self, Api, ClaimError, Sources};
 use linewright::clock::Clock;
 use linewright::webhook::{Listener, Pending};
+use tokio_util::sync::CancellationToken;
 
 const REPO: &str = "owner/widgets";
 
@@ -1231,6 +1232,201 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
     assert_eq!(lines.len(), 19);
     assert_eq!(*end, event(None, "end", r#"{"run":"1/triage-1"}"#));
     answering.stop().await;
+}
+
+#[tokio::test]
+async fn logs_reads_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
+    let (agent, answering, runtime_dir) = triage_under_way().await;
+    let served = answering.lw(&["logs", "1"]).await.stdout;
+    let stopped = stops_as_asked(
+        runtime_dir.path(),
+        answering.runtime_dir.path(),
+        Stops::AtRequest(1),
+    );
+
+    let work_dir = answering._dir.path().join("work");
+    let output = lw(
+        runtime_dir.path(),
+        &["--work-dir", work_dir.to_str().unwrap(), "logs", "1"],
+    )
+    .await;
+
+    stopped.await.unwrap();
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert_eq!(output.stdout, served);
+    drop(agent);
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn a_serve_that_hangs_up_on_every_request_is_an_error() {
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let (_, listener) = stand_in_socket(runtime_dir.path());
+    let hanging_up = tokio::spawn(async move {
+        loop {
+            drop(listener.accept().await.unwrap());
+        }
+    });
+
+    let output = lw(runtime_dir.path(), &["status"]).await;
+
+    hanging_up.abort();
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output.stderr.starts_with("lw: asking `serve`: "),
+        "{}",
+        output.stderr
+    );
+}
+
+#[tokio::test]
+async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
+    let (agent, answering, runtime_dir) = triage_under_way().await;
+    // Asked for the transcript so far, then to follow it.
+    let stopped = stops_as_asked(
+        runtime_dir.path(),
+        answering.runtime_dir.path(),
+        Stops::AtRequest(2),
+    );
+
+    let follow = follow_through(&answering, runtime_dir.path());
+    stopped.await.unwrap();
+    agent.writes(&turn_1()[4..].concat());
+    drop(agent);
+
+    shows_the_rest_once_serve_stops(&answering, follow).await;
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_part_way_as_it_stops() {
+    let (agent, answering, runtime_dir) = triage_under_way().await;
+    let stopping = CancellationToken::new();
+    let stopped = stops_as_asked(
+        runtime_dir.path(),
+        answering.runtime_dir.path(),
+        Stops::OnceCancelled(stopping.clone()),
+    );
+
+    let follow = follow_through(&answering, runtime_dir.path());
+    // The transcript so far, so that what follows comes as it is followed.
+    follow.shows("→ exit 0, 19 lines\n").await;
+    let turn = turn_1();
+    agent.writes(&turn[4..6].concat());
+    follow.shows("→ running\n").await;
+    stopping.cancel();
+    stopped.await.unwrap();
+    agent.writes(&turn[6..].concat());
+    drop(agent);
+
+    shows_the_rest_once_serve_stops(&answering, follow).await;
+    answering.stop().await;
+}
+
+/// A triage run under way, its turn written through its first Bash call,
+/// with the agent of the turn, the `serve` answering for it, and a runtime
+/// directory for a stand-in `serve`.
+async fn triage_under_way() -> (HeldTurn, Answering, tempfile::TempDir) {
+    let world = with_issue_for_triage().await;
+    let agent = world.runtime.hold();
+    let answering = Answering::start(world, false).await;
+    agent.writes(&turn_1()[..4].concat());
+    eventually_async(|| async {
+        answering
+            .lw(&["logs", "1"])
+            .await
+            .stdout
+            .contains("Bash(ls;")
+    })
+    .await;
+    (agent, answering, tempfile::tempdir().unwrap())
+}
+
+/// `logs 1 --follow` asking the `serve` in `runtime_dir`, and reading the
+/// records of the one `answering` serves once none is running.
+fn follow_through(answering: &Answering, runtime_dir: &Path) -> Watching {
+    let work_dir = answering._dir.path().join("work");
+    Watching::start(
+        runtime_dir,
+        &[
+            "--work-dir",
+            work_dir.to_str().unwrap(),
+            "logs",
+            "1",
+            "--follow",
+        ],
+    )
+}
+
+/// Checks that `follow` showed the transcript to the end of the run, which
+/// `answering` serves, the Bash call that returned once `serve` stopped
+/// included.
+async fn shows_the_rest_once_serve_stops(answering: &Answering, follow: Watching) {
+    let (code, shown, stderr) = follow.exits().await;
+
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(shown.contains(") → exit 2\n"), "{shown}");
+    let logs = answering.lw(&["logs", "1"]).await.stdout;
+    assert_eq!(shown.lines().last(), logs.lines().last(), "{shown}");
+}
+
+/// The socket of a stand-in for the `serve` in `runtime_dir`, and its
+/// listener.
+fn stand_in_socket(runtime_dir: &Path) -> (std::path::PathBuf, tokio::net::UnixListener) {
+    let path = api::socket_path(&socket_dir(runtime_dir), REPO);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let listener = tokio::net::UnixListener::bind(&path).unwrap();
+    (path, listener)
+}
+
+/// When a stand-in `serve` stops.
+enum Stops {
+    /// As it is made its nth request, from 1.
+    AtRequest(usize),
+    OnceCancelled(CancellationToken),
+}
+
+/// Stands in for the `serve` in `serving_dir`, in `runtime_dir`, passing
+/// each request on to it until it stops as `stops` says, as `serve` stops
+/// as it is asked. It then removes its socket and hangs up on the requests
+/// it was passing on, answered in part or not at all. Ends once it has
+/// stopped.
+fn stops_as_asked(
+    runtime_dir: &Path,
+    serving_dir: &Path,
+    stops: Stops,
+) -> tokio::task::JoinHandle<()> {
+    let (path, listener) = stand_in_socket(runtime_dir);
+    let serving = api::socket_path(&socket_dir(serving_dir), REPO);
+    tokio::spawn(async move {
+        let mut passing = tokio::task::JoinSet::new();
+        let mut asked = 0;
+        let cancelled = async {
+            match &stops {
+                Stops::OnceCancelled(stopping) => stopping.cancelled().await,
+                Stops::AtRequest(_) => std::future::pending().await,
+            }
+        };
+        tokio::pin!(cancelled);
+        let unanswered = loop {
+            let (mut request, _) = tokio::select! {
+                accepted = listener.accept() => accepted.unwrap(),
+                () = &mut cancelled => break None,
+            };
+            asked += 1;
+            if matches!(stops, Stops::AtRequest(nth) if nth == asked) {
+                break Some(request);
+            }
+            let mut answering = tokio::net::UnixStream::connect(&serving).await.unwrap();
+            passing.spawn(async move {
+                let _ = tokio::io::copy_bidirectional(&mut request, &mut answering).await;
+            });
+        };
+        std::fs::remove_file(&path).unwrap();
+        drop(listener);
+        passing.shutdown().await;
+        drop(unanswered);
+    })
 }
 
 #[tokio::test]

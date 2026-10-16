@@ -604,8 +604,23 @@ pub enum RequestError {
     /// (`docs/specs/monitoring.md`, "Output").
     #[error("{0}")]
     NotFound(String),
+    /// `serve` closed the connection before it had answered, as when it
+    /// stops as it is asked.
+    #[error(transparent)]
+    HungUp(anyhow::Error),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+impl RequestError {
+    /// A request that failed with `e`, `serve` having hung up if `hung_up`.
+    fn failed(e: anyhow::Error, hung_up: bool) -> RequestError {
+        if hung_up {
+            RequestError::HungUp(e)
+        } else {
+            RequestError::Other(e)
+        }
+    }
 }
 
 /// `query` as the query string of a request for it.
@@ -613,16 +628,56 @@ pub fn query_string(query: &impl serde::Serialize) -> String {
     serde_urlencoded::to_string(query).expect("a query serializes")
 }
 
+/// How long to wait before asking `serve` again, when it hung up or its
+/// stream broke off.
+pub const ASK_AGAIN_AFTER: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// How many times in a row `serve` is asked when it hangs up, before the
+/// request fails: one that stops as it is asked hangs up only until its
+/// socket is gone.
+const HANG_UP_TRIES: u32 = 50;
+
+/// The times in a row `serve` hung up, with nothing sent between them.
+#[derive(Default)]
+pub struct HangUps(u32);
+
+impl HangUps {
+    /// Counts one more hang-up, and gives whether to ask again.
+    pub fn ask_again(&mut self) -> bool {
+        self.0 += 1;
+        self.0 < HANG_UP_TRIES
+    }
+
+    /// Starts counting again, `serve` having sent something.
+    pub fn sent(&mut self) {
+        self.0 = 0;
+    }
+}
+
 /// Asks the `serve` of `repo` whose socket is in `dir` for `resource`, such
-/// as `/status`, and returns its answer's body.
+/// as `/status`, and returns its answer's body. Asks again when it hangs
+/// up, as [`HangUps`] says.
 pub async fn get_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
+    let mut hang_ups = HangUps::default();
+    loop {
+        match ask(dir, repo, resource).await {
+            Err(RequestError::HungUp(_)) if hang_ups.ask_again() => {
+                tokio::time::sleep(ASK_AGAIN_AFTER).await;
+            }
+            answer => return answer,
+        }
+    }
+}
+
+/// Asks the `serve` of `repo` whose socket is in `dir` for `resource` once.
+async fn ask(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
     let response = send(connect(dir, repo).await?, resource, None).await?;
     let status = response.status();
     let body = response
         .into_body()
         .collect()
         .await
-        .context("reading `serve`'s answer")?
+        .map_err(|e| request_error(e, "reading `serve`'s answer"))?
         .to_bytes();
     check(status, &body)?;
     Ok(body)
@@ -667,7 +722,7 @@ pub async fn get_events(
     }
     let mut unread = Vec::new();
     while let Some(frame) = body.frame().await {
-        let frame = frame.context("reading `serve`'s events")?;
+        let frame = frame.map_err(|e| request_error(e, "reading `serve`'s events"))?;
         let Some(data) = frame.data_ref() else {
             continue;
         };
@@ -732,7 +787,11 @@ async fn connect(dir: &Path, repo: &str) -> Result<UnixStream, RequestError> {
                 path: path.display().to_string(),
             })
         }
-        Err(e) => Err(e).with_context(|| format!("connecting to {}", path.display()))?,
+        Err(e) => {
+            let hung_up = hung_up(&e);
+            let e = anyhow::Error::new(e).context(format!("connecting to {}", path.display()));
+            Err(RequestError::failed(e, hung_up))
+        }
     }
 }
 
@@ -754,10 +813,31 @@ async fn send(
     let request = request
         .body(Empty::<Bytes>::new())
         .context("building the request")?;
-    Ok(sender
+    sender
         .send_request(request)
         .await
-        .context("asking `serve`")?)
+        .map_err(|e| request_error(e, "asking `serve`"))
+}
+
+/// The error of a request that failed with `e` while `doing` something,
+/// telling `serve` hanging up apart.
+fn request_error(e: hyper::Error, doing: &'static str) -> RequestError {
+    let hung_up = e.is_canceled()
+        || e.is_incomplete_message()
+        || std::error::Error::source(&e)
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+            .is_some_and(hung_up);
+    RequestError::failed(anyhow::Error::new(e).context(doing), hung_up)
+}
+
+/// Whether `e` is `serve` closing the connection on its side.
+fn hung_up(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::UnexpectedEof
+    )
 }
 
 /// Fails unless `status` and `body` are an answer rather than an error.
