@@ -26,6 +26,8 @@ requests that have already been through review.
    been through review.
 6. As an operator, I want the spec left as it is by agents, so that it stays
    mine.
+7. As an operator, I want the implementer to read only the spec its ticket
+   touches, so that it stays in its smart zone and its run costs less.
 
 ## Decisions
 
@@ -67,6 +69,10 @@ requests that have already been through review.
   runs the repository's checks, has the work reviewed in fresh contexts for both
   standards and spec, applies the findings, reviews again when the fixes were
   substantial, and commits.
+- Of the spec, the implementer reads the glossary and the parts its work
+  touches, not the whole spec. For a ticket cut from a spec change, its brief
+  also holds the spec change's spec diff, and the files the diff changes are
+  among the parts the work touches.
 - The implementer leaves spec files as they are, by its brief; a spec it
   cannot build from is a spec gap, below. Linewright does not check the
   branch for spec changes: they show in the PR's diff, and a maintainer who
