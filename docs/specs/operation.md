@@ -14,8 +14,8 @@ from Linewright's base image with the project's toolchain added.
    run it from cron.
 3. As an operator, I want to run it directly on a machine or inside a container,
    so that I choose the isolation.
-4. As an operator, I want to run it on Linux in production and on macOS while
-   developing.
+4. As an operator, I want to run it on Linux or macOS, so that I can run it on
+   the machine I have.
 5. As an operator, I want what Linewright does available as commands, so that I
    and coding agents can drive and debug it.
 6. As an operator, I want the server's log to say what it is doing and why, so
@@ -85,8 +85,7 @@ from Linewright's base image with the project's toolchain added.
   commit it was built from.
 - Agents run without permission prompts; the container is the isolation
   when one is used.
-- Unix-like systems: Linux is the deployment target, macOS a development
-  host.
+- Unix-like systems: Linux and macOS.
 
 ## Out of scope
 
