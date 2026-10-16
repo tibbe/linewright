@@ -20,9 +20,9 @@ use super::{
 use crate::clock::Clock;
 use crate::domain::{
     Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent,
-    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull,
-    PullState, Push, Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp,
-    closing_references,
+    LabelChange, LabelEvent, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull,
+    Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState,
+    Snapshot, Thread, Timestamp, closing_references,
 };
 use crate::git;
 
@@ -93,6 +93,7 @@ struct PullRecord {
     head_ref: String,
     state: PullState,
     labels: Vec<String>,
+    label_events: Vec<LabelEvent>,
     pushes: Vec<Push>,
     comments: Vec<Comment>,
     reviews: Vec<Review>,
@@ -279,7 +280,8 @@ impl LocalStore {
     }
 
     pub fn unlabel_as(&self, number: Number, label: &str) -> Result<()> {
-        self.state().remove_label(number, label)
+        let now = self.now();
+        self.state().remove_label(number, label, now)
     }
 
     pub fn assign_as(&self, issue: Number, login: &str) -> Result<()> {
@@ -828,6 +830,8 @@ impl LocalStore {
             comments: record.comments,
             reviews: record.reviews,
             threads: record.threads,
+            labels: record.labels,
+            label_events: record.label_events,
         })
     }
 
@@ -961,19 +965,32 @@ impl State {
                 at: now,
             });
         } else {
-            let labels = &mut self.pull_mut(number)?.labels;
-            if !labels.iter().any(|l| l == label) {
-                labels.push(label.into());
+            let pull = self.pull_mut(number)?;
+            if !pull.has_label(label) {
+                pull.labels.push(label.into());
+                pull.label_events.push(LabelEvent {
+                    label: label.into(),
+                    change: LabelChange::Applied,
+                    at: now,
+                });
             }
         }
         Ok(())
     }
 
-    fn remove_label(&mut self, number: Number, label: &str) -> Result<()> {
+    fn remove_label(&mut self, number: Number, label: &str, now: Timestamp) -> Result<()> {
         if let Some(issue) = self.issues.get_mut(&number) {
             issue.issue.labels.retain(|l| l != label);
         } else {
-            self.pull_mut(number)?.labels.retain(|l| l != label);
+            let pull = self.pull_mut(number)?;
+            if pull.has_label(label) {
+                pull.labels.retain(|l| l != label);
+                pull.label_events.push(LabelEvent {
+                    label: label.into(),
+                    change: LabelChange::Removed,
+                    at: now,
+                });
+            }
         }
         Ok(())
     }
@@ -1001,6 +1018,10 @@ impl State {
 impl PullRecord {
     fn is_open(&self) -> bool {
         matches!(self.state, PullState::Open { .. })
+    }
+
+    fn has_label(&self, label: &str) -> bool {
+        self.labels.iter().any(|l| l == label)
     }
 
     /// Whether the pull request closes the issue `number` when merged.
@@ -1044,6 +1065,7 @@ impl PullRecord {
             head_ref: head_ref.into(),
             state: PullState::Open { draft: true },
             labels: vec![],
+            label_events: vec![],
             pushes: vec![],
             comments: vec![],
             reviews: vec![],
@@ -1335,7 +1357,8 @@ impl Store for LocalStore {
     }
 
     async fn remove_label(&self, number: Number, label: &str) -> Result<()> {
-        self.state().remove_label(number, label)
+        let now = self.now();
+        self.state().remove_label(number, label, now)
     }
 
     async fn assign(&self, issue: Number) -> Result<()> {

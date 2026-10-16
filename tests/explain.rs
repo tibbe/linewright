@@ -38,6 +38,8 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         comments: vec![],
         reviews: vec![],
         threads: vec![],
+        labels: vec![],
+        label_events: vec![],
     }
 }
 

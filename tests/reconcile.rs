@@ -560,6 +560,8 @@ fn pull(number: u64, closes: u64) -> Pull {
         comments: vec![],
         reviews: vec![],
         threads: vec![],
+        labels: vec![],
+        label_events: vec![],
     }
 }
 

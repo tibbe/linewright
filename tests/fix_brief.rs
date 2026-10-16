@@ -44,6 +44,8 @@ fn pull() -> Pull {
         comments: vec![],
         reviews: vec![],
         threads: vec![],
+        labels: vec![],
+        label_events: vec![],
     }
 }
 

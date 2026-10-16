@@ -326,6 +326,21 @@ pub struct Push {
     pub at: Timestamp,
 }
 
+/// A label applied to or removed from a pull request, and when.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelEvent {
+    pub label: String,
+    pub change: LabelChange,
+    pub at: Timestamp,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LabelChange {
+    Applied,
+    Removed,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pull {
     pub number: Number,
@@ -346,6 +361,9 @@ pub struct Pull {
     pub comments: Vec<Comment>,
     pub reviews: Vec<Review>,
     pub threads: Vec<Thread>,
+    pub labels: Vec<String>,
+    /// When labels were applied and removed, oldest first.
+    pub label_events: Vec<LabelEvent>,
 }
 
 impl Pull {

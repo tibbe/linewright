@@ -22,8 +22,9 @@ use super::{
 use super::{job_log, rate_limit};
 use crate::domain::{
     Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent,
-    JobLog, Linked, Login, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState,
-    Push, Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, Timestamp, label,
+    JobLog, LabelChange, LabelEvent, Linked, Login, MergeMethod, Mergeability, MergedPull, Number,
+    Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState, Snapshot,
+    Thread, Timestamp, label,
 };
 use crate::git;
 
@@ -873,10 +874,28 @@ fn tracking_issues_among(
         .collect()
 }
 
+/// The fields of a `LabeledEvent` or `UnlabeledEvent` that [`GqlLabeling`]
+/// reads.
+macro_rules! labeling_fields {
+    () => {
+        "createdAt label { name }"
+    };
+}
+
+/// A label applied to or removed from an issue or pull request, read with
+/// [`labeling_fields!`].
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlLabeling {
+    created_at: Timestamp,
+    label: Name,
+}
+
 // `orderByState` lists the open pull requests that close an issue before the
 // closed and merged ones, so that these do not crowd them out of the first
 // page.
-const ISSUE_FIELDS: &str = "fragment IssueFields on Issue {
+const ISSUE_FIELDS: &str = concat!(
+    "fragment IssueFields on Issue {
   number title body createdAt state
   author { __typename login }
   labels(first: 50) { nodes { name } }
@@ -889,7 +908,9 @@ const ISSUE_FIELDS: &str = "fragment IssueFields on Issue {
   timelineItems(last: 100, itemTypes: [LABELED_EVENT, UNASSIGNED_EVENT]) {
     nodes {
       __typename
-      ... on LabeledEvent { createdAt label { name } }
+      ... on LabeledEvent { ",
+    labeling_fields!(),
+    " }
       ... on UnassignedEvent {
         createdAt
         actor { __typename login }
@@ -897,7 +918,8 @@ const ISSUE_FIELDS: &str = "fragment IssueFields on Issue {
       }
     }
   }
-}";
+}"
+);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -928,8 +950,7 @@ struct GqlClosingPull {
 #[derive(Deserialize)]
 #[serde(tag = "__typename")]
 enum GqlEvent {
-    #[serde(rename_all = "camelCase")]
-    LabeledEvent { created_at: Timestamp, label: Name },
+    LabeledEvent(GqlLabeling),
     #[serde(rename_all = "camelCase")]
     UnassignedEvent {
         created_at: Timestamp,
@@ -962,9 +983,9 @@ impl GqlIssue {
             .nodes
             .into_iter()
             .filter_map(|e| match e {
-                GqlEvent::LabeledEvent { created_at, label } => Some(IssueEvent::Labeled {
-                    label: label.name,
-                    at: created_at,
+                GqlEvent::LabeledEvent(labeling) => Some(IssueEvent::Labeled {
+                    label: labeling.label.name,
+                    at: labeling.created_at,
                 }),
                 GqlEvent::UnassignedEvent {
                     created_at,
@@ -1030,6 +1051,18 @@ const PULL_FIELDS: &str = concat!(
   ",
     closes_field!(),
     "
+  labels(first: 50) { nodes { name } }
+  timelineItems(last: 100, itemTypes: [LABELED_EVENT, UNLABELED_EVENT]) {
+    nodes {
+      __typename
+      ... on LabeledEvent { ",
+    labeling_fields!(),
+    " }
+      ... on UnlabeledEvent { ",
+    labeling_fields!(),
+    " }
+    }
+  }
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
   reviews(last: 100) { nodes { author { __typename login } state body submittedAt } }
   reviewRequests(first: 20) {
@@ -1075,6 +1108,29 @@ struct GqlPull {
     review_requests: Nodes<GqlReviewRequest>,
     review_threads: Nodes<GqlThread>,
     status_check_rollup: Option<Rollup>,
+    labels: Nodes<Name>,
+    timeline_items: Nodes<GqlLabelEvent>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum GqlLabelEvent {
+    LabeledEvent(GqlLabeling),
+    UnlabeledEvent(GqlLabeling),
+}
+
+impl From<GqlLabelEvent> for LabelEvent {
+    fn from(e: GqlLabelEvent) -> LabelEvent {
+        let (labeling, change) = match e {
+            GqlLabelEvent::LabeledEvent(labeling) => (labeling, LabelChange::Applied),
+            GqlLabelEvent::UnlabeledEvent(labeling) => (labeling, LabelChange::Removed),
+        };
+        LabelEvent {
+            label: labeling.label.name,
+            change,
+            at: labeling.created_at,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1328,6 +1384,13 @@ impl GqlPull {
                     resolved: t.is_resolved,
                     comments: t.comments.nodes.into_iter().map(Comment::from).collect(),
                 })
+                .collect(),
+            labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
+            label_events: self
+                .timeline_items
+                .nodes
+                .into_iter()
+                .map(LabelEvent::from)
                 .collect(),
         }
     }
@@ -2178,8 +2241,53 @@ mod tests {
             "reviewRequests": {"nodes": requests},
             "reviewThreads": {"nodes": []},
             "statusCheckRollup": null,
+            "labels": {"nodes": []},
+            "timelineItems": {"nodes": []},
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_pull_request_lists_its_labels_and_when_each_was_applied_and_removed() {
+        let mut pr = review_required(json!([]));
+        pr.labels =
+            serde_json::from_value(json!({"nodes": [{"name": "ready-for-agent"}]})).unwrap();
+        pr.timeline_items = serde_json::from_value(json!({"nodes": [
+            {"__typename": "LabeledEvent", "createdAt": "2026-10-09T12:05:00Z", "label": {"name": "ready-for-human"}},
+            {"__typename": "UnlabeledEvent", "createdAt": "2026-10-09T12:10:00Z", "label": {"name": "ready-for-human"}},
+            {"__typename": "LabeledEvent", "createdAt": "2026-10-09T12:15:00Z", "label": {"name": "ready-for-agent"}},
+        ]}))
+        .unwrap();
+
+        let pull = pr.into_pull(vec![], &BranchRules::default());
+
+        assert_eq!(pull.labels, ["ready-for-agent"]);
+        let at = |t: &str| t.parse::<Timestamp>().unwrap();
+        let event = |label: &str, change, t| LabelEvent {
+            label: label.into(),
+            change,
+            at: at(t),
+        };
+        assert_eq!(
+            pull.label_events,
+            [
+                event(
+                    "ready-for-human",
+                    LabelChange::Applied,
+                    "2026-10-09T12:05:00Z"
+                ),
+                event(
+                    "ready-for-human",
+                    LabelChange::Removed,
+                    "2026-10-09T12:10:00Z"
+                ),
+                event(
+                    "ready-for-agent",
+                    LabelChange::Applied,
+                    "2026-10-09T12:15:00Z"
+                ),
+            ]
+        );
     }
 
     fn code_owner(reviewer: Value) -> Value {
