@@ -116,18 +116,23 @@ impl LocalStore {
     pub async fn create(root: &Path, seed: Seed, clock: Arc<dyn Clock>) -> Result<LocalStore> {
         tokio::fs::create_dir_all(root).await?;
         let root = root.canonicalize()?;
+        // Refs in a reftable rather than a file each under `refs/heads/`: on
+        // a case-insensitive file system, as macOS's are by default, the
+        // files would make `1-Gadgets` and `1-gadgets` the same branch.
         git::git(
             &root,
             &[
                 "init",
                 "--quiet",
                 "--bare",
+                "--ref-format=reftable",
                 "-b",
                 &seed.default_branch,
                 "repo.git",
             ],
         )
-        .await?;
+        .await
+        .context("the local store needs git 2.45 or later")?;
         Ok(LocalStore {
             root,
             clock,

@@ -5,10 +5,11 @@ coding agents turn it into working software.
 
 ## Running it
 
-You need `git`, `bash` and [Claude Code](https://code.claude.com) (`claude`)
-on the path, your project's toolchain so agents can build and test it, and a
-GitHub user account for Linewright with write access to the repository. Agents'
-commands run in `bash`, whatever shell you use.
+You need `git` (2.45 or later), `bash` and
+[Claude Code](https://code.claude.com) (`claude`) on the path, your project's
+toolchain so agents can build and test it, and a GitHub user account for
+Linewright with write access to the repository. Agents' commands run in `bash`,
+whatever shell you use.
 
 ```sh
 export GH_TOKEN=...            # that account's token (or GITHUB_TOKEN)

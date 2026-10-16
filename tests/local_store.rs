@@ -81,3 +81,28 @@ async fn removing_a_label_a_pull_request_lacks_records_nothing() {
 
     assert_eq!(snapshot_pull(&world, pr).await.label_events, []);
 }
+
+#[tokio::test]
+async fn branches_whose_names_differ_only_in_case_are_kept_apart() {
+    let world = World::new().await;
+    let branches = ["1-Gadgets", "1-gadgets"];
+
+    for branch in branches {
+        let contents = format!("{branch}\n");
+        world
+            .store
+            .commit(
+                LINEWRIGHT,
+                branch,
+                &[("src/gadgets.txt", &contents)],
+                "Gadgets",
+            )
+            .await
+            .unwrap();
+    }
+
+    for branch in branches {
+        let contents = world.store.file(branch, "src/gadgets.txt").await.unwrap();
+        assert_eq!(contents, format!("{branch}\n"));
+    }
+}
