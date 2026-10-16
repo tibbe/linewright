@@ -10,10 +10,10 @@ use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    BranchIssue, CheckState, Comment, Filed, Issue, IssueEvent, Item, LabelChange, Linked, Login,
-    MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Rebaseability,
-    Requirement, Review, ReviewState, Snapshot, Thread, TicketBranchName, Timestamp, UpdateMethod,
-    UpdateRule, label,
+    BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent, Item, LabelChange,
+    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
+    Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, TicketBranchName, Timestamp,
+    UpdateMethod, UpdateRule, label,
 };
 use crate::marker::{Stage, marked, stage_of};
 use crate::runtime::UsageLimit;
@@ -87,12 +87,12 @@ pub enum Work {
     Tickets {
         pr: Number,
     },
-    /// A fresh run: no open pull request for the ticket.
+    /// A fresh run: no open pull request closes the ticket.
     Implement {
         issue: Number,
     },
     /// Work on Linewright's open pull request `pr`, briefed with `issue`, the
-    /// ticket it was opened for.
+    /// ticket among those it closes that [`ticket_of`] names.
     Rework {
         issue: Number,
         pr: Number,
@@ -151,15 +151,6 @@ impl Work {
             | Work::Rework { pr, .. }
             | Work::FixCi { pr, .. }
             | Work::Update { pr, .. } => Item::Pull(*pr),
-        }
-    }
-
-    /// The pull request for its issue it is given to work on, if any. A
-    /// spec change's pull request is its subject instead.
-    pub fn pr(&self) -> Option<Number> {
-        match self {
-            Work::Rework { pr, .. } | Work::FixCi { pr, .. } | Work::Update { pr, .. } => Some(*pr),
-            Work::Triage { .. } | Work::Tickets { .. } | Work::Implement { .. } => None,
         }
     }
 
@@ -294,120 +285,59 @@ impl Memory {
     }
 }
 
-/// Which issue each of Linewright's pull requests was opened for, as the
-/// runs that opened them record it under the work directory: the one fact of
-/// machine state Linewright keeps rather than reads from the store
-/// (`docs/specs/repository.md`, "Labels and state").
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct OpenedFor(BTreeMap<Number, Number>);
-
-impl OpenedFor {
-    /// The record of each pull request `pr` opened for the issue `issue`, as
-    /// `(pr, issue)`.
-    pub fn new(opened: impl IntoIterator<Item = (Number, Number)>) -> OpenedFor {
-        OpenedFor(opened.into_iter().collect())
-    }
-
-    /// The issue the pull request #`pr` was opened for: `None` when no record
-    /// links to it, as for one opened before runs kept their pull request.
-    pub fn issue(&self, pr: Number) -> Option<Number> {
-        self.0.get(&pr).copied()
-    }
-
-    /// Whether Linewright's pull request `pull` is for the issue #`issue`:
-    /// the one it was opened for or, when no record links to it, any it
-    /// closes.
-    pub fn is_for(&self, pull: &Pull, issue: Number) -> bool {
-        self.issue(pull.number).map_or_else(
-            || pull.closes.contains(&issue),
-            |opened_for| opened_for == issue,
-        )
-    }
+/// Linewright's newest open pull request that closes the issue #`issue`.
+pub fn open_pull_for<'a>(
+    snapshot: &'a Snapshot,
+    issue: Number,
+    linewright: &'a Login,
+) -> Option<&'a Pull> {
+    snapshot
+        .pulls
+        .iter()
+        .filter(|p| &p.author == linewright && p.is_open() && p.closes.contains(&issue))
+        .max_by_key(|p| p.number)
 }
 
-/// What the decisions are taken on: the store's snapshot, with which issue
-/// each of Linewright's pull requests in it was opened for.
-#[derive(Clone, Copy)]
-pub struct Facts<'a> {
-    pub snapshot: &'a Snapshot,
-    pub opened_for: &'a OpenedFor,
+/// The ticket Linewright's pull request `pull` is worked for, whose brief
+/// its runs are given: the first issue it closes that the snapshot holds,
+/// else the first it closes. `None` when it closes none.
+pub fn ticket_of(snapshot: &Snapshot, pull: &Pull) -> Option<Number> {
+    let held = pull.closes.iter().find(|&&n| snapshot.issue(n).is_some());
+    held.or(pull.closes.first()).copied()
 }
 
-impl<'a> Facts<'a> {
-    /// Linewright's pull requests for the issue #`issue`, open or ended.
-    fn pulls_for(
-        self,
-        issue: Number,
-        linewright: &'a Login,
-    ) -> impl Iterator<Item = &'a Pull> + Clone {
-        let opened_for = self.opened_for;
-        self.snapshot
-            .pulls
-            .iter()
-            .filter(move |p| &p.author == linewright && opened_for.is_for(p, issue))
-    }
+/// The open pull requests Linewright works on, each with its ticket.
+pub fn worked_pulls<'a>(
+    snapshot: &'a Snapshot,
+    linewright: &'a Login,
+) -> impl Iterator<Item = (&'a Pull, Number)> + 'a {
+    snapshot
+        .pulls
+        .iter()
+        .filter(|p| p.is_open())
+        .filter_map(move |p| Some((p, worked_ticket(snapshot, p, linewright).ok()?)))
+}
 
-    /// The pull request Linewright works on for the issue #`issue`, which
-    /// is in review while it is open: its newest open one.
-    pub fn open_pull_for(self, issue: Number, linewright: &'a Login) -> Option<&'a Pull> {
-        self.pulls_for(issue, linewright)
-            .filter(|p| p.is_open())
-            .max_by_key(|p| p.number)
+/// The ticket the open pull request `pull` is worked for, when Linewright
+/// works on it: it is Linewright's, closes an issue, and is the newest of
+/// Linewright's open ones that close its ticket. `Err` with why Linewright
+/// does not.
+pub fn worked_ticket(
+    snapshot: &Snapshot,
+    pull: &Pull,
+    linewright: &Login,
+) -> Result<Number, NotWorked> {
+    if &pull.author != linewright {
+        return Err(NotWorked::NotLinewrights);
     }
-
-    /// The ticket Linewright's pull request `pull` is worked for, whose brief
-    /// its runs are given: the issue it was opened for or, when no record
-    /// links to it, the first it closes that the snapshot holds, else the
-    /// first it closes. `None` when it is for no issue.
-    pub fn ticket_of(self, pull: &Pull) -> Option<Number> {
-        self.opened_for.issue(pull.number).or_else(|| {
-            let held = pull
-                .closes
-                .iter()
-                .find(|&&n| self.snapshot.issue(n).is_some());
-            held.or(pull.closes.first()).copied()
-        })
-    }
-
-    /// The open pull requests Linewright works on, each with its ticket.
-    pub fn worked_pulls(
-        self,
-        linewright: &'a Login,
-    ) -> impl Iterator<Item = (&'a Pull, Number)> + 'a {
-        self.snapshot
-            .pulls
-            .iter()
-            .filter(|p| p.is_open())
-            .filter_map(move |p| Some((p, self.worked_ticket(p, linewright).ok()?)))
-    }
-
-    /// The ticket the open pull request `pull` is worked for, when
-    /// Linewright works on it: it is Linewright's, for an issue, and the
-    /// newest open one for it. `Err` with why Linewright does not.
-    pub fn worked_ticket(self, pull: &Pull, linewright: &'a Login) -> Result<Number, NotWorked> {
-        if &pull.author != linewright {
-            return Err(NotWorked::NotLinewrights);
-        }
-        let ticket = self.ticket_of(pull).ok_or(NotWorked::ForNoIssue)?;
-        match self.superseding(pull, ticket, linewright) {
-            Some(newer) => Err(NotWorked::Superseded {
-                ticket,
-                by: newer.number,
-            }),
-            None => Ok(ticket),
-        }
-    }
-
-    /// Linewright's newer open pull request for #`ticket`, which it works on
-    /// instead of `pull`, if there is one.
-    pub fn superseding(
-        self,
-        pull: &Pull,
-        ticket: Number,
-        linewright: &'a Login,
-    ) -> Option<&'a Pull> {
-        self.open_pull_for(ticket, linewright)
-            .filter(|newest| newest.number != pull.number)
+    let ticket = ticket_of(snapshot, pull).ok_or(NotWorked::ForNoIssue)?;
+    match open_pull_for(snapshot, ticket, linewright).filter(|newest| newest.number != pull.number)
+    {
+        Some(newer) => Err(NotWorked::Superseded {
+            ticket,
+            by: newer.number,
+        }),
+        None => Ok(ticket),
     }
 }
 
@@ -539,11 +469,11 @@ pub enum Wait {
     UsageLimit { resets_at: Timestamp },
     /// An issue that blocks it, still open.
     Blocker { issue: Number },
-    /// An open pull request not opened for it that closes it, whoever opened
-    /// it.
+    /// Someone else's open pull request that closes it, until it is merged,
+    /// closed or no longer closes it.
     ClosingPullRequest { pull_request: Number },
-    /// Its open pull request, which Linewright works on, until it is merged
-    /// or closed.
+    /// Linewright's open pull request that closes it, until it is merged,
+    /// closed or no longer closes it.
     PullRequest { pull_request: Number },
     /// CI on its pull request: checks still running, or none reported yet.
     Ci { pull_request: Number },
@@ -591,27 +521,26 @@ pub struct Decisions {
 }
 
 pub fn reconcile(
-    facts: Facts,
+    snapshot: &Snapshot,
     live: &[LiveRun],
     memory: &Memory,
     workflows: &Workflows,
     now: Timestamp,
     policy: &Policy,
 ) -> Vec<Action> {
-    decisions(facts, live, memory, workflows, now, policy).actions
+    decisions(snapshot, live, memory, workflows, now, policy).actions
 }
 
 /// The decisions [`reconcile`] takes, with what each item it does not act on
 /// waits for.
 pub fn decisions(
-    facts: Facts,
+    snapshot: &Snapshot,
     live: &[LiveRun],
     memory: &Memory,
     workflows: &Workflows,
     now: Timestamp,
     policy: &Policy,
 ) -> Decisions {
-    let snapshot = facts.snapshot;
     let mut plan = Plan {
         now,
         actions: vec![],
@@ -666,7 +595,7 @@ pub fn decisions(
     // Linewright's pull request is worked because it is open, whatever its
     // ticket's label and assignees (`docs/specs/pull_requests.md`, "The pull
     // request").
-    for (pr, ticket) in facts.worked_pulls(&policy.linewright) {
+    for (pr, ticket) in worked_pulls(snapshot, &policy.linewright) {
         if pr.has_label(label::READY_FOR_HUMAN) {
             plan.wait(pr.number, Wait::HandedBack);
         } else if let Some(stage) = running(Subject::Pull(pr.number)) {
@@ -707,18 +636,32 @@ pub fn decisions(
                 add: label::NEEDS_TRIAGE.into(),
             });
         }
-        if let Some(pr) = facts.open_pull_for(issue.number, &policy.linewright) {
-            // The work is the pull request's while it is open, whatever the
-            // ticket's labels.
+        let closing = snapshot.pulls_closing(issue);
+        let open_closing: Vec<&ClosingPull> = closing.iter().filter(|p| p.is_open()).collect();
+        if !open_closing.is_empty() {
+            // In review: the work is the pull requests' while one is open,
+            // whoever opened it and whatever the issue's labels
+            // (`docs/specs/repository.md`).
             if let Some(stage) = running(subject) {
                 plan.wait(issue.number, Wait::Run { stage });
             }
-            plan.wait(
-                issue.number,
-                Wait::PullRequest {
-                    pull_request: pr.number,
-                },
-            );
+            let mut linewrights = false;
+            for pull in open_closing {
+                let pull_request = pull.number;
+                let wait = if pull.author == policy.linewright {
+                    linewrights = true;
+                    Wait::PullRequest { pull_request }
+                } else {
+                    Wait::ClosingPullRequest { pull_request }
+                };
+                plan.wait(issue.number, wait);
+            }
+            // Someone else's pull request may be closed with the ticket left
+            // to Linewright, which then waits for its blockers; once
+            // Linewright's ends, they hold nothing back.
+            if !linewrights && issue.has_label(label::READY_FOR_AGENT) {
+                wait_for_blockers(issue, &mut plan);
+            }
         } else if replied || wants_triage(issue, policy) {
             match running(subject) {
                 Some(stage) => plan.wait(issue.number, Wait::Run { stage }),
@@ -727,7 +670,7 @@ pub fn decisions(
                 }),
             }
         } else if issue.has_label(label::READY_FOR_AGENT) && !issue.has_label(label::NEEDS_TRIAGE) {
-            implementation(issue, facts, running(subject), policy, &mut plan);
+            implementation(issue, &closing, running(subject), policy, &mut plan);
         } else {
             for wait in labeled_waits(issue, policy) {
                 plan.wait(issue.number, wait);
@@ -1037,11 +980,12 @@ fn required_label(policy: &Policy) -> Option<Wait> {
         })
 }
 
-/// An issue labeled `ready-for-agent` with no open pull request: claim it
-/// when it is unblocked, and implement it.
+/// An issue labeled `ready-for-agent` that no open pull request closes,
+/// with `closing` the ended ones that do: claim it when it is unblocked, and
+/// implement it.
 fn implementation(
     issue: &Issue,
-    facts: Facts,
+    closing: &[ClosingPull],
     live: Option<WorkKind>,
     policy: &Policy,
     plan: &mut Plan,
@@ -1061,13 +1005,11 @@ fn implementation(
     if !claimed && !policy.may_start_on(issue) {
         return plan.wait_for(issue.number, required_label(policy));
     }
-    // Its open pull request, if any, is waited for above.
-    let own = facts.pulls_for(issue.number, &policy.linewright);
     // GitHub closes the issue shortly after the merge; until then, or after a
     // reopen, only applying the label again asks for more work.
     let relabeled_since = |at| last_labeled(issue, label::READY_FOR_AGENT).is_some_and(|l| l > at);
-    if let Some(merged) = own
-        .clone()
+    if let Some(merged) = closing
+        .iter()
         .find(|p| matches!(p.state, PullState::Merged { at } if !relabeled_since(at)))
     {
         return plan.wait(
@@ -1081,42 +1023,33 @@ fn implementation(
     }
     // Still claimed after a merge, the issue was reopened, and more work on
     // it is a start.
-    let reopened = own
-        .clone()
+    let reopened = closing
+        .iter()
         .any(|p| matches!(p.state, PullState::Merged { .. }));
     if reopened && !policy.may_start_on(issue) {
         return plan.wait_for(issue.number, required_label(policy));
     }
+    // A pull request closed unmerged while Linewright had the issue claimed
+    // is the maintainer's no, said once (`docs/specs/pull_requests.md`, "The
+    // pull request"). One closed before the claim is not.
     if claimed {
-        let closed = own
-            .clone()
-            .find(|p| matches!(p.state, PullState::Closed { at } if !linewright_commented_since(issue, at, policy)));
-        if let Some(closed) = closed {
+        let claimed_at = last_assigned(issue, &policy.linewright);
+        let refused = closing.iter().find(|p| match p.state {
+            PullState::Closed { at } => {
+                claimed_at.is_none_or(|since| since <= at)
+                    && !linewright_commented_since(issue, at, policy)
+            }
+            PullState::Open { .. } | PullState::Merged { .. } => false,
+        });
+        if let Some(refused) = refused {
             return plan.act(Action::HandBack {
                 item: Item::Issue(issue.number),
                 stage: Stage::Review,
-                reason: format!("{} was closed without merging.", closed.number),
+                reason: format!("{} was closed without merging.", refused.number),
             });
         }
     }
-    // A pull request not opened for the ticket that closes it, whoever
-    // opened it, would do its work twice (`docs/specs/implementation.md`,
-    // "Tickets"). Linewright's own for it are none of them: none is open.
-    let closing = issue
-        .closed_by
-        .iter()
-        .filter(|p| p.open && !own.clone().any(|pull| pull.number == p.number))
-        .map(|p| Wait::ClosingPullRequest {
-            pull_request: p.number,
-        });
-    let blockers = open_numbers(&issue.blocked_by)
-        .into_iter()
-        .map(|blocker| Wait::Blocker { issue: blocker });
-    let waits: Vec<Wait> = closing.chain(blockers).collect();
-    if !waits.is_empty() {
-        for wait in waits {
-            plan.wait(issue.number, wait);
-        }
+    if wait_for_blockers(issue, plan) {
         return;
     }
     if claimed {
@@ -1128,6 +1061,28 @@ fn implementation(
     }
 }
 
+/// Waits for each open issue blocking `issue`. Returns whether there were
+/// any.
+fn wait_for_blockers(issue: &Issue, plan: &mut Plan) -> bool {
+    let blockers = open_numbers(&issue.blocked_by);
+    for &blocker in &blockers {
+        plan.wait(issue.number, Wait::Blocker { issue: blocker });
+    }
+    !blockers.is_empty()
+}
+
+/// When `login` was last assigned to the issue, as far as its events go.
+fn last_assigned(issue: &Issue, login: &Login) -> Option<Timestamp> {
+    issue
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            IssueEvent::Assigned { assignee, at } if assignee == login => Some(*at),
+            _ => None,
+        })
+        .max()
+}
+
 fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) -> bool {
     issue
         .comments
@@ -1135,7 +1090,7 @@ fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) 
         .any(|c| c.created_at > since && stage_of(c, &policy.linewright).is_some())
 }
 
-/// Linewright's open pull request for the ticket #`ticket`: address
+/// Linewright's open pull request worked for the ticket #`ticket`: address
 /// feedback, keep it up to date and get CI green, in that order, then mark it
 /// ready for review or, with auto-merge, merge it once no person holds it.
 /// What it waits for is its own, and what cannot finish hands it back.

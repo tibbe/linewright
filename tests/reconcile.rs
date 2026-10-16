@@ -69,19 +69,9 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
     }
 }
 
-/// The facts of `snapshot` with no record of which issue a pull request was
-/// opened for, as before runs kept their pull request.
-fn unrecorded(snapshot: &Snapshot) -> Facts<'_> {
-    static NONE: std::sync::LazyLock<OpenedFor> = std::sync::LazyLock::new(OpenedFor::default);
-    Facts {
-        snapshot,
-        opened_for: &NONE,
-    }
-}
-
 fn decide(snapshot: &Snapshot) -> Vec<Action> {
     reconcile(
-        unrecorded(snapshot),
+        snapshot,
         &[],
         &Memory::default(),
         &Workflows::default(),
@@ -285,7 +275,7 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
     );
     assert_eq!(
         reconcile(
-            unrecorded(&world),
+            &world,
             &cutting,
             &Memory::default(),
             &Workflows::default(),
@@ -355,7 +345,7 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
 
     assert_eq!(
         reconcile(
-            unrecorded(&world),
+            &world,
             &live,
             &Memory::default(),
             &Workflows::default(),
@@ -448,7 +438,7 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
 
     assert_eq!(
         reconcile(
-            unrecorded(&world),
+            &world,
             &busy,
             &Memory::default(),
             &Workflows::default(),
@@ -482,7 +472,7 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
     ];
 
     let cancelled: Vec<Subject> = reconcile(
-        unrecorded(&world),
+        &world,
         &runs,
         &Memory::default(),
         &Workflows::default(),
@@ -515,7 +505,7 @@ fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_labeled_ready_fo
     let runs = [20, 21, 22, 23, 24].map(|pr| live_on_pull(pr, WorkKind::Rework));
 
     let cancelled: Vec<(Subject, String)> = reconcile(
-        unrecorded(&world),
+        &world,
         &runs,
         &Memory::default(),
         &Workflows::default(),
@@ -637,13 +627,13 @@ fn the_branch_of_a_closed_ticket_is_deleted_unless_a_pull_request_is_open_for_it
     closed_by_pull.closed_by = vec![ClosingPull {
         number: Number(20),
         author: Login::new("alice"),
-        open: true,
+        state: PullState::Open { draft: false },
     }];
     let mut closed_by_merged_pull = closed(ticket(7));
     closed_by_merged_pull.closed_by = vec![ClosingPull {
         number: Number(70),
         author: Login::new("alice"),
-        open: false,
+        state: PullState::Merged { at: t(5) },
     }];
     let mut closed_by_open_pull = closed(ticket(6));
     closed_by_open_pull.closed_by = closed_by_pull.closed_by.clone();
@@ -679,7 +669,7 @@ fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
     world.ticket_branches = vec![ticket_branch(1, BranchIssue::Held)];
 
     let actions = reconcile(
-        unrecorded(&world),
+        &world,
         &[live(1, WorkKind::Implement)],
         &Memory::default(),
         &Workflows::default(),
@@ -717,7 +707,7 @@ fn a_tickets_run_is_cancelled_when_its_spec_change_is_marked_processed() {
 
     assert!(matches!(
         reconcile(
-            unrecorded(&world),
+            &world,
             &runs,
             &Memory::default(),
             &Workflows::default(),
@@ -776,7 +766,7 @@ fn in_review(pr: Pull) -> Snapshot {
 
 fn at(world: &Snapshot, minute: i64) -> Vec<Action> {
     reconcile(
-        unrecorded(world),
+        world,
         &[],
         &Memory::default(),
         &Workflows::default(),
@@ -1031,14 +1021,7 @@ fn not_rebaseable() -> Pull {
 }
 
 fn deciding(world: &Snapshot, memory: &Memory, policy: &Policy) -> Vec<Action> {
-    reconcile(
-        unrecorded(world),
-        &[],
-        memory,
-        &Workflows::default(),
-        t(10),
-        policy,
-    )
+    reconcile(world, &[], memory, &Workflows::default(), t(10), policy)
 }
 
 /// A rebase of #20 at `head`, tried at `minute`.
@@ -1659,7 +1642,7 @@ fn auto_merging_after(world: &Snapshot, failed: &[FailedMerge], minute: i64) -> 
         ..policy()
     };
     reconcile(
-        unrecorded(world),
+        world,
         &[],
         &memory,
         &Workflows::default(),
@@ -1850,7 +1833,7 @@ fn workflows(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Work
 /// The decisions at `minute` past 12:00, when ticks fall on the hour.
 fn scheduled(workflows: &Workflows, minute: i64) -> Vec<Action> {
     reconcile(
-        unrecorded(&snapshot(vec![])),
+        &snapshot(vec![]),
         &[],
         &Memory::default(),
         workflows,
@@ -1933,25 +1916,11 @@ fn workflow_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves(
     let quieter = snapshot(vec![claimed(ticket(8)), claimed(ticket(9))]);
 
     assert_eq!(
-        reconcile(
-            unrecorded(&world),
-            &busy,
-            &Memory::default(),
-            &due,
-            t(70),
-            &policy()
-        ),
+        reconcile(&world, &busy, &Memory::default(), &due, t(70), &policy()),
         vec![implement(1)]
     );
     assert_eq!(
-        reconcile(
-            unrecorded(&quieter),
-            &busy,
-            &Memory::default(),
-            &due,
-            t(70),
-            &policy()
-        ),
+        reconcile(&quieter, &busy, &Memory::default(), &due, t(70), &policy()),
         vec![
             Action::RunWorkflow(Box::new(hourly("b"))),
             Action::RecordLastRuns(last_runs(&[("a", 30), ("b", 70), ("c", 30)])),
@@ -1967,7 +1936,7 @@ fn a_workflow_seen_for_the_first_time_is_recorded_even_with_no_room() {
 
     assert_eq!(
         reconcile(
-            unrecorded(&tickets),
+            &tickets,
             &busy,
             &Memory::default(),
             &world,
@@ -2118,7 +2087,7 @@ fn removing_the_required_label_cancels_no_run_in_flight() {
     let runs = [live(1, WorkKind::Implement)];
 
     let actions = reconcile(
-        unrecorded(&world),
+        &world,
         &runs,
         &Memory::default(),
         &Workflows::default(),
@@ -2199,7 +2168,7 @@ fn removing_the_required_label_does_not_cancel_a_cut_under_way() {
 
     assert_eq!(
         reconcile(
-            unrecorded(&world),
+            &world,
             &runs,
             &Memory::default(),
             &Workflows::default(),
@@ -2281,14 +2250,7 @@ fn under_usage_limit(resets_at: i64) -> Vec<Action> {
         ..policy()
     };
     let memory = under_usage_limit_until(resets_at);
-    reconcile(
-        unrecorded(&world),
-        &live,
-        &memory,
-        &workflows,
-        t(70),
-        &policy,
-    )
+    reconcile(&world, &live, &memory, &workflows, t(70), &policy)
 }
 
 /// The actions in [`work_of_every_kind`] that start no session.
@@ -2370,7 +2332,7 @@ fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
 
     assert_eq!(
         reconcile(
-            unrecorded(&in_review(pr)),
+            &in_review(pr),
             &[],
             &under_usage_limit_until(80),
             &Workflows::default(),
@@ -2413,7 +2375,7 @@ fn waits(
     policy: &Policy,
 ) -> std::collections::BTreeMap<Number, Vec<Wait>> {
     decisions(
-        unrecorded(world),
+        world,
         live,
         memory,
         &Workflows::default(),
@@ -2451,7 +2413,7 @@ fn closed_by(mut issue: Issue, pr: u64, author: &str) -> Issue {
     issue.closed_by.push(ClosingPull {
         number: Number(pr),
         author: Login::new(author),
-        open: true,
+        state: PullState::Open { draft: false },
     });
     issue
 }
@@ -2470,13 +2432,13 @@ fn a_ticket_someone_elses_open_pull_request_closes_is_not_claimed_and_waits_for_
 }
 
 #[test]
-fn a_ticket_only_a_closed_or_merged_pull_request_closes_is_claimed() {
+fn a_ticket_only_pull_requests_closed_before_its_claim_close_is_claimed() {
     let mut ticket = ticket(2);
     for number in [43, 44] {
         ticket.closed_by.push(ClosingPull {
             number: Number(number),
             author: Login::new("alice"),
-            open: false,
+            state: PullState::Closed { at: t(5) },
         });
     }
     let world = snapshot(vec![ticket]);
@@ -2515,35 +2477,56 @@ fn a_ticket_waits_for_blockers_and_closing_pull_requests_alike() {
     );
 }
 
-/// Linewright's #43, opened for #42 and also closing #12, its CI failing,
-/// with #42 labeled `label` and claimed, and #12, `claimed` or not, which it
-/// closes.
-fn pull_for_42_closing_12(label: &str, claims_12: bool) -> Snapshot {
+/// Linewright's #43, closing #42 and #12, its CI failing, with #42 labeled
+/// `label` and #12 a ticket, both claimed at minute 0, and listing #43
+/// among the pull requests that close them.
+fn pull_closing_42_and_12(label: &str) -> Snapshot {
     let mut pr = pull(43, 42);
     pr.closes.push(Number(12));
     pr.checks = vec![check("test", CheckState::Failed)];
-    let mut for_it = claimed(issue(42));
-    for_it.labels = vec![label.into()];
-    let mut other = closed_by(ticket(12), 43, LINEWRIGHT);
-    if claims_12 {
-        other = claimed(other);
-    }
-    let mut world = snapshot(vec![for_it, other]);
+    let mut first = closed_by(assigned_at(issue(42), 0), 43, LINEWRIGHT);
+    first.labels = vec![label.into()];
+    let second = closed_by(assigned_at(ticket(12), 0), 43, LINEWRIGHT);
+    let mut world = snapshot(vec![first, second]);
     world.pulls = vec![pr];
     world
 }
 
-/// The record that Linewright opened #43 for #42.
-fn opened_43_for_42() -> OpenedFor {
-    OpenedFor::new([(Number(43), Number(42))])
+/// `issue`, Linewright assigned to it at `minute`.
+fn assigned_at(mut issue: Issue, minute: i64) -> Issue {
+    issue.assignees.push(Login::new(LINEWRIGHT));
+    issue.events.push(IssueEvent::Assigned {
+        assignee: Login::new(LINEWRIGHT),
+        at: t(minute),
+    });
+    issue
 }
 
-fn deciding_opened_for(world: &Snapshot, opened_for: &OpenedFor) -> Decisions {
+/// `world` with the pull request #`number` closed unmerged at `minute`,
+/// wherever it lists it.
+fn closed_unmerged(mut world: Snapshot, number: u64, minute: i64) -> Snapshot {
+    let state = PullState::Closed { at: t(minute) };
+    for pull in world
+        .pulls
+        .iter_mut()
+        .filter(|p| p.number == Number(number))
+    {
+        pull.state = state;
+    }
+    for closing in world
+        .issues
+        .iter_mut()
+        .flat_map(|i| &mut i.closed_by)
+        .filter(|p| p.number == Number(number))
+    {
+        closing.state = state;
+    }
+    world
+}
+
+fn decided(world: &Snapshot) -> Decisions {
     decisions(
-        Facts {
-            snapshot: world,
-            opened_for,
-        },
+        world,
         &[],
         &Memory::default(),
         &Workflows::default(),
@@ -2560,78 +2543,113 @@ fn fix_ci(issue: u64, pr: u64) -> Action {
     })
 }
 
-#[test]
-fn a_pull_request_whose_ticket_was_handed_back_is_still_worked_for_it_and_not_for_another_it_closes()
- {
-    for claims_12 in [false, true] {
-        let world = pull_for_42_closing_12(label::READY_FOR_HUMAN, claims_12);
+fn handed_back_issues(actions: &[Action]) -> Vec<u64> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::HandBack {
+                item: Item::Issue(number),
+                ..
+            } => Some(number.0),
+            _ => None,
+        })
+        .collect()
+}
 
-        let decided = deciding_opened_for(&world, &opened_43_for_42());
+#[test]
+fn a_pull_request_closing_two_issues_is_worked_while_both_wait_for_it_whatever_their_labels() {
+    for label in [label::READY_FOR_AGENT, label::READY_FOR_HUMAN] {
+        let world = pull_closing_42_and_12(label);
+
+        let decided = decided(&world);
 
         assert_eq!(decided.actions, vec![fix_ci(42, 43)]);
-        assert_eq!(
-            decided.waits[&Number(12)],
-            [Wait::ClosingPullRequest {
-                pull_request: Number(43)
-            }]
-        );
-        assert_eq!(
-            decided.waits[&Number(42)],
-            [Wait::PullRequest {
-                pull_request: Number(43)
-            }]
-        );
+        for issue in [12, 42] {
+            assert_eq!(
+                decided.waits[&Number(issue)],
+                [Wait::PullRequest {
+                    pull_request: Number(43)
+                }]
+            );
+        }
     }
 }
 
 #[test]
-fn a_pull_request_is_worked_for_the_issue_it_was_opened_for_while_another_it_closes_waits() {
-    let world = pull_for_42_closing_12(label::READY_FOR_AGENT, false);
+fn a_pull_request_closed_unmerged_hands_back_each_claimed_issue_it_closes_once() {
+    let world = closed_unmerged(pull_closing_42_and_12(label::READY_FOR_AGENT), 43, 5);
+    let mut handed_back = world.clone();
+    for issue in &mut handed_back.issues {
+        issue.comments = vec![comment(
+            LINEWRIGHT,
+            6,
+            &marked(Stage::Review, "#43 was closed without merging."),
+        )];
+    }
 
-    let decided = deciding_opened_for(&world, &opened_43_for_42());
-
-    assert_eq!(decided.actions, vec![fix_ci(42, 43)]);
+    assert_eq!(handed_back_issues(&decided(&world).actions), [42, 12]);
     assert_eq!(
-        decided.waits[&Number(12)],
-        [Wait::ClosingPullRequest {
+        handed_back_issues(&decided(&handed_back).actions),
+        Vec::<u64>::new()
+    );
+}
+
+#[test]
+fn a_ticket_in_review_with_linewrights_pull_request_waits_for_it_alone_whatever_blocks_it() {
+    let mut world = in_review(pull(43, 42));
+    world.issues[0] = blocked_by(world.issues[0].clone(), 1, true);
+
+    assert_eq!(
+        waits_on(&world, 42),
+        [Wait::PullRequest {
             pull_request: Number(43)
         }]
     );
 }
 
 #[test]
-fn a_pull_request_closed_unmerged_hands_back_only_the_issue_it_was_opened_for() {
-    let mut world = pull_for_42_closing_12(label::READY_FOR_AGENT, true);
-    world.pulls[0].state = PullState::Closed { at: t(5) };
-    world.issues[1].closed_by = vec![];
+fn a_ticket_claimed_after_the_pull_request_closing_it_was_closed_is_implemented() {
+    let world = snapshot(vec![assigned_at(closed_by(ticket(2), 20, LINEWRIGHT), 7)]);
+    let world = closed_unmerged(world, 20, 5);
 
-    let actions = deciding_opened_for(&world, &opened_43_for_42()).actions;
-
-    assert!(
-        matches!(
-            actions.as_slice(),
-            [Action::HandBack {
-            item: Item::Issue(Number(42)), .. }, start] if *start == implement(12)
-        ),
-        "{actions:?}"
-    );
+    assert_eq!(decide(&world), vec![implement(2)]);
 }
 
 #[test]
-fn a_pull_request_no_record_links_to_is_in_review_with_every_issue_it_closes() {
-    let world = pull_for_42_closing_12(label::READY_FOR_HUMAN, true);
+fn someone_elses_pull_request_closed_unmerged_hands_back_a_ticket_claimed_before() {
+    let world = snapshot(vec![assigned_at(closed_by(ticket(2), 20, "alice"), 0)]);
+    let world = closed_unmerged(world, 20, 5);
 
-    let decided = deciding_opened_for(&world, &OpenedFor::default());
+    assert_eq!(handed_back_issues(&decide(&world)), [2]);
+}
 
-    assert_eq!(decided.actions, vec![fix_ci(42, 43)]);
-    for issue in [12, 42] {
-        assert_eq!(
-            decided.waits[&Number(issue)],
-            [Wait::PullRequest {
-                pull_request: Number(43)
-            }]
-        );
-    }
+#[test]
+fn a_ticket_whose_pull_request_no_longer_closes_it_is_worked_again() {
+    let mut world = in_review(pull(43, 42));
+    world.pulls[0].closes = vec![];
+
+    assert_eq!(decide(&world), vec![implement(42)]);
+}
+
+#[test]
+fn a_ticket_someone_elses_merged_pull_request_closes_waits_to_be_labeled_again() {
+    let mut ticket = claimed(ticket(2));
+    ticket.closed_by.push(ClosingPull {
+        number: Number(20),
+        author: Login::new("alice"),
+        state: PullState::Merged { at: t(5) },
+    });
+    let world = snapshot(vec![ticket]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(
+        waits_on(&world, 2),
+        [Wait::Relabel {
+            since: Relabel::Merged {
+                pull_request: Number(20)
+            }
+        }]
+    );
 }
 
 #[test]
@@ -2926,7 +2944,7 @@ fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_no
     world.merged = vec![merged(5, &["docs/spec.md"])];
 
     let decided = decisions(
-        unrecorded(&world),
+        &world,
         &[],
         &Memory::default(),
         &Workflows::default(),
@@ -2977,7 +2995,7 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
         );
         assert_eq!(
             reconcile(
-                unrecorded(&world),
+                &world,
                 &fixing,
                 &Memory::default(),
                 &Workflows::default(),

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::domain::{Number, Timestamp};
-use crate::reconcile::{OpenedFor, WorkKind};
+use crate::reconcile::WorkKind;
 use crate::records;
 use crate::status::{Paint, utc};
 use crate::workflow::WorkflowName;
@@ -118,10 +118,6 @@ struct Record {
     /// The records of the sessions it started, with their transcripts,
     /// relative to the work directory.
     sessions: Vec<PathBuf>,
-    /// The pull request it works on or opened; `None` in records written
-    /// before runs kept it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pr: Option<Number>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -157,10 +153,9 @@ impl Runs {
         }
     }
 
-    /// Records the start, at `now`, of the next run of `of`, on the pull
-    /// request `pr` if it works on one, numbered after every earlier one,
-    /// and holds the run's lock until it ends.
-    pub(crate) fn begin(&self, of: RunOf, pr: Option<Number>, now: Timestamp) -> Result<Running> {
+    /// Records the start, at `now`, of the next run of `of`, numbered after
+    /// every earlier one, and holds the run's lock until it ends.
+    pub(crate) fn begin(&self, of: RunOf, now: Timestamp) -> Result<Running> {
         let dir = self.dir_of(&of);
         std::fs::create_dir_all(&dir).context("creating the runs' directory")?;
         let prefix = file_prefix(&of);
@@ -190,7 +185,6 @@ impl Runs {
                 started_at: now,
                 end: None,
                 sessions: vec![],
-                pr,
             }),
             activity: Activity::default(),
             _lock: lock,
@@ -446,12 +440,6 @@ impl Running {
         self.save_or_log();
     }
 
-    /// Links the pull request `pr`, which the run opened, to the run.
-    pub fn opened(&self, pr: Number) {
-        self.record.lock().unwrap().pr = Some(pr);
-        self.save_or_log();
-    }
-
     /// Records the run's end, at `now`, as `ending`.
     pub fn end(self, now: Timestamp, ending: Ending) {
         self.record.lock().unwrap().end = Some(End { at: now, ending });
@@ -482,8 +470,6 @@ pub struct Recorded {
     /// The records of the sessions it started, with their transcripts, in
     /// the order it started them.
     pub sessions: Vec<PathBuf>,
-    /// The pull request it works on or opened, if it is known.
-    pub pr: Option<Number>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -518,7 +504,6 @@ impl Recorded {
                 .iter()
                 .map(|dir| work_dir.join(dir))
                 .collect(),
-            pr: record.pr,
         }
     }
 }
@@ -663,20 +648,6 @@ pub fn of_item(recorded: &[Recorded], number: Number) -> Vec<Recorded> {
         .filter(|run| run.id.of.item() == Some(number))
         .cloned()
         .collect()
-}
-
-/// Which issue the runs `recorded` opened each pull request for: the item
-/// of the implement run that records it, the only stage that opens one. A
-/// pull request no run's record links to, as for records written before runs
-/// kept their pull request, is for none.
-pub fn opened_for_each(recorded: &[Recorded]) -> OpenedFor {
-    OpenedFor::new(recorded.iter().filter_map(|run| match run.id.of {
-        RunOf::Work {
-            item,
-            stage: WorkKind::Implement,
-        } => run.pr.map(|pr| (pr, item)),
-        _ => None,
-    }))
 }
 
 /// The runs of `recorded` that `query` asks for at `now`, newest first.

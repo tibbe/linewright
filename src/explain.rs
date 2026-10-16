@@ -11,9 +11,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    self, ClosingPull, Filed, Issue, Item, Login, MergedPull, Number, Pull, Timestamp, label,
+    self, ClosingPull, Filed, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, Timestamp,
+    label,
 };
-use crate::reconcile::{NotSpecChange, NotWorked, Wait, not_a_spec_change};
+use crate::reconcile::{NotSpecChange, NotWorked, Wait, not_a_spec_change, worked_ticket};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
     InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, standing, tracked,
@@ -256,8 +257,9 @@ impl Family {
 
     /// The family of the issue `issue`: a ticket's tracking issue, or a
     /// tracking issue's spec change and tickets; and the pull requests
-    /// that close it, the open ones first.
-    fn of_issue(issue: &Issue) -> Family {
+    /// that close it, as `snapshot` and the issue read them, the open ones
+    /// first.
+    fn of_issue(issue: &Issue, snapshot: &Snapshot) -> Family {
         let mut family = match issue.filed {
             Some(Filed::Tracking { spec_change }) => Family {
                 parents: vec![Parent {
@@ -294,8 +296,10 @@ impl Family {
                 children: vec![],
             },
         };
-        let (open, ended): (Vec<&ClosingPull>, Vec<&ClosingPull>) =
-            issue.closed_by.iter().partition(|pull| pull.open);
+        let (open, ended): (Vec<ClosingPull>, Vec<ClosingPull>) = snapshot
+            .pulls_closing(issue)
+            .into_iter()
+            .partition(ClosingPull::is_open);
         family
             .children
             .extend(open.into_iter().chain(ended).map(|pull| Child {
@@ -382,8 +386,8 @@ impl ChildRole {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Standing {
-    /// Linewright's pull request for the issue `pull_request_for`, which is
-    /// in review with it; the waits are the issue's.
+    /// Linewright's open pull request it works on, briefed with the issue
+    /// `pull_request_for`, one it closes.
     PullRequest {
         pull_request_for: Number,
         #[serde(flatten)]
@@ -395,15 +399,13 @@ pub enum Standing {
 
 /// The answer about #`number` at `now`: an item Linewright tracks, or
 /// Linewright's open pull request it works on. `None` for any other number.
-/// Its runs are those `recorded` as `runs N` lists them, and the issue each
-/// pull request was opened for is read from `recorded` too.
+/// Its runs are those `recorded` as `runs N` lists them.
 pub fn explain(
     view: &View,
     recorded: &[Recorded],
     number: Number,
     now: Timestamp,
 ) -> Option<Explanation> {
-    let view = &recording(view, recorded);
     let last_read = |item: Item| view.read_at.get(&item).copied().unwrap_or(view.polls.last);
     if let Some(pull) = view.snapshot.pull(number).filter(|p| p.is_open()) {
         let explanation = pull_standing(view, recorded, pull, now).ok()?;
@@ -417,7 +419,7 @@ pub fn explain(
         // A tracked spec change is a merged pull request, not yet cut into
         // tickets; the rest are issues.
         let (read, family) = match view.snapshot.issue(number) {
-            Some(issue) => (Item::Issue(number), Family::of_issue(issue)),
+            Some(issue) => (Item::Issue(number), Family::of_issue(issue, &view.snapshot)),
             None => (
                 Item::Pull(number),
                 view.snapshot
@@ -437,15 +439,6 @@ pub fn explain(
         ));
     }
     None
-}
-
-/// `view` with which issue each pull request was opened for as the runs
-/// `recorded` record it, so that an answer reads it from them alone.
-fn recording(view: &View, recorded: &[Recorded]) -> View {
-    View {
-        opened_for: runs::opened_for_each(recorded),
-        ..view.clone()
-    }
 }
 
 /// An item Linewright leaves alone, and why. Its fields keep their names and
@@ -520,10 +513,10 @@ pub enum PullExclusion {
 /// because its view tracks no such item: where #N stands if the read places
 /// it in the pipeline after all, as a label applied since the last poll
 /// does, or else why Linewright leaves it alone, by the rules that decide
-/// what it tracks. Its runs, and the issue each pull request was opened for,
-/// are read from `recorded`, as [`explain`] reads them.
+/// what it tracks. Its runs are read from `recorded`, as [`explain`] reads
+/// them.
 pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Timestamp) -> Answer {
-    let mut fresh = recording(view, recorded);
+    let mut fresh = view.clone();
     let linewright = &view.policy.linewright;
     // As a poll taking a snapshot now would hold #N.
     let held = Arc::make_mut(&mut fresh.snapshot);
@@ -543,7 +536,9 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             pull,
             tracking_issues,
         } => Family::of_merged(pull, tracking_issues),
-        AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => Family::of_issue(issue),
+        AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
+            Family::of_issue(issue, &fresh.snapshot)
+        }
     };
     let tracked_as = |title: &str, state: ItemState, waiting_for| {
         Answer::Tracked(Explanation::new(
@@ -568,7 +563,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
         ),
         AnyItem::HeldIssue(issue) => {
             let waiting_for = take_waits();
-            match standing(issue, fresh.facts(), &fresh.policy, &waiting_for) {
+            match standing(issue, &fresh.snapshot, &fresh.policy, &waiting_for) {
                 Ok(state) => return tracked_as(&issue.title, state, waiting_for),
                 Err(exclusion) => (
                     &issue.title,
@@ -623,15 +618,17 @@ fn pull_standing(
     pull: &Pull,
     now: Timestamp,
 ) -> Result<Explanation, PullExclusion> {
-    let ticket = view
-        .facts()
-        .worked_ticket(pull, &view.policy.linewright)
-        .map_err(|not_worked| match not_worked {
-            NotWorked::NotLinewrights => PullExclusion::NotLinewrights {
-                author: pull.author.clone(),
-            },
-            NotWorked::ForNoIssue => PullExclusion::ClosesNoIssue,
-            NotWorked::Superseded { ticket, by } => PullExclusion::Superseded { issue: ticket, by },
+    let ticket =
+        worked_ticket(&view.snapshot, pull, &view.policy.linewright).map_err(|not_worked| {
+            match not_worked {
+                NotWorked::NotLinewrights => PullExclusion::NotLinewrights {
+                    author: pull.author.clone(),
+                },
+                NotWorked::ForNoIssue => PullExclusion::ClosesNoIssue,
+                NotWorked::Superseded { ticket, by } => {
+                    PullExclusion::Superseded { issue: ticket, by }
+                }
+            }
         })?;
     let waiting_for = view.decisions(now).waits.remove(&pull.number);
     Ok(Explanation::new(

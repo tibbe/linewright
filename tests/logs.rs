@@ -35,7 +35,6 @@ fn run(id: &str, start: &str, sessions: usize) -> Recorded {
         sessions: (0..sessions)
             .map(|n| PathBuf::from(format!("sessions/{id}/{n}")))
             .collect(),
-        pr: None,
     }
 }
 
@@ -118,16 +117,12 @@ fn a_named_run_is_the_one_shown() {
 /// #1's runs, of which the implement run opened #3, and #3's own, the
 /// latest in flight.
 fn ticket_and_pull() -> Vec<Recorded> {
-    let on_pull = |run: Recorded| Recorded {
-        pr: Some(Number(3)),
-        ..run
-    };
-    let mut in_flight = on_pull(run("3/rework-2", "11:30:00", 1));
+    let mut in_flight = run("3/rework-2", "11:30:00", 1);
     in_flight.state = State::InFlight;
     vec![
         run("1/triage-1", "09:00:00", 1),
-        on_pull(run("1/implement-1", "10:00:00", 1)),
-        on_pull(run("3/rework-1", "11:00:00", 1)),
+        run("1/implement-1", "10:00:00", 1),
+        run("3/rework-1", "11:00:00", 1),
         in_flight,
     ]
 }

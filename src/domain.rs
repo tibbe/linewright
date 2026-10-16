@@ -115,6 +115,10 @@ pub enum IssueEvent {
         label: String,
         at: Timestamp,
     },
+    Assigned {
+        assignee: Login,
+        at: Timestamp,
+    },
     Unassigned {
         assignee: Login,
         actor: Login,
@@ -153,15 +157,23 @@ pub struct Issue {
 pub struct ClosingPull {
     pub number: Number,
     pub author: Login,
-    /// Cases captured before closed and merged pull requests were read hold
-    /// only open ones.
-    #[serde(default = "ClosingPull::open_by_default")]
-    pub open: bool,
+    #[serde(flatten)]
+    pub state: PullState,
 }
 
 impl ClosingPull {
-    fn open_by_default() -> bool {
-        true
+    pub fn is_open(&self) -> bool {
+        matches!(self.state, PullState::Open { .. })
+    }
+}
+
+impl From<&Pull> for ClosingPull {
+    fn from(pull: &Pull) -> ClosingPull {
+        ClosingPull {
+            number: pull.number,
+            author: pull.author.clone(),
+            state: pull.state,
+        }
     }
 }
 
@@ -238,7 +250,7 @@ impl Issue {
 
     /// Whether the issue is closed with no pull request open closing it.
     pub fn closed_with_no_open_pull(&self) -> bool {
-        !self.open && !self.closed_by.iter().any(|p| p.open)
+        !self.open && !self.closed_by.iter().any(ClosingPull::is_open)
     }
 
     pub fn is_assigned(&self, login: &Login) -> bool {
@@ -562,6 +574,42 @@ impl Snapshot {
         self.merged.iter().find(|p| p.number == number)
     }
 
+    /// The pull requests that close `issue`, open, closed or merged, whoever
+    /// opened them, in number order: those the snapshot holds, Linewright's,
+    /// as it holds them, and the others as the issue lists them.
+    pub fn pulls_closing(&self, issue: &Issue) -> Vec<ClosingPull> {
+        let held = self
+            .pulls
+            .iter()
+            .filter(|p| p.closes.contains(&issue.number))
+            .map(ClosingPull::from);
+        let others = issue
+            .closed_by
+            .iter()
+            .filter(|p| self.pull(p.number).is_none())
+            .cloned();
+        let mut pulls: Vec<ClosingPull> = held.chain(others).collect();
+        pulls.sort_by_key(|p| p.number);
+        pulls
+    }
+
+    /// The branch a run on `issue` as a ticket works on: [`Issue::branch`],
+    /// unless a pull request the snapshot holds is open from it, as one that
+    /// stopped closing the issue is. Then the first of it suffixed `-2`,
+    /// `-3` and so on that none is open from, so that the run leaves that
+    /// pull request as it is.
+    pub fn ticket_branch(&self, issue: &Issue) -> String {
+        let base = issue.branch();
+        let taken = |name: &str| self.pulls.iter().any(|p| p.is_open() && p.head_ref == name);
+        let mut name = base.clone();
+        let mut n = 1;
+        while taken(&name) {
+            n += 1;
+            name = format!("{base}-{n}");
+        }
+        name
+    }
+
     /// Puts `issue`, read again, in place of the one the snapshot holds, or
     /// beside the others.
     pub fn put_issue(&mut self, issue: Issue) {
@@ -611,7 +659,9 @@ impl Snapshot {
             .iter()
             .filter(|i| {
                 closes.contains(&i.number)
-                    || i.closed_by.iter().any(|p| p.open && p.number == number)
+                    || i.closed_by
+                        .iter()
+                        .any(|p| p.is_open() && p.number == number)
             })
             .map(|i| i.number)
             .collect()

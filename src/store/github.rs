@@ -1024,13 +1024,17 @@ const ISSUE_FIELDS: &str = concat!(
   subIssues(first: 100) { nodes { number state } }
   parent { number title body author { __typename login } }
   blockedBy(first: 50) { nodes { number state } }
-  closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state author { __typename login } } }
-  timelineItems(last: 100, itemTypes: [LABELED_EVENT, UNASSIGNED_EVENT]) {
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt author { __typename login } } }
+  timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
     nodes {
       __typename
       ... on LabeledEvent { ",
     labeling_fields!(),
     " }
+      ... on AssignedEvent {
+        createdAt
+        assignee { __typename ... on Actor { login } }
+      }
       ... on UnassignedEvent {
         createdAt
         actor { __typename login }
@@ -1061,18 +1065,29 @@ struct GqlIssue {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GqlClosingPull {
     number: u64,
     state: String,
+    #[serde(default)]
+    is_draft: bool,
+    merged_at: Option<Timestamp>,
+    closed_at: Option<Timestamp>,
     author: Option<Actor>,
 }
 
 #[derive(Deserialize)]
 #[serde(tag = "__typename")]
 enum GqlEvent {
-    LabeledEvent(GqlLabeling),
-    #[serde(rename_all = "camelCase")]
-    UnassignedEvent {
+    #[serde(rename = "LabeledEvent")]
+    Labeled(GqlLabeling),
+    #[serde(rename = "AssignedEvent", rename_all = "camelCase")]
+    Assigned {
+        created_at: Timestamp,
+        assignee: Option<Value>,
+    },
+    #[serde(rename = "UnassignedEvent", rename_all = "camelCase")]
+    Unassigned {
         created_at: Timestamp,
         actor: Option<Actor>,
         assignee: Option<Value>,
@@ -1103,11 +1118,21 @@ impl GqlIssue {
             .nodes
             .into_iter()
             .filter_map(|e| match e {
-                GqlEvent::LabeledEvent(labeling) => Some(IssueEvent::Labeled {
+                GqlEvent::Labeled(labeling) => Some(IssueEvent::Labeled {
                     label: labeling.label.name,
                     at: labeling.created_at,
                 }),
-                GqlEvent::UnassignedEvent {
+                GqlEvent::Assigned {
+                    created_at,
+                    assignee,
+                } => {
+                    let assignee: Actor = serde_json::from_value(assignee?).ok()?;
+                    Some(IssueEvent::Assigned {
+                        assignee: login(Some(assignee)),
+                        at: created_at,
+                    })
+                }
+                GqlEvent::Unassigned {
                     created_at,
                     actor,
                     assignee,
@@ -1148,11 +1173,26 @@ impl GqlIssue {
                 .into_iter()
                 .map(|p| ClosingPull {
                     number: Number(p.number),
-                    open: p.state == "OPEN",
+                    state: pull_state(&p.state, p.is_draft, p.merged_at, p.closed_at),
                     author: login(p.author),
                 })
                 .collect(),
         }
+    }
+}
+
+/// A pull request's state, from its `state`, `isDraft`, `mergedAt` and
+/// `closedAt`.
+fn pull_state(
+    state: &str,
+    is_draft: bool,
+    merged_at: Option<Timestamp>,
+    closed_at: Option<Timestamp>,
+) -> PullState {
+    match (state, merged_at, closed_at) {
+        ("MERGED", Some(at), _) => PullState::Merged { at },
+        ("CLOSED", _, Some(at)) => PullState::Closed { at },
+        _ => PullState::Open { draft: is_draft },
     }
 }
 
@@ -1432,13 +1472,7 @@ impl GqlPull {
     }
 
     fn into_pull(self, pushes: Vec<Push>, rules: &BranchRules) -> Pull {
-        let state = match (self.state.as_str(), self.merged_at, self.closed_at) {
-            ("MERGED", Some(at), _) => PullState::Merged { at },
-            ("CLOSED", _, Some(at)) => PullState::Closed { at },
-            _ => PullState::Open {
-                draft: self.is_draft,
-            },
-        };
+        let state = pull_state(&self.state, self.is_draft, self.merged_at, self.closed_at);
         let mergeability = match (self.mergeable.as_str(), self.merge_state_status.as_str()) {
             ("CONFLICTING", _) | (_, "DIRTY") => Mergeability::Conflicting,
             (_, "BEHIND") => Mergeability::Behind,
@@ -2598,27 +2632,35 @@ mod tests {
         let issue = ticket(
             Value::Null,
             json!([
-                {"number": 40, "state": "CLOSED", "author": {"__typename": "User", "login": "alice"}},
-                {"number": 41, "state": "MERGED", "author": {"__typename": "User", "login": "alice"}},
-                {"number": 43, "state": "OPEN", "author": {"__typename": "User", "login": "alice"}},
-                {"number": 44, "state": "OPEN", "author": {"__typename": "Bot", "login": "renovate"}},
-                {"number": 45, "state": "OPEN", "author": {"__typename": "User", "login": "linewright"}},
+                {"number": 40, "state": "CLOSED", "isDraft": false, "mergedAt": null,
+                 "closedAt": "2026-10-09T13:00:00Z",
+                 "author": {"__typename": "User", "login": "alice"}},
+                {"number": 41, "state": "MERGED", "isDraft": false,
+                 "mergedAt": "2026-10-09T14:00:00Z", "closedAt": "2026-10-09T14:00:00Z",
+                 "author": {"__typename": "User", "login": "alice"}},
+                {"number": 43, "state": "OPEN", "isDraft": true, "mergedAt": null, "closedAt": null,
+                 "author": {"__typename": "User", "login": "alice"}},
+                {"number": 44, "state": "OPEN", "isDraft": false, "mergedAt": null, "closedAt": null,
+                 "author": {"__typename": "Bot", "login": "renovate"}},
+                {"number": 45, "state": "OPEN", "isDraft": false, "mergedAt": null, "closedAt": null,
+                 "author": {"__typename": "User", "login": "linewright"}},
             ]),
         );
+        let at = |time: &str| format!("2026-10-09T{time}:00Z").parse().unwrap();
 
         assert_eq!(
             issue.closed_by,
             [
-                (40, "alice", false),
-                (41, "alice", false),
-                (43, "alice", true),
-                (44, "renovate[bot]", true),
-                (45, "linewright", true),
+                (40, "alice", PullState::Closed { at: at("13:00") }),
+                (41, "alice", PullState::Merged { at: at("14:00") }),
+                (43, "alice", PullState::Open { draft: true }),
+                (44, "renovate[bot]", PullState::Open { draft: false }),
+                (45, "linewright", PullState::Open { draft: false }),
             ]
-            .map(|(number, author, open)| ClosingPull {
+            .map(|(number, author, state)| ClosingPull {
                 number: Number(number),
                 author: Login::new(author),
-                open,
+                state,
             })
         );
     }

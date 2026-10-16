@@ -234,12 +234,12 @@ fn an_item_with_a_run_in_flight_shows_as_its_run_not_among_the_other_items() {
 }
 
 #[test]
-fn a_ticket_someone_elses_open_pull_request_closes_waits_for_it() {
+fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_and_waits_for_it() {
     let closed = closed_by(ready_issue(), 43, "alice");
 
     assert_eq!(
         after_linewright(&view(vec![closed]), "2026-10-01T12:00:30Z"),
-        ["#7: ready to claim — waiting for #43, which closes it — Do the thing"]
+        ["#7: in review: #43, opened by alice — waiting for #43, which closes it — Do the thing"]
     );
 }
 

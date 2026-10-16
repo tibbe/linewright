@@ -11,11 +11,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    CheckState, Filed, Issue, Item, Number, Pull, PullState, Snapshot, Timestamp, label,
+    CheckState, Filed, Issue, Item, Login, Number, Pull, PullState, Snapshot, Timestamp, label,
 };
 use crate::reconcile::{
-    Decisions, Facts, LiveRun, Memory, NextRun, OpenedFor, Policy, Relabel, Wait, Workflows,
-    decisions, next_run, pending_spec_changes,
+    Decisions, LiveRun, Memory, NextRun, Policy, Relabel, Wait, Workflows, decisions, next_run,
+    open_pull_for, pending_spec_changes, worked_pulls,
 };
 use crate::runs::{InFlight, RunInFlight, RunOf};
 use crate::webhook::Received;
@@ -33,9 +33,6 @@ pub struct Serving {
 pub struct View {
     /// The last poll's snapshot, with what refreshes read into it since.
     pub snapshot: Arc<Snapshot>,
-    /// Which issue each of Linewright's pull requests was opened for, as the
-    /// reconcile step last read it with the snapshot.
-    pub opened_for: OpenedFor,
     /// When refreshes read the items they read into the snapshot; the
     /// others were read by the last poll.
     pub read_at: HashMap<Item, Timestamp>,
@@ -64,21 +61,13 @@ impl View {
             in_flight: self.workflows_in_flight().collect(),
         };
         decisions(
-            self.facts(),
+            &self.snapshot,
             &self.live,
             &self.memory,
             &workflows,
             now,
             &self.policy,
         )
-    }
-
-    /// The facts the reconcile step takes its decisions on.
-    pub fn facts(&self) -> Facts<'_> {
-        Facts {
-            snapshot: &self.snapshot,
-            opened_for: &self.opened_for,
-        }
     }
 
     /// The runs in flight, the pipeline's and the workflows'.
@@ -159,6 +148,12 @@ pub enum ItemState {
     WaitingOnTheReporter,
     WithTheMaintainer,
     InReview(InReview),
+    /// In review with someone else's open pull request `pull_request`, by
+    /// `author`, which closes it.
+    InReviewElsewhere {
+        pull_request: Number,
+        author: Login,
+    },
     Claimed,
     ReadyToClaim,
 }
@@ -334,7 +329,7 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
     }
     for issue in snapshot.issues.iter().filter(|i| i.open) {
         let waiting_for = waits.remove(&issue.number).unwrap_or_default();
-        let Ok(state) = standing(issue, view.facts(), &view.policy, &waiting_for) else {
+        let Ok(state) = standing(issue, &view.snapshot, &view.policy, &waiting_for) else {
             continue;
         };
         items.push(Tracked {
@@ -344,7 +339,7 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
             waiting_for,
         });
     }
-    for (pr, _) in view.facts().worked_pulls(&view.policy.linewright) {
+    for (pr, _) in worked_pulls(&view.snapshot, &view.policy.linewright) {
         items.push(Tracked {
             number: pr.number,
             title: pr.title.clone(),
@@ -373,11 +368,11 @@ pub enum IssueExclusion {
 /// why Linewright leaves it alone.
 pub(crate) fn standing(
     issue: &Issue,
-    facts: Facts,
+    snapshot: &Snapshot,
     policy: &Policy,
     waiting_for: &[Wait],
 ) -> Result<ItemState, IssueExclusion> {
-    let state = issue_state(issue, facts, policy)?;
+    let state = issue_state(issue, snapshot, policy)?;
     // A tracking issue with no tickets and no cut in flight is left alone.
     if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
         return Err(IssueExclusion::NoTickets);
@@ -385,12 +380,19 @@ pub(crate) fn standing(
     Ok(state)
 }
 
-/// Where the open `issue` is in the pipeline, if its labels or Linewright's
-/// open pull request for it place it there: in review while that pull
-/// request is open, whatever its other labels. An issue of Linewright's own
-/// is never triaged, so `needs-triage` places it nowhere.
-fn issue_state(issue: &Issue, facts: Facts, policy: &Policy) -> Result<ItemState, IssueExclusion> {
-    let open_pull = facts.open_pull_for(issue.number, &policy.linewright);
+/// Where the open `issue` is in the pipeline, if its labels or the pull
+/// requests that close it place it there: in review while one is open,
+/// whatever its labels, shown with Linewright's newest if it has one open.
+/// An issue of Linewright's own is never triaged, so `needs-triage` places
+/// it nowhere.
+fn issue_state(
+    issue: &Issue,
+    snapshot: &Snapshot,
+    policy: &Policy,
+) -> Result<ItemState, IssueExclusion> {
+    let open_pull = open_pull_for(snapshot, issue.number, &policy.linewright);
+    let closing = snapshot.pulls_closing(issue);
+    let open_closing = closing.iter().find(|p| p.is_open());
     let state = if matches!(issue.filed, Some(Filed::Tracking { .. })) {
         ItemState::Tracking {
             tickets_closed: issue.sub_issues.iter().filter(|t| !t.open).count(),
@@ -398,6 +400,11 @@ fn issue_state(issue: &Issue, facts: Facts, policy: &Policy) -> Result<ItemState
         }
     } else if let Some(pr) = open_pull {
         ItemState::InReview(InReview::of(pr))
+    } else if let Some(pr) = open_closing {
+        ItemState::InReviewElsewhere {
+            pull_request: pr.number,
+            author: pr.author.clone(),
+        }
     } else if issue.has_label(label::NEEDS_TRIAGE) {
         if !policy.triages(issue) {
             return Err(IssueExclusion::OwnIssueForTriage);
@@ -551,6 +558,10 @@ pub(crate) fn describe(state: &ItemState) -> String {
         ItemState::WaitingOnTheReporter => "waiting on the reporter".into(),
         ItemState::WithTheMaintainer => "with the maintainer".into(),
         ItemState::InReview(review) => review.describe(),
+        ItemState::InReviewElsewhere {
+            pull_request,
+            author,
+        } => format!("in review: {pull_request}, opened by {author}"),
         ItemState::Claimed => "claimed: being implemented".into(),
         ItemState::ReadyToClaim => "ready to claim".into(),
     }

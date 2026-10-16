@@ -285,11 +285,16 @@ impl LocalStore {
     }
 
     pub fn assign_as(&self, issue: Number, login: &str) -> Result<()> {
+        let now = self.now();
         let mut state = self.state();
-        let assignees = &mut state.issue_mut(issue)?.issue.assignees;
+        let issue = &mut state.issue_mut(issue)?.issue;
         let login = Login::new(login);
-        if !assignees.contains(&login) {
-            assignees.push(login);
+        if !issue.is_assigned(&login) {
+            issue.assignees.push(login.clone());
+            issue.events.push(IssueEvent::Assigned {
+                assignee: login,
+                at: now,
+            });
         }
         Ok(())
     }
@@ -970,7 +975,7 @@ impl State {
                 .map(|p| ClosingPull {
                     number: p.number,
                     author: p.author.clone(),
-                    open: p.is_open(),
+                    state: p.state,
                 })
                 .collect(),
             ..issue.clone()

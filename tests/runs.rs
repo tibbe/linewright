@@ -466,15 +466,6 @@ fn work(item: u64, stage: WorkKind, n: u32, start: &str) -> Recorded {
             ending: Ending::Done,
         },
         sessions: vec![],
-        pr: None,
-    }
-}
-
-/// `run`, on the pull request `pr`.
-fn on_pull(pr: u64, run: Recorded) -> Recorded {
-    Recorded {
-        pr: Some(Number(pr)),
-        ..run
     }
 }
 
@@ -543,11 +534,11 @@ fn an_items_runs_are_only_its_own() {
 fn ticket_and_pull() -> Vec<Recorded> {
     vec![
         work(1, WorkKind::Triage, 1, "08:00:00"),
-        on_pull(3, work(1, WorkKind::Implement, 1, "09:00:00")),
-        on_pull(3, work(3, WorkKind::Rework, 1, "09:30:00")),
+        work(1, WorkKind::Implement, 1, "09:00:00"),
+        work(3, WorkKind::Rework, 1, "09:30:00"),
         work(2, WorkKind::Triage, 1, "10:30:00"),
-        on_pull(3, work(3, WorkKind::FixCi, 1, "11:00:00")),
-        on_pull(3, work(3, WorkKind::Rework, 2, "12:00:00")),
+        work(3, WorkKind::FixCi, 1, "11:00:00"),
+        work(3, WorkKind::Rework, 2, "12:00:00"),
     ]
 }
 

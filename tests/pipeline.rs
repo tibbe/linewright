@@ -5,8 +5,10 @@
 
 mod common;
 
+use chrono::TimeDelta;
 use common::*;
 use linewright::reconcile::WorkKind;
+use linewright::store::Store;
 use serde_json::json;
 
 #[tokio::test]
@@ -799,7 +801,7 @@ async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Numbe
 }
 
 #[tokio::test]
-async fn a_pull_request_whose_ticket_is_unlabeled_and_unassigned_is_still_worked_for_it_alone() {
+async fn a_pull_request_whose_ticket_is_unlabeled_and_unassigned_is_still_worked() {
     let mut world = World::new().await;
     let (ticket, other, _) = pull_request_closing_another_issue(&mut world).await;
     world.store.unlabel_as(ticket, "ready-for-agent").unwrap();
@@ -810,9 +812,7 @@ async fn a_pull_request_whose_ticket_is_unlabeled_and_unassigned_is_still_worked
 
     world.poll().await;
 
-    let fixes = world.runtime.prompts(WorkKind::FixCi);
-    assert_eq!(fixes.len(), 1);
-    assert!(fixes[0].contains("Do the thing"), "{}", fixes[0]);
+    assert_eq!(world.runtime.prompts(WorkKind::FixCi).len(), 1);
     assert_eq!(world.issue(other).assignees, []);
     assert_eq!(world.issue(ticket).assignees, []);
     assert_eq!(labels(&world.issue(ticket)), Vec::<&str>::new());
@@ -820,22 +820,20 @@ async fn a_pull_request_whose_ticket_is_unlabeled_and_unassigned_is_still_worked
 }
 
 #[tokio::test]
-async fn a_pull_request_is_worked_for_its_ticket_while_another_issue_it_closes_waits() {
+async fn a_pull_request_is_worked_while_each_issue_it_closes_waits_for_it() {
     let mut world = World::new().await;
-    let (ticket, other, _) = pull_request_closing_another_issue(&mut world).await;
+    let (_, other, _) = pull_request_closing_another_issue(&mut world).await;
 
     world.poll().await;
 
-    let fixes = world.runtime.prompts(WorkKind::FixCi);
-    assert_eq!(fixes.len(), 1);
-    assert!(fixes[0].contains(&ticket.to_string()), "{}", fixes[0]);
+    assert_eq!(world.runtime.prompts(WorkKind::FixCi).len(), 1);
     assert_eq!(world.issue(other).assignees, []);
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
 }
 
 #[tokio::test]
-async fn a_pull_request_closed_unmerged_hands_back_its_ticket_and_another_issue_it_closed_goes_on()
-{
+async fn a_pull_request_closed_unmerged_hands_back_its_claimed_ticket_and_an_unclaimed_issue_it_closed_goes_on()
+ {
     let mut world = World::new().await;
     let (ticket, other, pr) = pull_request_closing_another_issue(&mut world).await;
     world.poll().await;
@@ -847,6 +845,95 @@ async fn a_pull_request_closed_unmerged_hands_back_its_ticket_and_another_issue_
     assert_eq!(labels(&world.issue(other)), ["ready-for-agent"]);
     assert_eq!(world.issue(other).assignees, [Login::new(LINEWRIGHT)]);
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+}
+
+/// How many comments on `issue` say the pull request #`pr` was closed
+/// without merging.
+fn refusals(world: &World, issue: Number, pr: Number) -> usize {
+    let said = format!("{pr} was closed without merging");
+    world
+        .issue(issue)
+        .comments
+        .iter()
+        .filter(|c| c.body.contains(&said))
+        .count()
+}
+
+#[tokio::test]
+async fn a_pull_request_closed_unmerged_hands_back_each_claimed_ticket_it_closes_once_then_relabeling_starts_afresh()
+ {
+    let mut world = World::new().await;
+    let (ticket, other, pr) = pull_request_closing_another_issue(&mut world).await;
+    world.store.assign_as(other, LINEWRIGHT).unwrap();
+    world.clock.advance(TimeDelta::minutes(1));
+    world.store.close_pull_as(pr).unwrap();
+    world.clock.advance(TimeDelta::minutes(1));
+
+    world.poll().await;
+    world.poll().await;
+
+    for issue in [ticket, other] {
+        assert_eq!(labels(&world.issue(issue)), ["ready-for-human"]);
+        assert_eq!(world.issue(issue).assignees, []);
+        assert_eq!(refusals(&world, issue, pr), 1);
+    }
+
+    implement(&world);
+    world.clock.advance(TimeDelta::minutes(1));
+    for issue in [ticket, other] {
+        world.store.label_as(issue, "ready-for-agent").unwrap();
+    }
+    world.poll().await;
+    world.poll().await;
+
+    for issue in [ticket, other] {
+        assert_eq!(refusals(&world, issue, pr), 1);
+        assert_eq!(world.issue(issue).assignees, [Login::new(LINEWRIGHT)]);
+    }
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 3);
+    assert_eq!(world.store.pulls().len(), 3);
+}
+
+#[tokio::test]
+async fn a_ticket_whose_pull_request_is_edited_not_to_close_it_is_worked_again_beside_it() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .edit_body(pr, "Does it, but not that.")
+        .await
+        .unwrap();
+
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+    let pulls = world.store.pulls();
+    assert_eq!(pulls.len(), 2);
+    let (old, new) = (
+        world.store.snapshot_pull(pulls[0]).await,
+        world.store.snapshot_pull(pulls[1]).await,
+    );
+    assert!(old.is_open() && new.is_open());
+    assert_ne!(old.head_ref, new.head_ref);
+    assert_eq!(new.closes, [ticket]);
+}
+
+#[tokio::test]
+async fn a_rewritten_description_keeps_every_issue_the_pull_request_closes() {
+    let mut world = World::new().await;
+    let (ticket, other, pr) = pull_request_closing_another_issue(&mut world).await;
+    world.runtime.on(WorkKind::FixCi, |call| {
+        commit_in(&call.spec.dir, &[("src/fix.txt", "fixed\n")], "Fix it");
+        json(json!({"outcome": "done", "comment": "Fixed.", "pr_body": "Does it, fixed."}))
+    });
+
+    world.poll().await;
+
+    let body = world.store.snapshot_pull(pr).await.body;
+    assert!(body.starts_with("Does it, fixed."), "{body}");
+    let mut closes = world.store.snapshot_pull(pr).await.closes;
+    closes.sort();
+    assert_eq!(closes, [other, ticket]);
 }
 
 #[tokio::test]

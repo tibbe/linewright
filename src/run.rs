@@ -291,7 +291,9 @@ async fn attempt(
             return tickets(shell, ctx, pr).await;
         }
         Work::Implement { issue: n } => {
-            return implement(shell, ctx, &ticket_of(snapshot, issue(*n)?)).await;
+            let issue = issue(*n)?;
+            let branch = snapshot.ticket_branch(issue);
+            return implement(shell, ctx, &ticket_of(snapshot, issue), branch).await;
         }
         Work::Rework { issue: n, pr } => (n, pr, Task::Rework),
         Work::FixCi {
@@ -868,13 +870,18 @@ async fn keep_stopped_work(shell: &Shell, dir: &Path, upstream: &str, branch: &s
     Ok(())
 }
 
-async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), Failure> {
+/// Implements `ticket` on `branch`, a branch for the ticket.
+async fn implement(
+    shell: &Shell,
+    ctx: &Ctx,
+    ticket: &Ticket<'_>,
+    branch: String,
+) -> Result<(), Failure> {
     let purpose = Purpose::Work {
         subject: Subject::Issue(ticket.issue.number),
         kind: WorkKind::Implement,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    let branch = ticket.issue.branch();
     git::create_branch(&ws.dir, &branch).await.map_err(infra)?;
     let upstream = shell.upstream();
     let prompt = prompts::implement(&shell.repo(), ticket, &branch);
@@ -946,11 +953,10 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
                 .open_pull(NewPull {
                     head: branch.clone(),
                     title: pr_title.into(),
-                    body: closing(&pr_body, ticket.issue.number),
+                    body: closing(&pr_body, &[ticket.issue.number]),
                 })
                 .await
                 .map_err(Failure::Apply)?;
-            ctx.run.opened(pr);
             if let Some(required) = shell.creation_label().await.map_err(Failure::Apply)? {
                 store
                     .add_label(pr, &required)
@@ -995,12 +1001,19 @@ async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), 
     }
 }
 
-/// The pull request body, ending in the reference that closes the ticket.
-fn closing(body: &str, ticket: Number) -> String {
-    if closing_references(body).contains(&ticket) {
+/// The pull request body, ending in a reference that closes each of
+/// `closes` it does not close already.
+fn closing(body: &str, closes: &[Number]) -> String {
+    let referenced = closing_references(body);
+    let missing: Vec<String> = closes
+        .iter()
+        .filter(|issue| !referenced.contains(issue))
+        .map(|issue| format!("Closes {issue}"))
+        .collect();
+    if missing.is_empty() {
         body.trim().to_string()
     } else {
-        format!("{}\n\nCloses {ticket}", body.trim())
+        format!("{}\n\n{}", body.trim(), missing.join("\n"))
     }
 }
 
@@ -1194,9 +1207,11 @@ async fn pull_work(
                     .await
                     .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Unlabel))?;
             }
+            // The rewritten description keeps every issue the pull request
+            // closes (`docs/specs/pull_requests.md`, "The pull request").
             if let Some(body) = pr_body {
                 store
-                    .edit_body(pr.number, &closing(&body, ticket.issue.number))
+                    .edit_body(pr.number, &closing(&body, &pr_now.closes))
                     .await
                     .map_err(Failure::Apply)?;
             }

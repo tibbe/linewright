@@ -7,7 +7,7 @@ mod views;
 
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
-use linewright::runs::{Ending, Recorded, RunId, State};
+use linewright::runs::{Ending, Recorded, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
 use views::{at, closed_by, implementing, in_flight, limited_until, ticket, view};
@@ -89,7 +89,8 @@ fn explain_shows_where_the_item_is_when_serve_last_read_it_and_each_wait() {
 }
 
 #[test]
-fn a_ticket_someone_elses_open_pull_request_closes_names_it_as_a_child_and_waits_for_it() {
+fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_names_it_as_a_child_and_waits_for_it()
+ {
     let ticket = closed_by(ticket(42, "Add invoices"), 43, "alice");
 
     assert_eq!(
@@ -97,7 +98,7 @@ fn a_ticket_someone_elses_open_pull_request_closes_names_it_as_a_child_and_waits
         [
             "#42: Add invoices",
             "child: #43, a pull request that closes it",
-            "state: ready to claim",
+            "state: in review: #43, opened by alice",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: #43, which closes it",
         ]
@@ -222,7 +223,6 @@ fn recorded(id: &str, started: &str, state: State) -> Recorded {
         started_at: at(started),
         state,
         sessions: vec![],
-        pr: None,
     }
 }
 
@@ -373,7 +373,7 @@ fn explain_shows_three_past_runs_and_leaves_none_out() {
 #[test]
 fn linewrights_pull_request_points_to_runs_for_its_own_past_runs() {
     let view = implementing_42_again(vec![draft(43, 42, &[CheckState::Pending])]);
-    let mut runs = opening_43(five_past_runs_of_42());
+    let mut runs = five_past_runs_of_42();
     runs.extend((1..=5).map(|n| {
         recorded(
             &format!("43/rework-{n}"),
@@ -491,19 +491,10 @@ fn an_item_with_no_runs_shows_none() {
     assert_eq!(run_lines(&render(&answer, false)), Vec::<&str>::new());
 }
 
-/// `runs` with #42's first implement run having opened #43.
-fn opening_43(mut runs: Vec<Recorded>) -> Vec<Recorded> {
-    let first: RunId = "42/implement-1".parse().unwrap();
-    for run in runs.iter_mut().filter(|run| run.id == first) {
-        run.pr = Some(Number(43));
-    }
-    runs
-}
-
 /// #42's runs as [`runs_of_42`] has them, its first implement run having
 /// opened #43, and #43's own past run.
 fn runs_of_42_and_43() -> Vec<Recorded> {
-    let mut runs = opening_43(runs_of_42());
+    let mut runs = runs_of_42();
     runs.push(recorded(
         "43/rework-1",
         "2026-10-01T11:10:00Z",
@@ -628,16 +619,16 @@ fn linewrights_pull_request_in_review_shows_its_own_runs_as_runs_lists_them() {
 }
 
 #[test]
-fn linewrights_pull_request_shows_none_of_the_runs_of_the_issue_it_was_opened_for() {
+fn linewrights_pull_request_shows_none_of_the_runs_of_the_issue_it_closes() {
     let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
-    let runs = opening_43(runs_of_42());
+    let runs = runs_of_42();
     let answer = Answer::Tracked(explain(&view, &runs, Number(43), at(NOW)).unwrap());
 
     assert_shows_no_runs(&answer);
 }
 
 #[test]
-fn an_issue_shows_none_of_the_runs_of_the_pull_request_opened_for_it() {
+fn an_issue_shows_none_of_the_runs_of_the_pull_request_that_closes_it() {
     let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
     let answer = explain(&view, &runs_of_42_and_43(), Number(42), at(NOW)).unwrap();
 
@@ -1732,12 +1723,12 @@ fn a_spec_change_not_cut_names_no_tracking_issue_from_a_cut_discarded_part_way()
 }
 
 /// #42's implement run, which opened #43.
-fn opened_43_for_42() -> Vec<Recorded> {
-    opening_43(vec![recorded(
+fn implemented_42() -> Vec<Recorded> {
+    vec![recorded(
         "42/implement-1",
         "2026-10-01T10:00:00Z",
         ended("2026-10-01T10:30:00Z", Ending::Done),
-    )])
+    )]
 }
 
 /// The family lines of the answer about `read`, with the runs `recorded`.
@@ -1774,7 +1765,7 @@ fn closed_43(closes: &[u64]) -> Pull {
 }
 
 #[test]
-fn linewrights_pull_request_names_the_issues_it_closes_whatever_issue_it_was_opened_for() {
+fn linewrights_pull_request_names_the_issues_it_closes() {
     let edited_open = Pull {
         body: "Closes #12".into(),
         closes: numbers(&[12]),
@@ -1806,7 +1797,7 @@ fn linewrights_pull_request_names_the_issues_it_closes_whatever_issue_it_was_ope
         (AnyItem::Pull(Box::new(edited_open)), &only_12[..]),
     ] {
         assert_eq!(
-            read_family(&view(vec![], vec![]), &opened_43_for_42(), read),
+            read_family(&view(vec![], vec![]), &implemented_42(), read),
             parents
         );
     }
@@ -1826,7 +1817,7 @@ fn claimed_12_and_42() -> Vec<Issue> {
         .into()
 }
 
-/// Linewright's open pull request #43 for #42, which closes #12 as well.
+/// Linewright's open pull request #43, which closes #12 and #42.
 fn open_43_closing_12_and_42() -> Pull {
     Pull {
         body: "Closes #12 and closes #42".into(),
@@ -1836,10 +1827,9 @@ fn open_43_closing_12_and_42() -> Pull {
 }
 
 #[test]
-fn linewrights_pull_request_in_review_names_each_issue_it_closes_whatever_issue_it_was_opened_for()
-{
+fn linewrights_pull_request_in_review_names_each_issue_it_closes() {
     let in_review = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
-    let answer = explain(&in_review, &opened_43_for_42(), Number(43), at(NOW)).unwrap();
+    let answer = explain(&in_review, &implemented_42(), Number(43), at(NOW)).unwrap();
     let lines = lines_of(&render(&answer, false));
 
     assert_eq!(
@@ -1865,11 +1855,11 @@ fn linewrights_pull_request_in_review_names_each_issue_it_closes_whatever_issue_
 }
 
 #[test]
-fn linewrights_pull_request_is_a_child_of_each_issue_it_closes_whatever_issue_it_was_opened_for() {
+fn linewrights_pull_request_is_a_child_of_each_issue_it_closes() {
     let view = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
 
     for issue in [12, 42] {
-        let answer = explain(&view, &opened_43_for_42(), Number(issue), at(NOW)).unwrap();
+        let answer = explain(&view, &implemented_42(), Number(issue), at(NOW)).unwrap();
         assert_eq!(
             family_lines(&lines_of(&render(&answer, false))),
             ["child: #43, a pull request that closes it"]
@@ -1878,7 +1868,7 @@ fn linewrights_pull_request_is_a_child_of_each_issue_it_closes_whatever_issue_it
 }
 
 #[test]
-fn linewrights_pull_request_whose_issue_was_handed_back_is_explained_for_that_issue() {
+fn linewrights_pull_request_is_explained_for_the_first_issue_it_closes_whatever_its_labels() {
     let handed_back = Issue {
         labels: vec!["ready-for-human".into()],
         assignees: vec![Login::new("factory")],
@@ -1893,7 +1883,7 @@ fn linewrights_pull_request_whose_issue_was_handed_back_is_explained_for_that_is
         vec![open_43_closing_12_and_42()],
     );
 
-    let answer = explain(&view, &opened_43_for_42(), Number(43), at(NOW)).unwrap();
+    let answer = explain(&view, &implemented_42(), Number(43), at(NOW)).unwrap();
     assert_eq!(
         lines_of(&render(&answer, false))[1..],
         [
@@ -1906,7 +1896,7 @@ fn linewrights_pull_request_whose_issue_was_handed_back_is_explained_for_that_is
     );
     assert_eq!(
         serde_json::to_value(&answer).unwrap()["pull_request_for"],
-        42
+        12
     );
 }
 
@@ -1923,13 +1913,13 @@ fn a_spec_change_cut_into_tickets_names_the_issue_it_closes_and_its_tracking_iss
     };
 
     assert_eq!(
-        read_family(&view(vec![], vec![]), &opened_43_for_42(), read.clone()),
+        read_family(&view(vec![], vec![]), &implemented_42(), read.clone()),
         [
             "parent: #12, an issue it closes",
             "child: #40, its tracking issue",
         ]
     );
-    let answer = explain_read(&view(vec![], vec![]), &opened_43_for_42(), &read, at(NOW));
+    let answer = explain_read(&view(vec![], vec![]), &implemented_42(), &read, at(NOW));
     let json = serde_json::to_value(&answer).unwrap();
     assert_eq!(
         json["parents"],
@@ -1997,7 +1987,9 @@ fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
     let ended = |number| ClosingPull {
         number: Number(number),
         author: Login::new("alice"),
-        open: false,
+        state: PullState::Closed {
+            at: at("2026-10-01T11:00:00Z"),
+        },
     };
     let closed = Issue {
         open: false,

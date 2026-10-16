@@ -13,6 +13,7 @@ use common::*;
 use linewright::domain::{CheckState, Item, Number, ReviewState};
 use linewright::factory::Factory;
 use linewright::reconcile::{Action, Subject, Work, WorkKind};
+use linewright::store::Store;
 use linewright::webhook;
 
 #[tokio::test]
@@ -167,16 +168,19 @@ async fn a_ticket_linewrights_pull_request_for_another_opened_since_the_poll_clo
 }
 
 #[tokio::test]
-async fn refreshing_linewrights_own_pull_request_reads_not_the_issue_it_closes() {
+async fn a_ticket_whose_pull_request_is_refreshed_edited_not_to_close_it_is_worked_again() {
     let mut world = World::new().await;
-    let (_, pr) = world.ticket_in_review().await;
+    let (ticket, pr) = world.ticket_in_review().await;
     world.poll().await;
-    let read = world.store.items_read();
+    world
+        .store
+        .edit_body(pr, "Does it, but not that.")
+        .await
+        .unwrap();
 
-    world.factory.refresh([Item::Pull(pr)]).await.unwrap();
+    let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
 
-    // The pull request, as Linewright's and as a merged one.
-    assert_eq!(world.store.items_read(), read + 2);
+    assert_eq!(actions, [Action::Start(Work::Implement { issue: ticket })]);
 }
 
 #[tokio::test]

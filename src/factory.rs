@@ -25,8 +25,7 @@ use crate::domain::{
 };
 use crate::marker::{Stage, marked};
 use crate::reconcile::{
-    Action, Facts, FailedMerge, LiveRun, Memory, OpenedFor, Policy, Subject, Work, Workflows,
-    hold_note, reconcile,
+    Action, FailedMerge, LiveRun, Memory, Policy, Subject, Work, Workflows, hold_note, reconcile,
 };
 use crate::run::{self, Shell, WorkflowEnd};
 use crate::runs::{self, RunOf, Runs, Watched};
@@ -108,10 +107,6 @@ pub struct Factory {
 #[derive(Clone)]
 struct Kept {
     snapshot: Arc<Snapshot>,
-    /// Which issue each of Linewright's pull requests was opened for, read
-    /// from the runs' records after the snapshot, so that it links each pull
-    /// request a run opened before the snapshot read it.
-    opened_for: OpenedFor,
     /// When the poll took the snapshot.
     taken_at: Timestamp,
     /// When refreshes read the items they read into it.
@@ -232,12 +227,10 @@ impl Factory {
             .snapshot(now - shell.policy.spec_lookback)
             .await
             .context("taking a snapshot")?;
-        let opened_for = opened_for(shell)?;
         self.ended.clear();
         self.written.clear();
         let kept = Kept {
             snapshot: Arc::new(snapshot),
-            opened_for,
             taken_at: now,
             read_at: HashMap::new(),
         };
@@ -279,8 +272,7 @@ impl Factory {
             return Ok(vec![]);
         }
         read.extend(read_all(snapshot, shell, named, merged_since).await?);
-        kept.opened_for = opened_for(shell)?;
-        let others = closed_by_pulls_read(snapshot, &kept.opened_for, &read);
+        let others = closed_by_pulls_read(snapshot, &read);
         read.extend(read_all(snapshot, shell, others, merged_since).await?);
         kept.read_at
             .extend(read.into_iter().map(|item| (item, now)));
@@ -359,7 +351,6 @@ impl Factory {
             .collect();
         Some(View {
             snapshot: kept.snapshot.clone(),
-            opened_for: kept.opened_for.clone(),
             read_at: kept.read_at.clone(),
             policy: self.shell.policy.clone(),
             polls: Polls {
@@ -416,12 +407,8 @@ impl Factory {
             in_flight: self.workflows_in_flight(),
         };
         self.memory.retain_open(snapshot);
-        let facts = Facts {
-            snapshot,
-            opened_for: &kept.opened_for,
-        };
         let actions = reconcile(
-            facts,
+            snapshot,
             &live,
             &self.memory,
             &workflows,
@@ -573,7 +560,6 @@ impl Factory {
                         item: work.item(),
                         stage: work.kind(),
                     },
-                    work.pr(),
                     shell.clock.now(),
                 )?;
                 let id = running.id().to_string();
@@ -749,7 +735,6 @@ fn begin_workflow(shell: &Shell, name: &WorkflowName) -> Result<runs::Running> {
             RunOf::Workflow {
                 workflow: name.clone(),
             },
-            None,
             shell.clock.now(),
         )
         .with_context(|| format!("recording the run of the workflow `{name}`"))
@@ -794,35 +779,21 @@ async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str
     store.comment(pr, &marked(Stage::Review, note)).await
 }
 
-/// Which issue each of Linewright's pull requests was opened for, as the
-/// runs' records under the work directory say.
-fn opened_for(shell: &Shell) -> Result<OpenedFor> {
-    let recorded = shell.runs.read().context("reading the runs' records")?;
-    Ok(runs::opened_for_each(&recorded))
-}
-
 /// The issues to read again after `read`: those `snapshot` holds that a
 /// pull request of Linewright's among `read` closes, or closed while open,
-/// other than the one `opened_for` says it was opened for, and not read
-/// already. Linewright's pull request holds them back, as someone else's
-/// does, and so frees them when it ends. One no record links to is for them
-/// all, so it has none.
-fn closed_by_pulls_read(
-    snapshot: &Snapshot,
-    opened_for: &OpenedFor,
-    read: &BTreeSet<Item>,
-) -> BTreeSet<Item> {
+/// and not read already. Its pull request holds an issue back while it is
+/// open, and so frees it when it ends or stops closing it.
+fn closed_by_pulls_read(snapshot: &Snapshot, read: &BTreeSet<Item>) -> BTreeSet<Item> {
     let mut others = BTreeSet::new();
     for item in read {
         let Item::Pull(pr) = *item else { continue };
-        let (Some(pull), Some(issue)) = (snapshot.pull(pr), opened_for.issue(pr)) else {
+        let Some(pull) = snapshot.pull(pr) else {
             continue;
         };
         others.extend(
             snapshot
                 .issues_closing(pr, &pull.closes)
                 .into_iter()
-                .filter(|&i| i != issue)
                 .map(Item::Issue)
                 .filter(|other| !read.contains(other)),
         );
