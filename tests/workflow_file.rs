@@ -1,6 +1,3 @@
-//! Workflow files, parsed once at the boundary into a typed definition, with
-//! the keys and defaults of the spec's table (`docs/specs/workflows.md`).
-
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};

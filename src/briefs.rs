@@ -1,11 +1,3 @@
-//! The briefs, read at startup from the `briefs` setting so a change needs no
-//! rebuild (`docs/specs/replay.md`): a Claude Code plugin, `linewright`,
-//! holding a skill per stage and the skills those call, and the brief for
-//! workflow runs. The ones Linewright ships live in `briefs/` and are built
-//! in. Every session is given a copy of the plugin, so no session can change
-//! what another reads (`docs/specs/architecture.md`, "Briefs are files read
-//! at startup"). Docs: <https://code.claude.com/docs/en/plugins>.
-
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -13,11 +5,9 @@ use anyhow::{Context, Result};
 #[derive(Clone, Debug)]
 pub struct Briefs {
     pub workflow: String,
-    /// The plugin's files, each with its path in the directory.
     pub plugin: Vec<(&'static str, String)>,
 }
 
-/// The plugin's files Linewright ships, by their path in `briefs/`.
 const PLUGIN: [(&str, &str); 11] = [
     (
         ".claude-plugin/plugin.json",
@@ -73,7 +63,6 @@ impl Briefs {
         }
     }
 
-    /// Reads every brief from `dir`, failing on the first one missing.
     pub fn load(dir: &Path) -> Result<Briefs> {
         let read = |path: &Path| {
             std::fs::read_to_string(path)
@@ -90,7 +79,6 @@ impl Briefs {
         })
     }
 
-    /// Copies the plugin into `dir`.
     pub fn write_plugin(&self, dir: &Path) -> std::io::Result<()> {
         for (path, text) in &self.plugin {
             let path = dir.join(path);

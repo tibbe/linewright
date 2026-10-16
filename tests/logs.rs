@@ -1,9 +1,3 @@
-//! `lw logs`, end to end at the operator's level: a factory doing
-//! runs on the local store, its sessions streaming a recorded Claude Code
-//! transcript, and the `lw` program showing it from the records with
-//! no `serve` running; and which run `logs` shows, end to end on its data
-//! model (`docs/specs/monitoring.md`, "logs").
-
 mod common;
 
 use std::path::{Path, PathBuf};
@@ -16,14 +10,10 @@ use linewright::reconcile::WorkKind;
 use linewright::runs::{Ending, Recorded, RunId, State};
 use serde_json::json;
 
-// Which run, end to end on its data model.
-
 fn at(time: &str) -> Timestamp {
     format!("2026-10-14T{time}Z").parse().unwrap()
 }
 
-/// The run `id`, started at `start`, done a minute later, with `sessions`
-/// sessions.
 fn run(id: &str, start: &str, sessions: usize) -> Recorded {
     Recorded {
         id: id.parse().unwrap(),
@@ -115,8 +105,6 @@ fn a_named_run_is_the_one_shown() {
     );
 }
 
-/// #1's runs, of which the implement run opened #3, and #3's own, the
-/// latest in flight.
 fn ticket_and_pull() -> Vec<Recorded> {
     let mut in_flight = run("3/rework-2", "11:30:00", 1);
     in_flight.state = State::InFlight;
@@ -161,12 +149,8 @@ fn an_item_with_no_runs_has_none_to_show() {
     assert_eq!(picked(recorded, item(2)), Err(NoSuchRun::NoRuns(Number(2))));
 }
 
-// `logs` at the operator's level.
-
 const REPO: &str = "owner/widgets";
 
-/// A world whose factory keeps its records where `lw --work-dir`
-/// finds those of `owner/widgets`, with that work directory.
 async fn world() -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
     let world = World::with(|config| config.work_dir = work_dir.path().join(REPO)).await;
@@ -179,8 +163,6 @@ struct Output {
     stderr: String,
 }
 
-/// Runs `lw --repo owner/widgets --work-dir <work_dir>` with `args`,
-/// with no `serve` running.
 async fn lw(work_dir: &Path, args: &[&str]) -> Output {
     let runtime_dir = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();

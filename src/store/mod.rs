@@ -1,8 +1,3 @@
-//! The store: where every fact Linewright decides on lives and every outcome
-//! it records goes (`docs/specs/architecture.md`, "The store is an interface").
-//! GitHub is the production store; a local store of plain files serves replay
-//! and tests.
-
 pub mod github;
 mod job_log;
 pub mod local;
@@ -18,17 +13,13 @@ use crate::domain::{
     Snapshot, Timestamp, UpdateMethod, UpdateRule,
 };
 
-/// Who Linewright acts as.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     pub login: Login,
-    /// The author identity of the commits it makes.
     pub name: String,
     pub email: String,
 }
 
-/// How issues are categorized: the repository's issue types where it has
-/// them, otherwise the `bug` and `enhancement` labels.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Categories {
     IssueTypes(Vec<String>),
@@ -47,24 +38,16 @@ impl Categories {
     }
 }
 
-/// The repository settings Linewright follows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepoSettings {
     pub default_branch: String,
     pub update_rule: UpdateRule,
     pub merge_method: MergeMethod,
-    /// The merge methods the repository allows.
     pub allowed_merge_methods: MergeMethods,
     pub categories: Categories,
 }
 
 impl RepoSettings {
-    /// The settings of a repository whose default branch requires linear
-    /// history, or not, and that allows `allowed_merge_methods`: branches
-    /// are updated and merged by rebasing where it requires linear history,
-    /// and otherwise updated by merging, or by rebasing on a conflict where
-    /// it allows rebase merging, and merged with the first method it allows
-    /// (`docs/specs/pull_requests.md`, "Keeping up to date" and "Auto-merge").
     pub fn new(
         default_branch: String,
         linear_history: bool,
@@ -98,9 +81,6 @@ impl RepoSettings {
         }
     }
 
-    /// Fails unless auto-merge can merge with the merge method: the
-    /// repository allows it, and `update_branch`, the `update-branch`
-    /// setting, keeps branches mergeable with it (`docs/specs/repository.md`).
     pub fn check_auto_merge(&self, update_branch: Option<UpdateMethod>) -> Result<()> {
         let method = self.merge_method;
         let allowed = &self.allowed_merge_methods;
@@ -121,29 +101,21 @@ impl RepoSettings {
     }
 }
 
-/// How a push treats the branch it replaces.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PushMode {
-    /// Replace whatever the branch holds: a fresh run's new branch.
     Replace,
-    /// Only if the branch still points at the commit the run started from.
     Lease { expected: String },
 }
 
-/// Why a push failed.
 #[derive(Debug, thiserror::Error)]
 pub enum PushError {
-    /// GitHub refused it because Linewright's token lacks a permission, for
-    /// `reason`, in GitHub's words: no retry can change that.
     #[error("GitHub refused the push for a missing permission: {reason}")]
     MissingPermission { reason: String },
-    /// Anything else, such as the network or a lease the branch moved past.
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
 
 impl PushError {
-    /// The failure of a `git push`, from what the remote said in `error`.
     pub fn from_git(error: anyhow::Error) -> PushError {
         match missing_permission(&format!("{error:#}")) {
             Some(reason) => PushError::MissingPermission { reason },
@@ -172,43 +144,33 @@ fn missing_permission(output: &str) -> Option<String> {
     })
 }
 
-/// Why an issue is closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseReason {
     Completed,
     NotPlanned,
 }
 
-/// An issue, as a snapshot taken now sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IssueRead {
-    /// One the snapshot holds.
     Held {
         issue: Box<Issue>,
-        /// Linewright's pull requests that close the issue, which a
-        /// snapshot holds with it.
+        /// Linewright's pull requests that close the issue.
         pulls: Vec<Pull>,
     },
-    /// One the snapshot's filters leave out, though the issues it holds may
-    /// link to it.
-    LeftOut { open: bool },
-    /// One the store does not have, such as a deleted issue.
+    LeftOut {
+        open: bool,
+    },
     Gone,
 }
 
-/// An issue or pull request, whichever #N is, as a read of it on its own
-/// sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnyItem {
-    /// An issue a snapshot taken now holds.
     HeldIssue(Box<Issue>),
-    /// An issue a snapshot taken now leaves out.
     LeftOutIssue(Box<Issue>),
     /// A pull request open, or closed without merging.
     Pull(Box<Pull>),
     Merged {
         pull: Box<MergedPull>,
-        /// The tracking issues Linewright filed for it as a spec change.
         tracking_issues: Vec<Number>,
     },
 }
@@ -291,9 +253,7 @@ pub trait Store: Send + Sync {
     /// The names of the files directly in the directory `dir` at the head of
     /// `branch`: none when it has no such directory.
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;
-    /// Clones the repository into `dir`, with `branch` checked out.
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
-    /// Pushes `HEAD` of the clone in `dir` to `branch`.
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;
     /// Deletes `branch`, if the repository has it.
     async fn delete_branch(&self, branch: &str) -> Result<()>;

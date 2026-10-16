@@ -1,8 +1,3 @@
-//! What a session hands back: its final message is a JSON object the manager
-//! parses into one of these types (`docs/specs/architecture.md`, "Agents read
-//! through the brief and write through the result"). A message that does not
-//! parse yields the error to send back to the session.
-
 use std::collections::BTreeMap;
 
 use serde::de::DeserializeOwned;
@@ -56,14 +51,12 @@ pub struct Ticket {
     pub blocked_by: Vec<usize>,
 }
 
-/// A spec change a session found the spec needs.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct SpecGap {
     pub title: String,
     pub body: String,
 }
 
-/// A pull request's title as the session wrote it: trimmed, and not empty.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
 pub struct PrTitle(String);
@@ -94,7 +87,6 @@ pub enum ImplementResult {
         #[serde(default)]
         spec_gaps: Vec<SpecGap>,
     },
-    /// A spec gap blocks the ticket.
     Blocked {
         question: String,
         #[serde(default)]
@@ -114,16 +106,12 @@ pub struct ThreadReply {
     pub resolve: bool,
 }
 
-/// The result of work on an open pull request: rework, a CI fix or a
-/// conflict resolved.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "outcome", rename_all = "kebab-case")]
 pub enum PullWorkResult {
     Done {
         #[serde(deserialize_with = "trimmed")]
         comment: String,
-        /// The pull request's body rewritten, when the change made it out of
-        /// date.
         #[serde(default)]
         pr_body: Option<String>,
         #[serde(default)]
@@ -141,7 +129,6 @@ pub enum PullWorkResult {
     },
 }
 
-/// The label an issue a workflow hands back is filed with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkflowIssueLabel {
@@ -157,7 +144,6 @@ pub struct WorkflowIssue {
     pub label: WorkflowIssueLabel,
 }
 
-/// What a workflow's run did and found, and the issues it hands back.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct WorkflowResult {
     pub summary: String,
@@ -165,7 +151,6 @@ pub struct WorkflowResult {
     pub issues: Vec<WorkflowIssue>,
 }
 
-/// Text a session wrote for people, without the whitespace around it.
 fn trimmed<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     Ok(String::deserialize(deserializer)?.trim().to_string())
 }
@@ -238,13 +223,10 @@ pub fn parse<T: DeserializeOwned>(message: &str) -> Result<T, String> {
         .map_err(|e| format!("The result JSON does not match the contract: {e}."))
 }
 
-/// The JSON object in a final message, for the session's record.
 pub fn json_value(message: &str) -> Option<serde_json::Value> {
     serde_json::from_str(extract_json(message)?).ok()
 }
 
-/// The JSON object in a final message: the whole message, the last fenced
-/// block, or the span from the first `{` to the last `}`.
 fn extract_json(message: &str) -> Option<&str> {
     let trimmed = message.trim();
     if trimmed.starts_with('{') && trimmed.ends_with('}') {

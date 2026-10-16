@@ -1,15 +1,9 @@
-//! Startup, end to end at the operator's level: the repository's settings
-//! and Linewright's in, a factory or an error out, against the local store
-//! (`docs/specs/repository.md`). `serve`, `once` and `workflow run` all start
-//! this way.
-
 mod common;
 
 use common::*;
 use linewright::domain::{MergeMethod, UpdateMethod};
 use linewright::factory::FactoryConfig;
 
-/// The error startup with auto-merge and `adjust` applied fails with.
 async fn refused(repository: Repository, adjust: impl FnOnce(&mut FactoryConfig)) -> String {
     let started = World::start(repository, |config| {
         config.auto_merge = true;
@@ -99,10 +93,9 @@ async fn without_auto_merge_neither_the_merge_method_nor_update_branch_is_checke
     assert!(disallowed_merge_method.is_ok());
 }
 
-/// Runs `lw` with `args`, `env` and only `path` on the path, and
-/// returns whether it succeeded and what it wrote to stderr. It gets a runtime
-/// directory of its own, so that `serve`s run by tests at the same time don't
-/// claim the same socket.
+/// Returns whether it succeeded and what it wrote to stderr. It gets a
+/// runtime directory of its own, so that `serve`s run by tests at the same
+/// time don't claim the same socket.
 fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
     let dir = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
@@ -205,7 +198,6 @@ fn once_does_not_listen_even_with_the_secret() {
     assert!(error.contains("`git` is not on the path"), "{error}");
 }
 
-/// The version `Cargo.toml` gives the package.
 fn version() -> String {
     let manifest: toml::Table =
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
@@ -215,8 +207,6 @@ fn version() -> String {
     manifest["package"]["version"].as_str().unwrap().to_owned()
 }
 
-/// Whether `commit` names the commit this checkout's `HEAD` points to: 12 hex
-/// digits it starts with.
 fn names_head(commit: &str) -> bool {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -231,7 +221,6 @@ fn names_head(commit: &str) -> bool {
             .starts_with(commit)
 }
 
-/// What `serve` logs, in `format`, when it stops for want of `git`.
 fn serve_log(format: &str) -> String {
     let empty = tempfile::tempdir().unwrap();
     let (_, log) = lw(
@@ -250,7 +239,6 @@ fn serve_log(format: &str) -> String {
     log
 }
 
-/// `text` without the colors the text log format adds.
 fn without_colors(text: &str) -> String {
     text.split('\x1b')
         .map(|part| part.split_once('m').map_or(part, |(_, rest)| rest))

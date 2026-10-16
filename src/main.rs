@@ -26,8 +26,7 @@ use tracing::{error, info};
 
 const RUNTIME: &str = "claude";
 
-/// The exit statuses beyond success and failure (`docs/specs/monitoring.md`,
-/// "Output"). Clap exits with 2 too for a command line it cannot parse.
+/// Clap exits with 2 too for a command line it cannot parse.
 const WRONG_COMMAND_LINE: u8 = 2;
 const NOT_SERVING: u8 = 3;
 const NO_SUCH_ITEM: u8 = 4;
@@ -61,8 +60,6 @@ async fn main() -> ExitCode {
     }
 }
 
-/// Prints `message` to standard error as an error of the program's own,
-/// without the log's decoration.
 fn complain(message: impl std::fmt::Display) {
     eprintln!("{COMMAND}: {message}");
 }
@@ -79,10 +76,6 @@ fn init_logging(format: LogFormat) {
     }
 }
 
-/// A monitoring command: asks the `serve` of the configured repository for
-/// `resource` and prints its answer, a `what`, as text by `render` or, with
-/// `json`, as it came. Errors go to standard error, without the log's
-/// decoration.
 async fn ask<T: serde::de::DeserializeOwned>(
     config: &Config,
     resource: &str,
@@ -116,9 +109,6 @@ async fn ask<T: serde::de::DeserializeOwned>(
     ExitCode::SUCCESS
 }
 
-/// `lw runs`: the runs `query` asks for, from the `serve` of the
-/// configured repository or, with none running, from the records it keeps,
-/// printed as text or, with `json`, as JSON.
 async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
     let resource = format!("/runs?{}", api::query_string(query));
     let answer = ask_or_read(config, &resource, "runs", |work_dir| {
@@ -128,7 +118,6 @@ async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
     print_answer(answer.map(|answer| answer.text(json)))
 }
 
-/// How `logs` prints a transcript.
 #[derive(Clone, Copy)]
 struct Printing {
     verbosity: Verbosity,
@@ -137,9 +126,7 @@ struct Printing {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Format {
-    /// Text, coloured on a terminal.
     Text,
-    /// A JSON object per line.
     Json,
 }
 
@@ -151,7 +138,6 @@ impl Printing {
         }
     }
 
-    /// Prints `line` of a followed transcript at once.
     fn line(self, line: &transcript::Line) {
         match self.format {
             Format::Text => print!("{}", transcript::render_line(line, colour())),
@@ -161,10 +147,6 @@ impl Printing {
     }
 }
 
-/// `lw logs`: the transcript of the run `which` names, from the
-/// `serve` of the configured repository or, with none running, from the
-/// records it keeps, printed as `printing` says. With `follow`, a run in
-/// flight's is followed until the run ends.
 async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: bool) -> ExitCode {
     let resource = format!("/logs?{}", api::query_string(which));
     let answer = ask_or_read(config, &resource, "a transcript", |work_dir| {
@@ -183,7 +165,6 @@ async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: b
             },
             verbosity: printing.verbosity,
         };
-        // So far as `logs` shows it, unless no session has written yet.
         let after = match in_flight {
             InFlight::Unread => None,
             InFlight::ReadTo(read) => {
@@ -199,11 +180,6 @@ async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: b
     print_answer(answer.map(|answer| printing.transcript(answer.value())))
 }
 
-/// `lw logs --follow` of the run in flight `query` names: each line of its
-/// transcript after `after`, or from the first, as it is written,
-/// until the run ends, from the `serve` of the configured repository,
-/// resumed after the last line read when its stream breaks off or it hangs
-/// up, or, with none running, from the records it keeps.
 async fn follow_logs(
     config: &Config,
     query: FollowQuery,
@@ -257,8 +233,6 @@ async fn follow_logs(
             Ok(()) if ended => return ExitCode::SUCCESS,
             // Broken off: asked again, after the last line read.
             Ok(()) => tokio::time::sleep(api::ASK_AGAIN_AFTER).await,
-            // Hung up on, as when `serve` stops as it is asked: asked again,
-            // after the last line read, as `api::get_answer` asks.
             Err(RequestError::HungUp(e)) => {
                 if !hang_ups.ask_again() {
                     return print_answer(Err(failed(e)));
@@ -274,9 +248,6 @@ async fn follow_logs(
     }
 }
 
-/// Follows the transcript of the run `query` names in the records in
-/// `work_dir`, printing each line after `after`, or from the first, as it
-/// is written, until the run ends.
 async fn follow_records(
     work_dir: &RepoWorkDir,
     query: &FollowQuery,
@@ -300,8 +271,6 @@ async fn follow_records(
     }
 }
 
-/// Prints `answer`, or its error to standard error, without the log's
-/// decoration, and gives the exit status.
 fn print_answer(answer: Result<String, (u8, String)>) -> ExitCode {
     match answer {
         Ok(text) => {
@@ -315,9 +284,6 @@ fn print_answer(answer: Result<String, (u8, String)>) -> ExitCode {
     }
 }
 
-/// Asks the `serve` of the configured repository for `resource`, an answer
-/// that reads as `what`, or, with none running, reads it from the records
-/// with `read`. Fails with the exit status and the error.
 async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
     config: &Config,
     resource: &str,
@@ -339,12 +305,10 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
     }
 }
 
-/// The exit status and message of `e`.
 fn failed(e: anyhow::Error) -> (u8, String) {
     (1, format!("{e:#}"))
 }
 
-/// The exit status and message of an answer the records do not give.
 fn unanswered(e: Unanswered) -> (u8, String) {
     match e {
         Unanswered::NoSuch { error, .. } => (NO_SUCH_ITEM, error),
@@ -352,7 +316,6 @@ fn unanswered(e: Unanswered) -> (u8, String) {
     }
 }
 
-/// The exit status and message of an answer `serve` does not give.
 fn refused(e: RequestError) -> (u8, String) {
     match e {
         RequestError::NotServing { .. } => (NOT_SERVING, e.to_string()),
@@ -361,7 +324,6 @@ fn refused(e: RequestError) -> (u8, String) {
     }
 }
 
-/// An answer: `serve`'s, or one read with no `serve` running.
 enum Answer<T> {
     Served { body: axum::body::Bytes, value: T },
     Read(T),
@@ -376,8 +338,6 @@ impl<T> Answer<T> {
 }
 
 impl Answer<runs::Listing> {
-    /// The answer as text or, with `json`, as JSON: `serve`'s as it sent it
-    /// (`docs/specs/architecture.md`, "The local API").
     fn text(&self, json: bool) -> String {
         match (self, json) {
             (Answer::Served { body, .. }, true) => {
@@ -394,13 +354,10 @@ impl Answer<runs::Listing> {
     }
 }
 
-/// Whether to colour what goes to standard output: only on a terminal.
 fn colour() -> bool {
     std::io::stdout().is_terminal()
 }
 
-/// The directory the local API's sockets are in, for this process's user
-/// and environment.
 fn socket_dir() -> PathBuf {
     api::socket_dir(
         std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
@@ -461,8 +418,6 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             // repository stops at once.
             let work_dir = config.repo_work_dir()?;
             let claimed = api::claim(&socket_dir(), &work_dir.repo)?;
-            // `once` and the other commands never listen
-            // (`docs/specs/webhooks.md`).
             let pending = Pending::default();
             let listener = match &config.webhooks {
                 Some(webhooks) => {
@@ -540,9 +495,6 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
     done.map(|()| ExitCode::SUCCESS)
 }
 
-/// Starts the factory and serves, polling and reading again the items
-/// deliveries add to `pending` and sending its view to `view`, until a stop
-/// signal.
 async fn serve(
     config: &Config,
     mut signals: StopSignals,
@@ -590,14 +542,10 @@ async fn connect(config: &Config, token: String) -> Result<GitHub> {
     GitHub::connect(config.required_repo()?, token).await
 }
 
-/// The repository's work directory: its clones, session records and the
-/// workflows' last runs.
 fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }
 
-/// The agent runtime, its sessions given `github_token`: the token of
-/// Linewright's account in production, none in replay (`docs/specs/replay.md`).
 fn runtime(config: &Config, bash: PathBuf, github_token: Option<String>) -> ClaudeCode {
     ClaudeCode {
         program: RUNTIME.into(),
@@ -636,14 +584,11 @@ fn factory_config(
     })
 }
 
-/// What a run refused for the usage limit does: only `serve` waits
-/// (`docs/specs/operation.md`, "Usage limit").
 enum OnUsageLimit {
     Wait,
     End,
 }
 
-/// Startup: refuse to start when the factory cannot work.
 async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory> {
     require_tool("git").await?;
     let bash = require_bash()?;
@@ -660,8 +605,6 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
     .await
 }
 
-/// SIGINT (Ctrl-C) and SIGTERM, which `docker stop` and service managers
-/// send: both ask `serve` to stop.
 struct StopSignals {
     interrupt: Signal,
     terminate: Signal,
@@ -697,8 +640,8 @@ impl StopSignals {
         })
     }
 
-    /// The next stop signal. Signals that arrive before the last one was read
-    /// count as one, so two sent back to back are a single stop.
+    /// Signals that arrive before the last one was read count as one, so two
+    /// sent back to back are a single stop.
     async fn next(&mut self) -> StopSignal {
         tokio::select! {
             _ = self.interrupt.recv() => StopSignal::Interrupt,
@@ -719,8 +662,8 @@ async fn require_tool(program: &str) -> Result<()> {
     Ok(())
 }
 
-/// The first `bash` on the path. Claude Code takes the shell it is told to
-/// use as a path, not a name to look up.
+/// Claude Code takes the shell it is told to use as a path, not a name to
+/// look up.
 fn require_bash() -> Result<PathBuf> {
     let found = std::env::var_os("PATH")
         .iter()

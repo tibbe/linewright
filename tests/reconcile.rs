@@ -1,6 +1,3 @@
-//! The functional core, end to end on its data model: a state of the world in,
-//! the decisions out (`CODING_STANDARDS.md`, "Where tests go").
-
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
 use linewright::reconcile::*;
@@ -589,7 +586,6 @@ fn ticket_branch(number: u64, issue: BranchIssue) -> TicketBranch {
     }
 }
 
-/// `issue`, read with its branch and left out of the snapshot.
 fn read(issue: Issue) -> BranchIssue {
     BranchIssue::Read(Box::new(issue))
 }
@@ -800,8 +796,6 @@ fn a_draft_waits_while_checks_run() {
     assert_eq!(at(&in_review(pr), 30), vec![]);
 }
 
-/// A run of `kind` on the pull request #`pr` that did its work at
-/// `minute`.
 fn done(pr: u64, kind: WorkKind, minute: i64) -> DoneRun {
     DoneRun {
         pr: Number(pr),
@@ -810,7 +804,6 @@ fn done(pr: u64, kind: WorkKind, minute: i64) -> DoneRun {
     }
 }
 
-/// The decisions at `minute`, with `policy`, remembering `memory`.
 fn deciding_at(world: &Snapshot, memory: &Memory, policy: &Policy, minute: i64) -> Vec<Action> {
     reconcile(world, &[], memory, &Workflows::default(), t(minute), policy)
 }
@@ -1048,8 +1041,6 @@ fn a_pull_request_behind_or_in_conflict_with_the_default_branch_is_brought_up_to
     assert_eq!(at(&in_review(conflicting), 10), vec![update(2, 20)]);
 }
 
-/// A green pull request ready for review, up to date, whose branch has a
-/// merge commit GitHub cannot rebase.
 fn not_rebaseable() -> Pull {
     let mut pr = ready(pull(20, 2));
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -1061,7 +1052,6 @@ fn deciding(world: &Snapshot, memory: &Memory, policy: &Policy) -> Vec<Action> {
     deciding_at(world, memory, policy, 10)
 }
 
-/// A rebase of #20 at `head`, tried at `minute`.
 fn tried(head: &str, minute: i64) -> TriedRebase {
     TriedRebase {
         pr: Number(20),
@@ -1070,8 +1060,6 @@ fn tried(head: &str, minute: i64) -> TriedRebase {
     }
 }
 
-/// An update run of #20 that rebases it, started at minute 10 and
-/// remembered as it starts.
 fn rebase_update() -> Vec<Action> {
     vec![Action::RememberRebase(tried("abc123", 10)), update(2, 20)]
 }
@@ -1371,8 +1359,6 @@ fn a_pull_request_github_blocks_is_held_for_review_after_it_is_marked_ready() {
     );
 }
 
-/// What Linewright remembers of a pull request #20 it held for a code
-/// owner's review.
 fn held_for_a_code_owner() -> Memory {
     let mut memory = Memory::default();
     memory.held.hold(Number(20), &code_owner_review());
@@ -1769,7 +1755,6 @@ fn a_pull_request_closed_without_merging_hands_the_ticket_back_once() {
     let mut pr = pull(20, 2);
     pr.state = PullState::Closed { at: t(5) };
     let closed = in_review(pr);
-    // Labeled again since, while Linewright is still assigned.
     let mut relabeled = closed.clone();
     relabeled.issues[0] = labeled_at(relabeled.issues[0].clone(), label::READY_FOR_AGENT, 6);
 
@@ -1834,8 +1819,6 @@ fn a_tracking_issue_is_closed_when_all_its_tickets_are() {
         vec![Action::CloseTracking { issue: Number(9) }]
     );
 }
-
-// Workflows: the due rule (`docs/specs/workflows.md`).
 
 fn hourly(name: &str) -> Workflow {
     linewright::workflow::parse(
@@ -2158,7 +2141,6 @@ fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_picked_up_on_a
 
 #[test]
 fn with_a_required_label_a_retried_handback_is_cut_again_only_if_labeled() {
-    // The maintainer retries by removing `ready-for-human`.
     let retried_unlabeled = merged(1, &["docs/spec.md"]);
     let mut retried = merged(2, &["docs/spec.md"]);
     retried.labels.push(REQUIRED.into());
@@ -2226,13 +2208,6 @@ fn pending_spec_changes_agree_with_the_required_label() {
     assert_eq!(numbers(&policy()), vec![Number(1), Number(2)]);
 }
 
-// The usage limit (`docs/specs/operation.md`, "Usage limit").
-
-/// A world with work of every kind to start and actions that start no
-/// session: an answered question, a run whose ticket lost its label, a
-/// pull request out of CI attempts, with [`fixed_twice`], a green draft and a
-/// tracking issue whose tickets are all closed, beside a workflow due since
-/// 13:00.
 fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
     let mut answered = labeled(issue(1), label::NEEDS_INFO);
     answered.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
@@ -2261,7 +2236,6 @@ fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
     )
 }
 
-/// The fix runs on the failing pull request in [`work_of_every_kind`].
 fn fixed_twice() -> Vec<DoneRun> {
     vec![done(22, WorkKind::FixCi, 3), done(22, WorkKind::FixCi, 6)]
 }
@@ -2288,7 +2262,6 @@ fn under_usage_limit(resets_at: i64) -> Vec<Action> {
     reconcile(&world, &live, &memory, &workflows, t(70), &policy)
 }
 
-/// The actions in [`work_of_every_kind`] that start no session.
 fn sessionless_actions() -> Vec<Action> {
     vec![
         Action::Cancel {
@@ -2399,8 +2372,6 @@ fn the_usage_limit_is_lifted_once_its_reset_passes() {
     assert_eq!(memory.lift_usage_limit(t(81)), None);
 }
 
-/// What Linewright waits for on each item, as the reconcile step derives it
-/// beside its actions (`docs/specs/monitoring.md`, "explain").
 fn waits(
     world: &Snapshot,
     live: &[LiveRun],
@@ -2442,7 +2413,6 @@ fn a_blocked_ticket_waits_for_each_open_blocker() {
     );
 }
 
-/// `issue`, which an open pull request #`pr` by `author` closes.
 fn closed_by(mut issue: Issue, pr: u64, author: &str) -> Issue {
     issue.closed_by.push(ClosingPull {
         number: Number(pr),
@@ -2511,9 +2481,6 @@ fn a_ticket_waits_for_blockers_and_closing_pull_requests_alike() {
     );
 }
 
-/// Linewright's #43, closing #42 and #12, its CI failing, with #42 labeled
-/// `label` and #12 a ticket, both claimed at minute 0, and listing #43
-/// among the pull requests that close them.
 fn pull_closing_42_and_12(label: &str) -> Snapshot {
     let mut pr = pull(43, 42);
     pr.closes.push(Number(12));
@@ -2526,7 +2493,6 @@ fn pull_closing_42_and_12(label: &str) -> Snapshot {
     world
 }
 
-/// `issue`, Linewright assigned to it at `minute`.
 fn assigned_at(mut issue: Issue, minute: i64) -> Issue {
     issue.assignees.push(Login::new(LINEWRIGHT));
     issue.events.push(IssueEvent::Assigned {
@@ -2536,8 +2502,6 @@ fn assigned_at(mut issue: Issue, minute: i64) -> Issue {
     issue
 }
 
-/// `world` with the pull request #`number` closed unmerged at `minute`,
-/// wherever it lists it.
 fn closed_unmerged(mut world: Snapshot, number: u64, minute: i64) -> Snapshot {
     let state = PullState::Closed { at: t(minute) };
     for pull in world
@@ -2612,7 +2576,6 @@ fn a_pull_request_closing_two_issues_is_worked_while_both_wait_for_it_whatever_t
 #[test]
 fn a_pull_request_closed_unmerged_hands_back_each_claimed_issue_it_closes_once() {
     let world = closed_unmerged(pull_closing_42_and_12(label::READY_FOR_AGENT), 43, 5);
-    // Labeled again since, while Linewright is still assigned.
     let mut relabeled = world.clone();
     for issue in &mut relabeled.issues {
         *issue = labeled_at(issue.clone(), label::READY_FOR_AGENT, 6);
@@ -2992,7 +2955,6 @@ fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_no
     assert_eq!(decided.waits.get(&Number(10)), None);
 }
 
-/// A run of `kind` in flight on the pull request #`pr`.
 fn live_on_pull(pr: u64, kind: WorkKind) -> LiveRun {
     LiveRun {
         subject: Subject::Pull(Number(pr)),

@@ -5,7 +5,6 @@ use crate::domain::Timestamp;
 #[async_trait]
 pub trait Clock: Send + Sync {
     fn now(&self) -> Timestamp;
-    /// Returns once `at` has come.
     async fn sleep_until(&self, at: Timestamp);
 }
 

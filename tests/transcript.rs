@@ -1,12 +1,6 @@
-//! A run's transcript as `logs` shows it, end to end on its data model: a
-//! session recorded from Claude Code, rendered compact, in full and as JSON
-//! (`docs/specs/monitoring.md`, "logs").
-
 use linewright::transcript::{self, After, Follower, SessionRecord, Transcript, Verbosity};
 use serde_json::json;
 
-/// A recorded implement session, trimmed: its first turn, and a second that a
-/// follow-up started.
 fn recorded() -> SessionRecord {
     SessionRecord {
         output: [
@@ -247,9 +241,6 @@ session 1: started 2026-10-13 10:00:00 UTC
     );
 }
 
-// Following a run's transcript as its sessions write it.
-
-/// `record` as far as its first `bytes` bytes of output.
 fn written(record: &SessionRecord, bytes: usize) -> SessionRecord {
     SessionRecord {
         output: record.output[..bytes].to_string(),
@@ -257,7 +248,6 @@ fn written(record: &SessionRecord, bytes: usize) -> SessionRecord {
     }
 }
 
-/// The text of `lines`.
 fn text(lines: &[transcript::FollowedLine]) -> String {
     lines
         .iter()
@@ -265,7 +255,6 @@ fn text(lines: &[transcript::FollowedLine]) -> String {
         .collect()
 }
 
-/// `lines` as JSON objects.
 fn json(lines: &[transcript::FollowedLine]) -> Vec<serde_json::Value> {
     lines
         .iter()

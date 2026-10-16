@@ -1,9 +1,3 @@
-//! Workflows: Markdown files in `.linewright/workflows/` on the default
-//! branch, each an agent's instructions under YAML front matter that says
-//! when they run (`docs/specs/workflows.md`). A file is parsed once, here,
-//! into a [`Workflow`]. The files are read from the store here too, and
-//! the workflows' last runs kept under the work directory.
-
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -19,23 +13,17 @@ use crate::domain::Timestamp;
 use crate::records;
 use crate::store::Store;
 
-/// Where the workflows live on the default branch.
 pub const DIR: &str = ".linewright/workflows";
 
-/// The issues one run files when the workflow sets no `max-issues`.
 const DEFAULT_MAX_ISSUES: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Workflow {
     pub name: WorkflowName,
-    /// The trigger, `on.schedule`.
     pub schedule: Schedule,
-    /// The session timeout of its runs; `None` is the `session-timeout`
-    /// setting.
+    /// `None` is the `session-timeout` setting.
     pub timeout: Option<Duration>,
-    /// The most issues one run files.
     pub max_issues: u32,
-    /// The body: the agent's instructions.
     pub instructions: String,
 }
 
@@ -54,19 +42,16 @@ impl Schedule {
             .map_err(|e| anyhow!("`on.schedule` is {expression:?}, not a cron expression: {e}"))
     }
 
-    /// The first tick after `time`, if the schedule has one.
     pub fn next_after(&self, time: Timestamp) -> Option<Timestamp> {
         self.0.find_next_occurrence(&time, false).ok()
     }
 }
 
-/// A workflow's name: the name of its file in [`DIR`], without `.md`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct WorkflowName(String);
 
 impl WorkflowName {
-    /// The workflow's file in the repository.
     pub fn path(&self) -> String {
         format!("{DIR}/{}.md", self.0)
     }
@@ -105,8 +90,6 @@ impl fmt::Display for WorkflowName {
     }
 }
 
-/// When each workflow last ran, by its name: bookkeeping Linewright keeps
-/// under the work directory and no person reads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct LastRuns(BTreeMap<WorkflowName, Timestamp>);
@@ -120,14 +103,12 @@ impl LastRuns {
         self.0.insert(name.clone(), at);
     }
 
-    /// The last runs recorded under `work_dir`. None are recorded when the
-    /// record is missing, and when it is unreadable, which is logged: every
+    /// Empty when the record is missing or unreadable, which is logged: every
     /// workflow then counts as seen for the first time.
     pub fn load(work_dir: &Path) -> LastRuns {
         records::load(&last_runs_path(work_dir), WHAT).unwrap_or_default()
     }
 
-    /// Records these last runs under `work_dir`, whole.
     pub fn save(&self, work_dir: &Path) -> Result<()> {
         records::save(&last_runs_path(work_dir), self, WHAT)
     }
@@ -135,7 +116,6 @@ impl LastRuns {
 
 const WHAT: &str = "the workflows' last runs";
 
-/// Where the workflows' last runs are kept, so they survive a restart.
 fn last_runs_path(work_dir: &Path) -> PathBuf {
     work_dir.join("workflow-runs.json")
 }
@@ -146,24 +126,18 @@ impl FromIterator<(WorkflowName, Timestamp)> for LastRuns {
     }
 }
 
-/// The files in [`DIR`] on a branch: the workflows whose files parse, and
-/// the files that do not.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkflowFiles {
     pub parsed: Vec<Workflow>,
     pub unparsed: Vec<Unparsed>,
 }
 
-/// A file in [`DIR`] that does not parse.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unparsed {
-    /// Its path in the repository.
     pub path: String,
-    /// Why it does not parse.
     pub reason: String,
 }
 
-/// Reads and parses the Markdown files in [`DIR`] at the head of `branch`.
 /// Fails only when the directory cannot be listed: a file that cannot be
 /// read is one that does not parse.
 pub async fn read(store: &dyn Store, branch: &str) -> Result<WorkflowFiles> {
@@ -205,8 +179,6 @@ struct Trigger {
     schedule: String,
 }
 
-/// Parses the workflow `name` from its file's `text`, saying why when it
-/// does not parse.
 pub fn parse(name: &WorkflowName, text: &str) -> Result<Workflow> {
     let (front, body) = split_front_matter(text)
         .context("the file does not open with YAML front matter between `---` lines")?;
@@ -228,7 +200,6 @@ pub fn parse(name: &WorkflowName, text: &str) -> Result<Workflow> {
     })
 }
 
-/// The front matter and the body after it.
 fn split_front_matter(text: &str) -> Option<(&str, &str)> {
     let rest = text
         .strip_prefix("---\n")

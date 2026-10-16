@@ -1,6 +1,3 @@
-//! Webhooks: GitHub's signed deliveries, received beside polling
-//! (`docs/specs/webhooks.md`).
-
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -23,24 +20,18 @@ use tracing::{error, info, info_span, warn};
 use crate::clock::Clock;
 use crate::domain::{Item, Number, Snapshot, Timestamp};
 
-/// The environment variable the webhook's secret comes from. The secret is a
-/// credential, so it is never a flag or a key in the config file.
 pub const SECRET_VARIABLE: &str = "LINEWRIGHT_WEBHOOK_SECRET";
 
-/// What `serve` needs to receive deliveries: set exactly when the secret is.
 #[derive(Clone, Debug)]
 pub struct Webhooks {
     pub address: Address,
     pub secret: Secret,
 }
 
-/// The secret GitHub signs each delivery with, kept out of `Debug` output.
 #[derive(Clone)]
 pub struct Secret(String);
 
 impl Secret {
-    /// The secret, unless `value` is empty: an empty one is unset, as with
-    /// the tokens.
     pub fn new(value: String) -> Option<Secret> {
         (!value.is_empty()).then_some(Secret(value))
     }
@@ -52,8 +43,6 @@ impl fmt::Debug for Secret {
     }
 }
 
-/// A host and port to listen on, such as `0.0.0.0:8080`, `localhost:8080`
-/// or `[::1]:8080`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address {
     /// Without the brackets of an IPv6 address.
@@ -107,21 +96,14 @@ impl fmt::Display for Address {
     }
 }
 
-/// What an accepted delivery names: what Linewright reads again for it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Subject {
     Item(Item),
-    /// The commit a check run, check suite or status reports on.
     Commit(String),
-    /// A push to the branch.
     Push(String),
 }
 
 impl Subject {
-    /// The issues and pull requests a refresh reads again for it, found in
-    /// `snapshot`, whose pull requests are Linewright's: the open ones
-    /// whose head is the commit, and every open one for a push to the
-    /// default branch.
     pub fn items(&self, snapshot: &Snapshot) -> Vec<Item> {
         let open = snapshot.pulls.iter().filter(|pull| pull.is_open());
         match self {
@@ -154,31 +136,25 @@ impl fmt::Display for Subject {
     }
 }
 
-/// A signed delivery Linewright reads.
 #[derive(Debug)]
 pub enum Delivery {
-    /// One of the events Linewright acts on, and what it names.
     Accepted(Subject),
-    /// Any other event, whatever its payload, or a push to something other
-    /// than a branch.
     Ignored,
 }
 
-/// Why a delivery is refused.
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
     #[error("it has no signature (`X-Hub-Signature-256`)")]
     NoSignature,
     #[error("its signature does not match the secret")]
     WrongSignature,
-    /// Signed, so the reason is the sender's to see.
     #[error(transparent)]
     Unreadable(#[from] Unreadable),
 }
 
 impl Refusal {
-    /// The status and body a refused delivery is answered with. Only a
-    /// signed one's says why, so a sender without the secret learns nothing.
+    /// Only a signed delivery's says why, so a sender without the secret
+    /// learns nothing.
     pub fn response(&self) -> (StatusCode, String) {
         match self {
             Refusal::NoSignature | Refusal::WrongSignature => {
@@ -191,7 +167,6 @@ impl Refusal {
     }
 }
 
-/// Why Linewright cannot tell what a signed delivery names.
 #[derive(Debug, thiserror::Error)]
 pub enum Unreadable {
     #[error("it names no event (`X-GitHub-Event`)")]
@@ -210,13 +185,10 @@ pub enum Unreadable {
     },
 }
 
-/// The events Linewright acts on, by where their payloads name what changed
-/// (<https://docs.github.com/en/webhooks/webhook-events-and-payloads>).
+/// <https://docs.github.com/en/webhooks/webhook-events-and-payloads>
 #[derive(Clone, Copy)]
 enum Event {
-    /// `issues` and `issue_comment`.
     Issue,
-    /// `pull_request` and its reviews and review comments.
     PullRequest,
     CheckRun,
     CheckSuite,
@@ -225,7 +197,6 @@ enum Event {
 }
 
 impl Event {
-    /// The event named `name`, unless it is outside the table.
     fn parse(name: &str) -> Option<Event> {
         Some(match name {
             "issues" | "issue_comment" => Event::Issue,
@@ -241,21 +212,14 @@ impl Event {
     }
 }
 
-/// The headers of a delivery that say how to read it, each `None` when the
-/// delivery lacks it.
 #[derive(Clone, Copy, Debug)]
 pub struct Headers<'a> {
-    /// `X-GitHub-Event`.
     pub event: Option<&'a str>,
-    /// `Content-Type`.
     pub content_type: Option<&'a str>,
-    /// `X-Hub-Signature-256`.
     pub signature: Option<&'a str>,
 }
 
-/// Checks a delivery's signature against `secret`
-/// (<https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries>)
-/// and reads what it names from `body`, as its content type says it is sent.
+/// <https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries>
 pub fn receive(secret: &Secret, headers: Headers, body: &[u8]) -> Result<Delivery, Refusal> {
     use hmac::Mac;
     let signature = headers.signature.ok_or(Refusal::NoSignature)?;
@@ -283,21 +247,15 @@ pub fn receive(secret: &Secret, headers: Headers, body: &[u8]) -> Result<Deliver
     })
 }
 
-/// The content types GitHub sends a delivery in
-/// (<https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks#creating-a-repository-webhook>).
+/// <https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks#creating-a-repository-webhook>
 #[derive(Clone, Copy)]
 enum Format {
-    /// `application/json`: the body is the payload.
     Json,
-    /// `application/x-www-form-urlencoded`: the payload is the value of the
-    /// form field `payload`.
     Form,
 }
 
 impl Format {
-    /// The format a delivery's `Content-Type` header says it is in, by its
-    /// media type, which is case-insensitive and may be followed by
-    /// parameters (<https://www.rfc-editor.org/rfc/rfc9110#name-media-type>).
+    /// <https://www.rfc-editor.org/rfc/rfc9110#name-media-type>
     fn parse(content_type: Option<&str>) -> Result<Format, Unreadable> {
         let unreadable = || Unreadable::ContentType(content_type.map(str::to_string));
         let media_type = content_type
@@ -313,7 +271,6 @@ impl Format {
         }
     }
 
-    /// The JSON payload of a delivery whose body is `body`.
     fn payload(self, body: &[u8]) -> Result<Cow<'_, [u8]>, Unreadable> {
         match self {
             Format::Json => Ok(Cow::Borrowed(body)),
@@ -325,8 +282,6 @@ impl Format {
     }
 }
 
-/// What a JSON payload of `event` names, from the parts of its payload that
-/// say which item changed.
 fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
     use serde_json::from_slice;
     #[derive(Deserialize)]
@@ -336,7 +291,6 @@ fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
     #[derive(Deserialize)]
     struct Issue {
         number: Number,
-        /// Set when the issue is a pull request.
         pull_request: Option<serde::de::IgnoredAny>,
     }
     #[derive(Deserialize)]
@@ -347,7 +301,6 @@ fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
     struct PullRequestEvent {
         pull_request: Numbered,
     }
-    /// A check run or check suite, by the commit it ran on.
     #[derive(Deserialize)]
     struct Check {
         head_sha: String,
@@ -397,8 +350,7 @@ fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
     Ok(Delivery::Accepted(subject))
 }
 
-/// What accepted deliveries named that the factory has yet to read again:
-/// the listener adds to it and the factory takes it, so deliveries never race
+/// The listener adds to it and the factory takes it, so deliveries never race
 /// a poll, and those that arrive while it reads coalesce.
 #[derive(Clone, Default)]
 pub struct Pending(Arc<PendingSubjects>);
@@ -415,8 +367,6 @@ impl Pending {
         self.0.arrived.notify_one();
     }
 
-    /// Waits until a delivery names something, and takes everything named
-    /// since the last take.
     pub async fn next(&self) -> BTreeSet<Subject> {
         loop {
             let subjects = self.take();
@@ -427,21 +377,18 @@ impl Pending {
         }
     }
 
-    /// Takes everything named since the last take.
     pub fn take(&self) -> BTreeSet<Subject> {
         std::mem::take(&mut *self.0.subjects.lock().unwrap())
     }
 }
 
-/// The deliveries received since `serve` started: when the last one was
-/// accepted, which it is unless refused, and how many were refused.
+/// Ignored deliveries count as accepted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Received {
     pub last_accepted: Option<Timestamp>,
     pub refused: u64,
 }
 
-/// The deliveries received, as the listener counts them.
 #[derive(Clone)]
 pub struct Tally {
     received: Arc<Mutex<Received>>,
@@ -462,7 +409,6 @@ impl Tally {
     }
 }
 
-/// The HTTP server `serve` runs with webhooks on, until stopped.
 pub struct Listener {
     address: SocketAddr,
     tally: Tally,
@@ -470,14 +416,10 @@ pub struct Listener {
     task: JoinHandle<()>,
 }
 
-/// GitHub's cap on a delivery's payload
-/// (<https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap>).
+/// <https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap>
 const PAYLOAD_CAP: usize = 25 * 1024 * 1024;
 
 impl Listener {
-    /// Listens on `webhooks.address`, or refuses when it cannot, adding what
-    /// accepted deliveries name to `pending` and counting the deliveries
-    /// received by `clock`.
     pub async fn bind(
         webhooks: &Webhooks,
         pending: Pending,
@@ -533,19 +475,16 @@ impl Listener {
         self.address
     }
 
-    /// The deliveries received, as they are counted from now on.
     pub fn tally(&self) -> Tally {
         self.tally.clone()
     }
 
-    /// Stops listening, once the deliveries being received are answered.
     pub async fn stop(self) {
         self.stop.cancel();
         let _ = self.task.await;
     }
 }
 
-/// Answers a delivery, and logs what became of it.
 async fn answer(
     secret: Secret,
     pending: Pending,

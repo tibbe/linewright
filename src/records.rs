@@ -1,6 +1,3 @@
-//! Bookkeeping Linewright keeps under the repository's work directory, each
-//! record a JSON file that no person reads.
-
 use std::path::Path;
 
 use anyhow::{Context, Result};

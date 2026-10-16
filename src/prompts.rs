@@ -1,8 +1,3 @@
-//! A session's prompt: its stage's brief, the briefs it builds on, the task
-//! (everything the session needs from the store) and the result contract the
-//! manager parses (`docs/specs/architecture.md`, "Agents read through the brief and
-//! write through the result").
-
 use std::fmt::Write;
 
 use crate::briefs::Briefs;
@@ -11,20 +6,16 @@ use crate::git::Conflict;
 use crate::reconcile::Feedback;
 use crate::workflow::Workflow;
 
-/// The repository facts every task states.
 pub struct Repo<'a> {
     pub default_branch: &'a str,
     pub spec_glob: &'a str,
 }
 
-/// A ticket, with the spec gaps earlier sessions on it filed that are still
-/// open.
 pub struct Ticket<'a> {
     pub issue: &'a Issue,
     pub filed_gaps: Vec<&'a Issue>,
 }
 
-/// What a run on an open pull request is for.
 pub enum PullTask<'a> {
     Rework(Feedback<'a>),
     FixCi(&'a [CheckFailure]),
@@ -32,8 +23,6 @@ pub enum PullTask<'a> {
     Update,
 }
 
-/// What starts each stage's session: its skill, invoked as a person invokes
-/// the original, the task and the result contract following as its input.
 const TRIAGE: &str = "/linewright:triage";
 const TO_TICKETS: &str = "/linewright:to-tickets";
 const IMPLEMENT: &str = "/linewright:implement";
@@ -248,9 +237,6 @@ fn compose(brief: &str, task: &str, contract: &str) -> String {
     prompt
 }
 
-/// The facts every task opens with: the repository's, and where the session
-/// keeps its scratch files (`docs/specs/architecture.md`, "Sessions are
-/// isolated").
 fn task_facts(task: &mut String, repo: &Repo) {
     let _ = writeln!(
         task,
@@ -281,9 +267,6 @@ fn write_issue(task: &mut String, heading: &str, issue: &Issue) {
     }
 }
 
-/// The ticket, the pointers to the tickets cut alongside it (its parent
-/// issue and the spec change it tracks, if any: `docs/specs/implementation.md`,
-/// "Runs"), and the spec gaps already filed for it.
 fn write_ticket(task: &mut String, ticket: &Ticket) {
     write_issue(task, "The ticket", ticket.issue);
     if let Some(parent) = ticket.issue.parent {
@@ -299,8 +282,6 @@ fn write_ticket(task: &mut String, ticket: &Ticket) {
     write_filed_gaps(task, &ticket.filed_gaps);
 }
 
-/// The spec gaps earlier sessions on the ticket filed and the maintainer has
-/// not closed.
 fn write_filed_gaps(task: &mut String, gaps: &[&Issue]) {
     if gaps.is_empty() {
         return;

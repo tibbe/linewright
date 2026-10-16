@@ -1,11 +1,5 @@
-//! What a GitHub Actions job log shows about why the job failed.
-
-/// The most lines of a failed step's output a fix session is given
-/// (`docs/specs/pull_requests.md`).
 const MAX_LINES: usize = 50;
 
-/// The end of the output of the step that failed in the job log `log`, or of
-/// the whole log where it does not show which step failed.
 pub fn failed_step_output(log: &str) -> String {
     // The log starts with a byte order mark.
     let log = log.trim_start_matches('\u{feff}');
@@ -14,12 +8,8 @@ pub fn failed_step_output(log: &str) -> String {
     shown[shown.len().saturating_sub(MAX_LINES)..].join("\n")
 }
 
-/// The lines of the step that failed, found from the log's workflow command
-/// markers
-/// (<https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands>):
-/// from the last `##[group]Run …` line before the first `##[error]` line to
-/// the step's last `##[error]` line, before the next step or the post-job
-/// cleanup. In a composite action that is the failing sub-step.
+/// <https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands>.
+/// In a composite action this finds the failing sub-step.
 fn failed_step<'a>(lines: &'a [&'a str]) -> Option<&'a [&'a str]> {
     let is_error = |l: &&str| l.starts_with("##[error]");
     let is_step = |l: &&str| l.starts_with("##[group]Run ");
@@ -45,7 +35,6 @@ fn untimestamped(line: &str) -> &str {
 mod tests {
     use super::*;
 
-    /// `lines` as a job log, each line timestamped as GitHub does.
     fn job_log(lines: &[&str]) -> String {
         lines
             .iter()

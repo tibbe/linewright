@@ -1,6 +1,3 @@
-//! Replay, end to end at the operator's level: a case directory in, the
-//! store's final state and every session's record out as files.
-
 mod common;
 
 use std::path::Path;
@@ -28,13 +25,10 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
-/// A case for a spec change: a repository at its base commit, holding
-/// `files` beside the spec, and the merge that changed the spec.
 fn spec_change_case(dir: &Path, files: &[(&str, &str)]) {
     spec_change_case_allowing(dir, files, &MergeMethod::ALL);
 }
 
-/// A spec change case in a repository that allows `allowed_merge_methods`.
 fn spec_change_case_allowing(
     dir: &Path,
     files: &[(&str, &str)],
@@ -153,10 +147,8 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     assert!(out.join("sessions/issue-3").is_dir());
 }
 
-/// Replays a spec change case in `dir` with the real binary and the real
-/// Claude Code runtime, `fake_claude` standing in for `claude` with `env` on
-/// top of the operator's environment. Returns the fake's directory, which is
-/// also Claude Code's config directory.
+/// Returns the fake's directory, which is also Claude Code's config
+/// directory.
 fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathBuf {
     spec_change_case(dir, &[]);
     let bin = dir.join("bin");

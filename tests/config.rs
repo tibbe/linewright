@@ -1,7 +1,3 @@
-//! Configuration as the operator gives it: flags, `LINEWRIGHT_*` environment
-//! variables and a TOML file, with that precedence over the defaults
-//! (`docs/specs/operation.md`).
-
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -13,7 +9,6 @@ fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Co
     resolve_blaming(args, env, file).map_err(|e| e.to_string())
 }
 
-/// Resolves the settings as [`resolve`] does, keeping the error's layer.
 fn resolve_blaming(
     args: &[&str],
     env: &[(&str, &str)],
@@ -95,7 +90,6 @@ fn a_bad_value_or_an_unknown_key_is_an_error_naming_the_setting() {
     );
 }
 
-/// Whether resolving with `args`, `env` and `file` blames the command line.
 fn blames_the_command_line(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> bool {
     match resolve_blaming(args, env, file) {
         Err(ResolveError::CommandLine(_)) => true,

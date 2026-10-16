@@ -1,9 +1,3 @@
-//! `lw status`: what `serve` is doing and what holds it back
-//! (`docs/specs/monitoring.md`, "status"). `serve` answers it from its own
-//! view, deriving the tracked items, what Linewright waits for on them and
-//! the workflows' next runs the way the reconcile step derives them; the
-//! command prints the answer.
-
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -21,39 +15,31 @@ use crate::runs::{InFlight, RunInFlight, RunOf};
 use crate::webhook::Received;
 use crate::workflow::{LastRuns, WorkflowFiles, WorkflowName};
 
-/// What `serve` knows of itself from its start.
 #[derive(Clone, Debug)]
 pub struct Serving {
     pub since: Timestamp,
     pub max_runs: usize,
 }
 
-/// `serve`'s view as of its last poll, and of what it has done since.
 #[derive(Clone, Debug)]
 pub struct View {
-    /// The last poll's snapshot, with what refreshes read into it since.
     pub snapshot: Arc<Snapshot>,
     /// When refreshes read the items they read into the snapshot; the
     /// others were read by the last poll.
     pub read_at: HashMap<Item, Timestamp>,
     pub policy: Policy,
     pub polls: Polls,
-    /// What the factory remembers between polls, with the usage limit last
-    /// refused for, whether or not it has reset.
+    /// Holds the usage limit last refused for, whether or not it has reset.
     pub memory: Memory,
     /// The pipeline's runs in flight, as the reconcile step counts them: a
     /// cut that ended since the snapshot was taken counts too.
     pub live: Vec<LiveRun>,
-    /// The runs in flight, the pipeline's and the workflows'.
     pub in_flight: Vec<InFlight>,
-    /// The workflow files the last poll read.
     pub workflows: WorkflowFiles,
     pub last_runs: LastRuns,
 }
 
 impl View {
-    /// The decisions the reconcile step takes on the view at `now`, and so
-    /// what it waits for on each item.
     pub fn decisions(&self, now: Timestamp) -> Decisions {
         let workflows = Workflows {
             defined: self.workflows.parsed.clone(),
@@ -70,12 +56,10 @@ impl View {
         )
     }
 
-    /// The runs in flight, the pipeline's and the workflows'.
     pub fn runs_in_flight(&self) -> usize {
         self.live.len() + self.workflows_in_flight().count()
     }
 
-    /// The workflows with a run in flight.
     fn workflows_in_flight(&self) -> impl Iterator<Item = WorkflowName> {
         self.in_flight.iter().filter_map(|run| match &run.id.of {
             RunOf::Workflow { workflow } => Some(workflow.clone()),
@@ -83,7 +67,6 @@ impl View {
         })
     }
 
-    /// Whether #`number` has a run in flight.
     fn has_run_in_flight(&self, number: Number) -> bool {
         self.in_flight
             .iter()
@@ -91,8 +74,6 @@ impl View {
     }
 }
 
-/// The answer to `status`, as the local API sends it. Its fields keep their
-/// names and meanings (`docs/specs/monitoring.md`, "Output").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
     pub linewright: Linewright,
@@ -117,15 +98,12 @@ pub struct Linewright {
     pub webhooks: Option<Received>,
 }
 
-/// When the last poll took its snapshot, and when the next is due.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Polls {
     pub last: Timestamp,
     pub next: Timestamp,
 }
 
-/// An open item Linewright tracks, where it is in the pipeline and what
-/// Linewright waits for before it acts on it next.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tracked {
     pub number: Number,
@@ -138,7 +116,6 @@ pub struct Tracked {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum ItemState {
-    /// A merged spec change not yet cut into tickets.
     WaitingForTickets,
     Tracking {
         tickets_closed: usize,
@@ -148,8 +125,6 @@ pub enum ItemState {
     WaitingOnTheReporter,
     WithTheMaintainer,
     InReview(InReview),
-    /// In review with someone else's open pull request `pull_request`, by
-    /// `author`, which closes it.
     InReviewElsewhere {
         pull_request: Number,
         author: Login,
@@ -158,7 +133,6 @@ pub enum ItemState {
     ReadyToClaim,
 }
 
-/// Linewright's pull request for an issue in review.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InReview {
     pub pull_request: Number,
@@ -184,7 +158,6 @@ impl InReview {
         }
     }
 
-    /// Where the item is: its pull request, draft or not, and its CI.
     pub(crate) fn describe(&self) -> String {
         let stage = if self.draft {
             "draft"
@@ -201,7 +174,6 @@ impl InReview {
     }
 }
 
-/// CI on a pull request, as its checks report it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Ci {
@@ -218,20 +190,20 @@ pub struct WorkflowRuns {
     pub runs: Runs,
 }
 
-/// A workflow's last run and its next, by its schedule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "schedule", rename_all = "kebab-case")]
 pub enum Runs {
-    /// No poll has seen it yet.
     NotRunYet,
-    /// A tick of its schedule has passed since its last run.
-    Due { last_run: Timestamp },
+    Due {
+        last_run: Timestamp,
+    },
     Scheduled {
         last_run: Timestamp,
         next_run: Timestamp,
     },
-    /// Its schedule ticks no more.
-    Ended { last_run: Timestamp },
+    Ended {
+        last_run: Timestamp,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,11 +212,7 @@ pub struct UnparsedWorkflow {
     pub reason: String,
 }
 
-/// The answer at `now`: Linewright itself, with the deliveries `webhooks`
-/// counts with them on, then the runs in flight, then the other items it
-/// tracks, then the workflows by name
-/// and the workflow files that do not parse. Before the first poll, `view` is
-/// `None` and there are no items or workflows.
+/// `view` is `None` before the first poll.
 pub fn status(
     serving: &Serving,
     webhooks: Option<Received>,
@@ -312,9 +280,6 @@ pub fn status(
     }
 }
 
-/// The open items Linewright tracks at `now`: the spec changes waiting for
-/// tickets, then the issues whose labels or pull requests place them in the
-/// pipeline, then the pull requests it works on.
 pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
     let snapshot = &view.snapshot;
     let mut waits = view.decisions(now).waits;
@@ -350,22 +315,14 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
     items
 }
 
-/// Why Linewright leaves an open issue alone: the fact or setting that keeps
-/// it out of the pipeline (`docs/specs/monitoring.md`, "explain").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum IssueExclusion {
-    /// It has none of the labels that place it in the pipeline.
     NoPipelineLabel,
-    /// It is Linewright's own, labeled `needs-triage`, and Linewright never
-    /// triages its own issues.
     OwnIssueForTriage,
-    /// It is a tracking issue with no tickets and no cut in flight.
     NoTickets,
 }
 
-/// Where the open `issue` is in the pipeline, waiting for `waiting_for`, or
-/// why Linewright leaves it alone.
 pub(crate) fn standing(
     issue: &Issue,
     snapshot: &Snapshot,
@@ -373,18 +330,12 @@ pub(crate) fn standing(
     waiting_for: &[Wait],
 ) -> Result<ItemState, IssueExclusion> {
     let state = issue_state(issue, snapshot, policy)?;
-    // A tracking issue with no tickets and no cut in flight is left alone.
     if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
         return Err(IssueExclusion::NoTickets);
     }
     Ok(state)
 }
 
-/// Where the open `issue` is in the pipeline, if its labels or the pull
-/// requests that close it place it there: in review while one is open,
-/// whatever its labels, shown with Linewright's newest if it has one open.
-/// An issue of Linewright's own is never triaged, so `needs-triage` places
-/// it nowhere.
 fn issue_state(
     issue: &Issue,
     snapshot: &Snapshot,
@@ -426,9 +377,6 @@ fn issue_state(
     Ok(state)
 }
 
-/// The answer as text: one fact per line as `label: value`, a blank line
-/// between sections, coloured if `colour` (`docs/specs/monitoring.md`,
-/// "Output").
 pub fn render(status: &Status, colour: bool) -> String {
     let paint = Paint(colour);
     let sections = [
@@ -466,7 +414,6 @@ pub fn render(status: &Status, colour: bool) -> String {
     text
 }
 
-/// Colours text with ANSI escapes, if it is on.
 #[derive(Clone, Copy)]
 pub(crate) struct Paint(pub bool);
 

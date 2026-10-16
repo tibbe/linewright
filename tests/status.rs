@@ -1,8 +1,3 @@
-//! `lw status`, end to end on its data model: what `serve` knows of
-//! itself and its view of the repository, and the clock in, the answer and
-//! its text out (`CODING_STANDARDS.md`, "Where tests go";
-//! `docs/specs/monitoring.md`, "status").
-
 mod views;
 
 use linewright::domain::*;
@@ -12,8 +7,6 @@ use linewright::webhook::Received;
 use linewright::workflow::{LastRuns, Unparsed, WorkflowFiles};
 use views::{at, closed_by, implementing, in_flight, limited_until, ticket};
 
-/// The workflows, each a name and a cron expression, and the files that do
-/// not parse.
 fn files(workflows: &[(&str, &str)], unparsed: &[(&str, &str)]) -> WorkflowFiles {
     WorkflowFiles {
         parsed: workflows
@@ -42,7 +35,6 @@ fn last_runs(runs: &[(&str, &str)]) -> LastRuns {
         .collect()
 }
 
-/// A `serve` running since 11:00.
 fn serving() -> Serving {
     Serving {
         since: at("2026-10-01T11:00:00Z"),
@@ -50,7 +42,6 @@ fn serving() -> Serving {
     }
 }
 
-/// The view of a poll at 12:00 that saw `issues`.
 fn view(issues: Vec<Issue>) -> View {
     views::view(issues, vec![])
 }
@@ -59,18 +50,15 @@ fn ready_issue() -> Issue {
     ticket(7, "Do the thing")
 }
 
-/// The text of the answer, without webhooks and without colour.
 fn text(view: Option<&View>, now: &str) -> Vec<String> {
     text_with(None, view, now)
 }
 
-/// The text of the answer with the deliveries `webhooks`, without colour.
 fn text_with(webhooks: Option<Received>, view: Option<&View>, now: &str) -> Vec<String> {
     let answer = status(&serving(), webhooks, view, at(now));
     render(&answer, false).lines().map(str::to_string).collect()
 }
 
-/// The lines of the text after the Linewright section.
 fn after_linewright(view: &View, now: &str) -> Vec<String> {
     let lines = text(Some(view), now);
     let blank = lines

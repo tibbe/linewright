@@ -1,7 +1,3 @@
-//! `lw runs`, end to end at the operator's level: a factory doing
-//! runs on the local store, and the `lw` program listing them, from
-//! the records with no `serve` running (`docs/specs/monitoring.md`, "runs").
-
 mod common;
 
 use std::path::Path;
@@ -15,8 +11,6 @@ use serde_json::json;
 
 const REPO: &str = "owner/widgets";
 
-/// A world whose factory keeps its records where `lw --work-dir`
-/// finds those of `owner/widgets`, with that work directory.
 async fn world() -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
     let world = World::with(|config| config.work_dir = work_dir.path().join(REPO)).await;
@@ -29,8 +23,6 @@ struct Output {
     stderr: String,
 }
 
-/// Runs `lw --repo owner/widgets --work-dir <work_dir>` with `args`,
-/// with no `serve` running.
 async fn lw(work_dir: &Path, args: &[&str]) -> Output {
     let runtime_dir = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
@@ -81,8 +73,6 @@ async fn a_triage_run_is_listed_under_its_run_id_with_its_outcome() {
     );
 }
 
-/// Labels `issue` `needs-triage` again, as the maintainer does to have it
-/// triaged again.
 fn triage_again(world: &World, issue: linewright::domain::Number) {
     world.store.unlabel_as(issue, "ready-for-agent").unwrap();
     world.store.label_as(issue, "needs-triage").unwrap();
@@ -100,7 +90,6 @@ async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
     triage_again(&world, issue);
     world.poll().await;
 
-    // A restart: a new factory on the same work directory.
     let config = common::config(&work_dir.path().join(REPO));
     world.factory = linewright::factory::Factory::start(
         world.store.clone(),
@@ -305,8 +294,6 @@ async fn runs_json_prints_the_answer_as_json() {
     assert_eq!(answer["left_out"], 0);
 }
 
-/// The IDs of the runs `lw runs N` lists for #`item`, as text and, the
-/// same, as JSON.
 async fn listed(dir: &Path, item: Number) -> Vec<String> {
     let text = lw(dir, &["runs", &item.0.to_string()]).await;
     let json = lw(dir, &["runs", &item.0.to_string(), "--json"]).await;
@@ -373,7 +360,6 @@ async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
     let (mut world, work_dir) = world().await;
     let (issue, closed) = world.ticket_in_review().await;
     world.store.close_pull_as(closed).unwrap();
-    // Handed back for the close, then given to Linewright again.
     world.poll().await;
     world.store.unlabel_as(issue, "ready-for-human").unwrap();
     world.store.label_as(issue, "ready-for-agent").unwrap();
@@ -443,14 +429,10 @@ async fn a_run_recorded_before_runs_kept_their_pull_request_is_listed() {
     );
 }
 
-// The listing, end to end on its data model.
-
 fn at(time: &str) -> Timestamp {
     format!("2026-10-14T{time}Z").parse().unwrap()
 }
 
-/// A run of `stage` on `item`, numbered `n`, started at `start` and done
-/// a minute later.
 fn work(item: u64, stage: WorkKind, n: u32, start: &str) -> Recorded {
     Recorded {
         id: RunId {
@@ -482,7 +464,6 @@ fn weekly(n: u32, start: &str) -> Recorded {
     }
 }
 
-/// Runs on #1 and #2 and of a workflow, through the morning.
 fn morning() -> Vec<Recorded> {
     vec![
         work(1, WorkKind::Triage, 1, "08:00:00"),
@@ -531,7 +512,6 @@ fn an_items_runs_are_only_its_own() {
     );
 }
 
-/// #1's runs, of which the first implement run opened #3, and #3's own.
 fn ticket_and_pull() -> Vec<Recorded> {
     vec![
         work(1, WorkKind::Triage, 1, "08:00:00"),

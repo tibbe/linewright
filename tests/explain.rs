@@ -1,8 +1,3 @@
-//! `lw explain N`, end to end on its data model: `serve`'s view of
-//! the repository and the clock in, the answer about #N and its text out
-//! (`CODING_STANDARDS.md`, "Where tests go"; `docs/specs/monitoring.md`,
-//! "explain").
-
 mod views;
 
 use linewright::domain::*;
@@ -12,8 +7,6 @@ use linewright::status::View;
 use linewright::store::AnyItem;
 use views::{at, closed_by, implementing, in_flight, limited_until, ticket, view};
 
-/// Linewright's draft pull request #`number` for #`closes`, pushed at 11:58
-/// with its checks `checks`.
 fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
     Pull {
         number: Number(number),
@@ -50,12 +43,10 @@ fn text(view: &View, number: u64) -> Vec<String> {
     lines_of(&render(&answer, false))
 }
 
-/// The lines of `text`.
 fn lines_of(text: &str) -> Vec<String> {
     text.lines().map(str::to_string).collect()
 }
 
-/// The issues `numbers`.
 fn numbers(numbers: &[u64]) -> Vec<Number> {
     numbers.iter().copied().map(Number).collect()
 }
@@ -216,7 +207,6 @@ fn linewrights_pull_request_is_explained_as_the_issue_in_review_with_it() {
     );
 }
 
-/// The run `id` as its record shows it, started at `started` and in `state`.
 fn recorded(id: &str, started: &str, state: State) -> Recorded {
     Recorded {
         id: id.parse().unwrap(),
@@ -234,7 +224,6 @@ fn ended(at_: &str, ending: Ending) -> State {
     }
 }
 
-/// #42's runs, its second implement run in flight, beside one of #7's.
 fn runs_of_42() -> Vec<Recorded> {
     vec![
         recorded(
@@ -252,8 +241,6 @@ fn runs_of_42() -> Vec<Recorded> {
     ]
 }
 
-/// #42 claimed, with its second implement run in flight, its agent last
-/// heard at 11:50.
 fn implementing_42(pulls: Vec<Pull>) -> View {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -270,7 +257,6 @@ fn implementing_42(pulls: Vec<Pull>) -> View {
     }
 }
 
-/// The lines of the text about #`number` that are about its runs.
 fn run_lines(text: &str) -> Vec<&str> {
     text.lines()
         .filter(|line| {
@@ -295,8 +281,6 @@ fn explain_shows_the_run_in_flight_with_its_quiet_time_then_the_past_runs_as_run
     );
 }
 
-/// #42's five past implement runs, an hour apart from 07:00, and its sixth
-/// in flight, as [`implementing_42_again`] shows it.
 fn five_past_runs_of_42() -> Vec<Recorded> {
     let mut runs: Vec<Recorded> = (1..=5)
         .map(|n| {
@@ -315,8 +299,6 @@ fn five_past_runs_of_42() -> Vec<Recorded> {
     runs
 }
 
-/// #42 claimed, with its sixth implement run in flight, its agent last
-/// heard at 11:50.
 fn implementing_42_again(pulls: Vec<Pull>) -> View {
     View {
         in_flight: vec![in_flight(
@@ -492,8 +474,6 @@ fn an_item_with_no_runs_shows_none() {
     assert_eq!(run_lines(&render(&answer, false)), Vec::<&str>::new());
 }
 
-/// #42's runs as [`runs_of_42`] has them, its first implement run having
-/// opened #43, and #43's own past run.
 fn runs_of_42_and_43() -> Vec<Recorded> {
     let mut runs = runs_of_42();
     runs.push(recorded(
@@ -517,9 +497,6 @@ fn shown(answer: &Answer) -> Vec<String> {
     in_flight.into_iter().chain(past).collect()
 }
 
-/// That `answer` about #43 shows #43's own past run and none of #42's runs,
-/// as text and as JSON, as `runs 43` lists them among
-/// [`runs_of_42_and_43`].
 fn assert_shows_the_runs_of_43(answer: &Answer) {
     assert_eq!(
         run_lines(&render_answer(answer, false)),
@@ -528,8 +505,6 @@ fn assert_shows_the_runs_of_43(answer: &Answer) {
     assert_eq!(shown(answer), ["43/rework-1"]);
 }
 
-/// That `answer` about #43 shows no runs, as text or as JSON, as `runs 43`
-/// lists none among [`runs_of_42`].
 fn assert_shows_no_runs(answer: &Answer) {
     assert_eq!(run_lines(&render_answer(answer, false)), Vec::<&str>::new());
     assert_eq!(shown(answer), Vec::<String>::new());
@@ -877,7 +852,6 @@ fn a_tracking_issue_with_no_tickets_and_no_cut_in_flight_is_not_tracked() {
     );
 }
 
-/// The answer about an item `serve` read from GitHub, as text.
 fn left_alone_text(view: &View, read: AnyItem) -> Vec<String> {
     let answer = explain_read(view, &[], &read, at(NOW));
     render_answer(&answer, false)
@@ -1011,7 +985,6 @@ fn an_issue_the_read_places_in_the_pipeline_is_explained_as_read_then() {
     );
 }
 
-/// The maintainer's pull request #`number`, open.
 fn someones_pull(number: u64) -> Pull {
     Pull {
         author: Login::new("maintainer"),
@@ -1085,8 +1058,6 @@ fn linewrights_older_pull_request_for_an_issue_names_the_one_it_works_through() 
     );
 }
 
-/// The maintainer's pull request #5, merged into `main` at 09:00 changing
-/// the spec, labeled `labels`.
 fn merged(labels: &[&str]) -> MergedPull {
     MergedPull {
         number: Number(5),
@@ -1387,7 +1358,6 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
     }
 }
 
-/// The lines of `lines` that name a parent or a child.
 fn family_lines(lines: &[String]) -> Vec<&str> {
     lines
         .iter()
@@ -1518,8 +1488,6 @@ fn the_json_of_a_closed_pull_request_names_the_issue_it_closes() {
     );
 }
 
-/// Ticket #42, cut from the spec change #5 and a sub-issue of its tracking
-/// issue #40.
 fn ticket_of_40() -> Issue {
     Issue {
         parent: Some(Parent {
@@ -1540,8 +1508,6 @@ fn a_ticket_names_its_tracking_issue() {
     );
 }
 
-/// Tracking issue #40 of the spec change #5, with its tickets #41, closed,
-/// and #42.
 fn tracking_40() -> Issue {
     Issue {
         author: Login::new("factory"),
@@ -1723,7 +1689,6 @@ fn a_spec_change_not_cut_names_no_tracking_issue_from_a_cut_discarded_part_way()
     );
 }
 
-/// #42's implement run, which opened #43.
 fn implemented_42() -> Vec<Recorded> {
     vec![recorded(
         "42/implement-1",
@@ -1732,7 +1697,6 @@ fn implemented_42() -> Vec<Recorded> {
     )]
 }
 
-/// The family lines of the answer about `read`, with the runs `recorded`.
 fn read_family(view: &View, recorded: &[Recorded], read: AnyItem) -> Vec<String> {
     let answer = explain_read(view, recorded, &read, at(NOW));
     let lines = lines_of(&render_answer(&answer, false));
@@ -1742,7 +1706,6 @@ fn read_family(view: &View, recorded: &[Recorded], read: AnyItem) -> Vec<String>
         .collect()
 }
 
-/// Linewright's merged pull request #43, closing `closes`.
 fn merged_43(closes: &[u64]) -> MergedPull {
     MergedPull {
         number: Number(43),
@@ -1754,7 +1717,6 @@ fn merged_43(closes: &[u64]) -> MergedPull {
     }
 }
 
-/// Linewright's pull request #43 closed without merging, closing `closes`.
 fn closed_43(closes: &[u64]) -> Pull {
     Pull {
         closes: numbers(closes),
@@ -1804,8 +1766,6 @@ fn linewrights_pull_request_names_the_issues_it_closes() {
     }
 }
 
-/// #12 and #42, both claimed and closed by Linewright's open pull request
-/// #43, listed in that order.
 fn claimed_12_and_42() -> Vec<Issue> {
     [12, 42]
         .map(|number| {
@@ -1818,7 +1778,6 @@ fn claimed_12_and_42() -> Vec<Issue> {
         .into()
 }
 
-/// Linewright's open pull request #43, which closes #12 and #42.
 fn open_43_closing_12_and_42() -> Pull {
     Pull {
         body: "Closes #12 and closes #42".into(),
@@ -1932,7 +1891,6 @@ fn a_spec_change_cut_into_tickets_names_the_issue_it_closes_and_its_tracking_iss
     );
 }
 
-/// Someone's pull request #50, closing #40 and #41, in `state`.
 fn closing_40_and_41(state: PullState) -> Pull {
     Pull {
         body: "Closes #40 and closes #41".into(),

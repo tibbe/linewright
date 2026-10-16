@@ -1,7 +1,3 @@
-//! Webhook deliveries, end to end as GitHub sends them: signed HTTP requests
-//! to the listener `serve` runs with the secret set, and the log the operator
-//! reads (`docs/specs/webhooks.md`).
-
 mod common;
 
 use common::*;
@@ -88,8 +84,6 @@ async fn a_delivery_with_a_missing_or_wrong_signature_is_refused_and_logged() {
     }
 }
 
-/// A delivery of each event in the table, with what it names, as the log
-/// shows it.
 const DELIVERIES: [(&str, &str, &str); 9] = [
     (
         "issues",
@@ -138,7 +132,6 @@ const DELIVERIES: [(&str, &str, &str); 9] = [
     ),
 ];
 
-/// Checks that `log` has each of `DELIVERIES` accepted, naming what it names.
 fn assert_each_accepted(log: &Log) {
     let accepted = log.lines("INFO");
     for (event, _, names) in DELIVERIES {

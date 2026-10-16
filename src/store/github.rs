@@ -1,8 +1,3 @@
-//! GitHub as the store, through its REST and GraphQL APIs
-//! (<https://docs.github.com/en/rest>, <https://docs.github.com/en/graphql>).
-//! Clones and pushes go over HTTPS with the token in a header passed through
-//! the environment, so it never lands in a clone's configuration.
-
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::SystemTime;
@@ -30,8 +25,7 @@ use crate::git;
 
 const API: &str = "https://api.github.com";
 
-/// The environment variables `gh` reads a token from, in its order
-/// (<https://cli.github.com/manual/gh_help_environment>).
+/// In `gh`'s order (<https://cli.github.com/manual/gh_help_environment>).
 pub const TOKEN_VARIABLES: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 
 pub struct GitHub {
@@ -42,7 +36,6 @@ pub struct GitHub {
     viewer: Viewer,
 }
 
-/// A request GitHub answered with an error.
 #[derive(Debug)]
 struct ErrorResponse {
     request: String,
@@ -51,9 +44,6 @@ struct ErrorResponse {
 }
 
 impl ErrorResponse {
-    /// What GitHub says went wrong: the `message` of its error body
-    /// (<https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api>),
-    /// or the status and body when it has none.
     fn message(&self) -> String {
         #[derive(Deserialize)]
         struct Body {
@@ -80,7 +70,6 @@ struct Viewer {
 }
 
 impl GitHub {
-    /// Connects to `owner/name` as the token's user.
     pub async fn connect(repo: &str, token: String) -> Result<GitHub> {
         let (owner, name) = repo
             .split_once('/')
@@ -105,13 +94,10 @@ impl GitHub {
         Ok(github)
     }
 
-    /// A REST resource of the repository (`path` relative to it), for
-    /// capturing cases.
     pub async fn repo_get(&self, path: &str) -> Result<Value> {
         self.rest(Method::GET, &self.repo_path(path), None).await
     }
 
-    /// `owner/name`.
     pub fn full_name(&self) -> String {
         format!("{}/{}", self.owner, self.name)
     }
@@ -120,7 +106,6 @@ impl GitHub {
         Login::new(&self.viewer.login)
     }
 
-    /// Whether `author` is Linewright.
     fn by_linewright(&self, author: &Option<Actor>) -> bool {
         author
             .as_ref()
@@ -202,9 +187,8 @@ impl GitHub {
         response.data.context("GraphQL returned no data")
     }
 
-    /// As `graphql`, but `None` when GitHub resolves nothing the query names,
-    /// such as an issue that was deleted
-    /// (<https://docs.github.com/en/graphql/guides/forming-calls-with-graphql>).
+    /// `None` when GitHub resolves nothing the query names, such as a deleted
+    /// issue (<https://docs.github.com/en/graphql/guides/forming-calls-with-graphql>).
     async fn graphql_found<T: DeserializeOwned>(
         &self,
         query: &str,
@@ -235,7 +219,8 @@ impl GitHub {
         .await
     }
 
-    /// Git configuration in the environment that authenticates to GitHub.
+    /// Passed through the environment so the token never lands in a clone's
+    /// configuration.
     fn git_env(&self) -> Vec<(String, String)> {
         let basic = base64::engine::general_purpose::STANDARD
             .encode(format!("x-access-token:{}", self.token));
@@ -300,9 +285,8 @@ impl GitHub {
         }
     }
 
-    /// The repository's open pull requests, by number and author only: the
-    /// full fields cost points per pull request, so only Linewright's
-    /// are read in full.
+    /// Number and author only: the full fields cost points per pull request,
+    /// so only Linewright's are read in full.
     async fn open_pulls(&self) -> Result<Vec<GqlOpenPull>> {
         let query = "query($owner: String!, $name: String!, $cursor: String) {
               repository(owner: $owner, name: $name) {
@@ -330,14 +314,10 @@ impl GitHub {
         }
     }
 
-    /// The branches named for an issue whose head commit Linewright made, as
-    /// its committer, each with its issue read unless `open_in_view`, the
-    /// issues the snapshot holds, has it.
     async fn ticket_branches(
         &self,
         open_in_view: &BTreeMap<u64, GqlIssue>,
     ) -> Result<Vec<TicketBranch>> {
-        // <https://docs.github.com/en/graphql/reference/objects#ref>
         let query = "query($owner: String!, $name: String!, $cursor: String) {
               repository(owner: $owner, name: $name) {
                 refs(refPrefix: \"refs/heads/\", first: 100, after: $cursor) {
@@ -391,7 +371,6 @@ impl GitHub {
         }
     }
 
-    /// Every path a pull request touched, past the first page GraphQL gives.
     async fn all_files(&self, pr: u64) -> Result<Vec<String>> {
         #[derive(Deserialize)]
         struct File {
@@ -455,8 +434,6 @@ impl GitHub {
         }
     }
 
-    /// `pr` as a snapshot of the pull requests merged into `base` since
-    /// `since` holds it: `None` when it is not one of them.
     async fn merged_view(
         &self,
         pr: GqlMerged,
@@ -472,7 +449,6 @@ impl GitHub {
         Ok(Some(self.merged_of(pr, merged_at).await?))
     }
 
-    /// `pr`, merged at `merged_at`, as a merged pull request.
     async fn merged_of(&self, pr: GqlMerged, merged_at: Timestamp) -> Result<MergedPull> {
         Ok(MergedPull {
             number: Number(pr.number),
@@ -492,7 +468,7 @@ impl GitHub {
         })
     }
 
-    /// Pushes to the branch, oldest first, from the repository's activity
+    /// Oldest first
     /// (<https://docs.github.com/en/rest/repos/repos#list-repository-activities>).
     async fn pushes(&self, branch: &str) -> Result<Vec<Push>> {
         #[derive(Deserialize)]
@@ -543,7 +519,6 @@ impl GitHub {
         Ok(data.map(|d| d.repository.pull_request))
     }
 
-    /// The pull request with the fields a merged one is read with.
     async fn gql_merged(&self, number: Number) -> Result<Option<GqlMerged>> {
         let query = format!(
             "query($owner: String!, $name: String!, $number: Int!) {{
@@ -565,8 +540,6 @@ impl GitHub {
         Ok(data.map(|d| d.repository.pull_request))
     }
 
-    /// The tracking issues of the spec change #`spec_change`, as
-    /// [`tracking_issues_among`] finds them.
     async fn tracking_issues_of(&self, spec_change: Number) -> Result<Vec<Number>> {
         let query = format!(
             "query($owner: String!, $name: String!, $number: Int!) {{
@@ -633,8 +606,6 @@ impl GitHub {
         Ok(pr.into_pull(pushes, &rules))
     }
 
-    /// What the rulesets on `branch` require
-    /// (<https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch>).
     /// Classic branch protection is readable by admins only; its required
     /// checks show only once reported, as required.
     async fn branch_rules(&self, branch: &str) -> BranchRules {
@@ -690,7 +661,6 @@ impl GitHub {
         protection.is_ok_and(|p| p["required_linear_history"]["enabled"] == json!(true))
     }
 
-    /// The end of the output of the step that failed in job `job`'s log.
     async fn failed_step_output(&self, job: u64) -> Option<String> {
         let response = self
             .send(
@@ -711,17 +681,13 @@ impl GitHub {
 /// elsewhere.
 #[derive(Default)]
 struct BranchRules {
-    /// The checks required, reported or not.
+    /// Reported or not.
     checks: Vec<String>,
-    /// Whether a code owner's review is required.
     code_owner_review: bool,
-    /// Whether the branch's history must be linear.
     linear_history: bool,
 }
 
 impl BranchRules {
-    /// Reads `rules`, a branch's rules as the REST API returns them
-    /// (<https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch>).
     fn from_rules(rules: &[Value]) -> Self {
         let of_kind = |kind: &'static str| {
             rules
@@ -802,7 +768,6 @@ struct Actor {
     login: String,
 }
 
-/// A branch as the refs query returns it.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GqlRef {
@@ -828,23 +793,19 @@ struct Count {
 }
 
 impl GqlRef {
-    /// The branch's name, if a run on a ticket pushed it: if it is named for
-    /// the issue and the committer of its head commit is `linewright`.
     fn pushed_for(&self, linewright: &str) -> Option<TicketBranchName> {
         let name = TicketBranchName::parse(&self.name)?;
         let committer = self.target.as_ref()?.committer.as_ref()?.user.as_ref()?;
         (committer.login == linewright).then_some(name)
     }
 
-    /// Whether a pull request is open from the branch.
     fn open_pull(&self) -> bool {
         self.associated_pull_requests.total_count > 0
     }
 }
 
-/// The outcome of deleting a branch, from GitHub's answer: `status` and its
-/// `body`. A branch GitHub does not have is deleted already; GitHub answers
-/// 422 for it, as it does for a branch it refuses to delete
+/// A branch GitHub does not have is deleted already; GitHub answers 422 for
+/// it, as it does for a branch it refuses to delete
 /// (<https://docs.github.com/en/rest/git/refs#delete-a-reference>).
 fn branch_deleted(branch: &str, status: StatusCode, body: &str) -> Result<()> {
     #[derive(Deserialize)]
@@ -926,7 +887,6 @@ fn linked(nodes: Option<Nodes<LinkedNode>>) -> Vec<Linked> {
         .collect()
 }
 
-/// An issue another item links to, read with what Linewright filed it for.
 #[derive(Deserialize)]
 struct LinkedIssueNode {
     number: u64,
@@ -947,8 +907,6 @@ impl LinkedIssueNode {
     }
 }
 
-/// The field that reads the items that mention a pull request, for
-/// [`tracking_issues_among`]: a tracking issue mentions its spec change.
 const CROSS_REFERENCES_FIELD: &str =
     "timelineItems(last: 100, itemTypes: [CROSS_REFERENCED_EVENT]) {
     nodes {
@@ -973,9 +931,6 @@ enum ReferenceSource {
     PullRequest,
 }
 
-/// The tracking issues of `spec_change` among the items that mention it,
-/// `references`: those Linewright, `linewright`, filed for it in this
-/// repository.
 fn tracking_issues_among(
     references: Nodes<CrossReference>,
     spec_change: Number,
@@ -994,16 +949,12 @@ fn tracking_issues_among(
         .collect()
 }
 
-/// The fields of a `LabeledEvent` or `UnlabeledEvent` that [`GqlLabeling`]
-/// reads.
 macro_rules! labeling_fields {
     () => {
         "createdAt label { name }"
     };
 }
 
-/// A label applied to or removed from an issue or pull request, read with
-/// [`labeling_fields!`].
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GqlLabeling {
@@ -1095,9 +1046,7 @@ enum GqlEvent {
 }
 
 impl GqlIssue {
-    /// Whether a snapshot reads the issue: open, and labeled one of
-    /// `label::IN_VIEW`, assigned to Linewright or opened by it, as the
-    /// snapshot's filters select issues.
+    /// Must match the snapshot's filters.
     fn in_view(&self, linewright: &str) -> bool {
         self.state == "OPEN"
             && (self
@@ -1181,8 +1130,6 @@ impl GqlIssue {
     }
 }
 
-/// A pull request's state, from its `state`, `isDraft`, `mergedAt` and
-/// `closedAt`.
 fn pull_state(
     state: &str,
     is_draft: bool,
@@ -1196,7 +1143,6 @@ fn pull_state(
     }
 }
 
-/// The field that reads the issues a pull request closes, for [`closes`].
 macro_rules! closes_field {
     () => {
         "closingIssuesReferences(first: 20) { nodes { number } }"
@@ -1298,8 +1244,6 @@ struct NumberNode {
     number: u64,
 }
 
-/// The issues a pull request closes, from its `closingIssuesReferences`,
-/// which [`closes_field!`] reads.
 fn closes(references: Option<Nodes<NumberNode>>) -> Vec<Number> {
     references
         .map(|n| n.nodes.into_iter().map(|n| Number(n.number)).collect())
@@ -1322,9 +1266,8 @@ struct GqlReviewRequest {
     requested_reviewer: Option<GqlReviewer>,
 }
 
-/// Who review was requested from. A team is not named: its fields need the
-/// `read:org` scope, beyond the token's
-/// (<https://docs.github.com/en/graphql/reference/objects#team>).
+/// A team is not named: its fields need the `read:org` scope, beyond the
+/// token's (<https://docs.github.com/en/graphql/reference/objects#team>).
 #[derive(Deserialize)]
 #[serde(tag = "__typename")]
 enum GqlReviewer {
@@ -1405,11 +1348,6 @@ impl GqlContext {
 }
 
 impl GqlPull {
-    /// What GitHub requires before the pull request merges, read from its
-    /// review decision, the code owners it requested review from, its
-    /// required checks and what the rulesets on its base branch require,
-    /// `rules`
-    /// (<https://docs.github.com/en/graphql/reference/enums#mergestatestatus>).
     /// GitHub reports no review decision when the rules require a code
     /// owner's review but no approvals, so the rules say that review is
     /// needed then.
@@ -1446,11 +1384,9 @@ impl GqlPull {
         requires
     }
 
-    /// A code owner's review, if GitHub requested review from code owners,
-    /// naming them only when they are all users: a team can't be named, and
-    /// naming only the users would leave out the team's members.
+    /// Names the code owners only when they are all users: a team can't be
+    /// named, and naming only the users would leave out the team's members.
     fn code_owner_review(&self) -> Option<Requirement> {
-        // Each code owner requested, with its login if a user.
         let code_owners: Vec<Option<String>> = self
             .review_requests
             .nodes
@@ -1631,7 +1567,6 @@ impl Store for GitHub {
             default_branch: String,
         }
         let repo: Repo = self.rest(Method::GET, &self.repo_path(""), None).await?;
-        // <https://docs.github.com/en/graphql/reference/objects#repository>
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Settings {
@@ -1740,7 +1675,7 @@ impl Store for GitHub {
             .to_string();
         let linewright = &self.viewer.login;
         let mut issues: BTreeMap<u64, GqlIssue> = BTreeMap::new();
-        // As `GqlIssue::in_view` reads one issue.
+        // Must match `GqlIssue::in_view`.
         for filter in [
             json!({"states": ["OPEN"], "labels": label::IN_VIEW}),
             json!({"states": ["OPEN"], "assignee": linewright}),
@@ -1756,9 +1691,6 @@ impl Store for GitHub {
                 pulls.push(self.pull(Number(pr.number)).await?);
             }
         }
-        // Linewright's closed and merged pull requests for the issues in
-        // view, however long ago: a refused pull request is not redone, and a
-        // merged one is not redone while GitHub closes its issue.
         let closed: std::collections::BTreeSet<u64> = issues
             .values()
             .flat_map(|i| {
@@ -1829,8 +1761,7 @@ impl Store for GitHub {
         if !self.by_linewright(&pr.author) {
             return Ok(None);
         }
-        // As the snapshot reads them: every open one, and closed and merged
-        // ones for the issues in view.
+        // Must match what the snapshot holds.
         let mut held = pr.state == "OPEN";
         let closes: Vec<u64> = pr
             .closing_issues_references
@@ -1860,8 +1791,7 @@ impl Store for GitHub {
                 open: issue.state == "OPEN",
             });
         }
-        // A snapshot holds Linewright's open pull requests, and its
-        // closed and merged ones for the issues in view.
+        // Must match what the snapshot holds.
         let mut pulls = vec![];
         for pr in issue
             .closed_by_pull_requests_references
@@ -2069,7 +1999,6 @@ impl Store for GitHub {
             content: String,
             encoding: String,
         }
-        // <https://docs.github.com/en/rest/repos/contents#get-repository-content>
         let path_segments: Vec<String> = path.split('/').map(percent_encode).collect();
         let resource = self.repo_path(&format!(
             "/contents/{}?ref={}",
@@ -2109,7 +2038,6 @@ impl Store for GitHub {
             #[serde(rename = "type")]
             kind: String,
         }
-        // <https://docs.github.com/en/rest/repos/contents#get-repository-content>
         let dir_segments: Vec<String> = dir.split('/').map(percent_encode).collect();
         let resource = self.repo_path(&format!(
             "/contents/{}?ref={}",
@@ -2348,7 +2276,6 @@ impl Store for GitHub {
     }
 
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
-        // <https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request>
         self.rest_ok(
             Method::PUT,
             &self.repo_path(&format!("/pulls/{}/merge", pr.0)),
@@ -2388,8 +2315,6 @@ impl Store for GitHub {
 mod tests {
     use super::*;
 
-    /// A pull request GitHub reports needs review, with `requests` its
-    /// review requests as the snapshot query returns them.
     fn review_required(requests: Value) -> GqlPull {
         serde_json::from_value(json!({
             "number": 20, "title": "Do the ticket", "body": "",
@@ -2511,8 +2436,6 @@ mod tests {
         );
     }
 
-    /// A blocked pull request GitHub reports no review decision for, as it
-    /// does when the rules require a code owner's review and no approvals.
     fn no_review_decision(requests: Value) -> GqlPull {
         let mut pr = review_required(requests);
         pr.review_decision = None;
@@ -2602,13 +2525,10 @@ mod tests {
         assert!(rules.code_owner_review);
     }
 
-    /// A ticket as the snapshot query returns it, with `parent` its parent.
     fn ticket_with_parent(parent: Value) -> Issue {
         ticket(parent, json!([]))
     }
 
-    /// A ticket as the snapshot query returns it, with `parent` its parent
-    /// and `closing` the pull requests that close it.
     fn ticket(parent: Value, closing: Value) -> Issue {
         let issue: GqlIssue = serde_json::from_value(json!({
             "number": 12, "title": "Store gadgets", "body": "Gadgets persist.",
@@ -2704,8 +2624,6 @@ mod tests {
         assert_eq!(ticket_with_parent(Value::Null).parent, None);
     }
 
-    /// A cross-reference to #5 from issue #`number`, opened by `author` with
-    /// `title` and `body`, in this repository or another.
     fn referenced_by(number: u64, author: &str, title: &str, body: &str, cross: bool) -> Value {
         json!({
             "isCrossRepository": cross,

@@ -1,8 +1,3 @@
-//! The runs: each run `serve`, `once` and `workflow run` start is recorded
-//! under its run ID in the work directory, from its start to its end and
-//! with the sessions it started, and `lw runs` lists them
-//! (`docs/specs/monitoring.md`, "runs").
-
 use std::fmt::{self, Write as _};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
@@ -18,7 +13,6 @@ use crate::records;
 use crate::status::{Paint, utc};
 use crate::workflow::WorkflowName;
 
-/// What a run is of: a stage on an item, or a workflow.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RunOf {
@@ -27,7 +21,6 @@ pub enum RunOf {
 }
 
 impl RunOf {
-    /// The item a stage's run is on; `None` for a workflow's.
     pub fn item(&self) -> Option<Number> {
         match self {
             RunOf::Work { item, .. } => Some(*item),
@@ -36,8 +29,6 @@ impl RunOf {
     }
 }
 
-/// A run's ID: `<item>/<stage>-<n>` for the `n`th run of that stage on that
-/// item, or `<workflow>/<n>` for a workflow's `n`th run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunId {
     pub of: RunOf,
@@ -89,36 +80,25 @@ impl fmt::Display for RunId {
     }
 }
 
-/// How a run ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Ending {
-    /// It did its work, or found none left to do.
     Done,
-    /// It handed the work back to the maintainer.
     HandedBack,
-    /// Its subject stopped asking for it, or Linewright stopped.
     Cancelled,
-    /// The runtime refused its session for the usage limit.
     UsageLimit,
-    /// It failed and was not handed back: a workflow's run, which has
-    /// nothing to hand back, or a run whose hand-back failed.
     Failed,
 }
 
-/// A run as its record keeps it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Record {
     #[serde(flatten)]
     of: RunOf,
     n: u32,
     started_at: Timestamp,
-    /// `None` until the run ends.
     end: Option<End>,
-    /// The records of the sessions it started, with their transcripts,
-    /// relative to the work directory.
+    /// Relative to the work directory.
     sessions: Vec<PathBuf>,
-    /// For a rework, when it last read the feedback it answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     answered_until: Option<Timestamp>,
 }
@@ -129,14 +109,12 @@ struct End {
     ending: Ending,
 }
 
-/// The records of the runs on one repository, in its work directory.
 #[derive(Clone, Debug)]
 pub struct Runs {
     work_dir: PathBuf,
 }
 
 impl Runs {
-    /// The records in the repository's work directory `work_dir`.
     pub fn new(work_dir: &Path) -> Runs {
         Runs {
             work_dir: work_dir.to_path_buf(),
@@ -147,8 +125,6 @@ impl Runs {
         self.work_dir.join("runs")
     }
 
-    /// The directory of the runs of what `of` names: `runs/items/<item>` or
-    /// `runs/workflows/<workflow>`.
     fn dir_of(&self, of: &RunOf) -> PathBuf {
         match of {
             RunOf::Work { item, .. } => self.dir().join("items").join(item.0.to_string()),
@@ -156,8 +132,6 @@ impl Runs {
         }
     }
 
-    /// Records the start, at `now`, of the next run of `of`, numbered after
-    /// every earlier one, and holds the run's lock until it ends.
     pub(crate) fn begin(&self, of: RunOf, now: Timestamp) -> Result<Running> {
         let dir = self.dir_of(&of);
         std::fs::create_dir_all(&dir).context("creating the runs' directory")?;
@@ -197,8 +171,7 @@ impl Runs {
         Ok(running)
     }
 
-    /// The run `id`, if it is recorded. A record that does not read is
-    /// logged and taken as missing.
+    /// A record that does not read is logged and taken as missing.
     pub fn read_run(&self, id: &RunId) -> Option<Recorded> {
         let path = self
             .dir_of(&id.of)
@@ -207,8 +180,7 @@ impl Runs {
         Some(Recorded::of(record, &path, &self.work_dir))
     }
 
-    /// Every run recorded. A record that does not read is logged and
-    /// skipped.
+    /// A record that does not read is logged and skipped.
     pub fn read(&self) -> Result<Vec<Recorded>> {
         let mut recorded = vec![];
         for kind in ["items", "workflows"] {
@@ -226,7 +198,6 @@ impl Runs {
     }
 }
 
-/// What starts the names of the files of `of`'s runs, before the number.
 fn file_prefix(of: &RunOf) -> String {
     match of {
         RunOf::Work { stage, .. } => format!("{}-", stage.name()),
@@ -234,7 +205,6 @@ fn file_prefix(of: &RunOf) -> String {
     }
 }
 
-/// The numbers of the runs in `dir` whose files' names start with `prefix`.
 fn numbers(dir: &Path, prefix: &str) -> impl Iterator<Item = u32> {
     entries(dir)
         .unwrap_or_default()
@@ -245,7 +215,6 @@ fn numbers(dir: &Path, prefix: &str) -> impl Iterator<Item = u32> {
         })
 }
 
-/// The paths in `dir`, none when it does not exist.
 fn entries(dir: &Path) -> Result<Vec<PathBuf>> {
     match std::fs::read_dir(dir) {
         Ok(entries) => entries
@@ -257,14 +226,12 @@ fn entries(dir: &Path) -> Result<Vec<PathBuf>> {
     }
 }
 
-/// When a run's agent last produced output, noted as `serve` hears it while
-/// the run is in flight: `None` until the run starts a session, whose start
-/// counts as its first.
+/// When a run's agent last produced output: `None` until the run starts a
+/// session, whose start counts as its first.
 #[derive(Clone, Debug, Default)]
 pub struct Activity(Arc<Mutex<Option<Timestamp>>>);
 
 impl Activity {
-    /// Notes output at `at`, unless later output has been noted.
     pub fn note(&self, at: Timestamp) {
         let mut last = self.0.lock().unwrap();
         *last = Some(last.map_or(at, |last| last.max(at)));
@@ -275,7 +242,6 @@ impl Activity {
     }
 }
 
-/// A run in flight as `serve` holds it, its activity noted as it goes.
 #[derive(Clone, Debug)]
 pub struct Watched {
     pub id: RunId,
@@ -284,7 +250,6 @@ pub struct Watched {
 }
 
 impl Watched {
-    /// The run as it stands now, its last output read afresh.
     pub fn read(&self) -> InFlight {
         InFlight {
             id: self.id.clone(),
@@ -294,18 +259,14 @@ impl Watched {
     }
 }
 
-/// A run in flight, as of a reading of its activity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InFlight {
     pub id: RunId,
     pub started_at: Timestamp,
-    /// When its agent last produced output: `None` until it starts a
-    /// session, whose start counts as its first.
     pub last_output: Option<Timestamp>,
 }
 
 impl InFlight {
-    /// The run as `status` and `explain` answer it at `now`.
     pub fn at(&self, now: Timestamp) -> RunInFlight {
         RunInFlight {
             id: self.id.clone(),
@@ -318,9 +279,6 @@ impl InFlight {
     }
 }
 
-/// A run in flight as `status` and `explain` answer it: how long it has run
-/// and its quiet time, how long since its agent last produced output
-/// (`docs/specs/monitoring.md`, "status").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "RunInFlightAnswer", try_from = "RunInFlightAnswer")]
 pub struct RunInFlight {
@@ -371,8 +329,6 @@ impl TryFrom<RunInFlightAnswer> for RunInFlight {
 }
 
 impl RunInFlight {
-    /// The run as text: its run ID, what it is of, how long it has run and
-    /// its quiet time, coloured with `paint`.
     pub(crate) fn render(&self, paint: Paint) -> String {
         let quiet = self
             .quiet_seconds
@@ -388,7 +344,6 @@ impl RunInFlight {
     }
 }
 
-/// What a run is of, as text: `#42 rework` or `workflow weekly`.
 fn describe_of(of: &RunOf) -> String {
     match of {
         RunOf::Work { item, stage } => format!("{item} {}", stage.name()),
@@ -396,14 +351,13 @@ fn describe_of(of: &RunOf) -> String {
     }
 }
 
-/// `seconds` as text, such as `1h 5m 3s`.
 fn duration(seconds: i64) -> String {
     let duration = std::time::Duration::from_secs(seconds.max(0).unsigned_abs());
     humantime::format_duration(duration).to_string()
 }
 
-/// A run in flight, its record kept up to date until it ends. A run
-/// dropped without ending, as when its process dies, reads as interrupted.
+/// A run dropped without ending, as when its process dies, reads as
+/// interrupted.
 pub(crate) struct Running {
     id: RunId,
     path: PathBuf,
@@ -421,7 +375,6 @@ impl Running {
         &self.id
     }
 
-    /// The run as `serve` holds it while in flight.
     pub fn watched(&self) -> Watched {
         Watched {
             id: self.id.clone(),
@@ -430,13 +383,10 @@ impl Running {
         }
     }
 
-    /// When the run's agent last produced output.
     pub fn activity(&self) -> &Activity {
         &self.activity
     }
 
-    /// Links the session whose record is in `dir`, started at `now`, to the
-    /// run. Its quiet time counts from the start.
     pub fn session(&self, dir: &Path, now: Timestamp) {
         self.activity.note(now);
         let dir = dir.strip_prefix(&self.work_dir).unwrap_or(dir);
@@ -444,14 +394,11 @@ impl Running {
         self.save_or_log();
     }
 
-    /// Records that the run answered the feedback on its pull request up to
-    /// `at`, when it last read it.
     pub fn answered(&self, at: Timestamp) {
         self.record.lock().unwrap().answered_until = Some(at);
         self.save_or_log();
     }
 
-    /// Records the run's end, at `now`, as `ending`.
     pub fn end(self, now: Timestamp, ending: Ending) {
         self.record.lock().unwrap().end = Some(End { at: now, ending });
         self.save_or_log();
@@ -472,14 +419,12 @@ impl Running {
     }
 }
 
-/// A run as its record and its lock show it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recorded {
     pub id: RunId,
     pub started_at: Timestamp,
     pub state: State,
-    /// The records of the sessions it started, with their transcripts, in
-    /// the order it started them.
+    /// In the order it started them.
     pub sessions: Vec<PathBuf>,
     /// For a rework, when it last read the feedback it answered.
     pub answered_until: Option<Timestamp>,
@@ -487,18 +432,12 @@ pub struct Recorded {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
-    Ended {
-        at: Timestamp,
-        ending: Ending,
-    },
+    Ended { at: Timestamp, ending: Ending },
     InFlight,
-    /// It never ended: the process running it stopped first.
     Interrupted,
 }
 
 impl Recorded {
-    /// The run `record`, at `path` in the work directory `work_dir`, in
-    /// flight only while its lock is held.
     fn of(record: Record, path: &Path, work_dir: &Path) -> Recorded {
         let state = match record.end {
             Some(End { at, ending }) => State::Ended { at, ending },
@@ -521,8 +460,6 @@ impl Recorded {
         }
     }
 
-    /// The run, if it is one on a pull request that did its work: done when
-    /// it answered the feedback, for a rework, and otherwise when it ended.
     pub fn done_on_pull(&self) -> Option<DoneRun> {
         match (&self.id.of, self.state) {
             (
@@ -541,7 +478,6 @@ impl Recorded {
     }
 }
 
-/// Whether a process holds the lock at `path`.
 fn is_locked(path: &Path) -> bool {
     let Ok(file) = File::open(path) else {
         return false;
@@ -549,31 +485,21 @@ fn is_locked(path: &Path) -> bool {
     matches!(file.try_lock(), Err(TryLockError::WouldBlock))
 }
 
-/// Which runs `runs` lists.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Query {
-    /// Only this item's.
     pub item: Option<Number>,
-    /// Only the runs of this stage.
     pub stage: Option<WorkKind>,
-    /// Only those started at or after.
     pub since: Option<Timestamp>,
-    /// At most this many, the newest.
     pub limit: Option<usize>,
 }
 
-/// The answer to `runs`. Its fields keep their names and meanings
-/// (`docs/specs/monitoring.md`, "Output").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Listing {
     /// Newest first.
     pub runs: Vec<Run>,
-    /// How many more runs the query's limit left out.
     pub left_out: usize,
 }
 
-/// A run as `runs` answers it: its run ID, with the item and stage or the
-/// workflow it names beside it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "RunAnswer", try_from = "RunAnswer")]
 pub struct Run {
@@ -582,17 +508,10 @@ pub struct Run {
     pub outcome: Outcome,
 }
 
-/// How a run ended and how long it ran, or how long it has run in flight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    Ended {
-        ending: Ending,
-        seconds: i64,
-    },
-    InFlight {
-        seconds: i64,
-    },
-    /// The process running it stopped before it ended, at a time unknown.
+    Ended { ending: Ending, seconds: i64 },
+    InFlight { seconds: i64 },
     Interrupted,
 }
 
@@ -602,7 +521,6 @@ struct RunAnswer {
     #[serde(flatten)]
     of: RunOf,
     started_at: Timestamp,
-    /// `None` for a run interrupted.
     duration_seconds: Option<i64>,
     outcome: OutcomeName,
 }
@@ -668,13 +586,10 @@ impl TryFrom<RunAnswer> for Run {
     }
 }
 
-/// Why `runs N` has nothing to list.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{0} has no runs")]
 pub struct NoRuns(pub Number);
 
-/// The runs of `recorded` on #`number`, its own alone
-/// (`docs/specs/monitoring.md`, "runs").
 pub fn of_item(recorded: &[Recorded], number: Number) -> Vec<Recorded> {
     recorded
         .iter()
@@ -683,7 +598,6 @@ pub fn of_item(recorded: &[Recorded], number: Number) -> Vec<Recorded> {
         .collect()
 }
 
-/// The runs of `recorded` that `query` asks for at `now`, newest first.
 /// Asking for an item's runs when it has none is an error, however the rest
 /// of the query narrows them.
 pub fn list(recorded: Vec<Recorded>, query: &Query, now: Timestamp) -> Result<Listing, NoRuns> {
@@ -714,7 +628,6 @@ pub fn list(recorded: Vec<Recorded>, query: &Query, now: Timestamp) -> Result<Li
     })
 }
 
-/// Sorts `runs` newest first, as `runs` lists them.
 pub(crate) fn sort_newest_first(runs: &mut [Recorded]) {
     runs.sort_by(|a, b| {
         (b.started_at, b.id.n)
@@ -724,7 +637,6 @@ pub(crate) fn sort_newest_first(runs: &mut [Recorded]) {
 }
 
 impl Recorded {
-    /// The run as `runs` answers it at `now`.
     pub(crate) fn at(self, now: Timestamp) -> Run {
         let seconds = |until: Timestamp| (until - self.started_at).num_seconds();
         let outcome = match self.state {
@@ -745,9 +657,6 @@ impl Recorded {
     }
 }
 
-/// The answer as text, one run per line, coloured if `colour`, ending with
-/// how many runs the limit left out and how to show them
-/// (`docs/specs/monitoring.md`, "Output").
 pub fn render(listing: &Listing, colour: bool) -> String {
     let paint = Paint(colour);
     let mut text = String::new();
@@ -765,15 +674,11 @@ pub fn render(listing: &Listing, colour: bool) -> String {
     text
 }
 
-/// The line ending a list of runs cut to a limit: how many earlier runs,
-/// `left_out`, it left out, and `how` to show them
-/// (`docs/specs/monitoring.md`, "Output").
 pub(crate) fn render_left_out(left_out: usize, how: &str) -> String {
     let runs = if left_out == 1 { "run" } else { "runs" };
     format!("left out: {left_out} earlier {runs}; show them with {how}")
 }
 
-/// A run as `runs` lists it, coloured with `paint`.
 pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
     let (outcome, seconds) = match run.outcome {
         Outcome::Ended { ending, seconds } => {
@@ -800,7 +705,6 @@ pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
     )
 }
 
-/// Why `runs` has no listing to give.
 #[derive(Debug, thiserror::Error)]
 pub enum ListError {
     #[error(transparent)]
@@ -809,15 +713,11 @@ pub enum ListError {
     Other(#[from] anyhow::Error),
 }
 
-/// The answer to `query` at `now` from the records in `work_dir`, as
-/// `serve` gives it and as `runs` gives it with no `serve` running.
 pub fn answer(work_dir: &RepoWorkDir, query: &Query, now: Timestamp) -> Result<Listing, ListError> {
     let recorded = Runs::new(&work_dir.resolve()).read()?;
     Ok(list(recorded, query, now)?)
 }
 
-/// A repository's work directory, as a monitoring command finds it from
-/// its settings: `repo` under the `work-dir` setting `base`.
 #[derive(Clone, Debug)]
 pub struct RepoWorkDir {
     pub base: PathBuf,
@@ -825,10 +725,9 @@ pub struct RepoWorkDir {
 }
 
 impl RepoWorkDir {
-    /// The directory, which `serve` names as GitHub spells the repository:
-    /// the one spelled as `repo` or, as GitHub names repositories
-    /// case-insensitively, else one spelled otherwise. Found afresh each
-    /// time, as `serve` may create it after it starts.
+    /// Falls back to a directory spelled otherwise, as GitHub names
+    /// repositories case-insensitively. Found afresh each time, as `serve`
+    /// may create it after it starts.
     pub fn resolve(&self) -> PathBuf {
         work_dir(&self.base, &self.repo)
     }

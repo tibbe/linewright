@@ -1,12 +1,8 @@
-/// The command Linewright runs as (`docs/specs/operation.md`), which names
-/// the program in its help and starts the errors it prints itself.
 pub const COMMAND: &str = "lw";
-/// The version Linewright is built as.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The commit Linewright is built from, abbreviated, or `unknown` (see
 /// `build.rs`).
 pub const COMMIT: &str = env!("LINEWRIGHT_COMMIT");
-/// The version and the commit, as `--version` names them.
 pub const VERSION_AND_COMMIT: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",

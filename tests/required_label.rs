@@ -1,7 +1,3 @@
-//! With `require-label` set, everything Linewright creates carries the
-//! required label, when the repository has it, end to end against the local
-//! store and a scripted runtime (`docs/specs/repository.md`).
-
 mod common;
 
 use common::*;

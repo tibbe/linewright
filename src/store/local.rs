@@ -1,9 +1,3 @@
-//! The local store: a repository and its issues and pull requests on disk,
-//! standing in for GitHub in replay and tests. Its state lives in memory and
-//! is exported as plain files (JSON, Markdown, diffs) a coding agent reads
-//! directly. Besides the store interface it has the actions of people (open
-//! an issue, comment, review, merge) that seed a case or drive a test.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -26,15 +20,11 @@ use crate::domain::{
 };
 use crate::git;
 
-/// The repository a local store starts with.
 pub struct Seed {
     pub default_branch: String,
     pub linewright: Login,
-    /// The repository's issue types, if it has them.
     pub issue_types: Option<Vec<String>>,
-    /// Whether the default branch requires linear history.
     pub linear_history: bool,
-    /// The merge methods the repository allows.
     pub allowed_merge_methods: MergeMethods,
 }
 
@@ -54,18 +44,10 @@ struct State {
     next_number: u64,
     issues: BTreeMap<Number, IssueRecord>,
     pulls: BTreeMap<Number, PullRecord>,
-    /// How many snapshots have been taken.
     snapshots_taken: usize,
-    /// How many reads of an issue or pull request on its own, outside a
-    /// snapshot, there have been.
     items_read: usize,
-    /// Why snapshots and reads of issues and pull requests fail, while they
-    /// do.
     unreadable: Option<String>,
-    /// What `git push` reports for every push GitHub refuses, while it
-    /// refuses them.
     pushes_refused: Option<String>,
-    /// What happens right after Linewright next comments.
     after_comment: Option<Box<dyn FnOnce() + Send>>,
 }
 
@@ -101,16 +83,10 @@ struct PullRecord {
     reviews: Vec<Review>,
     threads: Vec<Thread>,
     requested_reviewers: Vec<Login>,
-    /// What branch rules would require before the pull request merges, if
-    /// they block it: the local store has no rules of its own.
     blocked: Option<Vec<Requirement>>,
-    /// Whether GitHub has yet to work out the open pull request's merge
-    /// state.
     merge_state_pending: bool,
-    /// Why merges of the pull request fail, if they do, though nothing
-    /// blocks them.
     refused: Option<String>,
-    /// Checks by head commit: a push starts the head's checks afresh.
+    /// By head commit: a push starts the head's checks afresh.
     checks: BTreeMap<String, Vec<CheckRecord>>,
     /// For a merged pull request: the default branch before and after.
     merge: Option<(String, String)>,
@@ -160,7 +136,6 @@ impl LocalStore {
         })
     }
 
-    /// The bare repository the store's clones come from.
     pub fn repository(&self) -> PathBuf {
         self.root.join("repo.git")
     }
@@ -175,10 +150,6 @@ impl LocalStore {
         self.clock.now()
     }
 
-    // People's actions.
-
-    /// Commits `files` (path, contents) as `author` on top of `branch`,
-    /// creating it from the default branch when missing, and pushes it.
     pub async fn commit(
         &self,
         author: &str,
@@ -321,14 +292,11 @@ impl LocalStore {
         Ok(())
     }
 
-    /// Reopens a closed issue, as a person does.
     pub fn reopen_issue_as(&self, issue: Number) -> Result<()> {
         self.state().issue_mut(issue)?.issue.open = true;
         Ok(())
     }
 
-    /// Fetches the commits of a git bundle into the repository, and points
-    /// the default branch at `base`.
     pub async fn import_bundle(&self, bundle: &Path, base: &str) -> Result<()> {
         let bundle = bundle.canonicalize()?;
         let bundle = bundle.to_str().context("bundle paths are UTF-8")?;
@@ -346,8 +314,7 @@ impl LocalStore {
         Ok(())
     }
 
-    /// A person's pull request whose merge moved the default branch to
-    /// `merged`, a commit already in the repository.
+    /// `merged` is a commit already in the repository.
     pub async fn merge_commit(
         &self,
         author: &str,
@@ -390,8 +357,6 @@ impl LocalStore {
         Ok(number)
     }
 
-    /// A person's pull request touching `files`, merged into the default
-    /// branch at once.
     pub async fn merge_change(
         &self,
         author: &str,
@@ -427,16 +392,12 @@ impl LocalStore {
         Ok(number)
     }
 
-    /// A person merges an open pull request into the default branch, closing
-    /// the issues it closes.
     pub async fn merge_pull(&self, pr: Number) -> Result<()> {
         self.merge_as(pr, "maintainer", MergeMethod::Merge).await
     }
 
-    /// Merges an open pull request into the default branch with `method`,
-    /// as GitHub does
-    /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>),
-    /// closing the issues it closes.
+    /// As GitHub merges
+    /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>).
     async fn merge_as(&self, pr: Number, by: &str, method: MergeMethod) -> Result<()> {
         let (head_ref, title, default_branch) = {
             let mut state = self.state();
@@ -500,68 +461,51 @@ impl LocalStore {
         Ok(())
     }
 
-    /// Blocks the pull request's merge until `requires` is met, as branch
-    /// rules on GitHub would, until [`LocalStore::allow_merge`].
     pub fn block_merge(&self, pr: Number, requires: Vec<Requirement>) {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.blocked = Some(requires);
         }
     }
 
-    /// Lifts [`LocalStore::block_merge`], as a person meeting what the rules
-    /// require would.
     pub fn allow_merge(&self, pr: Number) {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.blocked = None;
         }
     }
 
-    /// Reports the pull request's merge state as not worked out yet, as
-    /// GitHub does for a while after a change, until
-    /// [`LocalStore::work_out_merge_state`].
     pub fn pend_merge_state(&self, pr: Number) {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.merge_state_pending = true;
         }
     }
 
-    /// Lifts [`LocalStore::pend_merge_state`].
     pub fn work_out_merge_state(&self, pr: Number) {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.merge_state_pending = false;
         }
     }
 
-    /// Makes every merge of the pull request fail with `reason`, as GitHub
-    /// refusing at the last moment would, until [`LocalStore::accept_merges`].
     pub fn refuse_merges(&self, pr: Number, reason: &str) {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.refused = Some(reason.to_string());
         }
     }
 
-    /// Makes every push fail as GitHub refusing it would, `git push`
-    /// reporting `output`, such as GitHub's message for a permission
-    /// Linewright's token lacks.
+    /// `output` is what `git push` reports.
     pub fn refuse_pushes(&self, output: &str) {
         self.state().pushes_refused = Some(output.to_string());
     }
 
-    /// Does `then` right after Linewright next comments, as someone acting
-    /// while a run records its outcome.
     pub fn after_linewrights_next_comment(&self, then: impl FnOnce() + Send + 'static) {
         self.state().after_comment = Some(Box::new(then));
     }
 
-    /// Lifts [`LocalStore::refuse_merges`].
     pub fn accept_merges(&self, pr: Number) {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.refused = None;
         }
     }
 
-    /// A pull request `author` opens from the new branch `branch`, holding
-    /// `files` (path, contents), as a person or another bot does.
     pub async fn open_pull_as(
         &self,
         author: &str,
@@ -590,7 +534,7 @@ impl LocalStore {
         Ok(())
     }
 
-    /// A review, with an inline comment (path, body) opening a thread each.
+    /// Each `inline` (path, body) opens a thread.
     pub fn review_as(
         &self,
         author: &str,
@@ -625,7 +569,7 @@ impl LocalStore {
         Ok(())
     }
 
-    /// Sets the checks on the pull request's current head.
+    /// On the pull request's current head.
     pub async fn set_checks(&self, pr: Number, checks: Vec<CheckRecord>) -> Result<()> {
         let head_ref = self.state().pull_mut(pr)?.head_ref.clone();
         let head = self.rev(&head_ref).await?;
@@ -633,12 +577,9 @@ impl LocalStore {
         Ok(())
     }
 
-    /// Creates the label `name` in the repository, as a maintainer does.
     pub fn create_label(&self, name: &str) {
         self.state().labels.insert(name.to_string());
     }
-
-    // Reading the store's state, for tests.
 
     pub fn has_label(&self, name: &str) -> bool {
         self.state().labels.contains(name)
@@ -677,7 +618,6 @@ impl LocalStore {
             .unwrap_or_default()
     }
 
-    /// The pull request as a snapshot shows it.
     pub async fn snapshot_pull(&self, pr: Number) -> Pull {
         self.pull_view(pr).await.expect("the pull request exists")
     }
@@ -686,25 +626,18 @@ impl LocalStore {
         self.state().pulls.keys().copied().collect()
     }
 
-    /// How many snapshots have been taken of the store.
     pub fn snapshots_taken(&self) -> usize {
         self.state().snapshots_taken
     }
 
-    /// How many reads of an issue or pull request on its own, outside a
-    /// snapshot, there have been.
     pub fn items_read(&self) -> usize {
         self.state().items_read
     }
 
-    /// Makes snapshots and reads of issues and pull requests fail with
-    /// `reason`, as when GitHub cannot be reached, until
-    /// [`LocalStore::restore_reads`].
     pub fn fail_reads(&self, reason: &str) {
         self.state().unreadable = Some(reason.into());
     }
 
-    /// Lets reads succeed again after [`LocalStore::fail_reads`].
     pub fn restore_reads(&self) {
         self.state().unreadable = None;
     }
@@ -716,23 +649,18 @@ impl LocalStore {
         }
     }
 
-    /// Counts a read of an issue or pull request on its own, which fails
-    /// as [`LocalStore::fail_reads`] says.
     fn read_item(&self) -> Result<()> {
         self.readable()?;
         self.state().items_read += 1;
         Ok(())
     }
 
-    /// The contents of `path` at the head of `branch`, which has it.
     pub async fn file(&self, branch: &str, path: &str) -> Result<String> {
         Store::read_file(self, branch, path)
             .await?
             .with_context(|| format!("{branch} has no {path}"))
     }
 
-    /// Writes the store's state as files under its root: `issues/<n>.json`
-    /// and `.md`, `pulls/<n>.json`, `.md` and `.diff`.
     pub async fn export(&self) -> Result<()> {
         let issues = self.issues();
         let pulls: Vec<Number> = self.pulls();
@@ -769,8 +697,6 @@ impl LocalStore {
         Ok(())
     }
 
-    // Internals.
-
     fn url(&self) -> String {
         self.repository().to_string_lossy().into_owned()
     }
@@ -795,8 +721,7 @@ impl LocalStore {
         }
     }
 
-    /// The branches named for an issue the store has whose head commit
-    /// Linewright made, as its committer. A snapshot holds every issue.
+    /// A snapshot of the local store holds every issue.
     async fn ticket_branches(&self) -> Result<Vec<TicketBranch>> {
         let heads = git::git(
             &self.repository(),
@@ -1016,8 +941,6 @@ impl State {
         }
     }
 
-    /// The tracking issues Linewright filed for the spec change
-    /// `spec_change`.
     fn tracking_issues_of(&self, spec_change: Number) -> Vec<Number> {
         self.issues
             .values()
@@ -1100,13 +1023,10 @@ impl PullRecord {
         self.labels.iter().any(|l| l == label)
     }
 
-    /// Whether the pull request closes the issue `number` when merged.
     fn closes(&self, number: Number) -> bool {
         closing_references(&self.body).contains(&number)
     }
 
-    /// The pull request as a merged one, into `default_branch`: `None` when
-    /// it is not merged.
     fn merged(&self, default_branch: &str) -> Option<MergedPull> {
         let PullState::Merged { at } = self.state else {
             return None;
@@ -1360,7 +1280,6 @@ impl Store for LocalStore {
             .map(|c| CheckFailure {
                 name: c.name,
                 summary: String::new(),
-                // The local store keeps no full logs.
                 log: Some(CheckLog {
                     step_output: c.log,
                     full: None,

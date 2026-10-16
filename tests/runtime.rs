@@ -1,6 +1,3 @@
-//! The Claude Code runtime against a stand-in `claude` program: what a
-//! session's environment holds and what configuration each turn reads.
-
 mod common;
 
 use std::path::Path;
@@ -22,7 +19,6 @@ fn runtime_without_token(dir: &Path) -> ClaudeCode {
     )
 }
 
-/// A runtime without a GitHub token whose every turn streams `events`.
 fn runtime_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
     ClaudeCode {
         program: fake_claude_streaming(dir, events).to_str().unwrap().into(),
@@ -32,7 +28,6 @@ fn runtime_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
     }
 }
 
-/// The arguments of each turn the stand-in `claude` in `dir` ran.
 fn turn_args(dir: &Path) -> Vec<Vec<String>> {
     std::fs::read_to_string(dir.join("args.log"))
         .unwrap()
@@ -41,19 +36,17 @@ fn turn_args(dir: &Path) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// The value following `flag` in one turn's arguments.
 fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     let at = args.iter().position(|arg| arg == flag)?;
     args.get(at + 1).map(String::as_str)
 }
 
-/// The settings one turn passed on the command line.
 fn settings(args: &[String]) -> Value {
     flag_value(args, "--settings").map_or(Value::Null, |s| serde_json::from_str(s).unwrap())
 }
 
-/// The agent instruction files one turn excluded. `globset` stands in for
-/// Claude Code's own matcher, which also treats parentheses as special.
+/// `globset` stands in for Claude Code's own matcher, which also treats
+/// parentheses as special.
 fn instruction_excludes(args: &[String]) -> globset::GlobSet {
     let mut excludes = globset::GlobSetBuilder::new();
     for pattern in settings(args)["claudeMdExcludes"].as_array().unwrap() {
@@ -66,15 +59,10 @@ fn instruction_excludes(args: &[String]) -> globset::GlobSet {
     excludes.build().unwrap()
 }
 
-/// A triage session laid out under `dir` as a run lays it out: its clone in
-/// `repo` with its scratch directory `tmp` beside it, and its record in `dir`.
 fn triage_session(dir: &Path) -> SessionSpec {
     triage_session_heard(dir, &Activity::default())
 }
 
-/// The triage session of [`triage_session`], whose output is noted in
-/// `activity` by a clock that starts at 12:00:00 and ticks a second per
-/// reading.
 fn triage_session_heard(dir: &Path, activity: &Activity) -> SessionSpec {
     for sub in ["repo", "tmp"] {
         std::fs::create_dir(dir.join(sub)).unwrap();
@@ -238,7 +226,6 @@ async fn every_turn_leaves_out_what_no_brief_uses() {
         .map(|tool| denied.contains(&json!(tool))),
         [true, true, true, true]
     );
-    // What the briefs work with: sub-agents, their skills, the clone and the web.
     assert_eq!(
         [
             "Task",
@@ -269,7 +256,6 @@ async fn every_turn_leaves_out_the_skills_the_runtime_ships() {
         overrides,
         &json!({ "design": "off", "doctor": "off", "plugin-authoring": "off" })
     );
-    // Linewright's skills and this repository's own.
     assert_eq!(
         [
             "linewright:triage",
@@ -343,8 +329,6 @@ async fn a_clone_under_a_claude_directory_keeps_its_own_agent_instructions() {
     );
 }
 
-/// The stream of a session the runtime refused for the usage limit, as
-/// Claude Code streamed one, with the `rate_limit_info` it gave.
 fn refused_for_the_usage_limit(rate_limit_info: Value) -> Vec<Value> {
     let session = "9f4fb233-b170-4a09-8ce1-34e0a9c68e36";
     vec![
@@ -362,8 +346,6 @@ fn refused_for_the_usage_limit(rate_limit_info: Value) -> Vec<Value> {
     ]
 }
 
-/// The `rate_limit_info` of a refusal for the usage limit that resets at
-/// 7:50 UTC on 13 October 2026.
 fn rejected() -> Value {
     json!({
         "status": "rejected",
@@ -505,7 +487,6 @@ async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it
 #[tokio::test]
 async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
     let dir = tempfile::tempdir().unwrap();
-    // Says one thing, then waits to be let finish.
     let program = dir.path().join("claude");
     let go = dir.path().join("go");
     write_program(

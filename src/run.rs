@@ -1,8 +1,3 @@
-//! A run: one piece of work, from a fresh clone through its agent session to
-//! the outcome recorded in the store. Runs read the snapshot they started
-//! from and write only through the store; their decisions come from the
-//! reconcile step and the session's result.
-
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -36,7 +31,6 @@ use crate::tracking;
 use crate::transcript;
 use crate::workflow::Workflow;
 
-/// What every run shares.
 pub(crate) struct Shell {
     pub store: Arc<dyn Store>,
     pub runtime: Arc<dyn Runtime>,
@@ -48,12 +42,8 @@ pub(crate) struct Shell {
     pub result_retries: u32,
     pub session_timeout: std::time::Duration,
     pub work_dir: PathBuf,
-    /// The records of the runs, in the work directory.
     pub runs: Runs,
-    /// Whether a session turn refused for the usage limit waits for the
-    /// reset and carries on, as under `serve`, rather than ending its run.
     pub waits_out_usage_limit: bool,
-    /// Reports each refusal for the usage limit as it happens.
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
 }
 
@@ -65,9 +55,6 @@ impl Shell {
         }
     }
 
-    /// The label to put on what Linewright creates: the required label, when
-    /// one is set and the repository has it. Never created here: a missing
-    /// label is skipped, not an error.
     async fn creation_label(&self) -> Result<Option<String>> {
         let Some(name) = &self.policy.require_label else {
             return Ok(None);
@@ -87,28 +74,17 @@ impl Shell {
     }
 }
 
-/// How a run ends when it does not end in its outcome.
 enum Failure {
-    /// The runtime or the store failed before the outcome was recorded:
-    /// worth one retry.
     Infrastructure(anyhow::Error),
-    /// The work goes back to the maintainer.
     HandBack {
         reason: String,
         log_tail: Option<String>,
     },
-    /// Recording the outcome failed part way.
     Apply(anyhow::Error),
-    /// The subject stopped asking for the work.
     Cancelled,
-    /// The runtime refused a session for the usage limit, and the run does
-    /// not wait it out: the run ends, keeping its claim and its work.
     UsageLimit(UsageLimit),
 }
 
-/// What a run knows beyond the shell: when its snapshot was taken, when a
-/// rework on its pull request last did its work, whether it is still wanted,
-/// and its record.
 struct Ctx {
     as_of: Timestamp,
     reworked: Option<Timestamp>,
@@ -120,10 +96,6 @@ fn infra(error: anyhow::Error) -> Failure {
     Failure::Infrastructure(error)
 }
 
-/// A failed push of `branch`: one GitHub refused for a missing permission
-/// goes straight back to the maintainer, as no retry can change it
-/// (`docs/specs/runs.md`, "Ending"). What the maintainer then does to try
-/// again depends on what the run is on.
 fn push_failure(branch: &str, error: PushError, again: TryAgain) -> Failure {
     match error {
         PushError::MissingPermission { reason } => Failure::HandBack {
@@ -134,19 +106,12 @@ fn push_failure(branch: &str, error: PushError, again: TryAgain) -> Failure {
     }
 }
 
-/// How the maintainer asks for the work again once they have handled a
-/// hand-back.
 #[derive(Clone, Copy)]
 enum TryAgain {
-    /// Apply `ready-for-agent` to the ticket again.
     Relabel,
-    /// Remove `ready-for-human` from the pull request, as its hand-back
-    /// comment ends by saying.
     Unlabel,
 }
 
-/// What a hand-back says of a push of `branch` GitHub refused for a missing
-/// permission, for `reason`.
 fn refused_push(branch: &str, reason: &str, again: TryAgain) -> String {
     let remedy = match again {
         TryAgain::Relabel => format!(
@@ -161,7 +126,6 @@ fn refused_push(branch: &str, reason: &str, again: TryAgain) -> String {
     )
 }
 
-/// Runs `work`, recorded as `run`, to its end.
 pub(crate) async fn run(
     shell: Arc<Shell>,
     work: Work,
@@ -218,9 +182,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             Err(Failure::HandBack { reason, log_tail }) => break (reason, log_tail),
         }
     };
-    // A cancelled run posts nothing more, and neither does one whose pull
-    // request was merged or closed while it worked (`docs/specs/runs.md`,
-    // "Ending").
     if ctx.cancel.is_cancelled() {
         info!(subject = ?subject, reason, "run cancelled; not handed back");
         return Ending::Cancelled;
@@ -236,7 +197,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             ),
         }
     }
-    // Comments hold only what belongs to the repository.
     let work_dir = shell.work_dir.to_string_lossy().into_owned();
     let reason = reason.replace(&work_dir, "<work-dir>");
     let log_tail = log_tail.map(|t| t.replace(&work_dir, "<work-dir>"));
@@ -300,9 +260,7 @@ async fn attempt(
     pull_work(shell, ctx, &ticket_of(snapshot, &held), pull(*pr)?, task).await
 }
 
-/// The ticket #`number` a pull request is worked for, as the snapshot holds
-/// it or else read from the store: the pull request is worked whatever its
-/// ticket's labels and assignees, so the snapshot may leave the ticket out.
+/// The snapshot may leave out the ticket of a pull request it works.
 async fn pull_ticket<'a>(
     shell: &Shell,
     snapshot: &'a Snapshot,
@@ -317,7 +275,6 @@ async fn pull_ticket<'a>(
     }
 }
 
-/// `issue` as a ticket, with the spec gaps `snapshot` holds filed for it.
 fn ticket_of<'a>(snapshot: &'a Snapshot, issue: &'a Issue) -> Ticket<'a> {
     Ticket {
         issue,
@@ -325,9 +282,6 @@ fn ticket_of<'a>(snapshot: &'a Snapshot, issue: &'a Issue) -> Ticket<'a> {
     }
 }
 
-/// Whether the pull request #`pr` is still open, as the store reads it now.
-/// A run on one merged or closed while it worked pushes and posts nothing
-/// (`docs/specs/runs.md`, "Ending").
 async fn still_open(shell: &Shell, pr: Number) -> Result<bool> {
     let open = shell.store.pull(pr).await?.is_open();
     if !open {
@@ -339,8 +293,6 @@ async fn still_open(shell: &Shell, pr: Number) -> Result<bool> {
     Ok(open)
 }
 
-/// Gives `item` to the maintainer, as [`hand_back_issue`] or
-/// [`hand_back_pull`] does.
 pub(crate) async fn hand_back(
     shell: &Shell,
     item: Item,
@@ -353,8 +305,6 @@ pub(crate) async fn hand_back(
     }
 }
 
-/// Gives the issue to the maintainer: `ready-for-human`, unassigned, and a
-/// comment with the reason and the tail of the log.
 async fn hand_back_issue(
     shell: &Shell,
     issue: Number,
@@ -373,9 +323,6 @@ async fn hand_back_issue(
     store.comment(issue, &with_log(reason, log_tail)).await
 }
 
-/// Gives Linewright's pull request to the maintainer: `ready-for-human` and
-/// a comment with the reason, the tail of the log and how to try again. Its
-/// ticket stays as it is (`docs/specs/pull_requests.md`, "The pull request").
 async fn hand_back_pull(
     shell: &Shell,
     pr: Number,
@@ -415,8 +362,6 @@ fn with_log(reason: &str, log_tail: Option<&str>) -> String {
     }
 }
 
-/// A fresh clone for one run, with an empty scratch directory and the
-/// briefs' plugin beside it, all removed when the run ends.
 struct Workspace {
     _temp: TempDir,
     dir: PathBuf,
@@ -469,8 +414,6 @@ pub fn subject_name(subject: Subject) -> String {
     }
 }
 
-/// The name of what a session is for, as its clones and records are named:
-/// `issue-3`, `pr-4` or `workflow-weekly`.
 pub fn purpose_name(purpose: &Purpose) -> String {
     match purpose {
         Purpose::Work { subject, .. } => subject_name(*subject),
@@ -478,8 +421,6 @@ pub fn purpose_name(purpose: &Purpose) -> String {
     }
 }
 
-/// A new directory for a session's record: its brief, results and transcript,
-/// kept under the work directory after the run ends.
 fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBuf, Failure> {
     let parent = shell.work_dir.join("sessions").join(purpose_name(purpose));
     std::fs::create_dir_all(&parent)
@@ -505,9 +446,7 @@ fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBu
     unreachable!()
 }
 
-/// Why a session's answer is not accepted.
 enum Rejection {
-    /// Ask the session again with this follow-up.
     Retry(String),
     Fail(Failure),
 }
@@ -522,9 +461,6 @@ fn parse_retry(error: String) -> Rejection {
     Rejection::Retry(prompts::parse_error(&error))
 }
 
-/// Runs a session turn, `first`, and asks again, up to the result retries,
-/// while its answer is rejected. Returns the accepted result and the turn
-/// that gave it.
 async fn converse<T, F, Fut>(
     shell: &Shell,
     ctx: &Ctx,
@@ -568,23 +504,15 @@ where
     }
 }
 
-/// A turn of a session: its first, or one resuming it with a prompt.
 enum Step {
     Start,
     Resume { session: String, prompt: String },
 }
 
-/// Writes `text` to the file `name` in the session's record.
 fn record(spec: &SessionSpec, name: &str, text: &str) {
     let _ = std::fs::write(spec.record.join(name), text);
 }
 
-/// Takes the session turn `step`, kept in the session's record, stopping at
-/// once when the run is cancelled. A turn the runtime refuses for the usage
-/// limit is reported as it happens. A run that waits out the limit then
-/// waits for the reset, its session's deadline moved on by the wait, and
-/// carries on: in the session the turn got under way in, or taking the turn
-/// again (`docs/specs/operation.md`, "Usage limit").
 async fn take_turn(
     shell: &Shell,
     ctx: &Ctx,
@@ -642,8 +570,7 @@ async fn take_turn(
     }
 }
 
-/// A session turn that stops at once when the run is cancelled; what the
-/// session committed stays in the clone for the caller to keep.
+/// What the session committed stays in the clone for the caller to keep.
 async fn cancellable<T>(ctx: &Ctx, turn: impl Future<Output = T>) -> Result<T, Failure> {
     tokio::select! {
         biased;
@@ -659,8 +586,6 @@ fn followup_name(record: &Path) -> String {
     transcript::followup_file(n)
 }
 
-/// The log without the clone's location: comments hold only what belongs
-/// to the repository.
 fn scrub(text: &str, dir: &Path) -> String {
     text.replace(&dir.to_string_lossy().into_owned(), ".")
 }
@@ -670,7 +595,6 @@ fn tail(text: &str, lines: usize) -> String {
     all[all.len().saturating_sub(lines)..].join("\n")
 }
 
-/// A session that times out after `timeout`, its record linked to the run.
 fn session_spec(
     shell: &Shell,
     ctx: &Ctx,
@@ -694,8 +618,6 @@ fn session_spec(
     })
 }
 
-// Triage.
-
 async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> {
     let purpose = Purpose::Work {
         subject: Subject::Issue(issue.number),
@@ -717,8 +639,6 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
-    // The maintainer answers with a label (`docs/specs/triage.md`,
-    // "Answers"), so the hand-back names them.
     let (state, body) = match result.outcome {
         TriageOutcome::ReadyForAgent => (label::READY_FOR_AGENT, result.comment),
         TriageOutcome::NeedsInfo => (label::NEEDS_INFO, result.comment),
@@ -753,8 +673,6 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     store.add_label(issue.number, state).await?;
     store.comment(issue.number, &body).await
 }
-
-// Tickets.
 
 async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failure> {
     let purpose = Purpose::Work {
@@ -835,10 +753,6 @@ async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Res
     store.add_label(pr.number, label::SPEC_PROCESSED).await
 }
 
-// Implementation.
-
-/// Keeps the branch of a run that stopped before its result: what the
-/// session committed in `dir` is pushed.
 async fn keep_stopped_work(shell: &Shell, dir: &Path, upstream: &str, branch: &str) -> Result<()> {
     if git::commits_ahead(dir, upstream).await? > 0 {
         shell.store.push(dir, branch, PushMode::Replace).await?;
@@ -846,7 +760,6 @@ async fn keep_stopped_work(shell: &Shell, dir: &Path, upstream: &str, branch: &s
     Ok(())
 }
 
-/// Implements `ticket` on `branch`, a branch for the ticket.
 async fn implement(
     shell: &Shell,
     ctx: &Ctx,
@@ -977,8 +890,6 @@ async fn implement(
     }
 }
 
-/// The pull request body, ending in a reference that closes each of
-/// `closes` it does not close already.
 fn closing(body: &str, closes: &[Number]) -> String {
     let referenced = closing_references(body);
     let missing: Vec<String> = closes
@@ -993,8 +904,8 @@ fn closing(body: &str, closes: &[Number]) -> String {
     }
 }
 
-/// Files the gaps not already filed for the ticket. A session told which are
-/// may still return one, so its title is compared too.
+/// A session told which gaps are filed may still return one, so titles are
+/// compared.
 async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], ticket: &Ticket<'_>) -> Result<()> {
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     for gap in gaps {
@@ -1029,8 +940,6 @@ async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], ticket: &Ticket<'_>) ->
     }
     Ok(())
 }
-
-// Work on an open pull request.
 
 enum Task<'a> {
     Rework,
@@ -1163,9 +1072,6 @@ async fn pull_work(
         (result, turn) =
             converse(shell, ctx, &mut spec, step, |m| accept(m, threads.clone())).await?;
     }
-    // Merged or closed while the session worked: its work is for a pull
-    // request that is done, and what happens to the ticket is the next
-    // poll's to decide.
     if !pr_now.is_open() {
         info!(
             pr = pr.number.0,
@@ -1186,8 +1092,6 @@ async fn pull_work(
                     .await
                     .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Unlabel))?;
             }
-            // The rewritten description keeps every issue the pull request
-            // closes (`docs/specs/pull_requests.md`, "The pull request").
             if let Some(body) = pr_body {
                 store
                     .edit_body(pr.number, &closing(&body, &pr_now.closes))
@@ -1198,8 +1102,7 @@ async fn pull_work(
                 .await
                 .map_err(Failure::Apply)?;
             // The session saw the feedback up to the last read; what came
-            // after is for the next rework (`docs/specs/pull_requests.md`,
-            // "Rework").
+            // after is for the next rework.
             if kind == WorkKind::Rework {
                 ctx.run.answered(read_at);
             }
@@ -1232,7 +1135,6 @@ async fn pull_work(
     }
 }
 
-/// Feedback posted after `since`.
 fn late<'a>(feedback: &Feedback<'a>, since: Timestamp) -> Feedback<'a> {
     Feedback {
         comments: feedback
@@ -1279,8 +1181,6 @@ fn feedback_people(feedback: &Feedback, linewright: &Login) -> Vec<Login> {
         .collect()
 }
 
-/// Replies in the threads and comments on `pr`, and after a rework asks the
-/// people whose feedback it addressed, `feedback_authors`, to review again.
 async fn record_pull_work(
     shell: &Shell,
     pr: &Pull,
@@ -1294,7 +1194,6 @@ async fn record_pull_work(
         store
             .reply_in_thread(pr.number, &reply.thread, &reply.body)
             .await?;
-        // People resolve their own threads; the implementer resolves bots'.
         let opened_by_bot = pr
             .threads
             .iter()
@@ -1317,19 +1216,12 @@ async fn record_pull_work(
     Ok(())
 }
 
-// Workflows.
-
-/// How a workflow run that did not fail ended.
 pub(crate) enum WorkflowEnd {
-    /// The session's result, whose issues were filed.
     Finished(WorkflowResult),
-    /// The runtime refused the session for the usage limit.
     UsageLimit(UsageLimit),
 }
 
-/// Runs `workflow` once, recorded as `run`: one session on a fresh clone of
-/// the default branch, then files the issues its result returns. A workflow
-/// run has no issue to hand back, so a run that fails is an error.
+/// A workflow run has no issue to hand back, so a run that fails is an error.
 pub(crate) async fn workflow(
     shell: &Shell,
     workflow: &Workflow,
@@ -1381,8 +1273,6 @@ pub(crate) async fn workflow(
     }
 }
 
-/// Files the issues `result` returns, as Linewright, up to the
-/// workflow's `max-issues`; the rest are dropped.
 async fn record_workflow(
     shell: &Shell,
     workflow: &Workflow,

@@ -1,9 +1,3 @@
-//! The functional core: one poll's decisions as a pure function of the
-//! store's snapshot, the workflows and their last runs, the runs in flight
-//! and the clock (`docs/specs/architecture.md`, "Functional core, imperative
-//! shell"). The rules are the product spec's: `docs/specs/product.md` and the
-//! areas it lists.
-
 use std::collections::BTreeMap;
 
 use chrono::TimeDelta;
@@ -20,7 +14,6 @@ use crate::runtime::UsageLimit;
 use crate::spec_glob::SpecGlob;
 use crate::workflow::{LastRuns, Workflow, WorkflowName};
 
-/// The settings the decisions depend on.
 #[derive(Clone, Debug)]
 pub struct Policy {
     pub linewright: Login,
@@ -30,55 +23,39 @@ pub struct Policy {
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
-    /// Merge green pull requests with this method instead of requesting
-    /// review.
     pub auto_merge: Option<MergeMethod>,
     pub update_rule: UpdateRule,
-    /// The merge methods the repository allows.
     pub allowed_merge_methods: MergeMethods,
-    /// Start work only on issues carrying this label
-    /// (`docs/specs/repository.md`). Work already started carries on without
-    /// it.
     pub require_label: Option<String>,
 }
 
 impl Policy {
-    /// Whether Linewright triages `issue`: not one of its own, which it
-    /// files already briefed.
     pub fn triages(&self, issue: &Issue) -> bool {
         issue.author != self.linewright
     }
 
-    /// Whether Linewright may start work on `issue`: unless a label is
-    /// required and the issue lacks it.
     fn may_start_on(&self, issue: &Issue) -> bool {
         self.require_label
             .as_ref()
             .is_none_or(|l| issue.has_label(l))
     }
 
-    /// Whether a pull request GitHub reports not rebaseable is rebased onto
-    /// the default branch, up to date or not: where the repository allows
-    /// rebase merging and branches are not always updated by merging
-    /// (`docs/specs/pull_requests.md`, "Keeping up to date"). A merge commit
-    /// that resolved a conflict is the usual cause, and a rebase drops it.
+    /// A merge commit that resolved a conflict is the usual cause of GitHub
+    /// reporting a pull request not rebaseable, and a rebase drops it.
     pub fn rebases_unrebaseable(&self) -> bool {
         self.allowed_merge_methods.contains(MergeMethod::Rebase)
             && self.update_rule != UpdateRule::Always(UpdateMethod::Merge)
     }
 }
 
-/// What a run works on. At most one run per subject is in flight.
+/// At most one run per subject is in flight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Subject {
     Issue(Number),
     SpecChange(Number),
-    /// Linewright's open pull request, whose runs are its own
-    /// (`docs/specs/pull_requests.md`, "The pull request").
     Pull(Number),
 }
 
-/// A run to start.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Work {
     Triage {
@@ -87,12 +64,9 @@ pub enum Work {
     Tickets {
         pr: Number,
     },
-    /// A fresh run: no open pull request closes the ticket.
     Implement {
         issue: Number,
     },
-    /// Work on Linewright's open pull request `pr`, briefed with `issue`, the
-    /// ticket among those it closes that [`ticket_of`] names.
     Rework {
         issue: Number,
         pr: Number,
@@ -102,7 +76,6 @@ pub enum Work {
         pr: Number,
         failing: Vec<String>,
     },
-    /// Bring the pull request's branch up to date, and nothing else.
     Update {
         issue: Number,
         pr: Number,
@@ -110,7 +83,6 @@ pub enum Work {
 }
 
 impl Subject {
-    /// The issue or pull request the subject is.
     pub fn number(self) -> Number {
         match self {
             Subject::Issue(number) | Subject::SpecChange(number) | Subject::Pull(number) => number,
@@ -129,9 +101,6 @@ impl Work {
         }
     }
 
-    /// The item the run is on, whose runs it counts among and which its run
-    /// ID names: its pull request, or else its subject
-    /// (`docs/specs/pull_requests.md`, "The pull request").
     pub fn item(&self) -> Number {
         match self {
             Work::Triage { issue } | Work::Implement { issue } => *issue,
@@ -142,8 +111,6 @@ impl Work {
         }
     }
 
-    /// The item whose facts the run starts from: its pull request, or else
-    /// its subject.
     pub fn starts_from(&self) -> Item {
         match self {
             Work::Triage { issue } | Work::Implement { issue } => Item::Issue(*issue),
@@ -166,8 +133,6 @@ impl Work {
     }
 }
 
-/// The stage a run does, named in its run ID and in JSON by
-/// [`WorkKind::name`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(into = "&'static str", try_from = "String")]
 pub enum WorkKind {
@@ -189,8 +154,6 @@ impl WorkKind {
         WorkKind::Update,
     ];
 
-    /// Whether the stage's runs are on Linewright's pull request, as their
-    /// item.
     pub fn is_on_pull(self) -> bool {
         match self {
             WorkKind::Rework | WorkKind::FixCi | WorkKind::Update => true,
@@ -198,7 +161,6 @@ impl WorkKind {
         }
     }
 
-    /// The stage's name in run IDs (`docs/specs/monitoring.md`, "runs").
     pub fn name(self) -> &'static str {
         match self {
             WorkKind::Triage => "triage",
@@ -239,38 +201,23 @@ impl std::str::FromStr for WorkKind {
     }
 }
 
-/// A run in flight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LiveRun {
     pub subject: Subject,
     pub kind: WorkKind,
 }
 
-/// What the manager remembers between polls, and never in the store: what
-/// Linewright did that GitHub does not show apart from its comments, which
-/// decide nothing (`docs/specs/repository.md`). The runs that did their work
-/// and the holds for review outlast a restart, under the work directory; the
-/// rest does not.
 #[derive(Clone, Debug, Default)]
 pub struct Memory {
     /// Oldest first.
     pub failed_merges: Vec<FailedMerge>,
     pub tried_rebases: Vec<TriedRebase>,
-    /// The runs on pull requests that did their work, as their records keep
-    /// them: what Linewright tried on a pull request beyond its pushes, such
-    /// as a fix that changed nothing or a rework that needed no change.
     pub done_runs: Vec<DoneRun>,
-    /// What GitHub required of each pull request when Linewright last held
-    /// it for review.
     pub held: Holds,
-    /// The usage limit the agent runtime refused a session for: until it
-    /// resets no session starts (`docs/specs/operation.md`, "Usage limit").
     pub usage_limit: Option<UsageLimit>,
 }
 
 impl Memory {
-    /// Forgets what it remembers of pull requests the snapshot does not
-    /// show open.
     pub fn retain_open(&mut self, snapshot: &Snapshot) {
         let open = |pr| snapshot.pull(pr).is_some_and(|p| p.is_open());
         self.failed_merges.retain(|f| open(f.pr));
@@ -279,8 +226,6 @@ impl Memory {
         self.held.retain(open);
     }
 
-    /// When the latest run of `kind` on the pull request #`pr` that did its
-    /// work did it, as [`DoneRun::done_at`] says.
     pub fn last_done(&self, pr: Number, kind: WorkKind) -> Option<Timestamp> {
         self.done_runs_of(pr, kind).map(|r| r.done_at).max()
     }
@@ -291,13 +236,11 @@ impl Memory {
             .filter(move |r| r.pr == pr && r.kind == kind)
     }
 
-    /// Whether the usage limit holds starts back at `now`.
     pub fn holds_starts(&self, now: Timestamp) -> bool {
         self.usage_limit.is_some_and(|limit| now < limit.resets_at)
     }
 
-    /// Holds starts back until `resets_at`, unless a later reset already
-    /// holds them: the latest wins. Returns whether the hold changed.
+    /// The latest reset wins. Returns whether the hold changed.
     pub fn hold_until(&mut self, resets_at: Timestamp) -> bool {
         if self
             .usage_limit
@@ -309,8 +252,7 @@ impl Memory {
         true
     }
 
-    /// Lifts the hold on starts if its reset has passed at `now`. Returns
-    /// the reset it lifted.
+    /// Returns the reset it lifted.
     pub fn lift_usage_limit(&mut self, now: Timestamp) -> Option<Timestamp> {
         if self.holds_starts(now) {
             return None;
@@ -319,7 +261,7 @@ impl Memory {
     }
 }
 
-/// Linewright's newest open pull request that closes the issue #`issue`.
+/// The newest, when several close the issue.
 pub fn open_pull_for<'a>(
     snapshot: &'a Snapshot,
     issue: Number,
@@ -332,15 +274,11 @@ pub fn open_pull_for<'a>(
         .max_by_key(|p| p.number)
 }
 
-/// The ticket Linewright's pull request `pull` is worked for, whose brief
-/// its runs are given: the first issue it closes that the snapshot holds,
-/// else the first it closes. `None` when it closes none.
 pub fn ticket_of(snapshot: &Snapshot, pull: &Pull) -> Option<Number> {
     let held = pull.closes.iter().find(|&&n| snapshot.issue(n).is_some());
     held.or(pull.closes.first()).copied()
 }
 
-/// The open pull requests Linewright works on, each with its ticket.
 pub fn worked_pulls<'a>(
     snapshot: &'a Snapshot,
     linewright: &'a Login,
@@ -352,10 +290,6 @@ pub fn worked_pulls<'a>(
         .filter_map(move |p| Some((p, worked_ticket(snapshot, p, linewright).ok()?)))
 }
 
-/// The ticket the open pull request `pull` is worked for, when Linewright
-/// works on it: it is Linewright's, closes an issue, and is the newest of
-/// Linewright's open ones that close its ticket. `Err` with why Linewright
-/// does not.
 pub fn worked_ticket(
     snapshot: &Snapshot,
     pull: &Pull,
@@ -375,19 +309,13 @@ pub fn worked_ticket(
     }
 }
 
-/// Why Linewright does not work on an open pull request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotWorked {
-    /// Someone else opened it.
     NotLinewrights,
-    /// It is Linewright's, and closes no issue.
     ForNoIssue,
-    /// It is Linewright's for `ticket`, which Linewright works on through its
-    /// newer pull request `by`.
     Superseded { ticket: Number, by: Number },
 }
 
-/// A merge of `pr` the store refused at `at`, for `reason`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailedMerge {
     pub pr: Number,
@@ -395,10 +323,8 @@ pub struct FailedMerge {
     pub at: Timestamp,
 }
 
-/// An update run started on `pr` at `head`, at `at`, to rebase it while
-/// GitHub reported it not rebaseable. Another waits for a new head, or for
-/// `ready-for-human` to be removed from the pull request since, so that a
-/// rebase that leaves the branch as it was is not tried again at every poll.
+/// Remembered so that a rebase that leaves the branch as it was is not
+/// tried again at every poll.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TriedRebase {
     pub pr: Number,
@@ -406,7 +332,6 @@ pub struct TriedRebase {
     pub at: Timestamp,
 }
 
-/// A run of `kind` on the pull request `pr` that did its work.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoneRun {
     pub pr: Number,
@@ -416,14 +341,10 @@ pub struct DoneRun {
     pub done_at: Timestamp,
 }
 
-/// The workflows on the default branch and their runs: what the due rule
-/// reads.
 #[derive(Clone, Debug, Default)]
 pub struct Workflows {
-    /// The workflows whose files parse.
     pub defined: Vec<Workflow>,
     pub last_runs: LastRuns,
-    /// The workflows with a run in flight.
     pub in_flight: Vec<WorkflowName>,
 }
 
@@ -434,7 +355,6 @@ pub enum Action {
         subject: Subject,
         reason: String,
     },
-    /// Add Linewright as an assignee.
     Claim {
         issue: Number,
     },
@@ -443,9 +363,6 @@ pub enum Action {
         remove: String,
         add: String,
     },
-    /// Give the item to the maintainer: `ready-for-human` and a comment that
-    /// says why. An issue is unassigned too; Linewright's pull request's
-    /// ticket is left as it is.
     HandBack {
         item: Item,
         reason: String,
@@ -453,11 +370,8 @@ pub enum Action {
     MarkReady {
         pr: Number,
     },
-    /// Remember the rebase an update run starting now tries.
     RememberRebase(TriedRebase),
-    /// Merge the pull request with `method`, if its head is still
-    /// `head`. A draft is marked ready for review first: GitHub merges no
-    /// draft.
+    /// Only while its head is still `head`.
     Merge {
         pr: Number,
         head: String,
@@ -465,12 +379,10 @@ pub enum Action {
         method: MergeMethod,
     },
     /// Mark the draft ready for review, so that the store reports its merge
-    /// state: a later poll merges it, or holds it for review.
+    /// state.
     MarkReadyForMergeState {
         pr: Number,
     },
-    /// Hand a pull request the default branch's rules block to people: mark
-    /// it ready for review if a draft and comment [`hold_note`].
     HoldForReview {
         pr: Number,
         draft: bool,
@@ -479,84 +391,74 @@ pub enum Action {
     CloseTracking {
         issue: Number,
     },
-    /// Close an interrupted decomposition's tracking issue and its open
-    /// tickets, so the spec change is cut into tickets again.
     DiscardTickets {
         tracking: Number,
         tickets: Vec<Number>,
     },
-    /// Delete the branch a run pushed for a ticket that is closed with no
-    /// pull request open for it (`docs/specs/implementation.md`, "Working a
-    /// ticket").
     DeleteBranch {
         branch: TicketBranchName,
     },
-    /// Keep the workflows' last runs, which changed, under the work
-    /// directory.
     RecordLastRuns(LastRuns),
-    /// Run the workflow, as `lw workflow run` does.
     RunWorkflow(Box<Workflow>),
 }
 
-/// Something Linewright waits for before it acts on an item next
-/// (`docs/specs/monitoring.md`, "explain").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "wait", rename_all = "kebab-case")]
 pub enum Wait {
-    /// Its run in flight, of `stage`.
-    Run { stage: WorkKind },
-    /// A free run: `in_flight` of the `max_runs` that may run at once are,
-    /// counting those the poll starts.
-    FreeRun { in_flight: usize, max_runs: usize },
-    /// The usage limit, in force until `resets_at`.
-    UsageLimit { resets_at: Timestamp },
-    /// An issue that blocks it, still open.
-    Blocker { issue: Number },
-    /// Someone else's open pull request that closes it, until it is merged,
-    /// closed or no longer closes it.
-    ClosingPullRequest { pull_request: Number },
-    /// Linewright's open pull request that closes it, until it is merged,
-    /// closed or no longer closes it.
-    PullRequest { pull_request: Number },
-    /// CI on its pull request: checks still running, or none reported yet.
-    Ci { pull_request: Number },
-    /// GitHub, to work out whether its pull request can merge.
-    MergeState { pull_request: Number },
-    /// Its tickets still open, as its tracking issue.
-    Tickets { open: Vec<Number> },
-    /// The reporter, as `needs-info` says.
+    Run {
+        stage: WorkKind,
+    },
+    /// `in_flight` counts the runs the poll starts.
+    FreeRun {
+        in_flight: usize,
+        max_runs: usize,
+    },
+    UsageLimit {
+        resets_at: Timestamp,
+    },
+    Blocker {
+        issue: Number,
+    },
+    ClosingPullRequest {
+        pull_request: Number,
+    },
+    PullRequest {
+        pull_request: Number,
+    },
+    Ci {
+        pull_request: Number,
+    },
+    MergeState {
+        pull_request: Number,
+    },
+    Tickets {
+        open: Vec<Number>,
+    },
     Reporter,
-    /// The maintainer, as `ready-for-human` says: to answer with a label.
     Maintainer,
-    /// The maintainer, as `ready-for-human` on Linewright's pull request
-    /// says: until they remove it.
     HandedBack,
-    /// The maintainer, to apply the required label `label`.
-    RequiredLabel { label: String },
-    /// The maintainer, to label it `ready-for-agent` again.
-    Relabel { since: Relabel },
-    /// The maintainer, to review its pull request.
-    Review { pull_request: Number },
-    /// What the default branch's rules require before its pull request
-    /// merges.
+    RequiredLabel {
+        label: String,
+    },
+    Relabel {
+        since: Relabel,
+    },
+    Review {
+        pull_request: Number,
+    },
     Requirements {
         pull_request: Number,
         requires: Vec<Requirement>,
     },
 }
 
-/// Why only labeling a ticket `ready-for-agent` again asks for more work.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum Relabel {
-    /// A person unassigned Linewright.
     Unassigned,
-    /// Its pull request merged.
     Merged { pull_request: Number },
 }
 
-/// One poll's decisions: the actions to take, and for each item it does not
-/// act on yet, what it waits for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Decisions {
     pub actions: Vec<Action>,
@@ -574,8 +476,6 @@ pub fn reconcile(
     decisions(snapshot, live, memory, workflows, now, policy).actions
 }
 
-/// The decisions [`reconcile`] takes, with what each item it does not act on
-/// waits for.
 pub fn decisions(
     snapshot: &Snapshot,
     live: &[LiveRun],
@@ -635,9 +535,6 @@ pub fn decisions(
         }
     }
 
-    // Linewright's pull request is worked because it is open, whatever its
-    // ticket's label and assignees (`docs/specs/pull_requests.md`, "The pull
-    // request").
     for (pr, ticket) in worked_pulls(snapshot, &policy.linewright) {
         if pr.has_label(label::READY_FOR_HUMAN) {
             plan.wait(pr.number, Wait::HandedBack);
@@ -654,8 +551,6 @@ pub fn decisions(
             Some(Filed::Tracking { spec_change }) => Some(spec_change),
             _ => None,
         };
-        // While its spec change is cut into tickets, a tracking issue waits
-        // for the cut; one that stopped part way is discarded above.
         let cut = tracks.and_then(|spec_change| running(Subject::SpecChange(spec_change)));
         if let Some(stage) = cut {
             plan.wait(issue.number, Wait::Run { stage });
@@ -682,9 +577,6 @@ pub fn decisions(
         let closing = snapshot.pulls_closing(issue);
         let open_closing: Vec<&ClosingPull> = closing.iter().filter(|p| p.is_open()).collect();
         if !open_closing.is_empty() {
-            // In review: the work is the pull requests' while one is open,
-            // whoever opened it and whatever the issue's labels
-            // (`docs/specs/repository.md`).
             if let Some(stage) = running(subject) {
                 plan.wait(issue.number, Wait::Run { stage });
             }
@@ -745,8 +637,6 @@ pub fn decisions(
         }
     }
 
-    // Workflow runs count against the ceiling beside the pipeline's. Under
-    // the usage limit there is no room: a due workflow stays due.
     let in_flight = live.len() + workflows.in_flight.len();
     let (room, held) = match memory.usage_limit.filter(|_| memory.holds_starts(now)) {
         Some(UsageLimit { resets_at }) => (0, Held::UsageLimit { resets_at }),
@@ -763,20 +653,13 @@ pub fn decisions(
     decisions
 }
 
-/// When a workflow runs next, by the due rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NextRun {
-    /// A tick of its schedule has passed since its last run.
     Due,
-    /// Its next tick, after its last run.
     At(Timestamp),
-    /// Its schedule ticks no more.
     Never,
 }
 
-/// When `workflow`, last run at `last`, runs next as of `now`. A workflow is
-/// due when a tick of its schedule has passed since its last run, so ticks
-/// missed meanwhile collapse into one run.
 pub fn next_run(workflow: &Workflow, last: Timestamp, now: Timestamp) -> NextRun {
     match workflow.schedule.next_after(last) {
         Some(tick) if tick <= now => NextRun::Due,
@@ -785,10 +668,6 @@ pub fn next_run(workflow: &Workflow, last: Timestamp, now: Timestamp) -> NextRun
     }
 }
 
-/// The workflows to run in the `room` the pipeline's runs left, and their
-/// last runs recorded. A workflow runs when it is due and has no run in
-/// flight. A workflow seen for the first time counts as run now, so adding
-/// one does not start it at once.
 fn schedule(workflows: &Workflows, now: Timestamp, room: usize) -> Vec<Action> {
     let mut last_runs = workflows.last_runs.clone();
     let mut due = vec![];
@@ -821,10 +700,6 @@ fn schedule(workflows: &Workflows, now: Timestamp, room: usize) -> Vec<Action> {
     actions
 }
 
-/// Why a run in flight must stop, if it must: its subject no longer asks for
-/// the work. Runs stop when their issue loses its label, is closed or, for
-/// implementation, loses Linewright as an assignee; and when their pull
-/// request is merged, closed or labeled `ready-for-human`.
 fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<String> {
     match run.subject {
         Subject::Pull(number) => {
@@ -869,8 +744,6 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
     }
 }
 
-/// The actions of one poll, with the runs to start held back until the
-/// ceiling on simultaneous runs is applied.
 struct Plan {
     now: Timestamp,
     actions: Vec<Action>,
@@ -878,22 +751,13 @@ struct Plan {
     waits: BTreeMap<Number, Vec<Wait>>,
 }
 
-/// Why runs beyond the room are held back.
 enum Held {
-    UsageLimit {
-        resets_at: Timestamp,
-    },
-    /// `in_flight` of `max_runs` were in flight before the poll.
-    Ceiling {
-        in_flight: usize,
-        max_runs: usize,
-    },
+    UsageLimit { resets_at: Timestamp },
+    Ceiling { in_flight: usize, max_runs: usize },
 }
 
 struct Start {
-    /// The issue to claim before the run starts.
     claim: Option<Number>,
-    /// The rebase the run tries, to remember as it starts.
     rebase: Option<TriedRebase>,
     work: Work,
 }
@@ -937,9 +801,6 @@ impl Plan {
         });
     }
 
-    /// Every action, then as many runs as there is room for, work closest to
-    /// a person first: pull requests, then triage, then tickets, then fresh
-    /// implementations, each oldest first, the rest waiting as `held` says.
     /// Also returns the room left.
     fn into_decisions(mut self, room: usize, held: Held) -> (Decisions, usize) {
         let mut starts = std::mem::take(&mut self.starts);
@@ -986,11 +847,6 @@ fn rank(kind: WorkKind) -> u8 {
     }
 }
 
-/// What an issue Linewright starts nothing on waits for, as its labels
-/// say: the person a label hands it to, and the required label when it
-/// lacks it, without which an answer starts nothing either. An issue of
-/// Linewright's own labeled `needs-triage` waits for nothing: it is never
-/// triaged.
 fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
     let handed_to = if issue.has_label(label::NEEDS_TRIAGE) {
         if !policy.triages(issue) {
@@ -1008,12 +864,10 @@ fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
     handed_to.into_iter().chain(unlabeled).collect()
 }
 
-/// The numbers of the linked issues still open.
 fn open_numbers(linked: &[Linked]) -> Vec<Number> {
     linked.iter().filter(|l| l.open).map(|l| l.number).collect()
 }
 
-/// The wait for the maintainer to apply the required label, if one is set.
 fn required_label(policy: &Policy) -> Option<Wait> {
     policy
         .require_label
@@ -1023,9 +877,7 @@ fn required_label(policy: &Policy) -> Option<Wait> {
         })
 }
 
-/// An issue labeled `ready-for-agent` that no open pull request closes,
-/// with `closing` the ended ones that do: claim it when it is unblocked, and
-/// implement it.
+/// No open pull request closes `issue`; `closing` are the ended ones that do.
 fn implementation(
     issue: &Issue,
     closing: &[ClosingPull],
@@ -1072,10 +924,6 @@ fn implementation(
     if reopened && !policy.may_start_on(issue) {
         return plan.wait_for(issue.number, required_label(policy));
     }
-    // A pull request closed unmerged while Linewright had the issue claimed
-    // is the maintainer's no, said once (`docs/specs/pull_requests.md`, "The
-    // pull request"). One closed before the claim, or before the issue was
-    // labeled again, is not.
     if claimed {
         let claimed_at = last_assigned(issue, &policy.linewright);
         let refused = closing.iter().find(|p| match p.state {
@@ -1103,8 +951,7 @@ fn implementation(
     }
 }
 
-/// Waits for each open issue blocking `issue`. Returns whether there were
-/// any.
+/// Returns whether any blocker is open.
 fn wait_for_blockers(issue: &Issue, plan: &mut Plan) -> bool {
     let blockers = open_numbers(&issue.blocked_by);
     for &blocker in &blockers {
@@ -1113,7 +960,6 @@ fn wait_for_blockers(issue: &Issue, plan: &mut Plan) -> bool {
     !blockers.is_empty()
 }
 
-/// When `login` was last assigned to the issue, as far as its events go.
 fn last_assigned(issue: &Issue, login: &Login) -> Option<Timestamp> {
     issue
         .events
@@ -1125,10 +971,6 @@ fn last_assigned(issue: &Issue, login: &Login) -> Option<Timestamp> {
         .max()
 }
 
-/// Linewright's open pull request worked for the ticket #`ticket`: address
-/// feedback, keep it up to date and get CI green, in that order, then mark it
-/// ready for review or, with auto-merge, merge it once no person holds it.
-/// What it waits for is its own, and what cannot finish hands it back.
 fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: &mut Plan) {
     let pr_number = pr.number;
     let linewright = &policy.linewright;
@@ -1186,8 +1028,6 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
     if pr.checks.is_empty() && now < pushed + policy.ci_grace {
         return plan.wait(pr_number, ci);
     }
-    // A pull request given back to the maintainer waits a full timeout again
-    // once they remove `ready-for-human`.
     let waiting_since = restarted.map_or(pushed, |r| r.max(pushed));
     if !pending.is_empty() {
         if now > waiting_since + policy.ci_timeout {
@@ -1205,8 +1045,6 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         return;
     }
     if !failed.is_empty() {
-        // A rework, and the maintainer removing `ready-for-human`, give
-        // fresh attempts.
         let cycle_start = [
             Some(pr.created_at),
             memory.last_done(pr_number, WorkKind::Rework),
@@ -1237,8 +1075,6 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         return;
     }
     let draft = pr.state == (PullState::Open { draft: true });
-    // A pull request a person holds is marked ready as it is without
-    // auto-merge, so the people holding it can approve it.
     let method = match policy.auto_merge {
         Some(method) if !is_held(pr, linewright) => method,
         _ => {
@@ -1270,11 +1106,9 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
                      onto the default branch, so it cannot be merged by rebase."
                 ),
             }),
-            // Not computed yet: a later poll merges it.
             Rebaseability::Unknown => plan.wait(pr_number, merge_state),
         },
         Mergeability::Clean => merge(pr, draft, method, memory, restarted, plan),
-        // Held for review again only when what GitHub requires changes.
         Mergeability::Blocked { requires }
             if draft || !memory.held.is_held_for(pr_number, requires) =>
         {
@@ -1294,17 +1128,12 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         Mergeability::Unknown if draft => {
             plan.act(Action::MarkReadyForMergeState { pr: pr_number })
         }
-        // A merge state not computed yet waits for the next poll.
         Mergeability::Unknown => plan.wait(pr_number, merge_state),
         // Brought up to date above.
         Mergeability::Behind | Mergeability::Conflicting => {}
     }
 }
 
-/// When the maintainer last removed `ready-for-human` from the pull request:
-/// its work starts over from then, with a fresh CI timeout, fresh fix
-/// attempts, no failed merges and no rebase tried
-/// (`docs/specs/pull_requests.md`, "The pull request").
 fn restarted_at(pr: &Pull) -> Option<Timestamp> {
     pr.label_events
         .iter()
@@ -1313,8 +1142,6 @@ fn restarted_at(pr: &Pull) -> Option<Timestamp> {
         .max()
 }
 
-/// Whether an update run already tried to rebase the pull request at its
-/// head since its work last `restarted`.
 fn tried_rebase(pr: &Pull, memory: &Memory, restarted: Option<Timestamp>) -> bool {
     memory
         .tried_rebases
@@ -1322,16 +1149,10 @@ fn tried_rebase(pr: &Pull, memory: &Memory, restarted: Option<Timestamp>) -> boo
         .any(|r| r.pr == pr.number && r.head == pr.head_sha && restarted.is_none_or(|at| at < r.at))
 }
 
-/// Whether a run on the pull request rebases its branch onto the default
-/// branch, up to date or not, instead of updating it by the update rule:
-/// GitHub reports it not rebaseable, and the policy rebases such pull
-/// requests.
 pub fn rebases_to_repair(pr: &Pull, policy: &Policy) -> bool {
     pr.rebaseability == Rebaseability::NotRebaseable && policy.rebases_unrebaseable()
 }
 
-/// Merges the pull request with `method`, unless its merge has failed twice
-/// since its work last `restarted`: then it is handed back.
 fn merge(
     pr: &Pull,
     draft: bool,
@@ -1359,8 +1180,6 @@ fn merge(
     }
 }
 
-/// The pull request's last failed merge, if its merge has failed twice since
-/// its work last `restarted`: a failure is retried once.
 fn merge_failed_twice<'a>(
     pr: &Pull,
     failed_merges: &'a [FailedMerge],
@@ -1373,8 +1192,6 @@ fn merge_failed_twice<'a>(
     failed.last().copied().filter(|_| failed.len() >= 2)
 }
 
-/// The comment on a pull request held for review: what GitHub requires
-/// before it merges.
 pub fn hold_note(requires: &[Requirement]) -> String {
     let names: Vec<String> = requires.iter().map(ToString::to_string).collect();
     let required = match names.as_slice() {
@@ -1390,11 +1207,8 @@ pub fn hold_note(requires: &[Requirement]) -> String {
     format!("Ready for review: {required}. Linewright merges it once GitHub allows it.")
 }
 
-/// Whether a person who commented on or reviewed the pull request holds its
-/// merge: they have no approving review newer than every comment they made
-/// on it, as a PR comment, in a review thread or as another review. The
-/// inline comments submitted with an approval are made no later than it, so
-/// they don't hold the merge. Bots and Linewright hold nothing.
+/// The inline comments submitted with an approval are made no later than it,
+/// so they don't hold the merge.
 fn is_held(pr: &Pull, linewright: &Login) -> bool {
     let comments = pr
         .comments
@@ -1421,12 +1235,10 @@ fn is_held(pr: &Pull, linewright: &Login) -> bool {
     })
 }
 
-/// Feedback on a pull request that Linewright has not answered yet.
 #[derive(Debug, Default)]
 pub struct Feedback<'a> {
     pub comments: Vec<&'a Comment>,
     pub reviews: Vec<&'a Review>,
-    /// Threads with new comments, and those comments.
     pub threads: Vec<(&'a Thread, Vec<&'a Comment>)>,
 }
 
@@ -1436,13 +1248,6 @@ impl Feedback<'_> {
     }
 }
 
-/// Comments and reviews from anyone other than Linewright, posted after
-/// Linewright last answered: its last push, or when its last rework run
-/// that did its work last read the feedback, `reworked`, when a rework
-/// needed no change. A
-/// rework that handed the pull request back answered nothing, so the work
-/// tries again once it restarts. A review that only approves is not
-/// feedback.
 pub fn new_feedback<'a>(
     pr: &'a Pull,
     linewright: &Login,
@@ -1497,8 +1302,6 @@ fn humanize(delta: TimeDelta) -> String {
     humantime::format_duration(delta.to_std().unwrap_or_default()).to_string()
 }
 
-/// A person unassigning Linewright stops the issue's work until
-/// `ready-for-agent` is applied again.
 fn stopped_by_unassign(issue: &Issue, policy: &Policy) -> bool {
     let linewright = &policy.linewright;
     let unassigned = issue
@@ -1532,16 +1335,10 @@ fn last_labeled(issue: &Issue, name: &str) -> Option<Timestamp> {
         .max()
 }
 
-/// Triage runs on `needs-triage` issues not authored by Linewright:
-/// tickets Linewright creates are already briefed.
 fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
     issue.has_label(label::NEEDS_TRIAGE) && policy.triages(issue) && policy.may_start_on(issue)
 }
 
-/// Whether a `needs-info` issue has a reply (`docs/specs/triage.md`,
-/// "Answers"). Its question was asked at the later of the label and
-/// Linewright's last comment; without a comment of Linewright's there is no
-/// question to reply to.
 fn has_reply_to_needs_info(issue: &Issue, policy: &Policy) -> bool {
     let linewright = &policy.linewright;
     if !issue.has_label(label::NEEDS_INFO)
@@ -1569,7 +1366,6 @@ fn has_reply_to_needs_info(issue: &Issue, policy: &Policy) -> bool {
         .any(|c| &c.author != linewright && c.created_at > asked)
 }
 
-/// The spec changes waiting to be cut into tickets.
 pub fn pending_spec_changes<'a>(
     snapshot: &'a Snapshot,
     now: Timestamp,
@@ -1582,42 +1378,34 @@ pub fn pending_spec_changes<'a>(
         .collect()
 }
 
-/// A spec change: merged into the default branch within the lookback window,
-/// touching the spec, not authored by Linewright, neither processed nor
-/// handed back and, with a label required, carrying it. The label is checked
-/// on every poll, so one applied after the merge counts; `cancel_reason` does
-/// not look at it, so a cut under way survives its removal.
+/// `cancel_reason` does not look at the required label, so a cut under way
+/// survives its removal.
 fn is_spec_change(pr: &MergedPull, snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> bool {
     not_a_spec_change(pr, &snapshot.default_branch, now, policy).is_none()
 }
 
-/// Why a merged pull request is no spec change (`docs/specs/sources_of_work.md`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum NotSpecChange {
-    /// Linewright opened it.
     Linewrights,
-    /// It was merged into `base`, not the default branch.
-    OtherBranch { base: String },
-    /// It touched no file matching `spec_glob`.
-    NoSpecFile { spec_glob: String },
-    /// It is labeled `linewright:spec-processed`.
+    OtherBranch {
+        base: String,
+    },
+    NoSpecFile {
+        spec_glob: String,
+    },
     Processed,
-    /// It is labeled `ready-for-human`.
     HandedBack,
-    /// It was merged at `merged_at`, before the lookback window opened at
-    /// `window_opened`.
     BeforeLookback {
         merged_at: Timestamp,
         window_opened: Timestamp,
     },
-    /// It lacks the required label `label`.
-    RequiredLabel { label: String },
+    RequiredLabel {
+        label: String,
+    },
 }
 
-/// Why `pr`, merged, is no spec change at `now` where the default branch is
-/// `default_branch`: the first rule of a spec change it fails, those
-/// that hold for good first. `None` for a spec change.
+/// Rules that hold for good are checked first.
 pub fn not_a_spec_change(
     pr: &MergedPull,
     default_branch: &str,
@@ -1646,8 +1434,6 @@ pub fn not_a_spec_change(
             window_opened,
         }
     } else {
-        // The last rule: without the required label it is none, and with it
-        // or none required, a spec change.
         return unlabeled.map(|label| NotSpecChange::RequiredLabel {
             label: label.clone(),
         });

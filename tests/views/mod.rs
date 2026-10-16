@@ -1,6 +1,3 @@
-//! `serve`'s view of the repository, as the answers to the monitoring
-//! commands are derived from it, for the tests of those answers.
-
 #![allow(dead_code)]
 
 use std::sync::Arc;
@@ -37,7 +34,6 @@ pub fn policy() -> Policy {
     }
 }
 
-/// The maintainer's issue #`number`, labeled `ready-for-agent`.
 pub fn ticket(number: u64, title: &str) -> Issue {
     Issue {
         number: Number(number),
@@ -58,7 +54,6 @@ pub fn ticket(number: u64, title: &str) -> Issue {
     }
 }
 
-/// `issue`, which an open pull request #`pr` by `author` closes.
 pub fn closed_by(issue: Issue, pr: u64, author: &str) -> Issue {
     Issue {
         closed_by: vec![ClosingPull {
@@ -70,7 +65,6 @@ pub fn closed_by(issue: Issue, pr: u64, author: &str) -> Issue {
     }
 }
 
-/// An implement run in flight on #`issue`.
 pub fn implementing(issue: u64) -> LiveRun {
     LiveRun {
         subject: Subject::Issue(Number(issue)),
@@ -88,8 +82,6 @@ pub fn in_flight(id: &str, started: &str, heard: Option<&str>) -> InFlight {
     }
 }
 
-/// What the factory remembers with the usage limit in force until
-/// `resets_at`.
 pub fn limited_until(resets_at: &str) -> Memory {
     Memory {
         usage_limit: Some(UsageLimit {
@@ -99,8 +91,6 @@ pub fn limited_until(resets_at: &str) -> Memory {
     }
 }
 
-/// The view of a poll at 12:00 that saw `issues` and `pulls`, with no run
-/// in flight, no usage limit and no workflows.
 pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
     View {
         snapshot: Arc::new(Snapshot {

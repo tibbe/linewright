@@ -1,7 +1,3 @@
-//! The fix session's brief on its data model: the failing checks the store
-//! returns in, the brief's section on each out (`CODING_STANDARDS.md`, "Where
-//! tests go"; `docs/specs/pull_requests.md`, CI).
-
 use chrono::{DateTime, Utc};
 use linewright::domain::*;
 use linewright::prompts::{self, PullTask, Repo, Ticket};
@@ -55,8 +51,6 @@ fn created() -> Timestamp {
         .with_timezone(&Utc)
 }
 
-/// The brief's section on the failing check `name`: from its heading to the
-/// next heading.
 fn section(failures: &[CheckFailure], name: &str) -> String {
     let issue = issue();
     let ticket = Ticket {

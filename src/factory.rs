@@ -1,9 +1,3 @@
-//! The manager: each poll takes a snapshot of the store, asks the reconcile
-//! step what to do, and does it, starting runs as tasks. Between polls it
-//! holds the runs in flight and keeps the snapshot, which a refresh reads the
-//! items a delivery names into again before it reconciles
-//! (`docs/specs/architecture.md`).
-
 use std::collections::{BTreeSet, HashMap};
 
 use std::path::PathBuf;
@@ -37,7 +31,6 @@ use crate::store::{CloseReason, IssueRead, Store};
 use crate::webhook::{self, Pending};
 use crate::workflow::{self, LastRuns, Workflow, WorkflowFiles, WorkflowName};
 
-/// The settings a factory runs with.
 #[derive(Clone, Debug)]
 pub struct FactoryConfig {
     pub spec_glob: SpecGlob,
@@ -50,26 +43,16 @@ pub struct FactoryConfig {
     pub session_timeout: std::time::Duration,
     /// `None` follows the repository's settings.
     pub update_method: Option<UpdateMethod>,
-    /// Merge green pull requests instead of leaving them for review.
     pub auto_merge: bool,
     /// `None` follows the repository's settings.
     pub merge_method: Option<MergeMethod>,
-    /// Start work only on issues with this label, which is never created.
     pub require_label: Option<String>,
     pub briefs: Briefs,
-    /// Where clones, session records and the workflows' last runs go.
     pub work_dir: PathBuf,
-    /// Whether each poll also starts the workflows that are due. Replay does
-    /// not: workflows are not captured or replayed.
     pub schedule_workflows: bool,
-    /// Whether a session refused for the usage limit waits for the reset and
-    /// carries on, rather than ending its run: only `serve` waits
-    /// (`docs/specs/operation.md`, "Usage limit").
     pub waits_out_usage_limit: bool,
 }
 
-/// What a run in flight works on: a stage on an item, or a workflow, whose
-/// name its run ID holds.
 enum Running {
     Work(LiveRun),
     Workflow,
@@ -84,20 +67,14 @@ struct LiveEntry {
 pub struct Factory {
     shell: Arc<Shell>,
     runs: JoinSet<()>,
-    /// The refusals for the usage limit the runs report.
     refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
     live: HashMap<Id, LiveEntry>,
     stopping: CancellationToken,
     schedule_workflows: bool,
     last_runs: LastRuns,
-    /// The workflow files the last poll read.
     workflow_files: WorkflowFiles,
-    /// What it remembers between polls, of pull requests still open.
     memory: Memory,
-    /// How far the holds for review in `memory` are recorded.
     holds_record: HoldsRecord,
-    /// The last poll's snapshot, with what refreshes read into it since:
-    /// `None` before the first poll.
     kept: Option<Kept>,
     /// The cuts into tickets that ended since the kept snapshot was taken.
     ended: Vec<LiveRun>,
@@ -106,35 +83,30 @@ pub struct Factory {
     written: BTreeSet<Item>,
 }
 
-/// How far the holds for review are recorded under the work directory.
 enum HoldsRecord {
     /// There is no record yet: the next poll takes the holds from what its
     /// snapshot shows, so that a Linewright that kept none does not hold
     /// pull requests again.
     Missing,
-    /// Recorded as `saved`, `None` until first written, which a save that
-    /// failed leaves behind the holds remembered. The pull requests in `settling` were ready when the record
-    /// began, and GitHub had not worked out their merge state yet: they are
-    /// taken from the snapshot too, once it has.
+    /// `saved` is `None` until first written, and a save that failed leaves
+    /// it behind the holds remembered. The pull requests in `settling` were
+    /// ready when the record began, before GitHub had worked out their merge
+    /// state: they are taken from the snapshot too, once it has.
     Kept {
         saved: Option<Holds>,
         settling: BTreeSet<Number>,
     },
 }
 
-/// The snapshot kept between polls, with what refreshes read into it.
 #[derive(Clone)]
 struct Kept {
     snapshot: Arc<Snapshot>,
-    /// When the poll took the snapshot.
     taken_at: Timestamp,
-    /// When refreshes read the items they read into it.
     read_at: HashMap<Item, Timestamp>,
 }
 
 impl Kept {
-    /// When what `work` starts from was read. The run takes feedback since
-    /// as having arrived after.
+    /// The run takes feedback since this as having arrived after.
     fn as_of(&self, work: &Work) -> Timestamp {
         let read_at = self.read_at.get(&work.starts_from());
         read_at.copied().unwrap_or(self.taken_at)
@@ -142,10 +114,6 @@ impl Kept {
 }
 
 impl Factory {
-    /// Checks the store can be worked (the token can push and, with
-    /// auto-merge, the repository allows the merge method and `update-branch`
-    /// keeps branches mergeable with it), reads the repository's settings
-    /// and creates missing labels.
     pub async fn start(
         store: Arc<dyn Store>,
         runtime: Arc<dyn Runtime>,
@@ -241,14 +209,12 @@ impl Factory {
         })
     }
 
-    /// Cancelled to stop: a poll or refresh then takes no more actions,
-    /// though the one in progress finishes, so no action is left half done.
+    /// Cancelling it lets the action in progress finish, so no action is left
+    /// half done.
     pub fn stopping(&self) -> CancellationToken {
         self.stopping.clone()
     }
 
-    /// One poll: reconcile a fresh snapshot with the runs in flight and act
-    /// on the decisions, and keep the snapshot. Returns the decisions.
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
         // Reap first: a run that ends during the snapshot stays live for this
         // poll, so the snapshot cannot miss what it wrote.
@@ -271,14 +237,9 @@ impl Factory {
         Ok(self.reconcile(kept, defined, now).await)
     }
 
-    /// One refresh: read the items Linewright changed since they were last
-    /// read, then those `subjects` name, into the kept snapshot, reconcile it
-    /// with the runs in flight and act on the decisions, without taking a
-    /// snapshot. What a commit or a push names is found in the kept snapshot
-    /// once it holds what Linewright changed, such as a pull request a run
-    /// opened or pushed to. With nothing to read, it decides nothing.
-    /// Workflows wait for the next poll. Before the first poll there is
-    /// nothing kept, and it polls instead. Returns the decisions.
+    /// The items Linewright changed are read before `subjects` are resolved:
+    /// what a commit or a push names is found in the kept snapshot only once
+    /// it holds them, such as a pull request a run opened or pushed to.
     pub async fn refresh(
         &mut self,
         subjects: impl IntoIterator<Item: Into<webhook::Subject>>,
@@ -299,8 +260,6 @@ impl Factory {
             .flat_map(|subject| subject.into().items(snapshot))
             .filter(|item| !read.contains(item))
             .collect();
-        // Deliveries for other commits and branches are many: with nothing
-        // read, there is nothing new to decide on.
         if read.is_empty() && named.is_empty() {
             return Ok(vec![]);
         }
@@ -313,13 +272,8 @@ impl Factory {
         Ok(self.reconcile(kept, vec![], now).await)
     }
 
-    /// Polls every `poll_interval` and, between polls, refreshes what
-    /// deliveries add to `pending`, until stopping. A refresh never races a
-    /// poll: one still running when the poll falls due finishes first. A
-    /// failed poll or refresh is logged and left for the next poll to catch
-    /// up on (`docs/specs/webhooks.md`). Its view goes to `served`, with its
-    /// store, after each poll and refresh, and as runs end and are refused
-    /// for the usage limit, once a poll has taken a snapshot.
+    /// A refresh never races a poll: one still running when the poll falls
+    /// due finishes first.
     pub async fn serve(
         &mut self,
         poll_interval: Duration,
@@ -361,8 +315,6 @@ impl Factory {
         }
     }
 
-    /// The factory's view, with the next poll at `next_poll`, and its store:
-    /// `None` until a poll has taken a snapshot.
     fn served(&self, next_poll: Timestamp) -> Option<Served> {
         let runs = self.live.values().map(|entry| entry.watched.clone());
         Some(Served::new(
@@ -372,8 +324,6 @@ impl Factory {
         ))
     }
 
-    /// The factory's view, with the next poll at `next_poll`: `None` until
-    /// a poll has taken a snapshot.
     fn view(&self, next_poll: Timestamp) -> Option<View> {
         let kept = self.kept.as_ref()?;
         let live = self.live_runs();
@@ -398,8 +348,7 @@ impl Factory {
         })
     }
 
-    /// The pipeline's runs in flight as the reconcile step takes them. A
-    /// cut that ended since the snapshot was taken counts as in flight: the
+    /// A cut that ended since the snapshot was taken counts as in flight: the
     /// snapshot may miss what it wrote.
     fn live_runs(&self) -> Vec<LiveRun> {
         let in_flight = self.live.values().filter_map(|entry| match entry.running {
@@ -409,7 +358,6 @@ impl Factory {
         self.ended.iter().copied().chain(in_flight).collect()
     }
 
-    /// The workflows with a run in flight.
     fn workflows_in_flight(&self) -> Vec<WorkflowName> {
         self.live
             .values()
@@ -420,8 +368,6 @@ impl Factory {
             .collect()
     }
 
-    /// Keeps `kept`, reconciles its snapshot with the runs in flight and the
-    /// workflows `defined`, and acts on the decisions. Returns the decisions.
     async fn reconcile(
         &mut self,
         kept: Kept,
@@ -462,9 +408,6 @@ impl Factory {
         actions
     }
 
-    /// Runs the workflow `name` on the default branch once, now, and files
-    /// the issues its result returns. Fails when there is no such workflow,
-    /// its file does not parse or the run fails.
     pub async fn run_workflow(&self, name: &WorkflowName) -> Result<()> {
         let shell = &self.shell;
         let branch = &shell.settings.default_branch;
@@ -487,9 +430,6 @@ impl Factory {
         .with_context(|| format!("the run of the workflow `{name}` failed"))
     }
 
-    /// The workflows on the default branch whose files parse, when polls
-    /// schedule them. A file that does not parse is logged and skipped.
-    /// The files read are kept for the view.
     async fn workflows(&mut self) -> Vec<Workflow> {
         if !self.schedule_workflows {
             return vec![];
@@ -516,21 +456,18 @@ impl Factory {
         self.runs.is_empty()
     }
 
-    /// Waits for one run in flight to end.
     pub async fn next_finished(&mut self) {
         if let Some(result) = self.runs.join_next_with_id().await {
             self.finished(result);
         }
     }
 
-    /// Waits for every run in flight to end.
     pub async fn settle(&mut self) {
         while !self.is_idle() {
             self.next_finished().await;
         }
     }
 
-    /// Cancels every run in flight and waits for them to stop.
     pub async fn stop(mut self) {
         for entry in self.live.values() {
             entry.cancel.cancel();
@@ -547,8 +484,6 @@ impl Factory {
         }
     }
 
-    /// Takes the holds for review from what `snapshot` shows, while the
-    /// record of them is missing or settling.
     fn take_shown_holds(&mut self, snapshot: &Snapshot) {
         let linewright = &self.shell.policy.linewright;
         let held = &mut self.memory.held;
@@ -566,8 +501,6 @@ impl Factory {
         }
     }
 
-    /// Records the holds for review remembered, if they changed since they
-    /// were last recorded. A save that fails is logged and tried again later.
     fn record_holds(&mut self) {
         let HoldsRecord::Kept { saved, .. } = &mut self.holds_record else {
             return;
@@ -584,7 +517,6 @@ impl Factory {
         }
     }
 
-    /// Holds starts back for a run refused for the usage limit `limit`.
     fn refused(&mut self, UsageLimit { resets_at }: UsageLimit) {
         if self.memory.hold_until(resets_at) {
             info!(%resets_at, "usage limit in force; no session starts until it resets");
@@ -669,8 +601,6 @@ impl Factory {
                 );
             }
             Action::Cancel { subject, reason } => {
-                // A run that ended since the snapshot is cancelled too, and
-                // there is nothing left to stop.
                 for entry in self.live.values() {
                     if matches!(&entry.running, Running::Work(run) if run.subject == *subject) {
                         info!(subject = ?subject, reason, "cancelling run");
@@ -802,8 +732,6 @@ impl Factory {
     }
 }
 
-/// The runs on pull requests that did their work, as `runs` records them.
-/// Records that do not read are left out.
 fn done_runs(runs: &Runs) -> Vec<DoneRun> {
     let recorded = runs.read().unwrap_or_else(|e| {
         warn!(error = format!("{e:#}"), "reading the runs' records failed");
@@ -812,7 +740,6 @@ fn done_runs(runs: &Runs) -> Vec<DoneRun> {
     recorded.iter().filter_map(Recorded::done_on_pull).collect()
 }
 
-/// Records the start of a run of the workflow `name`, now.
 fn begin_workflow(shell: &Shell, name: &WorkflowName) -> Result<runs::Running> {
     shell
         .runs
@@ -825,8 +752,6 @@ fn begin_workflow(shell: &Shell, name: &WorkflowName) -> Result<runs::Running> {
         .with_context(|| format!("recording the run of the workflow `{name}`"))
 }
 
-/// Runs `workflow` once, recorded as `running`, files the issues its result
-/// returns and logs how it went: by hand or on its schedule.
 async fn run_and_log(
     shell: &Shell,
     workflow: &Workflow,
@@ -855,8 +780,6 @@ async fn run_and_log(
     }
 }
 
-/// Hands the pull request to people: marks it ready for review if `draft`
-/// and comments `note`.
 async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str) -> Result<()> {
     if draft {
         store.mark_ready(pr).await?;
@@ -864,10 +787,8 @@ async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str
     store.comment(pr, note).await
 }
 
-/// The issues to read again after `read`: those `snapshot` holds that a
-/// pull request of Linewright's among `read` closes, or closed while open,
-/// and not read already. Its pull request holds an issue back while it is
-/// open, and so frees it when it ends or stops closing it.
+/// Also the issues closed while open: a pull request frees an issue when it
+/// ends or stops closing it.
 fn closed_by_pulls_read(snapshot: &Snapshot, read: &BTreeSet<Item>) -> BTreeSet<Item> {
     let mut others = BTreeSet::new();
     for item in read {
@@ -886,8 +807,6 @@ fn closed_by_pulls_read(snapshot: &Snapshot, read: &BTreeSet<Item>) -> BTreeSet<
     others
 }
 
-/// Reads each of `items` again into `snapshot`, as [`read_into`] does.
-/// Returns the items read.
 async fn read_all(
     snapshot: &mut Snapshot,
     shell: &Shell,
@@ -902,12 +821,9 @@ async fn read_all(
     Ok(read)
 }
 
-/// Reads `item` again into `snapshot`, as a snapshot taken now holds it,
-/// with pull requests merged since `merged_since`. Returns the items read:
-/// an issue's pull requests are read with it, and so are the ended ones a
-/// snapshot may hold only for the issues it holds. So are the issues the
-/// snapshot holds that someone else's pull request closes, or closed while
-/// open, since it holds their work back while it is open.
+/// Returns the items read: besides `item`, an issue's pull requests, the
+/// ended ones a snapshot may hold only for the issues it holds, and the
+/// issues someone else's pull request closes or closed while open.
 async fn read_into(
     snapshot: &mut Snapshot,
     shell: &Shell,
@@ -940,7 +856,6 @@ async fn read_into(
     }
 }
 
-/// Reads the issue `number` again into `snapshot`, as [`read_into`] does.
 async fn read_issue_into(
     snapshot: &mut Snapshot,
     shell: &Shell,
@@ -992,7 +907,6 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
             .chain([tracking])
             .map(|issue| Item::Issue(*issue))
             .collect(),
-        // A merge closes the issues the pull request closes.
         Action::Merge { pr, .. } => snapshot
             .pull(*pr)
             .into_iter()

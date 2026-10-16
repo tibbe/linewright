@@ -1,7 +1,3 @@
-//! The local API: `serve` answers questions about itself over HTTP with
-//! JSON bodies on a Unix socket, and the monitoring commands are its clients
-//! (`docs/specs/architecture.md`, "The local API").
-
 use std::fs::{DirBuilder, File, Permissions, TryLockError};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -36,9 +32,6 @@ use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::webhook::Tally;
 
-/// The per-user directory the sockets are in: `linewright` under the user's
-/// runtime directory, `XDG_RUNTIME_DIR`, when it is set, or else
-/// `linewright-<uid>` under the temporary directory `temp_dir`.
 pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> PathBuf {
     match runtime_dir.filter(|dir| !dir.as_os_str().is_empty()) {
         Some(dir) => dir.join("linewright"),
@@ -46,15 +39,13 @@ pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> Pa
     }
 }
 
-/// The socket of the `serve` of `repo` in `dir`, named for the repository,
-/// which GitHub names case-insensitively, by a hash that keeps the path
-/// short whatever the name's length.
+/// Hashed to keep the path short whatever the name's length; lowercased as
+/// GitHub names repositories case-insensitively.
 pub fn socket_path(dir: &Path, repo: &str) -> PathBuf {
     let digest = sha2::Sha256::digest(repo.to_lowercase().as_bytes());
     dir.join(format!("{}.sock", &hex::encode(digest)[..16]))
 }
 
-/// Why `serve` cannot take the socket.
 #[derive(Debug, thiserror::Error)]
 pub enum ClaimError {
     #[error("a `serve` already runs for {repo} on this host; stop it first (its socket is {path})")]
@@ -63,7 +54,6 @@ pub enum ClaimError {
     Other(#[from] anyhow::Error),
 }
 
-/// The socket a `serve` listens on, held for as long as it lives.
 pub struct Claimed {
     listener: UnixListener,
     path: PathBuf,
@@ -73,8 +63,6 @@ pub struct Claimed {
     lock: File,
 }
 
-/// Takes the socket of the `serve` of `repo` in `dir`, only `serve`'s user
-/// able to open it, unless another `serve` holds it.
 pub fn claim(dir: &Path, repo: &str) -> Result<Claimed, ClaimError> {
     private_dir(dir)?;
     let path = socket_path(dir, repo);
@@ -111,7 +99,6 @@ pub fn claim(dir: &Path, repo: &str) -> Result<Claimed, ClaimError> {
     })
 }
 
-/// Removes the file at `path`, if there is one.
 fn remove_if_present(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -121,8 +108,6 @@ fn remove_if_present(path: &Path) -> Result<()> {
     }
 }
 
-/// Makes `dir`, readable only by its owner, or checks that it is so and
-/// owned by this user.
 fn private_dir(dir: &Path) -> Result<()> {
     match DirBuilder::new().recursive(false).mode(0o700).create(dir) {
         Ok(()) => return Ok(()),
@@ -143,8 +128,6 @@ fn private_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// What `serve` answers from once it has polled: its view, and the store it
-/// reads the items it does not track from.
 #[derive(Clone)]
 pub struct Served {
     /// Read only through [`Served::view_now`].
@@ -155,13 +138,10 @@ pub struct Served {
 }
 
 impl Served {
-    /// The factory's `view`, with its runs in flight `runs`, and its store.
     pub fn new(view: View, store: Arc<dyn Store>, runs: Vec<Watched>) -> Served {
         Served { view, store, runs }
     }
 
-    /// The view with the runs in flight as they stand now, so that their
-    /// quiet time counts from their latest output.
     pub fn view_now(&self) -> View {
         View {
             in_flight: self.runs.iter().map(Watched::read).collect(),
@@ -170,20 +150,17 @@ impl Served {
     }
 }
 
-/// What the API answers from.
 #[derive(Clone)]
 pub struct Sources {
     pub serving: Serving,
-    /// The factory's view and store, `None` until its first poll.
+    /// `None` until the first poll.
     pub served: watch::Receiver<Option<Served>>,
     /// Set with webhooks on.
     pub deliveries: Option<Tally>,
     pub clock: Arc<dyn Clock>,
-    /// Where the repository's runs are recorded.
     pub work_dir: RepoWorkDir,
 }
 
-/// The API's server, until stopped.
 pub struct Api {
     path: PathBuf,
     stop: CancellationToken,
@@ -193,7 +170,6 @@ pub struct Api {
 }
 
 impl Api {
-    /// Answers on the `claimed` socket from `sources`.
     pub fn serve(claimed: Claimed, sources: Sources) -> Api {
         let Claimed {
             listener,
@@ -233,8 +209,6 @@ impl Api {
         }
     }
 
-    /// Stops answering, once the requests being answered are, and removes
-    /// the socket.
     pub async fn stop(self) {
         self.stop.cancel();
         let _ = self.task.await;
@@ -260,33 +234,19 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
     json_response(StatusCode::OK, &answer)
 }
 
-/// The runs the query asks for, read from their records as `runs` reads
-/// them with no `serve` running, so that the answer is the same.
 async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Query>) -> Response {
     answer(runs::answer(&sources.work_dir, &query, sources.clock.now()))
 }
 
-/// The transcript of the run the query names, read from the records as
-/// `logs` reads it with no `serve` running, so that the answer is the same.
 async fn answer_logs(State(sources): State<Sources>, Query(which): Query<logs::Which>) -> Response {
     answer(logs::answer(&sources.work_dir, &which))
 }
 
-/// The type of an event of a followed transcript that is a line of it.
 pub const LINE_EVENT: &str = "line";
-/// The type of the event that ends a followed transcript once its run has.
 pub const END_EVENT: &str = "end";
-/// The type of the event that ends a followed transcript that could not be
-/// followed further, saying why.
 pub const ERROR_EVENT: &str = "error";
-/// The header in which a reader names the last event it saw.
 const LAST_EVENT_ID: &str = "last-event-id";
 
-/// The transcript of the run the query names as server-sent events, each
-/// line of it a [`LINE_EVENT`] whose ID is an [`EventId`], then an
-/// [`END_EVENT`] once the run has ended, or an [`ERROR_EVENT`] if it cannot
-/// be followed further. A reader that names the last event it saw in
-/// `Last-Event-ID` is sent the lines after it.
 async fn follow_logs(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
@@ -363,9 +323,6 @@ async fn follow_logs(
         .into_response()
 }
 
-/// The ID of a line of a transcript being followed:
-/// `<run>:<session>.<line>.<nth>`, the run's ID and where in it the line
-/// was made (see [`Made`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventId {
     pub run: runs::RunId,
@@ -392,10 +349,6 @@ impl std::fmt::Display for EventId {
     }
 }
 
-/// Where a reader resumes a transcript's stream, as it names it in
-/// `Last-Event-ID`: after a line, by its [`EventId`], or after every line
-/// made once the transcript was read to a point, as
-/// `<run>:<session>.<line>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Resume {
     pub run: runs::RunId,
@@ -451,15 +404,9 @@ impl std::fmt::Display for Resume {
     }
 }
 
-/// Why there is no answer from the records, `serve`'s or a command's.
 #[derive(Debug)]
 pub enum Unanswered {
-    /// The item or run asked about does not exist (`docs/specs/monitoring.md`,
-    /// "Output").
-    NoSuch {
-        missing: Missing,
-        error: String,
-    },
+    NoSuch { missing: Missing, error: String },
     Failed(anyhow::Error),
 }
 
@@ -490,7 +437,6 @@ impl From<LogsError> for Unanswered {
     }
 }
 
-/// `answer` as `serve` sends it.
 fn answer(answer: Result<impl serde::Serialize, impl Into<Unanswered>>) -> Response {
     match answer.map_err(Into::into) {
         Ok(value) => json_response(StatusCode::OK, &value),
@@ -507,10 +453,6 @@ fn answer(answer: Result<impl serde::Serialize, impl Into<Unanswered>>) -> Respo
     }
 }
 
-/// The answer to `explain N`: from the view for an item Linewright tracks,
-/// or else from #N read from the store, with its runs read from their
-/// records; not found for a number with no item, and unavailable before the
-/// first poll.
 async fn answer_item(
     State(sources): State<Sources>,
     Resource(number): Resource<Number>,
@@ -565,8 +507,6 @@ async fn local_only(request: Request, next: Next) -> Response {
     next.run(request).await
 }
 
-/// Whether `host`, a `Host` header, names this host by a loopback name or
-/// address, with or without a port.
 fn is_local(host: &str) -> bool {
     let name = match host.strip_prefix('[') {
         Some(bracketed) => bracketed.split_once(']').map(|(address, _)| address),
@@ -595,17 +535,12 @@ fn error_response(status: StatusCode, message: &str) -> Response {
     )
 }
 
-/// Why a monitoring command got no answer.
 #[derive(Debug, thiserror::Error)]
 pub enum RequestError {
     #[error("`serve` is not running for {repo} on this host: nothing listens on {path}")]
     NotServing { repo: String, path: String },
-    /// `serve` has no such item or run, as its answer says
-    /// (`docs/specs/monitoring.md`, "Output").
     #[error("{0}")]
     NotFound(String),
-    /// `serve` closed the connection before it had answered, as when it
-    /// stops as it is asked.
     #[error(transparent)]
     HungUp(anyhow::Error),
     #[error(transparent)]
@@ -613,7 +548,6 @@ pub enum RequestError {
 }
 
 impl RequestError {
-    /// A request that failed with `e`, `serve` having hung up if `hung_up`.
     fn failed(e: anyhow::Error, hung_up: bool) -> RequestError {
         if hung_up {
             RequestError::HungUp(e)
@@ -623,40 +557,29 @@ impl RequestError {
     }
 }
 
-/// `query` as the query string of a request for it.
 pub fn query_string(query: &impl serde::Serialize) -> String {
     serde_urlencoded::to_string(query).expect("a query serializes")
 }
 
-/// How long to wait before asking `serve` again, when it hung up or its
-/// stream broke off.
 pub const ASK_AGAIN_AFTER: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// How many times in a row `serve` is asked when it hangs up, before the
-/// request fails: one that stops as it is asked hangs up only until its
-/// socket is gone.
+/// A `serve` that is stopping hangs up only until its socket is gone.
 const HANG_UP_TRIES: u32 = 50;
 
-/// The times in a row `serve` hung up, with nothing sent between them.
 #[derive(Default)]
 pub struct HangUps(u32);
 
 impl HangUps {
-    /// Counts one more hang-up, and gives whether to ask again.
     pub fn ask_again(&mut self) -> bool {
         self.0 += 1;
         self.0 < HANG_UP_TRIES
     }
 
-    /// Starts counting again, `serve` having sent something.
     pub fn sent(&mut self) {
         self.0 = 0;
     }
 }
 
-/// Asks the `serve` of `repo` whose socket is in `dir` for `resource`, such
-/// as `/status`, and returns its answer's body. Asks again when it hangs
-/// up, as [`HangUps`] says.
 pub async fn get_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
     let mut hang_ups = HangUps::default();
     loop {
@@ -669,7 +592,6 @@ pub async fn get_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes,
     }
 }
 
-/// Asks the `serve` of `repo` whose socket is in `dir` for `resource` once.
 async fn ask(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
     let response = send(connect(dir, repo).await?, resource, None).await?;
     let status = response.status();
@@ -683,19 +605,14 @@ async fn ask(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestErr
     Ok(body)
 }
 
-/// An event of a stream of server-sent events.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ServerEvent {
     pub id: Option<String>,
-    /// Its type, `message` unless it says.
     pub event: String,
     pub data: String,
 }
 
-/// Asks the `serve` of `repo` whose socket is in `dir` for `resource` as
-/// server-sent events, after the event `last_id` if one is given, and hands
-/// each to `on_event` as it comes until the stream ends, or fails with the
-/// error of an [`ERROR_EVENT`]. Docs:
+/// Fails with the error of an [`ERROR_EVENT`]. Docs:
 /// <https://html.spec.whatwg.org/multipage/server-sent-events.html>.
 pub async fn get_events(
     dir: &Path,
@@ -743,8 +660,7 @@ pub async fn get_events(
     Ok(())
 }
 
-/// The event `block` of a stream holds, if it holds one rather than only
-/// comments.
+/// `None` if `block` holds only comments.
 fn parse_event(block: &str) -> Option<ServerEvent> {
     let mut event = ServerEvent {
         event: "message".into(),
@@ -771,7 +687,6 @@ fn parse_event(block: &str) -> Option<ServerEvent> {
     Some(event)
 }
 
-/// Connects to the socket of the `serve` of `repo` in `dir`.
 async fn connect(dir: &Path, repo: &str) -> Result<UnixStream, RequestError> {
     let path = socket_path(dir, repo);
     match UnixStream::connect(&path).await {
@@ -795,8 +710,6 @@ async fn connect(dir: &Path, repo: &str) -> Result<UnixStream, RequestError> {
     }
 }
 
-/// Sends `GET resource` on `stream`, naming `last_id` as the last event seen
-/// if one is given.
 async fn send(
     stream: UnixStream,
     resource: &str,
@@ -819,8 +732,6 @@ async fn send(
         .map_err(|e| request_error(e, "asking `serve`"))
 }
 
-/// The error of a request that failed with `e` while `doing` something,
-/// telling `serve` hanging up apart.
 fn request_error(e: hyper::Error, doing: &'static str) -> RequestError {
     let hung_up = e.is_canceled()
         || e.is_incomplete_message()
@@ -830,7 +741,6 @@ fn request_error(e: hyper::Error, doing: &'static str) -> RequestError {
     RequestError::failed(anyhow::Error::new(e).context(doing), hung_up)
 }
 
-/// Whether `e` is `serve` closing the connection on its side.
 fn hung_up(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),
@@ -840,7 +750,6 @@ fn hung_up(e: &std::io::Error) -> bool {
     )
 }
 
-/// Fails unless `status` and `body` are an answer rather than an error.
 fn check(status: StatusCode, body: &Bytes) -> Result<(), RequestError> {
     let answer = serde_json::from_slice::<ErrorAnswer>(body);
     if let Ok(ErrorAnswer {
@@ -860,7 +769,6 @@ fn check(status: StatusCode, body: &Bytes) -> Result<(), RequestError> {
     Ok(())
 }
 
-/// The body of an answer that is an error.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ErrorAnswer {
     error: String,
@@ -871,7 +779,6 @@ struct ErrorAnswer {
     missing: Option<Missing>,
 }
 
-/// What does not exist.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Missing {

@@ -1,14 +1,8 @@
-//! Embeds the commit Linewright is built from as `LINEWRIGHT_COMMIT`: the
-//! checkout's `HEAD`, else the `LINEWRIGHT_COMMIT` the build is given (the
-//! Docker build has no `.git`), else `unknown`
-//! (`docs/specs/operation.md`).
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const COMMIT_VARIABLE: &str = "LINEWRIGHT_COMMIT";
 
-/// As many hex digits as a commit is named by.
 const COMMIT_DIGITS: usize = 12;
 
 fn main() {
@@ -23,8 +17,7 @@ fn main() {
     println!("cargo::rustc-env={COMMIT_VARIABLE}={commit}");
 }
 
-/// The commit to embed, abbreviated: `head`, the commit the checkout's `HEAD`
-/// names, else `given`, the one the build is given, else `unknown`.
+/// `given` is for the Docker build, which has no `.git`.
 fn commit(head: Option<String>, given: Option<String>) -> String {
     head.or(given)
         .map(|commit| {
@@ -56,12 +49,10 @@ fn head_paths() -> Vec<PathBuf> {
     paths
 }
 
-/// Where the repository keeps `name`, such as `HEAD`.
 fn git_path(name: &str) -> Option<PathBuf> {
     git(&["rev-parse", "--git-path", name]).map(PathBuf::from)
 }
 
-/// What `git args` prints, trimmed, if it succeeds.
 fn git(args: &[&str]) -> Option<String> {
     let output = Command::new("git").args(args).output().ok()?;
     if !output.status.success() {

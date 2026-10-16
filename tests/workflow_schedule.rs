@@ -1,8 +1,3 @@
-//! Workflows run on their schedule by `serve` and `once`, end to end at the
-//! operator's level: workflow files on the default branch and a fake clock
-//! in, agent sessions out, against the local store and a scripted runtime
-//! (`docs/specs/workflows.md`).
-
 mod common;
 
 use chrono::TimeDelta;
@@ -32,8 +27,6 @@ fn finished() -> Result<String, SessionError> {
     json(json!({"summary": "Nothing needs doing.", "issues": []}))
 }
 
-/// Stops the factory and starts another on the same store and work
-/// directory, as a restart of Linewright would.
 async fn restart(world: &mut World) {
     world.factory = Factory::start(
         world.store.clone(),

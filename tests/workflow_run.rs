@@ -1,8 +1,3 @@
-//! Running a workflow by hand, `lw workflow run NAME`, end to end at
-//! the operator's level: a workflow file on the default branch in, one agent
-//! session and its record out, against the local store and a scripted
-//! runtime (`docs/specs/workflows.md`).
-
 mod common;
 
 use std::sync::{Arc, Mutex};
@@ -273,7 +268,6 @@ async fn a_workflow_runs_kept_its_brief_result_and_transcript_under_the_work_dir
     }
 }
 
-/// How long the workflow's session had left when it started.
 async fn time_given(text: &str) -> Duration {
     let world = with_workflow("weekly", text).await;
     let left = Arc::new(Mutex::new(None));

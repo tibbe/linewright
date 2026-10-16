@@ -1,7 +1,5 @@
-//! GitHub's rate limits, handled as its docs ask: a client refused for a
-//! limit waits before it tries again
-//! (<https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit>,
-//! <https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#exceeding-the-rate-limit>).
+//! <https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit>,
+//! <https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#exceeding-the-rate-limit>
 
 use std::time::{Duration, SystemTime};
 
@@ -9,16 +7,13 @@ use reqwest::StatusCode;
 use reqwest::header::HeaderMap;
 use serde::Deserialize;
 
-/// How many times a rate-limited request waits and tries again before it
-/// fails.
 pub const RETRIES: u32 = 5;
 
 /// The shortest wait: GitHub asks for at least a minute when it gives no
 /// time, and a reset time is only as good as the clocks agree.
 const MINIMUM: Duration = Duration::from_secs(60);
 
-/// How long to wait before trying the request again, if GitHub refused it for
-/// a rate limit; `retries` is how many times it was tried again already.
+/// `retries` is how many times it was tried again already.
 pub fn wait(
     status: StatusCode,
     headers: &HeaderMap,
@@ -50,8 +45,6 @@ pub fn wait(
     Some(MINIMUM * 2u32.pow(retries))
 }
 
-/// Whether a REST error says it is about a rate limit, as a secondary
-/// limit's does.
 fn says_rate_limit(body: &str) -> bool {
     #[derive(Deserialize)]
     struct Error {

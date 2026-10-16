@@ -1,9 +1,3 @@
-//! Between polls the factory keeps its snapshot, and a refresh reads the
-//! issues and pull requests a delivery names into it again and reconciles,
-//! end to end against the local store and a scripted runtime
-//! (`docs/specs/architecture.md`, "The store is an interface" and "Webhook
-//! deliveries are hints, not state").
-
 mod common;
 
 use std::sync::Mutex;
@@ -460,19 +454,16 @@ async fn refresh(world: &mut World, item: Item) -> Vec<Action> {
     world.factory.refresh([item]).await.unwrap()
 }
 
-/// Sessions of `kind`, held at a gate until it is released, then failing.
 struct Gate {
     release: mpsc::Sender<()>,
     begun: tokio::sync::mpsc::UnboundedReceiver<()>,
 }
 
 impl Gate {
-    /// Waits for a session's turn to reach the gate, its prompt given.
     async fn begun(&mut self) {
         self.begun.recv().await.unwrap();
     }
 
-    /// Lets a turn at the gate go on, to fail.
     fn release(&self) {
         self.release.send(()).unwrap();
     }
@@ -493,7 +484,6 @@ fn gated(world: &World, kind: WorkKind) -> Gate {
     Gate { release, begun }
 }
 
-/// A person's pull request changing the spec, merged.
 async fn spec_change(world: &World) -> Number {
     world
         .store
@@ -657,7 +647,6 @@ async fn labeling_a_pull_request_ready_for_human_cancels_its_run_and_its_work_un
     gate.release();
     world.factory.settle().await;
     world.poll().await;
-    // The cancelled turn was given its prompt, and no other started.
     assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
     assert!(
         !world

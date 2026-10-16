@@ -1,6 +1,3 @@
-//! `lw logs`: which run's transcript to show, and the transcript as
-//! the sessions' records keep it (`docs/specs/monitoring.md`, "logs").
-
 use std::time::Duration;
 
 use anyhow::Context;
@@ -12,7 +9,6 @@ use crate::transcript::{
     self, After, FollowedLine, Follower, InFlight, ReadTo, SessionRecord, Transcript, Verbosity,
 };
 
-/// Which run's transcript to show.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "QueryString", into = "QueryString")]
 pub enum Which {
@@ -23,7 +19,6 @@ pub enum Which {
     Run { id: RunId, item: Option<Number> },
 }
 
-/// [`Which`] as the query string of a request for it.
 #[derive(Serialize, Deserialize)]
 struct QueryString {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,8 +51,6 @@ impl TryFrom<QueryString> for Which {
 }
 
 impl Which {
-    /// The run `run` names, which must be on `item` when both are given, or
-    /// else `item`'s.
     pub fn new(item: Option<Number>, run: Option<RunId>) -> Result<Which, &'static str> {
         match (item, run) {
             (item, Some(id)) => Ok(Which::Run { id, item }),
@@ -66,7 +59,6 @@ impl Which {
         }
     }
 
-    /// The item it names, if any.
     pub fn item(&self) -> Option<Number> {
         match self {
             Which::Item(item) => Some(*item),
@@ -75,7 +67,6 @@ impl Which {
     }
 }
 
-/// Why `logs` has no run to show.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum NoSuchRun {
     #[error("{0} has no runs")]
@@ -86,8 +77,6 @@ pub enum NoSuchRun {
     NotOf { run: RunId, item: Number },
 }
 
-/// The run of `recorded` that `which` names. An item's runs are those
-/// `runs N` lists for it.
 pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRun> {
     match which {
         Which::Run { id, item } => {
@@ -120,7 +109,6 @@ pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRu
     }
 }
 
-/// Why `logs` has no transcript to show.
 #[derive(Debug, thiserror::Error)]
 pub enum LogsError {
     #[error(transparent)]
@@ -129,9 +117,6 @@ pub enum LogsError {
     Other(#[from] anyhow::Error),
 }
 
-/// The transcript of the run `which` names, from the records in
-/// `work_dir`, as `serve` gives it and as `logs` gives it with no `serve`
-/// running.
 pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsError> {
     let recorded = Runs::new(&work_dir.resolve()).read()?;
     let run = pick(recorded, which)?;
@@ -165,8 +150,6 @@ pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsE
     })
 }
 
-/// What to follow: the run `which` names, its transcript shown as
-/// `verbosity` says.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "FollowQueryString", into = "FollowQueryString")]
 pub struct FollowQuery {
@@ -174,7 +157,6 @@ pub struct FollowQuery {
     pub verbosity: Verbosity,
 }
 
-/// [`FollowQuery`] as the query string of a request for it.
 #[derive(Serialize, Deserialize)]
 struct FollowQueryString {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -207,11 +189,8 @@ impl TryFrom<FollowQueryString> for FollowQuery {
     }
 }
 
-/// How long a followed run's records rest between readings.
 const FOLLOW_EVERY: Duration = Duration::from_millis(100);
 
-/// The transcript of a run followed in its records as its sessions write
-/// them (`docs/specs/monitoring.md`, "logs").
 pub struct Following {
     runs: Runs,
     run: RunId,
@@ -221,9 +200,6 @@ pub struct Following {
 }
 
 impl Following {
-    /// Follows the run `which` names in the records in `work_dir`, its
-    /// transcript shown as `verbosity` says, giving the lines after `after`
-    /// if one is given.
     pub fn start(
         work_dir: &RepoWorkDir,
         which: &Which,
@@ -241,7 +217,6 @@ impl Following {
         })
     }
 
-    /// The run followed.
     pub fn run(&self) -> &RunId {
         &self.run
     }

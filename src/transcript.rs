@@ -1,9 +1,3 @@
-//! A run's transcript as `logs` shows it: each session read from what its
-//! record keeps, Claude Code's stream of events turn by turn with the brief
-//! and follow-ups that started the turns, and shown compact, in full or as
-//! JSON (`docs/specs/monitoring.md`, "logs"). The stream's events are
-//! Claude Code's: <https://code.claude.com/docs/en/headless>.
-
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{Read as _, Seek as _, SeekFrom};
@@ -18,11 +12,8 @@ use crate::domain::Timestamp;
 use crate::runs::RunId;
 use crate::status::{Paint, utc};
 
-/// The file in a session's record the runtime streams its events to, every
-/// turn's after the last's.
 pub const OUTPUT: &str = "output.jsonl";
 
-/// The file in a session's record that holds its brief.
 pub const BRIEF: &str = "brief.md";
 
 /// The file in a session's record that holds its `n`th follow-up, from 1.
@@ -30,7 +21,6 @@ pub fn followup_file(n: usize) -> String {
     format!("followup-{n}.md")
 }
 
-/// What started a turn of a session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StartedBy {
@@ -54,7 +44,6 @@ enum MarkerKind {
     Turn,
 }
 
-/// The marker of a turn that `started_by` started at `started_at`.
 pub fn turn_marker(started_at: Timestamp, started_by: StartedBy) -> String {
     serde_json::to_string(&TurnMarker {
         kind: MarkerKind::Turn,
@@ -64,27 +53,20 @@ pub fn turn_marker(started_at: Timestamp, started_by: StartedBy) -> String {
     .expect("a marker serializes")
 }
 
-/// What a session's record keeps of its transcript.
 #[derive(Clone, Debug, Default)]
 pub struct SessionRecord {
-    /// The runtime's stream of events, as [`OUTPUT`] holds it.
     pub output: String,
-    /// The prompt that started the session.
     pub brief: Option<String>,
-    /// The prompts that resumed it, in order.
     pub followups: Vec<String>,
 }
 
 impl SessionRecord {
-    /// The record in `dir`, as far as it has been written.
     pub fn read(dir: &Path) -> Result<SessionRecord> {
         let mut record = SessionRecord::default();
         record.read_more(dir)?;
         Ok(record)
     }
 
-    /// Reads what has been added to the record in `dir` since it was last
-    /// read.
     pub fn read_more(&mut self, dir: &Path) -> Result<()> {
         let read = |name: &str| -> Result<Option<String>> {
             let path = dir.join(name);
@@ -123,7 +105,6 @@ impl SessionRecord {
     }
 }
 
-/// A run's transcript: its sessions, in the order it started them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Transcript {
     pub run: RunId,
@@ -135,10 +116,7 @@ pub struct Transcript {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Session {
-    /// `None` when nothing in its record says.
     pub started_at: Option<Timestamp>,
-    /// The directory it worked in, which its tools' paths are shown
-    /// relative to.
     pub dir: Option<String>,
     pub turns: Vec<Turn>,
 }
@@ -150,7 +128,6 @@ pub struct Turn {
     pub entries: Vec<Entry>,
 }
 
-/// What started a turn, with its text, `None` when the record lacks it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Prompt {
@@ -167,23 +144,14 @@ pub struct Entry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum What {
-    /// What the agent said.
     Message(String),
     Thinking(String),
-    /// What the runtime added to the conversation, such as a skill's text,
-    /// or a sub-agent's prompt.
     Context(String),
     Tool(Call),
-    /// Any other event the runtime streamed, such as the end of a turn, as
-    /// it streamed it.
     Event(Value),
-    /// Anything else in an event, such as content of a kind `logs` does not
-    /// know, as the runtime streamed it.
     Other(Value),
 }
 
-/// A tool call, with what it returned and, for a sub-agent's, the
-/// sub-agent's work.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Call {
     pub id: String,
@@ -196,8 +164,6 @@ pub struct Call {
     pub entries: Vec<Entry>,
 }
 
-/// A tool, by its name in Claude Code: those `logs` gives an account of
-/// their own, and any other.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "String", into = "String")]
 pub enum Tool {
@@ -219,7 +185,6 @@ pub enum Tool {
     Other(String),
 }
 
-/// The tools known by name.
 const KNOWN: [Tool; 14] = [
     Tool::Bash,
     Tool::Read,
@@ -258,8 +223,6 @@ impl Tool {
         }
     }
 
-    /// The key of the tool's main argument in its input, such as the
-    /// command it runs.
     fn main_argument(&self) -> Option<&'static str> {
         match self {
             Tool::Bash => Some("command"),
@@ -293,18 +256,13 @@ impl From<Tool> for String {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CallResult {
-    /// Its text content.
     pub text: String,
-    /// Its other content, such as images.
     pub other: Vec<Value>,
     pub error: bool,
-    /// What the runtime says of the result beside its text, which differs
-    /// from tool to tool.
     pub details: Value,
 }
 
-/// The session `record` keeps. Lines that do not read as events, such as
-/// one being written, are skipped.
+/// Lines that do not read as events, such as one being written, are skipped.
 pub fn parse(record: &SessionRecord) -> Session {
     let mut parser = Parser::default();
     for line in record.output.lines() {
@@ -313,22 +271,17 @@ pub fn parse(record: &SessionRecord) -> Session {
     parser.finish()
 }
 
-/// Whether `event` only counts progress on what other events show.
 fn is_progress(event: &Value) -> bool {
     event["type"] == "tool_progress"
         || ["thinking_tokens", "task_progress"]
             .contains(&event["subtype"].as_str().unwrap_or_default())
 }
 
-/// A session as its events are read.
 #[derive(Default)]
 struct Parser {
     session: Session,
-    /// Where each tool call is, by its ID.
     calls: HashMap<String, EntryAt>,
-    /// How many turns follow-ups have started.
     followups: usize,
-    /// What the events read changed, in order.
     touched: Vec<Touch>,
 }
 
@@ -340,19 +293,13 @@ struct EntryAt {
     path: Vec<usize>,
 }
 
-/// What reading an event changed in a session.
 enum Touch {
-    /// The turn with this index began.
     Turn(usize),
-    /// An entry was added.
     Added(EntryAt),
-    /// The call there returned, or ended in the background, at that time.
     Ended(EntryAt, Option<Timestamp>),
 }
 
 impl Parser {
-    /// Reads `line` of the output of the session `record` keeps, unless it
-    /// does not read as an event.
     fn line(&mut self, line: &str, record: &SessionRecord) {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
             return;
@@ -375,7 +322,6 @@ impl Parser {
         self.event(event);
     }
 
-    /// The session read.
     fn finish(self) -> Session {
         let mut session = self.session;
         session.started_at = started_at(&session);
@@ -394,7 +340,6 @@ impl Parser {
     fn event(&mut self, event: Value) {
         let turn = self.session.turns.len() - 1;
         let at = timestamp(&event["timestamp"]);
-        // Under the call that started the sub-agent whose event it is.
         let parent = event["parent_tool_use_id"]
             .as_str()
             .and_then(|id| self.calls.get(id))
@@ -493,7 +438,6 @@ impl Parser {
         }
     }
 
-    /// Adds `entry` to `turn`, under the call at `parent` if there is one.
     fn push(&mut self, turn: usize, parent: Option<&[usize]>, entry: Entry) {
         let id = match &entry.what {
             What::Tool(call) => Some(call.id.clone()),
@@ -513,7 +457,6 @@ impl Parser {
         self.touched.push(Touch::Added(at));
     }
 
-    /// The call with the ID `id` and where it is, if it has been read.
     fn call(&mut self, id: &Value) -> Option<(EntryAt, &mut Call)> {
         let at = self.calls.get(id.as_str()?)?.clone();
         let call = call_at(&mut self.session.turns[at.turn].entries, &at.path);
@@ -529,7 +472,6 @@ fn text(value: &Value) -> String {
     value.as_str().unwrap_or_default().to_string()
 }
 
-/// A tool result's content: its text, and its blocks of other kinds.
 fn result_content(content: &Value) -> (String, Vec<Value>) {
     match content {
         Value::String(text) => (text.clone(), vec![]),
@@ -558,19 +500,13 @@ fn call_at<'a>(entries: &'a mut [Entry], path: &[usize]) -> &'a mut Call {
     }
 }
 
-/// How much of the transcript to show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verbosity {
-    /// The agent's messages, each tool call on a line, and each follow-up
-    /// marked.
     Compact,
-    /// Everything: also the thinking, the tools' full input and results, the
-    /// brief and follow-ups, and the runtime's other events.
     Full,
 }
 
 impl Verbosity {
-    /// [`Verbosity::Full`] if `verbose`, else [`Verbosity::Compact`].
     pub fn of(verbose: bool) -> Verbosity {
         if verbose {
             Verbosity::Full
@@ -580,15 +516,10 @@ impl Verbosity {
     }
 }
 
-/// One line of the transcript as `logs` shows it, or one JSON object of it.
-/// Its fields keep their names and meanings (`docs/specs/monitoring.md`,
-/// "Output").
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Line {
-    /// What the lines after it are of.
     Header(Header),
-    /// A line of a session, at a time in it.
     Entry(Box<Stamped>),
 }
 
@@ -597,7 +528,6 @@ pub enum Line {
 pub enum Header {
     Run {
         run: RunId,
-        /// The sessions it had started when the line was made.
         sessions: usize,
     },
     Session {
@@ -625,8 +555,6 @@ struct Stamp {
     under: Under,
 }
 
-/// Whose work a line is of: the session's own, or that of a sub-agent
-/// `depth` deep, started by the call with the ID `parent`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "UnderFields", into = "UnderFields")]
 enum Under {
@@ -635,7 +563,6 @@ enum Under {
 }
 
 impl Under {
-    /// How many sub-agents deep it is.
     fn depth(&self) -> usize {
         match self {
             Under::Session => 0,
@@ -643,8 +570,6 @@ impl Under {
         }
     }
 
-    /// The work of the sub-agent that the call with the ID `call`, made in
-    /// this work, started.
     fn sub_agent(&self, call: &str) -> Under {
         Under::SubAgent {
             depth: NonZeroUsize::MIN.saturating_add(self.depth()),
@@ -653,13 +578,9 @@ impl Under {
     }
 }
 
-/// [`Under`] as a line's fields.
 #[derive(Serialize, Deserialize)]
 struct UnderFields {
-    /// How many sub-agents deep it is.
     depth: usize,
-    /// The ID of the call that started the sub-agent it is of, named as
-    /// Claude Code's stream names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     parent_tool_use_id: Option<String>,
 }
@@ -716,8 +637,6 @@ enum EntryLine {
         other: Value,
     },
     Tool {
-        /// The ID the agent gave the call, named as Claude Code's stream
-        /// names it.
         tool_use_id: String,
         tool: String,
         argument: String,
@@ -727,7 +646,6 @@ enum EntryLine {
         input: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<String>,
-        /// The result's content other than its text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<Vec<Value>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -735,7 +653,6 @@ enum EntryLine {
     },
 }
 
-/// The lines `logs` shows of `transcript`.
 fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
     let mut lines = vec![Line::Header(Header::Run {
         run: transcript.run.clone(),
@@ -767,8 +684,6 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
     lines
 }
 
-/// Adds the lines of `entries`, the work `under` says in `session`, to
-/// `lines`.
 fn entry_lines(
     entries: &[Entry],
     under: &Under,
@@ -795,12 +710,9 @@ fn entry_lines(
     }
 }
 
-/// Stamps the lines of one session as they are made.
 struct Stamper {
-    /// The session's number in the run.
     number: usize,
     started_at: Option<Timestamp>,
-    /// The time of the last line, which a line with none of its own takes.
     last: Option<Timestamp>,
 }
 
@@ -820,8 +732,6 @@ impl Stamper {
         })
     }
 
-    /// The line of `what`, of the work `under` says, at `at` if it has a
-    /// time.
     fn line(&mut self, at: Option<Timestamp>, under: Under, what: EntryLine) -> Line {
         let at = at.or(self.last);
         self.last = at;
@@ -837,7 +747,6 @@ impl Stamper {
     }
 }
 
-/// The line of what started `turn`, if `verbosity` shows one.
 fn prompt_line(turn: &Turn, verbosity: Verbosity) -> Option<EntryLine> {
     let full = verbosity == Verbosity::Full;
     match &turn.prompt {
@@ -850,7 +759,6 @@ fn prompt_line(turn: &Turn, verbosity: Verbosity) -> Option<EntryLine> {
     }
 }
 
-/// The line of `entry` in `session`, if `verbosity` shows one.
 fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<EntryLine> {
     let full = verbosity == Verbosity::Full;
     Some(match &entry.what {
@@ -885,20 +793,14 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
     })
 }
 
-/// A run's transcript followed as its sessions write it: each line shown
-/// once its entry is written, a tool call's as running once it is made and
-/// again once it returns or ends in the background
-/// (`docs/specs/monitoring.md`, "logs"). The lines shown only ever grow, the
-/// same whatever pieces the records are read in.
+/// The lines shown only ever grow, the same whatever pieces the records are read in.
 pub struct Follower {
     run: RunId,
     verbosity: Verbosity,
     sessions: Vec<Followed>,
-    /// Where to give the lines after, if anywhere.
     after: Option<After>,
 }
 
-/// How far the transcript of a run in flight has been read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum InFlight {
@@ -924,12 +826,9 @@ pub struct Made {
     pub nth: usize,
 }
 
-/// Where in a followed transcript to give the lines after.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum After {
-    /// After the line made there.
     Line(Made),
-    /// After every line made once the transcript was read to it.
     Read(ReadTo),
 }
 
@@ -943,34 +842,25 @@ impl After {
     }
 }
 
-/// A line of a followed transcript, with where it was made.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FollowedLine {
     pub made: Made,
     pub line: Line,
 }
 
-/// `text` up to the end of its last whole line.
 pub fn whole_lines(text: &str) -> &str {
     &text[..text.rfind('\n').map_or(0, |end| end + 1)]
 }
 
-/// A session of a followed run.
 struct Followed {
-    /// The session's number in the run.
     number: usize,
     parser: Parser,
-    /// How many bytes of its output have been read.
     bytes_read: usize,
-    /// How many lines of its output have been read.
     lines_read: usize,
-    /// Stamps its lines once its header has been shown.
     stamper: Option<Stamper>,
 }
 
 impl Follower {
-    /// Follows the transcript of `run`, shown as `verbosity` says, giving
-    /// the lines after `after` if one is given.
     pub fn new(run: RunId, verbosity: Verbosity, after: Option<After>) -> Follower {
         Follower {
             run,
@@ -980,15 +870,11 @@ impl Follower {
         }
     }
 
-    /// The lines to show next of the run, whose sessions' records are now
-    /// `sessions`, in the order it started them, each with where it was
-    /// made. A line still being written waits.
+    /// A line still being written waits.
     pub fn update(&mut self, sessions: &[SessionRecord]) -> Vec<FollowedLine> {
         self.read(sessions, false)
     }
 
-    /// The last lines to show of the run, which has ended with its sessions'
-    /// records `sessions`, each with where it was made.
     pub fn end(&mut self, sessions: &[SessionRecord]) -> Vec<FollowedLine> {
         let mut lines = self.read(sessions, true);
         if self.sessions.is_empty() {
@@ -1001,7 +887,6 @@ impl Follower {
         lines
     }
 
-    /// The header of the run, which has started `sessions`.
     fn header(&self, sessions: usize) -> Line {
         Line::Header(Header::Run {
             run: self.run.clone(),
@@ -1009,13 +894,10 @@ impl Follower {
         })
     }
 
-    /// The lines to show of what `sessions` add, reading their last session
-    /// to the end if `ended`, or else to its last complete line.
     fn read(&mut self, sessions: &[SessionRecord], ended: bool) -> Vec<FollowedLine> {
         let mut lines = vec![];
         for (i, record) in sessions.iter().enumerate() {
             let session = i + 1;
-            // The lines made once the transcript was read to `read`.
             let mut shown = vec![];
             if i == self.sessions.len() {
                 if i == 0 {
@@ -1053,8 +935,6 @@ impl Follower {
     }
 }
 
-/// `lines` made after `after`, if one is given, each with where it was
-/// made: in turn, once the transcript was read to `read`.
 fn made(after: Option<After>, read: ReadTo, lines: Vec<Line>) -> Vec<FollowedLine> {
     lines
         .into_iter()
@@ -1078,12 +958,10 @@ impl Followed {
         }
     }
 
-    /// Adds the session's header to `lines` unless it has been shown.
     fn open(&mut self, lines: &mut Vec<Line>) {
         open(&mut self.stamper, self.number, &self.parser.session, lines);
     }
 
-    /// Adds the lines of what the events read last changed to `lines`.
     fn show(&mut self, verbosity: Verbosity, lines: &mut Vec<Line>) {
         let session = &self.parser.session;
         for touch in std::mem::take(&mut self.parser.touched) {
@@ -1108,8 +986,6 @@ impl Followed {
     }
 }
 
-/// What stamps the lines of the `number`th session, `session`, once it is
-/// `opened`: if it is not yet, it is, and its header is added to `lines`.
 fn open<'a>(
     opened: &'a mut Option<Stamper>,
     number: usize,
@@ -1123,7 +999,6 @@ fn open<'a>(
     })
 }
 
-/// When `session` started, as far as its turns say.
 fn started_at(session: &Session) -> Option<Timestamp> {
     session.turns.first().and_then(|turn| {
         turn.started_at
@@ -1131,7 +1006,6 @@ fn started_at(session: &Session) -> Option<Timestamp> {
     })
 }
 
-/// The entry at `at` in `session`, and whose work it is of.
 fn entry_at<'a>(session: &'a Session, at: &EntryAt) -> (&'a Entry, Under) {
     let mut entries = &session.turns[at.turn].entries;
     let mut under = Under::Session;
@@ -1149,8 +1023,6 @@ fn entry_at<'a>(session: &'a Session, at: &EntryAt) -> (&'a Entry, Under) {
 /// The longest a tool's argument shows, in characters.
 const ARGUMENT_CHARS: usize = 80;
 
-/// The call's main argument, such as the command it ran or the file it
-/// read, on one line.
 fn argument(call: &Call, dir: Option<&str>) -> String {
     let value = call
         .tool
@@ -1169,8 +1041,6 @@ fn argument(call: &Call, dir: Option<&str>) -> String {
     one_line(&value, ARGUMENT_CHARS)
 }
 
-/// The first line of `text`, cut to `chars`, ending with `…` when there is
-/// more.
 fn one_line(text: &str, chars: usize) -> String {
     let text = text.trim();
     let first = text.lines().next().unwrap_or_default();
@@ -1182,7 +1052,6 @@ fn one_line(text: &str, chars: usize) -> String {
     }
 }
 
-/// A follow-up's first line.
 fn summary(prompt: &str) -> String {
     let prompt = prompt.trim();
     match prompt.split_once('\n') {
@@ -1191,8 +1060,6 @@ fn summary(prompt: &str) -> String {
     }
 }
 
-/// A short account of the call's result, such as the lines read or the
-/// exit status.
 fn account(call: &Call) -> String {
     let Some(result) = &call.result else {
         return "running".into();
@@ -1262,7 +1129,6 @@ fn account(call: &Call) -> String {
     }
 }
 
-/// `transcript` as text, coloured if `colour`.
 pub fn render(transcript: &Transcript, verbosity: Verbosity, colour: bool) -> String {
     lines(transcript, verbosity)
         .iter()
@@ -1356,7 +1222,6 @@ pub fn render_line(line: &Line, colour: bool) -> String {
     shown
 }
 
-/// `text` after `label`, every line of it indented a step.
 fn indented(label: &str, text: &str) -> Vec<String> {
     let (first, rest) = block(label, text);
     std::iter::once(first)
@@ -1365,14 +1230,12 @@ fn indented(label: &str, text: &str) -> Vec<String> {
         .collect()
 }
 
-/// `text` after `label`: its first line, and the lines after it.
 fn block(label: &str, text: &str) -> (String, Vec<String>) {
     let mut lines = text.trim_end().lines();
     let first = format!("{label}{}", lines.next().unwrap_or_default());
     (first, lines.map(str::to_string).collect())
 }
 
-/// `seconds` as `m:ss`, or `h:mm:ss` from an hour.
 fn elapsed(seconds: i64) -> String {
     let seconds = seconds.max(0);
     let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
@@ -1383,7 +1246,6 @@ fn elapsed(seconds: i64) -> String {
     }
 }
 
-/// `transcript` as JSON, one object per line.
 pub fn json_lines(transcript: &Transcript, verbosity: Verbosity) -> String {
     lines(transcript, verbosity).iter().map(json_line).collect()
 }

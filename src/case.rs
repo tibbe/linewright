@@ -1,12 +1,3 @@
-//! Cases: a spec change or issue the factory handled, captured on disk and
-//! run again through the whole pipeline against a local store
-//! (`docs/specs/replay.md`).
-//!
-//! A case directory holds `case.json` (the repository's facts and the event),
-//! `repo.bundle` (the repository at the event's base commit, and the merge
-//! of a spec change) and, when captured on the factory's machine,
-//! `transcripts/<subject>/` with the sessions that handled it.
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -35,11 +26,9 @@ pub struct Case {
     pub issue_types: Option<Vec<String>>,
     /// `rebase` exactly where the default branch requires linear history.
     pub update_method: UpdateMethod,
-    /// The merge methods the repository allows; every method in cases
-    /// captured before they were recorded.
+    /// Every method in cases captured before it was recorded.
     #[serde(default = "MergeMethods::all")]
     pub allowed_merge_methods: MergeMethods,
-    /// The commit the event starts from.
     pub base: String,
     pub event: Event,
 }
@@ -52,7 +41,6 @@ pub enum Event {
         title: String,
         body: String,
         author: Login,
-        /// The default branch after the merge.
         merge_commit: String,
         commits: Vec<CaseCommit>,
     },
@@ -80,8 +68,6 @@ pub struct CaseComment {
 const BASE_REF: &str = "refs/heads/linewright-base";
 const MERGE_REF: &str = "refs/heads/linewright-merge";
 
-/// Writes the case of `number` (a merged spec change or an issue) to `dir`,
-/// with the transcripts of the sessions that handled it from `sessions`.
 pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Path) -> Result<()> {
     if dir.exists() && std::fs::read_dir(dir)?.next().is_some() {
         bail!("{} is not empty", dir.display());
@@ -192,8 +178,6 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
     copy_sessions(&handled, sessions, dir)
 }
 
-/// Copies the records of the sessions that handled `subjects`, transcripts
-/// and all, from `sessions` to `transcripts/<subject>/` in the case `dir`.
 pub fn copy_sessions(subjects: &[Subject], sessions: &Path, dir: &Path) -> Result<()> {
     for subject in subjects {
         let name = subject_name(*subject);
@@ -205,8 +189,6 @@ pub fn copy_sessions(subjects: &[Subject], sessions: &Path, dir: &Path) -> Resul
     Ok(())
 }
 
-/// The tickets Linewright cut a spec change into: the sub-issues of its
-/// tracking issue.
 async fn tickets_of(
     github: &GitHub,
     linewright: &Login,
@@ -257,10 +239,8 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Runs the case in `case_dir` through the whole pipeline against a local
-/// store in `out`, until nothing is left to do. `out` ends up holding the
-/// store's final state as files and every session's record under
-/// `sessions/`.
+/// `out` ends up holding the store's final state as files and every
+/// session's record under `sessions/`.
 pub async fn replay(
     case_dir: &Path,
     out: &Path,

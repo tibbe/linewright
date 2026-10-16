@@ -1,10 +1,3 @@
-//! `lw explain N`: where issue or pull request #N stands and what
-//! Linewright waits for before it acts on it next, or why Linewright leaves
-//! it alone (`docs/specs/monitoring.md`, "explain"). `serve` answers it from
-//! its own view, with the waits the reconcile step derives, and for an item
-//! it does not track from #N read from the store; the command prints the
-//! answer.
-
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -22,7 +15,6 @@ use crate::status::{
 };
 use crate::store::AnyItem;
 
-/// The answer to `explain N`, as the local API sends it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Answer {
@@ -31,8 +23,6 @@ pub enum Answer {
     Tracked(Explanation),
 }
 
-/// The answer to `explain N`, as the local API sends it. Its fields keep
-/// their names and meanings (`docs/specs/monitoring.md`, "Output").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Explanation {
     pub number: Number,
@@ -41,7 +31,6 @@ pub struct Explanation {
     pub family: Family,
     #[serde(flatten)]
     pub standing: Standing,
-    /// When `serve` last read #N.
     pub last_read: Timestamp,
     pub waiting_for: Vec<Wait>,
     #[serde(flatten)]
@@ -49,7 +38,6 @@ pub struct Explanation {
 }
 
 impl Explanation {
-    /// The answer about #`number`, with `family`, in `standing`.
     fn new(
         number: Number,
         title: String,
@@ -71,11 +59,8 @@ impl Explanation {
     }
 }
 
-/// An item's runs: its run in flight, with its quiet time, and its latest
-/// [`PAST_RUNS_SHOWN`] past runs as `runs N` lists them
-/// (`docs/specs/monitoring.md`, "explain"). Its fields are private so
-/// that only `ItemRuns::of`, which cuts the past runs to the limit, and a
-/// read of its JSON that checks the cut make one.
+/// Its fields are private so that only `ItemRuns::of`, which cuts the past
+/// runs to the limit, and a read of its JSON that checks the cut make one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "ItemRunsAnswer", try_from = "ItemRunsAnswer")]
 pub struct ItemRuns {
@@ -87,12 +72,10 @@ pub struct ItemRuns {
 
 #[derive(Serialize, Deserialize)]
 struct ItemRunsAnswer {
-    /// The item whose runs they are, which `runs N` lists them for.
     runs_of: Number,
     run_in_flight: Option<RunInFlight>,
     /// Newest first.
     past_runs: Vec<Run>,
-    /// How many earlier past runs the limit left out.
     past_runs_left_out: usize,
 }
 
@@ -127,12 +110,9 @@ impl TryFrom<ItemRunsAnswer> for ItemRuns {
     }
 }
 
-/// How many past runs `explain` shows.
 pub const PAST_RUNS_SHOWN: usize = 3;
 
 impl ItemRuns {
-    /// The runs of #`item` at `now`, those `runs N` lists for it among
-    /// `recorded`: the one in flight in `view`, and the others.
     fn of(view: &View, recorded: &[Recorded], item: Number, now: Timestamp) -> ItemRuns {
         let of_item = runs::of_item(recorded, item);
         let run_in_flight = view
@@ -157,8 +137,6 @@ impl ItemRuns {
         }
     }
 
-    /// The runs as text, one per line, coloured with `paint`, ending with
-    /// how many past runs the limit left out and how to show them.
     fn lines(&self, paint: Paint) -> Vec<String> {
         let in_flight = self
             .run_in_flight
@@ -176,9 +154,6 @@ impl ItemRuns {
     }
 }
 
-/// #N's parents and children in the pipeline, which tie a pull request to
-/// issues by GitHub's closing references alone
-/// (`docs/specs/monitoring.md`, "explain").
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "FamilyAnswer", try_from = "FamilyAnswer")]
 pub struct Family {
@@ -189,7 +164,7 @@ pub struct Family {
 #[derive(Serialize, Deserialize)]
 struct FamilyAnswer {
     /// The first of `parents`, as answers named #N's parent before it could
-    /// have several (`docs/specs/monitoring.md`, "Output").
+    /// have several.
     parent: Option<Parent>,
     parents: Vec<Parent>,
     children: Vec<Child>,
@@ -223,8 +198,6 @@ impl TryFrom<FamilyAnswer> for Family {
 }
 
 impl Family {
-    /// The family of a pull request, open, closed or merged, whoever opened
-    /// it, closing the issues `closes`.
     fn of_pull(closes: &[Number]) -> Family {
         Family {
             parents: closes
@@ -238,10 +211,8 @@ impl Family {
         }
     }
 
-    /// The family of the merged pull request `pull`, with the tracking
-    /// issues Linewright filed for it `tracking_issues`: when it is a spec
-    /// change cut into tickets, its tracking issue, the newest, since a cut
-    /// discarded part way leaves an older one.
+    /// The tracking issue is the newest, since a cut discarded part way
+    /// leaves an older one.
     fn of_merged(pull: &MergedPull, tracking_issues: &[Number]) -> Family {
         let mut family = Family::of_pull(&pull.closes);
         if pull.has_label(label::SPEC_PROCESSED) {
@@ -255,10 +226,6 @@ impl Family {
         family
     }
 
-    /// The family of the issue `issue`: a ticket's tracking issue, or a
-    /// tracking issue's spec change and tickets; and the pull requests
-    /// that close it, as `snapshot` and the issue read them, the open ones
-    /// first.
     fn of_issue(issue: &Issue, snapshot: &Snapshot) -> Family {
         let mut family = match issue.filed {
             Some(Filed::Tracking { spec_change }) => Family {
@@ -309,7 +276,6 @@ impl Family {
         family
     }
 
-    /// The parents and children as text, one per line.
     fn lines(&self) -> Vec<String> {
         let parents = self
             .parents
@@ -323,7 +289,6 @@ impl Family {
     }
 }
 
-/// One of #N's parents, and what it is to #N.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Parent {
     pub number: Number,
@@ -333,16 +298,12 @@ pub struct Parent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ParentRole {
-    /// An issue pull request #N closes.
     IssueItCloses,
-    /// The tracking issue of ticket #N.
     TrackingIssue,
-    /// The spec change tracking issue #N tracks.
     SpecChange,
 }
 
 impl ParentRole {
-    /// What the parent is to #N, as text.
     fn describe(self) -> &'static str {
         match self {
             ParentRole::IssueItCloses => "an issue it closes",
@@ -352,7 +313,6 @@ impl ParentRole {
     }
 }
 
-/// One of #N's children, and what it is to #N.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Child {
     pub number: Number,
@@ -362,17 +322,12 @@ pub struct Child {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChildRole {
-    /// A pull request that closes issue #N, open, closed or merged, whoever
-    /// opened it.
     PullRequestClosingIt,
-    /// One of tracking issue #N's tickets.
     Ticket,
-    /// The tracking issue of spec change #N.
     TrackingIssue,
 }
 
 impl ChildRole {
-    /// What the child is to #N, as text.
     fn describe(self) -> &'static str {
         match self {
             ChildRole::PullRequestClosingIt => "a pull request that closes it",
@@ -382,24 +337,19 @@ impl ChildRole {
     }
 }
 
-/// Where #N is in the pipeline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Standing {
-    /// Linewright's open pull request it works on, briefed with the issue
-    /// `pull_request_for`, one it closes.
     PullRequest {
         pull_request_for: Number,
         #[serde(flatten)]
         review: InReview,
     },
-    /// An item Linewright tracks.
     Item(ItemState),
 }
 
-/// The answer about #`number` at `now`: an item Linewright tracks, or
-/// Linewright's open pull request it works on. `None` for any other number.
-/// Its runs are those `recorded` as `runs N` lists them.
+/// `None` unless #`number` is an item Linewright tracks or Linewright's
+/// open pull request it works on.
 pub fn explain(
     view: &View,
     recorded: &[Recorded],
@@ -441,8 +391,6 @@ pub fn explain(
     None
 }
 
-/// An item Linewright leaves alone, and why. Its fields keep their names and
-/// meanings (`docs/specs/monitoring.md`, "Output").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeftAlone {
     pub number: Number,
@@ -451,7 +399,6 @@ pub struct LeftAlone {
     pub family: Family,
     #[serde(flatten)]
     pub item: LeftAloneItem,
-    /// When `serve` read #N.
     pub last_read: Timestamp,
     #[serde(flatten)]
     pub runs: ItemRuns,
@@ -464,8 +411,6 @@ pub enum LeftAloneItem {
     PullRequest(LeftAlonePull),
 }
 
-/// An issue Linewright leaves alone: closed, or open and kept out by
-/// `left_alone`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum LeftAloneIssue {
@@ -473,21 +418,14 @@ pub enum LeftAloneIssue {
     Open { left_alone: OpenIssueExclusion },
 }
 
-/// Why Linewright leaves an open issue alone.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum OpenIssueExclusion {
-    /// A snapshot does not read it: it has none of the labels that bring an
-    /// issue in, and Linewright neither opened it nor is assigned to it.
     NotInView,
-    /// A snapshot reads it, and the rules that place an issue in the
-    /// pipeline keep it out.
     #[serde(untagged)]
     Held(IssueExclusion),
 }
 
-/// A pull request Linewright leaves alone: closed without merging, open and
-/// kept out by `left_alone`, or merged and no spec change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum LeftAlonePull {
@@ -496,25 +434,14 @@ pub enum LeftAlonePull {
     Merged { left_alone: NotSpecChange },
 }
 
-/// Why Linewright leaves an open pull request alone.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum PullExclusion {
-    /// Someone other than Linewright, `author`, opened it.
     NotLinewrights { author: Login },
-    /// It is Linewright's, closing no issue.
     ClosesNoIssue,
-    /// It is Linewright's for `issue`, which Linewright works on through its
-    /// newer pull request `by`.
     Superseded { issue: Number, by: Number },
 }
 
-/// The answer about `read`, #N as `serve` read it from the store at `now`
-/// because its view tracks no such item: where #N stands if the read places
-/// it in the pipeline after all, as a label applied since the last poll
-/// does, or else why Linewright leaves it alone, by the rules that decide
-/// what it tracks. Its runs are read from `recorded`, as [`explain`] reads
-/// them.
 pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Timestamp) -> Answer {
     let mut fresh = view.clone();
     let linewright = &view.policy.linewright;
@@ -608,10 +535,6 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
     })
 }
 
-/// Where the open pull request `pull`, read at `now`, stands in `view`, as
-/// Linewright's pull request it works on, with what it waits for, or why
-/// Linewright leaves it alone. It is worked because it is open, whatever
-/// the issue it is for (`docs/specs/pull_requests.md`, "The pull request").
 fn pull_standing(
     view: &View,
     recorded: &[Recorded],
@@ -645,8 +568,6 @@ fn pull_standing(
     ))
 }
 
-/// The answer as text, as [`render`] gives a tracked item's, and for an item
-/// Linewright leaves alone: where it is and why.
 pub fn render_answer(answer: &Answer, colour: bool) -> String {
     let left_alone = match answer {
         Answer::Tracked(explanation) => return render(explanation, colour),
@@ -691,7 +612,6 @@ pub fn render_answer(answer: &Answer, colour: bool) -> String {
     text
 }
 
-/// The labels `names`, quoted, as "`a`, `b` or `c`".
 fn one_of(names: &[&str]) -> String {
     let names: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
     match names.as_slice() {
@@ -700,8 +620,6 @@ fn one_of(names: &[&str]) -> String {
     }
 }
 
-/// Why Linewright leaves an open issue alone, as a phrase after "left
-/// alone:".
 fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> String {
     let exclusion = match exclusion {
         OpenIssueExclusion::NotInView => {
@@ -726,8 +644,6 @@ fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> String {
     }
 }
 
-/// Why Linewright leaves an open pull request alone, as a phrase after
-/// "left alone:".
 fn describe_pull_exclusion(exclusion: &PullExclusion) -> String {
     match exclusion {
         PullExclusion::NotLinewrights { author } => {
@@ -742,7 +658,6 @@ fn describe_pull_exclusion(exclusion: &PullExclusion) -> String {
     }
 }
 
-/// Why a merged pull request is no spec change, as a phrase.
 fn describe_not_spec_change(because: &NotSpecChange) -> String {
     match because {
         NotSpecChange::Linewrights => "Linewright opened it".into(),
@@ -774,8 +689,6 @@ fn describe_not_spec_change(because: &NotSpecChange) -> String {
     }
 }
 
-/// The answer as text: one fact per line as `label: value`, coloured if
-/// `colour` (`docs/specs/monitoring.md`, "Output").
 pub fn render(explanation: &Explanation, colour: bool) -> String {
     let paint = Paint(colour);
     let mut lines = vec![format!(

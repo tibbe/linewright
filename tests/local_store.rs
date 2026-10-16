@@ -1,8 +1,3 @@
-//! The local store, as the factory reads it through the store interface:
-//! what it reports of the changes made to it (`docs/specs/architecture.md`,
-//! "The store is an interface"; `CODING_STANDARDS.md`, "Internal
-//! libraries").
-
 mod common;
 
 use common::*;
@@ -10,7 +5,6 @@ use linewright::clock::Clock;
 use linewright::domain::{LabelChange, Number, Pull, Timestamp};
 use linewright::store::Store;
 
-/// Linewright's pull request as a snapshot taken now holds it.
 async fn snapshot_pull(world: &World, pr: Number) -> Pull {
     let snapshot = world.store.snapshot(Timestamp::MIN_UTC).await.unwrap();
     snapshot.pull(pr).expect("the snapshot holds it").clone()

@@ -1,7 +1,3 @@
-//! Claude Code as the agent runtime: one headless `claude -p` process per
-//! turn, without permission prompts, streaming JSON events. Docs:
-//! <https://code.claude.com/docs/en/headless>.
-
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -19,17 +15,14 @@ use crate::transcript::{self, StartedBy};
 
 pub struct ClaudeCode {
     pub program: String,
-    /// The `bash` every session runs its commands in, whatever shell the
-    /// operator uses (`docs/specs/operation.md`).
     pub bash: PathBuf,
-    /// `None` uses the runtime's default model.
     pub model: Option<String>,
-    /// The GitHub token sessions get, as `gh` reads it. `None` gives them
-    /// none, whatever Linewright's own environment holds.
+    /// `None` gives sessions none, whatever Linewright's own environment
+    /// holds.
     pub github_token: Option<String>,
 }
 
-/// The stream's last line: <https://code.claude.com/docs/en/headless#get-structured-output>.
+/// <https://code.claude.com/docs/en/headless#get-structured-output>
 #[derive(Deserialize)]
 struct ResultEvent {
     #[serde(default)]
@@ -44,8 +37,7 @@ struct ResultEvent {
     api_error_status: Option<serde_json::Value>,
 }
 
-/// The event Claude Code streams about the usage limit: as it refuses the
-/// session, and beside it as the limit nears. Its name is Claude Code's.
+/// Claude Code streams it as it refuses the session, and as the limit nears.
 #[derive(Deserialize)]
 struct RateLimitEvent {
     rate_limit_info: RateLimitInfo,
@@ -69,8 +61,6 @@ enum RateLimitStatus {
 }
 
 impl RateLimitEvent {
-    /// The usage limit the event refuses the session for, when it says
-    /// when the limit resets.
     fn refusal(&self) -> Option<UsageLimit> {
         match self.rate_limit_info {
             RateLimitInfo {
@@ -82,23 +72,16 @@ impl RateLimitEvent {
     }
 }
 
-/// What every turn reads: only the repository's configuration and agent
-/// instructions, beside managed policy, never the operator's user-level
-/// setup, and no memory of its own (`docs/specs/repository.md`).
 /// The settings outrank the repository's, so it cannot turn auto-memory back
-/// on. claude.ai connectors come with the operator's login and `CLAUDE.md`
-/// files with every directory above the clone, whatever the setting sources,
-/// so the settings turn those off too. Docs:
+/// on. claude.ai connectors and the `CLAUDE.md` files above the clone load
+/// whatever the setting sources, so the settings turn those off too:
 /// <https://code.claude.com/docs/en/agent-sdk/claude-code-features#what-settingsources-does-not-control>,
 /// <https://code.claude.com/docs/en/memory>.
 ///
-/// The settings also leave out what Claude Code bundles that no brief uses,
-/// so it does not fill the context of every session and sub-agent, nor
-/// compete with the plugin's skills. A tool is left out only by denying it
-/// by its bare name: <https://code.claude.com/docs/en/permissions>. A skill
-/// is left out by turning it off in `skillOverrides`, which takes it out of
-/// the listing a session sees, where a `Skill(name)` deny rule leaves it
-/// listed: <https://code.claude.com/docs/en/skills>.
+/// A tool is left out only by denying it by its bare name:
+/// <https://code.claude.com/docs/en/permissions>. A `Skill(name)` deny rule
+/// leaves the skill listed, so skills are turned off in `skillOverrides`:
+/// <https://code.claude.com/docs/en/skills>.
 fn isolation_args(clone: &Path) -> [String; 4] {
     let mut excludes = Vec::new();
     for dir in clone.ancestors().skip(1) {
@@ -128,12 +111,9 @@ fn isolation_args(clone: &Path) -> [String; 4] {
     ]
 }
 
-/// The skills Claude Code ships that `disableBundledSkills` keeps and no brief
-/// uses.
+/// Bundled skills that `disableBundledSkills` keeps.
 const UNUSED_SKILLS: [&str; 3] = ["design", "doctor", "plugin-authoring"];
 
-/// The tools no session uses: they ask a person, plan, schedule, message or
-/// switch worktrees, none of which a headless session in its own clone does.
 const UNUSED_TOOLS: [&str; 17] = [
     "AskUserQuestion",
     "CronCreate",
@@ -165,7 +145,6 @@ fn escape_glob(path: &str) -> String {
         .collect()
 }
 
-/// The session a turn is in, by its ID: one it starts, or one it resumes.
 #[derive(Clone, Copy)]
 enum Session<'a> {
     Start(&'a str),
@@ -186,7 +165,6 @@ impl<'a> Session<'a> {
         }
     }
 
-    /// The arguments that tell Claude Code which session the turn is in.
     fn args(self) -> [&'a str; 2] {
         match self {
             Session::Start(id) => ["--session-id", id],
@@ -254,10 +232,7 @@ impl ClaudeCode {
         if let Some(model) = &self.model {
             command.args(["--model", model]);
         }
-        // A session's GitHub token is the one it was built with, never one
-        // inherited: production sessions read GitHub and write to it only
-        // through their result, a rule the brief keeps, and replay sessions
-        // get none (`docs/specs/replay.md`).
+        // Never inherit a GitHub token from Linewright's environment.
         for variable in TOKEN_VARIABLES {
             match &self.github_token {
                 Some(token) => command.env(variable, token),
@@ -351,8 +326,6 @@ impl ClaudeCode {
                 message,
                 log_tail: log.tail(),
             }),
-            // A turn refused before the agent said anything left nothing to
-            // carry on from.
             _ if let Some(limit) = refusal => Err(SessionError::UsageLimit {
                 limit,
                 underway: underway.then_some(session),
@@ -399,9 +372,8 @@ fn assistant_text(event: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-/// Copies the runtime's own transcript of the session beside its record:
-/// `<config>/projects/<encoded cwd>/<session>.jsonl`
-/// (<https://code.claude.com/docs/en/sessions>).
+/// The transcript is at `<config>/projects/<encoded cwd>/<session>.jsonl`:
+/// <https://code.claude.com/docs/en/sessions>.
 async fn copy_transcript(session: &str, to: &Path) {
     let Some(config) = std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)

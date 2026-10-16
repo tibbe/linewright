@@ -1,8 +1,3 @@
-//! The system, end to end at the user's level: labeled issues and merged pull
-//! requests in, labels, comments and pull requests out, against fakes of
-//! GitHub, the agent runtime and the clock (`CODING_STANDARDS.md`, "Where
-//! tests go").
-
 mod common;
 
 use chrono::TimeDelta;
@@ -599,8 +594,6 @@ async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_r
     );
 }
 
-/// Runs a rework of the comments `authors` post, one each, on a ticket the
-/// maintainer is assigned, and returns who was asked for review.
 async fn reviewers_after_rework_of_comments_by(authors: &[&str]) -> Vec<Login> {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -704,8 +697,6 @@ async fn a_rework_that_makes_the_description_out_of_date_rewrites_it() {
     assert_eq!(view.body, format!("Does it, renamed.\n\nCloses {ticket}"));
 }
 
-/// A ticket for the factory, `claimed` or not, and a person's open pull
-/// request that closes it.
 async fn ticket_a_persons_pull_request_closes(world: &World, claimed: bool) -> (Number, Number) {
     implement(world);
     let ticket = world.store.open_issue(
@@ -841,8 +832,6 @@ async fn a_pull_request_closed_unmerged_hands_back_its_claimed_ticket_and_an_unc
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
 }
 
-/// How many comments on `issue` say the pull request #`pr` was closed
-/// without merging.
 fn refusals(world: &World, issue: Number, pr: Number) -> usize {
     let said = format!("{pr} was closed without merging");
     world
@@ -1123,9 +1112,6 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
     );
 }
 
-/// Checks that Linewright's pull request `pr` was handed back with the
-/// comment `comment`, and its ticket left as it was: labeled
-/// `ready-for-agent` and assigned to Linewright.
 async fn assert_handed_back(world: &World, ticket: Number, pr: Number, comment: &str) {
     assert_eq!(world.store.pull_labels(pr), ["ready-for-human"]);
     assert_eq!(
@@ -1427,8 +1413,6 @@ async fn a_pull_request_closed_without_merging_hands_its_ticket_back() {
     );
 }
 
-/// A ticket whose implementer committed part of the work and gave up, so
-/// that the work so far is on the ticket's branch, returned with the branch.
 async fn ticket_handed_back_with_its_branch(world: &mut World) -> (Number, String) {
     world.runtime.on(WorkKind::Implement, |call| {
         commit_in(&call.spec.dir, &[("src/partial.txt", "half\n")], "Start");
@@ -1571,10 +1555,6 @@ async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date() {
     );
 }
 
-/// A world on `repository` with the `update-branch` setting, if any, and a
-/// ticket in review whose pull request the default branch has moved past, in
-/// the file the pull request changes if `conflicting`. Its sessions on the
-/// pull request resolve conflicts as an agent would.
 async fn moved_past(
     repository: Repository,
     update_branch: Option<linewright::domain::UpdateMethod>,
@@ -1588,7 +1568,6 @@ async fn moved_past(
     .await
 }
 
-/// [`moved_past`], with the settings `adjust` makes.
 async fn moved_past_with(
     repository: Repository,
     adjust: impl FnOnce(&mut linewright::factory::FactoryConfig),
@@ -1616,8 +1595,6 @@ async fn moved_past_with(
     (world, pr)
 }
 
-/// Writes `files` in the session's clone and finishes the rebase or merge
-/// in progress, as an agent resolving a conflict would.
 fn resolve_in(dir: &std::path::Path, files: &[(&str, &str)]) {
     for (path, contents) in files {
         std::fs::write(dir.join(path), contents).unwrap();
@@ -1645,7 +1622,6 @@ fn resolve_in(dir: &std::path::Path, files: &[(&str, &str)]) {
     }
 }
 
-/// Runs `git` in the store's repository.
 fn store_git(world: &World, args: &[&str]) -> std::process::Output {
     std::process::Command::new("git")
         .args(args)
@@ -1654,7 +1630,6 @@ fn store_git(world: &World, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-/// Whether the store's repository has the branch `branch`.
 fn has_branch(world: &World, branch: &str) -> bool {
     let branch = format!("refs/heads/{branch}");
     store_git(world, &["rev-parse", "--verify", "--quiet", &branch])
@@ -1662,7 +1637,6 @@ fn has_branch(world: &World, branch: &str) -> bool {
         .success()
 }
 
-/// How many merge commits `branch` has that the default branch doesn't.
 fn merges(world: &World, branch: &str) -> usize {
     let output = store_git(
         world,
@@ -1680,14 +1654,12 @@ fn merges(world: &World, branch: &str) -> usize {
         .unwrap()
 }
 
-/// Whether `branch` still contains `commit`: its history wasn't rewritten.
 fn contains(world: &World, branch: &str, commit: &str) -> bool {
     store_git(world, &["merge-base", "--is-ancestor", commit, branch])
         .status
         .success()
 }
 
-/// The conflict instructions the sessions of `kind` were given.
 fn told_to_finish(world: &World, kind: WorkKind) -> Vec<&'static str> {
     world
         .runtime
@@ -1807,9 +1779,6 @@ async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
     assert_eq!(merges(&world, &view.head_ref), 0);
 }
 
-/// A person resolves the conflict between `branch` and the default branch in
-/// a merge commit, with `files` as the resolution, and pushes it: how #16's
-/// branch came to be impossible to rebase.
 async fn merge_default_branch_in(world: &World, branch: &str, files: &[(&str, &str)]) {
     use linewright::git;
 
@@ -1837,10 +1806,6 @@ async fn merge_default_branch_in(world: &World, branch: &str, files: &[(&str, &s
     .unwrap();
 }
 
-/// A world with the settings `adjust` makes and a ticket in review whose
-/// branch the default branch moved past in a conflict, which a person
-/// resolved in a merge commit, and the file resolved. The pull request is up
-/// to date but not rebaseable.
 async fn merged_in_conflict(
     adjust: impl FnOnce(&mut linewright::factory::FactoryConfig),
 ) -> (World, linewright::domain::Number, String) {
@@ -2017,8 +1982,6 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     assert_eq!(world.store.snapshot_pull(next).await.closes, [second]);
 }
 
-/// Runs a ticket to a green pull request with auto-merge on and the
-/// `merge-method` setting, if any.
 async fn auto_merged(
     repository: Repository,
     merge_method: Option<linewright::domain::MergeMethod>,
@@ -2329,8 +2292,6 @@ async fn with_auto_merge_a_merge_that_succeeds_on_the_retry_leaves_no_handback_o
     assert!(!issue.has_label("ready-for-human"));
 }
 
-/// Checks that the implementing run on `ticket`, refused for the usage
-/// limit, ended at once, logging the limit, and left the ticket as it was.
 fn assert_run_ended_keeping_its_claim(
     world: &World,
     ticket: linewright::domain::Number,
@@ -2478,8 +2439,6 @@ async fn a_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once_w
     assert!(world.store.pulls().is_empty());
 }
 
-/// A ticket implemented while every push fails, `git push` reporting
-/// `output`, after the poll that works it.
 async fn implemented_with_pushes_refused(output: &str) -> (World, linewright::domain::Number) {
     let mut world = World::new().await;
     implement(&world);

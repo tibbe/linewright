@@ -1,5 +1,3 @@
-//! The git operations of a run, on its own clone.
-
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -7,7 +5,6 @@ use tokio::process::Command;
 
 use crate::domain::{UpdateMethod, UpdateRule};
 
-/// Environment for git commands that reach the remote, such as credentials.
 pub type GitEnv = [(String, String)];
 
 pub async fn git(dir: &Path, args: &[&str]) -> Result<String> {
@@ -142,7 +139,6 @@ async fn update_with(dir: &Path, upstream: &str, method: UpdateMethod) -> Result
     }
 }
 
-/// The files the branch changes since it left `base`.
 pub async fn changed_files(dir: &Path, base: &str) -> Result<Vec<String>> {
     Ok(
         git(dir, &["diff", "--name-only", &format!("{base}...HEAD")])
@@ -160,8 +156,6 @@ pub async fn commits_ahead(dir: &Path, base: &str) -> Result<usize> {
         .parse()?)
 }
 
-/// What keeps the clone from being pushed as it is: uncommitted changes to
-/// tracked files, or a rebase or merge in progress.
 pub async fn unfinished(dir: &Path) -> Result<Option<String>> {
     for (path, what) in [
         ("rebase-merge", "a rebase is in progress"),

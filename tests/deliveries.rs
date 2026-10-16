@@ -1,8 +1,3 @@
-//! `serve` acting on webhook deliveries between polls, end to end: signed
-//! deliveries as GitHub sends them to the listener, a factory serving the
-//! local store and a scripted runtime, and what the user then sees
-//! (`docs/specs/webhooks.md`).
-
 mod common;
 
 use std::sync::Arc;
@@ -22,7 +17,6 @@ use serde_json::json;
 /// A poll interval no test waits out: what such a test sees, deliveries did.
 const NEVER: Duration = Duration::from_secs(3600);
 
-/// A world's factory serving, with webhooks on.
 struct Served {
     store: Arc<LocalStore>,
     runtime: Arc<ScriptedRuntime>,
@@ -67,8 +61,6 @@ impl Served {
         assert!(status.is_success(), "{event}: {status}");
     }
 
-    /// Delivers `body` as GitHub does with the webhook's content type left
-    /// at its default, `application/x-www-form-urlencoded`.
     async fn deliver_form_encoded(&self, event: &str, body: serde_json::Value) {
         let status = signed_form(&self.listener, event, &body.to_string()).await;
         assert!(status.is_success(), "{event}: {status}");
@@ -133,20 +125,14 @@ async fn an_issue_labeled_ready_for_agent_is_claimed_on_a_form_encoded_delivery(
     served.stop().await;
 }
 
-/// The payload GitHub sends with an `issues` or `issue_comment` delivery
-/// about the issue `number`, cut to what names it.
 fn about_issue(number: Number) -> serde_json::Value {
     json!({"issue": {"number": number.0}})
 }
 
-/// The payload GitHub sends with an `issue_comment` delivery about the pull
-/// request `number`, which GitHub names as an issue.
 fn about_pull_as_issue(number: Number) -> serde_json::Value {
     json!({"issue": {"number": number.0, "pull_request": {"url": "https://api.github.com/x"}}})
 }
 
-/// The payload GitHub sends with a `pull_request`, `pull_request_review` or
-/// `pull_request_review_comment` delivery about the pull request `number`.
 fn about_pull(number: Number) -> serde_json::Value {
     json!({"number": number.0, "pull_request": {"number": number.0}})
 }
@@ -246,8 +232,6 @@ async fn a_spec_change_merged_is_cut_into_tickets_on_the_delivery() {
     served.stop().await;
 }
 
-/// Feedback a person gives on a pull request, and the delivery GitHub sends
-/// for it.
 type Feedback = fn(&LocalStore, Number) -> (&'static str, serde_json::Value);
 
 #[tokio::test]
@@ -307,8 +291,6 @@ async fn feedback_on_linewrights_pull_request_is_addressed_on_the_delivery() {
     }
 }
 
-/// An agent runtime whose sessions run until they are stopped, counting
-/// those that started and those that stopped.
 #[derive(Default)]
 struct Endless {
     started: AtomicUsize,
@@ -440,8 +422,6 @@ async fn merging_linewrights_pull_request_works_the_ticket_it_unblocked_on_the_d
     assert!(!claimed(&served.store, blocked));
 
     served.store.merge_pull(pr).await.unwrap();
-    // GitHub sends one delivery for the merge and one for each issue it
-    // closes.
     served.deliver("pull_request", about_pull(pr)).await;
     served.deliver("issues", about_issue(ticket)).await;
 
@@ -540,13 +520,10 @@ async fn a_failed_read_for_a_delivery_is_logged_and_the_next_poll_catches_up() {
     served.stop().await;
 }
 
-/// The events GitHub sends a delivery of as CI reports on a commit.
 const CI_EVENTS: [&str; 3] = ["check_run", "check_suite", "status"];
 
-/// The payload GitHub sends with a delivery of `event`, one of
-/// [`CI_EVENTS`], about the commit `sha`, cut to what names it. The pull
-/// requests a check names are left empty, as GitHub leaves them for one from
-/// a fork.
+/// The pull requests a check names are left empty, as GitHub leaves them
+/// for one from a fork.
 fn about_commit(event: &str, sha: &str) -> serde_json::Value {
     match event {
         "check_run" => json!({"check_run": {"head_sha": sha, "pull_requests": []}}),
@@ -557,8 +534,6 @@ fn about_commit(event: &str, sha: &str) -> serde_json::Value {
 }
 
 impl Served {
-    /// CI reports a check `test` in `state` on the head of `pr`, and GitHub
-    /// sends a delivery of `event`, one of [`CI_EVENTS`], about it.
     async fn report_check(&self, pr: Number, state: CheckState, event: &str) {
         let check = check("test", state, "assertion failed: widgets == 2");
         self.store.set_checks(pr, vec![check]).await.unwrap();

@@ -1,9 +1,3 @@
-//! Under `serve` a session refused for the usage limit waits for the reset
-//! and carries on, and no session starts until then, end to end at the
-//! operator's level: a runtime that refuses sessions and a fake clock in,
-//! the issues, sessions, log and the limit in `serve`'s view out, against the
-//! local store (`docs/specs/operation.md`, "Usage limit").
-
 mod common;
 
 use std::path::PathBuf;
@@ -21,19 +15,15 @@ use linewright::store::Store;
 use linewright::webhook::Pending;
 use serde_json::json;
 
-/// Advances the fake clock to `minutes` past [`usage_limit_resets_at`].
 fn advance_past_the_reset(world: &World, minutes: i64) {
     advance_to(world, usage_limit_resets_at() + TimeDelta::minutes(minutes));
 }
 
-/// Advances the fake clock to `at`.
 fn advance_to(world: &World, at: Timestamp) {
     let now = world.clock.now();
     world.clock.advance(at - now);
 }
 
-/// The lines logged at `INFO` that say `phrase` and name the reset in
-/// [`usage_limit_resets_at`].
 fn info_naming_the_reset(log: &Log, phrase: &str) -> Vec<String> {
     log.lines("INFO")
         .into_iter()
@@ -53,7 +43,6 @@ fn open_ticket(world: &World, title: &str) -> Number {
         .open_issue("maintainer", title, "Please.", &["ready-for-agent"])
 }
 
-/// The subjects of the runs `actions` start.
 fn started(actions: &[Action]) -> Vec<Subject> {
     actions
         .iter()
@@ -64,13 +53,11 @@ fn started(actions: &[Action]) -> Vec<Subject> {
         .collect()
 }
 
-/// One turn of a session, as its script saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Seen {
     session: String,
     dir: PathBuf,
     followup: Option<String>,
-    /// The time the session had left as the turn began.
     left: Duration,
 }
 
@@ -88,7 +75,6 @@ fn see(turns: &Turns, call: &Call) -> usize {
     turns.len() - 1
 }
 
-/// A scripted turn's end.
 type Answer = Result<String, SessionError>;
 
 fn done() -> Answer {
@@ -112,9 +98,6 @@ fn implement_turns(world: &World, turns: Vec<fn(&Call) -> Answer>) -> Turns {
     seen
 }
 
-/// A serving world with a ticket (returned) whose implementing session is
-/// refused for the usage limit that resets at [`usage_limit_resets_at`]
-/// before its first turn began, and finishes after. Its run is waiting.
 async fn refused() -> (World, Number) {
     let mut world = World::serving().await;
     implement_turns(&world, vec![|_| refused_for_the_usage_limit()]);
@@ -123,8 +106,6 @@ async fn refused() -> (World, Number) {
     assert_eq!(world.clock.next_sleep().await, usage_limit_resets_at());
     (world, ticket)
 }
-
-// No session starts until the limit resets.
 
 #[tokio::test]
 async fn before_the_reset_a_poll_starts_no_run_and_claims_no_issue() {
@@ -287,8 +268,6 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
     assert_eq!(world.store.pulls().len(), 1);
 }
-
-// The refused session waits out the limit and carries on.
 
 #[tokio::test]
 async fn a_session_refused_part_way_resumes_after_the_reset_in_the_same_clone() {
@@ -539,8 +518,6 @@ async fn a_waiting_run_counts_against_max_runs_and_is_not_started_again() {
     assert_ne!(started[0], Subject::Issue(waiting));
 }
 
-// `once` and `workflow run` do not wait.
-
 #[tokio::test]
 async fn once_ends_the_refused_run_without_waiting() {
     let mut world = World::new().await;
@@ -554,16 +531,12 @@ async fn once_ends_the_refused_run_without_waiting() {
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
 }
 
-// What `status` shows of the usage limit: `serve`'s own.
-
-/// A world's factory serving, polling every few milliseconds.
 struct Served {
     world: World,
     serving: Serving,
 }
 
 impl Served {
-    /// Serves a fresh world's factory, as `serve` does, in place of `world`'s.
     async fn start(world: World) -> Served {
         let factory = Factory::start(
             world.store.clone(),
@@ -580,7 +553,6 @@ impl Served {
         Served { world, serving }
     }
 
-    /// The usage limit in `serve`'s view.
     fn usage_limit(&self) -> Option<UsageLimit> {
         self.serving
             .served

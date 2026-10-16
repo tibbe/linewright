@@ -1,10 +1,3 @@
-//! Configuration: every setting is a flag, a `LINEWRIGHT_<FLAG>` environment
-//! variable or a key in a TOML file, with precedence flag, environment, file,
-//! default (`docs/specs/operation.md`), parsed once into one typed value.
-//! Credentials are not settings: they come from the environment variables
-//! their tools already read, and the webhook secret from
-//! `LINEWRIGHT_WEBHOOK_SECRET`.
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -110,7 +103,6 @@ pub enum Command {
     },
 }
 
-/// Where `runs --since` starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Since {
     At(Timestamp),
@@ -118,7 +110,6 @@ pub enum Since {
 }
 
 impl Since {
-    /// The time it names, at `now`.
     pub fn at(self, now: Timestamp) -> Timestamp {
         match self {
             Since::At(at) => at,
@@ -263,10 +254,8 @@ pub enum LogFormat {
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Required by the commands that talk to GitHub; `replay` runs without.
     pub repo: Option<String>,
     pub poll_interval: Duration,
-    /// Set by the webhook secret; `serve` alone listens.
     pub webhooks: Option<Webhooks>,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
@@ -338,12 +327,10 @@ const KEYS: [&str; 19] = [
 ];
 
 impl Config {
-    /// The repository, which every command but `replay` needs.
     pub fn required_repo(&self) -> Result<&str> {
         self.repo.as_deref().context("set `repo` (owner/name)")
     }
 
-    /// The repository's work directory, as the monitoring commands find it.
     pub fn repo_work_dir(&self) -> Result<RepoWorkDir> {
         Ok(RepoWorkDir {
             base: self.work_dir.clone(),
@@ -351,9 +338,6 @@ impl Config {
         })
     }
 
-    /// Merges the layers: `settings` (flags), `env`, the config file
-    /// (relative to `cwd` by default), and the defaults. A value that is
-    /// wrong is blamed on the layer it came from.
     pub fn resolve(
         settings: &Settings,
         cwd: &Path,
@@ -370,8 +354,6 @@ impl Config {
                 .or_else(|| env(&variable))
                 .or_else(|| file.get(key).cloned())
         };
-        // The error that the settings `keys` hold a wrong value, blamed on
-        // the command line if it gave any of them.
         let blame = |keys: &[&str], error: anyhow::Error| {
             if keys.iter().any(|key| flags.contains_key(key)) {
                 ResolveError::CommandLine(error)
@@ -379,8 +361,6 @@ impl Config {
                 ResolveError::Elsewhere(error)
             }
         };
-        // Each setting is parsed once, into its type, naming the setting
-        // when its value is not one.
         let not_one = |key: &str, value: &str, error: anyhow::Error| {
             blame(
                 &[key],
@@ -511,7 +491,6 @@ impl Config {
     }
 }
 
-/// Why the settings do not resolve, by the layer the wrong value came from.
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
     /// A flag, or the file `--config` names, which cannot be read.
@@ -522,9 +501,6 @@ pub enum ResolveError {
     Elsewhere(anyhow::Error),
 }
 
-/// The config file's settings, as strings. An explicit `--config` must
-/// exist and be readable, or the command line is wrong; the default
-/// `linewright.toml` may not exist.
 fn read_file(
     explicit: Option<&Path>,
     cwd: &Path,
@@ -548,7 +524,6 @@ fn read_file(
     settings_in(&path, &text).map_err(ResolveError::Elsewhere)
 }
 
-/// The settings in `text`, the contents of the config file at `path`.
 fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
     let table: toml::Table = text
         .parse()

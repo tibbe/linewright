@@ -1,8 +1,3 @@
-//! The local API and `lw status`, end to end at the operator's
-//! level: a factory serving the local store with the API on a socket, and
-//! the `lw` program asking it (`docs/specs/monitoring.md`;
-//! `docs/specs/architecture.md`, "The local API").
-
 mod common;
 
 use std::os::unix::fs::PermissionsExt;
@@ -17,15 +12,11 @@ use tokio_util::sync::CancellationToken;
 
 const REPO: &str = "owner/widgets";
 
-/// A world's factory serving with the API answering on a socket under its
-/// own runtime directory, as `serve` does.
 struct Answering {
     serving: Serving,
     api: Api,
     listener: Option<Listener>,
-    /// Stands in for `XDG_RUNTIME_DIR`.
     runtime_dir: tempfile::TempDir,
-    /// The world's directory, which its store is in.
     _dir: tempfile::TempDir,
 }
 
@@ -86,8 +77,6 @@ impl Answering {
         }
     }
 
-    /// Runs `lw --repo owner/widgets` with `args`, as the operator
-    /// would on this host.
     async fn lw(&self, args: &[&str]) -> Output {
         lw(self.runtime_dir.path(), args).await
     }
@@ -101,7 +90,6 @@ impl Answering {
     }
 }
 
-/// Where the sockets go with `XDG_RUNTIME_DIR` set to `runtime_dir`.
 fn socket_dir(runtime_dir: &Path) -> std::path::PathBuf {
     api::socket_dir(Some(runtime_dir.to_path_buf()), Path::new("/unused"), 0)
 }
@@ -112,15 +100,11 @@ struct Output {
     stderr: String,
 }
 
-/// Runs `lw --repo owner/widgets` with `args` and `XDG_RUNTIME_DIR`
-/// set to `runtime_dir`, in an empty working directory.
 async fn lw(runtime_dir: &Path, args: &[&str]) -> Output {
     let args: Vec<&str> = ["--repo", REPO].iter().chain(args).copied().collect();
     lw_with(runtime_dir, &args, &[]).await
 }
 
-/// Runs `lw` with `args`, `env` and `XDG_RUNTIME_DIR` set to
-/// `runtime_dir`, in an empty working directory.
 async fn lw_with(runtime_dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     let cwd = tempfile::tempdir().unwrap();
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
@@ -139,8 +123,6 @@ async fn lw_with(runtime_dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Out
     }
 }
 
-/// Sends `GET resource` with `host` as its `Host` to the socket of the
-/// `serve` in `runtime_dir`, and returns the response's status and body.
 async fn get(runtime_dir: &Path, host: &str, resource: &str) -> (u16, String) {
     use http_body_util::BodyExt;
     let path = api::socket_path(&socket_dir(runtime_dir), REPO);
@@ -425,9 +407,6 @@ async fn a_wrong_setting_outside_the_command_line_exits_1() {
     assert!(output.stderr.contains("poll-interval"), "{}", output.stderr);
 }
 
-/// A world whose factory records its runs where `serve` and
-/// `lw --work-dir <dir>/work` look for those of `owner/widgets`,
-/// with an issue for triage, which triage readies.
 async fn with_issue_for_triage() -> World {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     world
@@ -804,12 +783,10 @@ async fn logs_gives_the_same_answer_with_serve_running_and_without() {
     );
 }
 
-/// The line of `text` that starts with `start`, if any.
 fn line_starting<'a>(text: &'a str, start: &str) -> Option<&'a str> {
     text.lines().find(|line| line.starts_with(start))
 }
 
-/// Whether `line` ends with a quiet time under a minute.
 fn quiet_for_seconds(line: &str) -> bool {
     line.rsplit_once("quiet for ")
         .is_some_and(|(_, quiet)| quiet.ends_with('s') && !quiet.contains(['m', 'h']))
@@ -822,7 +799,6 @@ async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_
     let clock = world.clock.clone();
     let answering = Answering::start(world, false).await;
     let run = "1/triage-1: #1 triage, running for ";
-    // Once its session has started.
     eventually_async(|| async {
         line_starting(&answering.lw(&["status"]).await.stdout, run)
             .is_some_and(|line| line.contains(", quiet for "))
@@ -891,9 +867,6 @@ async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_
     answering.stop().await;
 }
 
-/// `lw --repo owner/widgets` run with `args` in the background, as
-/// the operator would on this host, what it prints to standard output and
-/// error gathered as it prints it.
 struct Watching {
     child: tokio::process::Child,
     stdout: std::sync::Arc<std::sync::Mutex<String>>,
@@ -924,7 +897,6 @@ impl Watching {
         self.stdout.lock().unwrap().clone()
     }
 
-    /// Waits until it has shown `text`.
     async fn shows(&self, text: &str) {
         let shown = || self.shown().contains(text);
         let waited = tokio::time::timeout(Duration::from_secs(10), async {
@@ -936,8 +908,6 @@ impl Watching {
         assert!(waited.is_ok(), "{text:?} not in\n{}", self.shown());
     }
 
-    /// Waits for it to exit, and gives its exit status and what it printed
-    /// to standard output and error.
     async fn exits(mut self) -> (Option<i32>, String, String) {
         let status = tokio::time::timeout(Duration::from_secs(10), self.child.wait())
             .await
@@ -950,7 +920,6 @@ impl Watching {
     }
 }
 
-/// What `from` gives, gathered as it gives it.
 fn gathered(
     mut from: impl tokio::io::AsyncRead + Unpin + Send + 'static,
 ) -> std::sync::Arc<std::sync::Mutex<String>> {
@@ -969,7 +938,6 @@ fn gathered(
     gathered
 }
 
-/// The recorded session's first turn, line by line.
 fn turn_1() -> Vec<String> {
     include_str!("fixtures/transcript/turn-1.jsonl")
         .lines()
@@ -1008,7 +976,6 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     drop(agent);
     let (code, shown, _) = follow.exits().await;
 
-    // So far as `logs` shows it.
     assert_eq!(
         so_far,
         "run: 1/triage-1\n\
@@ -1030,10 +997,6 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     answering.stop().await;
 }
 
-/// A world whose factory records its runs where `serve` and
-/// `lw --work-dir <dir>/work` look for those of `owner/widgets`, with
-/// ticket #1 implemented as the pull request #2, which has a comment for
-/// rework to answer.
 async fn with_pull_request_for_rework() -> World {
     let mut world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     let (_, pr) = world.ticket_in_review().await;
@@ -1173,7 +1136,6 @@ async fn events(
     read
 }
 
-/// An event of a transcript's stream.
 fn event(id: Option<&str>, event: &str, data: &str) -> api::ServerEvent {
     api::ServerEvent {
         id: id.map(str::to_string),
@@ -1309,7 +1271,6 @@ async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_part_way_as
     );
 
     let follow = follow_through(&answering, runtime_dir.path());
-    // The transcript so far, so that what follows comes as it is followed.
     follow.shows("→ exit 0, 19 lines\n").await;
     let turn = turn_1();
     agent.writes(&turn[4..6].concat());
@@ -1323,9 +1284,6 @@ async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_part_way_as
     answering.stop().await;
 }
 
-/// A triage run under way, its turn written through its first Bash call,
-/// with the agent of the turn, the `serve` answering for it, and a runtime
-/// directory for a stand-in `serve`.
 async fn triage_under_way() -> (HeldTurn, Answering, tempfile::TempDir) {
     let world = with_issue_for_triage().await;
     let agent = world.runtime.hold();
@@ -1342,8 +1300,6 @@ async fn triage_under_way() -> (HeldTurn, Answering, tempfile::TempDir) {
     (agent, answering, tempfile::tempdir().unwrap())
 }
 
-/// `logs 1 --follow` asking the `serve` in `runtime_dir`, and reading the
-/// records of the one `answering` serves once none is running.
 fn follow_through(answering: &Answering, runtime_dir: &Path) -> Watching {
     let work_dir = answering._dir.path().join("work");
     Watching::start(
@@ -1358,9 +1314,6 @@ fn follow_through(answering: &Answering, runtime_dir: &Path) -> Watching {
     )
 }
 
-/// Checks that `follow` showed the transcript to the end of the run, which
-/// `answering` serves, the Bash call that returned once `serve` stopped
-/// included.
 async fn shows_the_rest_once_serve_stops(answering: &Answering, follow: Watching) {
     let (code, shown, stderr) = follow.exits().await;
 
@@ -1370,8 +1323,6 @@ async fn shows_the_rest_once_serve_stops(answering: &Answering, follow: Watching
     assert_eq!(shown.lines().last(), logs.lines().last(), "{shown}");
 }
 
-/// The socket of a stand-in for the `serve` in `runtime_dir`, and its
-/// listener.
 fn stand_in_socket(runtime_dir: &Path) -> (std::path::PathBuf, tokio::net::UnixListener) {
     let path = api::socket_path(&socket_dir(runtime_dir), REPO);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1379,18 +1330,15 @@ fn stand_in_socket(runtime_dir: &Path) -> (std::path::PathBuf, tokio::net::UnixL
     (path, listener)
 }
 
-/// When a stand-in `serve` stops.
 enum Stops {
-    /// As it is made its nth request, from 1.
+    /// From 1.
     AtRequest(usize),
     OnceCancelled(CancellationToken),
 }
 
-/// Stands in for the `serve` in `serving_dir`, in `runtime_dir`, passing
-/// each request on to it until it stops as `stops` says, as `serve` stops
-/// as it is asked. It then removes its socket and hangs up on the requests
-/// it was passing on, answered in part or not at all. Ends once it has
-/// stopped.
+/// Passes requests on to the `serve` in `serving_dir` until it stops, then,
+/// as a stopping `serve` does, removes its socket and hangs up on the
+/// requests still being answered.
 fn stops_as_asked(
     runtime_dir: &Path,
     serving_dir: &Path,
@@ -1496,7 +1444,6 @@ async fn logs_follow_json_verbose_carries_on_from_the_records_once_serve_stops()
     assert_eq!(lines[7]["tool_use_id"], "toolu_01WZp27kcvbZoQtwuKJUvLUt");
 }
 
-/// The files under `dir` whose paths end in `name`.
 fn files_named(dir: &Path, name: &str) -> Vec<std::path::PathBuf> {
     let mut found = vec![];
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -1548,7 +1495,6 @@ async fn logs_of_a_session_yet_to_write_anything_counts_it_as_started() {
     let world = with_issue_for_triage().await;
     let agent = world.runtime.hold();
     let answering = Answering::start(world, false).await;
-    // Its session started, its output still to come.
     let has_a_session = || {
         files_named(answering._dir.path(), "items/1/triage-1.json")
             .iter()
@@ -1578,7 +1524,6 @@ async fn logs_follow_of_a_session_yet_to_write_anything_shows_its_header_once() 
     let world = with_issue_for_triage().await;
     let agent = world.runtime.hold();
     let answering = Answering::start(world, false).await;
-    // Its session started, its output still to come.
     let has_a_session = || {
         files_named(answering._dir.path(), "items/1/triage-1.json")
             .iter()

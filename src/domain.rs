@@ -1,8 +1,3 @@
-//! The facts Linewright decides on: a snapshot of the store (see
-//! `docs/specs/architecture.md`, "The store is an interface"). Every machine state
-//! the spec names (claimed, in review) is derived from these facts, never
-//! stored.
-
 use std::fmt;
 
 use chrono::{DateTime, Utc};
@@ -10,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 pub type Timestamp = DateTime<Utc>;
 
-/// An issue or pull request number. GitHub numbers both from one sequence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Number(pub u64);
@@ -21,7 +15,6 @@ impl fmt::Display for Number {
     }
 }
 
-/// A GitHub account name.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Login(pub String);
@@ -31,7 +24,6 @@ impl Login {
         Login(login.into())
     }
 
-    /// GitHub Apps act as `<app>[bot]`.
     pub fn is_bot(&self) -> bool {
         self.0.ends_with("[bot]")
     }
@@ -40,7 +32,6 @@ impl Login {
         &self.0
     }
 
-    /// A person other than Linewright: someone to ask for a review.
     pub fn is_person_besides(&self, linewright: &Login) -> bool {
         self != linewright && !self.is_bot()
     }
@@ -52,7 +43,6 @@ impl fmt::Display for Login {
     }
 }
 
-/// The labels of `docs/specs/repository.md`.
 pub mod label {
     pub const NEEDS_TRIAGE: &str = "needs-triage";
     pub const NEEDS_INFO: &str = "needs-info";
@@ -62,22 +52,15 @@ pub mod label {
     pub const ENHANCEMENT: &str = "enhancement";
     pub const SPEC_PROCESSED: &str = "linewright:spec-processed";
 
-    /// The labels that say where an issue is in its lifecycle. An issue
-    /// handed from one state to another loses all the others.
     pub const STATES: [&str; 4] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT, READY_FOR_HUMAN];
 
-    /// The labels that bring an open issue into the store's snapshot,
-    /// besides being assigned to or opened by Linewright.
     pub const IN_VIEW: [&str; 3] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT];
 
-    /// The labels the maintainer answers a `ready-for-human` issue with
-    /// (`docs/specs/triage.md`, "Answers"), with what each asks for.
     pub const ANSWERS: [(&str, &str); 2] = [
         (READY_FOR_AGENT, "to implement it as decided"),
         (NEEDS_TRIAGE, "to triage it again"),
     ];
 
-    /// Every label Linewright creates at startup, with its description.
     pub const ALL: [(&str, &str); 7] = [
         (NEEDS_TRIAGE, "New, not yet assessed"),
         (NEEDS_INFO, "Waiting on the reporter"),
@@ -99,15 +82,12 @@ pub struct Comment {
     pub created_at: Timestamp,
 }
 
-/// Another issue an issue points at (a blocker or a sub-issue), with whether
-/// it is still open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Linked {
     pub number: Number,
     pub open: bool,
 }
 
-/// The issue timeline events the reconcile step reads.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum IssueEvent {
@@ -139,20 +119,15 @@ pub struct Issue {
     pub comments: Vec<Comment>,
     pub blocked_by: Vec<Linked>,
     pub sub_issues: Vec<Linked>,
-    /// The issue this one is a sub-issue of, if any.
     #[serde(default)]
     pub parent: Option<Parent>,
     pub events: Vec<IssueEvent>,
-    /// What the issue is for, if Linewright filed it.
     #[serde(default)]
     pub filed: Option<Filed>,
-    /// The pull requests that close the issue, open, closed or merged,
-    /// whoever opened them.
     #[serde(default)]
     pub closed_by: Vec<ClosingPull>,
 }
 
-/// A pull request that closes an issue: when merged, if it is open.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClosingPull {
     pub number: Number,
@@ -177,14 +152,10 @@ impl From<&Pull> for ClosingPull {
     }
 }
 
-/// What an issue Linewright filed is for. A store reads it from the issue's
-/// title and body once, when it builds the snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Filed {
-    /// The tracking issue of a spec change.
     Tracking { spec_change: Number },
-    /// A spec gap found while working on a ticket, which did not block it.
     SpecGap { ticket: Number },
 }
 
@@ -200,8 +171,6 @@ impl Filed {
     }
 }
 
-/// An issue's parent issue, with the spec change it tracks when it is a
-/// tracking issue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Parent {
     pub number: Number,
@@ -225,9 +194,6 @@ impl Issue {
         self.labels.iter().any(|l| l == label)
     }
 
-    /// The name of the branch a run on the issue as a ticket works on, one a
-    /// person could have chosen: the issue number and its title, as GitHub
-    /// names branches it creates for an issue.
     pub fn branch(&self) -> String {
         let mut slug = String::new();
         for c in self.title.chars() {
@@ -248,7 +214,6 @@ impl Issue {
         }
     }
 
-    /// Whether the issue is closed with no pull request open closing it.
     pub fn closed_with_no_open_pull(&self) -> bool {
         !self.open && !self.closed_by.iter().any(ClosingPull::is_open)
     }
@@ -266,50 +231,41 @@ pub enum PullState {
     Closed { at: Timestamp },
 }
 
-/// Whether the pull request's branch can merge into the default branch, as
-/// the store reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mergeability {
     Clean,
-    /// The default branch has commits the branch lacks.
     Behind,
     Conflicting,
-    /// The branch merges cleanly, but the default branch's rules hold the
-    /// merge until what they require is met: `requires`, as far as the store
-    /// can name it.
     Blocked {
         requires: Vec<Requirement>,
     },
-    /// Not computed yet. GitHub computes none for a draft.
+    /// GitHub computes none for a draft.
     Unknown,
 }
 
-/// Whether the store can rebase the pull request's commits onto the default
-/// branch, as it reports it: what merging it by rebase needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Rebaseability {
     Rebaseable,
     NotRebaseable,
-    /// Not computed yet.
     Unknown,
 }
 
-/// Something the default branch's rules require before a pull request
-/// merges
-/// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>).
+/// <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Requirement {
-    /// An approving review.
     Approval,
     /// An approving review from a code owner of the files changed: one of
     /// `owners`, those GitHub requested review from. Empty when they can't
     /// all be named.
-    CodeOwnerReview { owners: Vec<String> },
-    /// The required check `name`, passing.
-    Check { name: String },
+    CodeOwnerReview {
+        owners: Vec<String>,
+    },
+    Check {
+        name: String,
+    },
 }
 
 impl fmt::Display for Requirement {
@@ -336,7 +292,6 @@ pub enum CheckState {
     Failed,
 }
 
-/// A check run or commit status on the pull request's head.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Check {
     pub name: String,
@@ -360,8 +315,6 @@ pub struct Review {
     pub submitted_at: Timestamp,
 }
 
-/// A review thread on the diff. The store's id is what replies and
-/// resolutions address.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thread {
     pub id: String,
@@ -371,7 +324,6 @@ pub struct Thread {
 }
 
 impl Thread {
-    /// Who opened the thread.
     pub fn opened_by(&self) -> Option<&Login> {
         self.comments.first().map(|c| &c.author)
     }
@@ -383,7 +335,6 @@ pub struct Push {
     pub at: Timestamp,
 }
 
-/// A label applied to or removed from a pull request, and when.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LabelEvent {
     pub label: String,
@@ -408,9 +359,8 @@ pub struct Pull {
     pub head_ref: String,
     pub head_sha: String,
     pub state: PullState,
-    /// The issues the pull request closes when merged (`Closes #N`).
     pub closes: Vec<Number>,
-    /// Pushes to the head branch, oldest first.
+    /// Oldest first.
     pub pushes: Vec<Push>,
     pub mergeability: Mergeability,
     pub rebaseability: Rebaseability,
@@ -419,7 +369,7 @@ pub struct Pull {
     pub reviews: Vec<Review>,
     pub threads: Vec<Thread>,
     pub labels: Vec<String>,
-    /// When labels were applied and removed, oldest first.
+    /// Oldest first.
     pub label_events: Vec<LabelEvent>,
 }
 
@@ -433,8 +383,6 @@ impl Pull {
     }
 }
 
-/// An issue or pull request the store holds. GitHub numbers both from
-/// one sequence, but reads them differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Item {
     Issue(Number),
@@ -450,7 +398,6 @@ impl fmt::Display for Item {
     }
 }
 
-/// A pull request merged into the default branch: a candidate spec change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergedPull {
     pub number: Number,
@@ -460,9 +407,7 @@ pub struct MergedPull {
     pub merged_at: Timestamp,
     pub base_ref: String,
     pub labels: Vec<String>,
-    /// The issues the pull request closes when merged (`Closes #N`).
     pub closes: Vec<Number>,
-    /// The paths the pull request touched.
     pub files: Vec<String>,
 }
 
@@ -482,7 +427,6 @@ pub struct TicketBranchName {
 }
 
 impl TicketBranchName {
-    /// `name`, if a run on a ticket could have named a branch so.
     pub fn parse(name: &str) -> Option<Self> {
         let (number, slug) = name.split_once('-').unwrap_or((name, ""));
         let digits = |word: &str| !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit());
@@ -506,7 +450,6 @@ impl TicketBranchName {
         &self.name
     }
 
-    /// The issue the branch is named for.
     pub fn issue(&self) -> Number {
         self.issue
     }
@@ -526,37 +469,26 @@ impl From<TicketBranchName> for String {
     }
 }
 
-/// A branch a run on a ticket pushed: named for the issue, with a commit
-/// Linewright made at its head.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TicketBranch {
     pub name: TicketBranchName,
     pub issue: BranchIssue,
-    /// Whether a pull request is open from the branch, whoever opened it.
     pub open_pull_from_branch: bool,
 }
 
-/// Where a ticket branch's issue is read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BranchIssue {
-    /// The snapshot holds the issue.
     Held,
-    /// The snapshot leaves the issue out: this is it as read with the branch.
     Read(Box<Issue>),
 }
 
-/// A snapshot of the store: what one poll reconciles.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub default_branch: String,
-    /// Open issues Linewright may act on, and any others the store returns.
     pub issues: Vec<Issue>,
-    /// Pull requests by Linewright: open ones, and recently closed ones.
     pub pulls: Vec<Pull>,
-    /// Pull requests merged into the default branch since the lookback cutoff.
     pub merged: Vec<MergedPull>,
-    /// The branches Linewright pushed for tickets.
     #[serde(default)]
     pub ticket_branches: Vec<TicketBranch>,
 }
@@ -574,9 +506,6 @@ impl Snapshot {
         self.merged.iter().find(|p| p.number == number)
     }
 
-    /// The pull requests that close `issue`, open, closed or merged, whoever
-    /// opened them, in number order: those the snapshot holds, Linewright's,
-    /// as it holds them, and the others as the issue lists them.
     pub fn pulls_closing(&self, issue: &Issue) -> Vec<ClosingPull> {
         let held = self
             .pulls
@@ -593,11 +522,6 @@ impl Snapshot {
         pulls
     }
 
-    /// The branch a run on `issue` as a ticket works on: [`Issue::branch`],
-    /// unless a pull request the snapshot holds is open from it, as one that
-    /// stopped closing the issue is. Then the first of it suffixed `-2`,
-    /// `-3` and so on that none is open from, so that the run leaves that
-    /// pull request as it is.
     pub fn ticket_branch(&self, issue: &Issue) -> String {
         let base = issue.branch();
         let taken = |name: &str| self.pulls.iter().any(|p| p.is_open() && p.head_ref == name);
@@ -610,8 +534,6 @@ impl Snapshot {
         name
     }
 
-    /// Puts `issue`, read again, in place of the one the snapshot holds, or
-    /// beside the others.
     pub fn put_issue(&mut self, issue: Issue) {
         put(&mut self.issues, issue, |i| i.number);
     }
@@ -620,8 +542,6 @@ impl Snapshot {
         self.issues.retain(|i| i.number != number);
     }
 
-    /// Records whether the issue `number` is `open`, read again, where the
-    /// issues the snapshot holds link to it as a blocker or a sub-issue.
     pub fn relink(&mut self, number: Number, open: bool) {
         for issue in &mut self.issues {
             for linked in issue.blocked_by.iter_mut().chain(&mut issue.sub_issues) {
@@ -632,8 +552,6 @@ impl Snapshot {
         }
     }
 
-    /// Drops the links to the issue `number`, which the store no longer has,
-    /// from the issues the snapshot holds.
     pub fn unlink(&mut self, number: Number) {
         for issue in &mut self.issues {
             issue.blocked_by.retain(|linked| linked.number != number);
@@ -641,8 +559,6 @@ impl Snapshot {
         }
     }
 
-    /// The closed and merged pull requests the snapshot holds that close the
-    /// issue `number`.
     pub fn ended_pulls_closing(&self, number: Number) -> Vec<Number> {
         self.pulls
             .iter()
@@ -651,9 +567,6 @@ impl Snapshot {
             .collect()
     }
 
-    /// The issues the snapshot holds that the pull request `number` closes,
-    /// `closes` as it reads now, or closed while open, as the issues were
-    /// last read.
     pub fn issues_closing(&self, number: Number, closes: &[Number]) -> Vec<Number> {
         self.issues
             .iter()
@@ -667,8 +580,6 @@ impl Snapshot {
             .collect()
     }
 
-    /// Puts `pull`, read again, in place of the one the snapshot holds, or
-    /// beside the others.
     pub fn put_pull(&mut self, pull: Pull) {
         put(&mut self.pulls, pull, |p| p.number);
     }
@@ -677,8 +588,6 @@ impl Snapshot {
         self.pulls.retain(|p| p.number != number);
     }
 
-    /// Puts `pull`, read again, in place of the merged one the snapshot
-    /// holds, or beside the others.
     pub fn put_merged(&mut self, pull: MergedPull) {
         put(&mut self.merged, pull, |p| p.number);
     }
@@ -699,7 +608,6 @@ fn put<T>(items: &mut Vec<T>, item: T, number: impl Fn(&T) -> Number) {
     }
 }
 
-/// How a branch is brought up to date with the default branch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateMethod {
@@ -707,20 +615,14 @@ pub enum UpdateMethod {
     Merge,
 }
 
-/// Which method brings a branch up to date with the default branch
-/// (`docs/specs/pull_requests.md`, "Keeping up to date").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateRule {
     Always(UpdateMethod),
-    /// Merge, but rebase where the merge has a conflict to resolve: a
-    /// conflict resolved in a merge commit leaves the branch impossible to
-    /// rebase-merge.
+    /// Merge, but rebase where the merge has a conflict to resolve.
     RebaseOnConflict,
 }
 
-/// How a pull request is merged into the default branch, as GitHub's merge
-/// methods are named
-/// (<https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request>).
+/// <https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request>
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MergeMethod {
@@ -730,8 +632,7 @@ pub enum MergeMethod {
 }
 
 impl MergeMethod {
-    /// Every merge method, in the order Linewright prefers them
-    /// (`docs/specs/pull_requests.md`, "Auto-merge").
+    /// In the order Linewright prefers them.
     pub const ALL: [MergeMethod; 3] =
         [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase];
 }
@@ -758,7 +659,6 @@ impl std::str::FromStr for MergeMethod {
     }
 }
 
-/// The merge methods a repository allows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeMethods(Vec<MergeMethod>);
 
@@ -778,7 +678,6 @@ impl FromIterator<MergeMethod> for MergeMethods {
     }
 }
 
-/// As a phrase: "only `squash`", "`merge` and `rebase`".
 impl fmt::Display for MergeMethods {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let names: Vec<String> = self.0.iter().map(|m| format!("`{m}`")).collect();
@@ -790,21 +689,17 @@ impl fmt::Display for MergeMethods {
     }
 }
 
-/// A failing check, with what the store can tell about why it failed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckFailure {
     pub name: String,
     pub summary: String,
-    /// Its log, where it has one: a commit status has none.
+    /// A commit status has none.
     pub log: Option<CheckLog>,
 }
 
-/// What a fix session is given of a failing check's log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckLog {
-    /// The end of the output of the check's failed step.
     pub step_output: String,
-    /// Where to read the whole log, where the store can tell.
     pub full: Option<JobLog>,
 }
 
@@ -817,9 +712,7 @@ pub struct JobLog {
     pub job: u64,
 }
 
-/// The issues a pull request body closes when merged: GitHub's closing
-/// keywords followed by `#N`
-/// (<https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>).
+/// <https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>
 pub fn closing_references(body: &str) -> Vec<Number> {
     const KEYWORDS: [&str; 9] = [
         "close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved",
