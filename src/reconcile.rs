@@ -10,9 +10,10 @@ use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    CheckState, Comment, Filed, Issue, IssueEvent, Item, Linked, Login, MergeMethod, MergeMethods,
-    Mergeability, MergedPull, Number, Pull, PullState, Rebaseability, Requirement, Review,
-    ReviewState, Snapshot, Thread, Timestamp, UpdateMethod, UpdateRule, label,
+    BranchIssue, CheckState, Comment, Filed, Issue, IssueEvent, Item, Linked, Login, MergeMethod,
+    MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Rebaseability, Requirement,
+    Review, ReviewState, Snapshot, Thread, TicketBranchName, Timestamp, UpdateMethod, UpdateRule,
+    label,
 };
 use crate::marker::{Stage, marked, stage_of};
 use crate::runtime::UsageLimit;
@@ -443,6 +444,12 @@ pub enum Action {
         tracking: Number,
         tickets: Vec<Number>,
     },
+    /// Delete the branch a run pushed for a ticket that is closed with no
+    /// pull request open for it (`docs/specs/implementation.md`, "Working a
+    /// ticket").
+    DeleteBranch {
+        branch: TicketBranchName,
+    },
     /// Keep the workflows' last runs, which changed, under the work
     /// directory.
     RecordLastRuns(LastRuns),
@@ -626,6 +633,30 @@ pub fn decisions(
             for wait in labeled_waits(issue, policy) {
                 plan.wait(issue.number, wait);
             }
+        }
+    }
+
+    for branch in &snapshot.ticket_branches {
+        let number = branch.name.issue();
+        // An issue read since the branch was, by a refresh, is as the
+        // snapshot holds it; one that left the snapshot is not known closed.
+        let read = match &branch.issue {
+            BranchIssue::Held => None,
+            BranchIssue::Read(issue) => Some(&**issue),
+        };
+        let closed_with_no_pull = snapshot
+            .issue(number)
+            .or(read)
+            .is_some_and(Issue::closed_with_no_open_pull);
+        // Closing the ticket cancels its run, which pushes its work as it
+        // stops: the branch waits for the run to end.
+        if closed_with_no_pull
+            && !branch.open_pull_from_branch
+            && running(Subject::Issue(number)).is_none()
+        {
+            plan.act(Action::DeleteBranch {
+                branch: branch.name.clone(),
+            });
         }
     }
 

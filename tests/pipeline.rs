@@ -1167,6 +1167,119 @@ async fn a_pull_request_closed_without_merging_hands_its_ticket_back() {
     );
 }
 
+/// A ticket whose implementer committed part of the work and gave up, so
+/// that the work so far is on the ticket's branch, returned with the branch.
+async fn ticket_handed_back_with_its_branch(world: &mut World) -> (Number, String) {
+    world.runtime.on(WorkKind::Implement, |call| {
+        commit_in(&call.spec.dir, &[("src/partial.txt", "half\n")], "Start");
+        json(json!({"outcome": "gave-up", "reason": "Too hard."}))
+    });
+    let ticket = world
+        .store
+        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    world.poll().await;
+    let branch = format!("{}-gadgets", ticket.0);
+    assert!(has_branch(world, &branch), "the work so far is kept");
+    (ticket, branch)
+}
+
+#[tokio::test]
+async fn closing_a_ticket_with_no_open_pull_request_deletes_its_branch() {
+    let mut world = World::new().await;
+    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+
+    world.store.close_issue_as(ticket).unwrap();
+    world.poll().await;
+
+    assert!(!has_branch(&world, &branch));
+}
+
+#[tokio::test]
+async fn closing_a_ticket_whose_pull_request_is_open_leaves_its_branch() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    let branch = world.store.snapshot_pull(pr).await.head_ref;
+
+    world.store.close_issue_as(ticket).unwrap();
+    world.poll().await;
+
+    assert!(has_branch(&world, &branch));
+}
+
+#[tokio::test]
+async fn a_branch_named_for_a_closed_issue_whose_head_a_person_made_is_left() {
+    let mut world = World::new().await;
+    let issue = world.store.open_issue("maintainer", "Gadgets", "", &[]);
+    let branch = format!("{}-gadgets", issue.0);
+    world
+        .store
+        .commit(
+            "alice",
+            &branch,
+            &[("src/gadgets.txt", "gadgets\n")],
+            "Gadgets",
+        )
+        .await
+        .unwrap();
+
+    world.store.close_issue_as(issue).unwrap();
+    world.poll().await;
+
+    assert!(has_branch(&world, &branch));
+}
+
+#[tokio::test]
+async fn only_a_branch_named_as_linewright_names_a_closed_tickets_branch_is_deleted() {
+    let mut world = World::new().await;
+    let issue = world.store.open_issue("maintainer", "Gadgets", "", &[]);
+    let named = format!("{}-gadgets", issue.0);
+    let others = [
+        format!("0{}-gadgets", issue.0),
+        format!("{}--gadgets", issue.0),
+        format!("{}-Gadgets", issue.0),
+        "gadgets".to_string(),
+    ];
+    for branch in others.iter().chain([&named]) {
+        world
+            .store
+            .commit(
+                LINEWRIGHT,
+                branch,
+                &[("src/gadgets.txt", "gadgets\n")],
+                "Gadgets",
+            )
+            .await
+            .unwrap();
+    }
+
+    world.store.close_issue_as(issue).unwrap();
+    world.poll().await;
+
+    assert!(!has_branch(&world, &named));
+    for branch in &others {
+        assert!(has_branch(&world, branch), "{branch} is left");
+    }
+}
+
+#[tokio::test]
+async fn the_branch_of_a_ticket_closed_while_linewright_was_stopped_is_deleted_after_a_restart() {
+    let mut world = World::new().await;
+    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+
+    world.store.close_issue_as(ticket).unwrap();
+    world.factory = linewright::factory::Factory::start(
+        world.store.clone(),
+        world.runtime.clone(),
+        world.clock.clone(),
+        config(&world.dir.path().join("work")),
+    )
+    .await
+    .unwrap();
+    world.poll().await;
+
+    assert!(!has_branch(&world, &branch));
+}
+
 #[tokio::test]
 async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date() {
     let mut world = World::new().await;
@@ -1286,6 +1399,14 @@ fn store_git(world: &World, args: &[&str]) -> std::process::Output {
         .current_dir(world.store.repository())
         .output()
         .unwrap()
+}
+
+/// Whether the store's repository has the branch `branch`.
+fn has_branch(world: &World, branch: &str) -> bool {
+    let branch = format!("refs/heads/{branch}");
+    store_git(world, &["rev-parse", "--verify", "--quiet", &branch])
+        .status
+        .success()
 }
 
 /// How many merge commits `branch` has that the default branch doesn't.

@@ -108,6 +108,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
             issues,
             pulls,
             merged: vec![],
+            ticket_branches: vec![],
         }),
         opened_for: OpenedFor::default(),
         read_at: Default::default(),

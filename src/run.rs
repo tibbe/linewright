@@ -764,35 +764,13 @@ async fn keep_stopped_work(shell: &Shell, dir: &Path, upstream: &str, branch: &s
     Ok(())
 }
 
-/// A branch name a person could have chosen: the issue number and its
-/// title, as GitHub names branches it creates for an issue.
-fn branch_name(issue: &Issue) -> String {
-    let mut slug = String::new();
-    for c in issue.title.chars() {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c.to_ascii_lowercase());
-        } else if !slug.ends_with('-') {
-            slug.push('-');
-        }
-        if slug.len() >= 40 {
-            break;
-        }
-    }
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        format!("{}", issue.number.0)
-    } else {
-        format!("{}-{slug}", issue.number.0)
-    }
-}
-
 async fn implement(shell: &Shell, ctx: &Ctx, ticket: &Ticket<'_>) -> Result<(), Failure> {
     let purpose = Purpose::Work {
         subject: Subject::Issue(ticket.issue.number),
         kind: WorkKind::Implement,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    let branch = branch_name(ticket.issue);
+    let branch = ticket.issue.branch();
     git::create_branch(&ws.dir, &branch).await.map_err(infra)?;
     let upstream = shell.upstream();
     let prompt = prompts::implement(&shell.repo(), ticket, &branch);

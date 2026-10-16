@@ -65,6 +65,7 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
         issues,
         pulls: vec![],
         merged: vec![],
+        ticket_branches: vec![],
     }
 }
 
@@ -500,6 +501,111 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
         cancelled,
         [1, 2, 3, 4, 5].map(|n| Subject::Issue(Number(n))).to_vec()
     );
+}
+
+fn ticket_branch(number: u64, issue: BranchIssue) -> TicketBranch {
+    TicketBranch {
+        name: TicketBranchName::parse(&format!("{number}-gadgets")).unwrap(),
+        issue,
+        open_pull_from_branch: false,
+    }
+}
+
+/// `issue`, read with its branch and left out of the snapshot.
+fn read(issue: Issue) -> BranchIssue {
+    BranchIssue::Read(Box::new(issue))
+}
+
+fn closed_unpulled(number: u64) -> BranchIssue {
+    read(closed(ticket(number)))
+}
+
+fn closed(mut issue: Issue) -> Issue {
+    issue.open = false;
+    issue
+}
+
+fn deleted_branches(actions: Vec<Action>) -> Vec<String> {
+    actions
+        .into_iter()
+        .filter_map(|a| match a {
+            Action::DeleteBranch { branch } => Some(branch.into()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_branch_of_a_closed_ticket_is_deleted_unless_a_pull_request_is_open_for_it() {
+    let mut closed_by_pull = closed(ticket(2));
+    closed_by_pull.closed_by = vec![ClosingPull {
+        number: Number(20),
+        author: Login::new("alice"),
+        open: true,
+    }];
+    let mut closed_by_merged_pull = closed(ticket(7));
+    closed_by_merged_pull.closed_by = vec![ClosingPull {
+        number: Number(70),
+        author: Login::new("alice"),
+        open: false,
+    }];
+    let mut closed_by_open_pull = closed(ticket(6));
+    closed_by_open_pull.closed_by = closed_by_pull.closed_by.clone();
+    let mut world = snapshot(vec![
+        closed(ticket(1)),
+        closed_by_pull,
+        closed(ticket(3)),
+        ticket(4),
+        closed_by_merged_pull,
+    ]);
+    let mut pulled_from = ticket_branch(3, BranchIssue::Held);
+    pulled_from.open_pull_from_branch = true;
+    world.ticket_branches = vec![
+        ticket_branch(1, BranchIssue::Held),
+        ticket_branch(2, BranchIssue::Held),
+        pulled_from,
+        ticket_branch(4, BranchIssue::Held),
+        ticket_branch(5, closed_unpulled(5)),
+        ticket_branch(6, read(closed_by_open_pull)),
+        ticket_branch(7, BranchIssue::Held),
+        ticket_branch(8, read(ticket(8))),
+    ];
+
+    assert_eq!(
+        deleted_branches(decide(&world)),
+        ["1-gadgets", "5-gadgets", "7-gadgets"]
+    );
+}
+
+#[test]
+fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
+    let mut world = snapshot(vec![closed(claimed(ticket(1)))]);
+    world.ticket_branches = vec![ticket_branch(1, BranchIssue::Held)];
+
+    let actions = reconcile(
+        unrecorded(&world),
+        &[live(1, WorkKind::Implement)],
+        &Memory::default(),
+        &Workflows::default(),
+        t(10),
+        &policy(),
+    );
+
+    assert_eq!(deleted_branches(actions), Vec::<String>::new());
+}
+
+#[test]
+fn the_branch_of_a_ticket_read_again_is_kept_or_deleted_as_the_ticket_now_is() {
+    // Read closed with its branch, then reopened; read open with its branch,
+    // then closed; held with its branch, then left out of the snapshot.
+    let mut world = snapshot(vec![ticket(1), closed(ticket(2))]);
+    world.ticket_branches = vec![
+        ticket_branch(1, closed_unpulled(1)),
+        ticket_branch(2, BranchIssue::Held),
+        ticket_branch(3, BranchIssue::Held),
+    ];
+
+    assert_eq!(deleted_branches(decide(&world)), ["2-gadgets"]);
 }
 
 #[test]

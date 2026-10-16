@@ -256,7 +256,7 @@ pub trait Store: Send + Sync {
     async fn label_exists(&self, name: &str) -> Result<bool>;
 
     /// The facts one poll reconciles, with pull requests merged since
-    /// `merged_since`.
+    /// `merged_since` and every branch Linewright pushed for a ticket.
     async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot>;
     /// The issue as a snapshot taken now sees it.
     async fn issue(&self, number: Number) -> Result<IssueRead>;
@@ -295,6 +295,8 @@ pub trait Store: Send + Sync {
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
     /// Pushes `HEAD` of the clone in `dir` to `branch`.
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;
+    /// Deletes `branch`, if the repository has it.
+    async fn delete_branch(&self, branch: &str) -> Result<()>;
 
     async fn add_label(&self, number: Number, label: &str) -> Result<()>;
     /// Removes the label if the issue or pull request has it.

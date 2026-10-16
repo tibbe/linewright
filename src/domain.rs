@@ -213,6 +213,34 @@ impl Issue {
         self.labels.iter().any(|l| l == label)
     }
 
+    /// The name of the branch a run on the issue as a ticket works on, one a
+    /// person could have chosen: the issue number and its title, as GitHub
+    /// names branches it creates for an issue.
+    pub fn branch(&self) -> String {
+        let mut slug = String::new();
+        for c in self.title.chars() {
+            if c.is_ascii_alphanumeric() {
+                slug.push(c.to_ascii_lowercase());
+            } else if !slug.ends_with('-') {
+                slug.push('-');
+            }
+            if slug.len() >= 40 {
+                break;
+            }
+        }
+        let slug = slug.trim_matches('-');
+        if slug.is_empty() {
+            format!("{}", self.number.0)
+        } else {
+            format!("{}-{slug}", self.number.0)
+        }
+    }
+
+    /// Whether the issue is closed with no pull request open closing it.
+    pub fn closed_with_no_open_pull(&self) -> bool {
+        !self.open && !self.closed_by.iter().any(|p| p.open)
+    }
+
     pub fn is_assigned(&self, login: &Login) -> bool {
         self.assignees.contains(login)
     }
@@ -428,6 +456,80 @@ impl MergedPull {
     }
 }
 
+/// The name of a branch a run on a ticket could have pushed: one
+/// [`Issue::branch`] gives under any title the issue has had.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct TicketBranchName {
+    name: String,
+    issue: Number,
+}
+
+impl TicketBranchName {
+    /// `name`, if a run on a ticket could have named a branch so.
+    pub fn parse(name: &str) -> Option<Self> {
+        let (number, slug) = name.split_once('-').unwrap_or((name, ""));
+        let digits = |word: &str| !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit());
+        let word = |word: &str| {
+            !word.is_empty()
+                && word
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        };
+        let named = digits(number)
+            && !number.starts_with('0')
+            && (slug.is_empty() || slug.split('-').all(word));
+        let issue = named.then(|| number.parse().ok()).flatten()?;
+        Some(Self {
+            name: name.to_string(),
+            issue: Number(issue),
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.name
+    }
+
+    /// The issue the branch is named for.
+    pub fn issue(&self) -> Number {
+        self.issue
+    }
+}
+
+impl TryFrom<String> for TicketBranchName {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        Self::parse(&name).ok_or_else(|| format!("{name} names no ticket's branch"))
+    }
+}
+
+impl From<TicketBranchName> for String {
+    fn from(name: TicketBranchName) -> String {
+        name.name
+    }
+}
+
+/// A branch a run on a ticket pushed: named for the issue, with a commit
+/// Linewright made at its head.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TicketBranch {
+    pub name: TicketBranchName,
+    pub issue: BranchIssue,
+    /// Whether a pull request is open from the branch, whoever opened it.
+    pub open_pull_from_branch: bool,
+}
+
+/// Where a ticket branch's issue is read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BranchIssue {
+    /// The snapshot holds the issue.
+    Held,
+    /// The snapshot leaves the issue out: this is it as read with the branch.
+    Read(Box<Issue>),
+}
+
 /// A snapshot of the store: what one poll reconciles.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -438,6 +540,9 @@ pub struct Snapshot {
     pub pulls: Vec<Pull>,
     /// Pull requests merged into the default branch since the lookback cutoff.
     pub merged: Vec<MergedPull>,
+    /// The branches Linewright pushed for tickets.
+    #[serde(default)]
+    pub ticket_branches: Vec<TicketBranch>,
 }
 
 impl Snapshot {

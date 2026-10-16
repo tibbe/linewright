@@ -19,10 +19,10 @@ use super::{
 };
 use crate::clock::Clock;
 use crate::domain::{
-    Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent,
-    LabelChange, LabelEvent, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull,
-    Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState,
-    Snapshot, Thread, Timestamp, closing_references,
+    BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue,
+    IssueEvent, LabelChange, LabelEvent, Linked, Login, MergeMethod, MergeMethods, Mergeability,
+    MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review,
+    ReviewState, Snapshot, Thread, TicketBranch, TicketBranchName, Timestamp, closing_references,
 };
 use crate::git;
 
@@ -757,6 +757,42 @@ impl LocalStore {
         }
     }
 
+    /// The branches named for an issue the store has whose head commit
+    /// Linewright made, as its committer. A snapshot holds every issue.
+    async fn ticket_branches(&self) -> Result<Vec<TicketBranch>> {
+        let heads = git::git(
+            &self.repository(),
+            &[
+                "for-each-ref",
+                "--format=%(refname:lstrip=2)%09%(committername)",
+                "refs/heads",
+            ],
+        )
+        .await?;
+        let state = self.state();
+        Ok(heads
+            .lines()
+            .filter_map(|line| {
+                let (name, committer) = line.split_once('\t')?;
+                let branch = TicketBranchName::parse(name)?;
+                if committer != state.linewright.as_str()
+                    || !state.issues.contains_key(&branch.issue())
+                {
+                    return None;
+                }
+                let open_pull_from_branch = state
+                    .pulls
+                    .values()
+                    .any(|p| p.is_open() && p.head_ref == name);
+                Some(TicketBranch {
+                    name: branch,
+                    issue: BranchIssue::Held,
+                    open_pull_from_branch,
+                })
+            })
+            .collect())
+    }
+
     async fn pull_diff(&self, pr: Number) -> Result<String> {
         let (merge, head_ref, default_branch) = {
             let mut state = self.state();
@@ -1141,6 +1177,7 @@ impl Store for LocalStore {
             issues,
             pulls: vec![],
             merged: vec![],
+            ticket_branches: self.ticket_branches().await?,
         };
         for (number, author) in pulls {
             if let Some(merged) = self.merged_pull(number, merged_since).await? {
@@ -1349,6 +1386,13 @@ impl Store for LocalStore {
         git::git(dir, &args).await.map_err(PushError::from_git)?;
         let linewright = self.state().linewright.clone();
         self.record_push(branch, &linewright);
+        Ok(())
+    }
+
+    async fn delete_branch(&self, branch: &str) -> Result<()> {
+        // Deleting a ref the repository lacks succeeds.
+        let refname = format!("refs/heads/{branch}");
+        git::git(&self.repository(), &["update-ref", "-d", &refname]).await?;
         Ok(())
     }
 

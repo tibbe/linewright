@@ -695,6 +695,20 @@ impl Factory {
                     store.close_issue(*issue, CloseReason::NotPlanned).await?;
                 }
             }
+            Action::DeleteBranch { branch } => {
+                info!(
+                    branch = branch.as_str(),
+                    "deleting the branch of a closed ticket"
+                );
+                store.delete_branch(branch.as_str()).await?;
+                // A refresh before the next poll decides on the kept
+                // snapshot, which must not hold the branch any more.
+                if let Some(latest) = &mut self.kept {
+                    Arc::make_mut(&mut latest.snapshot)
+                        .ticket_branches
+                        .retain(|b| b.name != *branch);
+                }
+            }
             Action::RecordLastRuns(last_runs) => {
                 self.last_runs = last_runs.clone();
                 last_runs.save(&self.shell.work_dir)?;
@@ -935,6 +949,7 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         | Action::Cancel { .. }
         | Action::RememberRebase(_)
         | Action::ForgetFailedMerges { .. }
+        | Action::DeleteBranch { .. }
         | Action::RecordLastRuns(_)
         | Action::RunWorkflow(_) => vec![],
     }

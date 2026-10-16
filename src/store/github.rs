@@ -21,10 +21,10 @@ use super::{
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
-    Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent,
-    JobLog, LabelChange, LabelEvent, Linked, Login, MergeMethod, Mergeability, MergedPull, Number,
-    Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState, Snapshot,
-    Thread, Timestamp, label,
+    BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue,
+    IssueEvent, JobLog, LabelChange, LabelEvent, Linked, Login, MergeMethod, Mergeability,
+    MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review,
+    ReviewState, Snapshot, Thread, TicketBranch, TicketBranchName, Timestamp, label,
 };
 use crate::git;
 
@@ -325,6 +325,67 @@ impl GitHub {
             pulls.extend(page.nodes);
             if !page.page_info.has_next_page {
                 return Ok(pulls);
+            }
+            cursor = json!(page.page_info.end_cursor);
+        }
+    }
+
+    /// The branches named for an issue whose head commit Linewright made, as
+    /// its committer, each with its issue read unless `open_in_view`, the
+    /// issues the snapshot holds, has it.
+    async fn ticket_branches(
+        &self,
+        open_in_view: &BTreeMap<u64, GqlIssue>,
+    ) -> Result<Vec<TicketBranch>> {
+        // <https://docs.github.com/en/graphql/reference/objects#ref>
+        let query = "query($owner: String!, $name: String!, $cursor: String) {
+              repository(owner: $owner, name: $name) {
+                refs(refPrefix: \"refs/heads/\", first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    name
+                    target { ... on Commit { committer { user { login } } } }
+                    associatedPullRequests(states: [OPEN], first: 1) { totalCount }
+                  }
+                }
+              }
+            }";
+        #[derive(Deserialize)]
+        struct Refs {
+            refs: Page<GqlRef>,
+        }
+        let mut branches = vec![];
+        let mut cursor = Value::Null;
+        loop {
+            let data: RepoData<Refs> = self
+                .graphql(
+                    query,
+                    json!({"owner": self.owner, "name": self.name, "cursor": cursor}),
+                )
+                .await?;
+            let page = data.repository.refs;
+            for branch in page.nodes {
+                let Some(name) = branch.pushed_for(&self.viewer.login) else {
+                    continue;
+                };
+                let issue = if open_in_view.contains_key(&name.issue().0) {
+                    BranchIssue::Held
+                } else {
+                    // No issue, as when the number is a pull request's, names
+                    // no ticket.
+                    let Some(read) = self.gql_issue(name.issue()).await? else {
+                        continue;
+                    };
+                    BranchIssue::Read(Box::new(read.into_issue(&self.linewright())))
+                };
+                branches.push(TicketBranch {
+                    open_pull_from_branch: branch.open_pull(),
+                    name,
+                    issue,
+                });
+            }
+            if !page.page_info.has_next_page {
+                return Ok(branches);
             }
             cursor = json!(page.page_info.end_cursor);
         }
@@ -739,6 +800,65 @@ struct Actor {
     #[serde(rename = "__typename")]
     typename: String,
     login: String,
+}
+
+/// A branch as the refs query returns it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlRef {
+    name: String,
+    target: Option<GqlRefTarget>,
+    associated_pull_requests: Count,
+}
+
+#[derive(Deserialize)]
+struct GqlRefTarget {
+    committer: Option<GqlCommitter>,
+}
+
+#[derive(Deserialize)]
+struct GqlCommitter {
+    user: Option<LoginNode>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Count {
+    total_count: u64,
+}
+
+impl GqlRef {
+    /// The branch's name, if a run on a ticket pushed it: if it is named for
+    /// the issue and the committer of its head commit is `linewright`.
+    fn pushed_for(&self, linewright: &str) -> Option<TicketBranchName> {
+        let name = TicketBranchName::parse(&self.name)?;
+        let committer = self.target.as_ref()?.committer.as_ref()?.user.as_ref()?;
+        (committer.login == linewright).then_some(name)
+    }
+
+    /// Whether a pull request is open from the branch.
+    fn open_pull(&self) -> bool {
+        self.associated_pull_requests.total_count > 0
+    }
+}
+
+/// The outcome of deleting a branch, from GitHub's answer: `status` and its
+/// `body`. A branch GitHub does not have is deleted already; GitHub answers
+/// 422 for it, as it does for a branch it refuses to delete
+/// (<https://docs.github.com/en/rest/git/refs#delete-a-reference>).
+fn branch_deleted(branch: &str, status: StatusCode, body: &str) -> Result<()> {
+    #[derive(Deserialize)]
+    struct Error {
+        message: String,
+    }
+    let missing = || {
+        serde_json::from_str::<Error>(body).is_ok_and(|e| e.message == "Reference does not exist")
+    };
+    if status.is_success() || (status == StatusCode::UNPROCESSABLE_ENTITY && missing()) {
+        Ok(())
+    } else {
+        bail!("deleting branch {branch}: {status}: {body}")
+    }
 }
 
 /// `text` as one segment of a URL's path or a query value.
@@ -1621,6 +1741,7 @@ impl Store for GitHub {
             pulls.push(self.pull(Number(number)).await?);
         }
         Ok(Snapshot {
+            ticket_branches: self.ticket_branches(&issues).await?,
             merged: self.merged_since(&default_branch, merged_since).await?,
             default_branch,
             issues: issues
@@ -2000,6 +2121,15 @@ impl Store for GitHub {
         .await
         .map_err(PushError::from_git)?;
         Ok(())
+    }
+
+    async fn delete_branch(&self, branch: &str) -> Result<()> {
+        let path = format!("/git/refs/heads/{}", percent_encode(branch));
+        let response = self
+            .send(Method::DELETE, &self.repo_path(&path), None)
+            .await?;
+        let status = response.status();
+        branch_deleted(branch, status, &response.text().await?)
     }
 
     async fn add_label(&self, number: Number, label: &str) -> Result<()> {
