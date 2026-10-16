@@ -238,11 +238,20 @@ impl ScriptedRuntime {
             reason: format!("no script for {key:?}"),
             log_tail: String::new(),
         })?;
-        let message = script(&Call {
+        let call = Call {
             spec,
             session: &session,
             followup,
-        })?;
+        };
+        // A script may block, waiting for its test to let it go on. On a
+        // multi-threaded runtime it gives up its worker meanwhile, else the
+        // tasks queued on that worker wait with it.
+        let message = match tokio::runtime::Handle::current().runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| script(&call))
+            }
+            _ => script(&call),
+        }?;
         Ok(Turn {
             session,
             message,
