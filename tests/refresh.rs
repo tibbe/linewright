@@ -42,7 +42,7 @@ async fn an_issue_labeled_ready_for_agent_and_refreshed_after_a_poll_is_claimed_
 #[tokio::test(flavor = "multi_thread")]
 async fn refreshing_an_issue_closed_since_the_poll_cancels_its_run() {
     let mut world = World::new().await;
-    let release = gated(&world, WorkKind::Implement);
+    let gate = gated(&world, WorkKind::Implement);
     let issue = world.store.open_issue(
         "maintainer",
         "Do the thing",
@@ -61,7 +61,7 @@ async fn refreshing_an_issue_closed_since_the_poll_cancels_its_run() {
             reason: format!("{issue} was closed"),
         }]
     );
-    release.send(()).unwrap();
+    gate.release();
     world.factory.settle().await;
 }
 
@@ -96,7 +96,7 @@ async fn a_ticket_a_persons_pull_request_opened_since_the_poll_closes_waits_for_
 {
     let mut world = World::with(|config| config.max_runs = 1).await;
     implement(&world);
-    let release = gated(&world, WorkKind::Triage);
+    let gate = gated(&world, WorkKind::Triage);
     world
         .store
         .open_issue("reporter", "It broke", "It crashes.", &["needs-triage"]);
@@ -109,7 +109,7 @@ async fn a_ticket_a_persons_pull_request_opened_since_the_poll_closes_waits_for_
     // The triage run takes the only free run, so the ticket waits for one.
     world.factory.cycle().await.unwrap();
     let theirs = world.persons_pull_closing(issue).await;
-    release.send(()).unwrap();
+    gate.release();
     world.factory.settle().await;
 
     let actions = world.factory.refresh([Item::Pull(theirs)]).await.unwrap();
@@ -460,18 +460,37 @@ async fn refresh(world: &mut World, item: Item) -> Vec<Action> {
     world.factory.refresh([item]).await.unwrap()
 }
 
-/// Sessions of `kind` wait until the returned sender sends, then fail.
-fn gated(world: &World, kind: WorkKind) -> mpsc::Sender<()> {
+/// Sessions of `kind`, held at a gate until it is released, then failing.
+struct Gate {
+    release: mpsc::Sender<()>,
+    begun: tokio::sync::mpsc::UnboundedReceiver<()>,
+}
+
+impl Gate {
+    /// Waits for a session's turn to reach the gate, its prompt given.
+    async fn begun(&mut self) {
+        self.begun.recv().await.unwrap();
+    }
+
+    /// Lets a turn at the gate go on, to fail.
+    fn release(&self) {
+        self.release.send(()).unwrap();
+    }
+}
+
+fn gated(world: &World, kind: WorkKind) -> Gate {
     let (release, released) = mpsc::channel();
     let released = Mutex::new(released);
+    let (begin, begun) = tokio::sync::mpsc::unbounded_channel();
     world.runtime.on(kind, move |_| {
+        let _ = begin.send(());
         released.lock().unwrap().recv().unwrap();
         Err(linewright::runtime::SessionError::Failed {
             reason: "released".into(),
             log_tail: String::new(),
         })
     });
-    release
+    Gate { release, begun }
 }
 
 /// A person's pull request changing the spec, merged.
@@ -598,7 +617,7 @@ async fn a_ticket_losing_its_label_or_linewright_while_its_pull_request_is_worke
         .store
         .comment_as("maintainer", pr, "Rename it.")
         .unwrap();
-    let release = gated(&world, WorkKind::Rework);
+    let gate = gated(&world, WorkKind::Rework);
     world.factory.cycle().await.unwrap();
 
     world.store.unlabel_as(ticket, "ready-for-agent").unwrap();
@@ -609,7 +628,7 @@ async fn a_ticket_losing_its_label_or_linewright_while_its_pull_request_is_worke
     let actions = world.factory.refresh([Item::Issue(ticket)]).await.unwrap();
 
     assert_eq!(actions, []);
-    release.send(()).unwrap();
+    gate.release();
     world.factory.settle().await;
 }
 
@@ -621,8 +640,9 @@ async fn labeling_a_pull_request_ready_for_human_cancels_its_run_and_its_work_un
         .store
         .comment_as("maintainer", pr, "Rename it.")
         .unwrap();
-    let release = gated(&world, WorkKind::Rework);
+    let mut gate = gated(&world, WorkKind::Rework);
     world.factory.cycle().await.unwrap();
+    gate.begun().await;
 
     world.store.label_as(pr, "ready-for-human").unwrap();
     let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
@@ -634,12 +654,11 @@ async fn labeling_a_pull_request_ready_for_human_cancels_its_run_and_its_work_un
             reason: format!("{pr} was labeled `ready-for-human`"),
         }]
     );
-    release.send(()).unwrap();
+    gate.release();
     world.factory.settle().await;
     world.poll().await;
-    // A turn's prompt is recorded once it returns: the cancelled one never
-    // did, and no other started.
-    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 0);
+    // The cancelled turn was given its prompt, and no other started.
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
     assert!(
         !world
             .store
@@ -655,5 +674,5 @@ async fn labeling_a_pull_request_ready_for_human_cancels_its_run_and_its_work_un
     world.rework_asked(pr);
     world.store.unlabel_as(pr, "ready-for-human").unwrap();
     world.poll().await;
-    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 2);
 }
