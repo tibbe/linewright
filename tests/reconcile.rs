@@ -3,7 +3,6 @@
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
-use linewright::marker::{Stage, marked};
 use linewright::reconcile::*;
 use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
@@ -99,11 +98,7 @@ fn comment(author: &str, minute: i64, body: &str) -> Comment {
 }
 
 fn triage_comment(minute: i64) -> Comment {
-    comment(
-        LINEWRIGHT,
-        minute,
-        &marked(Stage::Triage, "What version are you on?"),
-    )
+    comment(LINEWRIGHT, minute, "What version are you on?")
 }
 
 #[test]
@@ -125,10 +120,14 @@ fn a_reply_to_needs_info_sends_the_issue_back_to_triage() {
 }
 
 #[test]
-fn a_reply_to_a_question_without_a_marker_line_sends_the_issue_back_to_triage() {
+fn a_reply_to_a_question_opening_with_the_old_marker_line_sends_the_issue_back_to_triage() {
     let mut asked = labeled(issue(1), label::NEEDS_INFO);
     asked.comments = vec![
-        comment(LINEWRIGHT, 1, "What version are you on?"),
+        comment(
+            LINEWRIGHT,
+            1,
+            "> *Linewright, triage*\n\nWhat version are you on?",
+        ),
         comment("maintainer", 2, "Version 3, I checked."),
     ];
 
@@ -159,21 +158,14 @@ fn needs_info_waits_while_only_linewright_has_spoken_since_triage() {
 
 #[test]
 fn a_comment_on_a_ready_for_human_issue_starts_nothing() {
-    for stage in [
-        Stage::Triage,
-        Stage::Ci,
-        Stage::Review,
-        Stage::Implementation,
-    ] {
-        let mut handed_back = labeled(issue(1), label::READY_FOR_HUMAN);
-        handed_back.comments = vec![
-            comment(LINEWRIGHT, 1, &marked(stage, "Should they be resizable?")),
-            comment("maintainer", 2, "Make them resizable."),
-            comment("reporter", 3, "Please do."),
-        ];
+    let mut handed_back = labeled(issue(1), label::READY_FOR_HUMAN);
+    handed_back.comments = vec![
+        comment(LINEWRIGHT, 1, "Should they be resizable?"),
+        comment("maintainer", 2, "Make them resizable."),
+        comment("reporter", 3, "Please do."),
+    ];
 
-        assert_eq!(decide(&snapshot(vec![handed_back])), vec![], "{stage}");
-    }
+    assert_eq!(decide(&snapshot(vec![handed_back])), vec![]);
 }
 
 #[test]
@@ -808,12 +800,27 @@ fn a_draft_waits_while_checks_run() {
     assert_eq!(at(&in_review(pr), 30), vec![]);
 }
 
-fn ci_fix_comment(minute: i64) -> Comment {
-    comment(
-        LINEWRIGHT,
-        minute,
-        &marked(Stage::Ci, "Fixed the failing test."),
-    )
+/// A run of `kind` on the pull request #`pr` that did its work at
+/// `minute`.
+fn done(pr: u64, kind: WorkKind, minute: i64) -> DoneRun {
+    DoneRun {
+        pr: Number(pr),
+        kind,
+        done_at: t(minute),
+    }
+}
+
+/// The decisions at `minute`, with `policy`, remembering `memory`.
+fn deciding_at(world: &Snapshot, memory: &Memory, policy: &Policy, minute: i64) -> Vec<Action> {
+    reconcile(world, &[], memory, &Workflows::default(), t(minute), policy)
+}
+
+fn after_runs(world: &Snapshot, runs: &[DoneRun], minute: i64) -> Vec<Action> {
+    let memory = Memory {
+        done_runs: runs.to_vec(),
+        ..Memory::default()
+    };
+    deciding_at(world, &memory, &policy(), minute)
 }
 
 #[test]
@@ -823,12 +830,11 @@ fn a_failing_check_starts_a_fix_and_after_the_last_attempt_the_pull_request_is_h
         check("test", CheckState::Failed),
         check("lint", CheckState::Passed),
     ];
-    let first = in_review(pr.clone());
-    pr.comments = vec![ci_fix_comment(3), ci_fix_comment(6)];
-    let exhausted = in_review(pr);
+    let world = in_review(pr);
+    let fixed = [done(20, WorkKind::FixCi, 3), done(20, WorkKind::FixCi, 6)];
 
     assert_eq!(
-        at(&first, 10),
+        at(&world, 10),
         vec![Action::Start(Work::FixCi {
             issue: Number(2),
             pr: Number(20),
@@ -836,10 +842,27 @@ fn a_failing_check_starts_a_fix_and_after_the_last_attempt_the_pull_request_is_h
         })]
     );
     assert!(matches!(
-        at(&exhausted, 10).as_slice(),
+        after_runs(&world, &fixed, 10).as_slice(),
         [Action::HandBack {
-            item: Item::Pull(Number(20)), stage: Stage::Ci, reason }] if reason.contains("`test`")
+            item: Item::Pull(Number(20)), reason }] if reason.contains("`test`")
     ));
+}
+
+#[test]
+fn fix_attempts_count_only_the_pull_requests_own_fix_runs_since_its_last_rework() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Failed)];
+    let world = in_review(pr);
+    let runs = [
+        done(20, WorkKind::FixCi, 2),
+        done(20, WorkKind::FixCi, 3),
+        done(20, WorkKind::Rework, 4),
+        done(20, WorkKind::Update, 5),
+        done(20, WorkKind::FixCi, 6),
+        done(21, WorkKind::FixCi, 7),
+    ];
+
+    assert_eq!(after_runs(&world, &runs, 10), vec![fix_ci(2, 20)]);
 }
 
 #[test]
@@ -850,10 +873,7 @@ fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once
     pr.comments = vec![comment(
         LINEWRIGHT,
         6 * 60 + 3,
-        &marked(
-            Stage::Ci,
-            "CI did not complete within 6h: `e2e` still running.",
-        ),
+        "CI did not complete within 6h: `e2e` still running.",
     )];
     let world = in_review(handed_back_at(pr, 6 * 60 + 3, Some(6 * 60 + 5)));
 
@@ -862,7 +882,6 @@ fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once
         at(&world, 12 * 60 + 6).as_slice(),
         [Action::HandBack {
             item: Item::Pull(Number(20)),
-            stage: Stage::Ci,
             ..
         }]
     ));
@@ -872,19 +891,11 @@ fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once
 fn removing_ready_for_human_gives_the_pull_request_fresh_ci_fix_attempts() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Failed)];
-    pr.comments = vec![
-        ci_fix_comment(3),
-        ci_fix_comment(6),
-        comment(
-            LINEWRIGHT,
-            8,
-            &marked(Stage::Ci, "`test` still failing after 2 fix attempts."),
-        ),
-    ];
     let world = in_review(handed_back_at(pr, 8, Some(9)));
+    let fixed = [done(20, WorkKind::FixCi, 3), done(20, WorkKind::FixCi, 6)];
 
     assert_eq!(
-        at(&world, 10),
+        after_runs(&world, &fixed, 10),
         vec![Action::Start(Work::FixCi {
             issue: Number(2),
             pr: Number(20),
@@ -899,11 +910,7 @@ fn removing_ready_for_human_from_a_pull_request_a_rework_handed_back_addresses_i
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![
         comment("maintainer", 4, "Please rename `foo`."),
-        comment(
-            LINEWRIGHT,
-            5,
-            &marked(Stage::Rework, "The run failed twice on its infrastructure."),
-        ),
+        comment(LINEWRIGHT, 5, "The run failed twice on its infrastructure."),
     ];
     let world = in_review(handed_back_at(pr, 5, Some(7)));
 
@@ -920,7 +927,7 @@ fn checks_that_never_complete_hand_the_pull_request_back_at_the_ci_timeout() {
     assert!(matches!(
         at(&world, 6 * 60 + 2).as_slice(),
         [Action::HandBack {
-            item: Item::Pull(Number(20)), stage: Stage::Ci, reason }] if reason.contains("`e2e`")
+            item: Item::Pull(Number(20)), reason }] if reason.contains("`e2e`")
     ));
 }
 
@@ -979,18 +986,48 @@ fn feedback_already_answered_starts_nothing() {
         comment(LINEWRIGHT, 3, "Thanks!"),
     ];
     let before_the_push = in_review(pr.clone());
+    pr.comments = vec![comment("coverage[bot]", 4, "Coverage dropped 0.1%.")];
+    let answered_without_a_push = in_review(pr);
+
+    assert_eq!(at(&before_the_push, 10), vec![]);
+    assert_eq!(
+        after_runs(
+            &answered_without_a_push,
+            &[done(20, WorkKind::Rework, 5)],
+            10
+        ),
+        vec![]
+    );
+}
+
+#[test]
+fn feedback_after_a_rework_that_needed_no_change_starts_another() {
+    let mut pr = ready(pull(20, 2));
+    pr.comments = vec![
+        comment("coverage[bot]", 4, "Coverage dropped 0.1%."),
+        comment("maintainer", 6, "Please rename `foo`."),
+    ];
+    let world = in_review(pr);
+
+    assert_eq!(
+        after_runs(&world, &[done(20, WorkKind::Rework, 5)], 10),
+        vec![rework(2, 20)]
+    );
+}
+
+#[test]
+fn linewrights_comments_answer_no_feedback() {
+    let mut pr = ready(pull(20, 2));
     pr.comments = vec![
         comment("coverage[bot]", 4, "Coverage dropped 0.1%."),
         comment(
             LINEWRIGHT,
             5,
-            &marked(Stage::Rework, "No change needed: noise."),
+            "> *Linewright, rework*\n\nNo change needed: noise.",
         ),
     ];
-    let answered_without_a_push = in_review(pr);
 
-    assert_eq!(at(&before_the_push, 10), vec![]);
-    assert_eq!(at(&answered_without_a_push, 10), vec![]);
+    assert_eq!(at(&in_review(pr), 10), vec![rework(2, 20)]);
 }
 
 fn update(issue: u64, pr: u64) -> Action {
@@ -1021,7 +1058,7 @@ fn not_rebaseable() -> Pull {
 }
 
 fn deciding(world: &Snapshot, memory: &Memory, policy: &Policy) -> Vec<Action> {
-    reconcile(world, &[], memory, &Workflows::default(), t(10), policy)
+    deciding_at(world, memory, policy, 10)
 }
 
 /// A rebase of #20 at `head`, tried at `minute`.
@@ -1190,7 +1227,6 @@ fn with_auto_merge_by_rebase_a_pull_request_still_not_rebaseable_after_a_rebase_
         ),
         vec![Action::HandBack {
             item: Item::Pull(Number(20)),
-            stage: Stage::Review,
             reason: "GitHub reports #20 not rebaseable though Linewright rebased it onto the \
                      default branch, so it cannot be merged by rebase."
                 .into(),
@@ -1335,14 +1371,16 @@ fn a_pull_request_github_blocks_is_held_for_review_after_it_is_marked_ready() {
     );
 }
 
-/// Linewright's comment on a pull request held for a code owner's review.
-fn held_for_a_code_owner(minute: i64) -> Comment {
-    comment(
-        LINEWRIGHT,
-        minute,
-        "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
-         (@alice) before merging. Linewright merges it once GitHub allows it.",
-    )
+/// What Linewright remembers of a pull request #20 it held for a code
+/// owner's review.
+fn held_for_a_code_owner() -> Memory {
+    let mut memory = Memory::default();
+    memory.held.hold(Number(20), &code_owner_review());
+    memory
+}
+
+fn auto_merging_remembering(world: &Snapshot, memory: &Memory, minute: i64) -> Vec<Action> {
+    deciding_at(world, memory, &merging_by(MergeMethod::Merge), minute)
 }
 
 #[test]
@@ -1351,7 +1389,6 @@ fn a_pull_request_github_blocks_and_already_held_for_review_waits_also_after_a_p
     pr.mergeability = Mergeability::Blocked {
         requires: code_owner_review(),
     };
-    pr.comments = vec![held_for_a_code_owner(2)];
     let held = in_review(pr.clone());
     pr.pushes.push(Push {
         by: Login::new(LINEWRIGHT),
@@ -1359,16 +1396,24 @@ fn a_pull_request_github_blocks_and_already_held_for_review_waits_also_after_a_p
     });
     let updated_since = in_review(pr);
 
-    assert_eq!(auto_merging(&held, 10), vec![]);
-    assert_eq!(auto_merging(&updated_since, 10), vec![]);
+    assert_eq!(
+        auto_merging_remembering(&held, &held_for_a_code_owner(), 10),
+        vec![]
+    );
+    assert_eq!(
+        auto_merging_remembering(&updated_since, &held_for_a_code_owner(), 10),
+        vec![]
+    );
 }
 
 #[test]
 fn a_pull_request_held_for_review_is_merged_once_github_no_longer_blocks_it() {
-    let mut pr = ready(pull(20, 2));
-    pr.comments = vec![held_for_a_code_owner(7)];
+    let world = in_review(ready(pull(20, 2)));
 
-    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+    assert_eq!(
+        auto_merging_remembering(&world, &held_for_a_code_owner(), 10),
+        vec![merge(20, false)]
+    );
 }
 
 #[test]
@@ -1380,10 +1425,9 @@ fn a_pull_request_is_held_again_when_what_github_requires_changes() {
     pr.mergeability = Mergeability::Blocked {
         requires: requires.clone(),
     };
-    pr.comments = vec![held_for_a_code_owner(7)];
 
     assert_eq!(
-        auto_merging(&in_review(pr), 10),
+        auto_merging_remembering(&in_review(pr), &held_for_a_code_owner(), 10),
         vec![Action::HoldForReview {
             pr: Number(20),
             draft: false,
@@ -1393,7 +1437,7 @@ fn a_pull_request_is_held_again_when_what_github_requires_changes() {
 }
 
 #[test]
-fn a_pull_request_marked_ready_without_auto_merge_is_held_when_github_blocks_it() {
+fn a_pull_request_is_held_whatever_linewrights_comments_on_it_say() {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Blocked {
         requires: code_owner_review(),
@@ -1401,7 +1445,8 @@ fn a_pull_request_marked_ready_without_auto_merge_is_held_when_github_blocks_it(
     pr.comments = vec![comment(
         LINEWRIGHT,
         7,
-        &marked(Stage::Review, "CI is green: ready for review."),
+        "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
+         (@alice) before merging. Linewright merges it once GitHub allows it.",
     )];
 
     assert!(matches!(
@@ -1637,18 +1682,7 @@ fn auto_merging_after(world: &Snapshot, failed: &[FailedMerge], minute: i64) -> 
         failed_merges: failed.to_vec(),
         ..Memory::default()
     };
-    let policy = Policy {
-        auto_merge: Some(MergeMethod::Merge),
-        ..policy()
-    };
-    reconcile(
-        world,
-        &[],
-        &memory,
-        &Workflows::default(),
-        t(minute),
-        &policy,
-    )
+    auto_merging_remembering(world, &memory, minute)
 }
 
 #[test]
@@ -1675,7 +1709,6 @@ fn with_auto_merge_a_green_pull_request_whose_merge_failed_twice_is_handed_back_
         auto_merging_after(&world, &failed, 11),
         vec![Action::HandBack {
             item: Item::Pull(Number(20)),
-            stage: Stage::Review,
             reason: "Merging #20 failed twice. GitHub's reason: Pull Request is not mergeable"
                 .into(),
         }]
@@ -1736,22 +1769,18 @@ fn a_pull_request_closed_without_merging_hands_the_ticket_back_once() {
     let mut pr = pull(20, 2);
     pr.state = PullState::Closed { at: t(5) };
     let closed = in_review(pr);
-    let mut handed_back = closed.clone();
-    handed_back.issues[0].comments = vec![comment(
-        LINEWRIGHT,
-        6,
-        &marked(Stage::Review, "#20 was closed without merging."),
-    )];
+    // Labeled again since, while Linewright is still assigned.
+    let mut relabeled = closed.clone();
+    relabeled.issues[0] = labeled_at(relabeled.issues[0].clone(), label::READY_FOR_AGENT, 6);
 
     assert!(matches!(
         at(&closed, 10).as_slice(),
         [Action::HandBack {
             item: Item::Issue(Number(2)),
-            stage: Stage::Review,
             ..
         }]
     ));
-    assert_eq!(at(&handed_back, 10), vec![implement(2)]);
+    assert_eq!(at(&relabeled, 10), vec![implement(2)]);
 }
 
 #[test]
@@ -2201,8 +2230,9 @@ fn pending_spec_changes_agree_with_the_required_label() {
 
 /// A world with work of every kind to start and actions that start no
 /// session: an answered question, a run whose ticket lost its label, a
-/// pull request out of CI attempts, a green draft and a tracking issue whose
-/// tickets are all closed, beside a workflow due since 13:00.
+/// pull request out of CI attempts, with [`fixed_twice`], a green draft and a
+/// tracking issue whose tickets are all closed, beside a workflow due since
+/// 13:00.
 fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
     let mut answered = labeled(issue(1), label::NEEDS_INFO);
     answered.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
@@ -2212,7 +2242,6 @@ fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
     green.checks = vec![check("test", CheckState::Passed)];
     let mut failing = pull(22, 11);
     failing.checks = vec![check("test", CheckState::Failed)];
-    failing.comments = vec![ci_fix_comment(3), ci_fix_comment(6)];
     let mut world = snapshot(vec![
         answered,
         claimed(ticket(2)),
@@ -2232,11 +2261,17 @@ fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
     )
 }
 
+/// The fix runs on the failing pull request in [`work_of_every_kind`].
+fn fixed_twice() -> Vec<DoneRun> {
+    vec![done(22, WorkKind::FixCi, 3), done(22, WorkKind::FixCi, 6)]
+}
+
 fn under_usage_limit_until(resets_at: i64) -> Memory {
     Memory {
         usage_limit: Some(UsageLimit {
             resets_at: t(resets_at),
         }),
+        done_runs: fixed_twice(),
         ..Memory::default()
     }
 }
@@ -2288,7 +2323,6 @@ fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions
         handed_back.as_slice(),
         [Action::HandBack {
             item: Item::Pull(Number(22)),
-            stage: Stage::Ci,
             ..
         }]
     ));
@@ -2578,18 +2612,15 @@ fn a_pull_request_closing_two_issues_is_worked_while_both_wait_for_it_whatever_t
 #[test]
 fn a_pull_request_closed_unmerged_hands_back_each_claimed_issue_it_closes_once() {
     let world = closed_unmerged(pull_closing_42_and_12(label::READY_FOR_AGENT), 43, 5);
-    let mut handed_back = world.clone();
-    for issue in &mut handed_back.issues {
-        issue.comments = vec![comment(
-            LINEWRIGHT,
-            6,
-            &marked(Stage::Review, "#43 was closed without merging."),
-        )];
+    // Labeled again since, while Linewright is still assigned.
+    let mut relabeled = world.clone();
+    for issue in &mut relabeled.issues {
+        *issue = labeled_at(issue.clone(), label::READY_FOR_AGENT, 6);
     }
 
     assert_eq!(handed_back_issues(&decided(&world).actions), [42, 12]);
     assert_eq!(
-        handed_back_issues(&decided(&handed_back).actions),
+        handed_back_issues(&decided(&relabeled).actions),
         Vec::<u64>::new()
     );
 }
@@ -2800,13 +2831,12 @@ fn with_auto_merge_a_pull_request_held_for_what_github_requires_waits_for_it() {
     pr.mergeability = Mergeability::Blocked {
         requires: code_owner_review(),
     };
-    pr.comments = vec![held_for_a_code_owner(5)];
 
     assert_eq!(
         waits(
             &in_review(pr),
             &[],
-            &Memory::default(),
+            &held_for_a_code_owner(),
             10,
             &merging_by(MergeMethod::Merge)
         )

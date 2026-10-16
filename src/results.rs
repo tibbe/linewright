@@ -5,8 +5,8 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -20,6 +20,7 @@ pub enum TriageOutcome {
 pub struct TriageResult {
     pub outcome: TriageOutcome,
     pub category: String,
+    #[serde(deserialize_with = "trimmed")]
     pub comment: String,
 }
 
@@ -35,6 +36,7 @@ pub struct TicketDraft {
 #[derive(Deserialize)]
 struct RawTickets {
     tickets: Vec<TicketDraft>,
+    #[serde(deserialize_with = "trimmed")]
     comment: String,
 }
 
@@ -106,6 +108,7 @@ pub enum ImplementResult {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct ThreadReply {
     pub thread: String,
+    #[serde(deserialize_with = "trimmed")]
     pub body: String,
     #[serde(default)]
     pub resolve: bool,
@@ -117,6 +120,7 @@ pub struct ThreadReply {
 #[serde(tag = "outcome", rename_all = "kebab-case")]
 pub enum PullWorkResult {
     Done {
+        #[serde(deserialize_with = "trimmed")]
         comment: String,
         /// The pull request's body rewritten, when the change made it out of
         /// date.
@@ -148,6 +152,7 @@ pub enum WorkflowIssueLabel {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct WorkflowIssue {
     pub title: String,
+    #[serde(deserialize_with = "trimmed")]
     pub body: String,
     pub label: WorkflowIssueLabel,
 }
@@ -158,6 +163,11 @@ pub struct WorkflowResult {
     pub summary: String,
     #[serde(default)]
     pub issues: Vec<WorkflowIssue>,
+}
+
+/// Text a session wrote for people, without the whitespace around it.
+fn trimmed<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(String::deserialize(deserializer)?.trim().to_string())
 }
 
 pub fn parse_triage(message: &str, categories: &[String]) -> Result<TriageResult, String> {

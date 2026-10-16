@@ -65,6 +65,8 @@ struct State {
     /// What `git push` reports for every push GitHub refuses, while it
     /// refuses them.
     pushes_refused: Option<String>,
+    /// What happens right after Linewright next comments.
+    after_comment: Option<Box<dyn FnOnce() + Send>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -102,6 +104,9 @@ struct PullRecord {
     /// What branch rules would require before the pull request merges, if
     /// they block it: the local store has no rules of its own.
     blocked: Option<Vec<Requirement>>,
+    /// Whether GitHub has yet to work out the open pull request's merge
+    /// state.
+    merge_state_pending: bool,
     /// Why merges of the pull request fail, if they do, though nothing
     /// blocks them.
     refused: Option<String>,
@@ -150,6 +155,7 @@ impl LocalStore {
                 items_read: 0,
                 unreadable: None,
                 pushes_refused: None,
+                after_comment: None,
             }),
         })
     }
@@ -510,6 +516,22 @@ impl LocalStore {
         }
     }
 
+    /// Reports the pull request's merge state as not worked out yet, as
+    /// GitHub does for a while after a change, until
+    /// [`LocalStore::work_out_merge_state`].
+    pub fn pend_merge_state(&self, pr: Number) {
+        if let Ok(record) = self.state().pull_mut(pr) {
+            record.merge_state_pending = true;
+        }
+    }
+
+    /// Lifts [`LocalStore::pend_merge_state`].
+    pub fn work_out_merge_state(&self, pr: Number) {
+        if let Ok(record) = self.state().pull_mut(pr) {
+            record.merge_state_pending = false;
+        }
+    }
+
     /// Makes every merge of the pull request fail with `reason`, as GitHub
     /// refusing at the last moment would, until [`LocalStore::accept_merges`].
     pub fn refuse_merges(&self, pr: Number, reason: &str) {
@@ -523,6 +545,12 @@ impl LocalStore {
     /// Linewright's token lacks.
     pub fn refuse_pushes(&self, output: &str) {
         self.state().pushes_refused = Some(output.to_string());
+    }
+
+    /// Does `then` right after Linewright next comments, as someone acting
+    /// while a run records its outcome.
+    pub fn after_linewrights_next_comment(&self, then: impl FnOnce() + Send + 'static) {
+        self.state().after_comment = Some(Box::new(then));
     }
 
     /// Lifts [`LocalStore::refuse_merges`].
@@ -829,6 +857,7 @@ impl LocalStore {
         };
         let head_sha = self.rev(&record.head_ref).await.unwrap_or_default();
         let mergeability = match (record.state, &record.blocked) {
+            (PullState::Open { .. }, _) if record.merge_state_pending => Mergeability::Unknown,
             (PullState::Open { .. }, blocked) => {
                 match self.mergeability(&default_branch, &record.head_ref).await? {
                     Mergeability::Clean if let Some(requires) = blocked => Mergeability::Blocked {
@@ -1119,6 +1148,7 @@ impl PullRecord {
             threads: vec![],
             requested_reviewers: vec![],
             blocked: None,
+            merge_state_pending: false,
             refused: None,
             checks: BTreeMap::new(),
             merge: None,
@@ -1430,7 +1460,12 @@ impl Store for LocalStore {
 
     async fn comment(&self, number: Number, body: &str) -> Result<()> {
         let linewright = self.state().linewright.clone();
-        self.comment_as(linewright.as_str(), number, body)
+        self.comment_as(linewright.as_str(), number, body)?;
+        let then = self.state().after_comment.take();
+        if let Some(then) = then {
+            then();
+        }
+        Ok(())
     }
 
     async fn create_issue(&self, issue: NewIssue) -> Result<Number> {

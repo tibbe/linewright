@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::domain::{Number, Timestamp};
-use crate::reconcile::WorkKind;
+use crate::reconcile::{DoneRun, WorkKind};
 use crate::records;
 use crate::status::{Paint, utc};
 use crate::workflow::WorkflowName;
@@ -118,6 +118,9 @@ struct Record {
     /// The records of the sessions it started, with their transcripts,
     /// relative to the work directory.
     sessions: Vec<PathBuf>,
+    /// For a rework, when it last read the feedback it answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    answered_until: Option<Timestamp>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -185,6 +188,7 @@ impl Runs {
                 started_at: now,
                 end: None,
                 sessions: vec![],
+                answered_until: None,
             }),
             activity: Activity::default(),
             _lock: lock,
@@ -440,6 +444,13 @@ impl Running {
         self.save_or_log();
     }
 
+    /// Records that the run answered the feedback on its pull request up to
+    /// `at`, when it last read it.
+    pub fn answered(&self, at: Timestamp) {
+        self.record.lock().unwrap().answered_until = Some(at);
+        self.save_or_log();
+    }
+
     /// Records the run's end, at `now`, as `ending`.
     pub fn end(self, now: Timestamp, ending: Ending) {
         self.record.lock().unwrap().end = Some(End { at: now, ending });
@@ -470,6 +481,8 @@ pub struct Recorded {
     /// The records of the sessions it started, with their transcripts, in
     /// the order it started them.
     pub sessions: Vec<PathBuf>,
+    /// For a rework, when it last read the feedback it answered.
+    pub answered_until: Option<Timestamp>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -504,6 +517,26 @@ impl Recorded {
                 .iter()
                 .map(|dir| work_dir.join(dir))
                 .collect(),
+            answered_until: record.answered_until,
+        }
+    }
+
+    /// The run, if it is one on a pull request that did its work: done when
+    /// it answered the feedback, for a rework, and otherwise when it ended.
+    pub fn done_on_pull(&self) -> Option<DoneRun> {
+        match (&self.id.of, self.state) {
+            (
+                RunOf::Work { item, stage },
+                State::Ended {
+                    at,
+                    ending: Ending::Done,
+                },
+            ) if stage.is_on_pull() => Some(DoneRun {
+                pr: *item,
+                kind: *stage,
+                done_at: self.answered_until.unwrap_or(at),
+            }),
+            _ => None,
         }
     }
 }

@@ -15,7 +15,7 @@ use crate::domain::{
     Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, TicketBranchName, Timestamp,
     UpdateMethod, UpdateRule, label,
 };
-use crate::marker::{Stage, marked, stage_of};
+use crate::holds::Holds;
 use crate::runtime::UsageLimit;
 use crate::spec_glob::SpecGlob;
 use crate::workflow::{LastRuns, Workflow, WorkflowName};
@@ -189,6 +189,15 @@ impl WorkKind {
         WorkKind::Update,
     ];
 
+    /// Whether the stage's runs are on Linewright's pull request, as their
+    /// item.
+    pub fn is_on_pull(self) -> bool {
+        match self {
+            WorkKind::Rework | WorkKind::FixCi | WorkKind::Update => true,
+            WorkKind::Triage | WorkKind::Tickets | WorkKind::Implement => false,
+        }
+    }
+
     /// The stage's name in run IDs (`docs/specs/monitoring.md`, "runs").
     pub fn name(self) -> &'static str {
         match self {
@@ -237,12 +246,23 @@ pub struct LiveRun {
     pub kind: WorkKind,
 }
 
-/// What the manager remembers between polls, and never in the store.
+/// What the manager remembers between polls, and never in the store: what
+/// Linewright did that GitHub does not show apart from its comments, which
+/// decide nothing (`docs/specs/repository.md`). The runs that did their work
+/// and the holds for review outlast a restart, under the work directory; the
+/// rest does not.
 #[derive(Clone, Debug, Default)]
 pub struct Memory {
     /// Oldest first.
     pub failed_merges: Vec<FailedMerge>,
     pub tried_rebases: Vec<TriedRebase>,
+    /// The runs on pull requests that did their work, as their records keep
+    /// them: what Linewright tried on a pull request beyond its pushes, such
+    /// as a fix that changed nothing or a rework that needed no change.
+    pub done_runs: Vec<DoneRun>,
+    /// What GitHub required of each pull request when Linewright last held
+    /// it for review.
+    pub held: Holds,
     /// The usage limit the agent runtime refused a session for: until it
     /// resets no session starts (`docs/specs/operation.md`, "Usage limit").
     pub usage_limit: Option<UsageLimit>,
@@ -255,6 +275,20 @@ impl Memory {
         let open = |pr| snapshot.pull(pr).is_some_and(|p| p.is_open());
         self.failed_merges.retain(|f| open(f.pr));
         self.tried_rebases.retain(|r| open(r.pr));
+        self.done_runs.retain(|r| open(r.pr));
+        self.held.retain(open);
+    }
+
+    /// When the latest run of `kind` on the pull request #`pr` that did its
+    /// work did it, as [`DoneRun::done_at`] says.
+    pub fn last_done(&self, pr: Number, kind: WorkKind) -> Option<Timestamp> {
+        self.done_runs_of(pr, kind).map(|r| r.done_at).max()
+    }
+
+    fn done_runs_of(&self, pr: Number, kind: WorkKind) -> impl Iterator<Item = &DoneRun> {
+        self.done_runs
+            .iter()
+            .filter(move |r| r.pr == pr && r.kind == kind)
     }
 
     /// Whether the usage limit holds starts back at `now`.
@@ -372,6 +406,16 @@ pub struct TriedRebase {
     pub at: Timestamp,
 }
 
+/// A run of `kind` on the pull request `pr` that did its work.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DoneRun {
+    pub pr: Number,
+    pub kind: WorkKind,
+    /// For a rework, when it last read the feedback it answered; otherwise
+    /// when it ended.
+    pub done_at: Timestamp,
+}
+
 /// The workflows on the default branch and their runs: what the due rule
 /// reads.
 #[derive(Clone, Debug, Default)]
@@ -404,7 +448,6 @@ pub enum Action {
     /// ticket is left as it is.
     HandBack {
         item: Item,
-        stage: Stage,
         reason: String,
     },
     MarkReady {
@@ -1031,20 +1074,19 @@ fn implementation(
     }
     // A pull request closed unmerged while Linewright had the issue claimed
     // is the maintainer's no, said once (`docs/specs/pull_requests.md`, "The
-    // pull request"). One closed before the claim is not.
+    // pull request"). One closed before the claim, or before the issue was
+    // labeled again, is not.
     if claimed {
         let claimed_at = last_assigned(issue, &policy.linewright);
         let refused = closing.iter().find(|p| match p.state {
             PullState::Closed { at } => {
-                claimed_at.is_none_or(|since| since <= at)
-                    && !linewright_commented_since(issue, at, policy)
+                claimed_at.is_none_or(|since| since <= at) && !relabeled_since(at)
             }
             PullState::Open { .. } | PullState::Merged { .. } => false,
         });
         if let Some(refused) = refused {
             return plan.act(Action::HandBack {
                 item: Item::Issue(issue.number),
-                stage: Stage::Review,
                 reason: format!("{} was closed without merging.", refused.number),
             });
         }
@@ -1083,13 +1125,6 @@ fn last_assigned(issue: &Issue, login: &Login) -> Option<Timestamp> {
         .max()
 }
 
-fn linewright_commented_since(issue: &Issue, since: Timestamp, policy: &Policy) -> bool {
-    issue
-        .comments
-        .iter()
-        .any(|c| c.created_at > since && stage_of(c, &policy.linewright).is_some())
-}
-
 /// Linewright's open pull request worked for the ticket #`ticket`: address
 /// feedback, keep it up to date and get CI green, in that order, then mark it
 /// ready for review or, with auto-merge, merge it once no person holds it.
@@ -1098,7 +1133,13 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
     let pr_number = pr.number;
     let linewright = &policy.linewright;
     let restarted = restarted_at(pr);
-    if !new_feedback(pr, linewright).is_empty() {
+    if !new_feedback(
+        pr,
+        linewright,
+        memory.last_done(pr_number, WorkKind::Rework),
+    )
+    .is_empty()
+    {
         return plan.start(Work::Rework {
             issue: ticket,
             pr: pr_number,
@@ -1152,7 +1193,6 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         if now > waiting_since + policy.ci_timeout {
             plan.act(Action::HandBack {
                 item: Item::Pull(pr_number),
-                stage: Stage::Ci,
                 reason: format!(
                     "CI did not complete within {}: {} still running.",
                     humanize(policy.ci_timeout),
@@ -1165,20 +1205,19 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         return;
     }
     if !failed.is_empty() {
+        // A rework, and the maintainer removing `ready-for-human`, give
+        // fresh attempts.
         let cycle_start = [
             Some(pr.created_at),
-            last_marked(&pr.comments, Stage::Rework, linewright),
+            memory.last_done(pr_number, WorkKind::Rework),
             restarted,
         ]
         .into_iter()
         .flatten()
         .max();
-        let attempts = pr
-            .comments
-            .iter()
-            .filter(|c| {
-                stage_of(c, linewright) == Some(Stage::Ci) && Some(c.created_at) > cycle_start
-            })
+        let attempts = memory
+            .done_runs_of(pr_number, WorkKind::FixCi)
+            .filter(|r| Some(r.done_at) > cycle_start)
             .count();
         if attempts < policy.ci_attempts as usize {
             plan.start(Work::FixCi {
@@ -1189,7 +1228,6 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         } else {
             plan.act(Action::HandBack {
                 item: Item::Pull(pr_number),
-                stage: Stage::Ci,
                 reason: format!(
                     "{} still failing after {attempts} fix attempts.",
                     code_list(&failed)
@@ -1227,7 +1265,6 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
             Rebaseability::Rebaseable => merge(pr, draft, method, memory, restarted, plan),
             Rebaseability::NotRebaseable => plan.act(Action::HandBack {
                 item: Item::Pull(pr_number),
-                stage: Stage::Review,
                 reason: format!(
                     "GitHub reports {pr_number} not rebaseable though Linewright rebased it \
                      onto the default branch, so it cannot be merged by rebase."
@@ -1238,7 +1275,9 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         },
         Mergeability::Clean => merge(pr, draft, method, memory, restarted, plan),
         // Held for review again only when what GitHub requires changes.
-        Mergeability::Blocked { requires } if draft || !hold_noted(pr, requires, linewright) => {
+        Mergeability::Blocked { requires }
+            if draft || !memory.held.is_held_for(pr_number, requires) =>
+        {
             plan.act(Action::HoldForReview {
                 pr: pr_number,
                 draft,
@@ -1305,7 +1344,6 @@ fn merge(
         Some(failed) => {
             plan.act(Action::HandBack {
                 item: Item::Pull(pr.number),
-                stage: Stage::Review,
                 reason: format!(
                     "Merging {} failed twice. GitHub's reason: {}",
                     pr.number, failed.reason
@@ -1350,17 +1388,6 @@ pub fn hold_note(requires: &[Requirement]) -> String {
         ),
     };
     format!("Ready for review: {required}. Linewright merges it once GitHub allows it.")
-}
-
-/// Whether Linewright's latest review comment on the pull request already
-/// names `requires`.
-fn hold_noted(pr: &Pull, requires: &[Requirement], linewright: &Login) -> bool {
-    let note = marked(Stage::Review, &hold_note(requires));
-    pr.comments
-        .iter()
-        .filter(|c| stage_of(c, linewright) == Some(Stage::Review))
-        .max_by_key(|c| c.created_at)
-        .is_some_and(|c| c.body.trim() == note)
 }
 
 /// Whether a person who commented on or reviewed the pull request holds its
@@ -1410,20 +1437,23 @@ impl Feedback<'_> {
 }
 
 /// Comments and reviews from anyone other than Linewright, posted after
-/// Linewright last answered: its last push, or its last rework comment when a
-/// rework needed no change. A rework comment from before the pull request's
-/// work last restarted, such as one handing it back, answers nothing: the
-/// work tries again. A review that only approves is not feedback.
-pub fn new_feedback<'a>(pr: &'a Pull, linewright: &Login) -> Feedback<'a> {
-    let restarted = restarted_at(pr);
+/// Linewright last answered: its last push, or when its last rework run
+/// that did its work last read the feedback, `reworked`, when a rework
+/// needed no change. A
+/// rework that handed the pull request back answered nothing, so the work
+/// tries again once it restarts. A review that only approves is not
+/// feedback.
+pub fn new_feedback<'a>(
+    pr: &'a Pull,
+    linewright: &Login,
+    reworked: Option<Timestamp>,
+) -> Feedback<'a> {
     let pushed = pr
         .pushes
         .iter()
         .filter(|p| &p.by == linewright)
         .map(|p| p.at);
     let created = (&pr.author == linewright).then_some(pr.created_at);
-    let reworked = last_marked(&pr.comments, Stage::Rework, linewright)
-        .filter(|&at| restarted.is_none_or(|r| at > r));
     let answered = pushed.chain(created).chain(reworked).max();
     let new = |author: &Login, at: Timestamp| {
         author != linewright && answered.is_none_or(|answered| at > answered)
@@ -1453,18 +1483,6 @@ pub fn new_feedback<'a>(pr: &'a Pull, linewright: &Login) -> Feedback<'a> {
             })
             .collect(),
     }
-}
-
-fn last_marked(
-    comments: &[crate::domain::Comment],
-    stage: Stage,
-    linewright: &Login,
-) -> Option<Timestamp> {
-    comments
-        .iter()
-        .filter(|c| stage_of(c, linewright) == Some(stage))
-        .map(|c| c.created_at)
-        .max()
 }
 
 fn code_list(names: &[String]) -> String {

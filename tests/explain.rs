@@ -223,6 +223,7 @@ fn recorded(id: &str, started: &str, state: State) -> Recorded {
         started_at: at(started),
         state,
         sessions: vec![],
+        answered_until: None,
     }
 }
 

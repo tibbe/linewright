@@ -419,7 +419,7 @@ async fn closing_linewrights_pull_request_hands_its_ticket_back_on_the_delivery(
     eventually(|| labels(&served.issue(ticket)).contains(&"ready-for-human")).await;
     assert_eq!(
         last_comment(&served.issue(ticket)),
-        format!("> *Linewright, review*\n\n{pr} was closed without merging.")
+        format!("{pr} was closed without merging.")
     );
     assert_eq!(served.store.snapshots_taken(), 2);
     served.stop().await;

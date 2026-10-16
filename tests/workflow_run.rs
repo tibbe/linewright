@@ -107,13 +107,13 @@ async fn a_workflow_run_files_the_issues_its_result_returns_as_linewright() {
                 "Fix the widget count",
                 vec!["ready-for-agent"],
                 LINEWRIGHT,
-                "> *Linewright, workflow weekly*\n\nCount them all.\n\n- [ ] All counted"
+                "Count them all.\n\n- [ ] All counted\n\nFiled by the workflow `weekly`."
             ),
             (
                 "Should gadgets expire?",
                 vec!["ready-for-human"],
                 LINEWRIGHT,
-                "> *Linewright, workflow weekly*\n\nRecommend: yes."
+                "Recommend: yes.\n\nFiled by the workflow `weekly`."
             ),
         ]
     );

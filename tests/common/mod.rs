@@ -527,6 +527,21 @@ impl World {
         })
     }
 
+    /// Starts the factory again on the same store, runtime, clock and work
+    /// directory, as after a restart, with the settings `adjust` makes.
+    pub async fn restart(&mut self, adjust: impl FnOnce(&mut FactoryConfig)) {
+        let mut config = config(&self.dir.path().join("work"));
+        adjust(&mut config);
+        self.factory = Factory::start(
+            self.store.clone(),
+            self.runtime.clone(),
+            self.clock.clone(),
+            config,
+        )
+        .await
+        .unwrap();
+    }
+
     /// One poll, and every run it started run to its end.
     pub async fn poll(&mut self) {
         self.factory.cycle().await.unwrap();

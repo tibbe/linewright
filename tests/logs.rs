@@ -35,6 +35,7 @@ fn run(id: &str, start: &str, sessions: usize) -> Recorded {
         sessions: (0..sessions)
             .map(|n| PathBuf::from(format!("sessions/{id}/{n}")))
             .collect(),
+        answered_until: None,
     }
 }
 

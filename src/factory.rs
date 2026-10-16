@@ -23,12 +23,13 @@ use crate::clock::Clock;
 use crate::domain::{
     Item, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
-use crate::marker::{Stage, marked};
+use crate::holds::Holds;
 use crate::reconcile::{
-    Action, FailedMerge, LiveRun, Memory, Policy, Subject, Work, Workflows, hold_note, reconcile,
+    Action, DoneRun, FailedMerge, LiveRun, Memory, Policy, Subject, Work, WorkKind, Workflows,
+    hold_note, reconcile,
 };
 use crate::run::{self, Shell, WorkflowEnd};
-use crate::runs::{self, RunOf, Runs, Watched};
+use crate::runs::{self, Recorded, RunOf, Runs, Watched};
 use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
@@ -93,6 +94,8 @@ pub struct Factory {
     workflow_files: WorkflowFiles,
     /// What it remembers between polls, of pull requests still open.
     memory: Memory,
+    /// How far the holds for review in `memory` are recorded.
+    holds_record: HoldsRecord,
     /// The last poll's snapshot, with what refreshes read into it since:
     /// `None` before the first poll.
     kept: Option<Kept>,
@@ -101,6 +104,22 @@ pub struct Factory {
     /// The items Linewright's actions and runs changed since the kept
     /// snapshot last read them.
     written: BTreeSet<Item>,
+}
+
+/// How far the holds for review are recorded under the work directory.
+enum HoldsRecord {
+    /// There is no record yet: the next poll takes the holds from what its
+    /// snapshot shows, so that a Linewright that kept none does not hold
+    /// pull requests again.
+    Missing,
+    /// Recorded as `saved`, `None` until first written, which a save that
+    /// failed leaves behind the holds remembered. The pull requests in `settling` were ready when the record
+    /// began, and GitHub had not worked out their merge state yet: they are
+    /// taken from the snapshot too, once it has.
+    Kept {
+        saved: Option<Holds>,
+        settling: BTreeSet<Number>,
+    },
 }
 
 /// The snapshot kept between polls, with what refreshes read into it.
@@ -165,6 +184,15 @@ impl Factory {
             LastRuns::default()
         };
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
+        let runs = Runs::new(&config.work_dir);
+        let held = Holds::load(&config.work_dir);
+        let holds_record = match &held {
+            Some(saved) => HoldsRecord::Kept {
+                saved: Some(saved.clone()),
+                settling: BTreeSet::new(),
+            },
+            None => HoldsRecord::Missing,
+        };
         let shell = Shell {
             policy: Policy {
                 linewright: identity.login.clone(),
@@ -187,7 +215,7 @@ impl Factory {
             settings,
             result_retries: config.result_retries,
             session_timeout: config.session_timeout,
-            runs: Runs::new(&config.work_dir),
+            runs: runs.clone(),
             work_dir: config.work_dir,
             waits_out_usage_limit: config.waits_out_usage_limit,
             report_refusal,
@@ -201,7 +229,12 @@ impl Factory {
             schedule_workflows: config.schedule_workflows,
             last_runs,
             workflow_files: WorkflowFiles::default(),
-            memory: Memory::default(),
+            memory: Memory {
+                done_runs: done_runs(&runs),
+                held: held.unwrap_or_default(),
+                ..Memory::default()
+            },
+            holds_record,
             kept: None,
             ended: vec![],
             written: BTreeSet::new(),
@@ -406,7 +439,9 @@ impl Factory {
             last_runs: self.last_runs.clone(),
             in_flight: self.workflows_in_flight(),
         };
+        self.take_shown_holds(snapshot);
         self.memory.retain_open(snapshot);
+        self.record_holds();
         let actions = reconcile(
             snapshot,
             &live,
@@ -512,6 +547,43 @@ impl Factory {
         }
     }
 
+    /// Takes the holds for review from what `snapshot` shows, while the
+    /// record of them is missing or settling.
+    fn take_shown_holds(&mut self, snapshot: &Snapshot) {
+        let linewright = &self.shell.policy.linewright;
+        let held = &mut self.memory.held;
+        match &mut self.holds_record {
+            HoldsRecord::Missing => {
+                self.holds_record = HoldsRecord::Kept {
+                    saved: None,
+                    settling: held.take_shown(snapshot, linewright, |_| true),
+                };
+            }
+            HoldsRecord::Kept { settling, .. } if !settling.is_empty() => {
+                *settling = held.take_shown(snapshot, linewright, |pr| settling.contains(&pr));
+            }
+            HoldsRecord::Kept { .. } => {}
+        }
+    }
+
+    /// Records the holds for review remembered, if they changed since they
+    /// were last recorded. A save that fails is logged and tried again later.
+    fn record_holds(&mut self) {
+        let HoldsRecord::Kept { saved, .. } = &mut self.holds_record else {
+            return;
+        };
+        if saved.as_ref() == Some(&self.memory.held) {
+            return;
+        }
+        match self.memory.held.save(&self.shell.work_dir) {
+            Ok(()) => *saved = Some(self.memory.held.clone()),
+            Err(e) => warn!(
+                error = format!("{e:#}"),
+                "recording the holds for review failed"
+            ),
+        }
+    }
+
     /// Holds starts back for a run refused for the usage limit `limit`.
     fn refused(&mut self, UsageLimit { resets_at }: UsageLimit) {
         if self.memory.hold_until(resets_at) {
@@ -529,11 +601,16 @@ impl Factory {
         };
         let Some(LiveEntry {
             running: Running::Work(run),
+            watched,
             ..
         }) = self.live.remove(&id)
         else {
             return;
         };
+        let done = self.shell.runs.read_run(&watched.id);
+        self.memory
+            .done_runs
+            .extend(done.as_ref().and_then(Recorded::done_on_pull));
         match run.subject {
             // Reading the issue again reads what the run wrote: the issue,
             // and the pull requests that close it.
@@ -565,11 +642,16 @@ impl Factory {
                 let id = running.id().to_string();
                 let watched = running.watched();
                 let cancel = CancellationToken::new();
+                let reworked = match work.subject() {
+                    Subject::Pull(pr) => self.memory.last_done(pr, WorkKind::Rework),
+                    Subject::Issue(_) | Subject::SpecChange(_) => None,
+                };
                 let handle = self.runs.spawn(run::run(
                     shell.clone(),
                     work.clone(),
                     snapshot.clone(),
                     kept.as_of(work),
+                    reworked,
                     running,
                     cancel.clone(),
                 ));
@@ -605,13 +687,9 @@ impl Factory {
                 store.remove_label(*issue, remove).await?;
                 store.add_label(*issue, add).await?;
             }
-            Action::HandBack {
-                item,
-                stage,
-                reason,
-            } => {
-                info!(%item, stage = %stage, reason, "handing back");
-                run::hand_back(&self.shell, *item, *stage, reason, None).await?;
+            Action::HandBack { item, reason } => {
+                info!(%item, reason, "handing back");
+                run::hand_back(&self.shell, *item, reason, None).await?;
             }
             Action::MarkReady { pr } => {
                 info!(pr = pr.0, "marking ready for review");
@@ -661,12 +739,12 @@ impl Factory {
                     "holding for review: GitHub blocks the merge"
                 );
                 ready_for_review(store.as_ref(), *pr, *draft, &hold_note(requires)).await?;
+                self.memory.held.hold(*pr, requires);
+                self.record_holds();
             }
             Action::CloseTracking { issue } => {
                 info!(issue = issue.0, "closing tracking issue");
-                store
-                    .comment(*issue, &marked(Stage::Tickets, "All tickets are closed."))
-                    .await?;
+                store.comment(*issue, "All tickets are closed.").await?;
                 store.close_issue(*issue, CloseReason::Completed).await?;
             }
             Action::DiscardTickets { tracking, tickets } => {
@@ -674,12 +752,9 @@ impl Factory {
                     tracking = tracking.0,
                     "discarding an interrupted decomposition"
                 );
-                let note = marked(
-                    Stage::Tickets,
-                    "Cutting the spec change into tickets stopped part way; this set is discarded and the spec change is cut again.",
-                );
+                let note = "Cutting the spec change into tickets stopped part way; this set is discarded and the spec change is cut again.";
                 for issue in tickets.iter().chain([tracking]) {
-                    store.comment(*issue, &note).await?;
+                    store.comment(*issue, note).await?;
                     store.close_issue(*issue, CloseReason::NotPlanned).await?;
                 }
             }
@@ -725,6 +800,16 @@ impl Factory {
         }
         Ok(())
     }
+}
+
+/// The runs on pull requests that did their work, as `runs` records them.
+/// Records that do not read are left out.
+fn done_runs(runs: &Runs) -> Vec<DoneRun> {
+    let recorded = runs.read().unwrap_or_else(|e| {
+        warn!(error = format!("{e:#}"), "reading the runs' records failed");
+        vec![]
+    });
+    recorded.iter().filter_map(Recorded::done_on_pull).collect()
 }
 
 /// Records the start of a run of the workflow `name`, now.
@@ -776,7 +861,7 @@ async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str
     if draft {
         store.mark_ready(pr).await?;
     }
-    store.comment(pr, &marked(Stage::Review, note)).await
+    store.comment(pr, note).await
 }
 
 /// The issues to read again after `read`: those `snapshot` holds that a

@@ -18,7 +18,6 @@ use crate::domain::{
     Issue, Item, Login, MergedPull, Number, Pull, Snapshot, Timestamp, closing_references, label,
 };
 use crate::git::{self, Updated};
-use crate::marker::{Stage, marked, workflow_marked};
 use crate::prompts::{self, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, Subject, Work, WorkKind, new_feedback, rebases_to_repair,
@@ -107,10 +106,12 @@ enum Failure {
     UsageLimit(UsageLimit),
 }
 
-/// What a run knows beyond the shell: when its snapshot was taken, whether
-/// it is still wanted, and its record.
+/// What a run knows beyond the shell: when its snapshot was taken, when a
+/// rework on its pull request last did its work, whether it is still wanted,
+/// and its record.
 struct Ctx {
     as_of: Timestamp,
+    reworked: Option<Timestamp>,
     cancel: CancellationToken,
     run: Running,
 }
@@ -160,34 +161,28 @@ fn refused_push(branch: &str, reason: &str, again: TryAgain) -> String {
     )
 }
 
-fn stage_of(kind: WorkKind) -> Stage {
-    match kind {
-        WorkKind::Triage => Stage::Triage,
-        WorkKind::Tickets => Stage::Tickets,
-        WorkKind::Implement => Stage::Implementation,
-        WorkKind::Rework => Stage::Rework,
-        WorkKind::FixCi => Stage::Ci,
-        WorkKind::Update => Stage::Update,
-    }
-}
-
 /// Runs `work`, recorded as `run`, to its end.
 pub(crate) async fn run(
     shell: Arc<Shell>,
     work: Work,
     snapshot: Arc<Snapshot>,
     as_of: Timestamp,
+    reworked: Option<Timestamp>,
     run: Running,
     cancel: CancellationToken,
 ) {
-    let ctx = Ctx { as_of, cancel, run };
+    let ctx = Ctx {
+        as_of,
+        reworked,
+        cancel,
+        run,
+    };
     let ending = drive(&shell, &work, &snapshot, &ctx).await;
     ctx.run.end(shell.clock.now(), ending);
 }
 
 async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Ending {
     let subject = work.subject();
-    let run_stage = stage_of(work.kind());
     let mut retried = false;
     let (reason, log_tail) = loop {
         match attempt(shell, work, snapshot, ctx).await {
@@ -248,10 +243,8 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
     info!(subject = ?subject, reason, "handing back");
     let log_tail = log_tail.as_deref();
     let handed = match subject {
-        Subject::Issue(issue) => {
-            hand_back(shell, Item::Issue(issue), run_stage, &reason, log_tail).await
-        }
-        Subject::Pull(pr) => hand_back(shell, Item::Pull(pr), run_stage, &reason, log_tail).await,
+        Subject::Issue(issue) => hand_back(shell, Item::Issue(issue), &reason, log_tail).await,
+        Subject::Pull(pr) => hand_back(shell, Item::Pull(pr), &reason, log_tail).await,
         Subject::SpecChange(pr) => hand_back_spec_change(shell, pr, &reason, log_tail).await,
     };
     match handed {
@@ -351,13 +344,12 @@ async fn still_open(shell: &Shell, pr: Number) -> Result<bool> {
 pub(crate) async fn hand_back(
     shell: &Shell,
     item: Item,
-    stage: Stage,
     reason: &str,
     log_tail: Option<&str>,
 ) -> Result<()> {
     match item {
-        Item::Issue(issue) => hand_back_issue(shell, issue, stage, reason, log_tail).await,
-        Item::Pull(pr) => hand_back_pull(shell, pr, stage, reason, log_tail).await,
+        Item::Issue(issue) => hand_back_issue(shell, issue, reason, log_tail).await,
+        Item::Pull(pr) => hand_back_pull(shell, pr, reason, log_tail).await,
     }
 }
 
@@ -366,7 +358,6 @@ pub(crate) async fn hand_back(
 async fn hand_back_issue(
     shell: &Shell,
     issue: Number,
-    stage: Stage,
     reason: &str,
     log_tail: Option<&str>,
 ) -> Result<()> {
@@ -379,9 +370,7 @@ async fn hand_back_issue(
     }
     store.add_label(issue, label::READY_FOR_HUMAN).await?;
     store.unassign(issue).await?;
-    store
-        .comment(issue, &marked(stage, &with_log(reason, log_tail)))
-        .await
+    store.comment(issue, &with_log(reason, log_tail)).await
 }
 
 /// Gives Linewright's pull request to the maintainer: `ready-for-human` and
@@ -390,7 +379,6 @@ async fn hand_back_issue(
 async fn hand_back_pull(
     shell: &Shell,
     pr: Number,
-    stage: Stage,
     reason: &str,
     log_tail: Option<&str>,
 ) -> Result<()> {
@@ -400,7 +388,7 @@ async fn hand_back_pull(
         with_log(reason, log_tail),
         label::READY_FOR_HUMAN
     );
-    shell.store.comment(pr, &marked(stage, &body)).await
+    shell.store.comment(pr, &body).await
 }
 
 async fn hand_back_spec_change(
@@ -415,10 +403,7 @@ async fn hand_back_spec_change(
         with_log(reason, log_tail),
         label::READY_FOR_HUMAN
     );
-    shell
-        .store
-        .comment(pr, &marked(Stage::Tickets, &body))
-        .await
+    shell.store.comment(pr, &body).await
 }
 
 fn with_log(reason: &str, log_tail: Option<&str>) -> String {
@@ -741,7 +726,7 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
             label::READY_FOR_HUMAN,
             format!(
                 "{}\n\nAnswer with a label: {}. A comment alone starts nothing.",
-                result.comment.trim_end(),
+                result.comment,
                 label::ANSWERS
                     .map(|(answer, asks)| format!("`{answer}` {asks}"))
                     .join(" or ")
@@ -766,9 +751,7 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
         }
     }
     store.add_label(issue.number, state).await?;
-    store
-        .comment(issue.number, &marked(Stage::Triage, &body))
-        .await
+    store.comment(issue.number, &body).await
 }
 
 // Tickets.
@@ -804,9 +787,7 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
 async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Result<()> {
     let store = &shell.store;
     if tickets.tickets.is_empty() {
-        store
-            .comment(pr.number, &marked(Stage::Tickets, &tickets.comment))
-            .await?;
+        store.comment(pr.number, &tickets.comment).await?;
         return store.add_label(pr.number, label::SPEC_PROCESSED).await;
     }
     let required: Vec<String> = shell.creation_label().await?.into_iter().collect();
@@ -840,19 +821,14 @@ async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Res
     store
         .edit_body(tracking_issue, &tracking::body(pr.number, &list))
         .await?;
-    store
-        .comment(tracking_issue, &marked(Stage::Tickets, &tickets.comment))
-        .await?;
+    store.comment(tracking_issue, &tickets.comment).await?;
     let listed: String = list.iter().map(|(n, t)| format!("- {n} {t}\n")).collect();
     store
         .comment(
             pr.number,
-            &marked(
-                Stage::Tickets,
-                &format!(
-                    "{}\n\nTracked in {tracking_issue}:\n\n{listed}",
-                    tickets.comment.trim()
-                ),
+            &format!(
+                "{}\n\nTracked in {tracking_issue}:\n\n{listed}",
+                tickets.comment
             ),
         )
         .await?;
@@ -1076,7 +1052,6 @@ async fn pull_work(
         Task::FixCi(_) => WorkKind::FixCi,
         Task::Update => WorkKind::Update,
     };
-    let stage = stage_of(kind);
     let linewright = &shell.policy.linewright;
     let purpose = Purpose::Work { subject, kind };
     let ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
@@ -1109,7 +1084,7 @@ async fn pull_work(
             );
             return Ok(());
         }
-        if !late(&new_feedback(&fresh, linewright), ctx.as_of).is_empty() {
+        if !late(&new_feedback(&fresh, linewright, ctx.reworked), ctx.as_of).is_empty() {
             info!(
                 pr = pr.number.0,
                 "feedback arrived; leaving the update to a rework run"
@@ -1128,7 +1103,7 @@ async fn pull_work(
             .map_err(infra)?,
         _ => vec![],
     };
-    let feedback = new_feedback(pr, linewright);
+    let feedback = new_feedback(pr, linewright, ctx.reworked);
     let mut feedback_authors = feedback_people(&feedback, linewright);
     let pull_task = match task {
         Task::Rework => PullTask::Rework(feedback),
@@ -1163,13 +1138,17 @@ async fn pull_work(
     // is pushed, for as long as it keeps coming within the session's time.
     let mut pr_now;
     let mut shown_until = ctx.as_of;
+    let mut read_at;
     loop {
-        let read_at = shell.clock.now();
+        read_at = shell.clock.now();
         pr_now = store.pull(pr.number).await.map_err(infra)?;
         if !pr_now.is_open() || !matches!(result, PullWorkResult::Done { .. }) {
             break;
         }
-        let arrived = late(&new_feedback(&pr_now, linewright), shown_until);
+        let arrived = late(
+            &new_feedback(&pr_now, linewright, ctx.reworked),
+            shown_until,
+        );
         if arrived.is_empty() {
             break;
         }
@@ -1215,9 +1194,15 @@ async fn pull_work(
                     .await
                     .map_err(Failure::Apply)?;
             }
-            record_pull_work(shell, &pr_now, stage, &comment, &replies, feedback_authors)
+            record_pull_work(shell, &pr_now, kind, &comment, &replies, feedback_authors)
                 .await
                 .map_err(Failure::Apply)?;
+            // The session saw the feedback up to the last read; what came
+            // after is for the next rework (`docs/specs/pull_requests.md`,
+            // "Rework").
+            if kind == WorkKind::Rework {
+                ctx.run.answered(read_at);
+            }
             file_spec_gaps(shell, &spec_gaps, ticket)
                 .await
                 .map_err(Failure::Apply)
@@ -1299,7 +1284,7 @@ fn feedback_people(feedback: &Feedback, linewright: &Login) -> Vec<Login> {
 async fn record_pull_work(
     shell: &Shell,
     pr: &Pull,
-    stage: Stage,
+    kind: WorkKind,
     comment: &str,
     replies: &[results::ThreadReply],
     feedback_authors: Vec<Login>,
@@ -1307,7 +1292,7 @@ async fn record_pull_work(
     let store = &shell.store;
     for reply in replies {
         store
-            .reply_in_thread(pr.number, &reply.thread, &marked(stage, &reply.body))
+            .reply_in_thread(pr.number, &reply.thread, &reply.body)
             .await?;
         // People resolve their own threads; the implementer resolves bots'.
         let opened_by_bot = pr
@@ -1320,8 +1305,8 @@ async fn record_pull_work(
             store.resolve_thread(pr.number, &reply.thread).await?;
         }
     }
-    store.comment(pr.number, &marked(stage, comment)).await?;
-    if stage == Stage::Rework {
+    store.comment(pr.number, comment).await?;
+    if kind == WorkKind::Rework {
         let mut reviewers = feedback_authors;
         reviewers.sort();
         reviewers.dedup();
@@ -1353,6 +1338,7 @@ pub(crate) async fn workflow(
 ) -> Result<WorkflowEnd> {
     let ctx = Ctx {
         as_of: shell.clock.now(),
+        reworked: None,
         cancel,
         run,
     };
@@ -1413,7 +1399,10 @@ async fn record_workflow(
             .store
             .create_issue(NewIssue {
                 title: issue.title.clone(),
-                body: workflow_marked(&workflow.name, &issue.body),
+                body: format!(
+                    "{}\n\nFiled by the workflow `{}`.",
+                    issue.body, workflow.name
+                ),
                 labels: [state.into()]
                     .into_iter()
                     .chain(shell.creation_label().await?)

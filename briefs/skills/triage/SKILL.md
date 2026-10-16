@@ -61,8 +61,8 @@ are; you may build and run the code to verify a claim.
    `needs-info` and ask only for the missing facts, even when a maintainer's
    decision will follow, because that decision usually depends on the facts.
    Sharpen fuzzy terms against `GLOSSARY.md` in your comment; don't edit it.
-5. **Write the comment** for the outcome. Don't add a disclaimer or a marker
-   line: Linewright adds its own.
+5. **Write the comment** for the outcome. Don't add a disclaimer or say who
+   wrote it: the comment is posted as Linewright.
 
 ## Writing the agent brief
 

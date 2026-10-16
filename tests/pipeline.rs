@@ -34,7 +34,7 @@ async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
     assert_eq!(labels(&issue), ["bug", "ready-for-agent"]);
     assert_eq!(
         last_comment(&issue),
-        "> *Linewright, triage*\n\n## Agent Brief\n\n**Summary:** Empty widgets crash."
+        "## Agent Brief\n\n**Summary:** Empty widgets crash."
     );
     assert!(issue.open);
 }
@@ -250,7 +250,7 @@ async fn an_issue_triaged_for_the_maintainer_says_a_label_answers_it() {
     assert_eq!(labels(&issue), ["enhancement", "ready-for-human"]);
     assert_eq!(
         last_comment(&issue),
-        "> *Linewright, triage*\n\nShould widgets be resizable?\n\n\
+        "Should widgets be resizable?\n\n\
          Answer with a label: `ready-for-agent` to implement it as decided or \
          `needs-triage` to triage it again. A comment alone starts nothing."
     );
@@ -283,7 +283,7 @@ async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again_once_they_
     assert_eq!(labels(&issue), ["enhancement", "ready-for-agent"]);
     assert_eq!(
         last_comment(&issue),
-        "> *Linewright, triage*\n\n## Agent Brief\n\n**Summary:** Make widgets resizable."
+        "## Agent Brief\n\n**Summary:** Make widgets resizable."
     );
 }
 
@@ -348,7 +348,7 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
     );
     assert_eq!(list_ticket.blocked_by[0].number, store_ticket.number);
     assert_eq!(labels(store_ticket), ["ready-for-agent"]);
-    assert!(last_comment(tracking).starts_with("> *Linewright, tickets*"));
+    assert_eq!(last_comment(tracking), "Two slices: storing, then listing.");
 
     world.poll().await;
 
@@ -396,7 +396,7 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
     );
     assert_eq!(
         ready.comments.last().unwrap().body,
-        "> *Linewright, review*\n\nNo CI reported: ready for review."
+        "No CI reported: ready for review."
     );
 
     world.store.merge_pull(pr).await.unwrap();
@@ -580,15 +580,9 @@ async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_r
         "renamed\n"
     );
     let thread = &view.threads[0];
-    assert_eq!(
-        thread.comments.last().unwrap().body,
-        "> *Linewright, rework*\n\nRenamed."
-    );
+    assert_eq!(thread.comments.last().unwrap().body, "Renamed.");
     assert!(!thread.resolved, "people resolve their own threads");
-    assert_eq!(
-        view.comments.last().unwrap().body,
-        "> *Linewright, rework*\n\nRenamed as asked."
-    );
+    assert_eq!(view.comments.last().unwrap().body, "Renamed as asked.");
     assert_eq!(
         world.store.requested_reviewers(pr),
         [Login::new("maintainer")]
@@ -965,12 +959,7 @@ async fn a_run_whose_pull_request_closes_while_it_works_pushes_and_records_nothi
             .await
             .is_err()
     );
-    assert!(
-        !view
-            .comments
-            .iter()
-            .any(|c| c.body.starts_with("> *Linewright, rework*"))
-    );
+    assert!(!view.comments.iter().any(|c| c.body == "Renamed as asked."));
 }
 
 #[tokio::test]
@@ -1019,6 +1008,51 @@ async fn feedback_posted_while_the_session_works_is_addressed_before_the_push() 
 }
 
 #[tokio::test]
+async fn a_rework_that_needed_no_change_answers_its_feedback_also_after_a_restart() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("coverage[bot]", pr, "Coverage dropped 0.1%.")
+        .unwrap();
+    world.runtime.on(WorkKind::Rework, |_| {
+        json(json!({"outcome": "done", "comment": "No change needed: noise."}))
+    });
+
+    world.poll().await;
+    world.poll().await;
+    world.restart(|_| {}).await;
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+}
+
+#[tokio::test]
+async fn feedback_posted_while_a_rework_records_its_outcome_starts_another() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("coverage[bot]", pr, "Coverage dropped 0.1%.")
+        .unwrap();
+    world.runtime.on(WorkKind::Rework, |_| {
+        json(json!({"outcome": "done", "comment": "No change needed: noise."}))
+    });
+    let (store, clock) = (world.store.clone(), world.clock.clone());
+    world.store.after_linewrights_next_comment(move || {
+        clock.advance(chrono::TimeDelta::minutes(1));
+        store
+            .comment_as("maintainer", pr, "Please rename `foo` too.")
+            .unwrap();
+    });
+
+    world.poll().await;
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 2);
+}
+
+#[tokio::test]
 async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back_naming_the_check()
 {
     let mut world = World::new().await;
@@ -1053,7 +1087,7 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
         let view = world.store.snapshot_pull(pr).await;
         assert_eq!(
             view.comments.last().unwrap().body,
-            "> *Linewright, CI*\n\nFixed the widget count."
+            "Fixed the widget count."
         );
         world
             .store
@@ -1074,7 +1108,7 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
         &world,
         ticket,
         pr,
-        "> *Linewright, CI*\n\n`test` still failing after 2 fix attempts.\n\nRemove \
+        "`test` still failing after 2 fix attempts.\n\nRemove \
          `ready-for-human` from this pull request to try again.",
     )
     .await;
@@ -1137,7 +1171,7 @@ async fn ci_that_does_not_complete_in_time_hands_the_pull_request_back_and_unlab
         &world,
         ticket,
         pr,
-        "> *Linewright, CI*\n\nCI did not complete within 6h: `e2e` still running.\n\nRemove \
+        "CI did not complete within 6h: `e2e` still running.\n\nRemove \
          `ready-for-human` from this pull request to try again.",
     )
     .await;
@@ -1173,7 +1207,7 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
         &world,
         ticket,
         pr,
-        "> *Linewright, rework*\n\nThe session ended unexpectedly: the session timed out\n\n\
+        "The session ended unexpectedly: the session timed out\n\n\
          Remove `ready-for-human` from this pull request to try again.",
     )
     .await;
@@ -1384,7 +1418,7 @@ async fn a_pull_request_closed_without_merging_hands_its_ticket_back() {
     assert_eq!(labels(&issue), ["ready-for-human"]);
     assert_eq!(
         last_comment(&issue),
-        format!("> *Linewright, review*\n\n{pr} was closed without merging.")
+        format!("{pr} was closed without merging.")
     );
     assert_eq!(
         world.store.pulls().len(),
@@ -1493,14 +1527,7 @@ async fn the_branch_of_a_ticket_closed_while_linewright_was_stopped_is_deleted_a
     let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
 
     world.store.close_issue_as(ticket).unwrap();
-    world.factory = linewright::factory::Factory::start(
-        world.store.clone(),
-        world.runtime.clone(),
-        world.clock.clone(),
-        config(&world.dir.path().join("work")),
-    )
-    .await
-    .unwrap();
+    world.restart(|_| {}).await;
     world.poll().await;
 
     assert!(!has_branch(&world, &branch));
@@ -2053,7 +2080,8 @@ async fn with_auto_merge_a_merge_method_set_wins_over_the_one_the_repository_all
 }
 
 #[tokio::test]
-async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_merges() {
+async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_across_a_restart_then_merges()
+ {
     use linewright::domain::{PullState, Requirement};
 
     let mut world = World::with(|config| config.auto_merge = true).await;
@@ -2068,6 +2096,8 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_me
     world.clock.advance(chrono::TimeDelta::minutes(6));
     world.poll().await;
     world.poll().await;
+    world.restart(|config| config.auto_merge = true).await;
+    world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
     assert_eq!(view.state, PullState::Open { draft: false });
@@ -2075,10 +2105,8 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_me
     let comments: Vec<&str> = view.comments.iter().map(|c| c.body.as_str()).collect();
     assert_eq!(
         comments,
-        [
-            "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
-             (@alice) before merging. Linewright merges it once GitHub allows it."
-        ]
+        ["Ready for review: GitHub requires a code owner's review \
+             (@alice) before merging. Linewright merges it once GitHub allows it."]
     );
 
     world.store.allow_merge(pr);
@@ -2087,6 +2115,87 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_then_me
     let merged = world.store.snapshot_pull(pr).await;
     assert!(matches!(merged.state, PullState::Merged { .. }));
     assert!(!world.issue(ticket).open);
+}
+
+#[tokio::test]
+async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_holds_is_not_held_again()
+ {
+    use linewright::domain::Requirement;
+
+    let mut world = World::with(|config| config.auto_merge = true).await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.store.block_merge(
+        pr,
+        vec![Requirement::CodeOwnerReview {
+            owners: vec!["alice".into()],
+        }],
+    );
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+    std::fs::remove_file(world.dir.path().join("work/held-for-review.json")).unwrap();
+
+    world.restart(|config| config.auto_merge = true).await;
+    world.poll().await;
+    world.poll().await;
+
+    assert_eq!(world.store.snapshot_pull(pr).await.comments.len(), 1);
+}
+
+#[tokio::test]
+async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_holds_is_not_held_again_once_github_works_out_its_merge_state()
+ {
+    use linewright::domain::Requirement;
+
+    let mut world = World::with(|config| config.auto_merge = true).await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.store.block_merge(
+        pr,
+        vec![Requirement::CodeOwnerReview {
+            owners: vec!["alice".into()],
+        }],
+    );
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+    std::fs::remove_file(world.dir.path().join("work/held-for-review.json")).unwrap();
+    world.store.pend_merge_state(pr);
+
+    world.restart(|config| config.auto_merge = true).await;
+    world.poll().await;
+    world.store.work_out_merge_state(pr);
+    world.poll().await;
+
+    assert_eq!(world.store.snapshot_pull(pr).await.comments.len(), 1);
+}
+
+#[tokio::test]
+async fn with_auto_merge_a_pull_request_github_blocks_while_linewright_is_stopped_is_held_for_review()
+ {
+    use linewright::domain::Requirement;
+
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
+    world.store.block_merge(
+        pr,
+        vec![Requirement::CodeOwnerReview {
+            owners: vec!["alice".into()],
+        }],
+    );
+
+    world.restart(|config| config.auto_merge = true).await;
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    let comments: Vec<&str> = view.comments.iter().map(|c| c.body.as_str()).collect();
+    assert_eq!(
+        comments,
+        [
+            "No CI reported: ready for review.",
+            "Ready for review: GitHub requires a code owner's review (@alice) before merging. \
+             Linewright merges it once GitHub allows it."
+        ]
+    );
 }
 
 #[tokio::test]
@@ -2164,7 +2273,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
         ticket,
         pr,
         &format!(
-            "> *Linewright, review*\n\nMerging {pr} failed twice. GitHub's reason: \
+            "Merging {pr} failed twice. GitHub's reason: \
              Head branch was modified. Review and try the merge again.\n\nRemove \
              `ready-for-human` from this pull request to try again."
         ),
@@ -2359,7 +2468,7 @@ async fn a_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once_w
     assert_eq!(
         last_comment(&issue),
         format!(
-            "> *Linewright, implementation*\n\nGitHub refused to push the branch \
+            "GitHub refused to push the branch \
              `{}-do-the-thing` because Linewright's token lacks a permission. GitHub's \
              reason: {WORKFLOW_REFUSAL}\n\nThe work was not kept. Grant the permission and \
              apply `ready-for-agent` again, or make the change yourself.",
@@ -2478,7 +2587,7 @@ async fn a_blocked_run_whose_work_is_refused_for_a_missing_permission_asks_its_q
     assert_eq!(
         last_comment(&issue),
         format!(
-            "> *Linewright, implementation*\n\nBlocked on a question the spec cannot decide:\n\n\
+            "Blocked on a question the spec cannot decide:\n\n\
              Should gadgets expire?\n\nGitHub refused to push the branch `{}-gadgets` because \
              Linewright's token lacks a permission. GitHub's reason: {WORKFLOW_REFUSAL}\n\nThe \
              work was not kept. Grant the permission and apply `ready-for-agent` again, or make \
@@ -2525,7 +2634,7 @@ async fn a_rework_push_refused_for_a_missing_permission_hands_the_pull_request_b
         ticket,
         pr,
         &format!(
-            "> *Linewright, rework*\n\nGitHub refused to push the branch `{head}` because \
+            "GitHub refused to push the branch `{head}` because \
              Linewright's token lacks a permission. GitHub's reason: {WORKFLOW_REFUSAL}\n\nThe \
              work was not kept. Grant the permission, or make the change yourself.\n\nRemove \
              `ready-for-human` from this pull request to try again."
@@ -2549,7 +2658,7 @@ async fn a_blocking_spec_gap_in_a_pull_request_run_hands_the_pull_request_back()
         &world,
         ticket,
         pr,
-        "> *Linewright, rework*\n\nBlocked on a question the spec cannot decide:\n\nShould \
+        "Blocked on a question the spec cannot decide:\n\nShould \
          renamed widgets keep their old name?\n\nRemove `ready-for-human` from this pull request \
          to try again.",
     )

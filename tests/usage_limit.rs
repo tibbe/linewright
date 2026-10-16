@@ -15,7 +15,6 @@ use common::*;
 use linewright::clock::Clock;
 use linewright::domain::{Item, Login, Number, Timestamp};
 use linewright::factory::Factory;
-use linewright::marker::{Stage, marked};
 use linewright::reconcile::{Action, Subject, WorkKind};
 use linewright::runtime::{SessionError, UsageLimit};
 use linewright::store::Store;
@@ -163,7 +162,7 @@ async fn before_the_reset_actions_that_start_no_session_are_still_taken() {
         .open_issue("reporter", "It broke", "How?", &["needs-info"]);
     world
         .store
-        .comment_as(LINEWRIGHT, asked, &marked(Stage::Triage, "Which version?"))
+        .comment_as(LINEWRIGHT, asked, "Which version?")
         .unwrap();
     world
         .store

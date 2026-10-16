@@ -466,6 +466,7 @@ fn work(item: u64, stage: WorkKind, n: u32, start: &str) -> Recorded {
             ending: Ending::Done,
         },
         sessions: vec![],
+        answered_until: None,
     }
 }
 
