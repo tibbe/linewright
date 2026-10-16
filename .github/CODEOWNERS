@@ -2,6 +2,7 @@
 # themselves.
 
 /docs/ @tibbe
+/briefs/ @tibbe
 /GLOSSARY.md @tibbe
 AGENTS.md @tibbe
 CLAUDE.md @tibbe
