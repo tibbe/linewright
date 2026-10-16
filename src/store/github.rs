@@ -1026,9 +1026,9 @@ impl GqlIssue {
                 .map(|n| n.nodes)
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|p| p.state == "OPEN")
                 .map(|p| ClosingPull {
                     number: Number(p.number),
+                    open: p.state == "OPEN",
                     author: login(p.author),
                 })
                 .collect(),
@@ -2464,7 +2464,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ticket_is_closed_by_its_open_pull_requests_whoever_opened_them() {
+    fn a_ticket_is_closed_by_its_pull_requests_open_closed_or_merged_whoever_opened_them() {
         let issue = ticket(
             Value::Null,
             json!([
@@ -2479,19 +2479,17 @@ mod tests {
         assert_eq!(
             issue.closed_by,
             [
-                ClosingPull {
-                    number: Number(43),
-                    author: Login::new("alice"),
-                },
-                ClosingPull {
-                    number: Number(44),
-                    author: Login::new("renovate[bot]"),
-                },
-                ClosingPull {
-                    number: Number(45),
-                    author: Login::new("linewright"),
-                },
+                (40, "alice", false),
+                (41, "alice", false),
+                (43, "alice", true),
+                (44, "renovate[bot]", true),
+                (45, "linewright", true),
             ]
+            .map(|(number, author, open)| ClosingPull {
+                number: Number(number),
+                author: Login::new(author),
+                open,
+            })
         );
     }
 

@@ -2169,6 +2169,7 @@ fn closed_by(mut issue: Issue, pr: u64, author: &str) -> Issue {
     issue.closed_by.push(ClosingPull {
         number: Number(pr),
         author: Login::new(author),
+        open: true,
     });
     issue
 }
@@ -2183,6 +2184,24 @@ fn a_ticket_someone_elses_open_pull_request_closes_is_not_claimed_and_waits_for_
         [Wait::ClosingPullRequest {
             pull_request: Number(43)
         }]
+    );
+}
+
+#[test]
+fn a_ticket_only_a_closed_or_merged_pull_request_closes_is_claimed() {
+    let mut ticket = ticket(2);
+    for number in [43, 44] {
+        ticket.closed_by.push(ClosingPull {
+            number: Number(number),
+            author: Login::new("alice"),
+            open: false,
+        });
+    }
+    let world = snapshot(vec![ticket]);
+
+    assert_eq!(
+        decide(&world),
+        vec![Action::Claim { issue: Number(2) }, implement(2)]
     );
 }
 

@@ -89,13 +89,14 @@ fn explain_shows_where_the_item_is_when_serve_last_read_it_and_each_wait() {
 }
 
 #[test]
-fn a_ticket_someone_elses_open_pull_request_closes_waits_for_it() {
+fn a_ticket_someone_elses_open_pull_request_closes_names_it_as_a_child_and_waits_for_it() {
     let ticket = closed_by(ticket(42, "Add invoices"), 43, "alice");
 
     assert_eq!(
         text(&view(vec![ticket], vec![]), 42),
         [
             "#42: Add invoices",
+            "child: #43, a pull request that closes it",
             "state: ready to claim",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: #43, which closes it",
@@ -151,12 +152,15 @@ fn an_item_in_review_waits_for_ci_on_its_pull_request() {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
     };
-    let view = view(vec![claimed], vec![draft(43, 42, &[CheckState::Pending])]);
+    let view = view(
+        vec![closed_by(claimed, 43, "factory")],
+        vec![draft(43, 42, &[CheckState::Pending])],
+    );
 
     assert_eq!(
         text(&view, 42)[1..],
         [
-            "child: #43, its current pull request",
+            "child: #43, a pull request that closes it",
             "state: in review: #43 (draft, CI running)",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: CI on #43",
@@ -190,7 +194,7 @@ fn an_item_linewright_acts_on_next_waits_for_nothing() {
 }
 
 #[test]
-fn linewrights_pull_request_is_explained_as_the_issue_it_is_for() {
+fn linewrights_pull_request_is_explained_as_the_issue_in_review_with_it() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
@@ -203,7 +207,7 @@ fn linewrights_pull_request_is_explained_as_the_issue_it_is_for() {
         text(&view, 43),
         [
             "#43: Do #42",
-            "parent: #42, the issue it is for",
+            "parent: #42, an issue it closes",
             "state: in review: #43 (draft, CI running)",
             "last read: 2026-10-01 12:00:20 UTC",
             "waiting for: CI on #43",
@@ -775,6 +779,7 @@ fn the_json_names_each_fact() {
             "number": 42,
             "title": "Add invoices",
             "parent": null,
+            "parents": [],
             "children": [],
             "state": "claimed",
             "last_read": "2026-10-01T12:00:00Z",
@@ -792,8 +797,8 @@ fn the_json_names_each_fact() {
 }
 
 #[test]
-fn the_json_of_linewrights_pull_request_no_run_links_to_names_the_issue_it_is_for_and_itself_as_runs_of()
- {
+fn the_json_of_linewrights_pull_request_in_review_names_the_issue_it_closes_and_itself_as_runs_of()
+{
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
@@ -806,7 +811,8 @@ fn the_json_of_linewrights_pull_request_no_run_links_to_names_the_issue_it_is_fo
         serde_json::json!({
             "number": 43,
             "title": "Do #42",
-            "parent": {"number": 42, "role": "issue-it-is-for"},
+            "parent": {"number": 42, "role": "issue-it-closes"},
+            "parents": [{"number": 42, "role": "issue-it-closes"}],
             "children": [],
             "pull_request_for": 42,
             "pull_request": 43,
@@ -827,19 +833,23 @@ fn the_json_of_linewrights_pull_request_no_run_links_to_names_the_issue_it_is_fo
 }
 
 #[test]
-fn the_json_of_an_issue_in_review_names_its_current_pull_request_as_its_child() {
+fn the_json_of_an_issue_in_review_names_the_pull_request_closing_it_as_its_child() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
     };
-    let view = view(vec![claimed], vec![draft(43, 42, &[CheckState::Pending])]);
+    let view = view(
+        vec![closed_by(claimed, 43, "factory")],
+        vec![draft(43, 42, &[CheckState::Pending])],
+    );
     let answer = explain(&view, &[], Number(42), at(NOW)).unwrap();
     let json = serde_json::to_value(&answer).unwrap();
 
     assert_eq!(json["parent"], serde_json::Value::Null);
+    assert_eq!(json["parents"], serde_json::json!([]));
     assert_eq!(
         json["children"],
-        serde_json::json!([{"number": 43, "role": "current-pull-request"}])
+        serde_json::json!([{"number": 43, "role": "pull-request-closing-it"}])
     );
     assert_eq!(json["pull_request"], 43);
 }
@@ -1031,7 +1041,7 @@ fn a_closed_pull_request_is_left_alone_as_closed() {
     assert_eq!(
         left_alone_text(&view(vec![], vec![]), AnyItem::Pull(Box::new(closed)))[1..],
         [
-            "parent: #42, the issue it is for",
+            "parent: #42, an issue it closes",
             "state: closed pull request",
             "last read: 2026-10-01 12:00:30 UTC",
             "left alone: it is closed",
@@ -1235,6 +1245,7 @@ fn the_json_of_an_item_left_alone_names_why() {
             "number": 5,
             "title": "Add invoices to the spec",
             "parent": null,
+            "parents": [],
             "children": [],
             "item": "pull-request",
             "state": "merged",
@@ -1274,7 +1285,7 @@ fn a_tracked_answer_reads_back_as_one() {
 }
 
 #[test]
-fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issues() {
+fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issue() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
@@ -1288,7 +1299,7 @@ fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issues
         ),
         [
             "#43: Do #42",
-            "parent: #42, the issue it is for",
+            "parent: #42, an issue it closes",
             "state: in review: #43 (draft, CI running)",
             "last read: 2026-10-01 12:00:30 UTC",
             "waiting for: CI on #43",
@@ -1338,6 +1349,7 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
                 "number": 42,
                 "title": "Add invoices",
                 "parent": null,
+                "parents": [],
                 "children": [],
                 "item": "issue",
                 "state": "open",
@@ -1366,7 +1378,7 @@ fn family_lines(lines: &[String]) -> Vec<&str> {
 }
 
 #[test]
-fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_is_for() {
+fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_closes() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
@@ -1395,13 +1407,13 @@ fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_is_for() {
                 &view,
                 AnyItem::Pull(Box::new(older.clone()))
             )),
-            ["parent: #42, the issue it is for"]
+            ["parent: #42, an issue it closes"]
         );
     }
 }
 
 #[test]
-fn linewrights_merged_pull_request_names_the_issue_it_is_for() {
+fn linewrights_merged_pull_request_names_the_issue_it_closes() {
     let done = MergedPull {
         number: Number(43),
         title: "Do #42".into(),
@@ -1424,14 +1436,14 @@ fn linewrights_merged_pull_request_names_the_issue_it_is_for() {
         lines[..3],
         [
             "#43: Do #42",
-            "parent: #42, the issue it is for",
+            "parent: #42, an issue it closes",
             "state: merged pull request",
         ]
     );
 }
 
 #[test]
-fn a_pull_request_not_linewrights_has_no_parent() {
+fn a_pull_request_someone_else_opened_names_the_issue_it_closes() {
     let someones_merged = MergedPull {
         body: "Closes #42".into(),
         closes: vec![Number(42)],
@@ -1461,13 +1473,13 @@ fn a_pull_request_not_linewrights_has_no_parent() {
     ] {
         assert_eq!(
             family_lines(&left_alone_text(&view(vec![], vec![]), read)),
-            Vec::<&str>::new()
+            ["parent: #42, an issue it closes"]
         );
     }
 }
 
 #[test]
-fn the_json_of_linewrights_pull_request_left_alone_names_the_issue_it_is_for() {
+fn the_json_of_a_closed_pull_request_names_the_issue_it_closes() {
     let closed = Pull {
         state: PullState::Closed {
             at: at("2026-10-01T11:00:00Z"),
@@ -1486,7 +1498,8 @@ fn the_json_of_linewrights_pull_request_left_alone_names_the_issue_it_is_for() {
         serde_json::json!({
             "number": 43,
             "title": "Do #42",
-            "parent": {"number": 42, "role": "issue-it-is-for"},
+            "parent": {"number": 42, "role": "issue-it-closes"},
+            "parents": [{"number": 42, "role": "issue-it-closes"}],
             "children": [],
             "item": "pull-request",
             "state": "closed",
@@ -1501,38 +1514,6 @@ fn the_json_of_linewrights_pull_request_left_alone_names_the_issue_it_is_for() {
         serde_json::from_value::<Answer>(serde_json::to_value(&answer).unwrap()).unwrap(),
         answer
     );
-}
-
-#[test]
-fn linewrights_pull_request_closing_several_issues_is_for_the_one_linewright_tracks() {
-    let claimed = Issue {
-        assignees: vec![Login::new("factory")],
-        ..ticket(42, "Add invoices")
-    };
-    let untracked = Issue {
-        labels: vec![],
-        ..ticket(50, "Old invoices")
-    };
-    let closed = Pull {
-        body: "Closes #50 and closes #42".into(),
-        closes: vec![Number(50), Number(42)],
-        state: PullState::Closed {
-            at: at("2026-10-01T11:00:00Z"),
-        },
-        ..draft(43, 42, &[])
-    };
-    let lines = |issues| {
-        left_alone_text(
-            &view(issues, vec![]),
-            AnyItem::Pull(Box::new(closed.clone())),
-        )
-    };
-
-    assert_eq!(
-        family_lines(&lines(vec![untracked.clone(), claimed])),
-        ["parent: #42, the issue it is for"]
-    );
-    assert_eq!(family_lines(&lines(vec![untracked])), Vec::<&str>::new());
 }
 
 /// Ticket #42, cut from the spec change #5 and a sub-issue of its tracking
@@ -1595,18 +1576,21 @@ fn a_tracking_issue_names_its_spec_change_and_each_of_its_tickets() {
 }
 
 #[test]
-fn a_ticket_in_review_names_its_tracking_issue_and_its_current_pull_request() {
+fn a_ticket_in_review_names_its_tracking_issue_and_the_pull_request_closing_it() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket_of_40()
     };
-    let view = view(vec![claimed], vec![draft(43, 42, &[CheckState::Pending])]);
+    let view = view(
+        vec![closed_by(claimed, 43, "factory")],
+        vec![draft(43, 42, &[CheckState::Pending])],
+    );
 
     assert_eq!(
         family_lines(&text(&view, 42)),
         [
             "parent: #40, its tracking issue",
-            "child: #43, its current pull request",
+            "child: #43, a pull request that closes it",
         ]
     );
 }
@@ -1780,29 +1764,40 @@ fn closed_43(closes: &[u64]) -> Pull {
 }
 
 #[test]
-fn linewrights_pull_request_left_alone_names_the_issue_it_was_opened_for_whatever_it_closes() {
+fn linewrights_pull_request_names_the_issues_it_closes_whatever_issue_it_was_opened_for() {
     let edited_open = Pull {
         body: "Closes #12".into(),
         closes: numbers(&[12]),
         ..draft(43, 42, &[])
     };
+    let both = [
+        "parent: #42, an issue it closes",
+        "parent: #12, an issue it closes",
+    ];
+    let only_12 = ["parent: #12, an issue it closes"];
 
-    for read in [
-        AnyItem::Merged {
-            pull: Box::new(merged_43(&[42, 12])),
-            tracking_issues: vec![],
-        },
-        AnyItem::Merged {
-            pull: Box::new(merged_43(&[12])),
-            tracking_issues: vec![],
-        },
-        AnyItem::Pull(Box::new(closed_43(&[42, 12]))),
-        AnyItem::Pull(Box::new(closed_43(&[12]))),
-        AnyItem::Pull(Box::new(edited_open)),
+    for (read, parents) in [
+        (
+            AnyItem::Merged {
+                pull: Box::new(merged_43(&[42, 12])),
+                tracking_issues: vec![],
+            },
+            &both[..],
+        ),
+        (
+            AnyItem::Merged {
+                pull: Box::new(merged_43(&[12])),
+                tracking_issues: vec![],
+            },
+            &only_12[..],
+        ),
+        (AnyItem::Pull(Box::new(closed_43(&[42, 12]))), &both[..]),
+        (AnyItem::Pull(Box::new(closed_43(&[12]))), &only_12[..]),
+        (AnyItem::Pull(Box::new(edited_open)), &only_12[..]),
     ] {
         assert_eq!(
             read_family(&view(vec![], vec![]), &opened_43_for_42(), read),
-            ["parent: #42, the issue it is for"]
+            parents
         );
     }
 }
@@ -1831,109 +1826,49 @@ fn open_43_closing_12_and_42() -> Pull {
 }
 
 #[test]
-fn linewrights_pull_request_in_review_with_two_issues_is_for_the_one_it_was_opened_for() {
+fn linewrights_pull_request_in_review_names_each_issue_it_closes_whatever_issue_it_was_opened_for()
+{
     let in_review = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
     let answer = explain(&in_review, &opened_43_for_42(), Number(43), at(NOW)).unwrap();
     let lines = lines_of(&render(&answer, false));
 
-    assert_eq!(family_lines(&lines), ["parent: #42, the issue it is for"]);
+    assert_eq!(
+        family_lines(&lines),
+        [
+            "parent: #12, an issue it closes",
+            "parent: #42, an issue it closes",
+        ]
+    );
     let json = serde_json::to_value(&answer).unwrap();
     assert_eq!(
-        json["parent"],
-        serde_json::json!({"number": 42, "role": "issue-it-is-for"})
+        json["parents"],
+        serde_json::json!([
+            {"number": 12, "role": "issue-it-closes"},
+            {"number": 42, "role": "issue-it-closes"},
+        ])
     );
-    assert_eq!(json["pull_request_for"], 42);
+    assert_eq!(
+        json["parent"],
+        serde_json::json!({"number": 12, "role": "issue-it-closes"})
+    );
     assert_eq!(json["children"], serde_json::json!([]));
 }
 
 #[test]
-fn linewrights_pull_request_the_read_places_in_review_with_two_issues_is_for_the_one_it_was_opened_for()
- {
-    let answer = explain_read(
-        &view(claimed_12_and_42(), vec![]),
-        &opened_43_for_42(),
-        &AnyItem::Pull(Box::new(open_43_closing_12_and_42())),
-        at(NOW),
-    );
-    let json = serde_json::to_value(&answer).unwrap();
-    assert_eq!(
-        json["parent"],
-        serde_json::json!({"number": 42, "role": "issue-it-is-for"})
-    );
-    assert_eq!(json["pull_request_for"], 42);
-}
-
-#[test]
-fn linewrights_pull_request_is_the_current_one_only_of_the_issue_it_was_opened_for() {
-    let view = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
-
-    let for_42 = explain(&view, &opened_43_for_42(), Number(42), at(NOW)).unwrap();
-    assert_eq!(
-        family_lines(&lines_of(&render(&for_42, false))),
-        ["child: #43, its current pull request"]
-    );
-    let for_12 = explain(&view, &opened_43_for_42(), Number(12), at(NOW)).unwrap();
-    assert_eq!(
-        lines_of(&render(&for_12, false))[1..],
-        [
-            "state: claimed: being implemented",
-            "last read: 2026-10-01 12:00:00 UTC",
-            "waiting for: #43, which closes it",
-        ]
-    );
-}
-
-#[test]
-fn linewrights_pull_request_no_run_links_to_is_the_current_one_of_each_issue_it_closes() {
+fn linewrights_pull_request_is_a_child_of_each_issue_it_closes_whatever_issue_it_was_opened_for() {
     let view = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
 
     for issue in [12, 42] {
-        let answer = explain(&view, &[], Number(issue), at(NOW)).unwrap();
+        let answer = explain(&view, &opened_43_for_42(), Number(issue), at(NOW)).unwrap();
         assert_eq!(
             family_lines(&lines_of(&render(&answer, false))),
-            ["child: #43, its current pull request"]
+            ["child: #43, a pull request that closes it"]
         );
     }
 }
 
 #[test]
-fn linewrights_pull_request_whose_issue_is_not_in_review_is_left_alone_for_that_issue() {
-    let handed_back = Issue {
-        labels: vec!["ready-for-human".into()],
-        assignees: vec![Login::new("factory")],
-        ..ticket(42, "Add invoices")
-    };
-    let claimed_12 = Issue {
-        assignees: vec![Login::new("factory")],
-        ..ticket(12, "Old invoices")
-    };
-    let open = open_43_closing_12_and_42();
-    let view = view(vec![claimed_12, handed_back], vec![open.clone()]);
-
-    assert_eq!(
-        explain(&view, &opened_43_for_42(), Number(43), at(NOW)),
-        None
-    );
-    let answer = explain_read(
-        &view,
-        &opened_43_for_42(),
-        &AnyItem::Pull(Box::new(open)),
-        at(NOW),
-    );
-    let lines = lines_of(&render_answer(&answer, false));
-    assert_eq!(
-        lines[1..5],
-        [
-            "parent: #42, the issue it is for",
-            "state: open pull request",
-            "last read: 2026-10-01 12:00:30 UTC",
-            "left alone: it is Linewright's for #42, which is not in review but with the maintainer",
-        ]
-    );
-}
-
-#[test]
-fn linewrights_spec_change_cut_into_tickets_names_the_issue_it_is_for_and_its_tracking_issue() {
+fn a_spec_change_cut_into_tickets_names_the_issue_it_closes_and_its_tracking_issue() {
     let processed = MergedPull {
         labels: vec!["linewright:spec-processed".into()],
         files: vec!["docs/specs/invoices.md".into()],
@@ -1947,15 +1882,15 @@ fn linewrights_spec_change_cut_into_tickets_names_the_issue_it_is_for_and_its_tr
     assert_eq!(
         read_family(&view(vec![], vec![]), &opened_43_for_42(), read.clone()),
         [
-            "parent: #42, the issue it is for",
+            "parent: #12, an issue it closes",
             "child: #40, its tracking issue",
         ]
     );
     let answer = explain_read(&view(vec![], vec![]), &opened_43_for_42(), &read, at(NOW));
     let json = serde_json::to_value(&answer).unwrap();
     assert_eq!(
-        json["parent"],
-        serde_json::json!({"number": 42, "role": "issue-it-is-for"})
+        json["parents"],
+        serde_json::json!([{"number": 12, "role": "issue-it-closes"}])
     );
     assert_eq!(
         json["children"],
@@ -1963,25 +1898,87 @@ fn linewrights_spec_change_cut_into_tickets_names_the_issue_it_is_for_and_its_tr
     );
 }
 
+/// Someone's pull request #50, closing #40 and #41, in `state`.
+fn closing_40_and_41(state: PullState) -> Pull {
+    Pull {
+        body: "Closes #40 and closes #41".into(),
+        closes: numbers(&[40, 41]),
+        state,
+        ..someones_pull(50)
+    }
+}
+
 #[test]
-fn linewrights_pull_request_no_run_links_to_is_for_the_issue_it_closes_in_review_with_it() {
-    let handed_back = Issue {
-        labels: vec!["ready-for-human".into()],
-        assignees: vec![Login::new("factory")],
-        ..ticket(12, "Old invoices")
+fn a_pull_request_names_each_issue_it_closes_as_a_parent() {
+    let closed = PullState::Closed {
+        at: at("2026-10-01T11:00:00Z"),
     };
-    let claimed_42 = Issue {
-        assignees: vec![Login::new("factory")],
+    let merged = MergedPull {
+        number: Number(50),
+        closes: numbers(&[40, 41]),
+        ..merged(&[])
+    };
+
+    for read in [
+        AnyItem::Pull(Box::new(closing_40_and_41(PullState::Open {
+            draft: false,
+        }))),
+        AnyItem::Pull(Box::new(closing_40_and_41(closed))),
+        AnyItem::Merged {
+            pull: Box::new(merged),
+            tracking_issues: vec![],
+        },
+    ] {
+        assert_eq!(
+            read_family(&view(vec![], vec![]), &[], read.clone()),
+            [
+                "parent: #40, an issue it closes",
+                "parent: #41, an issue it closes",
+            ]
+        );
+        let answer = explain_read(&view(vec![], vec![]), &[], &read, at(NOW));
+        let json = serde_json::to_value(&answer).unwrap();
+        assert_eq!(
+            json["parents"],
+            serde_json::json!([
+                {"number": 40, "role": "issue-it-closes"},
+                {"number": 41, "role": "issue-it-closes"},
+            ])
+        );
+        assert_eq!(serde_json::from_value::<Answer>(json).unwrap(), answer);
+    }
+}
+
+#[test]
+fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
+    let ended = |number| ClosingPull {
+        number: Number(number),
+        author: Login::new("alice"),
+        open: false,
+    };
+    let closed = Issue {
+        open: false,
+        closed_by: vec![ended(43), ended(44)],
         ..ticket(42, "Add invoices")
     };
-    let view = view(
-        vec![handed_back, claimed_42],
-        vec![open_43_closing_12_and_42()],
-    );
+    let mut open = closed_by(ticket(42, "Add invoices"), 45, "alice");
+    open.closed_by.insert(0, ended(43));
 
-    let answer = explain(&view, &[], Number(43), at(NOW)).unwrap();
     assert_eq!(
-        family_lines(&lines_of(&render(&answer, false))),
-        ["parent: #42, the issue it is for"]
+        family_lines(&left_alone_text(
+            &view(vec![], vec![]),
+            AnyItem::LeftOutIssue(Box::new(closed))
+        )),
+        [
+            "child: #43, a pull request that closes it",
+            "child: #44, a pull request that closes it",
+        ]
+    );
+    assert_eq!(
+        family_lines(&text(&view(vec![open], vec![]), 42)),
+        [
+            "child: #45, a pull request that closes it",
+            "child: #43, a pull request that closes it",
+        ]
     );
 }

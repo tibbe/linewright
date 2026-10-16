@@ -64,6 +64,7 @@ pub fn closed_by(issue: Issue, pr: u64, author: &str) -> Issue {
         closed_by: vec![ClosingPull {
             number: Number(pr),
             author: Login::new(author),
+            open: true,
         }],
         ..issue
     }

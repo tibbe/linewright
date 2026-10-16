@@ -970,7 +970,7 @@ fn implementation(
     let closing = issue
         .closed_by
         .iter()
-        .filter(|p| !own.clone().any(|pull| pull.number == p.number))
+        .filter(|p| p.open && !own.clone().any(|pull| pull.number == p.number))
         .map(|p| Wait::ClosingPullRequest {
             pull_request: p.number,
         });

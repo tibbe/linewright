@@ -930,10 +930,11 @@ impl State {
             closed_by: self
                 .pulls
                 .values()
-                .filter(|p| p.is_open() && p.closes(issue.number))
+                .filter(|p| p.closes(issue.number))
                 .map(|p| ClosingPull {
                     number: p.number,
                     author: p.author.clone(),
+                    open: p.is_open(),
                 })
                 .collect(),
             ..issue.clone()
