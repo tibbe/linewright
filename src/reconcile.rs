@@ -124,6 +124,19 @@ impl Work {
         }
     }
 
+    /// The item the run is on, whose runs it counts among and which its run
+    /// ID names: its pull request, or else its subject
+    /// (`docs/specs/pull_requests.md`, "The pull request").
+    pub fn item(&self) -> Number {
+        match self {
+            Work::Triage { issue } | Work::Implement { issue } => *issue,
+            Work::Tickets { pr }
+            | Work::Rework { pr, .. }
+            | Work::FixCi { pr, .. }
+            | Work::Update { pr, .. } => *pr,
+        }
+    }
+
     /// The item whose facts the run starts from: its pull request, or else
     /// its subject.
     pub fn starts_from(&self) -> Item {

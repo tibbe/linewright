@@ -40,7 +40,7 @@ lw --repo owner/name serve
   user can open, under `$XDG_RUNTIME_DIR/linewright/`, or `linewright-<uid>/` in
   the temporary directory without it.
 - `runs [N]` lists the runs, newest first, or issue or pull request #N's:
-  each run's ID (`42/rework-2`, the second rework run on #42, or
+  each run's ID (`43/rework-2`, the second rework run on pull request #43, or
   `weekly/3` for a workflow's), its item, stage, start, duration and outcome,
   including runs that started no session. `--stage`, `--since` and `--limit`
   narrow the list, and `--json` prints it as JSON. It asks the running

@@ -565,12 +565,9 @@ impl Factory {
         match action {
             Action::Start(work) => {
                 let shell = &self.shell;
-                let item = match work.subject() {
-                    Subject::Issue(number) | Subject::SpecChange(number) => number,
-                };
                 let running = shell.runs.begin(
                     RunOf::Work {
-                        item,
+                        item: work.item(),
                         stage: work.kind(),
                     },
                     work.pr(),

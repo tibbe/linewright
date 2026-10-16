@@ -655,42 +655,14 @@ impl TryFrom<RunAnswer> for Run {
 #[error("{0} has no runs")]
 pub struct NoRuns(pub Number);
 
-/// An item's runs, as `runs N` lists them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OfItem {
-    /// The item they are recorded under: the issue a run worked on the pull
-    /// request for, or opened it for, if any; else the item itself.
-    pub recorded_under: Number,
-    pub runs: Vec<Recorded>,
-}
-
-/// The runs of `recorded` on #`number`: its own and, when it is a pull
-/// request a run worked on or opened for an issue, the issue's, all of them
-/// (`docs/specs/monitoring.md`, "Commands").
-pub fn of_item(recorded: &[Recorded], number: Number) -> OfItem {
-    let recorded_under = opened_for_each(recorded)
-        .issue(number)
-        .or_else(|| {
-            recorded
-                .iter()
-                .find(|run| run.pr == Some(number))
-                .and_then(|run| run.id.of.item())
-        })
-        .unwrap_or(number);
-    let runs = recorded
+/// The runs of `recorded` on #`number`, its own alone
+/// (`docs/specs/monitoring.md`, "runs").
+pub fn of_item(recorded: &[Recorded], number: Number) -> Vec<Recorded> {
+    recorded
         .iter()
-        .filter(|run| {
-            run.id
-                .of
-                .item()
-                .is_some_and(|item| item == number || item == recorded_under)
-        })
+        .filter(|run| run.id.of.item() == Some(number))
         .cloned()
-        .collect();
-    OfItem {
-        recorded_under,
-        runs,
-    }
+        .collect()
 }
 
 /// Which issue the runs `recorded` opened each pull request for: the item
@@ -713,7 +685,7 @@ pub fn opened_for_each(recorded: &[Recorded]) -> OpenedFor {
 pub fn list(recorded: Vec<Recorded>, query: &Query, now: Timestamp) -> Result<Listing, NoRuns> {
     let mut runs: Vec<Recorded> = match query.item {
         Some(number) => {
-            let of_item = of_item(&recorded, number).runs;
+            let of_item = of_item(&recorded, number);
             if of_item.is_empty() {
                 return Err(NoRuns(number));
             }

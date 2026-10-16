@@ -115,41 +115,47 @@ fn a_named_run_is_the_one_shown() {
     );
 }
 
-/// #1's runs, the later on its pull request #3, the latest in flight.
-fn on_a_pull() -> Vec<Recorded> {
+/// #1's runs, of which the implement run opened #3, and #3's own, the
+/// latest in flight.
+fn ticket_and_pull() -> Vec<Recorded> {
     let on_pull = |run: Recorded| Recorded {
         pr: Some(Number(3)),
         ..run
     };
-    let mut in_flight = on_pull(run("1/rework-1", "11:00:00", 1));
+    let mut in_flight = on_pull(run("3/rework-2", "11:30:00", 1));
     in_flight.state = State::InFlight;
     vec![
         run("1/triage-1", "09:00:00", 1),
         on_pull(run("1/implement-1", "10:00:00", 1)),
+        on_pull(run("3/rework-1", "11:00:00", 1)),
         in_flight,
-        run("2/triage-1", "12:00:00", 1),
     ]
 }
 
 #[test]
-fn a_pull_requests_run_is_its_issues() {
+fn a_pull_requests_runs_are_its_own() {
     let named = |id: &str| Which::Run {
         id: id.parse::<RunId>().unwrap(),
         item: Some(Number(3)),
     };
 
-    assert_eq!(picked(on_a_pull(), item(3)).unwrap(), "1/rework-1");
+    assert_eq!(picked(ticket_and_pull(), item(3)).unwrap(), "3/rework-2");
     assert_eq!(
-        picked(on_a_pull(), named("1/triage-1")).unwrap(),
-        "1/triage-1"
+        picked(ticket_and_pull(), named("3/rework-1")).unwrap(),
+        "3/rework-1"
     );
     assert_eq!(
-        picked(on_a_pull(), named("2/triage-1")),
+        picked(ticket_and_pull(), named("1/implement-1")),
         Err(NoSuchRun::NotOf {
-            run: "2/triage-1".parse().unwrap(),
+            run: "1/implement-1".parse().unwrap(),
             item: Number(3),
         })
     );
+}
+
+#[test]
+fn a_tickets_runs_are_none_of_its_pull_requests() {
+    assert_eq!(picked(ticket_and_pull(), item(1)).unwrap(), "1/implement-1");
 }
 
 #[test]
@@ -304,7 +310,8 @@ async fn logs_json_prints_one_object_per_line() {
 #[tokio::test]
 async fn a_run_that_started_no_session_says_so() {
     let (mut world, work_dir) = world().await;
-    world.ticket_in_review().await;
+    let (_, pr) = world.ticket_in_review().await;
+    assert_eq!(pr, Number(2));
     world
         .store
         .merge_change(
@@ -318,14 +325,14 @@ async fn a_run_that_started_no_session_says_so() {
     // Brought up to date without a session: nothing conflicts.
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["logs", "1", "--run", "1/update-1"]).await;
-    let json = lw(work_dir.path(), &["logs", "--run", "1/update-1", "--json"]).await;
+    let output = lw(work_dir.path(), &["logs", "2", "--run", "2/update-1"]).await;
+    let json = lw(work_dir.path(), &["logs", "--run", "2/update-1", "--json"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, "run: 1/update-1 (it started no session)\n");
+    assert_eq!(output.stdout, "run: 2/update-1 (it started no session)\n");
     assert_eq!(
         json.stdout,
-        "{\"type\":\"run\",\"run\":\"1/update-1\",\"sessions\":0}\n"
+        "{\"type\":\"run\",\"run\":\"2/update-1\",\"sessions\":0}\n"
     );
 }
 

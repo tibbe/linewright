@@ -91,7 +91,7 @@ pub struct ItemRuns {
 
 #[derive(Serialize, Deserialize)]
 struct ItemRunsAnswer {
-    /// The item the runs are recorded under, which `runs N` lists them for.
+    /// The item whose runs they are, which `runs N` lists them for.
     runs_of: Number,
     run_in_flight: Option<RunInFlight>,
     /// Newest first.
@@ -138,10 +138,7 @@ impl ItemRuns {
     /// The runs of #`item` at `now`, those `runs N` lists for it among
     /// `recorded`: the one in flight in `view`, and the others.
     fn of(view: &View, recorded: &[Recorded], item: Number, now: Timestamp) -> ItemRuns {
-        let runs::OfItem {
-            recorded_under,
-            runs: of_item,
-        } = runs::of_item(recorded, item);
+        let of_item = runs::of_item(recorded, item);
         let run_in_flight = view
             .in_flight
             .iter()
@@ -157,7 +154,7 @@ impl ItemRuns {
         let past_runs_left_out = past.len().saturating_sub(PAST_RUNS_SHOWN);
         past.truncate(PAST_RUNS_SHOWN);
         ItemRuns {
-            runs_of: recorded_under,
+            runs_of: item,
             run_in_flight,
             past_runs: past.into_iter().map(|run| run.at(now)).collect(),
             past_runs_left_out,

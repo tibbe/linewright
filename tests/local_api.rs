@@ -1042,7 +1042,7 @@ async fn with_pull_request_for_rework() -> World {
 }
 
 #[tokio::test]
-async fn a_pull_requests_runs_and_logs_are_its_issues_with_serve_running_and_without() {
+async fn a_pull_requests_runs_and_logs_are_its_own_with_serve_running_and_without() {
     let world = with_pull_request_for_rework().await;
     let agent = world.runtime.hold();
     agent.writes(&turn_1().concat());
@@ -1053,12 +1053,11 @@ async fn a_pull_requests_runs_and_logs_are_its_issues_with_serve_running_and_wit
     let runs = ["--work-dir", work_dir, "runs", "2"];
     eventually_async(|| async { answering.lw(&runs).await.stdout.contains("rework-1: done") })
         .await;
-    let ways = |item: &'static str| -> [Vec<&str>; 4] {
+    let ways = |item: &'static str| -> [Vec<&str>; 3] {
         [
             vec!["runs", item],
             vec!["runs", item, "--json"],
             vec!["logs", item],
-            vec!["logs", item, "--run", "1/implement-1", "--json"],
         ]
     };
     let commands: Vec<Vec<&str>> = [ways("2"), ways("1")]
@@ -1085,30 +1084,30 @@ async fn a_pull_requests_runs_and_logs_are_its_issues_with_serve_running_and_wit
         read.push(lw(runtime_dir.path(), command).await);
     }
 
-    let (of_pr, of_issue) = served.split_at(4);
-    for answers in [of_issue, &read[..4], &read[4..]] {
-        for (expected, answer) in of_pr.iter().zip(answers) {
-            assert_eq!(answer.code, Some(0), "{}", answer.stderr);
-            assert_eq!(answer.stdout, expected.stdout);
-        }
+    for (by_serve, by_reading) in served.iter().zip(&read) {
+        assert_eq!(by_serve.code, Some(0), "{}", by_serve.stderr);
+        assert_eq!(by_reading.code, Some(0), "{}", by_reading.stderr);
+        assert_eq!(by_reading.stdout, by_serve.stdout);
     }
-    let listed: Vec<&str> = of_pr[0]
-        .stdout
-        .lines()
-        .map(|line| line.split_once(':').unwrap().0)
-        .collect();
-    assert_eq!(listed, ["1/rework-1", "1/implement-1"]);
+    let (of_pr, of_issue) = served.split_at(3);
+    assert_eq!(run_ids(&of_pr[0].stdout), ["2/rework-1"]);
+    assert_eq!(run_ids(&of_issue[0].stdout), ["1/implement-1"]);
     assert!(
         of_pr[2]
             .stdout
-            .starts_with("run: 1/rework-1\nsession 1: started 2026-10-13 10:09:08 UTC\n"),
+            .starts_with("run: 2/rework-1\nsession 1: started 2026-10-13 10:09:08 UTC\n"),
         "{}",
         of_pr[2].stdout
+    );
+    assert!(
+        of_issue[2].stdout.starts_with("run: 1/implement-1\n"),
+        "{}",
+        of_issue[2].stdout
     );
 }
 
 #[tokio::test]
-async fn logs_follow_of_a_pull_request_follows_its_issues_run_in_flight() {
+async fn logs_follow_of_a_pull_request_follows_its_run_in_flight() {
     let world = with_pull_request_for_rework().await;
     let agent = world.runtime.hold();
     let answering = Answering::start(world, false).await;
@@ -1116,7 +1115,7 @@ async fn logs_follow_of_a_pull_request_follows_its_issues_run_in_flight() {
     agent.writes(&turn[..4].concat());
     eventually_async(|| async {
         answering
-            .lw(&["logs", "1"])
+            .lw(&["logs", "2"])
             .await
             .stdout
             .contains("Bash(ls;")
@@ -1131,7 +1130,7 @@ async fn logs_follow_of_a_pull_request_follows_its_issues_run_in_flight() {
     let (code, shown, stderr) = follow.exits().await;
 
     assert_eq!(code, Some(0), "{stderr}");
-    assert!(shown.starts_with("run: 1/rework-1\n"), "{shown}");
+    assert!(shown.starts_with("run: 2/rework-1\n"), "{shown}");
     assert_eq!(shown.lines().count(), 18, "{shown}");
     answering.stop().await;
 }

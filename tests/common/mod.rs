@@ -390,6 +390,14 @@ impl Log {
     }
 }
 
+/// The run IDs that start the lines of `listed`, as `lw runs` prints them.
+pub fn run_ids(listed: &str) -> Vec<&str> {
+    listed
+        .lines()
+        .map(|line| line.split_once(':').unwrap().0)
+        .collect()
+}
+
 pub fn json(value: Value) -> Result<String, SessionError> {
     Ok(value.to_string())
 }

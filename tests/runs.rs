@@ -116,13 +116,8 @@ async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
     let output = lw(work_dir.path(), &["runs"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let ids: Vec<&str> = output
-        .stdout
-        .lines()
-        .map(|line| line.split_once(':').unwrap().0)
-        .collect();
     assert_eq!(
-        ids,
+        run_ids(&output.stdout),
         ["1/triage-3", "1/triage-2", "1/triage-1"],
         "{}",
         output.stdout
@@ -152,7 +147,7 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}", output.stdout);
     assert!(
-        lines[0].starts_with("1/update-1: done — #1 update, started "),
+        lines[0].starts_with("2/update-1: done — #2 update, started "),
         "{}",
         output.stdout
     );
@@ -168,7 +163,7 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
             .unwrap();
         run.sessions.len()
     };
-    assert_eq!((sessions("1/update-1"), sessions("1/implement-1")), (0, 1));
+    assert_eq!((sessions("2/update-1"), sessions("1/implement-1")), (0, 1));
 }
 
 #[tokio::test]
@@ -310,40 +305,71 @@ async fn runs_json_prints_the_answer_as_json() {
     assert_eq!(answer["left_out"], 0);
 }
 
-/// Asserts that `lw runs` gives #`pr` the runs it gives #`issue`, as text
-/// and as JSON, and that they are `ids`.
-async fn assert_runs_alike(dir: &Path, pr: Number, issue: Number, ids: &[&str]) {
-    for way in [&[][..], &["--json"]] {
-        let of_pr = lw(dir, &[&["runs", &pr.0.to_string()], way].concat()).await;
-        let of_issue = lw(dir, &[&["runs", &issue.0.to_string()], way].concat()).await;
+/// The IDs of the runs `lw runs N` lists for #`item`, as text and, the
+/// same, as JSON.
+async fn listed(dir: &Path, item: Number) -> Vec<String> {
+    let text = lw(dir, &["runs", &item.0.to_string()]).await;
+    let json = lw(dir, &["runs", &item.0.to_string(), "--json"]).await;
 
-        assert_eq!(of_pr.code, Some(0), "{}", of_pr.stderr);
-        assert_eq!(of_pr.stdout, of_issue.stdout, "{way:?}");
-    }
-    let listed = lw(dir, &["runs", &pr.0.to_string()]).await;
-    let listed: Vec<&str> = listed
-        .stdout
-        .lines()
-        .map(|line| line.split_once(':').unwrap().0)
+    assert_eq!(text.code, Some(0), "{}", text.stderr);
+    let ids: Vec<String> = run_ids(&text.stdout)
+        .into_iter()
+        .map(str::to_string)
         .collect();
-    assert_eq!(listed, ids);
+    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    let json_ids: Vec<String> = answer["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids, json_ids);
+    ids
 }
 
 #[tokio::test]
-async fn a_pull_requests_runs_are_its_issues_open_or_merged() {
+async fn a_pull_requests_runs_are_its_own_and_its_tickets_are_the_tickets() {
     let (mut world, work_dir) = world().await;
     let (issue, pr) = world.ticket_in_review().await;
     world.rework_asked(pr);
     world.poll().await;
-    let ids = ["1/rework-1", "1/implement-1"];
+    let dir = work_dir.path();
 
-    assert_runs_alike(work_dir.path(), pr, issue, &ids).await;
+    assert_eq!(listed(dir, pr).await, [format!("{}/rework-1", pr.0)]);
+    assert_eq!(listed(dir, issue).await, ["1/implement-1"]);
     world.store.merge_pull(pr).await.unwrap();
-    assert_runs_alike(work_dir.path(), pr, issue, &ids).await;
+    assert_eq!(listed(dir, pr).await, [format!("{}/rework-1", pr.0)]);
+    assert_eq!(listed(dir, issue).await, ["1/implement-1"]);
 }
 
 #[tokio::test]
-async fn a_closed_pull_requests_runs_are_its_issues_with_those_on_the_next() {
+async fn a_pull_requests_runs_are_counted_per_stage_on_it() {
+    let (mut world, work_dir) = world().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    world.poll().await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Rename it again.")
+        .unwrap();
+    world.runtime.on(WorkKind::Rework, |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("src/renamed.txt", "renamed again\n")],
+            "Rename again",
+        );
+        common::json(json!({"outcome": "done", "comment": "Renamed again."}))
+    });
+    world.poll().await;
+
+    assert_eq!(
+        listed(work_dir.path(), pr).await,
+        [format!("{}/rework-2", pr.0), format!("{}/rework-1", pr.0)]
+    );
+}
+
+#[tokio::test]
+async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
     let (mut world, work_dir) = world().await;
     let (issue, closed) = world.ticket_in_review().await;
     world.store.close_pull_as(closed).unwrap();
@@ -354,10 +380,19 @@ async fn a_closed_pull_requests_runs_are_its_issues_with_those_on_the_next() {
     world.poll().await;
     let next = *world.store.pulls().last().unwrap();
     assert_ne!(next, closed);
-    let ids = ["1/implement-2", "1/implement-1"];
+    let dir = work_dir.path();
 
-    assert_runs_alike(work_dir.path(), closed, issue, &ids).await;
-    assert_runs_alike(work_dir.path(), next, issue, &ids).await;
+    let of_closed = lw(dir, &["runs", &closed.0.to_string()]).await;
+
+    assert_eq!(listed(dir, issue).await, ["1/implement-2", "1/implement-1"]);
+    assert_eq!(of_closed.code, Some(4), "{}", of_closed.stdout);
+    assert!(
+        of_closed
+            .stderr
+            .contains(&format!("#{} has no runs", closed.0)),
+        "{}",
+        of_closed.stderr
+    );
 }
 
 #[tokio::test]
@@ -369,21 +404,16 @@ async fn a_pull_requests_runs_narrow_from_the_command_line() {
     let pr = pr.0.to_string();
 
     let rework = lw(work_dir.path(), &["runs", &pr, "--stage", "rework"]).await;
-    let latest = lw(work_dir.path(), &["runs", &pr, "--limit", "1"]).await;
+    let implement = lw(work_dir.path(), &["runs", &pr, "--stage", "implement"]).await;
     let later = lw(work_dir.path(), &["runs", &pr, "--since", "2026-10-02"]).await;
 
-    assert!(
-        rework.stdout.starts_with("1/rework-1: done"),
+    assert_eq!(
+        run_ids(&rework.stdout),
+        [format!("{pr}/rework-1")],
         "{}",
         rework.stdout
     );
-    assert_eq!(rework.stdout.lines().count(), 1, "{}", rework.stdout);
-    assert_eq!(
-        latest.stdout.lines().nth(1),
-        Some("left out: 1 earlier run; show them with --limit 2"),
-        "{}",
-        latest.stdout
-    );
+    assert_eq!((implement.code, implement.stdout.as_str()), (Some(0), ""));
     assert_eq!((later.code, later.stdout.as_str()), (Some(0), ""));
 }
 
@@ -509,69 +539,40 @@ fn an_items_runs_are_only_its_own() {
     );
 }
 
-/// #1's runs on its pull requests: #3, closed, then #4.
-fn on_two_pulls() -> Vec<Recorded> {
+/// #1's runs, of which the first implement run opened #3, and #3's own.
+fn ticket_and_pull() -> Vec<Recorded> {
     vec![
         work(1, WorkKind::Triage, 1, "08:00:00"),
         on_pull(3, work(1, WorkKind::Implement, 1, "09:00:00")),
-        on_pull(3, work(1, WorkKind::Rework, 1, "09:30:00")),
-        on_pull(4, work(1, WorkKind::Implement, 2, "10:00:00")),
+        on_pull(3, work(3, WorkKind::Rework, 1, "09:30:00")),
         work(2, WorkKind::Triage, 1, "10:30:00"),
-        on_pull(4, work(1, WorkKind::FixCi, 1, "11:00:00")),
+        on_pull(3, work(3, WorkKind::FixCi, 1, "11:00:00")),
+        on_pull(3, work(3, WorkKind::Rework, 2, "12:00:00")),
     ]
 }
 
 #[test]
-fn a_pull_requests_runs_are_its_issues_all_of_them() {
-    let all = [
-        "1/fix-ci-1",
-        "1/implement-2",
-        "1/rework-1",
-        "1/implement-1",
-        "1/triage-1",
-    ];
-    for pr in [3, 4] {
-        let query = Query {
-            item: Some(Number(pr)),
-            ..Query::default()
-        };
-
-        let listing = runs::list(on_two_pulls(), &query, at("13:00:00")).unwrap();
-
-        assert_eq!(ids(&listing), all, "#{pr}");
-    }
-}
-
-#[test]
-fn a_pull_requests_runs_are_those_of_the_issue_it_was_opened_for() {
-    let recorded = vec![
-        on_pull(3, work(2, WorkKind::Rework, 1, "08:00:00")),
-        work(1, WorkKind::Triage, 1, "08:30:00"),
-        on_pull(3, work(1, WorkKind::Implement, 1, "09:00:00")),
-    ];
+fn a_pull_requests_runs_are_its_own() {
     let query = Query {
         item: Some(Number(3)),
         ..Query::default()
     };
 
-    let listing = runs::list(recorded, &query, at("13:00:00")).unwrap();
+    let listing = runs::list(ticket_and_pull(), &query, at("13:00:00")).unwrap();
 
-    assert_eq!(ids(&listing), ["1/implement-1", "1/triage-1"]);
+    assert_eq!(ids(&listing), ["3/rework-2", "3/fix-ci-1", "3/rework-1"]);
 }
 
 #[test]
-fn a_pull_requests_runs_narrow_as_its_issues_do() {
+fn a_tickets_runs_are_its_own_and_none_of_its_pull_requests() {
     let query = Query {
-        item: Some(Number(4)),
-        stage: Some(WorkKind::Implement),
-        since: Some(at("09:00:00")),
-        limit: Some(1),
+        item: Some(Number(1)),
+        ..Query::default()
     };
 
-    let listing = runs::list(on_two_pulls(), &query, at("13:00:00")).unwrap();
+    let listing = runs::list(ticket_and_pull(), &query, at("13:00:00")).unwrap();
 
-    assert_eq!(ids(&listing), ["1/implement-2"]);
-    assert_eq!(listing.left_out, 1);
+    assert_eq!(ids(&listing), ["1/implement-1", "1/triage-1"]);
 }
 
 #[test]
