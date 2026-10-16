@@ -55,3 +55,57 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: scripts/check doc
+
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      base-image: ${{ steps.changes.outputs.base-image }}
+      deploy-images: ${{ steps.changes.outputs.deploy-images }}
+      binaries: ${{ steps.changes.outputs.binaries }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: changes
+        run: |
+          changed() { git diff --quiet HEAD^1 HEAD -- "$@" && echo false || echo true; }
+          workflows=.github/workflows
+          {
+            echo "base-image=$(changed Dockerfile .dockerignore rust-toolchain.toml \
+              $workflows/base-image.yml $workflows/release.yml $workflows/ci.yml)"
+            echo "deploy-images=$(changed Dockerfile .dockerignore rust-toolchain.toml \
+              linewright.toml deploy $workflows/deploy-images.yml $workflows/docker.yml $workflows/ci.yml)"
+            echo "binaries=$(changed Cargo.toml Cargo.lock rust-toolchain.toml \
+              $workflows/binaries.yml $workflows/release.yml $workflows/ci.yml)"
+          } >> "$GITHUB_OUTPUT"
+
+  base-image:
+    needs: changes
+    if: needs.changes.outputs.base-image == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/base-image.yml
+
+  deploy-images:
+    needs: changes
+    if: needs.changes.outputs.deploy-images == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy-images.yml
+
+  binaries:
+    needs: changes
+    if: needs.changes.outputs.binaries == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/binaries.yml
+
+  ci:
+    if: always()
+    needs: [fmt, markdown, compose, clippy, test, doc, changes, base-image, deploy-images, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

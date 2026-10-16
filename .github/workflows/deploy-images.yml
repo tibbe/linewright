@@ -1,0 +1,18 @@
+name: Deploy images
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      LINEWRIGHT_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: echo "LINEWRIGHT_TAG=sha-${LINEWRIGHT_COMMIT::7}" >> "$GITHUB_ENV"
+      - run: >-
+          touch deploy/.env &&
+          docker compose -f deploy/compose.yaml -f deploy/compose.build.yaml build

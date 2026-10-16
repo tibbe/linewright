@@ -3,33 +3,9 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  pull_request:
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - rust-toolchain.toml
-      - .github/workflows/release.yml
 
 jobs:
-  build:
-    if: github.event_name == 'pull_request'
-    strategy:
-      matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-    steps:
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          load: true
-          build-args: LINEWRIGHT_COMMIT=${{ github.sha }}
-          tags: linewright:test
-      - run: docker run --rm linewright:test --version
-
   version:
-    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -119,48 +95,11 @@ jobs:
 
   binaries:
     needs: version
-    if: ${{ !cancelled() && !failure() }}
-    strategy:
-      matrix:
-        include:
-          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04 }
-          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04-arm }
-          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04 }
-          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm }
-          - { target: aarch64-apple-darwin, runner: macos-15 }
-    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-    env:
-      TARGET: ${{ matrix.target }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - if: endsWith(matrix.target, '-musl')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
-          echo "CC_${TARGET//-/_}=musl-gcc" >> "$GITHUB_ENV"
-      - run: rustup toolchain install && rustup target add "$TARGET"
-      - run: cargo build --release --locked --target "$TARGET"
-      - run: '"target/$TARGET/release/lw" --version'
-      - if: github.event_name == 'push'
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          name="lw-$VERSION-$TARGET"
-          mkdir -p "$RUNNER_TEMP/$name" "$RUNNER_TEMP/binaries"
-          cp "target/$TARGET/release/lw" LICENSE "$RUNNER_TEMP/$name"
-          cd "$RUNNER_TEMP/binaries"
-          tar -czf "$name.tar.gz" -C "$RUNNER_TEMP" "$name"
-          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
-      - if: github.event_name == 'push'
-        uses: actions/upload-artifact@v7
-        with:
-          name: binary-${{ matrix.target }}
-          path: ${{ runner.temp }}/binaries/*
-          if-no-files-found: error
+    uses: ./.github/workflows/binaries.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
 
   release:
     needs: [merge, binaries]

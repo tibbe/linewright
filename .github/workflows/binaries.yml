@@ -1,0 +1,52 @@
+name: Binaries
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: ""
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04-arm }
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, runner: macos-15 }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - if: endsWith(matrix.target, '-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          echo "CC_${TARGET//-/_}=musl-gcc" >> "$GITHUB_ENV"
+      - run: rustup toolchain install && rustup target add "$TARGET"
+      - run: cargo build --release --locked --target "$TARGET"
+      - run: '"target/$TARGET/release/lw" --version'
+      - if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          name="lw-$VERSION-$TARGET"
+          mkdir -p "$RUNNER_TEMP/$name" "$RUNNER_TEMP/binaries"
+          cp "target/$TARGET/release/lw" LICENSE "$RUNNER_TEMP/$name"
+          cd "$RUNNER_TEMP/binaries"
+          tar -czf "$name.tar.gz" -C "$RUNNER_TEMP" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - if: inputs.version != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: ${{ runner.temp }}/binaries/*
+          if-no-files-found: error
