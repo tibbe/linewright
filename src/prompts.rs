@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use crate::briefs::Briefs;
-use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Pull, UpdateMethod};
+use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Pull, UpdateMethod};
 use crate::git::Conflict;
 use crate::reconcile::Feedback;
 use crate::workflow::Workflow;
@@ -12,8 +12,41 @@ pub struct Repo<'a> {
 }
 
 pub struct Ticket<'a> {
-    pub issue: &'a Issue,
-    pub filed_gaps: Vec<&'a Issue>,
+    issue: &'a Issue,
+    filed_gaps: Vec<&'a Issue>,
+    /// Only for a ticket cut from a spec change.
+    spec_diff: Option<String>,
+}
+
+impl<'a> Ticket<'a> {
+    /// # Panics
+    ///
+    /// When it has a spec diff but was cut from no spec change, or the other
+    /// way round.
+    pub fn new(
+        issue: &'a Issue,
+        filed_gaps: Vec<&'a Issue>,
+        spec_diff: Option<String>,
+    ) -> Ticket<'a> {
+        assert_eq!(
+            spec_diff.is_some(),
+            issue.cut_from().is_some(),
+            "a ticket has a spec diff exactly when it was cut from a spec change"
+        );
+        Ticket {
+            issue,
+            filed_gaps,
+            spec_diff,
+        }
+    }
+
+    pub fn number(&self) -> Number {
+        self.issue.number
+    }
+
+    pub fn filed_gaps(&self) -> &[&'a Issue] {
+        &self.filed_gaps
+    }
 }
 
 pub enum PullTask<'a> {
@@ -60,14 +93,14 @@ pub fn tickets(repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
     task_facts(&mut task, repo);
     let _ = writeln!(
         task,
-        "\n### The spec change: {} {}\n\nMerged by its author @{} into `{}`.\n\n{}\n\n#### Spec diff\n\n```diff\n{}\n```",
+        "\n### The spec change: {} {}\n\nMerged by its author @{} into `{}`.\n\n{}\n",
         pr.number,
         pr.title,
         pr.author,
         repo.default_branch,
         or_none(&pr.body),
-        spec_diff.trim_end()
     );
+    write_spec_diff(&mut task, "#### Spec diff", spec_diff);
     let contract = r#"{
   "tickets": [
     {
@@ -279,7 +312,18 @@ fn write_ticket(task: &mut String, ticket: &Ticket) {
             None => writeln!(task, "### Parent issue\n\n{}.\n", parent.number),
         };
     }
+    if let Some(spec_diff) = &ticket.spec_diff {
+        write_spec_diff(task, "#### The spec change's spec diff", spec_diff);
+    }
     write_filed_gaps(task, &ticket.filed_gaps);
+}
+
+fn write_spec_diff(task: &mut String, heading: &str, spec_diff: &str) {
+    let _ = writeln!(
+        task,
+        "{heading}\n\n```diff\n{}\n```\n",
+        spec_diff.trim_end()
+    );
 }
 
 fn write_filed_gaps(task: &mut String, gaps: &[&Issue]) {

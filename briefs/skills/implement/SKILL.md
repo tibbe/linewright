@@ -16,7 +16,10 @@ read GitHub but must not write to it or push: Linewright pushes your commits,
 opens or updates the pull request and posts what your result says.
 
 1. Read the ticket and its comments. Read `GLOSSARY.md` if present, and the
-   spec (the files matching the spec glob in your task).
+   parts of the spec (the files matching the spec glob in your task) your
+   work touches, not the whole spec. When your task holds the spec diff of
+   the spec change the ticket was cut from, the files it changes are among
+   those parts.
 2. Before writing code, call the Skill tool with `linewright:tdd`, and work
    test-first as it says.
 3. Run typechecking regularly, single test files regularly, and the
@@ -32,9 +35,10 @@ opens or updates the pull request and posts what your result says.
 ## The ticket's scope
 
 Your task may name the ticket's parent issue and, when the ticket was cut from
-a spec change, that spec change: pointers, not their content. The parent's
-other sub-issues are the tickets cut alongside this one, and they own what
-this ticket leaves out; the spec change and those tickets show what that is.
+a spec change, that spec change: pointers, not their content, though the spec
+change's spec diff comes with them. The parent's other sub-issues are the
+tickets cut alongside this one, and they own what this ticket leaves out; the
+spec change and those tickets show what that is.
 Read them on GitHub when the ticket's scope is in question, for example before
 adding something the ticket doesn't ask for, and pass them to the code review
 so its spec reviewer can too. You need not read them on every run.

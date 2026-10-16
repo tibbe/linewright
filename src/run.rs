@@ -246,7 +246,8 @@ async fn attempt(
         Work::Implement { issue: n } => {
             let issue = issue(*n)?;
             let branch = snapshot.ticket_branch(issue);
-            return implement(shell, ctx, &ticket_of(snapshot, issue), branch).await;
+            let ticket = ticket_of(shell, snapshot, issue).await?;
+            return implement(shell, ctx, &ticket, branch).await;
         }
         Work::Rework { issue: n, pr } => (n, pr, Task::Rework),
         Work::FixCi {
@@ -257,7 +258,8 @@ async fn attempt(
         Work::Update { issue: n, pr } => (n, pr, Task::Update),
     };
     let held = pull_ticket(shell, snapshot, *n).await?;
-    pull_work(shell, ctx, &ticket_of(snapshot, &held), pull(*pr)?, task).await
+    let ticket = ticket_of(shell, snapshot, &held).await?;
+    pull_work(shell, ctx, &ticket, pull(*pr)?, task).await
 }
 
 /// The snapshot may leave out the ticket of a pull request it works.
@@ -275,11 +277,28 @@ async fn pull_ticket<'a>(
     }
 }
 
-fn ticket_of<'a>(snapshot: &'a Snapshot, issue: &'a Issue) -> Ticket<'a> {
-    Ticket {
-        issue,
-        filed_gaps: spec_gap::filed_for(snapshot, issue.number),
-    }
+async fn ticket_of<'a>(
+    shell: &Shell,
+    snapshot: &'a Snapshot,
+    issue: &'a Issue,
+) -> Result<Ticket<'a>, Failure> {
+    let spec_diff = match issue.cut_from() {
+        None => None,
+        Some(spec_change) => {
+            let pr = shell
+                .store
+                .merged_pull(spec_change, Timestamp::MIN_UTC)
+                .await
+                .map_err(infra)?
+                .with_context(|| {
+                    format!("the spec change {spec_change} is not a merged pull request")
+                })
+                .map_err(infra)?;
+            Some(spec_diff(shell, &pr).await?)
+        }
+    };
+    let filed_gaps = spec_gap::filed_for(snapshot, issue.number);
+    Ok(Ticket::new(issue, filed_gaps, spec_diff))
 }
 
 async fn still_open(shell: &Shell, pr: Number) -> Result<bool> {
@@ -680,17 +699,7 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
         kind: WorkKind::Tickets,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    let spec_files: Vec<String> = pr
-        .files
-        .iter()
-        .filter(|f| shell.policy.spec_glob.matches(f))
-        .cloned()
-        .collect();
-    let diff = shell
-        .store
-        .diff(pr.number, &spec_files)
-        .await
-        .map_err(infra)?;
+    let diff = spec_diff(shell, pr).await?;
     let prompt = prompts::tickets(&shell.repo(), pr, &diff);
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let (tickets, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
@@ -700,6 +709,20 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
     record_tickets(shell, pr, tickets)
         .await
         .map_err(Failure::Apply)
+}
+
+async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
+    let spec_files: Vec<String> = pr
+        .files
+        .iter()
+        .filter(|f| shell.policy.spec_glob.matches(f))
+        .cloned()
+        .collect();
+    shell
+        .store
+        .diff(pr.number, &spec_files)
+        .await
+        .map_err(infra)
 }
 
 async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Result<()> {
@@ -767,7 +790,7 @@ async fn implement(
     branch: String,
 ) -> Result<(), Failure> {
     let purpose = Purpose::Work {
-        subject: Subject::Issue(ticket.issue.number),
+        subject: Subject::Issue(ticket.number()),
         kind: WorkKind::Implement,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
@@ -842,7 +865,7 @@ async fn implement(
                 .open_pull(NewPull {
                     head: branch.clone(),
                     title: pr_title.into(),
-                    body: closing(&pr_body, &[ticket.issue.number]),
+                    body: closing(&pr_body, &[ticket.number()]),
                 })
                 .await
                 .map_err(Failure::Apply)?;
@@ -853,7 +876,7 @@ async fn implement(
                     .map_err(Failure::Apply)?;
             }
             info!(
-                issue = ticket.issue.number.0,
+                issue = ticket.number().0,
                 pr = pr.0,
                 "opened draft pull request"
             );
@@ -910,13 +933,13 @@ async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], ticket: &Ticket<'_>) ->
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     for gap in gaps {
         if let Some(filed) = ticket
-            .filed_gaps
+            .filed_gaps()
             .iter()
             .find(|f| same(&f.title, &gap.title))
         {
             info!(
                 issue = filed.number.0,
-                ticket = ticket.issue.number.0,
+                ticket = ticket.number().0,
                 "spec gap already filed"
             );
             continue;
@@ -925,7 +948,7 @@ async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], ticket: &Ticket<'_>) ->
             .store
             .create_issue(NewIssue {
                 title: gap.title.clone(),
-                body: spec_gap::body(&gap.body, ticket.issue.number),
+                body: spec_gap::body(&gap.body, ticket.number()),
                 labels: [label::READY_FOR_HUMAN.into()]
                     .into_iter()
                     .chain(shell.creation_label().await?)
@@ -934,7 +957,7 @@ async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], ticket: &Ticket<'_>) ->
             .await?;
         info!(
             issue = number.0,
-            ticket = ticket.issue.number.0,
+            ticket = ticket.number().0,
             "filed a spec gap"
         );
     }
@@ -955,7 +978,7 @@ async fn pull_work(
     task: Task<'_>,
 ) -> Result<(), Failure> {
     // The sessions are kept with the ticket's, as a case captures them.
-    let subject = Subject::Issue(ticket.issue.number);
+    let subject = Subject::Issue(ticket.number());
     let kind = match task {
         Task::Rework => WorkKind::Rework,
         Task::FixCi(_) => WorkKind::FixCi,

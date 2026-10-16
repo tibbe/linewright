@@ -107,6 +107,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
         }))
     });
     runtime.on(WorkKind::Implement, |call| {
+        assert!(call.spec.prompt.contains("+Gadgets exist."));
         commit_in(
             &call.spec.dir,
             &[("src/gadgets.txt", "gadget\n")],

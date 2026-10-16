@@ -194,6 +194,10 @@ impl Issue {
         self.labels.iter().any(|l| l == label)
     }
 
+    pub fn cut_from(&self) -> Option<Number> {
+        self.parent.and_then(|parent| parent.spec_change)
+    }
+
     pub fn branch(&self) -> String {
         let mut slug = String::new();
         for c in self.title.chars() {

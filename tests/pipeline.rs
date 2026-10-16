@@ -405,8 +405,9 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
     );
 }
 
-#[tokio::test]
-async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_the_spec_change() {
+/// A world whose spec change, to the spec and to code, was cut into tickets,
+/// the first of which is in review; and that spec change.
+async fn ticket_cut_from_a_spec_change_of_spec_and_code() -> (World, Number) {
     let mut world = World::new().await;
     tickets_script(&world);
     implement_script(&world);
@@ -416,13 +417,32 @@ async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_
             "maintainer",
             "Gadgets",
             "Adds gadgets.",
-            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
+            &[
+                ("docs/spec.md", "# Spec\n\nGadgets exist.\n"),
+                ("src/gadgets.rs", "// Gadgets live here.\n"),
+            ],
         )
         .await
         .unwrap();
+    world.poll().await;
+    world.poll().await;
+    (world, spec_pr)
+}
 
-    world.poll().await;
-    world.poll().await;
+/// That `brief` holds the spec diff of the spec change from
+/// [`ticket_cut_from_a_spec_change_of_spec_and_code`], after the pointer to
+/// it, and none of its changes to code.
+fn assert_briefed_with_the_spec_diff(brief: &str) {
+    let parent = brief.find("### Parent issue").expect(brief);
+    let diff = brief.find("```diff\n").expect(brief);
+    assert!(parent < diff, "{brief}");
+    assert!(brief[diff..].contains("+Gadgets exist."), "{brief}");
+    assert!(!brief.contains("Gadgets live here."), "{brief}");
+}
+
+#[tokio::test]
+async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_the_spec_change() {
+    let (world, spec_pr) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
 
     let issues = world.store.issues();
     let tracking = &issues[0];
@@ -438,6 +458,14 @@ async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_
     );
     assert!(!brief.contains("Tickets for the spec change"), "{brief}");
     assert!(!brief.contains("List gadgets"), "{brief}");
+}
+
+#[tokio::test]
+async fn a_ticket_cut_from_a_spec_change_is_briefed_with_the_spec_changes_spec_diff() {
+    let (world, _) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Implement);
+    assert_briefed_with_the_spec_diff(&prompts[0]);
 }
 
 #[tokio::test]
@@ -462,6 +490,7 @@ async fn a_ticket_a_person_parented_is_briefed_with_its_parent_and_no_spec_chang
         prompts[0]
     );
     assert!(!prompts[0].contains("spec change #"), "{}", prompts[0]);
+    assert!(!prompts[0].contains("```diff"), "{}", prompts[0]);
 }
 
 #[tokio::test]
@@ -472,6 +501,7 @@ async fn a_ticket_with_no_parent_is_briefed_with_no_parent_issue() {
     let prompts = world.runtime.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 1);
     assert!(!prompts[0].contains("Parent issue"), "{}", prompts[0]);
+    assert!(!prompts[0].contains("```diff"), "{}", prompts[0]);
 }
 
 #[tokio::test]
@@ -505,6 +535,21 @@ async fn sessions_on_a_tickets_pull_request_are_briefed_with_its_parent_issue() 
         "{}",
         prompts[0]
     );
+    assert!(!prompts[0].contains("```diff"), "{}", prompts[0]);
+}
+
+#[tokio::test]
+async fn sessions_on_the_pull_request_of_a_ticket_cut_from_a_spec_change_are_briefed_with_its_spec_diff()
+ {
+    let (mut world, _) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
+    let pr = *world.store.pulls().last().unwrap();
+    world.rework_asked(pr);
+
+    world.poll().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Rework);
+    assert_eq!(prompts.len(), 1);
+    assert_briefed_with_the_spec_diff(&prompts[0]);
 }
 
 use linewright::domain::{CheckState, Login, Number, ReviewState};

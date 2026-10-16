@@ -53,10 +53,7 @@ fn created() -> Timestamp {
 
 fn section(failures: &[CheckFailure], name: &str) -> String {
     let issue = issue();
-    let ticket = Ticket {
-        issue: &issue,
-        filed_gaps: vec![],
-    };
+    let ticket = Ticket::new(&issue, vec![], None);
     let repo = Repo {
         default_branch: "main",
         spec_glob: "docs/specs/**/*.md",
