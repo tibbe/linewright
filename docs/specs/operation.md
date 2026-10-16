@@ -75,10 +75,8 @@ from Linewright's base image with the project's toolchain added.
   `6h` or `7d`.
 - Linewright runs wherever `git`, `bash`, the agent runtime and the project's
   toolchain are on the path: directly on a machine, or in a container whose
-  image the operator builds with those in it. Linewright publishes a base
-  image for `linux/amd64` and `linux/arm64` with everything but the project's
-  toolchain to build from. Agents' commands run in `bash`, whatever shell the
-  operator uses.
+  image the operator builds with those in it. Agents' commands run in `bash`,
+  whatever shell the operator uses.
 - The server logs each decision and action, readable for a person tailing it
   and structured (JSON lines) for machines, by the `log-format` setting.
   With webhooks on, that includes the address it listens on, each delivery
@@ -93,4 +91,4 @@ from Linewright's base image with the project's toolchain added.
 ## Out of scope
 
 - One container per run, instead of agents as processes beside the manager.
-- Base images for architectures other than `linux/amd64` and `linux/arm64`.
+- How Linewright is released (`docs/releasing.md`).
