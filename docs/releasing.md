@@ -1,7 +1,7 @@
 # Releasing
 
-A release is a `vX.Y.Z` tag on `main`. Pushing it publishes the base image as
-`X.Y.Z`, `X.Y` and `latest`, and a GitHub Release.
+A release is a `vX.Y.Z` tag on `main`. Pushing it runs
+`.github/workflows/release.yml`, which publishes the release.
 
 1. If `version` in `Cargo.toml` is not the one to release, change it in a pull
    request, with `Cargo.lock` updated by `cargo check`, and merge it.

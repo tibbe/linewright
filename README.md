@@ -17,6 +17,11 @@ cargo install --path .
 lw --repo owner/name serve
 ```
 
+Instead of `cargo install`, take `lw` from a
+[release](https://github.com/tibbe/linewright/releases): Linux (`gnu`, or
+static `musl` for Alpine and older distributions) on x86_64 and aarch64, and
+macOS on Apple silicon.
+
 - `lw serve` polls until stopped; `once` runs one poll cycle and the
   runs it starts; each poll also runs the workflows in `.linewright/workflows/`
   that are due on their schedule. `workflow run NAME` runs the workflow in
