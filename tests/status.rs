@@ -325,7 +325,7 @@ fn each_tracked_item_says_in_one_line_what_linewright_waits_for_on_it() {
             "#7: ready to claim — waiting for the usage limit, until 2026-10-01 14:30:00 UTC — Do the thing",
             "#8: ready to claim — waiting for #5, which blocks it; #6, which blocks it — Do the next thing",
             "#9: claimed: being implemented — waiting for its implement run, in flight — Do another thing",
-            "#10: with the maintainer — waiting for the maintainer: labeled `ready-for-human` — It broke",
+            "#10: with the maintainer — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — It broke",
         ]
     );
 }

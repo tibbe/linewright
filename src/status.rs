@@ -563,7 +563,12 @@ pub(crate) fn describe_wait(wait: &Wait) -> String {
             format!("its tickets: {} open", open.join(", "))
         }
         Wait::Reporter => format!("the reporter: labeled `{}`", label::NEEDS_INFO),
-        Wait::Maintainer => format!("the maintainer: labeled `{}`", label::READY_FOR_HUMAN),
+        Wait::Maintainer => format!(
+            "the maintainer: to label it {}",
+            label::ANSWERS
+                .map(|(answer, _)| format!("`{answer}`"))
+                .join(" or ")
+        ),
         Wait::RequiredLabel { label } => {
             format!("the maintainer: to label it `{label}`, the required label")
         }

@@ -163,7 +163,7 @@ fn an_item_in_review_waits_for_ci_on_its_pull_request() {
 }
 
 #[test]
-fn an_item_with_the_maintainer_waits_for_them_with_the_label() {
+fn an_item_with_the_maintainer_waits_for_their_label() {
     let handed_back = Issue {
         labels: vec!["ready-for-human".into()],
         ..ticket(42, "Add invoices")
@@ -174,7 +174,7 @@ fn an_item_with_the_maintainer_waits_for_them_with_the_label() {
         [
             "state: with the maintainer",
             "last read: 2026-10-01 12:00:00 UTC",
-            "waiting for: the maintainer: labeled `ready-for-human`",
+            "waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`",
         ]
     );
 }

@@ -134,6 +134,27 @@ fn a_reply_to_needs_info_sends_the_issue_back_to_triage() {
 }
 
 #[test]
+fn a_reply_to_a_question_without_a_marker_line_sends_the_issue_back_to_triage() {
+    let mut asked = labeled(issue(1), label::NEEDS_INFO);
+    asked.comments = vec![
+        comment(LINEWRIGHT, 1, "What version are you on?"),
+        comment("maintainer", 2, "Version 3, I checked."),
+    ];
+
+    assert_eq!(
+        decide(&snapshot(vec![asked])),
+        vec![
+            Action::Relabel {
+                issue: Number(1),
+                remove: label::NEEDS_INFO.into(),
+                add: label::NEEDS_TRIAGE.into(),
+            },
+            Action::Start(Work::Triage { issue: Number(1) }),
+        ]
+    );
+}
+
+#[test]
 fn needs_info_waits_while_only_linewright_has_spoken_since_triage() {
     let mut asked = labeled(issue(1), label::NEEDS_INFO);
     asked.comments = vec![
@@ -146,48 +167,18 @@ fn needs_info_waits_while_only_linewright_has_spoken_since_triage() {
 }
 
 #[test]
-fn a_maintainers_answer_to_a_ready_for_human_triage_sends_the_issue_back_to_triage() {
-    let mut asked = labeled(issue(1), label::READY_FOR_HUMAN);
-    asked.comments = vec![
-        triage_comment(1),
-        comment("maintainer", 2, "Make them resizable."),
-    ];
-
-    assert_eq!(
-        decide(&snapshot(vec![asked])),
-        vec![
-            Action::Relabel {
-                issue: Number(1),
-                remove: label::READY_FOR_HUMAN.into(),
-                add: label::NEEDS_TRIAGE.into(),
-            },
-            Action::Start(Work::Triage { issue: Number(1) }),
-        ]
-    );
-}
-
-#[test]
-fn only_comments_by_others_than_linewright_after_the_last_triage_comment_are_answers() {
-    for state in [label::NEEDS_INFO, label::READY_FOR_HUMAN] {
-        let mut asked = labeled(issue(1), state);
-        asked.comments = vec![
-            comment("maintainer", 0, "Should they be resizable?"),
-            triage_comment(1),
-            comment(LINEWRIGHT, 2, "Anything else?"),
-        ];
-
-        assert_eq!(decide(&snapshot(vec![asked])), vec![], "{state}");
-    }
-}
-
-#[test]
-fn a_comment_on_a_hand_back_from_after_triage_starts_nothing() {
-    for stage in [Stage::Ci, Stage::Review, Stage::Implementation] {
+fn a_comment_on_a_ready_for_human_issue_starts_nothing() {
+    for stage in [
+        Stage::Triage,
+        Stage::Ci,
+        Stage::Review,
+        Stage::Implementation,
+    ] {
         let mut handed_back = labeled(issue(1), label::READY_FOR_HUMAN);
         handed_back.comments = vec![
-            triage_comment(1),
-            comment(LINEWRIGHT, 3, &marked(stage, "Handed back.")),
-            comment("maintainer", 5, "Looking into it."),
+            comment(LINEWRIGHT, 1, &marked(stage, "Should they be resizable?")),
+            comment("maintainer", 2, "Make them resizable."),
+            comment("reporter", 3, "Please do."),
         ];
 
         assert_eq!(decide(&snapshot(vec![handed_back])), vec![], "{stage}");

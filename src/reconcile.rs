@@ -462,7 +462,7 @@ pub enum Wait {
     Tickets { open: Vec<Number> },
     /// The reporter, as `needs-info` says.
     Reporter,
-    /// The maintainer, as `ready-for-human` says.
+    /// The maintainer, as `ready-for-human` says: to answer with a label.
     Maintainer,
     /// The maintainer, to apply the required label `label`.
     RequiredLabel { label: String },
@@ -592,15 +592,15 @@ pub fn decisions(
                 plan.wait(issue.number, Wait::Tickets { open });
             }
         }
-        let answered = answered_label(issue, policy);
-        if let Some(waiting) = answered {
+        let replied = has_reply_to_needs_info(issue, policy);
+        if replied {
             plan.act(Action::Relabel {
                 issue: issue.number,
-                remove: waiting.into(),
+                remove: label::NEEDS_INFO.into(),
                 add: label::NEEDS_TRIAGE.into(),
             });
         }
-        if answered.is_some() || wants_triage(issue, policy) {
+        if replied || wants_triage(issue, policy) {
             match running(subject) {
                 Some(stage) => plan.wait(issue.number, Wait::Run { stage }),
                 None => plan.start(Work::Triage {
@@ -1410,39 +1410,35 @@ fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
     issue.has_label(label::NEEDS_TRIAGE) && policy.triages(issue) && policy.may_start_on(issue)
 }
 
-/// An answer in the thread (`docs/specs/triage.md`): the label of
-/// an issue waiting on the reporter or the maintainer, if Linewright's last
-/// comment on it is a triage comment and anyone other than Linewright
-/// commented after it and after the label was applied. A hand-back from after
-/// triage asks no question, and a label the maintainer applied wins over their
-/// comment.
-fn answered_label(issue: &Issue, policy: &Policy) -> Option<&'static str> {
+/// Whether a `needs-info` issue has a reply (`docs/specs/triage.md`,
+/// "Answers"). Its question was asked at the later of the label and
+/// Linewright's last comment; without a comment of Linewright's there is no
+/// question to reply to.
+fn has_reply_to_needs_info(issue: &Issue, policy: &Policy) -> bool {
     let linewright = &policy.linewright;
-    if !policy.triages(issue)
+    if !issue.has_label(label::NEEDS_INFO)
+        || !policy.triages(issue)
         || !policy.may_start_on(issue)
         || [label::READY_FOR_AGENT, label::NEEDS_TRIAGE]
             .into_iter()
             .any(|l| issue.has_label(l))
     {
-        return None;
+        return false;
     }
-    let waiting = [label::NEEDS_INFO, label::READY_FOR_HUMAN]
-        .into_iter()
-        .find(|l| issue.has_label(l))?;
-    let (stage, last) = issue
+    let Some(last) = issue
         .comments
         .iter()
-        .filter_map(|c| Some((stage_of(c, linewright)?, c.created_at)))
-        .max_by_key(|(_, at)| *at)?;
-    if stage != Stage::Triage {
-        return None;
-    }
-    let asked = last_labeled(issue, waiting).map_or(last, |labeled| labeled.max(last));
+        .filter(|c| &c.author == linewright)
+        .map(|c| c.created_at)
+        .max()
+    else {
+        return false;
+    };
+    let asked = last_labeled(issue, label::NEEDS_INFO).map_or(last, |labeled| labeled.max(last));
     issue
         .comments
         .iter()
         .any(|c| &c.author != linewright && c.created_at > asked)
-        .then_some(waiting)
 }
 
 /// The spec changes waiting to be cut into tickets.

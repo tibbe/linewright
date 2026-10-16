@@ -626,19 +626,19 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
-    // The maintainer answers in the thread or hands the issue back with a
-    // label (`docs/specs/triage.md`), so the hand-back names both.
+    // The maintainer answers with a label (`docs/specs/triage.md`,
+    // "Answers"), so the hand-back names them.
     let (state, body) = match result.outcome {
         TriageOutcome::ReadyForAgent => (label::READY_FOR_AGENT, result.comment),
         TriageOutcome::NeedsInfo => (label::NEEDS_INFO, result.comment),
         TriageOutcome::ReadyForHuman => (
             label::READY_FOR_HUMAN,
             format!(
-                "{}\n\nAnswer in this thread to have it triaged again with your answer, or apply \
-                 `{}` to implement it as decided or `{}` to triage it again.",
+                "{}\n\nAnswer with a label: {}. A comment alone starts nothing.",
                 result.comment.trim_end(),
-                label::READY_FOR_AGENT,
-                label::NEEDS_TRIAGE
+                label::ANSWERS
+                    .map(|(answer, asks)| format!("`{answer}` {asks}"))
+                    .join(" or ")
             ),
         ),
     };

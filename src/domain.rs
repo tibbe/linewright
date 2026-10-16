@@ -70,6 +70,13 @@ pub mod label {
     /// besides being assigned to or opened by Linewright.
     pub const IN_VIEW: [&str; 3] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT];
 
+    /// The labels the maintainer answers a `ready-for-human` issue with
+    /// (`docs/specs/triage.md`, "Answers"), with what each asks for.
+    pub const ANSWERS: [(&str, &str); 2] = [
+        (READY_FOR_AGENT, "to implement it as decided"),
+        (NEEDS_TRIAGE, "to triage it again"),
+    ];
+
     /// Every label Linewright creates at startup, with its description.
     pub const ALL: [(&str, &str); 7] = [
         (NEEDS_TRIAGE, "New, not yet assessed"),

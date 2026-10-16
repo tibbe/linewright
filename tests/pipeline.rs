@@ -235,7 +235,7 @@ fn triage_for_the_maintainer(world: &World) {
 }
 
 #[tokio::test]
-async fn an_issue_triaged_for_the_maintainer_says_an_answer_or_a_label_sends_it_back() {
+async fn an_issue_triaged_for_the_maintainer_says_a_label_answers_it() {
     let mut world = World::new().await;
     triage_for_the_maintainer(&world);
     let issue = world
@@ -249,14 +249,13 @@ async fn an_issue_triaged_for_the_maintainer_says_an_answer_or_a_label_sends_it_
     assert_eq!(
         last_comment(&issue),
         "> *Linewright, triage*\n\nShould widgets be resizable?\n\n\
-         Answer in this thread to have it triaged again with your answer, or \
-         apply `ready-for-agent` to implement it as decided or `needs-triage` \
-         to triage it again."
+         Answer with a label: `ready-for-agent` to implement it as decided or \
+         `needs-triage` to triage it again. A comment alone starts nothing."
     );
 }
 
 #[tokio::test]
-async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again() {
+async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again_once_they_label_it() {
     let mut world = World::new().await;
     triage_for_the_maintainer(&world);
     let issue = world
@@ -268,6 +267,14 @@ async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again() {
         .store
         .comment_as("maintainer", issue, "Yes, make them resizable.")
         .unwrap();
+    world.poll().await;
+
+    assert_eq!(
+        labels(&world.issue(issue)),
+        ["enhancement", "ready-for-human"]
+    );
+
+    world.store.label_as(issue, "needs-triage").unwrap();
     world.poll().await;
 
     let issue = world.issue(issue);

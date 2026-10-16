@@ -214,7 +214,7 @@ async fn status_shows_linewright_then_the_tracked_items_then_the_workflows() {
     assert_eq!(lines[3], "runs in flight: 0 of 4");
     assert_eq!(
         lines[5],
-        "#1: with the maintainer — waiting for the maintainer: labeled `ready-for-human` — Do the thing"
+        "#1: with the maintainer — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — Do the thing"
     );
     answering.stop().await;
 }
@@ -601,7 +601,7 @@ async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewr
     );
     assert_eq!(
         lines[3],
-        "waiting for: the maintainer: labeled `ready-for-human`"
+        "waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
     );
     answering.stop().await;
 }

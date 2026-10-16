@@ -187,7 +187,7 @@ async fn an_answer_to_a_triage_question_is_triaged_again_on_the_delivery() {
             })
         } else {
             json!({
-                "outcome": "ready-for-human",
+                "outcome": "needs-info",
                 "category": "bug",
                 "comment": "Which widget?"
             })
@@ -198,11 +198,11 @@ async fn an_answer_to_a_triage_question_is_triaged_again_on_the_delivery() {
         .store
         .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
     let served = serve(world, NEVER).await;
-    eventually(|| labels(&served.issue(issue)).contains(&"ready-for-human")).await;
+    eventually(|| labels(&served.issue(issue)).contains(&"needs-info")).await;
 
     served
         .store
-        .comment_as("maintainer", issue, "The round one.")
+        .comment_as("reporter", issue, "The round one.")
         .unwrap();
     served.deliver("issue_comment", about_issue(issue)).await;
 
