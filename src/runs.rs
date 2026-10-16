@@ -171,13 +171,23 @@ impl Runs {
         Ok(running)
     }
 
+    fn path_of(&self, id: &RunId) -> PathBuf {
+        self.dir_of(&id.of)
+            .join(format!("{}{}.json", file_prefix(&id.of), id.n))
+    }
+
     /// A record that does not read is logged and taken as missing.
     pub fn read_run(&self, id: &RunId) -> Option<Recorded> {
-        let path = self
-            .dir_of(&id.of)
-            .join(format!("{}{}.json", file_prefix(&id.of), id.n));
+        let path = self.path_of(id);
         let record = records::load::<Record>(&path, "a run's record")?;
         Some(Recorded::of(record, &path, &self.work_dir))
+    }
+
+    /// `None` if the run has no record; a record that does not read fails.
+    pub fn try_read_run(&self, id: &RunId) -> Result<Option<Recorded>> {
+        let path = self.path_of(id);
+        let record = records::read::<Record>(&path)?;
+        Ok(record.map(|record| Recorded::of(record, &path, &self.work_dir)))
     }
 
     /// A record that does not read is logged and skipped.

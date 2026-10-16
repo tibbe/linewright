@@ -336,6 +336,26 @@ async fn an_unknown_item_or_run_exits_4_saying_so() {
 }
 
 #[tokio::test]
+async fn a_named_run_whose_record_does_not_read_exits_1_saying_why() {
+    let (_world, work_dir) = implemented_as_recorded().await;
+    let [record] = &files_named(work_dir.path(), "items/1/implement-1.json")[..] else {
+        panic!("one record of 1/implement-1");
+    };
+    std::fs::write(record, "not a record").unwrap();
+
+    let output = lw(work_dir.path(), &["logs", "--run", "1/implement-1"]).await;
+
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output
+            .stderr
+            .contains("reading the record of 1/implement-1: expected ident"),
+        "{}",
+        output.stderr
+    );
+}
+
+#[tokio::test]
 async fn following_a_run_that_has_ended_shows_its_transcript_and_exits() {
     let (_world, work_dir) = implemented_as_recorded().await;
 

@@ -1444,19 +1444,6 @@ async fn logs_follow_json_verbose_carries_on_from_the_records_once_serve_stops()
     assert_eq!(lines[7]["tool_use_id"], "toolu_01WZp27kcvbZoQtwuKJUvLUt");
 }
 
-fn files_named(dir: &Path, name: &str) -> Vec<std::path::PathBuf> {
-    let mut found = vec![];
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            found.extend(files_named(&path, name));
-        } else if path.ends_with(name) {
-            found.push(path);
-        }
-    }
-    found
-}
-
 #[tokio::test]
 async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
     let world = with_issue_for_triage().await;
@@ -1487,6 +1474,28 @@ async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
         "{stderr}"
     );
     drop(agent);
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn logs_of_a_named_run_whose_record_does_not_read_exits_1_through_serve() {
+    let answering = Answering::start(with_issue_for_triage().await, false).await;
+    eventually_async(|| async { answering.lw(&["runs", "1"]).await.stdout.contains("done") }).await;
+    let [record] = &files_named(answering._dir.path(), "items/1/triage-1.json")[..] else {
+        panic!("one record of 1/triage-1");
+    };
+    std::fs::write(record, "not a record").unwrap();
+
+    let output = answering.lw(&["logs", "--run", "1/triage-1"]).await;
+
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output
+            .stderr
+            .contains("reading the record of 1/triage-1: expected ident"),
+        "{}",
+        output.stderr
+    );
     answering.stop().await;
 }
 

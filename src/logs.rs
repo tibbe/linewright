@@ -117,9 +117,18 @@ pub enum LogsError {
     Other(#[from] anyhow::Error),
 }
 
+/// A named run whose record does not read is not missing but failed to
+/// read, unlike the runs [`Runs::read`] skips.
+fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
+    if let Which::Run { id, .. } = which {
+        runs.try_read_run(id)
+            .with_context(|| format!("reading the record of {id}"))?;
+    }
+    Ok(pick(runs.read()?, which)?)
+}
+
 pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsError> {
-    let recorded = Runs::new(&work_dir.resolve()).read()?;
-    let run = pick(recorded, which)?;
+    let run = pick_from(&Runs::new(&work_dir.resolve()), which)?;
     let mut records = run
         .sessions
         .iter()
@@ -207,7 +216,7 @@ impl Following {
         after: Option<After>,
     ) -> Result<Following, LogsError> {
         let runs = Runs::new(&work_dir.resolve());
-        let run = pick(runs.read()?, which)?.id;
+        let run = pick_from(&runs, which)?.id;
         Ok(Following {
             runs,
             follower: Follower::new(run.clone(), verbosity, after),

@@ -359,6 +359,19 @@ impl Log {
     }
 }
 
+pub fn files_named(dir: &Path, name: &str) -> Vec<std::path::PathBuf> {
+    let mut found = vec![];
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(files_named(&path, name));
+        } else if path.ends_with(name) {
+            found.push(path);
+        }
+    }
+    found
+}
+
 pub fn run_ids(listed: &str) -> Vec<&str> {
     listed
         .lines()
