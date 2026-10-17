@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use crate::briefs::Briefs;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Pull, UpdateMethod};
-use crate::git::Conflict;
+use crate::git::{BranchStart, Conflict};
 use crate::reconcile::Feedback;
 use crate::workflow::Workflow;
 
@@ -117,13 +117,19 @@ pub fn tickets(repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
     compose(TO_TICKETS, &task, contract)
 }
 
-pub fn implement(repo: &Repo, ticket: &Ticket, branch: &str) -> String {
+pub fn implement(repo: &Repo, ticket: &Ticket, branch: &str, start: BranchStart) -> String {
     let mut task = String::new();
     task_facts(&mut task, repo);
+    let default_branch = repo.default_branch;
+    let holding = match start {
+        BranchStart::New => format!("fresh from `{default_branch}`."),
+        BranchStart::Existing => format!(
+            "holding earlier runs' work on the ticket; its comments say what they tried. Build on that work, or, if it is not worth keeping, reset the branch to `origin/{default_branch}` and start again."
+        ),
+    };
     let _ = writeln!(
         task,
-        "- Branch: `{branch}`, fresh from `{}`. The fixed point for review is `origin/{}`.\n",
-        repo.default_branch, repo.default_branch
+        "- Branch: `{branch}`, {holding} The fixed point for review is `origin/{default_branch}`.\n",
     );
     write_ticket(&mut task, ticket);
     compose(IMPLEMENT, &task, IMPLEMENT_CONTRACT)

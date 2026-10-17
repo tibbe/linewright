@@ -5,6 +5,7 @@ use common::*;
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
 use serde_json::json;
+use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
@@ -944,6 +945,8 @@ async fn a_ticket_whose_pull_request_is_edited_not_to_close_it_is_worked_again_b
     assert!(old.is_open() && new.is_open());
     assert_ne!(old.head_ref, new.head_ref);
     assert_eq!(new.closes, [ticket]);
+    let prompt = &world.runtime.prompts(WorkKind::Implement)[1];
+    assert!(prompt.contains(&format!("- Branch: `{}`, fresh from `main`.", new.head_ref)));
 }
 
 #[tokio::test]
@@ -1458,9 +1461,13 @@ async fn a_pull_request_closed_without_merging_hands_its_ticket_back() {
     );
 }
 
+/// The file the run [`ticket_handed_back_with_its_branch`] hands back
+/// leaves on the ticket's branch.
+const EARLIER_WORK: &str = "src/partial.txt";
+
 async fn ticket_handed_back_with_its_branch(world: &mut World) -> (Number, String) {
     world.runtime.on(WorkKind::Implement, |call| {
-        commit_in(&call.spec.dir, &[("src/partial.txt", "half\n")], "Start");
+        commit_in(&call.spec.dir, &[(EARLIER_WORK, "half\n")], "Start");
         json(json!({"outcome": "gave-up", "reason": "Too hard."}))
     });
     let ticket = world
@@ -1470,6 +1477,129 @@ async fn ticket_handed_back_with_its_branch(world: &mut World) -> (Number, Strin
     let branch = format!("{}-gadgets", ticket.0);
     assert!(has_branch(world, &branch), "the work so far is kept");
     (ticket, branch)
+}
+
+/// Relabels the handed-back ticket for a poll to start its next run, which
+/// does `work` and answers `done`.
+async fn worked_again(
+    world: &mut World,
+    ticket: Number,
+    work: impl Fn(&std::path::Path) + Send + Sync + 'static,
+) -> NextRun {
+    let next = script_next_run(world, work);
+    relabel_ready_for_agent(world, ticket);
+    world.poll().await;
+    next
+}
+
+/// What the next implement run's clone held when it started.
+struct NextRun(Arc<Mutex<Option<bool>>>);
+
+impl NextRun {
+    fn held_earlier_work(&self) -> bool {
+        self.0.lock().unwrap().expect("the ticket was worked again")
+    }
+}
+
+fn script_next_run(
+    world: &World,
+    work: impl Fn(&std::path::Path) + Send + Sync + 'static,
+) -> NextRun {
+    let held_earlier_work = Arc::new(Mutex::new(None));
+    let next = NextRun(held_earlier_work.clone());
+    world.runtime.on(WorkKind::Implement, move |call| {
+        *held_earlier_work.lock().unwrap() = Some(call.spec.dir.join(EARLIER_WORK).exists());
+        work(&call.spec.dir);
+        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "## Summary\n\nGadgets."}))
+    });
+    next
+}
+
+fn relabel_ready_for_agent(world: &World, ticket: Number) {
+    world.store.unlabel_as(ticket, "ready-for-human").unwrap();
+    world.store.label_as(ticket, "ready-for-agent").unwrap();
+}
+
+fn finish_gadgets(dir: &std::path::Path) {
+    commit_in(dir, &[("src/gadgets.txt", "gadgets\n")], "Finish gadgets");
+}
+
+#[tokio::test]
+async fn a_handed_back_tickets_next_run_starts_from_its_branch_and_is_told_it_holds_earlier_work() {
+    let mut world = World::new().await;
+    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+
+    let next = worked_again(&mut world, ticket, finish_gadgets).await;
+
+    assert!(next.held_earlier_work());
+    let prompt = &world.runtime.prompts(WorkKind::Implement)[1];
+    assert!(prompt.contains(&format!("- Branch: `{branch}`, holding earlier runs' work")));
+    assert!(prompt.contains("reset the branch to `origin/main`"));
+    assert!(!prompt.contains("fresh from"));
+    let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
+    assert_eq!(pr.head_ref, branch);
+    assert_eq!(
+        world.store.file(&branch, EARLIER_WORK).await.unwrap(),
+        "half\n"
+    );
+    assert_eq!(
+        world.store.file(&branch, "src/gadgets.txt").await.unwrap(),
+        "gadgets\n"
+    );
+}
+
+#[tokio::test]
+async fn a_handed_back_ticket_relabeled_before_the_next_poll_starts_from_its_branch() {
+    let mut world = World::new().await;
+    let (ticket, _) = ticket_handed_back_with_its_branch(&mut world).await;
+
+    let next = script_next_run(&world, finish_gadgets);
+    relabel_ready_for_agent(&world, ticket);
+    world
+        .factory
+        .refresh([linewright::domain::Item::Issue(ticket)])
+        .await
+        .unwrap();
+    world.factory.settle().await;
+
+    assert!(next.held_earlier_work());
+}
+
+#[tokio::test]
+async fn a_handed_back_tickets_next_run_starts_from_the_default_branch_once_its_branch_is_deleted()
+{
+    let mut world = World::new().await;
+    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+    assert!(
+        store_git(&world, &["branch", "-D", &branch])
+            .status
+            .success()
+    );
+
+    let next = worked_again(&mut world, ticket, finish_gadgets).await;
+
+    assert!(!next.held_earlier_work());
+    let prompt = &world.runtime.prompts(WorkKind::Implement)[1];
+    assert!(prompt.contains(&format!("- Branch: `{branch}`, fresh from `main`.")));
+    assert!(!prompt.contains("earlier runs' work"));
+}
+
+#[tokio::test]
+async fn a_run_that_resets_its_tickets_branch_to_the_default_branch_replaces_the_earlier_work() {
+    let mut world = World::new().await;
+    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+
+    worked_again(&mut world, ticket, |dir| {
+        git_in(dir, &["reset", "--quiet", "--hard", "origin/main"]);
+        finish_gadgets(dir);
+    })
+    .await;
+
+    assert!(world.store.file(&branch, EARLIER_WORK).await.is_err());
+    assert_eq!(
+        world.store.file(&branch, "src/gadgets.txt").await.unwrap(),
+        "gadgets\n"
+    );
 }
 
 #[tokio::test]

@@ -67,6 +67,31 @@ pub async fn create_branch(dir: &Path, branch: &str) -> Result<()> {
     Ok(())
 }
 
+/// What a branch [`check_out_branch`] checked out starts from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BranchStart {
+    /// The branch as the clone's remote has it.
+    Existing,
+    /// A new branch at the commit checked out before.
+    New,
+}
+
+/// Checks out `branch` as the remote had it when cloned, or as a new branch
+/// at `HEAD` when the remote had no such branch.
+pub async fn check_out_branch(dir: &Path, branch: &str) -> Result<BranchStart> {
+    let remote = format!("refs/remotes/origin/{branch}");
+    if git(dir, &["rev-parse", "--verify", "--quiet", &remote])
+        .await
+        .is_ok()
+    {
+        git(dir, &["checkout", "--quiet", "-B", branch, &remote]).await?;
+        Ok(BranchStart::Existing)
+    } else {
+        create_branch(dir, branch).await?;
+        Ok(BranchStart::New)
+    }
+}
+
 pub enum Updated {
     UpToDate,
     Updated,

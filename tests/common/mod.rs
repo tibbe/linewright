@@ -264,22 +264,22 @@ pub fn commit_in(dir: &Path, files: &[(&str, &str)], message: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, contents).unwrap();
     }
-    for args in [
-        vec!["add", "--all"],
-        vec!["commit", "--quiet", "-m", message],
-    ] {
-        let output = Command::new("git")
-            .args(&args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    git_in(dir, &["add", "--all"]);
+    git_in(dir, &["commit", "--quiet", "-m", message]);
+}
+
+pub fn git_in(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[derive(Clone, Default)]
@@ -540,10 +540,16 @@ pub fn subject_file(call: &Call) -> String {
     linewright::run::purpose_name(&call.spec.purpose)
 }
 
+/// Each run adds to what its ticket's branch holds.
 pub fn implement(world: &World) {
     world.runtime.on(WorkKind::Implement, |call| {
         let file = format!("src/{}.txt", subject_file(call));
-        commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
+        let done = std::fs::read_to_string(call.spec.dir.join(&file)).unwrap_or_default();
+        commit_in(
+            &call.spec.dir,
+            &[(&file, &format!("{done}done\n"))],
+            "Do the ticket",
+        );
         json(serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
     });
 }

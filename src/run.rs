@@ -794,9 +794,14 @@ async fn implement(
         kind: WorkKind::Implement,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    git::create_branch(&ws.dir, &branch).await.map_err(infra)?;
+    // Where the run starts: docs/specs/implementation.md, "Working a
+    // ticket". The clone, not the snapshot, says whether the branch exists: a
+    // snapshot taken before an earlier run pushed it does not hold it.
+    let start = git::check_out_branch(&ws.dir, &branch)
+        .await
+        .map_err(infra)?;
     let upstream = shell.upstream();
-    let prompt = prompts::implement(&shell.repo(), ticket, &branch);
+    let prompt = prompts::implement(&shell.repo(), ticket, &branch, start);
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let (dir, base) = (&ws.dir, &upstream);
     let conversation = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
