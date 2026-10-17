@@ -58,9 +58,10 @@ requests that have already been through review.
 ### Working a ticket
 
 - Claiming is adding Linewright as an assignee. A run on a ticket starts
-  from a fresh clone of the default branch on a new branch for the ticket,
-  replacing any earlier one. Once its pull request is open, the work is the
-  pull request's (see [Pull requests](pull_requests.md)).
+  from the ticket's branch when it has one, and otherwise from the default
+  branch on a new branch for the ticket. The run may discard the branch's work
+  and start again from the default branch. Once its pull request is open, the
+  work is the pull request's (see [Pull requests](pull_requests.md)).
 - The implementer reads the ticket and its comments (the triage brief, earlier
   handbacks). Its brief names the ticket's parent issue, and for a ticket cut
   from a spec change, the spec change: pointers, not their content. The
@@ -83,11 +84,10 @@ requests that have already been through review.
   open is not filed again.
 - Removing `ready-for-agent`, unassigning Linewright or closing the ticket
   cancels its run.
-- A run on a ticket that ends without opening its pull request pushes the work
-  so far to the ticket's branch, and a hand-back names the branch, so the
-  maintainer can see what was tried. The ticket's next run replaces it. When a
-  ticket is closed with no pull request open for it, Linewright deletes its
-  branch.
+- A hand-back of a ticket with no pull request names the ticket's branch, so
+  the maintainer can see what was tried, and deleting the branch starts the
+  ticket's next run from the default branch. When a ticket is closed with no
+  pull request open for it, Linewright deletes its branch.
 
 ## Out of scope
 

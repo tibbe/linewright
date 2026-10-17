@@ -57,7 +57,7 @@ from Linewright's base image with the project's toolchain added.
   | `work-dir` | `linewright/` under the user's data directory |
   | `model` | one model for every stage |
   | `briefs` (a directory) | the briefs Linewright ships |
-  | `session-timeout` | 30m |
+  | `session-timeout` | 60m |
   | `result-retries` | 1 |
   | `ci-grace` | 5m |
   | `ci-timeout` | 6h |

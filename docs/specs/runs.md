@@ -44,9 +44,12 @@ hands #43 back at once, saying which permission to grant.
 ### Limits
 
 - Concurrency is a ceiling on simultaneous runs, workflow runs included
-  (`max-runs`, default 4).
-- Each agent session has a timeout on the time it runs (`session-timeout`,
-  default 30 min), unless its workflow sets its own.
+  (`max-runs`).
+- Each agent session has a timeout on the time it runs (`session-timeout`),
+  unless its workflow sets its own. The timeout bounds what a run costs and
+  ends a session that stalls, so a run that times out is not retried: it hands
+  its item back, and the comment says the work may need cutting smaller or a
+  longer timeout.
 
 ### Ending
 
@@ -67,7 +70,7 @@ hands #43 back at once, saying which permission to grant.
 - Handing an item back is labeling it `ready-for-human` with a comment that
   says why.
 - A session's result the manager cannot parse goes back to the session with
-  the parse error, so it can answer again (`result-retries`, default once).
+  the parse error, so it can answer again (`result-retries`).
 - Any unexpected end (a crash, a timeout, the agent giving up, a result that
   still does not parse) hands the run's item back with the reason and the
   tail of the log.
@@ -76,6 +79,10 @@ hands #43 back at once, saying which permission to grant.
   back at once, and the comment says what the maintainer can do about it:
   for a push GitHub refuses because Linewright's token lacks a permission,
   which permission to grant.
+- A run that works on a branch and ends before it finishes pushes its work so
+  far to the branch, with what its session left uncommitted as an unfinished
+  commit. The next run on the branch folds the unfinished commit into its own
+  commits.
 - A run is cancelled when its item stops asking for its work, as each stage
   says, or when `serve` stops. A cancelled run posts nothing more, and one
   whose pull request was merged or closed pushes nothing either.
