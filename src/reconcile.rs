@@ -7,7 +7,7 @@ use crate::domain::{
     Assignment, BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent, Item,
     Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
     Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
-    TicketBranchName, Timestamp, UpdateMethod, UpdateRule, label,
+    TicketBranchName, Timestamp, UpdateMethod, UpdateRule, label, last_unassigned,
 };
 use crate::holds::Holds;
 use crate::runtime::UsageLimit;
@@ -1427,35 +1427,6 @@ fn stopped_by_unassign(issue: &Issue, policy: &Policy) -> bool {
     }
 }
 
-/// When `assignee` was last unassigned by an actor `by` accepts.
-fn last_unassigned(
-    events: &[IssueEvent],
-    assignee: &Login,
-    by: impl Fn(&Login) -> bool,
-) -> Option<Timestamp> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            IssueEvent::Assignment(Assignment::Unassigned {
-                assignee: unassigned,
-                actor,
-                at,
-            }) if unassigned == assignee && by(actor) => Some(*at),
-            _ => None,
-        })
-        .max()
-}
-
-fn last_labeled(events: &[IssueEvent], name: &str) -> Option<Timestamp> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            IssueEvent::Labeled { label, at } if label == name => Some(*at),
-            _ => None,
-        })
-        .max()
-}
-
 fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
     issue.holds(StatusLabel::NeedsTriage) && policy.triages(issue) && policy.may_start_on(issue)
 }
@@ -1555,7 +1526,9 @@ pub fn not_a_spec_change(
         }
     } else if pr.is_assigned(&policy.linewright) {
         return None;
-    } else if let Some(at) = unassigned_since_required_label(pr, policy) {
+    } else if let Some(at) =
+        pr.unassigned_since_labeled(&policy.linewright, policy.require_label.as_deref())
+    {
         NotSpecChange::Unassigned {
             at,
             required_label: policy.require_label.clone(),
@@ -1567,17 +1540,4 @@ pub fn not_a_spec_change(
         });
     };
     Some(because)
-}
-
-/// When Linewright was last unassigned from `pr`, by anyone, if the required
-/// label, when one is set, was not applied since.
-fn unassigned_since_required_label(pr: &MergedPull, policy: &Policy) -> Option<Timestamp> {
-    let unassigned = last_unassigned(&pr.events, &policy.linewright, |_| true)?;
-    let labeled = policy
-        .require_label
-        .as_ref()
-        .and_then(|required| last_labeled(&pr.events, required));
-    labeled
-        .is_none_or(|labeled| labeled < unassigned)
-        .then_some(unassigned)
 }

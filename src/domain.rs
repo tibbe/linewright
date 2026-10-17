@@ -293,14 +293,7 @@ impl Issue {
     /// When `status` was last applied, with the event's place among the events
     /// to order labels applied at the same time.
     fn last_labeling(&self, status: StatusLabel) -> Option<(Timestamp, usize)> {
-        self.events
-            .iter()
-            .enumerate()
-            .filter_map(|(i, e)| match e {
-                IssueEvent::Labeled { label, at } if label == status.label() => Some((*at, i)),
-                _ => None,
-            })
-            .max()
+        last_labeling(&self.events, status.label())
     }
 
     pub fn cut_from(&self) -> Option<Number> {
@@ -536,6 +529,55 @@ impl MergedPull {
     pub fn is_assigned(&self, login: &Login) -> bool {
         self.assignees.contains(login)
     }
+
+    /// When `linewright` was last unassigned from it, by anyone, if
+    /// `required_label`, when one is set, was not applied since.
+    pub fn unassigned_since_labeled(
+        &self,
+        linewright: &Login,
+        required_label: Option<&str>,
+    ) -> Option<Timestamp> {
+        let unassigned = last_unassigned(&self.events, linewright, |_| true)?;
+        let labeled = required_label
+            .and_then(|required| last_labeling(&self.events, required))
+            .map(|(at, _)| at);
+        labeled
+            .is_none_or(|labeled| labeled < unassigned)
+            .then_some(unassigned)
+    }
+}
+
+/// When `name` was last applied among `events`, with the event's place among
+/// them to order labels applied at the same time.
+fn last_labeling(events: &[IssueEvent], name: &str) -> Option<(Timestamp, usize)> {
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            IssueEvent::Labeled { label, at } if label == name => Some((*at, i)),
+            _ => None,
+        })
+        .max()
+}
+
+/// When `assignee` was last unassigned among `events`, by an actor `by`
+/// accepts.
+pub fn last_unassigned(
+    events: &[IssueEvent],
+    assignee: &Login,
+    by: impl Fn(&Login) -> bool,
+) -> Option<Timestamp> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            IssueEvent::Assignment(Assignment::Unassigned {
+                assignee: unassigned,
+                actor,
+                at,
+            }) if unassigned == assignee && by(actor) => Some(*at),
+            _ => None,
+        })
+        .max()
 }
 
 /// The name of a branch a run on a ticket could have pushed: one

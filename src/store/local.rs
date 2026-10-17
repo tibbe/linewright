@@ -68,6 +68,13 @@ pub struct CheckRecord {
     pub log: String,
 }
 
+/// A label applied to a pull request.
+#[derive(Clone, Serialize)]
+struct Labeling {
+    label: String,
+    at: Timestamp,
+}
+
 #[derive(Clone, Serialize)]
 struct PullRecord {
     number: Number,
@@ -78,8 +85,8 @@ struct PullRecord {
     head_ref: String,
     state: PullState,
     labels: Vec<String>,
-    /// When each label was applied, oldest first.
-    labelings: Vec<IssueEvent>,
+    /// Oldest first.
+    labelings: Vec<Labeling>,
     assignees: Vec<Login>,
     /// Oldest first.
     assignments: Vec<Assignment>,
@@ -976,7 +983,7 @@ impl State {
             let pull = self.pull_mut(number)?;
             if !pull.has_label(label) {
                 pull.labels.push(label.into());
-                pull.labelings.push(IssueEvent::Labeled {
+                pull.labelings.push(Labeling {
                     label: label.into(),
                     at: now,
                 });
@@ -1062,9 +1069,12 @@ impl PullRecord {
 
     /// Its labelings and assignments, oldest first.
     fn events(&self) -> Vec<IssueEvent> {
+        let labelings = self.labelings.iter().map(|l| IssueEvent::Labeled {
+            label: l.label.clone(),
+            at: l.at,
+        });
         let assignments = self.assignments.iter().cloned().map(IssueEvent::Assignment);
-        let mut events: Vec<IssueEvent> =
-            self.labelings.iter().cloned().chain(assignments).collect();
+        let mut events: Vec<IssueEvent> = labelings.chain(assignments).collect();
         events.sort_by_key(IssueEvent::at);
         events
     }
