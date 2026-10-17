@@ -41,6 +41,9 @@ jobs:
       matrix:
         runner: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.runner }}
+    # The tests take a few minutes; a hung one fails here rather than run
+    # for hours.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install

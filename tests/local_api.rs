@@ -83,10 +83,10 @@ impl Answering {
 
     async fn stop(self) {
         if let Some(listener) = self.listener {
-            listener.stop().await;
+            within(STOPPING, "the webhook listener stops", listener.stop()).await;
         }
-        self.api.stop().await;
-        self.serving.stop().await;
+        within(STOPPING, "the API stops", self.api.stop()).await;
+        within(STOPPING, "serving stops", self.serving.stop()).await;
     }
 }
 
@@ -98,6 +98,25 @@ struct Output {
     code: Option<i32>,
     stdout: String,
     stderr: String,
+}
+
+/// How long a test gives one `lw` to answer: more than the 5s `lw` asks a
+/// serve that hangs up again for, and less than `eventually_async` waits, so a
+/// hung `lw` in it is named.
+const ANSWERING: Duration = Duration::from_secs(8);
+/// How long a test gives a part of serve to stop.
+const STOPPING: Duration = Duration::from_secs(30);
+
+/// Waits up to `limit` for `future`, saying `what` did not happen when it
+/// does not finish, so a hang fails its test rather than the whole run.
+async fn within<T>(
+    limit: Duration,
+    what: impl std::fmt::Display,
+    future: impl Future<Output = T>,
+) -> T {
+    tokio::time::timeout(limit, future)
+        .await
+        .unwrap_or_else(|_| panic!("{what}: not within {limit:?}"))
 }
 
 async fn lw(runtime_dir: &Path, args: &[&str]) -> Output {
@@ -113,7 +132,9 @@ async fn lw_with(runtime_dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Out
         .env("XDG_RUNTIME_DIR", runtime_dir)
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .envs(env.iter().copied())
-        .output()
+        .kill_on_drop(true)
+        .output();
+    let output = within(ANSWERING, format!("lw {args:?} exits"), output)
         .await
         .unwrap();
     Output {
@@ -355,8 +376,8 @@ async fn once_a_serve_stops_another_can_start() {
         ..
     } = answering;
 
-    api.stop().await;
-    serving.stop().await;
+    within(STOPPING, "the API stops", api.stop()).await;
+    within(STOPPING, "serving stops", serving.stop()).await;
 
     // A process another test forks holds a copy of the lock until it runs
     // its program, so the lock may stay taken for a moment.
@@ -443,8 +464,8 @@ async fn runs_gives_the_same_answer_with_serve_running_and_without() {
         _dir,
         ..
     } = answering;
-    api.stop().await;
-    serving.stop().await;
+    within(STOPPING, "the API stops", api.stop()).await;
+    within(STOPPING, "serving stops", serving.stop()).await;
     let read = [
         lw(runtime_dir.path(), &args).await,
         lw(runtime_dir.path(), &[&args[..], &["--json"]].concat()).await,
@@ -482,8 +503,8 @@ async fn a_run_in_flight_is_listed_so_and_once_a_stop_cancels_it_as_cancelled() 
         _dir,
         ..
     } = answering;
-    api.stop().await;
-    serving.stop().await;
+    within(STOPPING, "the API stops", api.stop()).await;
+    within(STOPPING, "serving stops", serving.stop()).await;
     let stopped = lw(runtime_dir.path(), &args).await;
 
     assert!(
@@ -535,7 +556,7 @@ async fn a_run_whose_serve_died_is_listed_as_interrupted() {
     } = answering;
 
     serving.kill().await;
-    api.stop().await;
+    within(STOPPING, "the API stops", api.stop()).await;
 
     let output = lw(runtime_dir.path(), &args).await;
     let line = output.stdout.lines().next().unwrap_or_default();
@@ -756,8 +777,8 @@ async fn logs_gives_the_same_answer_with_serve_running_and_without() {
         _dir,
         ..
     } = answering;
-    api.stop().await;
-    serving.stop().await;
+    within(STOPPING, "the API stops", api.stop()).await;
+    within(STOPPING, "serving stops", serving.stop()).await;
     let mut read = vec![];
     for command in &commands {
         read.push(lw(runtime_dir.path(), command).await);
@@ -1041,8 +1062,8 @@ async fn a_pull_requests_runs_and_logs_are_its_own_with_serve_running_and_withou
         _dir,
         ..
     } = answering;
-    api.stop().await;
-    serving.stop().await;
+    within(STOPPING, "the API stops", api.stop()).await;
+    within(STOPPING, "serving stops", serving.stop()).await;
     let mut read = vec![];
     for command in &commands {
         read.push(lw(runtime_dir.path(), command).await);
@@ -1410,11 +1431,11 @@ async fn logs_follow_json_verbose_carries_on_from_the_records_once_serve_stops()
     let Answering {
         serving, api, _dir, ..
     } = answering;
-    api.stop().await;
+    within(STOPPING, "the API stops", api.stop()).await;
     agent.writes(&turn[6]);
     follow.shows(r#""account":"exit 2""#).await;
     drop(agent);
-    serving.stop().await;
+    within(STOPPING, "serving stops", serving.stop()).await;
     let (code, shown, _) = follow.exits().await;
 
     assert_eq!(code, Some(0));
