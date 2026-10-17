@@ -841,7 +841,7 @@ fn the_json_of_an_issue_in_review_names_the_pull_request_closing_it_as_its_child
 }
 
 #[test]
-fn an_issue_of_linewrights_own_labeled_needs_triage_is_not_tracked() {
+fn an_issue_linewright_filed_labeled_needs_triage_is_tracked_for_triage() {
     let filed = Issue {
         author: Login::new("factory"),
         labels: vec!["needs-triage".into()],
@@ -849,8 +849,31 @@ fn an_issue_of_linewrights_own_labeled_needs_triage_is_not_tracked() {
     };
 
     assert_eq!(
-        explain(&view(vec![filed], vec![]), &[], Number(42), at(NOW)),
-        None
+        text(&view(vec![filed], vec![]), 42)[1],
+        "state: waiting for triage"
+    );
+}
+
+#[test]
+fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_the_label_again() {
+    let stopped = Issue {
+        labels: vec!["needs-triage".into()],
+        events: vec![IssueEvent::Assignment(Assignment::Unassigned {
+            assignee: Login::new("factory"),
+            actor: Login::new("maintainer"),
+            at: at("2026-10-01T11:00:00Z"),
+        })],
+        ..ticket(42, "Add invoices")
+    };
+
+    assert_eq!(
+        text(&view(vec![stopped], vec![]), 42)[1..],
+        [
+            "state: waiting for triage",
+            "last read: 2026-10-01 12:00:00 UTC",
+            "waiting for: the maintainer: to label it `needs-triage` again, since Linewright was \
+             unassigned",
+        ]
     );
 }
 
@@ -936,24 +959,6 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
         )[3],
         "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
          `ready-for-human`"
-    );
-}
-
-#[test]
-fn an_issue_of_linewrights_own_labeled_needs_triage_is_left_alone_as_its_own() {
-    let filed = Issue {
-        author: Login::new("factory"),
-        labels: vec!["needs-triage".into()],
-        ..ticket(42, "Add invoices")
-    };
-
-    assert_eq!(
-        left_alone_text(
-            &view(vec![filed.clone()], vec![]),
-            AnyItem::HeldIssue(Box::new(filed))
-        )[3],
-        "left alone: Linewright opened it and triages no issue of its own, though it is labeled \
-         `needs-triage`"
     );
 }
 

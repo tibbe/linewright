@@ -2,6 +2,7 @@ mod common;
 
 use chrono::TimeDelta;
 use common::*;
+use linewright::domain::{Assignment, IssueEvent};
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
 use serde_json::json;
@@ -298,6 +299,100 @@ async fn an_issue_given_a_second_status_label_keeps_only_the_newer() {
     world.poll().await;
 
     assert_eq!(labels(&world.issue(issue)), ["bug", "needs-info"]);
+}
+
+fn triaged_to(world: &World, outcome: &'static str) {
+    world.runtime.on(WorkKind::Triage, move |_| {
+        json(json!({
+            "outcome": outcome,
+            "category": "bug",
+            "comment": "Triaged."
+        }))
+    });
+}
+
+#[tokio::test]
+async fn triage_claims_the_issue_and_keeps_it_only_when_it_ends_ready_for_agent() {
+    for (outcome, kept) in [
+        ("ready-for-agent", true),
+        ("needs-info", false),
+        ("ready-for-human", false),
+    ] {
+        let mut world = World::new().await;
+        triaged_to(&world, outcome);
+        let issue = world
+            .store
+            .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+
+        world.poll().await;
+
+        let issue = world.issue(issue);
+        assert!(labels(&issue).contains(&outcome), "{outcome}");
+        let assigned = issue
+            .assignees
+            .iter()
+            .map(Login::as_str)
+            .collect::<Vec<_>>();
+        let expected: &[&str] = if kept { &[LINEWRIGHT] } else { &[] };
+        assert_eq!(assigned, expected, "{outcome}");
+        let claims = issue
+            .events
+            .iter()
+            .filter(|e| matches!(e, IssueEvent::Assignment(Assignment::Assigned { .. })))
+            .count();
+        assert_eq!(claims, 1, "{outcome}: claimed before triage");
+    }
+}
+
+#[tokio::test]
+async fn an_issue_linewright_filed_with_needs_triage_is_triaged() {
+    let mut world = World::new().await;
+    triaged_to(&world, "ready-for-agent");
+    let issue = world
+        .store
+        .open_issue(LINEWRIGHT, "Untested fix", "", &["needs-triage"]);
+
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["bug", "ready-for-agent"]);
+    assert_eq!(last_comment(&issue), "Triaged.");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() {
+    let mut world = World::new().await;
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (begin, mut begun) = tokio::sync::mpsc::unbounded_channel();
+    world.runtime.on(WorkKind::Triage, move |_| {
+        begin.send(()).unwrap();
+        released.lock().unwrap().recv().unwrap();
+        json(json!({
+            "outcome": "ready-for-human",
+            "category": "bug",
+            "comment": "Triaged."
+        }))
+    });
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+    world.factory.cycle().await.unwrap();
+    begun.recv().await.unwrap();
+    assert!(world.issue(issue).is_assigned(&Login::new(LINEWRIGHT)));
+
+    world
+        .store
+        .unassign_as("maintainer", issue, LINEWRIGHT)
+        .unwrap();
+    world.factory.cycle().await.unwrap();
+    release.send(()).unwrap();
+    world.factory.settle().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["needs-triage"]);
+    assert!(issue.comments.is_empty());
+    assert!(issue.assignees.is_empty());
 }
 
 fn tickets_script(world: &World) {

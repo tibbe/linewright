@@ -57,15 +57,25 @@ For a bug a customer hit, or anything else that should change.
 
 1. File the issue with the `needs-triage` label, which asks Linewright to
    triage it. An issue template can apply the label for you.
-2. Linewright triages it: it reads the issue, the code and the spec, and tries
-   to reproduce a bug. It comments with what it found and labels the issue
-   with what happens next.
-3. If it labels the issue `needs-info`, it has asked you something. Reply in
-   the thread; your reply starts triage again.
+2. Linewright assigns itself and triages it: it reads the issue, the code and
+   the spec, and tries to reproduce a bug. It comments with what it found and
+   labels the issue with what happens next. It leaves alone an issue someone
+   else is assigned to, one an open issue blocks and one an open pull request
+   closes.
+3. If it labels the issue `needs-info`, it has asked you something and
+   unassigns itself. Reply in the thread; your reply starts triage again.
 4. If it labels the issue `ready-for-agent`, its comment is the brief an agent
-   builds from, and the work starts on its own.
+   builds from. It stays assigned, and the work starts on its own.
 5. If it labels the issue `ready-for-human`, the maintainer decides, and its
-   comment is its recommendation. You don't need to do anything.
+   comment is its recommendation. It unassigns itself. You don't need to do
+   anything.
+
+To stop a triage, unassign Linewright, remove `needs-triage` or close the
+issue. Once unassigned, Linewright leaves the issue until `needs-triage`, or
+the required label, is applied again.
+
+Issues Linewright files itself, such as a workflow's, are triaged the same
+way when they carry `needs-triage`.
 
 Linewright never closes an issue you filed. A duplicate, or something that
 already works, goes to the maintainer.

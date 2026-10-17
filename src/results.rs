@@ -11,6 +11,13 @@ pub enum TriageOutcome {
     ReadyForHuman,
 }
 
+impl TriageOutcome {
+    /// Only `ready-for-agent` still asks for Linewright's work.
+    pub fn asks_for_linewright(self) -> bool {
+        self == TriageOutcome::ReadyForAgent
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct TriageResult {
     pub outcome: TriageOutcome,

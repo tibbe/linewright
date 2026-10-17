@@ -739,6 +739,10 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
         results::parse_triage(&message, categories).map_err(parse_retry)
     })
     .await?;
+    // The session may end as the run is cancelled, too late to stop it.
+    if ctx.cancel.is_cancelled() {
+        return Err(Failure::Cancelled);
+    }
     record_triage(shell, issue, result).await.map_err(apply)
 }
 
@@ -780,7 +784,11 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
         }
     }
     store.add_label(issue.number, state).await?;
-    store.comment(issue.number, &body).await
+    store.comment(issue.number, &body).await?;
+    if !result.outcome.asks_for_linewright() {
+        store.unassign(issue.number).await?;
+    }
+    Ok(())
 }
 
 async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failure> {

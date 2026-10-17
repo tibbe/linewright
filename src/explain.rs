@@ -637,10 +637,6 @@ fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> String {
                 one_of(&StatusLabel::ALL.map(StatusLabel::label))
             )
         }
-        IssueExclusion::OwnIssueForTriage => format!(
-            "Linewright opened it and triages no issue of its own, though it is labeled `{}`",
-            label::NEEDS_TRIAGE
-        ),
         IssueExclusion::NoTickets => {
             "it is a tracking issue with no tickets, and none are being cut".into()
         }

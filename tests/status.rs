@@ -254,7 +254,14 @@ fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_
         labels: vec!["needs-triage".into()],
         ..ready_issue()
     };
-    let view = view(vec![ready_issue(), blocked, claimed, triage]);
+    let triaging = Issue {
+        number: Number(11),
+        title: "It broke again".into(),
+        labels: vec!["needs-triage".into()],
+        assignees: vec![Login::new("factory")],
+        ..ready_issue()
+    };
+    let view = view(vec![ready_issue(), blocked, claimed, triage, triaging]);
 
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
@@ -263,6 +270,7 @@ fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_
             "#8: ready to claim — waiting for #7, which blocks it — Do the next thing",
             "#9: claimed: being implemented — Do another thing",
             "#10: waiting for triage — It broke",
+            "#11: claimed: being triaged — It broke again",
         ]
     );
 }

@@ -77,7 +77,8 @@ pub mod label {
 }
 
 /// What an issue needs next, as its status label says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum StatusLabel {
     NeedsTriage,
     NeedsInfo,
@@ -549,7 +550,7 @@ impl MergedPull {
 
 /// When `name` was last applied among `events`, with the event's place among
 /// them to order labels applied at the same time.
-fn last_labeling(events: &[IssueEvent], name: &str) -> Option<(Timestamp, usize)> {
+pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<(Timestamp, usize)> {
     events
         .iter()
         .enumerate()
@@ -567,14 +568,25 @@ pub fn last_unassigned(
     assignee: &Login,
     by: impl Fn(&Login) -> bool,
 ) -> Option<Timestamp> {
+    last_unassignment(events, assignee, by).map(|(at, _)| at)
+}
+
+/// [`last_unassigned`], with the event's place among `events` to order it
+/// against events at the same time.
+pub fn last_unassignment(
+    events: &[IssueEvent],
+    assignee: &Login,
+    by: impl Fn(&Login) -> bool,
+) -> Option<(Timestamp, usize)> {
     events
         .iter()
-        .filter_map(|e| match e {
+        .enumerate()
+        .filter_map(|(i, e)| match e {
             IssueEvent::Assignment(Assignment::Unassigned {
                 assignee: unassigned,
                 actor,
                 at,
-            }) if unassigned == assignee && by(actor) => Some(*at),
+            }) if unassigned == assignee && by(actor) => Some((*at, i)),
             _ => None,
         })
         .max()

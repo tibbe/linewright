@@ -78,14 +78,17 @@ fn decide(snapshot: &Snapshot) -> Vec<Action> {
     )
 }
 
+fn triage(issue: u64) -> Action {
+    Action::Start(Work::Triage {
+        issue: Number(issue),
+    })
+}
+
 #[test]
-fn a_needs_triage_issue_is_triaged() {
+fn a_needs_triage_issue_is_claimed_then_triaged() {
     let world = snapshot(vec![labeled(issue(1), label::NEEDS_TRIAGE)]);
 
-    assert_eq!(
-        decide(&world),
-        vec![Action::Start(Work::Triage { issue: Number(1) })]
-    );
+    assert_eq!(decide(&world), vec![claim(1), triage(1)]);
 }
 
 fn comment(author: &str, minute: i64, body: &str) -> Comment {
@@ -113,7 +116,8 @@ fn a_reply_to_needs_info_sends_the_issue_back_to_triage() {
                 remove: label::NEEDS_INFO.into(),
                 add: label::NEEDS_TRIAGE.into(),
             },
-            Action::Start(Work::Triage { issue: Number(1) }),
+            claim(1),
+            triage(1),
         ]
     );
 }
@@ -138,7 +142,8 @@ fn a_reply_to_a_question_opening_with_the_old_marker_line_sends_the_issue_back_t
                 remove: label::NEEDS_INFO.into(),
                 add: label::NEEDS_TRIAGE.into(),
             },
-            Action::Start(Work::Triage { issue: Number(1) }),
+            claim(1),
+            triage(1),
         ]
     );
 }
@@ -193,20 +198,11 @@ fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_co
 
     assert_eq!(
         decide(&answered_with(StatusLabel::ReadyForAgent)),
-        vec![
-            unlabel_ready_for_human.clone(),
-            Action::Claim {
-                item: Item::Issue(Number(1))
-            },
-            implement(1)
-        ]
+        vec![unlabel_ready_for_human.clone(), claim(1), implement(1)]
     );
     assert_eq!(
         decide(&answered_with(StatusLabel::NeedsTriage)),
-        vec![
-            unlabel_ready_for_human,
-            Action::Start(Work::Triage { issue: Number(1) })
-        ]
+        vec![unlabel_ready_for_human, claim(1), triage(1)]
     );
 }
 
@@ -223,16 +219,9 @@ fn of_two_status_labels_the_newer_is_kept_and_followed() {
                 label: older,
             };
             let follow = match newer {
-                StatusLabel::NeedsTriage => {
-                    vec![Action::Start(Work::Triage { issue: Number(1) })]
-                }
+                StatusLabel::NeedsTriage => vec![claim(1), triage(1)],
                 StatusLabel::ReadyForAgent => {
-                    vec![
-                        Action::Claim {
-                            item: Item::Issue(Number(1)),
-                        },
-                        implement(1),
-                    ]
+                    vec![claim(1), implement(1)]
                 }
                 StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => vec![],
             };
@@ -550,6 +539,12 @@ fn blocked_by(mut issue: Issue, blocker: u64, open: bool) -> Issue {
     issue
 }
 
+fn claim(issue: u64) -> Action {
+    Action::Claim {
+        item: Item::Issue(Number(issue)),
+    }
+}
+
 fn implement(issue: u64) -> Action {
     Action::Start(Work::Implement {
         issue: Number(issue),
@@ -560,15 +555,7 @@ fn implement(issue: u64) -> Action {
 fn an_unblocked_ready_for_agent_issue_is_claimed_and_implemented() {
     let world = snapshot(vec![blocked_by(ticket(2), 1, false)]);
 
-    assert_eq!(
-        decide(&world),
-        vec![
-            Action::Claim {
-                item: Item::Issue(Number(2))
-            },
-            implement(2)
-        ]
-    );
+    assert_eq!(decide(&world), vec![claim(2), implement(2)]);
 }
 
 #[test]
@@ -653,21 +640,12 @@ fn unassigning_linewright_stops_the_work_until_the_label_is_applied_again() {
             restarted,
             handed_back_by_linewright
         ])),
-        vec![
-            Action::Claim {
-                item: Item::Issue(Number(3))
-            },
-            implement(3),
-            Action::Claim {
-                item: Item::Issue(Number(4))
-            },
-            implement(4),
-        ]
+        vec![claim(3), implement(3), claim(4), implement(4),]
     );
 }
 
 #[test]
-fn a_ticket_sent_back_to_triage_is_not_claimed() {
+fn a_ticket_sent_back_to_triage_is_triaged_not_implemented() {
     let sent_back = labeled_at(
         labeled_at(
             labeled(ticket(2), label::NEEDS_TRIAGE),
@@ -680,10 +658,14 @@ fn a_ticket_sent_back_to_triage_is_not_claimed() {
 
     assert_eq!(
         decide(&snapshot(vec![sent_back])),
-        vec![Action::RemoveStatusLabel {
-            issue: Number(2),
-            label: StatusLabel::ReadyForAgent,
-        }]
+        vec![
+            Action::RemoveStatusLabel {
+                issue: Number(2),
+                label: StatusLabel::ReadyForAgent,
+            },
+            claim(2),
+            triage(2)
+        ]
     );
 }
 
@@ -716,7 +698,8 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
             &policy()
         ),
         vec![
-            Action::Start(Work::Triage { issue: Number(3) }),
+            claim(3),
+            triage(3),
             Action::Claim {
                 item: Item::Pull(Number(5))
             },
@@ -2352,7 +2335,7 @@ fn with_a_required_label_only_a_labeled_needs_triage_issue_is_triaged() {
 
     assert_eq!(
         deciding_with_label(&snapshot(vec![unlabeled, with_label])),
-        vec![Action::Start(Work::Triage { issue: Number(2) })]
+        vec![claim(2), triage(2)]
     );
 }
 
@@ -2371,7 +2354,8 @@ fn with_a_required_label_only_a_labeled_issue_answered_after_a_triage_question_i
                 remove: label::NEEDS_INFO.into(),
                 add: label::NEEDS_TRIAGE.into(),
             },
-            Action::Start(Work::Triage { issue: Number(2) }),
+            claim(2),
+            triage(2),
         ]
     );
 }
@@ -2383,12 +2367,7 @@ fn with_a_required_label_only_a_labeled_unclaimed_ticket_is_claimed() {
 
     assert_eq!(
         deciding_with_label(&snapshot(vec![unlabeled, with_label])),
-        vec![
-            Action::Claim {
-                item: Item::Issue(Number(2))
-            },
-            implement(2)
-        ]
+        vec![claim(2), implement(2)]
     );
 }
 
@@ -2412,12 +2391,7 @@ fn with_a_required_label_a_ticket_is_claimed_again_after_an_unassignment_only_if
 
     assert_eq!(
         deciding_with_label(&snapshot(vec![restart(1, false), restart(2, true)])),
-        vec![
-            Action::Claim {
-                item: Item::Issue(Number(2))
-            },
-            implement(2)
-        ]
+        vec![claim(2), implement(2)]
     );
 }
 
@@ -2708,14 +2682,13 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_workflow_runs() {
         starts,
         vec![
             rework(2, 20),
-            Action::Start(Work::Triage { issue: Number(1) }),
+            claim(1),
+            triage(1),
             Action::Claim {
                 item: Item::Pull(Number(5))
             },
             Action::Start(Work::Tickets { pr: Number(5) }),
-            Action::Claim {
-                item: Item::Issue(Number(3))
-            },
+            claim(3),
             implement(3),
             implement(4),
             Action::RunWorkflow(Box::new(hourly("hourly"))),
@@ -2839,15 +2812,7 @@ fn a_ticket_only_pull_requests_closed_before_its_claim_close_is_claimed() {
     }
     let world = snapshot(vec![ticket]);
 
-    assert_eq!(
-        decide(&world),
-        vec![
-            Action::Claim {
-                item: Item::Issue(Number(2))
-            },
-            implement(2)
-        ]
-    );
+    assert_eq!(decide(&world), vec![claim(2), implement(2)]);
 }
 
 #[test]
@@ -3038,6 +3003,7 @@ fn a_ticket_someone_elses_merged_pull_request_closes_waits_to_be_labeled_again()
     assert_eq!(
         waits_on(&world, 2),
         [Wait::Relabel {
+            label: StatusLabel::ReadyForAgent,
             since: Relabel::Merged {
                 pull_request: Number(20)
             }
@@ -3274,12 +3240,11 @@ fn an_issue_without_the_required_label_waits_for_the_maintainer_to_apply_it() {
 }
 
 #[test]
-fn an_issue_of_linewrights_own_labeled_needs_triage_waits_for_nothing() {
+fn an_issue_linewright_filed_labeled_needs_triage_is_triaged() {
     let mut filed = labeled(issue(1), label::NEEDS_TRIAGE);
     filed.author = Login::new(LINEWRIGHT);
 
-    assert_eq!(decide(&snapshot(vec![filed.clone()])), vec![]);
-    assert_eq!(waits_on(&snapshot(vec![filed]), 1), []);
+    assert_eq!(decide(&snapshot(vec![filed])), vec![claim(1), triage(1)]);
 }
 
 #[test]
@@ -3293,7 +3258,10 @@ fn a_ticket_linewright_was_unassigned_from_waits_for_ready_for_agent_again() {
     assert_eq!(
         waits_on(&snapshot(vec![stopped]), 2),
         [Wait::Relabel {
-            since: Relabel::Unassigned
+            label: StatusLabel::ReadyForAgent,
+            since: Relabel::Unassigned {
+                required_label: None
+            }
         }]
     );
 }
@@ -3306,6 +3274,7 @@ fn a_ticket_whose_pull_request_merged_waits_for_ready_for_agent_again() {
     assert_eq!(
         waits_on(&in_review(pr), 2),
         [Wait::Relabel {
+            label: StatusLabel::ReadyForAgent,
             since: Relabel::Merged {
                 pull_request: Number(20)
             }
@@ -3396,4 +3365,196 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
             vec![]
         );
     }
+}
+
+#[test]
+fn a_needs_triage_issue_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
+    let mut assigned = labeled(issue(1), label::NEEDS_TRIAGE);
+    assigned.assignees.push(Login::new("alice"));
+    let world = snapshot(vec![assigned]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(
+        waits_on(&world, 1),
+        [Wait::Assignee {
+            assignee: Login::new("alice")
+        }]
+    );
+}
+
+#[test]
+fn a_needs_triage_issue_that_cannot_start_is_not_claimed_and_waits() {
+    let blocked = blocked_by(labeled(issue(1), label::NEEDS_TRIAGE), 3, true);
+    let closed = closed_by(labeled(issue(2), label::NEEDS_TRIAGE), 43, "alice");
+    let world = snapshot(vec![blocked, closed]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(waits_on(&world, 1), [Wait::Blocker { issue: Number(3) }]);
+    assert_eq!(
+        waits_on(&world, 2),
+        [Wait::ClosingPullRequest {
+            pull_request: Number(43)
+        }]
+    );
+}
+
+#[test]
+fn a_needs_triage_issue_linewright_is_assigned_to_is_triaged_without_claiming_it_again() {
+    let world = snapshot(vec![claimed(labeled(issue(1), label::NEEDS_TRIAGE))]);
+
+    assert_eq!(decide(&world), vec![triage(1)]);
+}
+
+fn needs_triage_unassigned_by(number: u64, actor: &str) -> Issue {
+    unassigned_by(
+        labeled_at(
+            labeled(issue(number), label::NEEDS_TRIAGE),
+            label::NEEDS_TRIAGE,
+            1,
+        ),
+        actor,
+        2,
+    )
+}
+
+#[test]
+fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_needs_triage_again() {
+    let relabel = Wait::Relabel {
+        label: StatusLabel::NeedsTriage,
+        since: Relabel::Unassigned {
+            required_label: None,
+        },
+    };
+    for actor in ["maintainer", LINEWRIGHT] {
+        let world = snapshot(vec![needs_triage_unassigned_by(1, actor)]);
+
+        assert_eq!(decide(&world), vec![], "unassigned by {actor}");
+        assert_eq!(
+            waits_on(&world, 1),
+            std::slice::from_ref(&relabel),
+            "unassigned by {actor}"
+        );
+    }
+}
+
+#[test]
+fn a_needs_triage_issue_labeled_again_after_an_unassignment_is_claimed() {
+    let relabeled = labeled_at(
+        needs_triage_unassigned_by(1, "maintainer"),
+        label::NEEDS_TRIAGE,
+        3,
+    );
+
+    assert_eq!(
+        decide(&snapshot(vec![relabeled])),
+        vec![claim(1), triage(1)]
+    );
+}
+
+#[test]
+fn of_a_labeling_and_an_unassignment_at_the_same_time_the_later_event_decides() {
+    let labeled_then_unassigned = unassigned_by(
+        labeled_at(
+            labeled(issue(1), label::NEEDS_TRIAGE),
+            label::NEEDS_TRIAGE,
+            1,
+        ),
+        "maintainer",
+        1,
+    );
+    let unassigned_then_labeled = labeled_at(
+        needs_triage_unassigned_by(2, "maintainer"),
+        label::NEEDS_TRIAGE,
+        2,
+    );
+
+    assert_eq!(
+        decide(&snapshot(vec![
+            labeled_then_unassigned,
+            unassigned_then_labeled
+        ])),
+        vec![claim(2), triage(2)]
+    );
+}
+
+#[test]
+fn with_a_required_label_applying_it_after_an_unassignment_lets_triage_claim_the_issue() {
+    let stopped = labeled(needs_triage_unassigned_by(1, "maintainer"), REQUIRED);
+    let relabeled = labeled_at(
+        labeled(needs_triage_unassigned_by(2, "maintainer"), REQUIRED),
+        REQUIRED,
+        3,
+    );
+
+    assert_eq!(
+        deciding_with_label(&snapshot(vec![stopped.clone(), relabeled])),
+        vec![claim(2), triage(2)]
+    );
+    let required = Policy {
+        require_label: Some(REQUIRED.into()),
+        ..policy()
+    };
+    assert_eq!(
+        waits(
+            &snapshot(vec![stopped]),
+            &[],
+            &Memory::default(),
+            10,
+            &required
+        )
+        .remove(&Number(1))
+        .unwrap_or_default(),
+        [Wait::Relabel {
+            label: StatusLabel::NeedsTriage,
+            since: Relabel::Unassigned {
+                required_label: Some(REQUIRED.into()),
+            },
+        }]
+    );
+}
+
+#[test]
+fn a_reply_to_needs_info_after_linewright_let_go_claims_the_issue_to_triage_it_again() {
+    let mut asked = unassigned_by(
+        labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1),
+        LINEWRIGHT,
+        1,
+    );
+    asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
+
+    assert_eq!(
+        decide(&snapshot(vec![asked])),
+        vec![
+            Action::Relabel {
+                issue: Number(1),
+                remove: label::NEEDS_INFO.into(),
+                add: label::NEEDS_TRIAGE.into(),
+            },
+            claim(1),
+            triage(1),
+        ]
+    );
+}
+
+#[test]
+fn a_triage_run_is_cancelled_when_linewright_is_unassigned_and_not_otherwise() {
+    let unassigned = labeled(issue(1), label::NEEDS_TRIAGE);
+    let still_claimed = claimed(labeled(issue(2), label::NEEDS_TRIAGE));
+    let world = snapshot(vec![unassigned, still_claimed]);
+    let runs = [live(1, WorkKind::Triage), live(2, WorkKind::Triage)];
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &runs,
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &policy(),
+        ),
+        vec![Action::Cancel {
+            subject: Subject::Issue(Number(1)),
+            reason: format!("{LINEWRIGHT} was unassigned from #1"),
+        }]
+    );
 }

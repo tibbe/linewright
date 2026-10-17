@@ -123,6 +123,7 @@ pub enum ItemState {
         tickets: usize,
     },
     WaitingForTriage,
+    BeingTriaged,
     WaitingOnTheReporter,
     WithTheMaintainer,
     InReview(InReview),
@@ -320,7 +321,6 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum IssueExclusion {
     NoPipelineLabel,
-    OwnIssueForTriage,
     NoTickets,
 }
 
@@ -359,8 +359,8 @@ fn issue_state(
         }
     } else {
         match issue.status_label() {
-            Some(StatusLabel::NeedsTriage) if !policy.triages(issue) => {
-                return Err(IssueExclusion::OwnIssueForTriage);
+            Some(StatusLabel::NeedsTriage) if issue.is_assigned(&policy.linewright) => {
+                ItemState::BeingTriaged
             }
             Some(StatusLabel::NeedsTriage) => ItemState::WaitingForTriage,
             Some(StatusLabel::NeedsInfo) => ItemState::WaitingOnTheReporter,
@@ -500,6 +500,7 @@ pub(crate) fn describe(state: &ItemState) -> String {
             tickets,
         } => format!("tracking issue, {tickets_closed}/{tickets} tickets closed"),
         ItemState::WaitingForTriage => "waiting for triage".into(),
+        ItemState::BeingTriaged => "claimed: being triaged".into(),
         ItemState::WaitingOnTheReporter => "waiting on the reporter".into(),
         ItemState::WithTheMaintainer => "with the maintainer".into(),
         ItemState::InReview(review) => review.describe(),
@@ -522,6 +523,7 @@ pub(crate) fn describe_wait(wait: &Wait) -> String {
         } => format!("a free run: {in_flight} of {max_runs} in flight"),
         Wait::UsageLimit { resets_at } => format!("the usage limit, until {}", utc(*resets_at)),
         Wait::Blocker { issue } => format!("{issue}, which blocks it"),
+        Wait::Assignee { assignee } => format!("{assignee}, who is assigned to it"),
         Wait::ClosingPullRequest { pull_request } => format!("{pull_request}, which closes it"),
         Wait::PullRequest { pull_request } => {
             format!("{pull_request}, its pull request, until it is merged or closed")
@@ -547,15 +549,20 @@ pub(crate) fn describe_wait(wait: &Wait) -> String {
         Wait::RequiredLabel { label } => {
             format!("the maintainer: to label it `{label}`, the required label")
         }
-        Wait::Relabel { since } => {
-            let since = match since {
-                Relabel::Unassigned => "Linewright was unassigned".to_string(),
-                Relabel::Merged { pull_request } => format!("{pull_request} merged"),
+        Wait::Relabel { label, since } => {
+            let (or_required, since) = match since {
+                Relabel::Unassigned { required_label } => (
+                    required_label
+                        .as_ref()
+                        .map(|l| format!(" or `{l}`, the required label,"))
+                        .unwrap_or_default(),
+                    "Linewright was unassigned".to_string(),
+                ),
+                Relabel::Merged { pull_request } => {
+                    (String::new(), format!("{pull_request} merged"))
+                }
             };
-            format!(
-                "the maintainer: to label it `{}` again, since {since}",
-                label::READY_FOR_AGENT
-            )
+            format!("the maintainer: to label it `{label}`{or_required} again, since {since}")
         }
         Wait::Review { pull_request } => format!("the maintainer: to review {pull_request}"),
         Wait::Requirements {
