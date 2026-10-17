@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use crate::briefs::Briefs;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Pull, UpdateMethod};
-use crate::git::{BranchStart, Conflict};
+use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::Feedback;
 use crate::workflow::Workflow;
 
@@ -117,15 +117,25 @@ pub fn tickets(repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
     compose(TO_TICKETS, &task, contract)
 }
 
-pub fn implement(repo: &Repo, ticket: &Ticket, branch: &str, start: BranchStart) -> String {
+pub fn implement(repo: &Repo, ticket: &Ticket, branch: &str, start: &BranchStart) -> String {
     let mut task = String::new();
     task_facts(&mut task, repo);
     let default_branch = repo.default_branch;
     let holding = match start {
         BranchStart::New => format!("fresh from `{default_branch}`."),
-        BranchStart::Existing => format!(
-            "holding earlier runs' work on the ticket; its comments say what they tried. Build on that work, or, if it is not worth keeping, reset the branch to `origin/{default_branch}` and start again."
-        ),
+        BranchStart::Existing { unfinished } => {
+            let mut holding = format!(
+                "holding earlier runs' work on the ticket; its comments say what they tried. Build on that work, or, if it is not worth keeping, reset the branch to `origin/{default_branch}` and start again."
+            );
+            if let Some(unfinished) = unfinished {
+                let _ = write!(
+                    holding,
+                    " The branch holds {}: what an earlier run's session left uncommitted when it stopped. Fold it into your own commits, for example by resetting softly to before it and committing the work properly, or discard it with the rest. No pull request opens while the branch holds an unfinished commit.",
+                    unfinished_commits(unfinished)
+                );
+            }
+            holding
+        }
     };
     let _ = writeln!(
         task,
@@ -247,10 +257,22 @@ pub fn parse_error(error: &str) -> String {
     )
 }
 
-pub fn unfinished(problem: &str) -> String {
+pub fn loose_ends(problem: &str) -> String {
     format!(
         "Your work is not finished: {problem}\n\nFix that, then answer again with only the result JSON object."
     )
+}
+
+/// Names the unfinished `commits`, as in "the unfinished commit `abc1234`".
+pub fn unfinished_commits(commits: &UnfinishedCommits) -> String {
+    let first = format!("`{}`", commits.first);
+    let Some((last, middle)) = commits.rest.split_last() else {
+        return format!("the unfinished commit {first}");
+    };
+    let leading: Vec<String> = std::iter::once(first)
+        .chain(middle.iter().map(|c| format!("`{c}`")))
+        .collect();
+    format!("the unfinished commits {} and `{last}`", leading.join(", "))
 }
 
 pub fn usage_limit_reset() -> String {

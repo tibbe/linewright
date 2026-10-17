@@ -68,24 +68,29 @@ pub async fn create_branch(dir: &Path, branch: &str) -> Result<()> {
 }
 
 /// What a branch [`check_out_branch`] checked out starts from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchStart {
-    /// The branch as the clone's remote has it.
-    Existing,
+    /// The branch as the clone's remote has it, with the `unfinished`
+    /// commits it holds.
+    Existing {
+        unfinished: Option<UnfinishedCommits>,
+    },
     /// A new branch at the commit checked out before.
     New,
 }
 
 /// Checks out `branch` as the remote had it when cloned, or as a new branch
-/// at `HEAD` when the remote had no such branch.
-pub async fn check_out_branch(dir: &Path, branch: &str) -> Result<BranchStart> {
+/// at `HEAD` when the remote had no such branch. `base` is what the
+/// branch's unfinished commits are counted past.
+pub async fn check_out_branch(dir: &Path, branch: &str, base: &str) -> Result<BranchStart> {
     let remote = format!("refs/remotes/origin/{branch}");
     if git(dir, &["rev-parse", "--verify", "--quiet", &remote])
         .await
         .is_ok()
     {
         git(dir, &["checkout", "--quiet", "-B", branch, &remote]).await?;
-        Ok(BranchStart::Existing)
+        let unfinished = unfinished_commits(dir, base).await?;
+        Ok(BranchStart::Existing { unfinished })
     } else {
         create_branch(dir, branch).await?;
         Ok(BranchStart::New)
@@ -181,16 +186,50 @@ pub async fn commits_ahead(dir: &Path, base: &str) -> Result<usize> {
         .parse()?)
 }
 
-pub async fn unfinished(dir: &Path) -> Result<Option<String>> {
+/// A rebase or merge left in progress.
+#[derive(Clone, Copy)]
+enum InProgress {
+    Rebase,
+    Merge,
+}
+
+impl InProgress {
+    fn describe(self) -> &'static str {
+        match self {
+            InProgress::Rebase => "a rebase is in progress",
+            InProgress::Merge => "a merge is in progress",
+        }
+    }
+
+    async fn abort(self, dir: &Path) -> Result<()> {
+        let command = match self {
+            InProgress::Rebase => "rebase",
+            InProgress::Merge => "merge",
+        };
+        git(dir, &[command, "--abort"]).await?;
+        Ok(())
+    }
+}
+
+async fn in_progress(dir: &Path) -> Result<Option<InProgress>> {
     for (path, what) in [
-        ("rebase-merge", "a rebase is in progress"),
-        ("rebase-apply", "a rebase is in progress"),
-        ("MERGE_HEAD", "a merge is in progress"),
+        ("rebase-merge", InProgress::Rebase),
+        ("rebase-apply", InProgress::Rebase),
+        ("MERGE_HEAD", InProgress::Merge),
     ] {
         let location = git(dir, &["rev-parse", "--git-path", path]).await?;
         if dir.join(location.trim()).exists() {
-            return Ok(Some(format!("{what}; finish it.")));
+            return Ok(Some(what));
         }
+    }
+    Ok(None)
+}
+
+/// What keeps the work in `dir` from being finished: a rebase or merge in
+/// progress, or uncommitted changes to tracked files.
+pub async fn loose_ends(dir: &Path) -> Result<Option<String>> {
+    if let Some(operation) = in_progress(dir).await? {
+        return Ok(Some(format!("{}; finish it.", operation.describe())));
     }
     let status = git(dir, &["status", "--porcelain", "--untracked-files=no"]).await?;
     if !status.trim().is_empty() {
@@ -200,4 +239,77 @@ pub async fn unfinished(dir: &Path) -> Result<Option<String>> {
         )));
     }
     Ok(None)
+}
+
+/// The trailer that marks an unfinished commit.
+const UNFINISHED_TRAILER: &str = "Linewright-Unfinished";
+
+/// Commits all that is uncommitted in `dir`, untracked files included and
+/// ignored ones not, as one unfinished commit, after aborting a rebase or
+/// merge in progress. The commit amends `HEAD` when that is an unfinished
+/// commit already, so the work a run leaves stays in one.
+pub async fn commit_unfinished(dir: &Path) -> Result<()> {
+    if let Some(operation) = in_progress(dir).await? {
+        operation.abort(dir).await?;
+    }
+    git(dir, &["add", "--all"]).await?;
+    if git(dir, &["diff", "--cached", "--quiet"]).await.is_ok() {
+        return Ok(());
+    }
+    let amend = is_unfinished(dir, "HEAD").await?;
+    let trailer = format!("{UNFINISHED_TRAILER}: true");
+    let mut args = vec![
+        "commit",
+        "--quiet",
+        "--no-verify",
+        "-m",
+        "Unfinished work, kept when its run stopped",
+        "-m",
+        "Linewright committed what the session left uncommitted when its run \
+         stopped. The next run folds it into its own commits.",
+        "-m",
+        &trailer,
+    ];
+    if amend {
+        args.push("--amend");
+    }
+    git(dir, &args).await?;
+    Ok(())
+}
+
+async fn is_unfinished(dir: &Path, commit: &str) -> Result<bool> {
+    let format = format!("--format=%(trailers:key={UNFINISHED_TRAILER},valueonly)");
+    Ok(git(dir, &["log", "-1", &format, commit])
+        .await?
+        .lines()
+        .any(|line| !line.trim().is_empty()))
+}
+
+/// The abbreviated names of one or more unfinished commits, oldest first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnfinishedCommits {
+    pub first: String,
+    pub rest: Vec<String>,
+}
+
+/// The unfinished commits on `HEAD` past `base`, if any.
+pub async fn unfinished_commits(dir: &Path, base: &str) -> Result<Option<UnfinishedCommits>> {
+    let format =
+        format!("--format=%h %(trailers:key={UNFINISHED_TRAILER},valueonly,separator=%x2C)");
+    let mut commits = git(
+        dir,
+        &["log", "--reverse", &format, &format!("{base}..HEAD")],
+    )
+    .await?
+    .lines()
+    .filter_map(|line| {
+        let (commit, marked) = line.split_once(' ')?;
+        (!marked.trim().is_empty()).then(|| commit.to_string())
+    })
+    .collect::<Vec<_>>()
+    .into_iter();
+    Ok(commits.next().map(|first| UnfinishedCommits {
+        first,
+        rest: commits.collect(),
+    }))
 }

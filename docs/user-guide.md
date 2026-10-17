@@ -139,8 +139,10 @@ Remove `ready-for-agent`, unassign Linewright or close the issue. Apply
 
 Before a pull request exists, Linewright pushes the work so far to the
 issue's branch when it stops or hands the issue back, and its comment names
-the branch, so you can see what it tried. The next run starts over and
-replaces the branch. Closing the issue deletes it.
+the branch, so you can see what it tried. What the agent left uncommitted is
+there as one commit titled "Unfinished work, kept when its run stopped". The
+next run continues from the branch and folds that commit into its own; delete
+the branch to have it start over. Closing the issue deletes it.
 
 ## Recurring work
 

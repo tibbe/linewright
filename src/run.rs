@@ -75,12 +75,20 @@ impl Shell {
 }
 
 enum Failure {
-    Infrastructure(anyhow::Error),
+    Infrastructure {
+        error: anyhow::Error,
+        /// What the hand-back adds after the reason.
+        note: String,
+    },
     HandBack {
         reason: String,
         log_tail: Option<String>,
     },
-    Apply(anyhow::Error),
+    Apply {
+        error: anyhow::Error,
+        /// What the hand-back adds after the reason.
+        note: String,
+    },
     Cancelled,
     UsageLimit(UsageLimit),
 }
@@ -92,8 +100,46 @@ struct Ctx {
     run: Running,
 }
 
+impl Failure {
+    /// Adds `note` to what the failure's hand-back says. A cancelled run and
+    /// one that ends for the usage limit post nothing, so they take none.
+    fn noted(self, note: &str) -> Failure {
+        match self {
+            Failure::Infrastructure {
+                error,
+                note: before,
+            } => Failure::Infrastructure {
+                error,
+                note: before + note,
+            },
+            Failure::Apply {
+                error,
+                note: before,
+            } => Failure::Apply {
+                error,
+                note: before + note,
+            },
+            Failure::HandBack { reason, log_tail } => Failure::HandBack {
+                reason: reason + note,
+                log_tail,
+            },
+            failure @ (Failure::Cancelled | Failure::UsageLimit(_)) => failure,
+        }
+    }
+}
+
+fn apply(error: anyhow::Error) -> Failure {
+    Failure::Apply {
+        error,
+        note: String::new(),
+    }
+}
+
 fn infra(error: anyhow::Error) -> Failure {
-    Failure::Infrastructure(error)
+    Failure::Infrastructure {
+        error,
+        note: String::new(),
+    }
 }
 
 fn push_failure(branch: &str, error: PushError, again: TryAgain) -> Failure {
@@ -154,13 +200,13 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 info!(subject = ?subject, kind = ?work.kind(), "run finished");
                 return Ending::Done;
             }
-            Err(Failure::Infrastructure(e)) if !retried => {
+            Err(Failure::Infrastructure { error: e, .. }) if !retried => {
                 warn!(subject = ?subject, error = format!("{e:#}"), "infrastructure failure; retrying once");
                 retried = true;
             }
-            Err(Failure::Infrastructure(e)) => {
+            Err(Failure::Infrastructure { error: e, note }) => {
                 break (
-                    format!("The run failed twice on its infrastructure: {e:#}"),
+                    format!("The run failed twice on its infrastructure: {e:#}{note}"),
                     None,
                 );
             }
@@ -176,8 +222,11 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 );
                 return Ending::UsageLimit;
             }
-            Err(Failure::Apply(e)) => {
-                break (format!("Recording the run's outcome failed: {e:#}"), None);
+            Err(Failure::Apply { error: e, note }) => {
+                break (
+                    format!("Recording the run's outcome failed: {e:#}{note}"),
+                    None,
+                );
             }
             Err(Failure::HandBack { reason, log_tail }) => break (reason, log_tail),
         }
@@ -673,9 +722,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
         results::parse_triage(&message, categories).map_err(parse_retry)
     })
     .await?;
-    record_triage(shell, issue, result)
-        .await
-        .map_err(Failure::Apply)
+    record_triage(shell, issue, result).await.map_err(apply)
 }
 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
@@ -728,9 +775,7 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
         results::parse_tickets(&message).map_err(parse_retry)
     })
     .await?;
-    record_tickets(shell, pr, tickets)
-        .await
-        .map_err(Failure::Apply)
+    record_tickets(shell, pr, tickets).await.map_err(apply)
 }
 
 async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
@@ -798,11 +843,54 @@ async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Res
     store.add_label(pr.number, label::SPEC_PROCESSED).await
 }
 
-async fn keep_stopped_work(shell: &Shell, dir: &Path, upstream: &str, branch: &str) -> Result<()> {
-    if git::commits_ahead(dir, upstream).await? > 0 {
-        shell.store.push(dir, branch, PushMode::Replace).await?;
+/// What became of the work of a run that stopped before it finished.
+enum Kept {
+    Nothing,
+    Pushed,
+    /// GitHub refused the push for a missing permission, saying why.
+    Refused(String),
+    /// Committing or pushing the work failed, saying why.
+    Failed(String),
+}
+
+/// Keeps the work of an implement run that stopped before it finished on the
+/// ticket's branch: docs/specs/runs.md, "Ending".
+async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch: &str) -> Kept {
+    let kept = async {
+        git::commit_unfinished(dir).await?;
+        if git::commits_ahead(dir, upstream).await? == 0 {
+            return Ok(Kept::Nothing);
+        }
+        match shell.store.push(dir, branch, PushMode::Replace).await {
+            Ok(()) => Ok(Kept::Pushed),
+            Err(PushError::MissingPermission { reason }) => Ok(Kept::Refused(reason)),
+            Err(PushError::Failed(e)) => Err(e),
+        }
+    };
+    let kept = kept
+        .await
+        .unwrap_or_else(|e: anyhow::Error| Kept::Failed(format!("{e:#}")));
+    match &kept {
+        Kept::Refused(reason) => warn!(
+            branch,
+            reason, "GitHub refused to keep the stopped run's work"
+        ),
+        Kept::Failed(error) => warn!(branch, error, "keeping the stopped run's work failed"),
+        Kept::Nothing | Kept::Pushed => {}
     }
-    Ok(())
+    kept
+}
+
+/// What a hand-back adds to say where the work it `kept` on `branch` is.
+fn kept_note(branch: &str, kept: &Kept) -> String {
+    match kept {
+        Kept::Nothing => String::new(),
+        Kept::Pushed => format!("\n\nThe work so far is on the branch `{branch}`."),
+        Kept::Refused(reason) => format!("\n\n{}", refused_push(branch, reason, TryAgain::Relabel)),
+        Kept::Failed(error) => {
+            format!("\n\nKeeping the work so far on the branch `{branch}` failed: {error}")
+        }
+    }
 }
 
 async fn implement(
@@ -819,65 +907,45 @@ async fn implement(
     // Where the run starts: docs/specs/implementation.md, "Working a
     // ticket". The clone, not the snapshot, says whether the branch exists: a
     // snapshot taken before an earlier run pushed it does not hold it.
-    let start = git::check_out_branch(&ws.dir, &branch)
+    let upstream = shell.upstream();
+    let start = git::check_out_branch(&ws.dir, &branch, &upstream)
         .await
         .map_err(infra)?;
-    let upstream = shell.upstream();
-    let prompt = prompts::implement(&shell.repo(), ticket, &branch, start);
+    let prompt = prompts::implement(&shell.repo(), ticket, &branch, &start);
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let (dir, base) = (&ws.dir, &upstream);
     let conversation = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         let result: ImplementResult = results::parse(&message).map_err(parse_retry)?;
-        if let Some(problem) = git::unfinished(dir).await? {
-            return Err(Rejection::Retry(prompts::unfinished(&problem)));
+        if !matches!(result, ImplementResult::Done { .. }) {
+            return Ok(result);
         }
-        if matches!(result, ImplementResult::Done { .. }) && git::commits_ahead(dir, base).await? == 0 {
-            return Err(Rejection::Retry(prompts::unfinished(
+        if let Some(problem) = git::loose_ends(dir).await? {
+            return Err(Rejection::Retry(prompts::loose_ends(&problem)));
+        }
+        if git::commits_ahead(dir, base).await? == 0 {
+            return Err(Rejection::Retry(prompts::loose_ends(
                 "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
             )));
+        }
+        let unfinished = git::unfinished_commits(dir, base).await?;
+        if let Some(unfinished) = unfinished {
+            return Err(Rejection::Retry(prompts::loose_ends(&format!(
+                "the branch still holds {}, from an earlier run; fold it into your own commits.",
+                prompts::unfinished_commits(&unfinished)
+            ))));
         }
         Ok(result)
     })
     .await;
+    let keep = async || {
+        let kept = keep_unfinished_work(shell, &ws.dir, &upstream, &branch).await;
+        kept_note(&branch, &kept)
+    };
     let (result, turn) = match conversation {
-        Err(Failure::Cancelled) => {
-            keep_stopped_work(shell, &ws.dir, &upstream, &branch)
-                .await
-                .map_err(infra)?;
-            return Err(Failure::Cancelled);
-        }
-        Err(Failure::UsageLimit(limit)) => {
-            // A refused session has not failed, so neither has its run if
-            // its work cannot be kept: it is neither retried nor handed back.
-            if let Err(e) = keep_stopped_work(shell, &ws.dir, &upstream, &branch).await {
-                warn!(
-                    branch,
-                    error = format!("{e:#}"),
-                    "keeping the refused run's branch failed"
-                );
-            }
-            return Err(Failure::UsageLimit(limit));
-        }
-        conversation => conversation?,
+        Ok(conversation) => conversation,
+        Err(failure) => return Err(failure.noted(&keep().await)),
     };
-    let has_commits = git::commits_ahead(&ws.dir, &upstream)
-        .await
-        .map_err(infra)?
-        > 0;
     let store = &shell.store;
-    let keep_branch = async || -> Result<String, Failure> {
-        if !has_commits {
-            return Ok(String::new());
-        }
-        match store.push(&ws.dir, &branch, PushMode::Replace).await {
-            Ok(()) => Ok(format!("\n\nThe work so far is on the branch `{branch}`.")),
-            Err(PushError::MissingPermission { reason }) => Ok(format!(
-                "\n\n{}",
-                refused_push(&branch, &reason, TryAgain::Relabel)
-            )),
-            Err(PushError::Failed(e)) => Err(Failure::Apply(e)),
-        }
-    };
     match result {
         ImplementResult::Done {
             pr_title,
@@ -895,12 +963,9 @@ async fn implement(
                     body: closing(&pr_body, &[ticket.number()]),
                 })
                 .await
-                .map_err(Failure::Apply)?;
-            if let Some(required) = shell.creation_label().await.map_err(Failure::Apply)? {
-                store
-                    .add_label(pr, &required)
-                    .await
-                    .map_err(Failure::Apply)?;
+                .map_err(apply)?;
+            if let Some(required) = shell.creation_label().await.map_err(apply)? {
+                store.add_label(pr, &required).await.map_err(apply)?;
             }
             info!(
                 issue = ticket.number().0,
@@ -909,16 +974,16 @@ async fn implement(
             );
             file_spec_gaps(shell, &spec_gaps, ticket)
                 .await
-                .map_err(Failure::Apply)
+                .map_err(apply)
         }
         ImplementResult::Blocked {
             question,
             spec_gaps,
         } => {
+            let kept = keep().await;
             file_spec_gaps(shell, &spec_gaps, ticket)
                 .await
-                .map_err(Failure::Apply)?;
-            let kept = keep_branch().await?;
+                .map_err(|e| apply(e).noted(&kept))?;
             Err(Failure::HandBack {
                 reason: format!(
                     "Blocked on a question the spec cannot decide:\n\n{}{kept}",
@@ -928,7 +993,7 @@ async fn implement(
             })
         }
         ImplementResult::GaveUp { reason } => {
-            let kept = keep_branch().await?;
+            let kept = keep().await;
             Err(Failure::HandBack {
                 reason: format!(
                     "The implementer handed the ticket back:\n\n{}{kept}",
@@ -1075,8 +1140,8 @@ async fn pull_work(
     let dir = &ws.dir;
     let accept = |message: String, pr_threads: Vec<String>| async move {
         let result: PullWorkResult = results::parse(&message).map_err(parse_retry)?;
-        if let Some(problem) = git::unfinished(dir).await? {
-            return Err(Rejection::Retry(prompts::unfinished(&problem)));
+        if let Some(problem) = git::loose_ends(dir).await? {
+            return Err(Rejection::Retry(prompts::loose_ends(&problem)));
         }
         if let PullWorkResult::Done { replies, .. } = &result
             && let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread))
@@ -1146,11 +1211,11 @@ async fn pull_work(
                 store
                     .edit_body(pr.number, &closing(&body, &pr_now.closes))
                     .await
-                    .map_err(Failure::Apply)?;
+                    .map_err(apply)?;
             }
             record_pull_work(shell, &pr_now, kind, &comment, &replies, feedback_authors)
                 .await
-                .map_err(Failure::Apply)?;
+                .map_err(apply)?;
             // The session saw the feedback up to the last read; what came
             // after is for the next rework.
             if kind == WorkKind::Rework {
@@ -1158,7 +1223,7 @@ async fn pull_work(
             }
             file_spec_gaps(shell, &spec_gaps, ticket)
                 .await
-                .map_err(Failure::Apply)
+                .map_err(apply)
         }
         PullWorkResult::Blocked {
             question,
@@ -1166,7 +1231,7 @@ async fn pull_work(
         } => {
             file_spec_gaps(shell, &spec_gaps, ticket)
                 .await
-                .map_err(Failure::Apply)?;
+                .map_err(apply)?;
             Err(Failure::HandBack {
                 reason: format!(
                     "Blocked on a question the spec cannot decide:\n\n{}",
@@ -1296,7 +1361,7 @@ pub(crate) async fn workflow(
         .await?;
         record_workflow(shell, workflow, &result)
             .await
-            .map_err(Failure::Apply)?;
+            .map_err(apply)?;
         Ok(result)
     };
     let ended = session.await;
@@ -1304,7 +1369,7 @@ pub(crate) async fn workflow(
         Ok(_) => Ending::Done,
         Err(Failure::UsageLimit(_)) => Ending::UsageLimit,
         Err(Failure::Cancelled) => Ending::Cancelled,
-        Err(Failure::Infrastructure(_) | Failure::Apply(_) | Failure::HandBack { .. }) => {
+        Err(Failure::Infrastructure { .. } | Failure::Apply { .. } | Failure::HandBack { .. }) => {
             Ending::Failed
         }
     };
@@ -1312,7 +1377,7 @@ pub(crate) async fn workflow(
     match ended {
         Ok(result) => Ok(WorkflowEnd::Finished(result)),
         Err(Failure::UsageLimit(limit)) => Ok(WorkflowEnd::UsageLimit(limit)),
-        Err(Failure::Infrastructure(e) | Failure::Apply(e)) => Err(e),
+        Err(Failure::Infrastructure { error: e, .. } | Failure::Apply { error: e, .. }) => Err(e),
         Err(Failure::HandBack { reason, log_tail }) => Err(
             match log_tail.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
                 Some(tail) => anyhow::anyhow!("{reason}\n\nThe end of the session's log:\n{tail}"),
