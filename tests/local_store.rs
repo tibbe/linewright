@@ -11,7 +11,7 @@ async fn snapshot_pull(world: &World, pr: Number) -> Pull {
 }
 
 #[tokio::test]
-async fn a_pull_request_lists_its_assignees_and_who_was_assigned_and_unassigned_when() {
+async fn a_pull_request_lists_its_assignees_and_who_assigned_and_unassigned_whom_when() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
     let opened = snapshot_pull(&world, pr).await.assignments.len();
@@ -22,7 +22,7 @@ async fn a_pull_request_lists_its_assignees_and_who_was_assigned_and_unassigned_
         .unassign_as("maintainer", pr, "factory")
         .unwrap();
     let unassigned = world.clock.now();
-    world.store.assign_as(pr, "maintainer").unwrap();
+    world.store.assign_as("lead", pr, "maintainer").unwrap();
     let end = world.clock.now();
 
     let pull = snapshot_pull(&world, pr).await;
@@ -33,10 +33,11 @@ async fn a_pull_request_lists_its_assignees_and_who_was_assigned_and_unassigned_
             changes,
             [
                 Assignment::Unassigned { assignee, actor, at: first },
-                Assignment::Assigned { assignee: second_assignee, at: second },
+                Assignment::Assigned { assignee: second_assignee, actor: second_actor, at: second },
             ] if assignee.as_str() == "factory"
                 && actor.as_str() == "maintainer"
                 && second_assignee.as_str() == "maintainer"
+                && second_actor.as_str() == "lead"
                 && start < *first && *first < unassigned
                 && unassigned < *second && *second < end
         ),

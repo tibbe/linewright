@@ -264,6 +264,11 @@ pub trait Store: Send + Sync {
     /// Adds Linewright as an assignee of the issue or pull request.
     async fn assign(&self, number: Number) -> Result<()>;
     async fn unassign(&self, number: Number) -> Result<()>;
+    /// Assigns `people` to the issue, as Linewright, and returns those of
+    /// them GitHub refused to assign.
+    async fn assign_people(&self, issue: Number, people: &[Login]) -> Result<Vec<Login>>;
+    /// Unassigns `people` from the issue, as Linewright.
+    async fn unassign_people(&self, issue: Number, people: &[Login]) -> Result<()>;
     async fn comment(&self, number: Number, body: &str) -> Result<()>;
     async fn create_issue(&self, issue: NewIssue) -> Result<Number>;
     async fn edit_body(&self, number: Number, body: &str) -> Result<()>;

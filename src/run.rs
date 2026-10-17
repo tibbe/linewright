@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::domain::{
-    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
+    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp, addressed_to,
     closing_references, label,
 };
 use crate::git::{self, Updated, WorkState};
@@ -748,9 +748,20 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
-    let (state, body) = match result.outcome {
+    let (state, body) = match &result.outcome {
         TriageOutcome::ReadyForAgent => (label::READY_FOR_AGENT, result.comment),
-        TriageOutcome::NeedsInfo => (label::NEEDS_INFO, result.comment),
+        TriageOutcome::NeedsInfo { ask } => {
+            let people = issue.people_asked(ask, &shell.policy.linewright);
+            let refused = store.assign_people(issue.number, &people).await?;
+            if !refused.is_empty() {
+                warn!(
+                    issue = issue.number.0,
+                    ?refused,
+                    "GitHub refused to assign people asked"
+                );
+            }
+            (label::NEEDS_INFO, addressed_to(&people, &result.comment))
+        }
         TriageOutcome::ReadyForHuman => (
             label::READY_FOR_HUMAN,
             format!(

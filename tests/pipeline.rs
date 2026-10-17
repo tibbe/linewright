@@ -2,10 +2,10 @@ mod common;
 
 use chrono::TimeDelta;
 use common::*;
-use linewright::domain::{Assignment, IssueEvent};
+use linewright::domain::{Assignment, Issue, IssueEvent};
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
@@ -311,11 +311,11 @@ fn triaged_to(world: &World, outcome: &'static str) {
 }
 
 #[tokio::test]
-async fn triage_claims_the_issue_and_keeps_it_only_when_it_ends_ready_for_agent() {
-    for (outcome, kept) in [
-        ("ready-for-agent", true),
-        ("needs-info", false),
-        ("ready-for-human", false),
+async fn triage_claims_the_issue_and_hands_it_on_by_its_outcome() {
+    for (outcome, assigned_after) in [
+        ("ready-for-agent", &[LINEWRIGHT][..]),
+        ("needs-info", &["reporter"][..]),
+        ("ready-for-human", &[][..]),
     ] {
         let mut world = World::new().await;
         triaged_to(&world, outcome);
@@ -332,12 +332,14 @@ async fn triage_claims_the_issue_and_keeps_it_only_when_it_ends_ready_for_agent(
             .iter()
             .map(Login::as_str)
             .collect::<Vec<_>>();
-        let expected: &[&str] = if kept { &[LINEWRIGHT] } else { &[] };
-        assert_eq!(assigned, expected, "{outcome}");
+        assert_eq!(assigned, assigned_after, "{outcome}");
         let claims = issue
             .events
             .iter()
-            .filter(|e| matches!(e, IssueEvent::Assignment(Assignment::Assigned { .. })))
+            .filter(|e| {
+                matches!(e, IssueEvent::Assignment(Assignment::Assigned { assignee, .. })
+                    if assignee.as_str() == LINEWRIGHT)
+            })
             .count();
         assert_eq!(claims, 1, "{outcome}: claimed before triage");
     }
@@ -356,6 +358,166 @@ async fn an_issue_linewright_filed_with_needs_triage_is_triaged() {
     let issue = world.issue(issue);
     assert_eq!(labels(&issue), ["bug", "ready-for-agent"]);
     assert_eq!(last_comment(&issue), "Triaged.");
+}
+
+fn asks(world: &World, ask: Value, comment: &'static str) {
+    world.runtime.on(WorkKind::Triage, move |call| {
+        let outcome = if call.spec.prompt.contains("Version 3.") {
+            json!({"outcome": "ready-for-agent", "category": "bug", "comment": "Triaged again."})
+        } else {
+            json!({"outcome": "needs-info", "category": "bug", "ask": ask, "comment": comment})
+        };
+        json(outcome)
+    });
+}
+
+fn assignees(issue: &Issue) -> Vec<&str> {
+    issue.assignees.iter().map(Login::as_str).collect()
+}
+
+#[tokio::test]
+async fn needs_info_assigns_the_people_asked_and_names_them_all_even_one_github_refuses() {
+    let mut world = World::new().await;
+    asks(
+        &world,
+        json!(["tester", "@outsider"]),
+        "Which version, @tester?",
+    );
+    world.store.refuse_to_assign("outsider");
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["bug", "needs-info"]);
+    assert_eq!(assignees(&issue), ["tester"]);
+    assert!(issue.events.iter().any(|e| matches!(
+        e,
+        IssueEvent::Assignment(Assignment::Assigned { assignee, actor, .. })
+            if assignee.as_str() == "tester" && actor.as_str() == LINEWRIGHT
+    )));
+    assert_eq!(last_comment(&issue), "@outsider\n\nWhich version, @tester?");
+}
+
+#[tokio::test]
+async fn needs_info_naming_no_one_asks_the_reporter() {
+    let mut world = World::new().await;
+    asks(&world, json!([]), "Which version?");
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(assignees(&issue), ["reporter"]);
+    assert_eq!(last_comment(&issue), "@reporter\n\nWhich version?");
+}
+
+#[tokio::test]
+async fn a_comment_mentioning_a_person_asked_in_another_case_names_them() {
+    let mut world = World::new().await;
+    asks(&world, json!(["tester"]), "Which version, @Tester?");
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(assignees(&issue), ["tester"]);
+    assert_eq!(last_comment(&issue), "Which version, @Tester?");
+}
+
+#[tokio::test]
+async fn linewright_never_asks_itself() {
+    let mut world = World::new().await;
+    asks(&world, json!([LINEWRIGHT]), "Which version?");
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(assignees(&issue), ["reporter"]);
+    assert_eq!(last_comment(&issue), "@reporter\n\nWhich version?");
+}
+
+#[tokio::test]
+async fn a_result_asking_something_that_is_not_a_login_is_sent_back() {
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Triage, |call| {
+        let ask = if call.followup.is_none() {
+            "the reporter"
+        } else {
+            "reporter"
+        };
+        json(json!({"outcome": "needs-info", "category": "bug", "ask": [ask], "comment": "Which version?"}))
+    });
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+
+    world.poll().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Triage);
+    assert_eq!(prompts.len(), 2);
+    assert!(
+        prompts[1].contains("\"the reporter\" is not a GitHub login"),
+        "{}",
+        prompts[1]
+    );
+    assert_eq!(assignees(&world.issue(issue)), ["reporter"]);
+}
+
+#[tokio::test]
+async fn a_reply_unassigns_the_people_asked_and_linewright_claims_the_issue_to_triage_it_again() {
+    let mut world = World::new().await;
+    asks(&world, json!(["reporter"]), "Which version, @reporter?");
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+    world.poll().await;
+    assert_eq!(assignees(&world.issue(issue)), ["reporter"]);
+
+    world
+        .store
+        .comment_as("reporter", issue, "Version 3.")
+        .unwrap();
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["bug", "ready-for-agent"]);
+    assert_eq!(last_comment(&issue), "Triaged again.");
+    assert_eq!(assignees(&issue), [LINEWRIGHT]);
+}
+
+#[tokio::test]
+async fn a_reply_leaves_a_person_someone_else_assigned_and_linewright_does_not_claim_over_them() {
+    let mut world = World::new().await;
+    asks(&world, json!(["reporter"]), "Which version, @reporter?");
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+    world.poll().await;
+    world
+        .store
+        .assign_as("maintainer", issue, "maintainer")
+        .unwrap();
+
+    world
+        .store
+        .comment_as("reporter", issue, "Version 3.")
+        .unwrap();
+    world.poll().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["bug", "needs-triage"]);
+    assert_eq!(assignees(&issue), ["maintainer"]);
+    assert_eq!(last_comment(&issue), "Version 3.");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -863,7 +1025,10 @@ async fn ticket_a_persons_pull_request_closes(world: &World, claimed: bool) -> (
         &["ready-for-agent"],
     );
     if claimed {
-        world.store.assign_as(ticket, LINEWRIGHT).unwrap();
+        world
+            .store
+            .assign_as("maintainer", ticket, LINEWRIGHT)
+            .unwrap();
     }
     let theirs = world.persons_pull_closing(ticket).await;
     (ticket, theirs)
@@ -1004,7 +1169,10 @@ async fn a_pull_request_closed_unmerged_hands_back_each_claimed_ticket_it_closes
  {
     let mut world = World::new().await;
     let (ticket, other, pr) = pull_request_closing_another_issue(&mut world).await;
-    world.store.assign_as(other, LINEWRIGHT).unwrap();
+    world
+        .store
+        .assign_as("maintainer", other, LINEWRIGHT)
+        .unwrap();
     world.clock.advance(TimeDelta::minutes(1));
     world.store.close_pull_as(pr).unwrap();
     world.clock.advance(TimeDelta::minutes(1));
@@ -1261,7 +1429,7 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
     )
     .await;
 
-    world.store.assign_as(pr, LINEWRIGHT).unwrap();
+    world.store.assign_as("maintainer", pr, LINEWRIGHT).unwrap();
     world.poll().await;
 
     assert_eq!(
@@ -1321,7 +1489,7 @@ async fn ci_that_does_not_complete_in_time_hands_the_pull_request_back_and_reass
     .await;
 
     world.clock.advance(chrono::TimeDelta::hours(1));
-    world.store.assign_as(pr, LINEWRIGHT).unwrap();
+    world.store.assign_as("maintainer", pr, LINEWRIGHT).unwrap();
     world.clock.advance(chrono::TimeDelta::hours(5));
     world.poll().await;
 
@@ -1507,7 +1675,10 @@ async fn a_handed_back_spec_change_is_cut_again_once_linewright_is_assigned_agai
     world.poll().await;
     let seen = cut_noting_assignees(&world, json!([]));
 
-    world.store.assign_as(spec_pr, LINEWRIGHT).unwrap();
+    world
+        .store
+        .assign_as("maintainer", spec_pr, LINEWRIGHT)
+        .unwrap();
     world.poll().await;
 
     assert_eq!(*seen.lock().unwrap(), [Login::new(LINEWRIGHT)]);
@@ -2643,7 +2814,7 @@ async fn the_next_rework_is_told_to_fold_in_the_unfinished_commit_and_its_done_i
         json(json!({"outcome": "done", "comment": "Renamed."}))
     });
 
-    world.store.assign_as(pr, LINEWRIGHT).unwrap();
+    world.store.assign_as("maintainer", pr, LINEWRIGHT).unwrap();
     world
         .store
         .comment_as("maintainer", pr, "Carry on.")
@@ -3319,7 +3490,10 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
         .await
         .unwrap();
     world.poll().await;
-    world.store.assign_as(first, "maintainer").unwrap();
+    world
+        .store
+        .assign_as("maintainer", first, "maintainer")
+        .unwrap();
     let pr = *world.store.pulls().last().unwrap();
 
     world.clock.advance(chrono::TimeDelta::minutes(6));
@@ -3610,7 +3784,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
     );
 
     world.clock.advance(chrono::TimeDelta::minutes(1));
-    world.store.assign_as(pr, LINEWRIGHT).unwrap();
+    world.store.assign_as("maintainer", pr, LINEWRIGHT).unwrap();
     world.clock.advance(chrono::TimeDelta::minutes(1));
     world.poll().await;
 

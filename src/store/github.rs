@@ -175,6 +175,39 @@ impl GitHub {
         serde_json::from_str(text).with_context(|| format!("decoding {method} {path}"))
     }
 
+    /// Adds (`POST`) or removes (`DELETE`) `people` as the issue's assignees,
+    /// at most ten a request, as GitHub takes them
+    /// (<https://docs.github.com/en/rest/issues/assignees>), and returns the
+    /// issue's assignees after.
+    async fn change_assignees(
+        &self,
+        method: Method,
+        issue: Number,
+        people: &[Login],
+    ) -> Result<Vec<Login>> {
+        const MAX_PER_REQUEST: usize = 10;
+        #[derive(Deserialize)]
+        struct Assignees {
+            assignees: Vec<RestUser>,
+        }
+        let mut assignees = vec![];
+        for batch in people.chunks(MAX_PER_REQUEST) {
+            let changed: Assignees = self
+                .rest(
+                    method.clone(),
+                    &self.repo_path(&format!("/issues/{}/assignees", issue.0)),
+                    Some(json!({"assignees": batch})),
+                )
+                .await?;
+            assignees = changed
+                .assignees
+                .into_iter()
+                .map(|a| Login::new(a.login))
+                .collect();
+        }
+        Ok(assignees)
+    }
+
     async fn rest_ok(&self, method: Method, path: &str, body: Option<Value>) -> Result<()> {
         self.rest::<Value>(method, path, body).await.map(|_| ())
     }
@@ -944,6 +977,7 @@ macro_rules! assignment_fields {
     () => {
         "... on AssignedEvent {
         createdAt
+        actor { __typename login }
         assignee { __typename ... on Actor { login } }
       }
       ... on UnassignedEvent {
@@ -1063,6 +1097,7 @@ enum GqlAssignment {
 #[serde(rename_all = "camelCase")]
 struct GqlAssigned {
     created_at: Timestamp,
+    actor: Option<Actor>,
     assignee: Option<Value>,
 }
 
@@ -1085,6 +1120,7 @@ impl GqlAssignment {
         Some(match self {
             GqlAssignment::Assigned(e) => Assignment::Assigned {
                 assignee: assignee(e.assignee)?,
+                actor: login(e.actor),
                 at: e.created_at,
             },
             GqlAssignment::Unassigned(e) => Assignment::Unassigned {
@@ -2188,6 +2224,43 @@ impl Store for GitHub {
         .await
     }
 
+    /// GitHub leaves out anyone it cannot assign, without an error
+    /// (<https://docs.github.com/en/rest/issues/assignees#add-assignees-to-an-issue>),
+    /// or refuses the request as invalid; one at a time, a refusal is the
+    /// person's alone.
+    async fn assign_people(&self, issue: Number, people: &[Login]) -> Result<Vec<Login>> {
+        let mut refused = vec![];
+        for person in people {
+            let assigned = match self
+                .change_assignees(Method::POST, issue, std::slice::from_ref(person))
+                .await
+            {
+                Ok(assignees) => assignees.contains(person),
+                Err(e) => match e.downcast_ref::<ErrorResponse>() {
+                    Some(response)
+                        if matches!(
+                            response.status,
+                            StatusCode::NOT_FOUND | StatusCode::UNPROCESSABLE_ENTITY
+                        ) =>
+                    {
+                        false
+                    }
+                    _ => return Err(e),
+                },
+            };
+            if !assigned {
+                refused.push(person.clone());
+            }
+        }
+        Ok(refused)
+    }
+
+    async fn unassign_people(&self, issue: Number, people: &[Login]) -> Result<()> {
+        self.change_assignees(Method::DELETE, issue, people)
+            .await
+            .map(|_| ())
+    }
+
     async fn comment(&self, number: Number, body: &str) -> Result<()> {
         self.rest_ok(
             Method::POST,
@@ -2384,13 +2457,13 @@ mod tests {
     }
 
     #[test]
-    fn a_pull_request_lists_its_assignees_and_who_was_assigned_and_unassigned_when() {
+    fn a_pull_request_lists_its_assignees_and_who_assigned_and_unassigned_whom_when() {
         let mut pr = review_required(json!([]));
         pr.assignees = serde_json::from_value(json!({"nodes": [{"login": "factory"}]})).unwrap();
         pr.timeline_items = serde_json::from_value(json!({"nodes": [
-            {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:05:00Z", "assignee": {"__typename": "User", "login": "factory"}},
+            {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:05:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "factory"}},
             {"__typename": "UnassignedEvent", "createdAt": "2026-10-09T12:10:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "factory"}},
-            {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:15:00Z", "assignee": {"__typename": "User", "login": "factory"}},
+            {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:15:00Z", "actor": {"__typename": "User", "login": "factory"}, "assignee": {"__typename": "User", "login": "factory"}},
             {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:16:00Z", "assignee": {"__typename": "Team"}},
         ]}))
         .unwrap();
@@ -2404,6 +2477,7 @@ mod tests {
             [
                 Assignment::Assigned {
                     assignee: Login::new("factory"),
+                    actor: Login::new("maintainer"),
                     at: at("2026-10-09T12:05:00Z"),
                 },
                 Assignment::Unassigned {
@@ -2413,6 +2487,7 @@ mod tests {
                 },
                 Assignment::Assigned {
                     assignee: Login::new("factory"),
+                    actor: Login::new("factory"),
                     at: at("2026-10-09T12:15:00Z"),
                 },
             ]
@@ -2566,7 +2641,7 @@ mod tests {
     }
 
     #[test]
-    fn an_issue_lists_its_label_and_assignment_events() {
+    fn an_issue_lists_its_label_and_assignment_events_with_who_made_each_assignment() {
         let issue: GqlIssue = serde_json::from_value(json!({
             "number": 12, "title": "Store gadgets", "body": "",
             "createdAt": "2026-10-09T12:00:00Z", "state": "OPEN",
@@ -2576,7 +2651,8 @@ mod tests {
             "comments": {"nodes": []},
             "timelineItems": {"nodes": [
                 {"__typename": "LabeledEvent", "createdAt": "2026-10-09T12:01:00Z", "label": {"name": "ready-for-agent"}},
-                {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:02:00Z", "assignee": {"__typename": "User", "login": "linewright"}},
+                {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:02:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "linewright"}},
+                {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:02:30Z", "actor": {"__typename": "User", "login": "linewright"}, "assignee": {"__typename": "User", "login": "reporter"}},
                 {"__typename": "UnassignedEvent", "createdAt": "2026-10-09T12:03:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "linewright"}},
             ]},
         }))
@@ -2594,7 +2670,13 @@ mod tests {
                 },
                 IssueEvent::Assignment(Assignment::Assigned {
                     assignee: Login::new("linewright"),
+                    actor: Login::new("maintainer"),
                     at: at("2026-10-09T12:02:00Z"),
+                }),
+                IssueEvent::Assignment(Assignment::Assigned {
+                    assignee: Login::new("reporter"),
+                    actor: Login::new("linewright"),
+                    at: at("2026-10-09T12:02:30Z"),
                 }),
                 IssueEvent::Assignment(Assignment::Unassigned {
                     assignee: Login::new("linewright"),
@@ -2621,11 +2703,13 @@ mod tests {
                 {"__typename": "LabeledEvent", "createdAt": "2026-10-09T11:00:00Z",
                  "label": {"name": "linewright"}},
                 {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:01:00Z",
+                 "actor": {"__typename": "User", "login": "linewright"},
                  "assignee": {"__typename": "User", "login": "linewright"}},
                 {"__typename": "UnassignedEvent", "createdAt": "2026-10-09T12:02:00Z",
                  "actor": {"__typename": "User", "login": "maintainer"},
                  "assignee": {"__typename": "User", "login": "linewright"}},
                 {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:03:00Z",
+                 "actor": {"__typename": "User", "login": "maintainer"},
                  "assignee": {"__typename": "User", "login": "linewright"}},
             ]},
         }))
@@ -2644,6 +2728,7 @@ mod tests {
                 },
                 IssueEvent::Assignment(Assignment::Assigned {
                     assignee: Login::new("linewright"),
+                    actor: Login::new("linewright"),
                     at: at("2026-10-09T12:01:00Z"),
                 }),
                 IssueEvent::Assignment(Assignment::Unassigned {
@@ -2653,6 +2738,7 @@ mod tests {
                 }),
                 IssueEvent::Assignment(Assignment::Assigned {
                     assignee: Login::new("linewright"),
+                    actor: Login::new("maintainer"),
                     at: at("2026-10-09T12:03:00Z"),
                 }),
             ]

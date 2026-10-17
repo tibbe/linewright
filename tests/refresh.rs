@@ -693,7 +693,7 @@ async fn unassigning_linewright_from_a_pull_request_cancels_its_run_and_its_work
     world.rework_asked(pr);
     world.poll().await;
     assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
-    world.store.assign_as(pr, "factory").unwrap();
+    world.store.assign_as("maintainer", pr, "factory").unwrap();
     world.poll().await;
     assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 2);
 }

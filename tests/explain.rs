@@ -1221,6 +1221,7 @@ fn unassigned_at(minute: &str) -> MergedPull {
             },
             IssueEvent::Assignment(Assignment::Assigned {
                 assignee: Login::new("factory"),
+                actor: Login::new("maintainer"),
                 at: at("2026-10-01T09:10:00Z"),
             }),
             IssueEvent::Assignment(Assignment::Unassigned {

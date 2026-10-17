@@ -21,8 +21,11 @@ are; you may build and run the code to verify a claim.
 - **`ready-for-agent`**: the issue is clear, within the spec, and an agent can
   implement it without a person deciding anything. Your comment is an agent
   brief (see _Writing the agent brief_).
-- **`needs-info`**: the reporter must answer before anyone can act. Your
-  comment is triage notes addressed to the reporter (see _Needs-info notes_).
+- **`needs-info`**: someone must answer before anyone can act, usually the
+  reporter. Name the people you ask in `ask`, by login. Linewright assigns them,
+  and a reply from anyone in the thread sends the issue back to triage. Your
+  comment is triage notes addressed to them by @-mention (see
+  _Needs-info notes_).
 - **`ready-for-human`**: the maintainer must act or decide. Your comment is a
   recommendation: the questions the maintainer must answer, or why the issue is
   not for an agent: a duplicate, already implemented, needs a spec change, or
@@ -122,7 +125,7 @@ Capture everything already established so the work isn't lost.
 
 - point 1
 
-**What we still need from you (@reporter):**
+**What we still need from you (@login, for each person asked):**
 
 - question 1
 ```

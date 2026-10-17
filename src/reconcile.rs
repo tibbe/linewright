@@ -1,13 +1,14 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    Assignment, BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent, Item,
-    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
-    Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
-    TicketBranchName, Timestamp, UpdateMethod, UpdateRule, label, last_labeling, last_unassignment,
+    Assignment, BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, Item, Linked, Login,
+    MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Rebaseability,
+    Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread, TicketBranchName, Timestamp,
+    UpdateMethod, UpdateRule, label, last_assigned, last_labeling, last_unassignment,
 };
 use crate::holds::Holds;
 use crate::runtime::UsageLimit;
@@ -368,6 +369,12 @@ pub enum Action {
         remove: String,
         add: String,
     },
+    /// Unassign the people Linewright asked a `needs-info` question, once
+    /// the issue is back to triage.
+    UnassignAsked {
+        issue: Number,
+        assignees: Vec<Login>,
+    },
     /// Remove a status label besides the one the issue holds.
     RemoveStatusLabel {
         issue: Number,
@@ -623,6 +630,7 @@ pub fn decisions(
             });
         }
         let replied = has_reply_to_needs_info(issue, policy);
+        let issue = &*let_go_of_people_asked(issue, replied, policy, &mut plan);
         if replied {
             plan.act(Action::Relabel {
                 issue: issue.number,
@@ -1057,7 +1065,7 @@ fn implementation(
         );
     }
     if claimed {
-        let claimed_at = last_assigned(issue, &policy.linewright);
+        let claimed_at = last_assigned(&issue.events, &policy.linewright);
         let refused = closing.iter().find(|p| match p.state {
             PullState::Closed { at } => {
                 claimed_at.is_none_or(|since| since <= at) && !relabeled_since(at)
@@ -1090,19 +1098,6 @@ fn wait_for_blockers(issue: &Issue, plan: &mut Plan) -> bool {
         plan.wait(issue.number, Wait::Blocker { issue: blocker });
     }
     !blockers.is_empty()
-}
-
-fn last_assigned(issue: &Issue, login: &Login) -> Option<Timestamp> {
-    issue
-        .events
-        .iter()
-        .filter_map(|e| match e {
-            IssueEvent::Assignment(Assignment::Assigned { assignee, at }) if assignee == login => {
-                Some(*at)
-            }
-            _ => None,
-        })
-        .max()
 }
 
 fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: &mut Plan) {
@@ -1319,7 +1314,7 @@ fn restarted_at(pr: &Pull, linewright: &Login) -> Option<Timestamp> {
             Assignment::Unassigned { assignee, .. } if assignee == linewright => {
                 unassigned = true;
             }
-            Assignment::Assigned { assignee, at } if assignee == linewright && unassigned => {
+            Assignment::Assigned { assignee, at, .. } if assignee == linewright && unassigned => {
                 restarted = Some(*at);
             }
             Assignment::Assigned { .. } | Assignment::Unassigned { .. } => {}
@@ -1500,6 +1495,32 @@ fn unassigned_since(issue: &Issue, policy: &Policy, status: StatusLabel) -> bool
         .filter_map(|l| last_labeling(&issue.events, l))
         .max()
         .is_none_or(|labeled| unassigned > labeled)
+}
+
+/// `issue` without the people its `needs-info` question asked, unassigning
+/// them, once it is back to triage by a reply (`replied`) or by hand.
+fn let_go_of_people_asked<'a>(
+    issue: &'a Issue,
+    replied: bool,
+    policy: &Policy,
+    plan: &mut Plan,
+) -> Cow<'a, Issue> {
+    let retriaged = issue.holds(StatusLabel::NeedsTriage) && policy.may_start_on(issue);
+    let people_asked = issue.assigned_by(&policy.linewright);
+    if !(replied || retriaged) || people_asked.is_empty() {
+        return Cow::Borrowed(issue);
+    }
+    // Unassigned before the relabeling, so that a stop between the two
+    // leaves the reply to be found again.
+    let mut without_asked = issue.clone();
+    without_asked
+        .assignees
+        .retain(|a| !people_asked.contains(a));
+    plan.act(Action::UnassignAsked {
+        issue: issue.number,
+        assignees: people_asked,
+    });
+    Cow::Owned(without_asked)
 }
 
 fn has_reply_to_needs_info(issue: &Issue, policy: &Policy) -> bool {

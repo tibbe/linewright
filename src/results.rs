@@ -3,23 +3,30 @@ use std::collections::BTreeMap;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+use crate::domain::Login;
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
 pub enum TriageOutcome {
     ReadyForAgent,
-    NeedsInfo,
+    NeedsInfo {
+        /// The people the question is for: none asks the reporter.
+        #[serde(default, deserialize_with = "logins")]
+        ask: Vec<Login>,
+    },
     ReadyForHuman,
 }
 
 impl TriageOutcome {
     /// Only `ready-for-agent` still asks for Linewright's work.
-    pub fn asks_for_linewright(self) -> bool {
-        self == TriageOutcome::ReadyForAgent
+    pub fn asks_for_linewright(&self) -> bool {
+        *self == TriageOutcome::ReadyForAgent
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct TriageResult {
+    #[serde(flatten)]
     pub outcome: TriageOutcome,
     pub category: String,
     #[serde(deserialize_with = "trimmed")]
@@ -160,6 +167,20 @@ pub struct WorkflowResult {
 
 fn trimmed<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     Ok(String::deserialize(deserializer)?.trim().to_string())
+}
+
+/// GitHub logins, written with or without a leading `@`, each once.
+fn logins<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Login>, D::Error> {
+    let mut logins: Vec<Login> = vec![];
+    for written in Vec::<String>::deserialize(deserializer)? {
+        let login = Login::parse(written.trim().trim_start_matches('@')).ok_or_else(|| {
+            serde::de::Error::custom(format!("{written:?} is not a GitHub login"))
+        })?;
+        if !logins.contains(&login) {
+            logins.push(login);
+        }
+    }
+    Ok(logins)
 }
 
 pub fn parse_triage(message: &str, categories: &[String]) -> Result<TriageResult, String> {

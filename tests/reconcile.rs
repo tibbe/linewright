@@ -122,6 +122,122 @@ fn a_reply_to_needs_info_sends_the_issue_back_to_triage() {
     );
 }
 
+fn assigned_by(mut issue: Issue, assignee: &str, actor: &str, minute: i64) -> Issue {
+    issue.assignees.push(Login::new(assignee));
+    issue
+        .events
+        .push(IssueEvent::Assignment(Assignment::Assigned {
+            assignee: Login::new(assignee),
+            actor: Login::new(actor),
+            at: t(minute),
+        }));
+    issue
+}
+
+fn unassign_asked(issue: u64, assignees: &[&str]) -> Action {
+    Action::UnassignAsked {
+        issue: Number(issue),
+        assignees: assignees.iter().map(|a| Login::new(*a)).collect(),
+    }
+}
+
+#[test]
+fn a_reply_unassigns_the_people_linewright_asked_then_it_claims_the_issue_to_triage_it_again() {
+    let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
+    asked = assigned_by(asked, "tester", LINEWRIGHT, 1);
+    asked.comments = vec![triage_comment(1), comment("tester", 2, "Version 3.")];
+
+    assert_eq!(
+        decide(&snapshot(vec![asked])),
+        vec![
+            unassign_asked(1, &["reporter", "tester"]),
+            Action::Relabel {
+                issue: Number(1),
+                remove: label::NEEDS_INFO.into(),
+                add: label::NEEDS_TRIAGE.into(),
+            },
+            claim(1),
+            triage(1),
+        ]
+    );
+}
+
+#[test]
+fn a_reply_leaves_a_person_someone_else_assigned_and_triage_waits_for_them() {
+    let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    asked = assigned_by(asked, "maintainer", "maintainer", 0);
+    asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
+    asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
+    let world = snapshot(vec![asked]);
+
+    assert_eq!(
+        decide(&world),
+        vec![
+            unassign_asked(1, &["reporter"]),
+            Action::Relabel {
+                issue: Number(1),
+                remove: label::NEEDS_INFO.into(),
+                add: label::NEEDS_TRIAGE.into(),
+            },
+        ]
+    );
+    assert_eq!(
+        waits_on(&world, 1),
+        [Wait::Assignee {
+            assignee: Login::new("maintainer"),
+        }]
+    );
+}
+
+#[test]
+fn a_reply_leaves_a_person_linewright_asked_whom_someone_else_had_assigned() {
+    let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    // Assigning someone already assigned changes nothing, so GitHub records
+    // only the maintainer's assignment.
+    asked = assigned_by(asked, "reporter", "maintainer", 0);
+    asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
+
+    assert_eq!(
+        decide(&snapshot(vec![asked])),
+        vec![Action::Relabel {
+            issue: Number(1),
+            remove: label::NEEDS_INFO.into(),
+            add: label::NEEDS_TRIAGE.into(),
+        }]
+    );
+}
+
+#[test]
+fn needs_triage_applied_by_hand_after_a_question_unassigns_the_people_asked() {
+    let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
+    asked = labeled_at(labeled(asked, label::NEEDS_TRIAGE), label::NEEDS_TRIAGE, 3);
+    asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
+
+    assert_eq!(
+        decide(&snapshot(vec![asked])),
+        vec![
+            Action::RemoveStatusLabel {
+                issue: Number(1),
+                label: StatusLabel::NeedsInfo,
+            },
+            unassign_asked(1, &["reporter"]),
+            claim(1),
+            triage(1),
+        ]
+    );
+}
+
+#[test]
+fn no_one_is_unassigned_before_a_reply() {
+    let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
+    asked.comments = vec![triage_comment(1)];
+
+    assert_eq!(decide(&snapshot(vec![asked])), vec![]);
+}
+
 #[test]
 fn a_reply_to_a_question_opening_with_the_old_marker_line_sends_the_issue_back_to_triage() {
     let mut asked = labeled(issue(1), label::NEEDS_INFO);
@@ -381,6 +497,7 @@ fn assigned(mut pr: MergedPull, minute: i64) -> MergedPull {
     pr.assignees.push(Login::new(LINEWRIGHT));
     pr.events.push(IssueEvent::Assignment(Assignment::Assigned {
         assignee: Login::new(LINEWRIGHT),
+        actor: Login::new("maintainer"),
         at: t(minute),
     }));
     pr
@@ -914,6 +1031,7 @@ fn a_pull_request_assigned_to_someone_else_alone_is_claimed_once() {
     pr.assignees = vec![Login::new("maintainer")];
     pr.assignments = vec![Assignment::Assigned {
         assignee: Login::new("maintainer"),
+        actor: Login::new("maintainer"),
         at: t(2),
     }];
 
@@ -1131,6 +1249,7 @@ fn pull(number: u64, closes: u64) -> Pull {
         assignees: vec![Login::new(LINEWRIGHT)],
         assignments: vec![Assignment::Assigned {
             assignee: Login::new(LINEWRIGHT),
+            actor: Login::new("maintainer"),
             at: t(1),
         }],
     }
@@ -2143,6 +2262,7 @@ fn unassigned_at(mut pr: Pull, actor: &str, unassigned: i64, reassigned: Option<
         pr.assignees.push(linewright.clone());
         pr.assignments.push(Assignment::Assigned {
             assignee: linewright,
+            actor: Login::new("maintainer"),
             at: t(reassigned),
         });
     }
@@ -2958,6 +3078,7 @@ fn assigned_at(mut issue: Issue, minute: i64) -> Issue {
         .events
         .push(IssueEvent::Assignment(Assignment::Assigned {
             assignee: Login::new(LINEWRIGHT),
+            actor: Login::new("maintainer"),
             at: t(minute),
         }));
     issue

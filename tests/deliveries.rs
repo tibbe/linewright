@@ -384,7 +384,7 @@ async fn assigning_linewrights_pull_request_reads_it_again_on_the_delivery() {
     eventually(|| served.store.items_read() > before_unassigned).await;
 
     let before_assigned = served.store.items_read();
-    served.store.assign_as(pr, "factory").unwrap();
+    served.store.assign_as("maintainer", pr, "factory").unwrap();
     served.deliver("pull_request", about_pull(pr)).await;
     eventually(|| served.store.items_read() > before_assigned).await;
 

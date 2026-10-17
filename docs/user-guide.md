@@ -21,8 +21,8 @@ the one applied last and removes the rest.
 
 - `needs-triage`: not yet assessed. Linewright triages it. Apply it to have an
   issue triaged again, such as with your answer.
-- `needs-info`: its assessment waits on a fact from the reporter. The reporter
-  replies in the thread.
+- `needs-info`: its assessment waits on a fact from the reporter. Linewright
+  assigns the people it asks; a comment from anyone but Linewright replies.
 - `ready-for-agent`: decided: an agent could build it, so Linewright builds
   it. Apply it to have an issue built as it stands; remove it to stop the
   work.
@@ -62,8 +62,14 @@ For a bug a customer hit, or anything else that should change.
    labels the issue with what happens next. It leaves alone an issue someone
    else is assigned to, one an open issue blocks and one an open pull request
    closes.
-3. If it labels the issue `needs-info`, it has asked you something and
-   unassigns itself. Reply in the thread; your reply starts triage again.
+3. If it labels the issue `needs-info`, it has asked you something: it
+   assigns the people it asks, usually you, names them all in its comment,
+   and unassigns itself. Someone GitHub won't let it assign, such as a person
+   without access to the repository, is named but not assigned. Reply in the
+   thread: a comment from anyone but Linewright puts the issue back to
+   `needs-triage`, and Linewright unassigns the people it assigned for the
+   question, leaving anyone someone else assigned, and triages the issue
+   again, claiming it as before.
 4. If it labels the issue `ready-for-agent`, its comment is the brief an agent
    builds from. It stays assigned, and the work starts on its own.
 5. If it labels the issue `ready-for-human`, the maintainer decides, and its

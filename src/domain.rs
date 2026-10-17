@@ -15,9 +15,41 @@ impl fmt::Display for Number {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// A GitHub login, which GitHub matches regardless of case
+/// (<https://docs.github.com/en/get-started/learning-about-github/types-of-github-accounts>):
+/// two logins differing only in case are equal.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Login(pub String);
+
+impl PartialEq for Login {
+    fn eq(&self, other: &Login) -> bool {
+        self.0.eq_ignore_ascii_case(&other.0)
+    }
+}
+
+impl Eq for Login {}
+
+impl std::hash::Hash for Login {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for b in self.folded() {
+            state.write_u8(b);
+        }
+        state.write_u8(0xff);
+    }
+}
+
+impl PartialOrd for Login {
+    fn partial_cmp(&self, other: &Login) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Login {
+    fn cmp(&self, other: &Login) -> std::cmp::Ordering {
+        self.folded().cmp(other.folded())
+    }
+}
 
 impl Login {
     pub fn new(login: impl Into<String>) -> Self {
@@ -34,6 +66,49 @@ impl Login {
 
     pub fn is_person_besides(&self, linewright: &Login) -> bool {
         self != linewright && !self.is_bot()
+    }
+
+    /// `login` if it is one GitHub allows: up to 39 letters, digits and
+    /// single hyphens, neither first nor last.
+    pub fn parse(login: &str) -> Option<Login> {
+        let valid = (1..=39).contains(&login.len())
+            && login.chars().all(is_login_char)
+            && !login.starts_with('-')
+            && !login.ends_with('-')
+            && !login.contains("--");
+        valid.then(|| Login::new(login))
+    }
+
+    /// Whether `text` holds an @-mention of the login.
+    pub fn is_mentioned_in(&self, text: &str) -> bool {
+        text.match_indices('@').any(|(at, _)| {
+            let after = &text[at + 1..];
+            let name = &after[..after.find(|c| !is_login_char(c)).unwrap_or(after.len())];
+            !text[..at].ends_with(is_login_char) && Login::new(name) == *self
+        })
+    }
+
+    fn folded(&self) -> impl Iterator<Item = u8> + '_ {
+        self.0.bytes().map(|b| b.to_ascii_lowercase())
+    }
+}
+
+/// Whether `c` may appear in a login.
+fn is_login_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-'
+}
+
+/// `comment`, opening with a mention of each of `people` it does not mention.
+pub fn addressed_to(people: &[Login], comment: &str) -> String {
+    let unnamed: Vec<String> = people
+        .iter()
+        .filter(|person| !person.is_mentioned_in(comment))
+        .map(|person| format!("@{person}"))
+        .collect();
+    if unnamed.is_empty() {
+        comment.to_string()
+    } else {
+        format!("{}\n\n{comment}", unnamed.join(" "))
     }
 }
 
@@ -143,6 +218,7 @@ pub enum IssueEvent {
 pub enum Assignment {
     Assigned {
         assignee: Login,
+        actor: Login,
         at: Timestamp,
     },
     Unassigned {
@@ -340,6 +416,32 @@ impl Issue {
                 _ => None,
             })
             .max()
+    }
+
+    /// The people a `needs-info` question asks: those `named`, or the
+    /// reporter when it names none, `linewright` never.
+    pub fn people_asked(&self, named: &[Login], linewright: &Login) -> Vec<Login> {
+        let named: Vec<Login> = named.iter().filter(|p| *p != linewright).cloned().collect();
+        if !named.is_empty() {
+            named
+        } else if &self.author != linewright {
+            vec![self.author.clone()]
+        } else {
+            vec![]
+        }
+    }
+
+    /// The other assignees `actor` assigned: those whose last assignment
+    /// among the events `actor` made. One whose assignment fell out of the
+    /// events read counts as assigned by someone else.
+    pub fn assigned_by(&self, actor: &Login) -> Vec<Login> {
+        self.assignees
+            .iter()
+            .filter(|a| {
+                *a != actor && last_assignment(&self.events, a).is_some_and(|(_, by)| by == actor)
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -572,6 +674,31 @@ pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<(Timestamp, us
             _ => None,
         })
         .max()
+}
+
+/// When `assignee` was last assigned among `events`, by anyone.
+pub fn last_assigned(events: &[IssueEvent], assignee: &Login) -> Option<Timestamp> {
+    last_assignment(events, assignee).map(|((at, _), _)| at)
+}
+
+/// [`last_assigned`], with the event's place among `events` to order it
+/// against events at the same time, and who made the assignment.
+pub fn last_assignment<'a>(
+    events: &'a [IssueEvent],
+    assignee: &Login,
+) -> Option<((Timestamp, usize), &'a Login)> {
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            IssueEvent::Assignment(Assignment::Assigned {
+                assignee: assigned,
+                actor,
+                at,
+            }) if assigned == assignee => Some(((*at, i), actor)),
+            _ => None,
+        })
+        .max_by_key(|(order, _)| *order)
 }
 
 /// When `assignee` was last unassigned among `events`, by anyone.

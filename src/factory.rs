@@ -621,6 +621,10 @@ impl Factory {
                 store.remove_label(*issue, remove).await?;
                 store.add_label(*issue, add).await?;
             }
+            Action::UnassignAsked { issue, assignees } => {
+                info!(issue = issue.0, ?assignees, "unassigning the people asked");
+                store.unassign_people(*issue, assignees).await?;
+            }
             Action::RemoveStatusLabel { issue, label } => {
                 info!(issue = issue.0, %label, "removing a status label it does not hold");
                 store.remove_label(*issue, label.label()).await?;
@@ -910,6 +914,7 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         Action::Claim { item } => vec![*item],
         Action::LetGo { issue }
         | Action::Relabel { issue, .. }
+        | Action::UnassignAsked { issue, .. }
         | Action::RemoveStatusLabel { issue, .. }
         | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
         Action::DiscardTickets { tracking, tickets } => tickets

@@ -49,6 +49,8 @@ struct State {
     items_read: usize,
     unreadable: Option<String>,
     pushes_refused: Option<String>,
+    /// People GitHub would refuse to assign, such as those without access.
+    unassignable: Vec<Login>,
     after_comment: Option<Box<dyn FnOnce() + Send>>,
 }
 
@@ -143,6 +145,7 @@ impl LocalStore {
                 items_read: 0,
                 unreadable: None,
                 pushes_refused: None,
+                unassignable: vec![],
                 after_comment: None,
             }),
         })
@@ -277,10 +280,11 @@ impl LocalStore {
         self.state().remove_label(number, label)
     }
 
-    /// Assigns `login` to the issue or pull request #`number`.
-    pub fn assign_as(&self, number: Number, login: &str) -> Result<()> {
+    /// `actor` assigns `login` to the issue or pull request #`number`.
+    pub fn assign_as(&self, actor: &str, number: Number, login: &str) -> Result<()> {
         let now = self.now();
-        self.state().assign(number, &Login::new(login), now)
+        self.state()
+            .assign(number, &Login::new(login), &Login::new(actor), now)
     }
 
     /// `actor` unassigns `login` from the issue or pull request #`number`.
@@ -501,6 +505,11 @@ impl LocalStore {
     /// `output` is what `git push` reports.
     pub fn refuse_pushes(&self, output: &str) {
         self.state().pushes_refused = Some(output.to_string());
+    }
+
+    /// Refuses to assign `login` to anything from now on.
+    pub fn refuse_to_assign(&self, login: &str) {
+        self.state().unassignable.push(Login::new(login));
     }
 
     pub fn after_linewrights_next_comment(&self, then: impl FnOnce() + Send + 'static) {
@@ -1005,9 +1014,16 @@ impl State {
         Ok(())
     }
 
-    fn assign(&mut self, number: Number, login: &Login, now: Timestamp) -> Result<()> {
+    fn assign(
+        &mut self,
+        number: Number,
+        login: &Login,
+        actor: &Login,
+        now: Timestamp,
+    ) -> Result<()> {
         let assigned = Assignment::Assigned {
             assignee: login.clone(),
+            actor: actor.clone(),
             at: now,
         };
         self.change_assignees(number, assigned)
@@ -1431,7 +1447,7 @@ impl Store for LocalStore {
         let now = self.now();
         let mut state = self.state();
         let linewright = state.linewright.clone();
-        state.assign(number, &linewright, now)
+        state.assign(number, &linewright, &linewright, now)
     }
 
     async fn unassign(&self, number: Number) -> Result<()> {
@@ -1439,6 +1455,31 @@ impl Store for LocalStore {
         let mut state = self.state();
         let linewright = state.linewright.clone();
         state.unassign(number, &linewright, &linewright, now)
+    }
+
+    async fn assign_people(&self, issue: Number, people: &[Login]) -> Result<Vec<Login>> {
+        let now = self.now();
+        let mut state = self.state();
+        let linewright = state.linewright.clone();
+        let mut refused = vec![];
+        for person in people {
+            if state.unassignable.contains(person) {
+                refused.push(person.clone());
+            } else {
+                state.assign(issue, person, &linewright, now)?;
+            }
+        }
+        Ok(refused)
+    }
+
+    async fn unassign_people(&self, issue: Number, people: &[Login]) -> Result<()> {
+        let now = self.now();
+        let mut state = self.state();
+        let linewright = state.linewright.clone();
+        for person in people {
+            state.unassign(issue, person, &linewright, now)?;
+        }
+        Ok(())
     }
 
     async fn comment(&self, number: Number, body: &str) -> Result<()> {

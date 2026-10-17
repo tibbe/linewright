@@ -77,13 +77,17 @@ pub fn triage(repo: &Repo, issue: &Issue, categories: &[String]) -> String {
         r#"{{
   "outcome": "ready-for-agent" | "needs-info" | "ready-for-human",
   "category": {},
-  "comment": "<the Markdown comment to post on the issue>"
-}}"#,
+  "comment": "<the Markdown comment to post on the issue>",
+  "ask": ["<for needs-info: the login of each person the question is for>"]
+}}
+
+`ask` is for `needs-info` only. Leave it out to ask the reporter, @{}."#,
         categories
             .iter()
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
-            .join(" | ")
+            .join(" | "),
+        issue.author
     );
     compose(TRIAGE, &task, &contract)
 }
