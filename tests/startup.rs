@@ -318,3 +318,25 @@ fn serve_first_logs_the_version_and_the_commit_as_text_too() {
         .and_then(|(_, rest)| rest.split_whitespace().next());
     assert!(commit.is_some_and(names_head), "{log}");
 }
+
+#[tokio::test]
+async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() {
+    let world = World::new().await;
+
+    assert_eq!(
+        [
+            "needs-triage",
+            "needs-info",
+            "ready-for-agent",
+            "ready-for-human"
+        ]
+        .map(|name| world.store.label_description(name)),
+        [
+            "Not yet assessed",
+            "Its assessment waits on a fact from the reporter",
+            "Decided: an agent could build it",
+            "Needs a person's decision or action",
+        ]
+        .map(|description| Some(description.to_string()))
+    );
+}

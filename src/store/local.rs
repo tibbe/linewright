@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -40,7 +40,8 @@ struct State {
     issue_types: Option<Vec<String>>,
     linear_history: bool,
     allowed_merge_methods: MergeMethods,
-    labels: BTreeSet<String>,
+    /// Each label by name, with its description.
+    labels: BTreeMap<String, String>,
     next_number: u64,
     issues: BTreeMap<Number, IssueRecord>,
     pulls: BTreeMap<Number, PullRecord>,
@@ -123,7 +124,7 @@ impl LocalStore {
                 issue_types: seed.issue_types,
                 linear_history: seed.linear_history,
                 allowed_merge_methods: seed.allowed_merge_methods,
-                labels: BTreeSet::new(),
+                labels: BTreeMap::new(),
                 next_number: 1,
                 issues: BTreeMap::new(),
                 pulls: BTreeMap::new(),
@@ -578,11 +579,15 @@ impl LocalStore {
     }
 
     pub fn create_label(&self, name: &str) {
-        self.state().labels.insert(name.to_string());
+        self.state().labels.insert(name.to_string(), String::new());
     }
 
     pub fn has_label(&self, name: &str) -> bool {
-        self.state().labels.contains(name)
+        self.state().labels.contains_key(name)
+    }
+
+    pub fn label_description(&self, name: &str) -> Option<String> {
+        self.state().labels.get(name).cloned()
     }
 
     pub fn issue(&self, number: Number) -> Option<Issue> {
@@ -1104,8 +1109,11 @@ impl Store for LocalStore {
 
     async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()> {
         let mut state = self.state();
-        for (name, _) in labels {
-            state.labels.insert(name.to_string());
+        for (name, description) in labels {
+            state
+                .labels
+                .entry(name.to_string())
+                .or_insert_with(|| description.to_string());
         }
         Ok(())
     }

@@ -62,10 +62,13 @@ pub mod label {
     ];
 
     pub const ALL: [(&str, &str); 7] = [
-        (NEEDS_TRIAGE, "New, not yet assessed"),
-        (NEEDS_INFO, "Waiting on the reporter"),
-        (READY_FOR_AGENT, "Actionable: an agent may claim it"),
-        (READY_FOR_HUMAN, "The maintainer must act or decide"),
+        (NEEDS_TRIAGE, "Not yet assessed"),
+        (
+            NEEDS_INFO,
+            "Its assessment waits on a fact from the reporter",
+        ),
+        (READY_FOR_AGENT, "Decided: an agent could build it"),
+        (READY_FOR_HUMAN, "Needs a person's decision or action"),
         (BUG, "Something is broken"),
         (ENHANCEMENT, "New feature or improvement"),
         (
