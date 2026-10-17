@@ -1,3 +1,5 @@
+mod views;
+
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
 use linewright::reconcile::*;
@@ -176,22 +178,113 @@ fn an_issue_linewright_filed_is_not_triaged_when_a_person_comments() {
 
 #[test]
 fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_comment() {
-    let answered_with = |state: &str| {
-        let mut answered = labeled(labeled(issue(1), label::READY_FOR_HUMAN), state);
+    let answered_with = |state: StatusLabel| {
+        let mut answered = labeled_both(StatusLabel::ReadyForHuman, state);
         answered.comments = vec![
             triage_comment(1),
             comment("maintainer", 2, "Make them resizable."),
         ];
         snapshot(vec![answered])
     };
+    let unlabel_ready_for_human = Action::RemoveStatusLabel {
+        issue: Number(1),
+        label: StatusLabel::ReadyForHuman,
+    };
 
     assert_eq!(
-        decide(&answered_with(label::READY_FOR_AGENT)),
-        vec![Action::Claim { issue: Number(1) }, implement(1)]
+        decide(&answered_with(StatusLabel::ReadyForAgent)),
+        vec![
+            unlabel_ready_for_human.clone(),
+            Action::Claim { issue: Number(1) },
+            implement(1)
+        ]
     );
     assert_eq!(
-        decide(&answered_with(label::NEEDS_TRIAGE)),
-        vec![Action::Start(Work::Triage { issue: Number(1) })]
+        decide(&answered_with(StatusLabel::NeedsTriage)),
+        vec![
+            unlabel_ready_for_human,
+            Action::Start(Work::Triage { issue: Number(1) })
+        ]
+    );
+}
+
+fn labeled_both(older: StatusLabel, newer: StatusLabel) -> Issue {
+    views::relabeled(issue(1), older.label(), newer.label())
+}
+
+#[test]
+fn of_two_status_labels_the_newer_is_kept_and_followed() {
+    for older in StatusLabel::ALL {
+        for newer in StatusLabel::ALL.into_iter().filter(|l| *l != older) {
+            let unlabel = Action::RemoveStatusLabel {
+                issue: Number(1),
+                label: older,
+            };
+            let follow = match newer {
+                StatusLabel::NeedsTriage => {
+                    vec![Action::Start(Work::Triage { issue: Number(1) })]
+                }
+                StatusLabel::ReadyForAgent => {
+                    vec![Action::Claim { issue: Number(1) }, implement(1)]
+                }
+                StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => vec![],
+            };
+
+            assert_eq!(
+                decide(&snapshot(vec![labeled_both(older, newer)])),
+                [vec![unlabel], follow].concat(),
+                "`{older}` applied before `{newer}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn of_several_status_labels_all_but_the_newest_are_removed() {
+    // `needs-triage` was applied before the events read, so it is the oldest.
+    let issue = labeled(
+        labeled(
+            labeled_both(StatusLabel::NeedsInfo, StatusLabel::ReadyForHuman),
+            label::NEEDS_TRIAGE,
+        ),
+        label::BUG,
+    );
+
+    assert_eq!(
+        decide(&snapshot(vec![issue])),
+        [StatusLabel::NeedsTriage, StatusLabel::NeedsInfo].map(|label| Action::RemoveStatusLabel {
+            issue: Number(1),
+            label,
+        })
+    );
+}
+
+#[test]
+fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
+    let world = snapshot(vec![labeled_both(
+        StatusLabel::NeedsTriage,
+        StatusLabel::ReadyForHuman,
+    )]);
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &[live(1, WorkKind::Triage)],
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &policy()
+        ),
+        vec![
+            Action::Cancel {
+                subject: Subject::Issue(Number(1)),
+                reason: "`needs-triage` was removed from #1".into(),
+            },
+            Action::RemoveStatusLabel {
+                issue: Number(1),
+                label: StatusLabel::NeedsTriage,
+            },
+        ]
     );
 }
 
@@ -400,10 +493,24 @@ fn unassigning_linewright_stops_the_work_until_the_label_is_applied_again() {
 }
 
 #[test]
-fn an_issue_waiting_for_triage_is_not_claimed() {
-    let world = snapshot(vec![labeled(ticket(2), label::NEEDS_TRIAGE)]);
+fn a_ticket_sent_back_to_triage_is_not_claimed() {
+    let sent_back = labeled_at(
+        labeled_at(
+            labeled(ticket(2), label::NEEDS_TRIAGE),
+            label::READY_FOR_AGENT,
+            1,
+        ),
+        label::NEEDS_TRIAGE,
+        2,
+    );
 
-    assert_eq!(decide(&world), vec![]);
+    assert_eq!(
+        decide(&snapshot(vec![sent_back])),
+        vec![Action::RemoveStatusLabel {
+            issue: Number(2),
+            label: StatusLabel::ReadyForAgent,
+        }]
+    );
 }
 
 fn live(issue: u64, kind: WorkKind) -> LiveRun {

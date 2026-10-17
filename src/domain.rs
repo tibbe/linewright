@@ -52,8 +52,6 @@ pub mod label {
     pub const ENHANCEMENT: &str = "enhancement";
     pub const SPEC_PROCESSED: &str = "linewright:spec-processed";
 
-    pub const STATES: [&str; 4] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT, READY_FOR_HUMAN];
-
     pub const IN_VIEW: [&str; 3] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT];
 
     pub const ANSWERS: [(&str, &str); 2] = [
@@ -76,6 +74,39 @@ pub mod label {
             "This merged PR's spec changes have been ticketed",
         ),
     ];
+}
+
+/// What an issue needs next, as its status label says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusLabel {
+    NeedsTriage,
+    NeedsInfo,
+    ReadyForAgent,
+    ReadyForHuman,
+}
+
+impl StatusLabel {
+    pub const ALL: [StatusLabel; 4] = [
+        StatusLabel::NeedsTriage,
+        StatusLabel::NeedsInfo,
+        StatusLabel::ReadyForAgent,
+        StatusLabel::ReadyForHuman,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StatusLabel::NeedsTriage => label::NEEDS_TRIAGE,
+            StatusLabel::NeedsInfo => label::NEEDS_INFO,
+            StatusLabel::ReadyForAgent => label::READY_FOR_AGENT,
+            StatusLabel::ReadyForHuman => label::READY_FOR_HUMAN,
+        }
+    }
+}
+
+impl fmt::Display for StatusLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +226,52 @@ impl Parent {
 impl Issue {
     pub fn has_label(&self, label: &str) -> bool {
         self.labels.iter().any(|l| l == label)
+    }
+
+    /// The status label the issue holds: of those it carries, the one applied
+    /// most recently (docs/specs/repository.md, "status labels"). One whose
+    /// application fell out of the events read counts as older than the rest.
+    pub fn status_label(&self) -> Option<StatusLabel> {
+        StatusLabel::ALL
+            .into_iter()
+            .filter_map(|status| {
+                let carried = self.labels.iter().position(|l| l == status.label())?;
+                Some((status, (self.last_labeling(status), carried)))
+            })
+            .max_by_key(|(_, order)| *order)
+            .map(|(status, _)| status)
+    }
+
+    /// Whether `status` is the status label the issue holds, rather than one it
+    /// merely carries.
+    pub fn holds(&self, status: StatusLabel) -> bool {
+        self.status_label() == Some(status)
+    }
+
+    /// The status labels the issue carries besides the one it holds.
+    pub fn stale_status_labels(&self) -> Vec<StatusLabel> {
+        let held = self.status_label();
+        StatusLabel::ALL
+            .into_iter()
+            .filter(|s| Some(*s) != held && self.has_label(s.label()))
+            .collect()
+    }
+
+    pub fn last_labeled(&self, status: StatusLabel) -> Option<Timestamp> {
+        self.last_labeling(status).map(|(at, _)| at)
+    }
+
+    /// When `status` was last applied, with the event's place among the events
+    /// to order labels applied at the same time.
+    fn last_labeling(&self, status: StatusLabel) -> Option<(Timestamp, usize)> {
+        self.events
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e {
+                IssueEvent::Labeled { label, at } if label == status.label() => Some((*at, i)),
+                _ => None,
+            })
+            .max()
     }
 
     pub fn cut_from(&self) -> Option<Number> {

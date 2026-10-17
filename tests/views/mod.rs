@@ -54,6 +54,24 @@ pub fn ticket(number: u64, title: &str) -> Issue {
     }
 }
 
+/// `issue` labeled `older`, then `newer`, listed newest first so that only
+/// the order they were applied in tells them apart.
+pub fn relabeled(issue: Issue, older: &str, newer: &str) -> Issue {
+    Issue {
+        labels: vec![newer.into(), older.into()],
+        events: [
+            (older, "2026-10-01T09:00:00Z"),
+            (newer, "2026-10-01T10:00:00Z"),
+        ]
+        .map(|(label, time)| IssueEvent::Labeled {
+            label: label.into(),
+            at: at(time),
+        })
+        .to_vec(),
+        ..issue
+    }
+}
+
 pub fn closed_by(issue: Issue, pr: u64, author: &str) -> Issue {
     Issue {
         closed_by: vec![ClosingPull {

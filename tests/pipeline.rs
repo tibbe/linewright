@@ -283,6 +283,23 @@ async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again_once_they_
     );
 }
 
+#[tokio::test]
+async fn an_issue_given_a_second_status_label_keeps_only_the_newer() {
+    let mut world = World::new().await;
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Resize widgets",
+        "",
+        &["bug", "ready-for-human"],
+    );
+    world.clock.advance(TimeDelta::minutes(1));
+    world.store.label_as(issue, "needs-info").unwrap();
+
+    world.poll().await;
+
+    assert_eq!(labels(&world.issue(issue)), ["bug", "needs-info"]);
+}
+
 fn tickets_script(world: &World) {
     world.runtime.on(WorkKind::Tickets, |_| {
         json(json!({

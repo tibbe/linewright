@@ -5,7 +5,7 @@ use linewright::reconcile::{LiveRun, Subject, WorkKind};
 use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
 use linewright::workflow::{LastRuns, Unparsed, WorkflowFiles};
-use views::{at, closed_by, implementing, in_flight, limited_until, ticket};
+use views::{at, closed_by, implementing, in_flight, limited_until, relabeled, ticket};
 
 fn files(workflows: &[(&str, &str)], unparsed: &[(&str, &str)]) -> WorkflowFiles {
     WorkflowFiles {
@@ -263,6 +263,27 @@ fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_
             "#8: ready to claim — waiting for #7, which blocks it — Do the next thing",
             "#9: claimed: being implemented — Do another thing",
             "#10: waiting for triage — It broke",
+        ]
+    );
+}
+
+#[test]
+fn an_issue_carrying_two_status_labels_shows_by_the_newer() {
+    let handed_back = Issue {
+        number: Number(8),
+        title: "It broke".into(),
+        ..relabeled(ready_issue(), "needs-triage", "ready-for-human")
+    };
+    let view = view(vec![
+        relabeled(ready_issue(), "ready-for-agent", "needs-triage"),
+        handed_back,
+    ]);
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:00:30Z"),
+        [
+            "#7: waiting for triage — Do the thing",
+            "#8: with the maintainer — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — It broke",
         ]
     );
 }

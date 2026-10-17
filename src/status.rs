@@ -5,7 +5,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    CheckState, Filed, Issue, Item, Login, Number, Pull, PullState, Snapshot, Timestamp, label,
+    CheckState, Filed, Issue, Item, Login, Number, Pull, PullState, Snapshot, StatusLabel,
+    Timestamp, label,
 };
 use crate::reconcile::{
     Decisions, LiveRun, Memory, NextRun, Policy, Relabel, Wait, Workflows, decisions, next_run,
@@ -356,23 +357,20 @@ fn issue_state(
             pull_request: pr.number,
             author: pr.author.clone(),
         }
-    } else if issue.has_label(label::NEEDS_TRIAGE) {
-        if !policy.triages(issue) {
-            return Err(IssueExclusion::OwnIssueForTriage);
-        }
-        ItemState::WaitingForTriage
-    } else if issue.has_label(label::NEEDS_INFO) {
-        ItemState::WaitingOnTheReporter
-    } else if issue.has_label(label::READY_FOR_HUMAN) {
-        ItemState::WithTheMaintainer
-    } else if issue.has_label(label::READY_FOR_AGENT) {
-        if issue.is_assigned(&policy.linewright) {
-            ItemState::Claimed
-        } else {
-            ItemState::ReadyToClaim
-        }
     } else {
-        return Err(IssueExclusion::NoPipelineLabel);
+        match issue.status_label() {
+            Some(StatusLabel::NeedsTriage) if !policy.triages(issue) => {
+                return Err(IssueExclusion::OwnIssueForTriage);
+            }
+            Some(StatusLabel::NeedsTriage) => ItemState::WaitingForTriage,
+            Some(StatusLabel::NeedsInfo) => ItemState::WaitingOnTheReporter,
+            Some(StatusLabel::ReadyForHuman) => ItemState::WithTheMaintainer,
+            Some(StatusLabel::ReadyForAgent) if issue.is_assigned(&policy.linewright) => {
+                ItemState::Claimed
+            }
+            Some(StatusLabel::ReadyForAgent) => ItemState::ReadyToClaim,
+            None => return Err(IssueExclusion::NoPipelineLabel),
+        }
     };
     Ok(state)
 }

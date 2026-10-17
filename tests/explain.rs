@@ -5,7 +5,7 @@ use linewright::explain::{Answer, Explanation, explain, explain_read, render, re
 use linewright::runs::{Ending, Recorded, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
-use views::{at, closed_by, implementing, in_flight, limited_until, ticket, view};
+use views::{at, closed_by, implementing, in_flight, limited_until, relabeled, ticket, view};
 
 fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
     Pull {
@@ -173,6 +173,24 @@ fn an_item_with_the_maintainer_waits_for_their_label() {
             "state: with the maintainer",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`",
+        ]
+    );
+}
+
+#[test]
+fn an_item_carrying_two_status_labels_is_explained_by_the_newer() {
+    let triaged = relabeled(
+        ticket(42, "Add invoices"),
+        "needs-triage",
+        "ready-for-agent",
+    );
+
+    assert_eq!(
+        text(&view(vec![triaged], vec![]), 42)[1..],
+        [
+            "state: ready to claim",
+            "last read: 2026-10-01 12:00:00 UTC",
+            "waiting for: nothing: Linewright acts on it at its next poll",
         ]
     );
 }

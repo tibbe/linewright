@@ -4,8 +4,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    self, ClosingPull, Filed, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, Timestamp,
-    label,
+    self, ClosingPull, Filed, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
+    Timestamp, label,
 };
 use crate::reconcile::{NotSpecChange, NotWorked, Wait, not_a_spec_change, worked_ticket};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
@@ -632,7 +632,10 @@ fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> String {
     };
     match exclusion {
         IssueExclusion::NoPipelineLabel => {
-            format!("it is labeled none of {}", one_of(&label::STATES))
+            format!(
+                "it is labeled none of {}",
+                one_of(&StatusLabel::ALL.map(StatusLabel::label))
+            )
         }
         IssueExclusion::OwnIssueForTriage => format!(
             "Linewright opened it and triages no issue of its own, though it is labeled `{}`",

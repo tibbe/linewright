@@ -617,6 +617,10 @@ impl Factory {
                 store.remove_label(*issue, remove).await?;
                 store.add_label(*issue, add).await?;
             }
+            Action::RemoveStatusLabel { issue, label } => {
+                info!(issue = issue.0, %label, "removing a status label it does not hold");
+                store.remove_label(*issue, label.label()).await?;
+            }
             Action::HandBack { item, reason } => {
                 info!(%item, reason, "handing back");
                 run::hand_back(&self.shell, *item, reason, None).await?;
@@ -901,6 +905,7 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
     match action {
         Action::Claim { issue }
         | Action::Relabel { issue, .. }
+        | Action::RemoveStatusLabel { issue, .. }
         | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
         Action::DiscardTickets { tracking, tickets } => tickets
             .iter()

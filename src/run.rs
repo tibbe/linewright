@@ -10,7 +10,8 @@ use tracing::{info, warn};
 use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::domain::{
-    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, Timestamp, closing_references, label,
+    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
+    closing_references, label,
 };
 use crate::git::{self, Updated, WorkState};
 use crate::prompts::{self, PullTask, Repo, Ticket};
@@ -380,7 +381,8 @@ async fn hand_back_issue(
     log_tail: Option<&str>,
 ) -> Result<()> {
     let store = &shell.store;
-    for state in label::STATES
+    for state in StatusLabel::ALL
+        .map(StatusLabel::label)
         .into_iter()
         .filter(|l| *l != label::READY_FOR_HUMAN)
     {
@@ -741,7 +743,11 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
             ),
         ),
     };
-    for other in label::STATES.into_iter().filter(|l| *l != state) {
+    for other in StatusLabel::ALL
+        .map(StatusLabel::label)
+        .into_iter()
+        .filter(|l| *l != state)
+    {
         store.remove_label(issue.number, other).await?;
     }
     match &shell.settings.categories {

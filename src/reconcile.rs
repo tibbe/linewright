@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::domain::{
     BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent, Item, LabelChange,
     Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
-    Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, TicketBranchName, Timestamp,
-    UpdateMethod, UpdateRule, label,
+    Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
+    TicketBranchName, Timestamp, UpdateMethod, UpdateRule, label,
 };
 use crate::holds::Holds;
 use crate::runtime::UsageLimit;
@@ -363,6 +363,11 @@ pub enum Action {
         remove: String,
         add: String,
     },
+    /// Remove a status label besides the one the issue holds.
+    RemoveStatusLabel {
+        issue: Number,
+        label: StatusLabel,
+    },
     HandBack {
         item: Item,
         reason: String,
@@ -566,6 +571,12 @@ pub fn decisions(
                 plan.wait(issue.number, Wait::Tickets { open });
             }
         }
+        for label in issue.stale_status_labels() {
+            plan.act(Action::RemoveStatusLabel {
+                issue: issue.number,
+                label,
+            });
+        }
         let replied = has_reply_to_needs_info(issue, policy);
         if replied {
             plan.act(Action::Relabel {
@@ -594,7 +605,7 @@ pub fn decisions(
             // Someone else's pull request may be closed with the ticket left
             // to Linewright, which then waits for its blockers; once
             // Linewright's ends, they hold nothing back.
-            if !linewrights && issue.has_label(label::READY_FOR_AGENT) {
+            if !linewrights && issue.holds(StatusLabel::ReadyForAgent) {
                 wait_for_blockers(issue, &mut plan);
             }
         } else if replied || wants_triage(issue, policy) {
@@ -604,7 +615,7 @@ pub fn decisions(
                     issue: issue.number,
                 }),
             }
-        } else if issue.has_label(label::READY_FOR_AGENT) && !issue.has_label(label::NEEDS_TRIAGE) {
+        } else if issue.holds(StatusLabel::ReadyForAgent) {
             implementation(issue, &closing, running(subject), policy, &mut plan);
         } else {
             for wait in labeled_waits(issue, policy) {
@@ -727,10 +738,10 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
                 return Some(format!("{number} was closed"));
             };
             let wanted = match run.kind {
-                WorkKind::Triage => label::NEEDS_TRIAGE,
-                _ => label::READY_FOR_AGENT,
+                WorkKind::Triage => StatusLabel::NeedsTriage,
+                _ => StatusLabel::ReadyForAgent,
             };
-            if !issue.has_label(wanted) {
+            if !issue.holds(wanted) {
                 Some(format!("`{wanted}` was removed from {number}"))
             } else if run.kind != WorkKind::Triage && !issue.is_assigned(&policy.linewright) {
                 Some(format!(
@@ -848,14 +859,14 @@ fn rank(kind: WorkKind) -> u8 {
 }
 
 fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
-    let handed_to = if issue.has_label(label::NEEDS_TRIAGE) {
+    let handed_to = if issue.holds(StatusLabel::NeedsTriage) {
         if !policy.triages(issue) {
             return vec![];
         }
         None
-    } else if issue.has_label(label::NEEDS_INFO) {
+    } else if issue.holds(StatusLabel::NeedsInfo) {
         Some(Wait::Reporter)
-    } else if issue.has_label(label::READY_FOR_HUMAN) {
+    } else if issue.holds(StatusLabel::ReadyForHuman) {
         Some(Wait::Maintainer)
     } else {
         return vec![];
@@ -902,7 +913,11 @@ fn implementation(
     }
     // GitHub closes the issue shortly after the merge; until then, or after a
     // reopen, only applying the label again asks for more work.
-    let relabeled_since = |at| last_labeled(issue, label::READY_FOR_AGENT).is_some_and(|l| l > at);
+    let relabeled_since = |at| {
+        issue
+            .last_labeled(StatusLabel::ReadyForAgent)
+            .is_some_and(|l| l > at)
+    };
     if let Some(merged) = closing
         .iter()
         .find(|p| matches!(p.state, PullState::Merged { at } if !relabeled_since(at)))
@@ -1316,7 +1331,7 @@ fn stopped_by_unassign(issue: &Issue, policy: &Policy) -> bool {
             _ => None,
         })
         .max();
-    let labeled = last_labeled(issue, label::READY_FOR_AGENT);
+    let labeled = issue.last_labeled(StatusLabel::ReadyForAgent);
     match (unassigned, labeled) {
         (Some(unassigned), Some(labeled)) => unassigned > labeled,
         (Some(_), None) => true,
@@ -1324,29 +1339,13 @@ fn stopped_by_unassign(issue: &Issue, policy: &Policy) -> bool {
     }
 }
 
-fn last_labeled(issue: &Issue, name: &str) -> Option<Timestamp> {
-    issue
-        .events
-        .iter()
-        .filter_map(|e| match e {
-            IssueEvent::Labeled { label, at } if label == name => Some(*at),
-            _ => None,
-        })
-        .max()
-}
-
 fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
-    issue.has_label(label::NEEDS_TRIAGE) && policy.triages(issue) && policy.may_start_on(issue)
+    issue.holds(StatusLabel::NeedsTriage) && policy.triages(issue) && policy.may_start_on(issue)
 }
 
 fn has_reply_to_needs_info(issue: &Issue, policy: &Policy) -> bool {
     let linewright = &policy.linewright;
-    if !issue.has_label(label::NEEDS_INFO)
-        || !policy.triages(issue)
-        || !policy.may_start_on(issue)
-        || [label::READY_FOR_AGENT, label::NEEDS_TRIAGE]
-            .into_iter()
-            .any(|l| issue.has_label(l))
+    if !issue.holds(StatusLabel::NeedsInfo) || !policy.triages(issue) || !policy.may_start_on(issue)
     {
         return false;
     }
@@ -1359,7 +1358,9 @@ fn has_reply_to_needs_info(issue: &Issue, policy: &Policy) -> bool {
     else {
         return false;
     };
-    let asked = last_labeled(issue, label::NEEDS_INFO).map_or(last, |labeled| labeled.max(last));
+    let asked = issue
+        .last_labeled(StatusLabel::NeedsInfo)
+        .map_or(last, |labeled| labeled.max(last));
     issue
         .comments
         .iter()

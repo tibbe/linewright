@@ -15,16 +15,18 @@ Labels are how you steer Linewright.
 
 ### Where an issue is
 
-An issue carries one of these at a time. It says where the issue is and who
-acts next.
+An issue carries one of these at a time. It says what the issue needs next.
+Applying one is enough: if an issue carries more than one, Linewright keeps
+the one applied last and removes the rest.
 
-- `needs-triage`: new, not yet looked at. Linewright triages it. Apply it to
-  have an issue triaged again, such as with your answer.
-- `needs-info`: Linewright asked the reporter something. The reporter replies
-  in the thread.
-- `ready-for-agent`: clear, so Linewright builds it. Apply it to have an issue
-  built as it stands; remove it to stop the work.
-- `ready-for-human`: a person must decide or help. Answer by applying
+- `needs-triage`: not yet assessed. Linewright triages it. Apply it to have an
+  issue triaged again, such as with your answer.
+- `needs-info`: its assessment waits on a fact from the reporter. The reporter
+  replies in the thread.
+- `ready-for-agent`: decided: an agent could build it, so Linewright builds
+  it. Apply it to have an issue built as it stands; remove it to stop the
+  work.
+- `ready-for-human`: needs a person's decision or action. Answer by applying
   `ready-for-agent` or `needs-triage`.
 
 ### On Linewright's pull requests
