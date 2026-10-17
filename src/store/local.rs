@@ -277,7 +277,8 @@ impl LocalStore {
     }
 
     pub fn unlabel_as(&self, number: Number, label: &str) -> Result<()> {
-        self.state().remove_label(number, label)
+        let now = self.now();
+        self.state().remove_label(number, label, now)
     }
 
     /// `actor` assigns `login` to the issue or pull request #`number`.
@@ -987,11 +988,11 @@ impl State {
         if let Some(issue) = self.issues.get_mut(&number) {
             if !issue.issue.has_label(label) {
                 issue.issue.labels.push(label.into());
+                issue.issue.events.push(IssueEvent::Labeled {
+                    label: label.into(),
+                    at: now,
+                });
             }
-            issue.issue.events.push(IssueEvent::Labeled {
-                label: label.into(),
-                at: now,
-            });
         } else {
             let pull = self.pull_mut(number)?;
             if !pull.has_label(label) {
@@ -1005,9 +1006,16 @@ impl State {
         Ok(())
     }
 
-    fn remove_label(&mut self, number: Number, label: &str) -> Result<()> {
+    fn remove_label(&mut self, number: Number, label: &str, now: Timestamp) -> Result<()> {
         if let Some(issue) = self.issues.get_mut(&number) {
-            issue.issue.labels.retain(|l| l != label);
+            let issue = &mut issue.issue;
+            if issue.has_label(label) {
+                issue.labels.retain(|l| l != label);
+                issue.events.push(IssueEvent::Unlabeled {
+                    label: label.into(),
+                    at: now,
+                });
+            }
         } else {
             self.pull_mut(number)?.labels.retain(|l| l != label);
         }
@@ -1440,7 +1448,8 @@ impl Store for LocalStore {
     }
 
     async fn remove_label(&self, number: Number, label: &str) -> Result<()> {
-        self.state().remove_label(number, label)
+        let now = self.now();
+        self.state().remove_label(number, label, now)
     }
 
     async fn assign(&self, number: Number) -> Result<()> {

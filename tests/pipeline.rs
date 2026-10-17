@@ -1978,6 +1978,220 @@ async fn relabeling_a_claimed_ticket_ready_for_human_lets_go_of_it_but_not_of_it
     assert!(linewright_assigned(&world, pr).await);
 }
 
+#[tokio::test]
+async fn a_ticket_without_the_required_label_assigned_to_linewright_by_hand_is_implemented() {
+    let mut world = World::with(|c| c.require_label = Some("linewright".into())).await;
+    implement(&world);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world.poll().await;
+    assert!(world.runtime.prompts(WorkKind::Implement).is_empty());
+
+    world
+        .store
+        .assign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+    assert!(world.store.pulls().last().is_some());
+}
+
+#[tokio::test]
+async fn an_issue_assigned_to_linewright_by_hand_beside_someone_else_is_triaged() {
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Triage, |_| {
+        json(json!({
+            "outcome": "ready-for-human",
+            "category": "bug",
+            "comment": "Is this a bug?"
+        }))
+    });
+    let issue = world
+        .store
+        .open_issue("reporter", "It broke", "It broke.", &["needs-triage"]);
+    world.store.assign_as("maintainer", issue, "alice").unwrap();
+    world.poll().await;
+    assert!(world.runtime.prompts(WorkKind::Triage).is_empty());
+
+    world
+        .store
+        .assign_as("maintainer", issue, LINEWRIGHT)
+        .unwrap();
+    world.poll().await;
+    // Letting go of the triaged issue, at the next poll, posts nothing more.
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Triage).len(), 1);
+    let issue = world.issue(issue);
+    assert_eq!(issue.assignees, [Login::new("alice")]);
+    assert_eq!(issue.comments.len(), 1);
+    assert!(last_comment(&issue).starts_with("Is this a bug?"));
+}
+
+#[tokio::test]
+async fn a_blocked_ticket_assigned_to_linewright_by_hand_is_held_assigned_until_its_blocker_closes()
+{
+    let mut world = World::new().await;
+    implement(&world);
+    let blocker = world
+        .store
+        .open_issue("maintainer", "First", "First.", &["ready-for-human"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world.store.add_blocked_by(ticket, blocker).await.unwrap();
+    world
+        .store
+        .assign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+
+    world.poll().await;
+
+    assert!(world.runtime.prompts(WorkKind::Implement).is_empty());
+    assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
+    assert!(world.issue(ticket).comments.is_empty());
+
+    world.store.close_issue_as(blocker).unwrap();
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+}
+
+#[tokio::test]
+async fn removing_the_label_of_a_ticket_assigned_to_linewright_by_hand_lets_go_of_it_silently() {
+    let mut world = World::new().await;
+    let blocker = world
+        .store
+        .open_issue("maintainer", "First", "First.", &["ready-for-human"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world.store.add_blocked_by(ticket, blocker).await.unwrap();
+    world
+        .store
+        .assign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.poll().await;
+
+    world.store.unlabel_as(ticket, "ready-for-agent").unwrap();
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert!(issue.assignees.is_empty());
+    assert!(issue.comments.is_empty());
+}
+
+#[tokio::test]
+async fn relabeling_a_ticket_assigned_to_linewright_by_hand_lets_go_of_it_silently_though_its_label_was_applied_again()
+ {
+    let mut world = World::new().await;
+    let blocker = world
+        .store
+        .open_issue("maintainer", "First", "First.", &["ready-for-human"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world.store.add_blocked_by(ticket, blocker).await.unwrap();
+    world
+        .store
+        .assign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.poll().await;
+
+    world.store.label_as(ticket, "ready-for-agent").unwrap();
+    world.store.label_as(ticket, "ready-for-human").unwrap();
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert!(issue.assignees.is_empty());
+    assert!(issue.comments.is_empty());
+}
+
+#[tokio::test]
+async fn an_issue_whose_label_asks_nothing_assigned_to_linewright_by_hand_is_let_go_with_one_comment()
+ {
+    let mut world = World::new().await;
+    let issues = [
+        world
+            .store
+            .open_issue("maintainer", "Decide", "Decide.", &["ready-for-human"]),
+        world
+            .store
+            .open_issue("maintainer", "Ask", "Ask.", &["needs-info"]),
+        world
+            .store
+            .open_issue("maintainer", "Unlabeled", "Hm.", &[]),
+    ];
+    for issue in issues {
+        world
+            .store
+            .assign_as("maintainer", issue, LINEWRIGHT)
+            .unwrap();
+    }
+
+    world.poll().await;
+    world.poll().await;
+
+    for issue in issues {
+        let issue = world.issue(issue);
+        assert!(issue.assignees.is_empty(), "{issue:?}");
+        assert_eq!(issue.comments.len(), 1, "{issue:?}");
+        assert!(
+            last_comment(&issue).contains(
+                "Label it `ready-for-agent` to have it implemented or `needs-triage` to have \
+                 it assessed, and assign @factory again."
+            ),
+            "{issue:?}"
+        );
+    }
+    assert!(world.runtime.prompts(WorkKind::Triage).is_empty());
+    assert!(world.runtime.prompts(WorkKind::Implement).is_empty());
+}
+
+#[tokio::test]
+async fn reassigning_linewright_after_unassigning_it_implements_the_ticket_again_unrelabeled() {
+    let mut world = World::new().await;
+    implement(&world);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    world
+        .store
+        .assign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world
+        .store
+        .unassign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.poll().await;
+    assert!(world.runtime.prompts(WorkKind::Implement).is_empty());
+
+    world
+        .store
+        .assign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+}
+
 /// The file the run [`ticket_handed_back_with_its_branch`] hands back
 /// leaves on the ticket's branch.
 const EARLIER_WORK: &str = "src/partial.txt";

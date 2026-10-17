@@ -1001,17 +1001,32 @@ struct GqlLabeling {
     label: Name,
 }
 
-/// An issue's or pull request's labelings, assignments and reopenings, read
-/// as [`GqlEvent`]s.
+/// An issue's or pull request's labelings, assignments and reopenings, and
+/// with `unlabelings` its unlabelings too, read as [`GqlEvent`]s.
 macro_rules! assignment_timeline {
     () => {
+        assignment_timeline!(@ "",)
+    };
+    (unlabelings) => {
+        assignment_timeline!(@ ", UNLABELED_EVENT",
+            "
+      ... on UnlabeledEvent { ",
+            labeling_fields!(),
+            " }",
+        )
+    };
+    (@ $types:literal, $($fragments:tt)*) => {
         concat!(
-            "timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, REOPENED_EVENT]) {
+            "timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, REOPENED_EVENT",
+            $types,
+            "]) {
     nodes {
       __typename
       ... on LabeledEvent { ",
             labeling_fields!(),
-            " }
+            " }",
+            $($fragments)*
+            "
       ... on ReopenedEvent { createdAt }
       ",
             assignment_fields!(),
@@ -1037,7 +1052,8 @@ const ISSUE_FIELDS: &str = concat!(
   blockedBy(first: 50) { nodes { number state } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt author { __typename login } } }
   ",
-    assignment_timeline!(),
+    // Only an issue's status labels need their removals.
+    assignment_timeline!(unlabelings),
     "
 }"
 );
@@ -1078,6 +1094,8 @@ struct GqlClosingPull {
 enum GqlEvent {
     #[serde(rename = "LabeledEvent")]
     Labeled(GqlLabeling),
+    #[serde(rename = "UnlabeledEvent")]
+    Unlabeled(GqlLabeling),
     #[serde(rename = "ReopenedEvent", rename_all = "camelCase")]
     Reopened { created_at: Timestamp },
     #[serde(untagged)]
@@ -1185,6 +1203,10 @@ fn events(nodes: Vec<GqlEvent>) -> Vec<IssueEvent> {
         .into_iter()
         .filter_map(|e| match e {
             GqlEvent::Labeled(labeling) => Some(IssueEvent::Labeled {
+                label: labeling.label.name,
+                at: labeling.created_at,
+            }),
+            GqlEvent::Unlabeled(labeling) => Some(IssueEvent::Unlabeled {
                 label: labeling.label.name,
                 at: labeling.created_at,
             }),
@@ -2641,7 +2663,7 @@ mod tests {
     }
 
     #[test]
-    fn an_issue_lists_its_label_and_assignment_events_with_who_made_each_assignment() {
+    fn an_issue_lists_its_labelings_unlabelings_and_assignments_with_who_made_them() {
         let issue: GqlIssue = serde_json::from_value(json!({
             "number": 12, "title": "Store gadgets", "body": "",
             "createdAt": "2026-10-09T12:00:00Z", "state": "OPEN",
@@ -2654,6 +2676,7 @@ mod tests {
                 {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:02:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "linewright"}},
                 {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:02:30Z", "actor": {"__typename": "User", "login": "linewright"}, "assignee": {"__typename": "User", "login": "reporter"}},
                 {"__typename": "UnassignedEvent", "createdAt": "2026-10-09T12:03:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "linewright"}},
+                {"__typename": "UnlabeledEvent", "createdAt": "2026-10-09T12:04:00Z", "label": {"name": "ready-for-agent"}},
             ]},
         }))
         .unwrap();
@@ -2683,6 +2706,10 @@ mod tests {
                     actor: Login::new("maintainer"),
                     at: at("2026-10-09T12:03:00Z"),
                 }),
+                IssueEvent::Unlabeled {
+                    label: "ready-for-agent".into(),
+                    at: at("2026-10-09T12:04:00Z"),
+                },
             ]
         );
     }

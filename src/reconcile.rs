@@ -8,7 +8,8 @@ use crate::domain::{
     Assignment, BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, Item, Linked, Login,
     MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Rebaseability,
     Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread, TicketBranchName, Timestamp,
-    UpdateMethod, UpdateRule, label, last_assigned, last_labeling, last_unassignment,
+    UpdateMethod, UpdateRule, label, last_assigned, last_assignment, last_labeling,
+    last_unassignment,
 };
 use crate::holds::Holds;
 use crate::runtime::UsageLimit;
@@ -359,10 +360,11 @@ pub enum Action {
     Claim {
         item: Item,
     },
-    /// Unassign Linewright from an open issue whose label no longer asks for
-    /// its work.
+    /// Post `comment` when there is one, then unassign Linewright from an
+    /// open issue whose label does not ask for its work.
     LetGo {
         issue: Number,
+        comment: Option<String>,
     },
     Relabel {
         issue: Number,
@@ -639,13 +641,17 @@ pub fn decisions(
             });
         }
         let asked = if replied {
-            Some(Asked::Triage)
+            Ok(Asked::Triage)
         } else {
-            asked_work(issue)
+            asked_work(issue.status_label())
         };
-        if asked.is_none() && issue.is_assigned(&policy.linewright) {
+        if let Err(unasked) = asked
+            && issue.is_assigned(&policy.linewright)
+        {
             plan.act(Action::LetGo {
                 issue: issue.number,
+                comment: answers_hand_assignment(issue, &policy.linewright)
+                    .then(|| let_go_comment(unasked, &policy.linewright)),
             });
         }
         let closing = snapshot.pulls_closing(issue);
@@ -673,11 +679,11 @@ pub fn decisions(
             }
         } else {
             match asked {
-                Some(Asked::Triage) => triage(issue, replied, running(subject), policy, &mut plan),
-                Some(Asked::Implementation) => {
+                Ok(Asked::Triage) => triage(issue, replied, running(subject), policy, &mut plan),
+                Ok(Asked::Implementation) => {
                     implementation(issue, &closing, running(subject), policy, &mut plan)
                 }
-                None => {
+                Err(_) => {
                     for wait in labeled_waits(issue, policy) {
                         plan.wait(issue.number, wait);
                     }
@@ -940,12 +946,63 @@ enum Asked {
     Implementation,
 }
 
-fn asked_work(issue: &Issue) -> Option<Asked> {
-    match issue.status_label()? {
-        StatusLabel::NeedsTriage => Some(Asked::Triage),
-        StatusLabel::ReadyForAgent => Some(Asked::Implementation),
-        StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => None,
+/// What an issue whose label asks nothing of Linewright is labeled.
+#[derive(Clone, Copy)]
+enum Unasked {
+    NeedsInfo,
+    ReadyForHuman,
+    NoStatusLabel,
+}
+
+/// What an issue labeled `status` asks of Linewright.
+fn asked_work(status: Option<StatusLabel>) -> Result<Asked, Unasked> {
+    match status {
+        Some(StatusLabel::NeedsTriage) => Ok(Asked::Triage),
+        Some(StatusLabel::ReadyForAgent) => Ok(Asked::Implementation),
+        Some(StatusLabel::NeedsInfo) => Err(Unasked::NeedsInfo),
+        Some(StatusLabel::ReadyForHuman) => Err(Unasked::ReadyForHuman),
+        None => Err(Unasked::NoStatusLabel),
     }
+}
+
+/// Whether letting go of `issue`, whose label asks nothing of Linewright,
+/// answers a person's assignment of Linewright: a person made the last one,
+/// its label asked nothing of Linewright then either, and Linewright has not
+/// commented since.
+fn answers_hand_assignment(issue: &Issue, linewright: &Login) -> bool {
+    let Some((assigned, actor)) = last_assignment(&issue.events, linewright) else {
+        return false;
+    };
+    let unasked_then = asked_work(issue.status_label_as_of(assigned)).is_err();
+    // A comment since means this one was posted, and a stop came before
+    // the unassignment.
+    let commented = issue
+        .comments
+        .iter()
+        .any(|c| &c.author == linewright && c.created_at >= assigned.at);
+    actor != linewright && unasked_then && !commented
+}
+
+/// The comment letting go of an issue assigned to Linewright by hand whose
+/// label asks nothing of it, labeled `unasked`.
+fn let_go_comment(unasked: Unasked, linewright: &Login) -> String {
+    let waits = match unasked {
+        Unasked::NeedsInfo => format!(
+            "This issue waits for an answer to its question (`{}`)",
+            label::NEEDS_INFO
+        ),
+        Unasked::ReadyForHuman => format!(
+            "This issue waits for a person's decision (`{}`)",
+            label::READY_FOR_HUMAN
+        ),
+        Unasked::NoStatusLabel => "This issue has no status label".into(),
+    };
+    format!(
+        "{waits}, so @{linewright} has let go of it. Label it `{}` to have it implemented or \
+         `{}` to have it assessed, and assign @{linewright} again.",
+        label::READY_FOR_AGENT,
+        label::NEEDS_TRIAGE,
+    )
 }
 
 fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {

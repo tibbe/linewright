@@ -78,7 +78,7 @@ For a bug a customer hit, or anything else that should change.
 
 To stop a triage, unassign Linewright, remove `needs-triage` or close the
 issue. Once unassigned, Linewright leaves the issue until `needs-triage`, or
-the required label, is applied again.
+the required label, is applied again, or until you assign it again.
 
 Issues Linewright files itself, such as a workflow's, are triaged the same
 way when they carry `needs-triage`.
@@ -102,7 +102,23 @@ decision.
 To give Linewright an issue directly, without triage, label it
 `ready-for-agent`. Linewright assigns itself and builds it. It leaves alone an
 issue someone else is assigned to, one an open issue blocks and one an open
-pull request closes.
+pull request closes. To have it build one of those, assign it.
+
+## Assigning Linewright
+
+Assigning Linewright to an issue asks it to work the issue now: whoever else
+is assigned, whether or not the issue carries the required label, and also
+after Linewright was unassigned from it. What it does depends on the label:
+
+- `needs-triage`: it triages the issue.
+- `ready-for-agent`: it builds it.
+- Either, while an open issue blocks it or an open pull request closes it:
+  it stays assigned and starts once it can. `lw status` shows what it waits
+  for.
+- `needs-info`, `ready-for-human` or no status label: there is nothing for it
+  to do yet. It unassigns itself and comments saying what the issue needs
+  first: `ready-for-agent` to have it built, or `needs-triage` to have it
+  assessed. Apply one and assign it again.
 
 ## Changing the spec
 
@@ -166,7 +182,8 @@ Change or remove its label, unassign Linewright or close the issue. Once the
 label no longer asks for Linewright's work, such as when you relabel the issue
 `ready-for-human`, Linewright stops any run on it and unassigns itself. Once
 unassigned, by you or by itself, Linewright leaves the issue until
-`ready-for-agent`, or the required label, is applied again.
+`ready-for-agent`, or the required label, is applied again, or until you
+assign it again.
 
 An issue reopened after its pull request merged is worked again while
 Linewright is still assigned to it, without applying the label again.

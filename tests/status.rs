@@ -245,6 +245,28 @@ fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
 }
 
 #[test]
+fn a_blocked_ticket_linewright_is_assigned_to_by_hand_shows_as_held_by_its_blocker() {
+    let held = Issue {
+        assignees: vec![Login::new("factory"), Login::new("alice")],
+        blocked_by: vec![Linked {
+            number: Number(5),
+            open: true,
+        }],
+        events: vec![IssueEvent::Assignment(Assignment::Assigned {
+            assignee: Login::new("factory"),
+            actor: Login::new("maintainer"),
+            at: at("2026-10-01T11:30:00Z"),
+        })],
+        ..ready_issue()
+    };
+
+    assert_eq!(
+        after_linewright(&view(vec![held]), "2026-10-01T12:00:30Z"),
+        ["#7: claimed: being implemented — waiting for #5, which blocks it — Do the thing"]
+    );
+}
+
+#[test]
 fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_it_is() {
     let blocked = Issue {
         number: Number(8),

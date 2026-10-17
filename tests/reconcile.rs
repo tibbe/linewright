@@ -403,6 +403,7 @@ fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
 fn let_go(issue: u64) -> Action {
     Action::LetGo {
         issue: Number(issue),
+        comment: None,
     }
 }
 
@@ -446,6 +447,203 @@ fn removing_a_claimed_issues_status_label_lets_go_of_it() {
     let world = snapshot(vec![claimed(issue(1))]);
 
     assert_eq!(decide(&world), vec![let_go(1)]);
+}
+
+#[test]
+fn an_issue_whose_label_asks_nothing_assigned_to_linewright_by_hand_is_let_go_saying_what_it_needs()
+{
+    let ready_for_human = labeled_at(
+        labeled(issue(1), label::READY_FOR_HUMAN),
+        label::READY_FOR_HUMAN,
+        1,
+    );
+    let needs_info = labeled_at(labeled(issue(2), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    let world = snapshot(vec![
+        assigned_by(ready_for_human, LINEWRIGHT, "maintainer", 2),
+        assigned_by(needs_info, LINEWRIGHT, "maintainer", 2),
+        assigned_by(issue(3), LINEWRIGHT, "maintainer", 2),
+    ]);
+    let needs = "Label it `ready-for-agent` to have it implemented or `needs-triage` to have it \
+                 assessed, and assign @factory again.";
+
+    assert_eq!(
+        decide(&world),
+        vec![
+            Action::LetGo {
+                issue: Number(1),
+                comment: Some(format!(
+                    "This issue waits for a person's decision (`ready-for-human`), so @factory \
+                     has let go of it. {needs}"
+                )),
+            },
+            Action::LetGo {
+                issue: Number(2),
+                comment: Some(format!(
+                    "This issue waits for an answer to its question (`needs-info`), so @factory \
+                     has let go of it. {needs}"
+                )),
+            },
+            Action::LetGo {
+                issue: Number(3),
+                comment: Some(format!(
+                    "This issue has no status label, so @factory has let go of it. {needs}"
+                )),
+            },
+        ]
+    );
+}
+
+#[test]
+fn an_issue_relabeled_from_one_label_that_asks_nothing_to_another_since_its_hand_assignment_is_let_go_saying_what_it_needs()
+ {
+    let relabeled = unlabeled_at(
+        labeled_at(
+            assigned_by(
+                labeled(issue(1), label::READY_FOR_HUMAN),
+                LINEWRIGHT,
+                "maintainer",
+                1,
+            ),
+            label::READY_FOR_HUMAN,
+            2,
+        ),
+        label::NEEDS_INFO,
+        2,
+    );
+
+    assert_eq!(
+        decide(&snapshot(vec![relabeled])),
+        vec![Action::LetGo {
+            issue: Number(1),
+            comment: Some(
+                "This issue waits for a person's decision (`ready-for-human`), so @factory has \
+                 let go of it. Label it `ready-for-agent` to have it implemented or \
+                 `needs-triage` to have it assessed, and assign @factory again."
+                    .into()
+            ),
+        }]
+    );
+}
+
+#[test]
+fn an_issue_linewright_commented_on_since_its_hand_assignment_is_let_go_silently() {
+    let mut commented = assigned_by(
+        labeled(issue(1), label::NEEDS_INFO),
+        LINEWRIGHT,
+        "maintainer",
+        1,
+    );
+    commented.comments = vec![comment(LINEWRIGHT, 2, "This issue waits for an answer.")];
+
+    assert_eq!(decide(&snapshot(vec![commented])), vec![let_go(1)]);
+}
+
+#[test]
+fn an_issue_whose_label_asked_for_work_at_its_hand_assignment_or_claimed_by_linewright_is_let_go_silently()
+ {
+    let triaged = unlabeled_at(
+        labeled_at(
+            assigned_by(
+                labeled(issue(1), label::NEEDS_INFO),
+                LINEWRIGHT,
+                "maintainer",
+                1,
+            ),
+            label::NEEDS_INFO,
+            2,
+        ),
+        label::NEEDS_TRIAGE,
+        2,
+    );
+    let claimed_itself = assigned_by(
+        labeled(issue(2), label::READY_FOR_HUMAN),
+        LINEWRIGHT,
+        LINEWRIGHT,
+        2,
+    );
+    let unlabeled = unlabeled_at(
+        assigned_by(issue(3), LINEWRIGHT, "maintainer", 1),
+        label::READY_FOR_AGENT,
+        2,
+    );
+    let world = snapshot(vec![triaged, claimed_itself, unlabeled]);
+
+    assert_eq!(decide(&world), vec![let_go(1), let_go(2), let_go(3)]);
+}
+
+#[test]
+fn an_issue_assigned_to_linewright_by_hand_beside_someone_else_is_worked_as_its_label_says_marked_or_not()
+ {
+    let mut ticket = assigned_by(
+        labeled(issue(1), label::READY_FOR_AGENT),
+        LINEWRIGHT,
+        "maintainer",
+        1,
+    );
+    let mut to_triage = assigned_by(
+        labeled(issue(2), label::NEEDS_TRIAGE),
+        LINEWRIGHT,
+        "maintainer",
+        1,
+    );
+    for issue in [&mut ticket, &mut to_triage] {
+        issue.assignees.push(Login::new("alice"));
+    }
+    let world = snapshot(vec![ticket, to_triage]);
+
+    assert_eq!(
+        deciding(&world, &Memory::default(), &requiring_label()),
+        vec![triage(2), implement(1)]
+    );
+}
+
+#[test]
+fn reassigning_linewright_after_an_unassignment_starts_the_work_again_unrelabeled() {
+    let reassigned = |issue: Issue| {
+        let unassigned = unassigned_by(issue, "maintainer", 2);
+        assigned_by(unassigned, LINEWRIGHT, "maintainer", 3)
+    };
+    let world = snapshot(vec![
+        reassigned(labeled_at(ticket(1), label::READY_FOR_AGENT, 0)),
+        reassigned(labeled_at(
+            labeled(issue(2), label::NEEDS_TRIAGE),
+            label::NEEDS_TRIAGE,
+            0,
+        )),
+    ]);
+
+    assert_eq!(decide(&world), vec![triage(2), implement(1)]);
+}
+
+#[test]
+fn an_issue_assigned_to_linewright_by_hand_that_cannot_start_yet_is_held_assigned() {
+    let blocked_ticket = blocked_by(assigned_by(ticket(1), LINEWRIGHT, "maintainer", 1), 5, true);
+    let blocked_triage = blocked_by(
+        assigned_by(
+            labeled(issue(2), label::NEEDS_TRIAGE),
+            LINEWRIGHT,
+            "maintainer",
+            1,
+        ),
+        5,
+        true,
+    );
+    let in_review = closed_by(
+        assigned_by(ticket(3), LINEWRIGHT, "maintainer", 1),
+        43,
+        "alice",
+    );
+    let world = snapshot(vec![blocked_ticket, blocked_triage, in_review]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(waits_on(&world, 1), [Wait::Blocker { issue: Number(5) }]);
+    assert_eq!(waits_on(&world, 2), [Wait::Blocker { issue: Number(5) }]);
+    assert_eq!(
+        waits_on(&world, 3),
+        [Wait::ClosingPullRequest {
+            pull_request: Number(43)
+        }]
+    );
 }
 
 #[test]
@@ -791,6 +989,14 @@ fn unassigned_by(mut issue: Issue, actor: &str, minute: i64) -> Issue {
 
 fn labeled_at(mut issue: Issue, label: &str, minute: i64) -> Issue {
     issue.events.push(IssueEvent::Labeled {
+        label: label.into(),
+        at: t(minute),
+    });
+    issue
+}
+
+fn unlabeled_at(mut issue: Issue, label: &str, minute: i64) -> Issue {
+    issue.events.push(IssueEvent::Unlabeled {
         label: label.into(),
         at: t(minute),
     });
@@ -3072,16 +3278,9 @@ fn pull_closing_42_and_12(label: &str) -> Snapshot {
     world
 }
 
-fn assigned_at(mut issue: Issue, minute: i64) -> Issue {
-    issue.assignees.push(Login::new(LINEWRIGHT));
-    issue
-        .events
-        .push(IssueEvent::Assignment(Assignment::Assigned {
-            assignee: Login::new(LINEWRIGHT),
-            actor: Login::new("maintainer"),
-            at: t(minute),
-        }));
-    issue
+/// Linewright claims `issue` at `minute`.
+fn assigned_at(issue: Issue, minute: i64) -> Issue {
+    assigned_by(issue, LINEWRIGHT, LINEWRIGHT, minute)
 }
 
 fn closed_unmerged(mut world: Snapshot, number: u64, minute: i64) -> Snapshot {

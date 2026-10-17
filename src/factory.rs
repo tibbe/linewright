@@ -609,11 +609,16 @@ impl Factory {
                 info!(%item, "claiming");
                 store.assign(item.number()).await?;
             }
-            Action::LetGo { issue } => {
+            Action::LetGo { issue, comment } => {
                 info!(
                     issue = issue.0,
-                    "letting go: its label no longer asks for Linewright"
+                    "letting go: its label does not ask for Linewright"
                 );
+                // Commented first, so that a stop between the two leaves
+                // the issue assigned, to be let go of at the next poll.
+                if let Some(comment) = comment {
+                    store.comment(*issue, comment).await?;
+                }
                 store.unassign(*issue).await?;
             }
             Action::Relabel { issue, remove, add } => {
@@ -912,7 +917,7 @@ async fn read_issue_into(
 fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
     match action {
         Action::Claim { item } => vec![*item],
-        Action::LetGo { issue }
+        Action::LetGo { issue, .. }
         | Action::Relabel { issue, .. }
         | Action::UnassignAsked { issue, .. }
         | Action::RemoveStatusLabel { issue, .. }

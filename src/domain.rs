@@ -205,6 +205,10 @@ pub enum IssueEvent {
         label: String,
         at: Timestamp,
     },
+    Unlabeled {
+        label: String,
+        at: Timestamp,
+    },
     Reopened {
         at: Timestamp,
     },
@@ -231,7 +235,9 @@ pub enum Assignment {
 impl IssueEvent {
     pub fn at(&self) -> Timestamp {
         match self {
-            IssueEvent::Labeled { at, .. } | IssueEvent::Reopened { at } => *at,
+            IssueEvent::Labeled { at, .. }
+            | IssueEvent::Unlabeled { at, .. }
+            | IssueEvent::Reopened { at } => *at,
             IssueEvent::Assignment(
                 Assignment::Assigned { at, .. } | Assignment::Unassigned { at, .. },
             ) => *at,
@@ -367,12 +373,34 @@ impl Issue {
     }
 
     pub fn last_labeled(&self, status: StatusLabel) -> Option<Timestamp> {
-        self.last_labeling(status).map(|(at, _)| at)
+        self.last_labeling(status).map(|order| order.at)
+    }
+
+    /// The status label the issue held just after the event at `when`: the
+    /// one it holds, with each label applied or removed since undone.
+    pub fn status_label_as_of(&self, when: EventOrder) -> Option<StatusLabel> {
+        let (before, mut since): (Vec<_>, Vec<_>) = self
+            .events
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (EventOrder::of(i, e), e))
+            .partition(|(order, _)| *order <= when);
+        since.sort_by_key(|(order, _)| *order);
+        let mut then = self.clone();
+        for (_, event) in since.into_iter().rev() {
+            match event {
+                IssueEvent::Labeled { label, .. } => then.labels.retain(|l| l != label),
+                IssueEvent::Unlabeled { label, .. } => then.labels.push(label.clone()),
+                IssueEvent::Reopened { .. } | IssueEvent::Assignment(_) => {}
+            }
+        }
+        then.events = before.into_iter().map(|(_, e)| e.clone()).collect();
+        then.status_label()
     }
 
     /// When `status` was last applied, with the event's place among the events
     /// to order labels applied at the same time.
-    fn last_labeling(&self, status: StatusLabel) -> Option<(Timestamp, usize)> {
+    fn last_labeling(&self, status: StatusLabel) -> Option<EventOrder> {
         last_labeling(&self.events, status.label())
     }
 
@@ -656,21 +684,40 @@ impl MergedPull {
         let unassigned = last_unassigned(&self.events, linewright)?;
         let labeled = required_label
             .and_then(|required| last_labeling(&self.events, required))
-            .map(|(at, _)| at);
+            .map(|order| order.at);
         labeled
             .is_none_or(|labeled| labeled < unassigned)
             .then_some(unassigned)
     }
 }
 
+/// When an event happened, with its place among the events read to order it
+/// against events at the same time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EventOrder {
+    pub at: Timestamp,
+    pub index: usize,
+}
+
+impl EventOrder {
+    pub fn new(at: Timestamp, index: usize) -> Self {
+        EventOrder { at, index }
+    }
+
+    /// The order of `event`, the `index`th of the events read.
+    pub fn of(index: usize, event: &IssueEvent) -> Self {
+        EventOrder::new(event.at(), index)
+    }
+}
+
 /// When `name` was last applied among `events`, with the event's place among
 /// them to order labels applied at the same time.
-pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<(Timestamp, usize)> {
+pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<EventOrder> {
     events
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
-            IssueEvent::Labeled { label, at } if label == name => Some((*at, i)),
+            IssueEvent::Labeled { label, at } if label == name => Some(EventOrder::new(*at, i)),
             _ => None,
         })
         .max()
@@ -678,7 +725,7 @@ pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<(Timestamp, us
 
 /// When `assignee` was last assigned among `events`, by anyone.
 pub fn last_assigned(events: &[IssueEvent], assignee: &Login) -> Option<Timestamp> {
-    last_assignment(events, assignee).map(|((at, _), _)| at)
+    last_assignment(events, assignee).map(|(order, _)| order.at)
 }
 
 /// [`last_assigned`], with the event's place among `events` to order it
@@ -686,7 +733,7 @@ pub fn last_assigned(events: &[IssueEvent], assignee: &Login) -> Option<Timestam
 pub fn last_assignment<'a>(
     events: &'a [IssueEvent],
     assignee: &Login,
-) -> Option<((Timestamp, usize), &'a Login)> {
+) -> Option<(EventOrder, &'a Login)> {
     events
         .iter()
         .enumerate()
@@ -695,7 +742,7 @@ pub fn last_assignment<'a>(
                 assignee: assigned,
                 actor,
                 at,
-            }) if assigned == assignee => Some(((*at, i), actor)),
+            }) if assigned == assignee => Some((EventOrder::new(*at, i), actor)),
             _ => None,
         })
         .max_by_key(|(order, _)| *order)
@@ -703,12 +750,12 @@ pub fn last_assignment<'a>(
 
 /// When `assignee` was last unassigned among `events`, by anyone.
 pub fn last_unassigned(events: &[IssueEvent], assignee: &Login) -> Option<Timestamp> {
-    last_unassignment(events, assignee).map(|(at, _)| at)
+    last_unassignment(events, assignee).map(|order| order.at)
 }
 
 /// [`last_unassigned`], with the event's place among `events` to order it
 /// against events at the same time.
-pub fn last_unassignment(events: &[IssueEvent], assignee: &Login) -> Option<(Timestamp, usize)> {
+pub fn last_unassignment(events: &[IssueEvent], assignee: &Login) -> Option<EventOrder> {
     events
         .iter()
         .enumerate()
@@ -717,7 +764,7 @@ pub fn last_unassignment(events: &[IssueEvent], assignee: &Login) -> Option<(Tim
                 assignee: unassigned,
                 at,
                 ..
-            }) if unassigned == assignee => Some((*at, i)),
+            }) if unassigned == assignee => Some(EventOrder::new(*at, i)),
             _ => None,
         })
         .max()
