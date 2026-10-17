@@ -58,7 +58,14 @@ fn section(failures: &[CheckFailure], name: &str) -> String {
         default_branch: "main",
         spec_glob: "docs/specs/**/*.md",
     };
-    let brief = prompts::pull_work(&repo, &ticket, &pull(), &PullTask::FixCi(failures), None);
+    let brief = prompts::pull_work(
+        &repo,
+        &ticket,
+        &pull(),
+        &PullTask::FixCi(failures),
+        None,
+        None,
+    );
     let heading = format!("#### `{name}`\n");
     let start = brief.find(&heading).expect(&brief);
     let rest = &brief[start + heading.len()..];

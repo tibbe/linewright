@@ -160,14 +160,23 @@ pub fn pull_work(
     pr: &Pull,
     work: &PullTask,
     conflict: Option<&Conflict>,
+    unfinished: Option<&UnfinishedCommits>,
 ) -> String {
     let mut task = String::new();
     task_facts(&mut task, repo);
-    let _ = writeln!(
+    let _ = write!(
         task,
-        "- Branch: `{}`, the head of pull request {} \"{}\". The fixed point for review is `origin/{}`.\n",
+        "- Branch: `{}`, the head of pull request {} \"{}\". The fixed point for review is `origin/{}`.",
         pr.head_ref, pr.number, pr.title, repo.default_branch
     );
+    if let Some(unfinished) = unfinished {
+        let _ = write!(
+            task,
+            " The branch holds {}: what an earlier run's session left uncommitted when it stopped. Fold it into your own commits, for example by resetting softly to before it and committing the work properly.",
+            unfinished_commits(unfinished)
+        );
+    }
+    task.push_str("\n\n");
     if let Some(conflict) = conflict {
         let (verb, finish) = match conflict.method {
             UpdateMethod::Rebase => (
@@ -273,6 +282,15 @@ pub fn unfinished_commits(commits: &UnfinishedCommits) -> String {
         .chain(middle.iter().map(|c| format!("`{c}`")))
         .collect();
     format!("the unfinished commits {} and `{last}`", leading.join(", "))
+}
+
+/// What a `done` answer is sent back with while the branch still holds the
+/// `unfinished` commits.
+pub fn fold_unfinished(unfinished: &UnfinishedCommits) -> String {
+    loose_ends(&format!(
+        "the branch still holds {}, from an earlier run; fold it into your own commits.",
+        unfinished_commits(unfinished)
+    ))
 }
 
 pub fn usage_limit_reset() -> String {

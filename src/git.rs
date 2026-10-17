@@ -89,7 +89,7 @@ pub async fn check_out_branch(dir: &Path, branch: &str, base: &str) -> Result<Br
         .is_ok()
     {
         git(dir, &["checkout", "--quiet", "-B", branch, &remote]).await?;
-        let unfinished = unfinished_commits(dir, base).await?;
+        let unfinished = unfinished_commits(dir, base, "HEAD").await?;
         Ok(BranchStart::Existing { unfinished })
     } else {
         create_branch(dir, branch).await?;
@@ -186,35 +186,157 @@ pub async fn commits_ahead(dir: &Path, base: &str) -> Result<usize> {
         .parse()?)
 }
 
+/// Where the work in a clone stands: the commit checked out and all that is
+/// uncommitted, untracked files included and ignored ones not.
+#[derive(Debug, PartialEq, Eq)]
+pub struct WorkState {
+    head: String,
+    tree: String,
+}
+
+/// Where the work in `dir` stands. Reading it changes nothing in `dir`.
+pub async fn work_state(dir: &Path) -> Result<WorkState> {
+    let path = async |name: &str| -> Result<String> {
+        let path = git(
+            dir,
+            &["rev-parse", "--path-format=absolute", "--git-path", name],
+        )
+        .await?;
+        Ok(path.trim().to_string())
+    };
+    // The tree is written from a copy of the index, so the clone's own,
+    // which may hold a conflict, is left as it is.
+    let scratch = path("linewright-state-index").await?;
+    tokio::fs::copy(path("index").await?, &scratch).await?;
+    let env = [("GIT_INDEX_FILE".to_string(), scratch.clone())];
+    let tree = async {
+        git_with(dir, &["add", "--all"], &env).await?;
+        git_with(dir, &["write-tree"], &env).await
+    }
+    .await;
+    let _ = tokio::fs::remove_file(&scratch).await;
+    Ok(WorkState {
+        head: head(dir).await?,
+        tree: tree?.trim().to_string(),
+    })
+}
+
 /// A rebase or merge left in progress.
 #[derive(Clone, Copy)]
 enum InProgress {
-    Rebase,
+    Rebase(Backend),
     Merge,
+}
+
+/// How a rebase replays commits, which says where it keeps its state.
+#[derive(Clone, Copy)]
+enum Backend {
+    Merge,
+    Apply,
+}
+
+impl Backend {
+    /// The directory of the git directory the rebase keeps its state in.
+    fn state(self) -> &'static str {
+        match self {
+            Backend::Merge => "rebase-merge",
+            Backend::Apply => "rebase-apply",
+        }
+    }
 }
 
 impl InProgress {
     fn describe(self) -> &'static str {
         match self {
-            InProgress::Rebase => "a rebase is in progress",
+            InProgress::Rebase(_) => "a rebase is in progress",
             InProgress::Merge => "a merge is in progress",
         }
     }
 
-    async fn abort(self, dir: &Path) -> Result<()> {
-        let command = match self {
-            InProgress::Rebase => "rebase",
-            InProgress::Merge => "merge",
+    /// The commit the branch was at before the operation, and the tree that
+    /// holds the branch with the operation's `work` tree applied to it, so
+    /// the work is kept without finishing the operation. A rebase's `work`
+    /// is on the commits it has replayed, so the commits it has not yet
+    /// replayed are merged into it.
+    async fn kept(self, dir: &Path, work: &str) -> Result<(String, String)> {
+        let InProgress::Rebase(backend) = self else {
+            return Ok((head(dir).await?, work.to_string()));
         };
-        git(dir, &[command, "--abort"]).await?;
+        let state = git(dir, &["rev-parse", "--git-path", backend.state()]).await?;
+        let state = dir.join(state.trim());
+        let read = async |file: &str| -> Result<String> {
+            tokio::fs::read_to_string(state.join(file))
+                .await
+                .with_context(|| format!("reading the rebase's {file}"))
+        };
+        let original = read("orig-head").await?.trim().to_string();
+        // The commit replayed last: the rebase stopped on it, or after it.
+        let replayed = match backend {
+            Backend::Merge => last_replayed(&read("done").await?)
+                .context("the rebase in progress has replayed no commit")?
+                .to_string(),
+            Backend::Apply => read("original-commit").await?.trim().to_string(),
+        };
+        let ours = git(dir, &["commit-tree", work, "-p", "HEAD", "-m", "Work"]).await?;
+        let tree = merge_trees(dir, &replayed, ours.trim(), &original).await?;
+        Ok((original, tree))
+    }
+
+    /// Ends the operation, leaving the branch as it was before it.
+    async fn abort(self, dir: &Path) -> Result<()> {
+        match self {
+            InProgress::Rebase(_) => git(dir, &["rebase", "--abort"]).await?,
+            InProgress::Merge => git(dir, &["reset", "--quiet", "--hard"]).await?,
+        };
         Ok(())
     }
 }
 
+/// The commit a merge rebase replayed last, from the commands it lists as
+/// `done`.
+fn last_replayed(done: &str) -> Option<&str> {
+    const REPLAYING: [&str; 10] = [
+        "pick", "p", "reword", "r", "edit", "e", "squash", "s", "fixup", "f",
+    ];
+    done.lines().rev().find_map(|line| {
+        let mut words = line.split_whitespace();
+        let command = words.next()?;
+        REPLAYING.contains(&command).then(|| words.next()).flatten()
+    })
+}
+
+/// The tree that merges `theirs` into `ours` as of `base`, conflicts marked
+/// in the files.
+async fn merge_trees(dir: &Path, base: &str, ours: &str, theirs: &str) -> Result<String> {
+    let base = format!("--merge-base={base}");
+    let args = ["merge-tree", "--write-tree", &base, ours, theirs];
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .with_context(|| format!("running git {}", args.join(" ")))?;
+    // Exit status 1 is a merge with conflicts, whose tree comes first all the
+    // same.
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .map(str::to_string)
+        .context("git merge-tree wrote no tree")
+}
+
 async fn in_progress(dir: &Path) -> Result<Option<InProgress>> {
     for (path, what) in [
-        ("rebase-merge", InProgress::Rebase),
-        ("rebase-apply", InProgress::Rebase),
+        ("rebase-merge", InProgress::Rebase(Backend::Merge)),
+        ("rebase-apply", InProgress::Rebase(Backend::Apply)),
         ("MERGE_HEAD", InProgress::Merge),
     ] {
         let location = git(dir, &["rev-parse", "--git-path", path]).await?;
@@ -245,35 +367,50 @@ pub async fn loose_ends(dir: &Path) -> Result<Option<String>> {
 const UNFINISHED_TRAILER: &str = "Linewright-Unfinished";
 
 /// Commits all that is uncommitted in `dir`, untracked files included and
-/// ignored ones not, as one unfinished commit, after aborting a rebase or
-/// merge in progress. The commit amends `HEAD` when that is an unfinished
-/// commit already, so the work a run leaves stays in one.
+/// ignored ones not, as one unfinished commit. A rebase or merge in progress
+/// is ended, and what it did so far is kept in the unfinished commit on the
+/// branch as it was before it. The commit amends the branch's last commit
+/// when that is an unfinished commit already, so the work a run leaves stays
+/// in one.
 pub async fn commit_unfinished(dir: &Path) -> Result<()> {
-    if let Some(operation) = in_progress(dir).await? {
-        operation.abort(dir).await?;
-    }
     git(dir, &["add", "--all"]).await?;
-    if git(dir, &["diff", "--cached", "--quiet"]).await.is_ok() {
+    let work = git(dir, &["write-tree"]).await?.trim().to_string();
+    let (tip, tree) = match in_progress(dir).await? {
+        Some(operation) => {
+            let kept = operation.kept(dir, &work).await?;
+            operation.abort(dir).await?;
+            kept
+        }
+        None => (head(dir).await?, work),
+    };
+    let tip_tree = git(dir, &["rev-parse", &format!("{tip}^{{tree}}")]).await?;
+    if tree == tip_tree.trim() {
         return Ok(());
     }
-    let amend = is_unfinished(dir, "HEAD").await?;
+    let parent = if is_unfinished(dir, &tip).await? {
+        format!("{tip}^")
+    } else {
+        tip
+    };
     let trailer = format!("{UNFINISHED_TRAILER}: true");
-    let mut args = vec![
-        "commit",
-        "--quiet",
-        "--no-verify",
-        "-m",
-        "Unfinished work, kept when its run stopped",
-        "-m",
-        "Linewright committed what the session left uncommitted when its run \
-         stopped. The next run folds it into its own commits.",
-        "-m",
-        &trailer,
-    ];
-    if amend {
-        args.push("--amend");
-    }
-    git(dir, &args).await?;
+    let commit = git(
+        dir,
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            &parent,
+            "-m",
+            "Unfinished work, kept when its run stopped",
+            "-m",
+            "Linewright committed what the session left uncommitted when its run \
+             stopped. The next run folds it into its own commits.",
+            "-m",
+            &trailer,
+        ],
+    )
+    .await?;
+    git(dir, &["reset", "--quiet", "--hard", commit.trim()]).await?;
     Ok(())
 }
 
@@ -292,13 +429,17 @@ pub struct UnfinishedCommits {
     pub rest: Vec<String>,
 }
 
-/// The unfinished commits on `HEAD` past `base`, if any.
-pub async fn unfinished_commits(dir: &Path, base: &str) -> Result<Option<UnfinishedCommits>> {
+/// The unfinished commits on `tip` past `base`, if any.
+pub async fn unfinished_commits(
+    dir: &Path,
+    base: &str,
+    tip: &str,
+) -> Result<Option<UnfinishedCommits>> {
     let format =
         format!("--format=%h %(trailers:key={UNFINISHED_TRAILER},valueonly,separator=%x2C)");
     let mut commits = git(
         dir,
-        &["log", "--reverse", &format, &format!("{base}..HEAD")],
+        &["log", "--reverse", &format, &format!("{base}..{tip}")],
     )
     .await?
     .lines()

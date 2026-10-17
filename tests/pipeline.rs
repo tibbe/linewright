@@ -1901,7 +1901,7 @@ async fn a_run_that_ends_with_nothing_committed_or_uncommitted_pushes_nothing_an
 }
 
 #[tokio::test]
-async fn a_run_that_stops_mid_rebase_leaves_its_work_as_an_unfinished_commit_on_a_branch_not_mid_rebase()
+async fn a_run_that_stops_mid_rebase_leaves_its_work_and_resolution_as_an_unfinished_commit_on_a_branch_not_mid_rebase()
  {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Implement, |call| {
@@ -1916,6 +1916,7 @@ async fn a_run_that_stops_mid_rebase_leaves_its_work_as_an_unfinished_commit_on_
             .output()
             .unwrap();
         assert!(!rebase.status.success(), "the rebase stops on a conflict");
+        std::fs::write(dir.join("src/gadgets.txt"), "ours, then theirs\n").unwrap();
         std::fs::write(dir.join("src/more.txt"), "more\n").unwrap();
         Err(linewright::runtime::SessionError::TimedOut {
             log_tail: String::new(),
@@ -1931,7 +1932,7 @@ async fn a_run_that_stops_mid_rebase_leaves_its_work_as_an_unfinished_commit_on_
     assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
     assert_eq!(
         world.store.file(&branch, "src/gadgets.txt").await.unwrap(),
-        "ours\n"
+        "ours, then theirs\n"
     );
     assert_eq!(
         world.store.file(&branch, "src/more.txt").await.unwrap(),
@@ -2076,6 +2077,437 @@ async fn a_run_that_fails_on_its_infrastructure_is_retried_from_its_unfinished_c
             && comment.ends_with(&kept_on(&branch)),
         "{comment}"
     );
+}
+
+/// Commits a rename, then leaves an edit to it and a new file uncommitted.
+fn rename_and_leave_edits(dir: &std::path::Path) {
+    commit_in(dir, &[("src/renamed.txt", "renamed\n")], "Rename");
+    std::fs::write(dir.join("src/renamed.txt"), "renamed and more\n").unwrap();
+    std::fs::write(dir.join("src/new.txt"), "new\n").unwrap();
+}
+
+async fn assert_pull_edits_kept_as_unfinished(world: &World, branch: &str) {
+    assert_eq!(
+        subjects(world, branch),
+        ["Do the ticket", "Rename", UNFINISHED]
+    );
+    let file = |path: &'static str| async move { world.store.file(branch, path).await.ok() };
+    assert_eq!(
+        file("src/renamed.txt").await.as_deref(),
+        Some("renamed and more\n")
+    );
+    assert_eq!(file("src/new.txt").await.as_deref(), Some("new\n"));
+}
+
+fn timed_out() -> Result<String, linewright::runtime::SessionError> {
+    Err(linewright::runtime::SessionError::TimedOut {
+        log_tail: String::new(),
+    })
+}
+
+const TRY_AGAIN: &str = "\n\nRemove `ready-for-human` from this pull request to try again.";
+
+#[tokio::test]
+async fn a_timed_out_rework_leaves_its_uncommitted_edits_on_the_pull_requests_branch_as_an_unfinished_commit()
+ {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    world.runtime.on(WorkKind::Rework, |call| {
+        rename_and_leave_edits(&call.spec.dir);
+        timed_out()
+    });
+
+    world.poll().await;
+
+    let branch = world.store.snapshot_pull(pr).await.head_ref;
+    assert_pull_edits_kept_as_unfinished(&world, &branch).await;
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        &format!("{TIMED_OUT}{}{TRY_AGAIN}", kept_on(&branch)),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_timed_out_ci_fix_leaves_its_uncommitted_edits_on_the_pull_requests_branch_as_an_unfinished_commit()
+ {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .set_checks(pr, vec![check("test", CheckState::Failed, "it failed")])
+        .await
+        .unwrap();
+    world.runtime.on(WorkKind::FixCi, |call| {
+        rename_and_leave_edits(&call.spec.dir);
+        timed_out()
+    });
+
+    world.poll().await;
+
+    let branch = world.store.snapshot_pull(pr).await.head_ref;
+    assert_pull_edits_kept_as_unfinished(&world, &branch).await;
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        &format!("{TIMED_OUT}{}{TRY_AGAIN}", kept_on(&branch)),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_unfinished_commit()
+ {
+    use linewright::runtime::SessionError;
+
+    type Ending = fn() -> Result<String, SessionError>;
+    let endings: [(Ending, &str); 4] = [
+        (
+            || {
+                Err(SessionError::Failed {
+                    reason: "it crashed".into(),
+                    log_tail: String::new(),
+                })
+            },
+            "The session ended unexpectedly: it crashed",
+        ),
+        (
+            || Ok("Out of ideas.".into()),
+            "The session's result still could not be used",
+        ),
+        (
+            || json(json!({"outcome": "blocked", "question": "Should it keep its old name?"})),
+            "Should it keep its old name?",
+        ),
+        (
+            || json(json!({"outcome": "gave-up", "reason": "Too hard."})),
+            "Too hard.",
+        ),
+    ];
+    for (ending, says) in endings {
+        let mut world = World::new().await;
+        let (_, pr) = world.ticket_in_review().await;
+        world.rework_asked(pr);
+        world.runtime.on(WorkKind::Rework, move |call| {
+            if call.followup.is_none() {
+                rename_and_leave_edits(&call.spec.dir);
+            }
+            ending()
+        });
+
+        world.poll().await;
+
+        let branch = world.store.snapshot_pull(pr).await.head_ref;
+        assert_pull_edits_kept_as_unfinished(&world, &branch).await;
+        assert_eq!(world.store.pull_labels(pr), ["ready-for-human"]);
+        let comment = last_pull_comment(&world, pr).await;
+        assert!(comment.contains(says), "{comment}");
+        assert!(comment.contains(&kept_on(&branch)), "{comment}");
+    }
+}
+
+/// Starts a rework, which leaves edits uncommitted, and has `cancel` cancel
+/// it while its session runs.
+async fn rework_cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, Number)) -> Number {
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Rename it.")
+        .unwrap();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (begin, mut begun) = tokio::sync::mpsc::unbounded_channel();
+    world.runtime.on(WorkKind::Rework, move |call| {
+        rename_and_leave_edits(&call.spec.dir);
+        begin.send(()).unwrap();
+        released.lock().unwrap().recv().unwrap();
+        json(json!({"outcome": "gave-up", "reason": "Released."}))
+    });
+    world.factory.cycle().await.unwrap();
+    begun.recv().await.unwrap();
+
+    cancel(world, pr);
+    world.factory.cycle().await.unwrap();
+    release.send(()).unwrap();
+    world.factory.settle().await;
+    pr
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_rework_whose_pull_request_is_open_leaves_its_uncommitted_edits_as_an_unfinished_commit()
+ {
+    let mut world = World::new().await;
+
+    let pr = rework_cancelled_with_edits(&mut world, |world, pr| {
+        world.store.label_as(pr, "ready-for-human").unwrap();
+    })
+    .await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_pull_edits_kept_as_unfinished(&world, &view.head_ref).await;
+    assert!(
+        !view
+            .comments
+            .iter()
+            .any(|c| c.author == Login::new(LINEWRIGHT)),
+        "a cancelled run posts nothing"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rework_cancelled_by_closing_its_pull_request_pushes_nothing() {
+    let mut world = World::new().await;
+
+    let pr = rework_cancelled_with_edits(&mut world, |world, pr| {
+        world.store.close_pull_as(pr).unwrap();
+    })
+    .await;
+
+    let branch = world.store.snapshot_pull(pr).await.head_ref;
+    assert_eq!(subjects(&world, &branch), ["Do the ticket"]);
+}
+
+#[tokio::test]
+async fn a_rework_whose_pull_request_closes_before_it_times_out_pushes_and_posts_nothing() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    let store = world.store.clone();
+    world.runtime.on(WorkKind::Rework, move |call| {
+        rename_and_leave_edits(&call.spec.dir);
+        store.close_pull_as(pr).unwrap();
+        timed_out()
+    });
+
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(subjects(&world, &view.head_ref), ["Do the ticket"]);
+    assert!(
+        !view
+            .comments
+            .iter()
+            .any(|c| c.author == Login::new(LINEWRIGHT))
+    );
+}
+
+#[tokio::test]
+async fn a_stopped_rework_leaves_commits_a_person_pushed_while_it_worked_and_says_its_push_was_rejected()
+ {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    let branch = world.store.snapshot_pull(pr).await.head_ref;
+    let store = world.store.clone();
+    let pushed_to = branch.clone();
+    world.runtime.on(WorkKind::Rework, move |call| {
+        rename_and_leave_edits(&call.spec.dir);
+        let (store, pushed_to) = (store.clone(), pushed_to.clone());
+        std::thread::spawn(move || {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                store
+                    .commit(
+                        "alice",
+                        &pushed_to,
+                        &[("src/alice.txt", "alice\n")],
+                        "Alice's fix",
+                    )
+                    .await
+                    .unwrap();
+            })
+        })
+        .join()
+        .unwrap();
+        timed_out()
+    });
+
+    world.poll().await;
+
+    assert_eq!(subjects(&world, &branch), ["Do the ticket", "Alice's fix"]);
+    let comment = last_pull_comment(&world, pr).await;
+    assert!(
+        comment.contains(&format!(
+            "Keeping the work so far on the branch `{branch}` failed"
+        )),
+        "{comment}"
+    );
+}
+
+async fn rework_timed_out_with_edits(world: &mut World) -> (Number, String) {
+    let (_, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    world.runtime.on(WorkKind::Rework, |call| {
+        rename_and_leave_edits(&call.spec.dir);
+        timed_out()
+    });
+    world.poll().await;
+    (pr, world.store.snapshot_pull(pr).await.head_ref)
+}
+
+#[tokio::test]
+async fn the_next_rework_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_sent_back_until_it_does()
+ {
+    let mut world = World::new().await;
+    let (pr, branch) = rework_timed_out_with_edits(&mut world).await;
+    let unfinished = store_git(&world, &["log", "-1", "--format=%h", &branch]).stdout;
+    let unfinished = String::from_utf8(unfinished).unwrap();
+    let unfinished = unfinished.trim().to_string();
+    world.runtime.on(WorkKind::Rework, |call| {
+        if call.followup.is_some() {
+            git_in(&call.spec.dir, &["reset", "--quiet", "--soft", "HEAD~1"]);
+            git_in(&call.spec.dir, &["commit", "--quiet", "-m", "Rename more"]);
+        }
+        json(json!({"outcome": "done", "comment": "Renamed."}))
+    });
+
+    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world
+        .store
+        .comment_as("maintainer", pr, "Carry on.")
+        .unwrap();
+    world.poll().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Rework);
+    assert!(
+        prompts[1].contains(&format!(
+            "The branch holds the unfinished commit `{unfinished}`: what an earlier run's session \
+             left uncommitted when it stopped. Fold it into your own commits"
+        )),
+        "{}",
+        prompts[1]
+    );
+    assert!(
+        prompts[2].contains(&format!(
+            "the branch still holds the unfinished commit `{unfinished}`, from an earlier run; \
+             fold it into your own commits."
+        )),
+        "{}",
+        prompts[2]
+    );
+    assert_eq!(prompts.len(), 3);
+    assert_eq!(
+        subjects(&world, &branch),
+        ["Do the ticket", "Rename", "Rename more"]
+    );
+    assert_eq!(last_pull_comment(&world, pr).await, "Renamed.");
+}
+
+#[tokio::test]
+async fn a_stopped_rework_with_nothing_new_but_its_update_pushes_nothing() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    let before = world.store.snapshot_pull(pr).await.head_sha;
+    world
+        .store
+        .merge_change(
+            "maintainer",
+            "Other work",
+            "",
+            &[("src/other.txt", "other\n")],
+        )
+        .await
+        .unwrap();
+    world.rework_asked(pr);
+    world.runtime.on(WorkKind::Rework, |_| timed_out());
+    let branch = world.store.snapshot_pull(pr).await.head_ref;
+
+    world.poll().await;
+
+    assert_eq!(
+        String::from_utf8(store_git(&world, &["rev-parse", &branch]).stdout)
+            .unwrap()
+            .trim(),
+        before
+    );
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+    assert_handed_back(&world, ticket, pr, &format!("{TIMED_OUT}{TRY_AGAIN}")).await;
+}
+
+async fn update_stopped_mid_conflict(method: linewright::domain::UpdateMethod) {
+    let (mut world, pr) = moved_past(Repository::default(), Some(method), true).await;
+    let ticket = world.store.snapshot_pull(pr).await.closes[0];
+    let file = format!("src/issue-{}.txt", ticket.0);
+    let resolving = file.clone();
+    world.runtime.on(WorkKind::Update, move |call| {
+        std::fs::write(call.spec.dir.join(&resolving), "done\nother, half\n").unwrap();
+        timed_out()
+    });
+
+    world.poll().await;
+
+    let branch = world.store.snapshot_pull(pr).await.head_ref;
+    assert_eq!(
+        subjects(&world, &branch),
+        ["Do the ticket", UNFINISHED],
+        "{method:?}"
+    );
+    assert_eq!(merges(&world, &branch), 0, "{method:?}");
+    assert_eq!(
+        world.store.file(&branch, &file).await.unwrap(),
+        "done\nother, half\n",
+        "{method:?}"
+    );
+    assert!(
+        last_pull_comment(&world, pr)
+            .await
+            .contains(&kept_on(&branch)),
+        "{method:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_update_stopped_mid_merge_keeps_its_resolution_as_an_unfinished_commit_not_a_merge() {
+    update_stopped_mid_conflict(linewright::domain::UpdateMethod::Merge).await;
+}
+
+#[tokio::test]
+async fn an_update_stopped_mid_rebase_keeps_the_commits_it_had_not_replayed() {
+    let mut world = World::with_repository(Repository::default(), |config| {
+        config.update_method = Some(linewright::domain::UpdateMethod::Rebase)
+    })
+    .await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    let branch = world.store.snapshot_pull(pr).await.head_ref;
+    world
+        .store
+        .commit("alice", &branch, &[("src/more.txt", "more\n")], "More")
+        .await
+        .unwrap();
+    let file = format!("src/issue-{}.txt", ticket.0);
+    world
+        .store
+        .merge_change("maintainer", "Other work", "", &[(&file, "other\n")])
+        .await
+        .unwrap();
+    let resolving = file.clone();
+    world.runtime.on(WorkKind::Update, move |call| {
+        std::fs::write(call.spec.dir.join(&resolving), "done\nother, half\n").unwrap();
+        timed_out()
+    });
+
+    world.poll().await;
+
+    assert_eq!(
+        subjects(&world, &branch),
+        ["Do the ticket", "More", UNFINISHED]
+    );
+    assert_eq!(
+        world.store.file(&branch, &file).await.unwrap(),
+        "done\nother, half\n"
+    );
+    assert_eq!(
+        world.store.file(&branch, "src/more.txt").await.unwrap(),
+        "more\n"
+    );
+}
+
+#[tokio::test]
+async fn an_update_stopped_mid_rebase_keeps_its_resolution_as_an_unfinished_commit_on_the_branch() {
+    update_stopped_mid_conflict(linewright::domain::UpdateMethod::Rebase).await;
 }
 
 #[tokio::test]

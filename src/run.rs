@@ -12,7 +12,7 @@ use crate::clock::Clock;
 use crate::domain::{
     Issue, Item, Login, MergedPull, Number, Pull, Snapshot, Timestamp, closing_references, label,
 };
-use crate::git::{self, Updated};
+use crate::git::{self, Updated, WorkState};
 use crate::prompts::{self, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, Subject, Work, WorkKind, new_feedback, rebases_to_repair,
@@ -856,20 +856,63 @@ enum Kept {
 /// Keeps the work of an implement run that stopped before it finished on the
 /// ticket's branch: docs/specs/runs.md, "Ending".
 async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch: &str) -> Kept {
+    reported(
+        branch,
+        push_unfinished(shell, dir, branch, upstream, PushMode::Replace).await,
+    )
+}
+
+/// Keeps the work of a run on a pull request that stopped before it finished
+/// on the pull request's branch, unless its session changed nothing since
+/// the clone stood at `before` or the pull request closed: docs/specs/runs.md,
+/// "Ending". The push leases the branch at `start`, so commits others pushed
+/// since are not overwritten.
+async fn keep_unfinished_pull_work(
+    shell: &Shell,
+    dir: &Path,
+    pr: &Pull,
+    start: &str,
+    before: &WorkState,
+) -> Kept {
     let kept = async {
-        git::commit_unfinished(dir).await?;
-        if git::commits_ahead(dir, upstream).await? == 0 {
+        if git::work_state(dir).await? == *before {
             return Ok(Kept::Nothing);
         }
-        match shell.store.push(dir, branch, PushMode::Replace).await {
-            Ok(()) => Ok(Kept::Pushed),
-            Err(PushError::MissingPermission { reason }) => Ok(Kept::Refused(reason)),
-            Err(PushError::Failed(e)) => Err(e),
+        if !still_open(shell, pr.number).await? {
+            return Ok(Kept::Nothing);
         }
+        let lease = PushMode::Lease {
+            expected: start.to_string(),
+        };
+        push_unfinished(shell, dir, &pr.head_ref, start, lease).await
     };
-    let kept = kept
-        .await
-        .unwrap_or_else(|e: anyhow::Error| Kept::Failed(format!("{e:#}")));
+    reported(&pr.head_ref, kept.await)
+}
+
+/// Commits what a stopped run's session left uncommitted, and pushes
+/// `branch` with `mode` when that leaves it past `past`.
+async fn push_unfinished(
+    shell: &Shell,
+    dir: &Path,
+    branch: &str,
+    past: &str,
+    mode: PushMode,
+) -> Result<Kept> {
+    git::commit_unfinished(dir).await?;
+    if git::commits_ahead(dir, past).await? == 0 {
+        return Ok(Kept::Nothing);
+    }
+    match shell.store.push(dir, branch, mode).await {
+        Ok(()) => Ok(Kept::Pushed),
+        Err(PushError::MissingPermission { reason }) => Ok(Kept::Refused(reason)),
+        Err(PushError::Failed(e)) => Err(e),
+    }
+}
+
+/// What became of a stopped run's work on `branch`, logged when it was not
+/// kept.
+fn reported(branch: &str, kept: Result<Kept>) -> Kept {
+    let kept = kept.unwrap_or_else(|e| Kept::Failed(format!("{e:#}")));
     match &kept {
         Kept::Refused(reason) => warn!(
             branch,
@@ -881,12 +924,13 @@ async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch:
     kept
 }
 
-/// What a hand-back adds to say where the work it `kept` on `branch` is.
-fn kept_note(branch: &str, kept: &Kept) -> String {
+/// What a hand-back adds to say where the work it `kept` on `branch` is, and
+/// how to `try_again` when GitHub refused it.
+fn kept_note(branch: &str, kept: &Kept, try_again: TryAgain) -> String {
     match kept {
         Kept::Nothing => String::new(),
         Kept::Pushed => format!("\n\nThe work so far is on the branch `{branch}`."),
-        Kept::Refused(reason) => format!("\n\n{}", refused_push(branch, reason, TryAgain::Relabel)),
+        Kept::Refused(reason) => format!("\n\n{}", refused_push(branch, reason, try_again)),
         Kept::Failed(error) => {
             format!("\n\nKeeping the work so far on the branch `{branch}` failed: {error}")
         }
@@ -927,19 +971,16 @@ async fn implement(
                 "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
             )));
         }
-        let unfinished = git::unfinished_commits(dir, base).await?;
+        let unfinished = git::unfinished_commits(dir, base, "HEAD").await?;
         if let Some(unfinished) = unfinished {
-            return Err(Rejection::Retry(prompts::loose_ends(&format!(
-                "the branch still holds {}, from an earlier run; fold it into your own commits.",
-                prompts::unfinished_commits(&unfinished)
-            ))));
+            return Err(Rejection::Retry(prompts::fold_unfinished(&unfinished)));
         }
         Ok(result)
     })
     .await;
     let keep = async || {
         let kept = keep_unfinished_work(shell, &ws.dir, &upstream, &branch).await;
-        kept_note(&branch, &kept)
+        kept_note(&branch, &kept, TryAgain::Relabel)
     };
     let (result, turn) = match conversation {
         Ok(conversation) => conversation,
@@ -1134,18 +1175,38 @@ async fn pull_work(
         Task::FixCi(_) => PullTask::FixCi(&failures),
         Task::Update => PullTask::Update,
     };
-    let prompt = prompts::pull_work(&shell.repo(), ticket, pr, &pull_task, conflict.as_ref());
+    let dir = &ws.dir;
+    let upstream = shell.upstream();
+    // A rebase that stopped on a conflict has not yet replayed the branch's
+    // unfinished commits.
+    let tip = if conflict.is_some() { &start } else { "HEAD" };
+    let left_unfinished = git::unfinished_commits(dir, &upstream, tip)
+        .await
+        .map_err(infra)?;
+    let prompt = prompts::pull_work(
+        &shell.repo(),
+        ticket,
+        pr,
+        &pull_task,
+        conflict.as_ref(),
+        left_unfinished.as_ref(),
+    );
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
-    let dir = &ws.dir;
+    let before = git::work_state(dir).await.map_err(infra)?;
+    let upstream = &upstream;
     let accept = |message: String, pr_threads: Vec<String>| async move {
         let result: PullWorkResult = results::parse(&message).map_err(parse_retry)?;
+        let PullWorkResult::Done { replies, .. } = &result else {
+            return Ok(result);
+        };
         if let Some(problem) = git::loose_ends(dir).await? {
             return Err(Rejection::Retry(prompts::loose_ends(&problem)));
         }
-        if let PullWorkResult::Done { replies, .. } = &result
-            && let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread))
-        {
+        if let Some(unfinished) = git::unfinished_commits(dir, upstream, "HEAD").await? {
+            return Err(Rejection::Retry(prompts::fold_unfinished(&unfinished)));
+        }
+        if let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread)) {
             return Err(parse_retry(format!(
                 "`{}` is not a thread on the pull request",
                 unknown.thread
@@ -1153,40 +1214,50 @@ async fn pull_work(
         }
         Ok(result)
     };
-    let (mut result, mut turn) = converse(shell, ctx, &mut spec, Step::Start, |m| {
-        accept(m, threads.clone())
-    })
-    .await?;
-    // Feedback posted after the snapshot the brief came from would be older
-    // than the push that follows, so it goes to the session before anything
-    // is pushed, for as long as it keeps coming within the session's time.
-    let mut pr_now;
-    let mut shown_until = ctx.as_of;
-    let mut read_at;
-    loop {
-        read_at = shell.clock.now();
-        pr_now = store.pull(pr.number).await.map_err(infra)?;
-        if !pr_now.is_open() || !matches!(result, PullWorkResult::Done { .. }) {
-            break;
+    let ended: Result<_, Failure> = async {
+        let (mut result, mut turn) = converse(shell, ctx, &mut spec, Step::Start, |m| {
+            accept(m, threads.clone())
+        })
+        .await?;
+        // Feedback posted after the snapshot the brief came from would be
+        // older than the push that follows, so it goes to the session before
+        // anything is pushed, for as long as it keeps coming within the
+        // session's time.
+        let mut shown_until = ctx.as_of;
+        loop {
+            let read_at = shell.clock.now();
+            let pr_now = store.pull(pr.number).await.map_err(infra)?;
+            if !pr_now.is_open() || !matches!(result, PullWorkResult::Done { .. }) {
+                return Ok((result, turn, pr_now, read_at));
+            }
+            let arrived = late(
+                &new_feedback(&pr_now, linewright, ctx.reworked),
+                shown_until,
+            );
+            if arrived.is_empty() {
+                return Ok((result, turn, pr_now, read_at));
+            }
+            shown_until = read_at;
+            feedback_authors.extend(feedback_people(&arrived, linewright));
+            threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
+            let followup = prompts::late_feedback(&pr_now, &arrived);
+            let step = Step::Resume {
+                session: turn.session.clone(),
+                prompt: followup,
+            };
+            (result, turn) =
+                converse(shell, ctx, &mut spec, step, |m| accept(m, threads.clone())).await?;
         }
-        let arrived = late(
-            &new_feedback(&pr_now, linewright, ctx.reworked),
-            shown_until,
-        );
-        if arrived.is_empty() {
-            break;
-        }
-        shown_until = read_at;
-        feedback_authors.extend(feedback_people(&arrived, linewright));
-        threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
-        let followup = prompts::late_feedback(&pr_now, &arrived);
-        let step = Step::Resume {
-            session: turn.session.clone(),
-            prompt: followup,
-        };
-        (result, turn) =
-            converse(shell, ctx, &mut spec, step, |m| accept(m, threads.clone())).await?;
     }
+    .await;
+    let keep = async || {
+        let kept = keep_unfinished_pull_work(shell, dir, pr, &start, &before).await;
+        kept_note(&pr.head_ref, &kept, TryAgain::Unlabel)
+    };
+    let (result, turn, pr_now, read_at) = match ended {
+        Ok(ended) => ended,
+        Err(failure) => return Err(failure.noted(&keep().await)),
+    };
     if !pr_now.is_open() {
         info!(
             pr = pr.number.0,
@@ -1201,9 +1272,9 @@ async fn pull_work(
             replies,
             spec_gaps,
         } => {
-            if git::head(&ws.dir).await.map_err(infra)? != start {
+            if git::head(dir).await.map_err(infra)? != start {
                 store
-                    .push(&ws.dir, &pr.head_ref, lease)
+                    .push(dir, &pr.head_ref, lease)
                     .await
                     .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Unlabel))?;
             }
@@ -1229,24 +1300,28 @@ async fn pull_work(
             question,
             spec_gaps,
         } => {
+            let kept = keep().await;
             file_spec_gaps(shell, &spec_gaps, ticket)
                 .await
-                .map_err(apply)?;
+                .map_err(|e| apply(e).noted(&kept))?;
             Err(Failure::HandBack {
                 reason: format!(
-                    "Blocked on a question the spec cannot decide:\n\n{}",
+                    "Blocked on a question the spec cannot decide:\n\n{}{kept}",
                     question.trim()
                 ),
                 log_tail: None,
             })
         }
-        PullWorkResult::GaveUp { reason } => Err(Failure::HandBack {
-            reason: format!(
-                "The implementer handed the pull request back:\n\n{}",
-                reason.trim()
-            ),
-            log_tail: Some(turn.log_tail),
-        }),
+        PullWorkResult::GaveUp { reason } => {
+            let kept = keep().await;
+            Err(Failure::HandBack {
+                reason: format!(
+                    "The implementer handed the pull request back:\n\n{}{kept}",
+                    reason.trim()
+                ),
+                log_tail: Some(turn.log_tail),
+            })
+        }
     }
 }
 

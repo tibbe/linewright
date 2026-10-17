@@ -128,7 +128,11 @@ review green ones. Linewright fixes failing CI itself.
   to let Linewright carry on. Linewright labels it the same way, with a
   comment, when it cannot get CI green or cannot merge it.
 
-You can push commits to its branch; Linewright keeps them. A pull request
+You can push commits to its branch; Linewright keeps them. When Linewright
+stops or hands the pull request back part way through its work, it pushes the
+work so far to the branch, with what the agent left uncommitted as one commit
+titled "Unfinished work, kept when its run stopped". Its next run on the pull
+request folds that commit into its own. A pull request
 closes the issues it names with `Closes #N`. Edit those out and the issue is
 no longer handled by that pull request, so Linewright works on it again.
 
