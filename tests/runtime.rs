@@ -417,6 +417,34 @@ async fn a_refusal_that_does_not_say_when_the_limit_resets_is_an_infrastructure_
 }
 
 #[tokio::test]
+async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("claude");
+    write_program(
+        &program,
+        "#!/bin/sh\n\
+         cat > /dev/null\n\
+         echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Still reading.\"}]}}'\n\
+         exec sleep 30\n",
+    );
+    let runtime = ClaudeCode {
+        program: program.to_str().unwrap().into(),
+        bash: "/bin/bash".into(),
+        model: None,
+        github_token: None,
+    };
+    let mut session = triage_session(dir.path());
+    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+
+    let error = runtime.start(&session).await.unwrap_err();
+
+    let SessionError::TimedOut { log_tail } = error else {
+        panic!("expected a timeout, got {error:?}");
+    };
+    assert_eq!(log_tail, "Still reading.");
+}
+
+#[tokio::test]
 async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
     let dir = tempfile::tempdir().unwrap();
     let runtime = runtime_streaming(

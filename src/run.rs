@@ -440,6 +440,15 @@ pub fn purpose_name(purpose: &Purpose) -> String {
     }
 }
 
+/// A timeout bounds what a run costs, so a timed-out run is not retried:
+/// its hand-back names the setting that would give the next run longer.
+fn timeout_setting(purpose: &Purpose) -> &'static str {
+    match purpose {
+        Purpose::Work { .. } => "`session-timeout`",
+        Purpose::Workflow(_) => "the workflow's `timeout`",
+    }
+}
+
 fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBuf, Failure> {
     let parent = shell.work_dir.join("sessions").join(purpose_name(purpose));
     std::fs::create_dir_all(&parent)
@@ -555,6 +564,19 @@ async fn take_turn(
             Err(SessionError::UsageLimit { limit, underway }) => (limit, underway),
             Err(SessionError::Infrastructure(reason)) => {
                 return Err(infra(anyhow::anyhow!(reason)));
+            }
+            Err(e @ SessionError::TimedOut { .. }) => {
+                let SessionError::TimedOut { log_tail } = &e else {
+                    unreachable!("matched as a timeout")
+                };
+                return Err(Failure::HandBack {
+                    reason: format!(
+                        "The session ended unexpectedly: {e}. The work may need cutting \
+                         smaller, or {} may need to be longer.",
+                        timeout_setting(&spec.purpose)
+                    ),
+                    log_tail: Some(scrub(log_tail, &spec.dir)),
+                });
             }
             Err(SessionError::Failed { reason, log_tail }) => {
                 return Err(Failure::HandBack {

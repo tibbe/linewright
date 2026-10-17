@@ -346,11 +346,10 @@ async fn a_workflow_file_that_does_not_parse_fails_saying_why() {
 }
 
 #[tokio::test]
-async fn a_session_that_fails_fails_the_run() {
+async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_out() {
     let world = with_workflow("weekly", WEEKLY).await;
     world.runtime.on_workflow(|_| {
-        Err(SessionError::Failed {
-            reason: "it timed out".into(),
+        Err(SessionError::TimedOut {
             log_tail: String::new(),
         })
     });
@@ -365,6 +364,33 @@ async fn a_session_that_fails_fails_the_run() {
     );
 
     assert!(error.contains("it timed out"), "{error}");
+    assert!(
+        error.contains("or the workflow's `timeout` may need to be longer"),
+        "{error}"
+    );
+    assert_eq!(world.runtime.workflow_prompts().len(), 1);
+}
+
+#[tokio::test]
+async fn a_session_that_fails_fails_the_run() {
+    let world = with_workflow("weekly", WEEKLY).await;
+    world.runtime.on_workflow(|_| {
+        Err(SessionError::Failed {
+            reason: "it crashed".into(),
+            log_tail: String::new(),
+        })
+    });
+
+    let error = format!(
+        "{:#}",
+        world
+            .factory
+            .run_workflow(&"weekly".parse().unwrap())
+            .await
+            .unwrap_err()
+    );
+
+    assert!(error.contains("it crashed"), "{error}");
 }
 
 #[tokio::test]

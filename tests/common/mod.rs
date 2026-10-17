@@ -536,6 +536,17 @@ pub fn last_comment(issue: &Issue) -> &str {
     &issue.comments.last().expect("the issue has a comment").body
 }
 
+pub async fn last_pull_comment(world: &World, pr: Number) -> String {
+    world
+        .store
+        .snapshot_pull(pr)
+        .await
+        .comments
+        .pop()
+        .expect("the pull request has a comment")
+        .body
+}
+
 pub fn subject_file(call: &Call) -> String {
     linewright::run::purpose_name(&call.spec.purpose)
 }

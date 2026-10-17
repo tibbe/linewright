@@ -311,8 +311,7 @@ impl ClaudeCode {
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
         let Ok((result, refusal, underway, status)) = outcome else {
-            return Err(SessionError::Failed {
-                reason: "it timed out".into(),
+            return Err(SessionError::TimedOut {
                 log_tail: log.tail(),
             });
         };

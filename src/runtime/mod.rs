@@ -95,6 +95,9 @@ pub enum SessionError {
         /// that it is to be taken again.
         underway: Option<String>,
     },
+    /// Ran past its deadline.
+    #[error("it timed out")]
+    TimedOut { log_tail: String },
     #[error("{reason}")]
     Failed { reason: String, log_tail: String },
 }

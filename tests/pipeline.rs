@@ -1159,17 +1159,7 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
 
 async fn assert_handed_back(world: &World, ticket: Number, pr: Number, comment: &str) {
     assert_eq!(world.store.pull_labels(pr), ["ready-for-human"]);
-    assert_eq!(
-        world
-            .store
-            .snapshot_pull(pr)
-            .await
-            .comments
-            .last()
-            .unwrap()
-            .body,
-        comment
-    );
+    assert_eq!(last_pull_comment(world, pr).await, comment);
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-agent"]);
     assert!(issue.is_assigned(&Login::new(LINEWRIGHT)));
@@ -1227,7 +1217,7 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
     world.rework_asked(pr);
     world.runtime.on(WorkKind::Rework, |_| {
         Err(linewright::runtime::SessionError::Failed {
-            reason: "the session timed out".into(),
+            reason: "it crashed".into(),
             log_tail: String::new(),
         })
     });
@@ -1238,10 +1228,96 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
         &world,
         ticket,
         pr,
-        "The session ended unexpectedly: the session timed out\n\n\
+        "The session ended unexpectedly: it crashed\n\n\
          Remove `ready-for-human` from this pull request to try again.",
     )
     .await;
+}
+
+const TIMED_OUT: &str = "The session ended unexpectedly: it timed out. The work may need \
+                         cutting smaller, or `session-timeout` may need to be longer.";
+
+#[tokio::test]
+async fn a_ticket_whose_session_times_out_is_handed_back_once_saying_to_cut_the_work_or_lengthen_the_timeout()
+ {
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Implement, |_| {
+        Err(linewright::runtime::SessionError::TimedOut {
+            log_tail: "Still reading the spec.".into(),
+        })
+    });
+    let ticket = world
+        .store
+        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+
+    world.poll().await;
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+    let issue = world.issue(ticket);
+    assert_eq!(labels(&issue), ["ready-for-human"]);
+    let comment = last_comment(&issue);
+    assert!(comment.starts_with(TIMED_OUT), "{comment}");
+    assert!(comment.contains("Still reading the spec."), "{comment}");
+}
+
+#[tokio::test]
+async fn a_pull_request_whose_session_times_out_is_handed_back_saying_to_cut_the_work_or_lengthen_the_timeout()
+ {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    world.runtime.on(WorkKind::Rework, |_| {
+        Err(linewright::runtime::SessionError::TimedOut {
+            log_tail: String::new(),
+        })
+    });
+
+    world.poll().await;
+
+    assert_handed_back(
+        &world,
+        ticket,
+        pr,
+        &format!("{TIMED_OUT}\n\nRemove `ready-for-human` from this pull request to try again."),
+    )
+    .await;
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+}
+
+#[tokio::test]
+async fn a_spec_change_whose_session_times_out_is_handed_back_saying_to_cut_the_work_or_lengthen_the_timeout()
+ {
+    let mut world = World::new().await;
+    world.runtime.on(WorkKind::Tickets, |_| {
+        Err(linewright::runtime::SessionError::TimedOut {
+            log_tail: "Still cutting tickets.".into(),
+        })
+    });
+    let spec_pr = world
+        .store
+        .merge_change(
+            "maintainer",
+            "Gadgets",
+            "Adds gadgets.",
+            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
+        )
+        .await
+        .unwrap();
+
+    world.poll().await;
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Tickets).len(), 1);
+    assert!(
+        world
+            .store
+            .pull_labels(spec_pr)
+            .contains(&"ready-for-human".to_string())
+    );
+    let comment = last_pull_comment(&world, spec_pr).await;
+    assert!(comment.starts_with(TIMED_OUT), "{comment}");
+    assert!(comment.contains("Still cutting tickets."), "{comment}");
 }
 
 #[tokio::test]
