@@ -718,7 +718,7 @@ async fn send(
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
         .context("talking to `serve`")?;
-    tokio::spawn(connection);
+    let mut connection = tokio::spawn(connection);
     let mut request = hyper::Request::get(resource).header(header::HOST, "localhost");
     if let Some(id) = last_id {
         request = request.header(LAST_EVENT_ID, id);
@@ -726,10 +726,30 @@ async fn send(
     let request = request
         .body(Empty::<Bytes>::new())
         .context("building the request")?;
-    sender
-        .send_request(request)
-        .await
-        .map_err(|e| request_error(e, "asking `serve`"))
+    // A request sent as the connection fails can be left unanswered, so
+    // the connection ending is a hang-up too:
+    // <https://github.com/hyperium/hyper/issues/4202>. The response is
+    // preferred, as the connection may end once it has given it.
+    tokio::select! {
+        biased;
+        response = sender.send_request(request) => {
+            response.map_err(|e| request_error(e, "asking `serve`"))
+        }
+        ended = &mut connection => Err(connection_ended(ended, "asking `serve`")),
+    }
+}
+
+fn connection_ended(
+    ended: Result<Result<(), hyper::Error>, tokio::task::JoinError>,
+    doing: &'static str,
+) -> RequestError {
+    match ended {
+        Ok(Ok(())) => {
+            RequestError::HungUp(anyhow::anyhow!("`serve` hung up unanswered").context(doing))
+        }
+        Ok(Err(e)) => request_error(e, doing),
+        Err(e) => RequestError::Other(anyhow::Error::new(e).context(doing)),
+    }
 }
 
 fn request_error(e: hyper::Error, doing: &'static str) -> RequestError {
