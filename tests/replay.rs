@@ -133,6 +133,10 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     assert!(read("issues/3.md").contains("- Parent: #2\n"));
     let pull = read("pulls/4.md");
     assert!(pull.contains("- State: ready for review"), "{pull}");
+    assert!(
+        pull.contains(&format!("- Assignees: {LINEWRIGHT}\n")),
+        "{pull}"
+    );
     assert!(read("pulls/4.diff").contains("+gadget"));
     let sessions: Vec<_> = std::fs::read_dir(out.join("sessions/pr-1"))
         .unwrap()

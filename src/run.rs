@@ -15,7 +15,7 @@ use crate::domain::{
 use crate::git::{self, Updated, WorkState};
 use crate::prompts::{self, PullTask, Repo, Ticket};
 use crate::reconcile::{
-    Feedback, Policy, Subject, Work, WorkKind, new_feedback, rebases_to_repair,
+    Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
 use crate::results::{
     self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
@@ -155,7 +155,7 @@ fn push_failure(branch: &str, error: PushError, again: TryAgain) -> Failure {
 #[derive(Clone, Copy)]
 enum TryAgain {
     Relabel,
-    Unlabel,
+    Reassign,
 }
 
 fn refused_push(branch: &str, reason: &str, again: TryAgain) -> String {
@@ -164,7 +164,7 @@ fn refused_push(branch: &str, reason: &str, again: TryAgain) -> String {
             "Grant the permission and apply `{}` again, or make the change yourself.",
             label::READY_FOR_AGENT
         ),
-        TryAgain::Unlabel => "Grant the permission, or make the change yourself.".to_string(),
+        TryAgain::Reassign => "Grant the permission, or make the change yourself.".to_string(),
     };
     format!(
         "GitHub refused to push the branch `{branch}` because Linewright's token lacks a \
@@ -236,7 +236,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
         return Ending::Cancelled;
     }
     if let Subject::Pull(pr) = subject {
-        match still_open(shell, pr).await {
+        match still_worked(shell, pr).await {
             Ok(true) => {}
             Ok(false) => return Ending::Cancelled,
             Err(e) => warn!(
@@ -350,15 +350,30 @@ async fn ticket_of<'a>(
     Ok(Ticket::new(issue, filed_gaps, spec_diff))
 }
 
+/// Whether the pull request is open and Linewright still works it.
+async fn still_worked(shell: &Shell, pr: Number) -> Result<bool> {
+    let pull = shell.store.pull(pr).await?;
+    Ok(stopped(&pull, &shell.policy.linewright).is_none())
+}
+
 async fn still_open(shell: &Shell, pr: Number) -> Result<bool> {
-    let open = shell.store.pull(pr).await?.is_open();
-    if !open {
-        info!(
-            pr = pr.0,
+    Ok(shell.store.pull(pr).await?.is_open())
+}
+
+/// Why work on the pull request stopped while the run worked, if it did.
+fn stopped(pr: &Pull, linewright: &Login) -> Option<PullStop> {
+    let stop = pull_stop(pr, linewright)?;
+    match stop {
+        PullStop::Merged | PullStop::Closed => info!(
+            pr = pr.number.0,
             "the pull request closed while the run worked; nothing pushed or posted"
-        );
+        ),
+        PullStop::Unassigned => info!(
+            pr = pr.number.0,
+            "Linewright was unassigned while the run worked; nothing posted"
+        ),
     }
-    Ok(open)
+    Some(stop)
 }
 
 pub(crate) async fn hand_back(
@@ -397,11 +412,11 @@ async fn hand_back_pull(
     reason: &str,
     log_tail: Option<&str>,
 ) -> Result<()> {
-    shell.store.add_label(pr, label::READY_FOR_HUMAN).await?;
+    shell.store.unassign(pr).await?;
     let body = format!(
-        "{}\n\nRemove `{}` from this pull request to try again.",
+        "{}\n\nAssign @{} to this pull request again to try again.",
         with_log(reason, log_tail),
-        label::READY_FOR_HUMAN
+        shell.policy.linewright
     );
     shell.store.comment(pr, &body).await
 }
@@ -1005,6 +1020,15 @@ async fn implement(
                 })
                 .await
                 .map_err(apply)?;
+            // A pull request Linewright was never assigned to is claimed by
+            // the next poll, so a failed assignment needs no hand-back.
+            if let Err(e) = store.assign(pr).await {
+                warn!(
+                    pr = pr.0,
+                    error = format!("{e:#}"),
+                    "assigning the pull request failed"
+                );
+            }
             if let Some(required) = shell.creation_label().await.map_err(apply)? {
                 store.add_label(pr, &required).await.map_err(apply)?;
             }
@@ -1142,12 +1166,8 @@ async fn pull_work(
             return Ok(());
         }
         let fresh = store.pull(pr.number).await.map_err(infra)?;
-        if !fresh.is_open() {
-            info!(
-                pr = pr.number.0,
-                "the pull request closed while the run worked; nothing pushed"
-            );
-            return Ok(());
+        if stopped(&fresh, linewright).is_some() {
+            return Err(Failure::Cancelled);
         }
         if !late(&new_feedback(&fresh, linewright, ctx.reworked), ctx.as_of).is_empty() {
             info!(
@@ -1159,7 +1179,7 @@ async fn pull_work(
         return store
             .push(&ws.dir, &pr.head_ref, lease)
             .await
-            .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Unlabel));
+            .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Reassign));
     }
     let failures = match task {
         Task::FixCi(names) => store
@@ -1227,7 +1247,9 @@ async fn pull_work(
         loop {
             let read_at = shell.clock.now();
             let pr_now = store.pull(pr.number).await.map_err(infra)?;
-            if !pr_now.is_open() || !matches!(result, PullWorkResult::Done { .. }) {
+            if pull_stop(&pr_now, linewright).is_some()
+                || !matches!(result, PullWorkResult::Done { .. })
+            {
                 return Ok((result, turn, pr_now, read_at));
             }
             let arrived = late(
@@ -1252,18 +1274,15 @@ async fn pull_work(
     .await;
     let keep = async || {
         let kept = keep_unfinished_pull_work(shell, dir, pr, &start, &before).await;
-        kept_note(&pr.head_ref, &kept, TryAgain::Unlabel)
+        kept_note(&pr.head_ref, &kept, TryAgain::Reassign)
     };
     let (result, turn, pr_now, read_at) = match ended {
         Ok(ended) => ended,
         Err(failure) => return Err(failure.noted(&keep().await)),
     };
-    if !pr_now.is_open() {
-        info!(
-            pr = pr.number.0,
-            "the pull request closed while the run worked; nothing pushed"
-        );
-        return Ok(());
+    if stopped(&pr_now, linewright).is_some() {
+        keep().await;
+        return Err(Failure::Cancelled);
     }
     match result {
         PullWorkResult::Done {
@@ -1276,7 +1295,7 @@ async fn pull_work(
                 store
                     .push(dir, &pr.head_ref, lease)
                     .await
-                    .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Unlabel))?;
+                    .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Reassign))?;
             }
             if let Some(body) = pr_body {
                 store

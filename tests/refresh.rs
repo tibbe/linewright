@@ -623,7 +623,8 @@ async fn a_ticket_losing_its_label_or_linewright_while_its_pull_request_is_worke
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn labeling_a_pull_request_ready_for_human_cancels_its_run_and_its_work_until_removed() {
+async fn unassigning_linewright_from_a_pull_request_cancels_its_run_and_its_work_until_reassigned()
+{
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
     world
@@ -634,14 +635,17 @@ async fn labeling_a_pull_request_ready_for_human_cancels_its_run_and_its_work_un
     world.factory.cycle().await.unwrap();
     gate.begun().await;
 
-    world.store.label_as(pr, "ready-for-human").unwrap();
+    world
+        .store
+        .unassign_as("maintainer", pr, "factory")
+        .unwrap();
     let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
 
     assert_eq!(
         actions,
         [Action::Cancel {
             subject: Subject::Pull(pr),
-            reason: format!("{pr} was labeled `ready-for-human`"),
+            reason: format!("factory was unassigned from {pr}"),
         }]
     );
     gate.release();
@@ -661,7 +665,9 @@ async fn labeling_a_pull_request_ready_for_human_cancels_its_run_and_its_work_un
     assert_eq!(world.issue(ticket).comments, []);
 
     world.rework_asked(pr);
-    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.poll().await;
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+    world.store.assign_as(pr, "factory").unwrap();
     world.poll().await;
     assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 2);
 }

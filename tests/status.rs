@@ -554,8 +554,13 @@ fn linewrights_pull_request_is_tracked_with_its_own_waits_and_its_ticket_waits_f
         comments: vec![],
         reviews: vec![],
         threads: vec![],
-        labels: vec!["ready-for-human".into()],
-        label_events: vec![],
+        labels: vec![],
+        assignees: vec![],
+        assignments: vec![Assignment::Unassigned {
+            assignee: Login::new("factory"),
+            actor: Login::new("maintainer"),
+            at: at("2026-10-01T11:59:00Z"),
+        }],
     };
     let unlabeled = Issue {
         labels: vec![],
@@ -570,8 +575,8 @@ fn linewrights_pull_request_is_tracked_with_its_own_waits_and_its_ticket_waits_f
         [
             "#7: in review: #43 (draft, CI failing) — waiting for #43, its pull request, until it \
              is merged or closed — Do the thing",
-            "#43: in review: #43 (draft, CI failing) — waiting for the maintainer: labeled \
-             `ready-for-human`, until they remove it — Do #7",
+            "#43: in review: #43 (draft, CI failing) — waiting for the maintainer: Linewright \
+             is unassigned, until they assign it again — Do #7",
         ]
     );
 }

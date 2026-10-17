@@ -370,20 +370,23 @@ async fn reopening_an_issue_ready_for_agent_claims_it_on_the_delivery() {
 }
 
 #[tokio::test]
-async fn labeling_linewrights_pull_request_reads_it_again_on_the_delivery() {
+async fn assigning_linewrights_pull_request_reads_it_again_on_the_delivery() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
     let served = serve(world, NEVER).await;
 
-    let before_labeled = served.store.items_read();
-    served.store.label_as(pr, "ready-for-human").unwrap();
+    let before_unassigned = served.store.items_read();
+    served
+        .store
+        .unassign_as("maintainer", pr, "factory")
+        .unwrap();
     served.deliver("pull_request", about_pull(pr)).await;
-    eventually(|| served.store.items_read() > before_labeled).await;
+    eventually(|| served.store.items_read() > before_unassigned).await;
 
-    let before_unlabeled = served.store.items_read();
-    served.store.unlabel_as(pr, "ready-for-human").unwrap();
+    let before_assigned = served.store.items_read();
+    served.store.assign_as(pr, "factory").unwrap();
     served.deliver("pull_request", about_pull(pr)).await;
-    eventually(|| served.store.items_read() > before_unlabeled).await;
+    eventually(|| served.store.items_read() > before_assigned).await;
 
     assert_eq!(served.store.snapshots_taken(), 2);
     served.stop().await;

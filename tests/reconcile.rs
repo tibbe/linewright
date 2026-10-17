@@ -346,11 +346,13 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
 }
 
 fn unassigned_by(mut issue: Issue, actor: &str, minute: i64) -> Issue {
-    issue.events.push(IssueEvent::Unassigned {
-        assignee: Login::new(LINEWRIGHT),
-        actor: Login::new(actor),
-        at: t(minute),
-    });
+    issue
+        .events
+        .push(IssueEvent::Assignment(Assignment::Unassigned {
+            assignee: Login::new(LINEWRIGHT),
+            actor: Login::new(actor),
+            at: t(minute),
+        }));
     issue
 }
 
@@ -482,15 +484,15 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
 }
 
 #[test]
-fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_labeled_ready_for_human() {
+fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_linewright_is_unassigned() {
     let mut merged = pull(20, 2);
     merged.state = PullState::Merged { at: t(5) };
     let mut closed = pull(21, 3);
     closed.state = PullState::Closed { at: t(5) };
-    let handed_back = handed_back_at(pull(22, 4), 5, None);
-    let still_wanted = pull(23, 6);
+    let unassigned = unassigned_at(pull(22, 4), "maintainer", 5, None);
+    let still_wanted = labeled_pull(pull(23, 6), label::READY_FOR_HUMAN);
     let mut world = snapshot(vec![ticket(2), ticket(3), ticket(4), ticket(6)]);
-    world.pulls = vec![merged, closed, handed_back, still_wanted];
+    world.pulls = vec![merged, closed, unassigned, still_wanted];
     let runs = [20, 21, 22, 23, 24].map(|pr| live_on_pull(pr, WorkKind::Rework));
 
     let cancelled: Vec<(Subject, String)> = reconcile(
@@ -513,7 +515,7 @@ fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_labeled_ready_fo
         [
             (20, "#20 was merged"),
             (21, "#21 was closed"),
-            (22, "#22 was labeled `ready-for-human`"),
+            (22, "factory was unassigned from #22"),
             (24, "#24 is no longer open"),
         ]
         .map(|(n, reason)| (Subject::Pull(Number(n)), reason.to_string()))
@@ -522,14 +524,70 @@ fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_labeled_ready_fo
 }
 
 #[test]
-fn a_pull_request_labeled_ready_for_human_starts_nothing_and_waits_for_the_maintainer() {
-    let mut pr = handed_back_at(pull(20, 2), 5, None);
-    pr.checks = vec![check("test", CheckState::Failed)];
-    pr.comments = vec![comment("maintainer", 6, "Let me look at this.")];
-    let world = in_review(pr);
+fn a_pull_request_linewright_is_unassigned_from_starts_nothing_and_waits_for_the_maintainer() {
+    for by in ["maintainer", LINEWRIGHT] {
+        let mut pr = unassigned_at(pull(20, 2), by, 5, None);
+        pr.checks = vec![check("test", CheckState::Failed)];
+        pr.comments = vec![comment("maintainer", 6, "Let me look at this.")];
+        let world = in_review(pr);
 
-    assert_eq!(at(&world, 10), vec![]);
-    assert_eq!(waits_on(&world, 20), [Wait::HandedBack]);
+        assert_eq!(at(&world, 10), vec![]);
+        assert_eq!(waits_on(&world, 20), [Wait::Unassigned]);
+    }
+}
+
+#[test]
+fn a_pull_request_labeled_ready_for_human_is_worked_as_without_the_label() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Failed)];
+    let world = in_review(labeled_pull(pr, label::READY_FOR_HUMAN));
+
+    assert_eq!(at(&world, 10), vec![fix_ci(2, 20)]);
+}
+
+#[test]
+fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Failed)];
+    pr.assignees.clear();
+    pr.assignments.clear();
+    let world = in_review(pr);
+    let runs = [live_on_pull(20, WorkKind::FixCi)];
+
+    assert_eq!(
+        at(&world, 10),
+        vec![Action::ClaimPull { pr: Number(20) }, fix_ci(2, 20)]
+    );
+    assert_eq!(
+        reconcile(
+            &world,
+            &runs,
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &policy(),
+        ),
+        vec![Action::ClaimPull { pr: Number(20) }]
+    );
+}
+
+#[test]
+fn a_pull_request_assigned_to_someone_else_alone_is_claimed_once() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Passed)];
+    pr.assignees = vec![Login::new("maintainer")];
+    pr.assignments = vec![Assignment::Assigned {
+        assignee: Login::new("maintainer"),
+        at: t(2),
+    }];
+
+    assert_eq!(
+        at(&in_review(pr), 10),
+        vec![
+            Action::ClaimPull { pr: Number(20) },
+            Action::MarkReady { pr: Number(20) }
+        ]
+    );
 }
 
 #[test]
@@ -732,7 +790,11 @@ fn pull(number: u64, closes: u64) -> Pull {
         reviews: vec![],
         threads: vec![],
         labels: vec![],
-        label_events: vec![],
+        assignees: vec![Login::new(LINEWRIGHT)],
+        assignments: vec![Assignment::Assigned {
+            assignee: Login::new(LINEWRIGHT),
+            at: t(1),
+        }],
     }
 }
 
@@ -859,8 +921,7 @@ fn fix_attempts_count_only_the_pull_requests_own_fix_runs_since_its_last_rework(
 }
 
 #[test]
-fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once_the_label_is_removed()
- {
+fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once_reassigned() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("e2e", CheckState::Pending)];
     pr.comments = vec![comment(
@@ -868,7 +929,7 @@ fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once
         6 * 60 + 3,
         "CI did not complete within 6h: `e2e` still running.",
     )];
-    let world = in_review(handed_back_at(pr, 6 * 60 + 3, Some(6 * 60 + 5)));
+    let world = in_review(unassigned_at(pr, LINEWRIGHT, 6 * 60 + 3, Some(6 * 60 + 5)));
 
     assert_eq!(at(&world, 6 * 60 + 10), vec![]);
     assert!(matches!(
@@ -881,10 +942,10 @@ fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once
 }
 
 #[test]
-fn removing_ready_for_human_gives_the_pull_request_fresh_ci_fix_attempts() {
+fn reassigning_linewright_gives_the_pull_request_fresh_ci_fix_attempts() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Failed)];
-    let world = in_review(handed_back_at(pr, 8, Some(9)));
+    let world = in_review(unassigned_at(pr, LINEWRIGHT, 8, Some(9)));
     let fixed = [done(20, WorkKind::FixCi, 3), done(20, WorkKind::FixCi, 6)];
 
     assert_eq!(
@@ -898,16 +959,31 @@ fn removing_ready_for_human_gives_the_pull_request_fresh_ci_fix_attempts() {
 }
 
 #[test]
-fn removing_ready_for_human_from_a_pull_request_a_rework_handed_back_addresses_its_feedback_again()
-{
+fn reassigning_linewright_to_a_pull_request_a_rework_handed_back_addresses_its_feedback_again() {
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![
         comment("maintainer", 4, "Please rename `foo`."),
         comment(LINEWRIGHT, 5, "The run failed twice on its infrastructure."),
     ];
-    let world = in_review(handed_back_at(pr, 5, Some(7)));
+    let world = in_review(unassigned_at(pr, LINEWRIGHT, 5, Some(7)));
 
     assert_eq!(at(&world, 10), vec![rework(2, 20)]);
+}
+
+#[test]
+fn reassigning_linewright_reworks_for_the_feedback_left_while_it_was_unassigned() {
+    let mut pr = ready(pull(20, 2));
+    pr.reviews = vec![review(
+        "maintainer",
+        ReviewState::ChangesRequested,
+        "Rename `foo`.",
+        6,
+    )];
+    let paused = in_review(unassigned_at(pr.clone(), "maintainer", 5, None));
+    let resumed = in_review(unassigned_at(pr, "maintainer", 5, Some(8)));
+
+    assert_eq!(at(&paused, 10), vec![]);
+    assert_eq!(at(&resumed, 10), vec![rework(2, 20)]);
 }
 
 #[test]
@@ -1145,16 +1221,16 @@ fn a_pull_request_behind_is_rebased_again_though_a_rebase_was_tried_at_its_head(
 }
 
 #[test]
-fn a_pull_request_handed_back_since_a_rebase_was_tried_tries_it_again_once_the_label_is_removed() {
-    let still_labeled = in_review(handed_back_at(not_rebaseable(), 7, None));
-    let unlabeled = in_review(handed_back_at(not_rebaseable(), 7, Some(8)));
+fn a_pull_request_handed_back_since_a_rebase_was_tried_tries_it_again_once_reassigned() {
+    let unassigned = in_review(unassigned_at(not_rebaseable(), LINEWRIGHT, 7, None));
+    let reassigned = in_review(unassigned_at(not_rebaseable(), LINEWRIGHT, 7, Some(8)));
 
     assert_eq!(
-        deciding(&still_labeled, &remembering(tried("abc123", 5)), &policy()),
+        deciding(&unassigned, &remembering(tried("abc123", 5)), &policy()),
         vec![]
     );
     assert_eq!(
-        deciding(&unlabeled, &remembering(tried("abc123", 5)), &policy()),
+        deciding(&reassigned, &remembering(tried("abc123", 5)), &policy()),
         rebase_update()
     );
 }
@@ -1715,29 +1791,35 @@ fn with_auto_merge_failed_merges_of_another_pull_request_do_not_count() {
     );
 }
 
-/// `pr` labeled `ready-for-human` at `applied`, and the label removed at
-/// `removed` if it was.
-fn handed_back_at(mut pr: Pull, applied: i64, removed: Option<i64>) -> Pull {
-    pr.label_events.push(LabelEvent {
-        label: label::READY_FOR_HUMAN.into(),
-        change: LabelChange::Applied,
-        at: t(applied),
+/// `pr` with Linewright unassigned by `actor` at `unassigned`, and assigned
+/// again at `reassigned` if it was.
+fn unassigned_at(mut pr: Pull, actor: &str, unassigned: i64, reassigned: Option<i64>) -> Pull {
+    let linewright = Login::new(LINEWRIGHT);
+    pr.assignees.retain(|a| a != &linewright);
+    pr.assignments.push(Assignment::Unassigned {
+        assignee: linewright.clone(),
+        actor: Login::new(actor),
+        at: t(unassigned),
     });
-    match removed {
-        Some(removed) => pr.label_events.push(LabelEvent {
-            label: label::READY_FOR_HUMAN.into(),
-            change: LabelChange::Removed,
-            at: t(removed),
-        }),
-        None => pr.labels.push(label::READY_FOR_HUMAN.into()),
+    if let Some(reassigned) = reassigned {
+        pr.assignees.push(linewright.clone());
+        pr.assignments.push(Assignment::Assigned {
+            assignee: linewright,
+            at: t(reassigned),
+        });
     }
     pr
 }
 
+fn labeled_pull(mut pr: Pull, label: &str) -> Pull {
+    pr.labels.push(label.into());
+    pr
+}
+
 #[test]
-fn with_auto_merge_removing_ready_for_human_from_a_pull_request_handed_back_for_failed_merges_tries_the_merge_again()
+fn with_auto_merge_reassigning_linewright_to_a_pull_request_handed_back_for_failed_merges_tries_the_merge_again()
  {
-    let world = in_review(handed_back_at(ready(pull(20, 2)), 12, Some(15)));
+    let world = in_review(unassigned_at(ready(pull(20, 2)), LINEWRIGHT, 12, Some(15)));
     let failed = [
         failed_merge_at(20, "Pull Request is not mergeable", 8),
         failed_merge_at(20, "Pull Request is not mergeable", 11),
@@ -2495,10 +2577,12 @@ fn pull_closing_42_and_12(label: &str) -> Snapshot {
 
 fn assigned_at(mut issue: Issue, minute: i64) -> Issue {
     issue.assignees.push(Login::new(LINEWRIGHT));
-    issue.events.push(IssueEvent::Assigned {
-        assignee: Login::new(LINEWRIGHT),
-        at: t(minute),
-    });
+    issue
+        .events
+        .push(IssueEvent::Assignment(Assignment::Assigned {
+            assignee: Login::new(LINEWRIGHT),
+            at: t(minute),
+        }));
     issue
 }
 

@@ -27,12 +27,6 @@ acts next.
 - `ready-for-human`: a person must decide or help. Answer by applying
   `ready-for-agent` or `needs-triage`.
 
-### On Linewright's pull requests
-
-- `ready-for-human`: Linewright has stopped and needs you, or you paused it.
-  Apply it to pause Linewright's work on the pull request; remove it to let
-  Linewright carry on.
-
 ### Other labels
 
 - `bug`, `enhancement`: the category, in repositories without issue types.
@@ -52,7 +46,8 @@ clear.
 
 Besides labels, assigning and pull requests say where an issue is. An issue
 assigned to Linewright is one it is working on, and an issue with an open
-pull request that closes it is in review.
+pull request that closes it is in review. Linewright's pull requests carry no
+such label: Linewright works one while it is assigned to it.
 
 ## Reporting an issue
 
@@ -124,9 +119,12 @@ review green ones. Linewright fixes failing CI itself.
   commented on.
 - **Reject it** by closing it. Linewright takes that as no, and labels the
   issue `ready-for-human`.
-- **Pause it** by labeling the pull request `ready-for-human`; remove the label
-  to let Linewright carry on. Linewright labels it the same way, with a
-  comment, when it cannot get CI green or cannot merge it.
+- **Pause it** by unassigning Linewright from the pull request. Linewright
+  stops any run on it and leaves it as it is. Assign Linewright again to let
+  it carry on: it addresses the comments, reviews, pushes and CI that came in
+  meanwhile, with fresh attempts at fixing CI and merging.
+- When Linewright cannot get CI green or cannot merge it, it unassigns itself
+  and comments why. Assign it again to have it try again.
 
 You can push commits to its branch; Linewright keeps them. When Linewright
 stops or hands the pull request back part way through its work, it pushes the

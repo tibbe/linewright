@@ -543,10 +543,9 @@ pub(crate) fn describe_wait(wait: &Wait) -> String {
                 .map(|(answer, _)| format!("`{answer}`"))
                 .join(" or ")
         ),
-        Wait::HandedBack => format!(
-            "the maintainer: labeled `{}`, until they remove it",
-            label::READY_FOR_HUMAN
-        ),
+        Wait::Unassigned => {
+            "the maintainer: Linewright is unassigned, until they assign it again".into()
+        }
         Wait::RequiredLabel { label } => {
             format!("the maintainer: to label it `{label}`, the required label")
         }

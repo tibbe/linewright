@@ -13,10 +13,10 @@ use super::{
 };
 use crate::clock::Clock;
 use crate::domain::{
-    BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue,
-    IssueEvent, LabelChange, LabelEvent, Linked, Login, MergeMethod, MergeMethods, Mergeability,
-    MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review,
-    ReviewState, Snapshot, Thread, TicketBranch, TicketBranchName, Timestamp, closing_references,
+    Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment,
+    Filed, Issue, IssueEvent, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull,
+    Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState,
+    Snapshot, Thread, TicketBranch, TicketBranchName, Timestamp, closing_references,
 };
 use crate::git;
 
@@ -77,7 +77,8 @@ struct PullRecord {
     head_ref: String,
     state: PullState,
     labels: Vec<String>,
-    label_events: Vec<LabelEvent>,
+    assignees: Vec<Login>,
+    assignments: Vec<Assignment>,
     pushes: Vec<Push>,
     comments: Vec<Comment>,
     reviews: Vec<Review>,
@@ -262,29 +263,20 @@ impl LocalStore {
     }
 
     pub fn unlabel_as(&self, number: Number, label: &str) -> Result<()> {
-        let now = self.now();
-        self.state().remove_label(number, label, now)
+        self.state().remove_label(number, label)
     }
 
-    pub fn assign_as(&self, issue: Number, login: &str) -> Result<()> {
+    /// Assigns `login` to the issue or pull request #`number`.
+    pub fn assign_as(&self, number: Number, login: &str) -> Result<()> {
         let now = self.now();
-        let mut state = self.state();
-        let issue = &mut state.issue_mut(issue)?.issue;
-        let login = Login::new(login);
-        if !issue.is_assigned(&login) {
-            issue.assignees.push(login.clone());
-            issue.events.push(IssueEvent::Assigned {
-                assignee: login,
-                at: now,
-            });
-        }
-        Ok(())
+        self.state().assign(number, &Login::new(login), now)
     }
 
-    pub fn unassign_as(&self, actor: &str, issue: Number, login: &str) -> Result<()> {
+    /// `actor` unassigns `login` from the issue or pull request #`number`.
+    pub fn unassign_as(&self, actor: &str, number: Number, login: &str) -> Result<()> {
         let now = self.now();
         self.state()
-            .unassign(issue, &Login::new(login), &Login::new(actor), now)
+            .unassign(number, &Login::new(login), &Login::new(actor), now)
     }
 
     pub fn close_issue_as(&self, issue: Number) -> Result<()> {
@@ -831,7 +823,8 @@ impl LocalStore {
             reviews: record.reviews,
             threads: record.threads,
             labels: record.labels,
-            label_events: record.label_events,
+            assignees: record.assignees,
+            assignments: record.assignments,
         })
     }
 
@@ -967,51 +960,71 @@ impl State {
             let pull = self.pull_mut(number)?;
             if !pull.has_label(label) {
                 pull.labels.push(label.into());
-                pull.label_events.push(LabelEvent {
-                    label: label.into(),
-                    change: LabelChange::Applied,
-                    at: now,
-                });
             }
         }
         Ok(())
     }
 
-    fn remove_label(&mut self, number: Number, label: &str, now: Timestamp) -> Result<()> {
+    fn remove_label(&mut self, number: Number, label: &str) -> Result<()> {
         if let Some(issue) = self.issues.get_mut(&number) {
             issue.issue.labels.retain(|l| l != label);
         } else {
-            let pull = self.pull_mut(number)?;
-            if pull.has_label(label) {
-                pull.labels.retain(|l| l != label);
-                pull.label_events.push(LabelEvent {
-                    label: label.into(),
-                    change: LabelChange::Removed,
-                    at: now,
-                });
-            }
+            self.pull_mut(number)?.labels.retain(|l| l != label);
         }
         Ok(())
+    }
+
+    fn assign(&mut self, number: Number, login: &Login, now: Timestamp) -> Result<()> {
+        let assigned = Assignment::Assigned {
+            assignee: login.clone(),
+            at: now,
+        };
+        self.change_assignees(number, assigned)
     }
 
     fn unassign(
         &mut self,
-        issue: Number,
+        number: Number,
         login: &Login,
         actor: &Login,
         now: Timestamp,
     ) -> Result<()> {
-        let issue = &mut self.issue_mut(issue)?.issue;
-        if issue.is_assigned(login) {
-            issue.assignees.retain(|a| a != login);
-            issue.events.push(IssueEvent::Unassigned {
-                assignee: login.clone(),
-                actor: actor.clone(),
-                at: now,
-            });
+        let unassigned = Assignment::Unassigned {
+            assignee: login.clone(),
+            actor: actor.clone(),
+            at: now,
+        };
+        self.change_assignees(number, unassigned)
+    }
+
+    /// Records `change` on the issue or pull request #`number`, unless it
+    /// changes nothing.
+    fn change_assignees(&mut self, number: Number, change: Assignment) -> Result<()> {
+        if let Some(record) = self.issues.get_mut(&number) {
+            let issue = &mut record.issue;
+            if changed(&mut issue.assignees, &change) {
+                issue.events.push(IssueEvent::Assignment(change));
+            }
+        } else {
+            let pull = self.pull_mut(number)?;
+            if changed(&mut pull.assignees, &change) {
+                pull.assignments.push(change);
+            }
         }
         Ok(())
     }
+}
+
+/// Applies `change` to `assignees`, returning whether it changed them.
+fn changed(assignees: &mut Vec<Login>, change: &Assignment) -> bool {
+    let assignee = change.assignee();
+    let assigned = assignees.contains(assignee);
+    match change {
+        Assignment::Assigned { .. } if !assigned => assignees.push(assignee.clone()),
+        Assignment::Unassigned { .. } if assigned => assignees.retain(|a| a != assignee),
+        Assignment::Assigned { .. } | Assignment::Unassigned { .. } => return false,
+    }
+    true
 }
 
 impl PullRecord {
@@ -1061,7 +1074,8 @@ impl PullRecord {
             head_ref: head_ref.into(),
             state: PullState::Open { draft: true },
             labels: vec![],
-            label_events: vec![],
+            assignees: vec![],
+            assignments: vec![],
             pushes: vec![],
             comments: vec![],
             reviews: vec![],
@@ -1361,20 +1375,21 @@ impl Store for LocalStore {
     }
 
     async fn remove_label(&self, number: Number, label: &str) -> Result<()> {
-        let now = self.now();
-        self.state().remove_label(number, label, now)
+        self.state().remove_label(number, label)
     }
 
-    async fn assign(&self, issue: Number) -> Result<()> {
-        let linewright = self.state().linewright.clone();
-        self.assign_as(issue, linewright.as_str())
-    }
-
-    async fn unassign(&self, issue: Number) -> Result<()> {
+    async fn assign(&self, number: Number) -> Result<()> {
         let now = self.now();
         let mut state = self.state();
         let linewright = state.linewright.clone();
-        state.unassign(issue, &linewright, &linewright, now)
+        state.assign(number, &linewright, now)
+    }
+
+    async fn unassign(&self, number: Number) -> Result<()> {
+        let now = self.now();
+        let mut state = self.state();
+        let linewright = state.linewright.clone();
+        state.unassign(number, &linewright, &linewright, now)
     }
 
     async fn comment(&self, number: Number, body: &str) -> Result<()> {
@@ -1581,10 +1596,15 @@ fn render_pull(pull: &Pull) -> String {
     };
     let _ = writeln!(
         out,
-        "# {} {}\n\n- State: {state}\n- Author: @{}\n- Branch: `{}`\n- Closes: {}\n- Checks: {}\n\n{}\n",
+        "# {} {}\n\n- State: {state}\n- Author: @{}\n- Assignees: {}\n- Branch: `{}`\n- Closes: {}\n- Checks: {}\n\n{}\n",
         pull.number,
         pull.title,
         pull.author,
+        pull.assignees
+            .iter()
+            .map(Login::as_str)
+            .collect::<Vec<_>>()
+            .join(", "),
         pull.head_ref,
         pull.closes
             .iter()

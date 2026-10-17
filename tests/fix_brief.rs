@@ -41,7 +41,8 @@ fn pull() -> Pull {
         reviews: vec![],
         threads: vec![],
         labels: vec![],
-        label_events: vec![],
+        assignees: vec![Login::new("factory")],
+        assignments: vec![],
     }
 }
 

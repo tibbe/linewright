@@ -1145,23 +1145,32 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
         &world,
         ticket,
         pr,
-        "`test` still failing after 2 fix attempts.\n\nRemove \
-         `ready-for-human` from this pull request to try again.",
+        "`test` still failing after 2 fix attempts.\n\nAssign @factory to this pull \
+         request again to try again.",
     )
     .await;
 
-    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.store.assign_as(pr, LINEWRIGHT).unwrap();
     world.poll().await;
 
     assert_eq!(
         world.runtime.prompts(WorkKind::FixCi).len(),
         3,
-        "removing the label gives fresh fix attempts"
+        "reassigning Linewright gives fresh fix attempts"
     );
 }
 
+async fn linewright_assigned(world: &World, pr: Number) -> bool {
+    world
+        .store
+        .snapshot_pull(pr)
+        .await
+        .is_assigned(&Login::new(LINEWRIGHT))
+}
+
 async fn assert_handed_back(world: &World, ticket: Number, pr: Number, comment: &str) {
-    assert_eq!(world.store.pull_labels(pr), ["ready-for-human"]);
+    assert!(!linewright_assigned(world, pr).await);
+    assert!(world.store.pull_labels(pr).is_empty());
     assert_eq!(last_pull_comment(world, pr).await, comment);
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-agent"]);
@@ -1176,7 +1185,7 @@ async fn assert_handed_back(world: &World, ticket: Number, pr: Number, comment: 
 }
 
 #[tokio::test]
-async fn ci_that_does_not_complete_in_time_hands_the_pull_request_back_and_unlabeling_waits_again()
+async fn ci_that_does_not_complete_in_time_hands_the_pull_request_back_and_reassigning_waits_again()
 {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -1195,22 +1204,22 @@ async fn ci_that_does_not_complete_in_time_hands_the_pull_request_back_and_unlab
         &world,
         ticket,
         pr,
-        "CI did not complete within 6h: `e2e` still running.\n\nRemove \
-         `ready-for-human` from this pull request to try again.",
+        "CI did not complete within 6h: `e2e` still running.\n\nAssign @factory to \
+         this pull request again to try again.",
     )
     .await;
 
     world.clock.advance(chrono::TimeDelta::hours(1));
-    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.store.assign_as(pr, LINEWRIGHT).unwrap();
     world.clock.advance(chrono::TimeDelta::hours(5));
     world.poll().await;
 
-    assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
+    assert!(linewright_assigned(&world, pr).await);
     world
         .clock
         .advance(chrono::TimeDelta::hours(1) + chrono::TimeDelta::minutes(1));
     world.poll().await;
-    assert_eq!(world.store.pull_labels(pr), ["ready-for-human"]);
+    assert!(!linewright_assigned(&world, pr).await);
 }
 
 #[tokio::test]
@@ -1232,9 +1241,16 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
         ticket,
         pr,
         "The session ended unexpectedly: it crashed\n\n\
-         Remove `ready-for-human` from this pull request to try again.",
+         Assign @factory to this pull request again to try again.",
     )
     .await;
+    world.factory.settle().await;
+    assert_eq!(
+        world.factory.cycle().await.unwrap(),
+        [],
+        "a replay ends once its pull request is handed back"
+    );
+    assert!(world.factory.is_idle());
 }
 
 const TIMED_OUT: &str = "The session ended unexpectedly: it timed out. The work may need \
@@ -1278,13 +1294,7 @@ async fn a_pull_request_whose_session_times_out_is_handed_back_saying_to_cut_the
 
     world.poll().await;
 
-    assert_handed_back(
-        &world,
-        ticket,
-        pr,
-        &format!("{TIMED_OUT}\n\nRemove `ready-for-human` from this pull request to try again."),
-    )
-    .await;
+    assert_handed_back(&world, ticket, pr, &format!("{TIMED_OUT}{TRY_AGAIN}")).await;
     assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
 }
 
@@ -1336,7 +1346,7 @@ async fn a_pull_request_closed_while_its_run_works_gets_no_hand_back() {
 
     world.poll().await;
 
-    assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
+    assert!(linewright_assigned(&world, pr).await);
     assert!(
         !world
             .store
@@ -1387,6 +1397,18 @@ async fn a_branch_that_changes_the_spec_is_pushed_and_its_pull_request_opened() 
         "# Spec\n\nRewritten.\n"
     );
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
+}
+
+#[tokio::test]
+async fn a_pull_request_linewright_opens_is_assigned_to_it() {
+    let mut world = World::new().await;
+
+    let (_, pr) = world.ticket_in_review().await;
+
+    assert_eq!(
+        world.store.snapshot_pull(pr).await.assignees,
+        [Login::new(LINEWRIGHT)]
+    );
 }
 
 #[tokio::test]
@@ -2105,7 +2127,7 @@ fn timed_out() -> Result<String, linewright::runtime::SessionError> {
     })
 }
 
-const TRY_AGAIN: &str = "\n\nRemove `ready-for-human` from this pull request to try again.";
+const TRY_AGAIN: &str = "\n\nAssign @factory to this pull request again to try again.";
 
 #[tokio::test]
 async fn a_timed_out_rework_leaves_its_uncommitted_edits_on_the_pull_requests_branch_as_an_unfinished_commit()
@@ -2203,7 +2225,7 @@ async fn a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_unc
 
         let branch = world.store.snapshot_pull(pr).await.head_ref;
         assert_pull_edits_kept_as_unfinished(&world, &branch).await;
-        assert_eq!(world.store.pull_labels(pr), ["ready-for-human"]);
+        assert!(!linewright_assigned(&world, pr).await);
         let comment = last_pull_comment(&world, pr).await;
         assert!(comment.contains(says), "{comment}");
         assert!(comment.contains(&kept_on(&branch)), "{comment}");
@@ -2238,14 +2260,22 @@ async fn rework_cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_cancelled_rework_whose_pull_request_is_open_leaves_its_uncommitted_edits_as_an_unfinished_commit()
+async fn a_rework_cancelled_by_unassigning_linewright_keeps_its_edits_as_an_unfinished_commit_and_posts_and_starts_nothing()
  {
     let mut world = World::new().await;
 
     let pr = rework_cancelled_with_edits(&mut world, |world, pr| {
-        world.store.label_as(pr, "ready-for-human").unwrap();
+        world
+            .store
+            .unassign_as("maintainer", pr, LINEWRIGHT)
+            .unwrap();
     })
     .await;
+    world
+        .store
+        .comment_as("maintainer", pr, "I'll take it from here.")
+        .unwrap();
+    world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
     assert_pull_edits_kept_as_unfinished(&world, &view.head_ref).await;
@@ -2256,6 +2286,7 @@ async fn a_cancelled_rework_whose_pull_request_is_open_leaves_its_uncommitted_ed
             .any(|c| c.author == Login::new(LINEWRIGHT)),
         "a cancelled run posts nothing"
     );
+    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2364,7 +2395,7 @@ async fn the_next_rework_is_told_to_fold_in_the_unfinished_commit_and_its_done_i
         json(json!({"outcome": "done", "comment": "Renamed."}))
     });
 
-    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.store.assign_as(pr, LINEWRIGHT).unwrap();
     world
         .store
         .comment_as("maintainer", pr, "Carry on.")
@@ -3288,7 +3319,7 @@ async fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_a
 }
 
 #[tokio::test]
-async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_and_unlabeling_merges_it()
+async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_and_reassigning_merges_it()
  {
     use linewright::domain::PullState;
 
@@ -3320,8 +3351,8 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
         pr,
         &format!(
             "Merging {pr} failed twice. GitHub's reason: \
-             Head branch was modified. Review and try the merge again.\n\nRemove \
-             `ready-for-human` from this pull request to try again."
+             Head branch was modified. Review and try the merge again.\n\nAssign \
+             @factory to this pull request again to try again."
         ),
     )
     .await;
@@ -3331,14 +3362,13 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
     );
 
     world.clock.advance(chrono::TimeDelta::minutes(1));
-    world.store.unlabel_as(pr, "ready-for-human").unwrap();
+    world.store.assign_as(pr, LINEWRIGHT).unwrap();
     world.clock.advance(chrono::TimeDelta::minutes(1));
     world.poll().await;
 
-    assert_eq!(
-        world.store.pull_labels(pr),
-        Vec::<String>::new(),
-        "a failure after the label is removed is retried, not handed back"
+    assert!(
+        linewright_assigned(&world, pr).await,
+        "a failure after Linewright is reassigned is retried, not handed back"
     );
 
     world.store.accept_merges(pr);
@@ -3678,8 +3708,8 @@ async fn a_rework_push_refused_for_a_missing_permission_hands_the_pull_request_b
         &format!(
             "GitHub refused to push the branch `{head}` because \
              Linewright's token lacks a permission. GitHub's reason: {WORKFLOW_REFUSAL}\n\nThe \
-             work was not kept. Grant the permission, or make the change yourself.\n\nRemove \
-             `ready-for-human` from this pull request to try again."
+             work was not kept. Grant the permission, or make the change yourself.\n\nAssign \
+             @factory to this pull request again to try again."
         ),
     )
     .await;
@@ -3701,8 +3731,8 @@ async fn a_blocking_spec_gap_in_a_pull_request_run_hands_the_pull_request_back()
         ticket,
         pr,
         "Blocked on a question the spec cannot decide:\n\nShould \
-         renamed widgets keep their old name?\n\nRemove `ready-for-human` from this pull request \
-         to try again.",
+         renamed widgets keep their old name?\n\nAssign @factory to this pull request \
+         again to try again.",
     )
     .await;
 }

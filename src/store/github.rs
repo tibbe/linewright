@@ -16,10 +16,10 @@ use super::{
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
-    BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment, Filed, Issue,
-    IssueEvent, JobLog, LabelChange, LabelEvent, Linked, Login, MergeMethod, Mergeability,
-    MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review,
-    ReviewState, Snapshot, Thread, TicketBranch, TicketBranchName, Timestamp, label,
+    Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment,
+    Filed, Issue, IssueEvent, JobLog, Linked, Login, MergeMethod, Mergeability, MergedPull, Number,
+    Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState, Snapshot,
+    Thread, TicketBranch, TicketBranchName, Timestamp, label,
 };
 use crate::git;
 
@@ -949,6 +949,20 @@ fn tracking_issues_among(
         .collect()
 }
 
+macro_rules! assignment_fields {
+    () => {
+        "... on AssignedEvent {
+        createdAt
+        assignee { __typename ... on Actor { login } }
+      }
+      ... on UnassignedEvent {
+        createdAt
+        actor { __typename login }
+        assignee { __typename ... on Actor { login } }
+      }"
+    };
+}
+
 macro_rules! labeling_fields {
     () => {
         "createdAt label { name }"
@@ -982,15 +996,9 @@ const ISSUE_FIELDS: &str = concat!(
       ... on LabeledEvent { ",
     labeling_fields!(),
     " }
-      ... on AssignedEvent {
-        createdAt
-        assignee { __typename ... on Actor { login } }
-      }
-      ... on UnassignedEvent {
-        createdAt
-        actor { __typename login }
-        assignee { __typename ... on Actor { login } }
-      }
+      ",
+    assignment_fields!(),
+    "
     }
   }
 }"
@@ -1032,17 +1040,54 @@ struct GqlClosingPull {
 enum GqlEvent {
     #[serde(rename = "LabeledEvent")]
     Labeled(GqlLabeling),
-    #[serde(rename = "AssignedEvent", rename_all = "camelCase")]
-    Assigned {
-        created_at: Timestamp,
-        assignee: Option<Value>,
-    },
-    #[serde(rename = "UnassignedEvent", rename_all = "camelCase")]
-    Unassigned {
-        created_at: Timestamp,
-        actor: Option<Actor>,
-        assignee: Option<Value>,
-    },
+    #[serde(untagged)]
+    Assignment(GqlAssignment),
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum GqlAssignment {
+    #[serde(rename = "AssignedEvent")]
+    Assigned(GqlAssigned),
+    #[serde(rename = "UnassignedEvent")]
+    Unassigned(GqlUnassigned),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlAssigned {
+    created_at: Timestamp,
+    assignee: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlUnassigned {
+    created_at: Timestamp,
+    actor: Option<Actor>,
+    assignee: Option<Value>,
+}
+
+/// `None` for an assignee with no login, such as a team.
+fn assignee(value: Option<Value>) -> Option<Login> {
+    let actor: Actor = serde_json::from_value(value?).ok()?;
+    Some(login(Some(actor)))
+}
+
+impl GqlAssignment {
+    fn read(self) -> Option<Assignment> {
+        Some(match self {
+            GqlAssignment::Assigned(e) => Assignment::Assigned {
+                assignee: assignee(e.assignee)?,
+                at: e.created_at,
+            },
+            GqlAssignment::Unassigned(e) => Assignment::Unassigned {
+                assignee: assignee(e.assignee)?,
+                actor: login(e.actor),
+                at: e.created_at,
+            },
+        })
+    }
 }
 
 impl GqlIssue {
@@ -1071,28 +1116,7 @@ impl GqlIssue {
                     label: labeling.label.name,
                     at: labeling.created_at,
                 }),
-                GqlEvent::Assigned {
-                    created_at,
-                    assignee,
-                } => {
-                    let assignee: Actor = serde_json::from_value(assignee?).ok()?;
-                    Some(IssueEvent::Assigned {
-                        assignee: login(Some(assignee)),
-                        at: created_at,
-                    })
-                }
-                GqlEvent::Unassigned {
-                    created_at,
-                    actor,
-                    assignee,
-                } => {
-                    let assignee: Actor = serde_json::from_value(assignee?).ok()?;
-                    Some(IssueEvent::Unassigned {
-                        assignee: login(Some(assignee)),
-                        actor: login(actor),
-                        at: created_at,
-                    })
-                }
+                GqlEvent::Assignment(assignment) => assignment.read().map(IssueEvent::Assignment),
             })
             .collect();
         Issue {
@@ -1158,15 +1182,13 @@ const PULL_FIELDS: &str = concat!(
     closes_field!(),
     "
   labels(first: 50) { nodes { name } }
-  timelineItems(last: 100, itemTypes: [LABELED_EVENT, UNLABELED_EVENT]) {
+  assignees(first: 20) { nodes { login } }
+  timelineItems(last: 100, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
     nodes {
       __typename
-      ... on LabeledEvent { ",
-    labeling_fields!(),
-    " }
-      ... on UnlabeledEvent { ",
-    labeling_fields!(),
-    " }
+      ",
+    assignment_fields!(),
+    "
     }
   }
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
@@ -1215,28 +1237,8 @@ struct GqlPull {
     review_threads: Nodes<GqlThread>,
     status_check_rollup: Option<Rollup>,
     labels: Nodes<Name>,
-    timeline_items: Nodes<GqlLabelEvent>,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "__typename")]
-enum GqlLabelEvent {
-    LabeledEvent(GqlLabeling),
-    UnlabeledEvent(GqlLabeling),
-}
-
-impl From<GqlLabelEvent> for LabelEvent {
-    fn from(e: GqlLabelEvent) -> LabelEvent {
-        let (labeling, change) = match e {
-            GqlLabelEvent::LabeledEvent(labeling) => (labeling, LabelChange::Applied),
-            GqlLabelEvent::UnlabeledEvent(labeling) => (labeling, LabelChange::Removed),
-        };
-        LabelEvent {
-            label: labeling.label.name,
-            change,
-            at: labeling.created_at,
-        }
-    }
+    assignees: Nodes<LoginNode>,
+    timeline_items: Nodes<GqlAssignment>,
 }
 
 #[derive(Deserialize)]
@@ -1476,11 +1478,17 @@ impl GqlPull {
                 })
                 .collect(),
             labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
-            label_events: self
+            assignees: self
+                .assignees
+                .nodes
+                .into_iter()
+                .map(|a| Login::new(a.login))
+                .collect(),
+            assignments: self
                 .timeline_items
                 .nodes
                 .into_iter()
-                .map(LabelEvent::from)
+                .filter_map(GqlAssignment::read)
                 .collect(),
         }
     }
@@ -2124,19 +2132,21 @@ impl Store for GitHub {
         }
     }
 
-    async fn assign(&self, issue: Number) -> Result<()> {
+    /// A pull request is an issue to the assignees API
+    /// (<https://docs.github.com/en/rest/issues/assignees>).
+    async fn assign(&self, number: Number) -> Result<()> {
         self.rest_ok(
             Method::POST,
-            &self.repo_path(&format!("/issues/{}/assignees", issue.0)),
+            &self.repo_path(&format!("/issues/{}/assignees", number.0)),
             Some(json!({"assignees": [self.viewer.login]})),
         )
         .await
     }
 
-    async fn unassign(&self, issue: Number) -> Result<()> {
+    async fn unassign(&self, number: Number) -> Result<()> {
         self.rest_ok(
             Method::DELETE,
-            &self.repo_path(&format!("/issues/{}/assignees", issue.0)),
+            &self.repo_path(&format!("/issues/{}/assignees", number.0)),
             Some(json!({"assignees": [self.viewer.login]})),
         )
         .await
@@ -2331,50 +2341,44 @@ mod tests {
             "reviewThreads": {"nodes": []},
             "statusCheckRollup": null,
             "labels": {"nodes": []},
+            "assignees": {"nodes": []},
             "timelineItems": {"nodes": []},
         }))
         .unwrap()
     }
 
     #[test]
-    fn a_pull_request_lists_its_labels_and_when_each_was_applied_and_removed() {
+    fn a_pull_request_lists_its_assignees_and_who_was_assigned_and_unassigned_when() {
         let mut pr = review_required(json!([]));
-        pr.labels =
-            serde_json::from_value(json!({"nodes": [{"name": "ready-for-agent"}]})).unwrap();
+        pr.assignees = serde_json::from_value(json!({"nodes": [{"login": "factory"}]})).unwrap();
         pr.timeline_items = serde_json::from_value(json!({"nodes": [
-            {"__typename": "LabeledEvent", "createdAt": "2026-10-09T12:05:00Z", "label": {"name": "ready-for-human"}},
-            {"__typename": "UnlabeledEvent", "createdAt": "2026-10-09T12:10:00Z", "label": {"name": "ready-for-human"}},
-            {"__typename": "LabeledEvent", "createdAt": "2026-10-09T12:15:00Z", "label": {"name": "ready-for-agent"}},
+            {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:05:00Z", "assignee": {"__typename": "User", "login": "factory"}},
+            {"__typename": "UnassignedEvent", "createdAt": "2026-10-09T12:10:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "factory"}},
+            {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:15:00Z", "assignee": {"__typename": "User", "login": "factory"}},
+            {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:16:00Z", "assignee": {"__typename": "Team"}},
         ]}))
         .unwrap();
 
         let pull = pr.into_pull(vec![], &BranchRules::default());
 
-        assert_eq!(pull.labels, ["ready-for-agent"]);
+        assert_eq!(pull.assignees, [Login::new("factory")]);
         let at = |t: &str| t.parse::<Timestamp>().unwrap();
-        let event = |label: &str, change, t| LabelEvent {
-            label: label.into(),
-            change,
-            at: at(t),
-        };
         assert_eq!(
-            pull.label_events,
+            pull.assignments,
             [
-                event(
-                    "ready-for-human",
-                    LabelChange::Applied,
-                    "2026-10-09T12:05:00Z"
-                ),
-                event(
-                    "ready-for-human",
-                    LabelChange::Removed,
-                    "2026-10-09T12:10:00Z"
-                ),
-                event(
-                    "ready-for-agent",
-                    LabelChange::Applied,
-                    "2026-10-09T12:15:00Z"
-                ),
+                Assignment::Assigned {
+                    assignee: Login::new("factory"),
+                    at: at("2026-10-09T12:05:00Z"),
+                },
+                Assignment::Unassigned {
+                    assignee: Login::new("factory"),
+                    actor: Login::new("maintainer"),
+                    at: at("2026-10-09T12:10:00Z"),
+                },
+                Assignment::Assigned {
+                    assignee: Login::new("factory"),
+                    at: at("2026-10-09T12:15:00Z"),
+                },
             ]
         );
     }
@@ -2523,6 +2527,46 @@ mod tests {
 
         assert_eq!(rules.checks, ["check"]);
         assert!(rules.code_owner_review);
+    }
+
+    #[test]
+    fn an_issue_lists_its_label_and_assignment_events() {
+        let issue: GqlIssue = serde_json::from_value(json!({
+            "number": 12, "title": "Store gadgets", "body": "",
+            "createdAt": "2026-10-09T12:00:00Z", "state": "OPEN",
+            "author": {"__typename": "User", "login": "maintainer"},
+            "labels": {"nodes": []},
+            "assignees": {"nodes": []},
+            "comments": {"nodes": []},
+            "timelineItems": {"nodes": [
+                {"__typename": "LabeledEvent", "createdAt": "2026-10-09T12:01:00Z", "label": {"name": "ready-for-agent"}},
+                {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:02:00Z", "assignee": {"__typename": "User", "login": "linewright"}},
+                {"__typename": "UnassignedEvent", "createdAt": "2026-10-09T12:03:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "linewright"}},
+            ]},
+        }))
+        .unwrap();
+
+        let issue = issue.into_issue(&Login::new("linewright"));
+
+        let at = |t: &str| t.parse::<Timestamp>().unwrap();
+        assert_eq!(
+            issue.events,
+            [
+                IssueEvent::Labeled {
+                    label: "ready-for-agent".into(),
+                    at: at("2026-10-09T12:01:00Z"),
+                },
+                IssueEvent::Assignment(Assignment::Assigned {
+                    assignee: Login::new("linewright"),
+                    at: at("2026-10-09T12:02:00Z"),
+                }),
+                IssueEvent::Assignment(Assignment::Unassigned {
+                    assignee: Login::new("linewright"),
+                    actor: Login::new("maintainer"),
+                    at: at("2026-10-09T12:03:00Z"),
+                }),
+            ]
+        );
     }
 
     fn ticket_with_parent(parent: Value) -> Issue {

@@ -261,9 +261,9 @@ pub trait Store: Send + Sync {
     async fn add_label(&self, number: Number, label: &str) -> Result<()>;
     /// Removes the label if the issue or pull request has it.
     async fn remove_label(&self, number: Number, label: &str) -> Result<()>;
-    /// Adds Linewright as an assignee.
-    async fn assign(&self, issue: Number) -> Result<()>;
-    async fn unassign(&self, issue: Number) -> Result<()>;
+    /// Adds Linewright as an assignee of the issue or pull request.
+    async fn assign(&self, number: Number) -> Result<()>;
+    async fn unassign(&self, number: Number) -> Result<()>;
     async fn comment(&self, number: Number, body: &str) -> Result<()>;
     async fn create_issue(&self, issue: NewIssue) -> Result<Number>;
     async fn edit_body(&self, number: Number, body: &str) -> Result<()>;

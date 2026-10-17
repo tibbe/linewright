@@ -2,7 +2,7 @@ mod common;
 
 use common::*;
 use linewright::clock::Clock;
-use linewright::domain::{LabelChange, Number, Pull, Timestamp};
+use linewright::domain::{Assignment, Login, Number, Pull, Timestamp};
 use linewright::store::Store;
 
 async fn snapshot_pull(world: &World, pr: Number) -> Pull {
@@ -11,69 +11,61 @@ async fn snapshot_pull(world: &World, pr: Number) -> Pull {
 }
 
 #[tokio::test]
-async fn a_pull_request_lists_its_labels_and_when_each_was_applied_and_removed() {
+async fn a_pull_request_lists_its_assignees_and_who_was_assigned_and_unassigned_when() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
+    let opened = snapshot_pull(&world, pr).await.assignments.len();
 
     let start = world.clock.now();
-    world.store.label_as(pr, "ready-for-human").unwrap();
-    let applied = world.clock.now();
-    world.store.unlabel_as(pr, "ready-for-human").unwrap();
-    let removed = world.clock.now();
-    world.store.add_label(pr, "ready-for-agent").await.unwrap();
+    world
+        .store
+        .unassign_as("maintainer", pr, "factory")
+        .unwrap();
+    let unassigned = world.clock.now();
+    world.store.assign_as(pr, "maintainer").unwrap();
     let end = world.clock.now();
 
     let pull = snapshot_pull(&world, pr).await;
-    assert_eq!(pull.labels, ["ready-for-agent"]);
-    let changes: Vec<(&str, LabelChange)> = pull
-        .label_events
-        .iter()
-        .map(|e| (e.label.as_str(), e.change))
-        .collect();
-    assert_eq!(
-        changes,
-        [
-            ("ready-for-human", LabelChange::Applied),
-            ("ready-for-human", LabelChange::Removed),
-            ("ready-for-agent", LabelChange::Applied),
-        ]
+    assert_eq!(pull.assignees, [Login::new("maintainer")]);
+    let changes = &pull.assignments[opened..];
+    assert!(
+        matches!(
+            changes,
+            [
+                Assignment::Unassigned { assignee, actor, at: first },
+                Assignment::Assigned { assignee: second_assignee, at: second },
+            ] if assignee.as_str() == "factory"
+                && actor.as_str() == "maintainer"
+                && second_assignee.as_str() == "maintainer"
+                && start < *first && *first < unassigned
+                && unassigned < *second && *second < end
+        ),
+        "{changes:?}"
     );
-    let t: Vec<Timestamp> = pull.label_events.iter().map(|e| e.at).collect();
-    assert!(start < t[0] && t[0] < applied, "{t:?}");
-    assert!(applied < t[1] && t[1] < removed, "{t:?}");
-    assert!(removed < t[2] && t[2] < end, "{t:?}");
 }
 
 #[tokio::test]
-async fn a_pull_request_read_again_lists_its_labels_as_a_snapshot_does() {
+async fn a_pull_request_read_again_lists_its_assignments_as_a_snapshot_does() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
-    world.store.label_as(pr, "ready-for-human").unwrap();
-    world
-        .store
-        .remove_label(pr, "ready-for-human")
-        .await
-        .unwrap();
-    world.store.label_as(pr, "ready-for-agent").unwrap();
+    world.store.unassign(pr).await.unwrap();
+    world.store.assign(pr).await.unwrap();
 
     let read = world.store.linewright_pull(pr).await.unwrap();
 
     assert_eq!(read, Some(snapshot_pull(&world, pr).await));
-    assert_eq!(read.unwrap().label_events.len(), 3);
+    assert_eq!(read.unwrap().assignees, [Login::new("factory")]);
 }
 
 #[tokio::test]
-async fn removing_a_label_a_pull_request_lacks_records_nothing() {
+async fn unassigning_someone_a_pull_request_is_not_assigned_to_records_nothing() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
+    let before = snapshot_pull(&world, pr).await.assignments;
 
-    world
-        .store
-        .remove_label(pr, "ready-for-human")
-        .await
-        .unwrap();
+    world.store.unassign_as("maintainer", pr, "alice").unwrap();
 
-    assert_eq!(snapshot_pull(&world, pr).await.label_events, []);
+    assert_eq!(snapshot_pull(&world, pr).await.assignments, before);
 }
 
 #[tokio::test]

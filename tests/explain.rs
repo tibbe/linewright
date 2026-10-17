@@ -32,7 +32,8 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         reviews: vec![],
         threads: vec![],
         labels: vec![],
-        label_events: vec![],
+        assignees: vec![Login::new("factory")],
+        assignments: vec![],
     }
 }
 
@@ -1288,9 +1289,14 @@ fn linewrights_pull_request_is_worked_whatever_the_labels_of_the_issue_it_is_for
 }
 
 #[test]
-fn linewrights_pull_request_labeled_ready_for_human_waits_for_the_maintainer() {
+fn linewrights_pull_request_it_is_unassigned_from_waits_for_the_maintainer() {
     let open = Pull {
-        labels: vec!["ready-for-human".into()],
+        assignees: vec![],
+        assignments: vec![Assignment::Unassigned {
+            assignee: Login::new("factory"),
+            actor: Login::new("maintainer"),
+            at: at("2026-10-01T11:59:00Z"),
+        }],
         ..draft(43, 42, &[CheckState::Failed])
     };
     let view = view(
@@ -1300,12 +1306,12 @@ fn linewrights_pull_request_labeled_ready_for_human_waits_for_the_maintainer() {
 
     assert_eq!(
         text(&view, 43)[4..],
-        ["waiting for: the maintainer: labeled `ready-for-human`, until they remove it"]
+        ["waiting for: the maintainer: Linewright is unassigned, until they assign it again"]
     );
     let answer = explain(&view, &[], Number(43), at(NOW)).unwrap();
     assert_eq!(
         serde_json::to_value(&answer).unwrap()["waiting_for"],
-        serde_json::json!([{"wait": "handed-back"}])
+        serde_json::json!([{"wait": "unassigned"}])
     );
     assert_eq!(
         text(&view, 42)[4..],

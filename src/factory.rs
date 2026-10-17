@@ -612,6 +612,10 @@ impl Factory {
                 info!(issue = issue.0, "claiming");
                 store.assign(*issue).await?;
             }
+            Action::ClaimPull { pr } => {
+                info!(pr = pr.0, "claiming the pull request");
+                store.assign(*pr).await?;
+            }
             Action::Relabel { issue, remove, add } => {
                 info!(issue = issue.0, remove, add, "relabeling");
                 store.remove_label(*issue, remove).await?;
@@ -913,7 +917,8 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
             .flat_map(|p| p.closes.iter().map(|issue| Item::Issue(*issue)))
             .chain([Item::Pull(*pr)])
             .collect(),
-        Action::MarkReady { pr }
+        Action::ClaimPull { pr }
+        | Action::MarkReady { pr }
         | Action::MarkReadyForMergeState { pr }
         | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
         Action::HandBack { item, .. } => vec![*item],

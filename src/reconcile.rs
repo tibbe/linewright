@@ -4,7 +4,7 @@ use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent, Item, LabelChange,
+    Assignment, BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, IssueEvent, Item,
     Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
     Rebaseability, Requirement, Review, ReviewState, Snapshot, Thread, TicketBranchName, Timestamp,
     UpdateMethod, UpdateRule, label,
@@ -358,6 +358,9 @@ pub enum Action {
     Claim {
         issue: Number,
     },
+    ClaimPull {
+        pr: Number,
+    },
     Relabel {
         issue: Number,
         remove: String,
@@ -436,7 +439,8 @@ pub enum Wait {
     },
     Reporter,
     Maintainer,
-    HandedBack,
+    /// Linewright is not assigned to the pull request.
+    Unassigned,
     RequiredLabel {
         label: String,
     },
@@ -536,9 +540,15 @@ pub fn decisions(
     }
 
     for (pr, ticket) in worked_pulls(snapshot, &policy.linewright) {
-        if pr.has_label(label::READY_FOR_HUMAN) {
-            plan.wait(pr.number, Wait::HandedBack);
-        } else if let Some(stage) = running(Subject::Pull(pr.number)) {
+        match pull_claim(pr, &policy.linewright) {
+            PullClaim::Claimed => {}
+            PullClaim::NeverAssigned => plan.act(Action::ClaimPull { pr: pr.number }),
+            PullClaim::Unassigned => {
+                plan.wait(pr.number, Wait::Unassigned);
+                continue;
+            }
+        }
+        if let Some(stage) = running(Subject::Pull(pr.number)) {
             plan.wait(pr.number, Wait::Run { stage });
         } else {
             in_review(ticket, pr, memory, policy, &mut plan);
@@ -706,14 +716,13 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
             let Some(pr) = snapshot.pull(number) else {
                 return Some(format!("{number} is no longer open"));
             };
-            match pr.state {
-                PullState::Merged { .. } => Some(format!("{number} was merged")),
-                PullState::Closed { .. } => Some(format!("{number} was closed")),
-                PullState::Open { .. } if pr.has_label(label::READY_FOR_HUMAN) => {
-                    Some(format!("{number} was labeled `{}`", label::READY_FOR_HUMAN))
+            pull_stop(pr, &policy.linewright).map(|stop| match stop {
+                PullStop::Merged => format!("{number} was merged"),
+                PullStop::Closed => format!("{number} was closed"),
+                PullStop::Unassigned => {
+                    format!("{} was unassigned from {number}", policy.linewright)
                 }
-                PullState::Open { .. } => None,
-            }
+            })
         }
         Subject::SpecChange(pr) => {
             let pr = snapshot.merged_pull(pr)?;
@@ -965,7 +974,9 @@ fn last_assigned(issue: &Issue, login: &Login) -> Option<Timestamp> {
         .events
         .iter()
         .filter_map(|e| match e {
-            IssueEvent::Assigned { assignee, at } if assignee == login => Some(*at),
+            IssueEvent::Assignment(Assignment::Assigned { assignee, at }) if assignee == login => {
+                Some(*at)
+            }
             _ => None,
         })
         .max()
@@ -974,7 +985,7 @@ fn last_assigned(issue: &Issue, login: &Login) -> Option<Timestamp> {
 fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: &mut Plan) {
     let pr_number = pr.number;
     let linewright = &policy.linewright;
-    let restarted = restarted_at(pr);
+    let restarted = restarted_at(pr, linewright);
     if !new_feedback(
         pr,
         linewright,
@@ -1134,12 +1145,64 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
     }
 }
 
-fn restarted_at(pr: &Pull) -> Option<Timestamp> {
-    pr.label_events
-        .iter()
-        .filter(|e| e.label == label::READY_FOR_HUMAN && e.change == LabelChange::Removed)
-        .map(|e| e.at)
-        .max()
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PullClaim {
+    Claimed,
+    /// Neither assigned nor unassigned ever, as a pull request Linewright
+    /// opened before it assigned itself to those it opens.
+    NeverAssigned,
+    Unassigned,
+}
+
+fn pull_claim(pr: &Pull, linewright: &Login) -> PullClaim {
+    let ever_assigned = pr.assignments.iter().any(|a| a.assignee() == linewright);
+    if pr.is_assigned(linewright) {
+        PullClaim::Claimed
+    } else if ever_assigned {
+        PullClaim::Unassigned
+    } else {
+        PullClaim::NeverAssigned
+    }
+}
+
+/// Why Linewright's work on a pull request stops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PullStop {
+    Merged,
+    Closed,
+    /// Linewright was unassigned from it: docs/specs/pull_requests.md, "The
+    /// pull request".
+    Unassigned,
+}
+
+pub fn pull_stop(pr: &Pull, linewright: &Login) -> Option<PullStop> {
+    match pr.state {
+        PullState::Merged { .. } => Some(PullStop::Merged),
+        PullState::Closed { .. } => Some(PullStop::Closed),
+        PullState::Open { .. } => match pull_claim(pr, linewright) {
+            PullClaim::Unassigned => Some(PullStop::Unassigned),
+            PullClaim::Claimed | PullClaim::NeverAssigned => None,
+        },
+    }
+}
+
+/// When Linewright was last assigned again after an unassignment, which
+/// restarts the pull request's retry counters.
+fn restarted_at(pr: &Pull, linewright: &Login) -> Option<Timestamp> {
+    let mut unassigned = false;
+    let mut restarted = None;
+    for assignment in &pr.assignments {
+        match assignment {
+            Assignment::Unassigned { assignee, .. } if assignee == linewright => {
+                unassigned = true;
+            }
+            Assignment::Assigned { assignee, at } if assignee == linewright && unassigned => {
+                restarted = Some(*at);
+            }
+            Assignment::Assigned { .. } | Assignment::Unassigned { .. } => {}
+        }
+    }
+    restarted
 }
 
 fn tried_rebase(pr: &Pull, memory: &Memory, restarted: Option<Timestamp>) -> bool {
@@ -1308,11 +1371,11 @@ fn stopped_by_unassign(issue: &Issue, policy: &Policy) -> bool {
         .events
         .iter()
         .filter_map(|e| match e {
-            IssueEvent::Unassigned {
+            IssueEvent::Assignment(Assignment::Unassigned {
                 assignee,
                 actor,
                 at,
-            } if assignee == linewright && actor != linewright => Some(*at),
+            }) if assignee == linewright && actor != linewright => Some(*at),
             _ => None,
         })
         .max();
