@@ -50,7 +50,7 @@ fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
     assert_eq!(config.max_runs, 3);
     assert_eq!(config.poll_interval, Duration::from_secs(300));
     assert_eq!(config.ci_attempts, 7);
-    assert_eq!(config.session_timeout, Duration::from_secs(30 * 60));
+    assert_eq!(config.session_timeout, Duration::from_secs(60 * 60));
     assert_eq!(config.spec_glob.pattern(), "docs/**/*.md");
 }
 
@@ -61,6 +61,7 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.poll_interval, Duration::from_secs(60));
     assert_eq!(config.spec_lookback, chrono::TimeDelta::days(7));
     assert_eq!(config.max_runs, 4);
+    assert_eq!(config.session_timeout, Duration::from_secs(60 * 60));
     assert_eq!(config.result_retries, 1);
     assert_eq!(config.ci_grace, chrono::TimeDelta::minutes(5));
     assert_eq!(config.ci_timeout, chrono::TimeDelta::hours(6));

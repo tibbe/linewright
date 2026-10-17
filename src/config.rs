@@ -214,7 +214,7 @@ pub struct Settings {
     /// A directory of briefs [default: the briefs Linewright ships]
     #[arg(long, global = true)]
     pub briefs: Option<String>,
-    /// Each agent session's timeout [default: 30m]
+    /// Each agent session's timeout [default: 60m]
     #[arg(long, global = true)]
     pub session_timeout: Option<String>,
     /// How often an unparseable result goes back to its session [default: 1]
@@ -477,7 +477,7 @@ impl Config {
             work_dir,
             model: get("model"),
             briefs: get("briefs").map(PathBuf::from),
-            session_timeout: duration("session-timeout", "30m")?,
+            session_timeout: duration("session-timeout", "60m")?,
             result_retries: number("result-retries", "1")?,
             ci_grace,
             ci_timeout,
