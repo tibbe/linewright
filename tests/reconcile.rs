@@ -195,7 +195,9 @@ fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_co
         decide(&answered_with(StatusLabel::ReadyForAgent)),
         vec![
             unlabel_ready_for_human.clone(),
-            Action::Claim { issue: Number(1) },
+            Action::Claim {
+                item: Item::Issue(Number(1))
+            },
             implement(1)
         ]
     );
@@ -225,7 +227,12 @@ fn of_two_status_labels_the_newer_is_kept_and_followed() {
                     vec![Action::Start(Work::Triage { issue: Number(1) })]
                 }
                 StatusLabel::ReadyForAgent => {
-                    vec![Action::Claim { issue: Number(1) }, implement(1)]
+                    vec![
+                        Action::Claim {
+                            item: Item::Issue(Number(1)),
+                        },
+                        implement(1),
+                    ]
                 }
                 StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => vec![],
             };
@@ -299,17 +306,186 @@ fn merged(number: u64, files: &[&str]) -> MergedPull {
         labels: vec![],
         closes: vec![],
         files: files.iter().map(|f| f.to_string()).collect(),
+        assignees: vec![],
+        events: vec![],
     }
 }
 
+fn cut(pr: u64) -> Vec<Action> {
+    vec![
+        Action::Claim {
+            item: Item::Pull(Number(pr)),
+        },
+        Action::Start(Work::Tickets { pr: Number(pr) }),
+    ]
+}
+
+fn assigned(mut pr: MergedPull, minute: i64) -> MergedPull {
+    pr.assignees.push(Login::new(LINEWRIGHT));
+    pr.events.push(IssueEvent::Assignment(Assignment::Assigned {
+        assignee: Login::new(LINEWRIGHT),
+        at: t(minute),
+    }));
+    pr
+}
+
+fn unassigned(mut pr: MergedPull, actor: &str, minute: i64) -> MergedPull {
+    pr.assignees.retain(|a| a.as_str() != LINEWRIGHT);
+    pr.events
+        .push(IssueEvent::Assignment(Assignment::Unassigned {
+            assignee: Login::new(LINEWRIGHT),
+            actor: Login::new(actor),
+            at: t(minute),
+        }));
+    pr
+}
+
+fn labeled_merged(mut pr: MergedPull, label: &str, minute: i64) -> MergedPull {
+    if !pr.has_label(label) {
+        pr.labels.push(label.into());
+    }
+    pr.events.push(IssueEvent::Labeled {
+        label: label.into(),
+        at: t(minute),
+    });
+    pr
+}
+
+fn cutting(pr: u64) -> [LiveRun; 1] {
+    [LiveRun {
+        subject: Subject::SpecChange(Number(pr)),
+        kind: WorkKind::Tickets,
+    }]
+}
+
 #[test]
-fn a_merged_pull_request_that_touches_the_spec_is_cut_into_tickets() {
+fn a_merged_pull_request_that_touches_the_spec_is_claimed_and_cut_into_tickets() {
     let mut world = snapshot(vec![]);
     world.merged = vec![merged(5, &["src/main.rs", "docs/billing/invoices.md"])];
+
+    assert_eq!(decide(&world), cut(5));
+}
+
+#[test]
+fn a_spec_change_linewright_is_assigned_to_is_cut_without_claiming_it_again() {
+    let mut world = snapshot(vec![]);
+    world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
 
     assert_eq!(
         decide(&world),
         vec![Action::Start(Work::Tickets { pr: Number(5) })]
+    );
+}
+
+#[test]
+fn a_spec_change_linewright_was_unassigned_from_is_not_cut_again_on_its_own() {
+    let handed_back = unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2);
+    let paused = unassigned(assigned(merged(6, &["docs/spec.md"]), 1), "maintainer", 2);
+    let mut world = snapshot(vec![]);
+    world.merged = vec![handed_back, paused];
+
+    assert_eq!(decide(&world), vec![]);
+}
+
+#[test]
+fn a_spec_change_linewright_is_assigned_to_again_is_cut_again() {
+    let retried = assigned(
+        unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2),
+        3,
+    );
+    let mut world = snapshot(vec![]);
+    world.merged = vec![retried];
+
+    assert_eq!(
+        decide(&world),
+        vec![Action::Start(Work::Tickets { pr: Number(5) })]
+    );
+}
+
+#[test]
+fn a_ready_for_human_label_on_a_spec_change_stops_nothing() {
+    let mut labeled = merged(5, &["docs/spec.md"]);
+    labeled.labels.push(label::READY_FOR_HUMAN.into());
+    let mut world = snapshot(vec![]);
+    world.merged = vec![labeled.clone()];
+    assert_eq!(decide(&world), cut(5));
+
+    world.merged = vec![assigned(labeled, 1)];
+    assert_eq!(
+        reconcile(
+            &world,
+            &cutting(5),
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &policy()
+        ),
+        vec![]
+    );
+}
+
+#[test]
+fn a_cut_that_ended_since_the_snapshot_is_neither_started_again_nor_cancelled() {
+    let mut world = snapshot(vec![]);
+    world.merged = vec![merged(5, &["docs/spec.md"])];
+    let memory = Memory {
+        ended_cuts: vec![Number(5)],
+        ..Memory::default()
+    };
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &[],
+            &memory,
+            &Workflows::default(),
+            t(10),
+            &policy()
+        ),
+        vec![]
+    );
+}
+
+#[test]
+fn a_cut_stopped_part_way_is_discarded_also_when_linewright_was_unassigned_from_it() {
+    let mut world = snapshot(vec![tracking(9, 5, &[(10, true)])]);
+    world.merged = vec![unassigned(
+        assigned(merged(5, &["docs/spec.md"]), 1),
+        "maintainer",
+        2,
+    )];
+
+    assert_eq!(
+        decide(&world),
+        vec![Action::DiscardTickets {
+            tracking: Number(9),
+            tickets: vec![Number(10)],
+        }]
+    );
+}
+
+#[test]
+fn unassigning_linewright_from_a_spec_change_cancels_its_cut() {
+    let mut world = snapshot(vec![]);
+    world.merged = vec![unassigned(
+        assigned(merged(5, &["docs/spec.md"]), 1),
+        "maintainer",
+        2,
+    )];
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &cutting(5),
+            &Memory::default(),
+            &Workflows::default(),
+            t(10),
+            &policy()
+        ),
+        vec![Action::Cancel {
+            subject: Subject::SpecChange(Number(5)),
+            reason: "factory was unassigned from #5".into(),
+        }]
     );
 }
 
@@ -324,17 +500,8 @@ fn only_unprocessed_spec_changes_by_people_within_the_lookback_are_picked_up() {
     too_old.merged_at = t(10) - TimeDelta::days(8);
     let mut other_base = merged(6, &["docs/spec.md"]);
     other_base.base_ref = "release".into();
-    let mut handed_back = merged(7, &["docs/spec.md"]);
-    handed_back.labels.push(label::READY_FOR_HUMAN.into());
     let mut world = snapshot(vec![]);
-    world.merged = vec![
-        code_only,
-        processed,
-        by_linewright,
-        too_old,
-        other_base,
-        handed_back,
-    ];
+    world.merged = vec![code_only, processed, by_linewright, too_old, other_base];
 
     assert_eq!(decide(&world), vec![]);
 }
@@ -342,11 +509,7 @@ fn only_unprocessed_spec_changes_by_people_within_the_lookback_are_picked_up() {
 #[test]
 fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
     let mut world = snapshot(vec![tracking(9, 5, &[(10, true)])]);
-    world.merged = vec![merged(5, &["docs/spec.md"])];
-    let cutting = [LiveRun {
-        subject: Subject::SpecChange(Number(5)),
-        kind: WorkKind::Tickets,
-    }];
+    world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
 
     assert_eq!(
         decide(&world),
@@ -358,7 +521,7 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
     assert_eq!(
         reconcile(
             &world,
-            &cutting,
+            &cutting(5),
             &Memory::default(),
             &Workflows::default(),
             t(10),
@@ -399,7 +562,12 @@ fn an_unblocked_ready_for_agent_issue_is_claimed_and_implemented() {
 
     assert_eq!(
         decide(&world),
-        vec![Action::Claim { issue: Number(2) }, implement(2)]
+        vec![
+            Action::Claim {
+                item: Item::Issue(Number(2))
+            },
+            implement(2)
+        ]
     );
 }
 
@@ -486,9 +654,13 @@ fn unassigning_linewright_stops_the_work_until_the_label_is_applied_again() {
             handed_back_by_linewright
         ])),
         vec![
-            Action::Claim { issue: Number(3) },
+            Action::Claim {
+                item: Item::Issue(Number(3))
+            },
             implement(3),
-            Action::Claim { issue: Number(4) },
+            Action::Claim {
+                item: Item::Issue(Number(4))
+            },
             implement(4),
         ]
     );
@@ -545,6 +717,9 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
         ),
         vec![
             Action::Start(Work::Triage { issue: Number(3) }),
+            Action::Claim {
+                item: Item::Pull(Number(5))
+            },
             Action::Start(Work::Tickets { pr: Number(5) }),
             implement(1),
         ]
@@ -663,7 +838,12 @@ fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
 
     assert_eq!(
         at(&world, 10),
-        vec![Action::ClaimPull { pr: Number(20) }, fix_ci(2, 20)]
+        vec![
+            Action::Claim {
+                item: Item::Pull(Number(20)),
+            },
+            fix_ci(2, 20)
+        ]
     );
     assert_eq!(
         reconcile(
@@ -674,7 +854,9 @@ fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
             t(10),
             &policy(),
         ),
-        vec![Action::ClaimPull { pr: Number(20) }]
+        vec![Action::Claim {
+            item: Item::Pull(Number(20)),
+        }]
     );
 }
 
@@ -691,7 +873,9 @@ fn a_pull_request_assigned_to_someone_else_alone_is_claimed_once() {
     assert_eq!(
         at(&in_review(pr), 10),
         vec![
-            Action::ClaimPull { pr: Number(20) },
+            Action::Claim {
+                item: Item::Pull(Number(20)),
+            },
             Action::MarkReady { pr: Number(20) }
         ]
     );
@@ -2199,7 +2383,12 @@ fn with_a_required_label_only_a_labeled_unclaimed_ticket_is_claimed() {
 
     assert_eq!(
         deciding_with_label(&snapshot(vec![unlabeled, with_label])),
-        vec![Action::Claim { issue: Number(2) }, implement(2)]
+        vec![
+            Action::Claim {
+                item: Item::Issue(Number(2))
+            },
+            implement(2)
+        ]
     );
 }
 
@@ -2223,7 +2412,12 @@ fn with_a_required_label_a_ticket_is_claimed_again_after_an_unassignment_only_if
 
     assert_eq!(
         deciding_with_label(&snapshot(vec![restart(1, false), restart(2, true)])),
-        vec![Action::Claim { issue: Number(2) }, implement(2)]
+        vec![
+            Action::Claim {
+                item: Item::Issue(Number(2))
+            },
+            implement(2)
+        ]
     );
 }
 
@@ -2307,10 +2501,7 @@ fn with_a_required_label_only_a_labeled_spec_change_is_cut_into_tickets() {
     let mut world = snapshot(vec![]);
     world.merged = vec![unlabeled, with_label];
 
-    assert_eq!(
-        deciding_with_label(&world),
-        vec![Action::Start(Work::Tickets { pr: Number(2) })]
-    );
+    assert_eq!(deciding_with_label(&world), cut(2));
 }
 
 #[test]
@@ -2322,25 +2513,36 @@ fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_picked_up_on_a
 
     pr.labels.push(REQUIRED.into());
     world.merged = vec![pr];
-    assert_eq!(
-        deciding_with_label(&world),
-        vec![Action::Start(Work::Tickets { pr: Number(1) })]
-    );
+    assert_eq!(deciding_with_label(&world), cut(1));
 }
 
 #[test]
-fn with_a_required_label_a_retried_handback_is_cut_again_only_if_labeled() {
-    let retried_unlabeled = merged(1, &["docs/spec.md"]);
-    let mut retried = merged(2, &["docs/spec.md"]);
-    retried.labels.push(REQUIRED.into());
-    let mut still_handed_back = merged(3, &["docs/spec.md"]);
-    still_handed_back.labels = vec![REQUIRED.into(), label::READY_FOR_HUMAN.into()];
+fn with_a_required_label_a_handed_back_spec_change_is_cut_again_once_the_label_is_applied_again() {
+    let handed_back = |number| {
+        unassigned(
+            assigned(
+                labeled_merged(merged(number, &["docs/spec.md"]), REQUIRED, 0),
+                1,
+            ),
+            LINEWRIGHT,
+            2,
+        )
+    };
+    let relabeled = labeled_merged(handed_back(2), REQUIRED, 3);
     let mut world = snapshot(vec![]);
-    world.merged = vec![retried_unlabeled, retried, still_handed_back];
+    world.merged = vec![handed_back(1), relabeled];
+
+    assert_eq!(deciding_with_label(&world), cut(2));
+}
+
+#[test]
+fn with_a_required_label_a_spec_change_assigned_to_linewright_by_hand_is_cut_unlabeled() {
+    let mut world = snapshot(vec![]);
+    world.merged = vec![assigned(merged(1, &["docs/spec.md"]), 1)];
 
     assert_eq!(
         deciding_with_label(&world),
-        vec![Action::Start(Work::Tickets { pr: Number(2) })]
+        vec![Action::Start(Work::Tickets { pr: Number(1) })]
     );
 }
 
@@ -2360,16 +2562,12 @@ fn with_a_required_label_processed_and_linewrights_spec_changes_are_skipped_even
 #[test]
 fn removing_the_required_label_does_not_cancel_a_cut_under_way() {
     let mut world = snapshot(vec![]);
-    world.merged = vec![merged(5, &["docs/spec.md"])];
-    let runs = [LiveRun {
-        subject: Subject::SpecChange(Number(5)),
-        kind: WorkKind::Tickets,
-    }];
+    world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
 
     assert_eq!(
         reconcile(
             &world,
-            &runs,
+            &cutting(5),
             &Memory::default(),
             &Workflows::default(),
             t(10),
@@ -2511,8 +2709,13 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_workflow_runs() {
         vec![
             rework(2, 20),
             Action::Start(Work::Triage { issue: Number(1) }),
+            Action::Claim {
+                item: Item::Pull(Number(5))
+            },
             Action::Start(Work::Tickets { pr: Number(5) }),
-            Action::Claim { issue: Number(3) },
+            Action::Claim {
+                item: Item::Issue(Number(3))
+            },
             implement(3),
             implement(4),
             Action::RunWorkflow(Box::new(hourly("hourly"))),
@@ -2638,7 +2841,12 @@ fn a_ticket_only_pull_requests_closed_before_its_claim_close_is_claimed() {
 
     assert_eq!(
         decide(&world),
-        vec![Action::Claim { issue: Number(2) }, implement(2)]
+        vec![
+            Action::Claim {
+                item: Item::Issue(Number(2))
+            },
+            implement(2)
+        ]
     );
 }
 

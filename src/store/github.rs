@@ -449,23 +449,14 @@ impl GitHub {
         Ok(Some(self.merged_of(pr, merged_at).await?))
     }
 
-    async fn merged_of(&self, pr: GqlMerged, merged_at: Timestamp) -> Result<MergedPull> {
-        Ok(MergedPull {
-            number: Number(pr.number),
-            title: pr.title,
-            body: pr.body,
-            author: login(pr.author),
-            merged_at,
-            base_ref: pr.base_ref_name,
-            labels: pr.labels.nodes.into_iter().map(|l| l.name).collect(),
-            closes: closes(pr.closing_issues_references),
-            files: match pr.files {
-                Some(files) if !files.page_info.has_next_page => {
-                    files.nodes.into_iter().map(|f| f.path).collect()
-                }
-                _ => self.all_files(pr.number).await?,
-            },
-        })
+    async fn merged_of(&self, mut pr: GqlMerged, merged_at: Timestamp) -> Result<MergedPull> {
+        let files = match pr.files.take() {
+            Some(files) if !files.page_info.has_next_page => {
+                files.nodes.into_iter().map(|f| f.path).collect()
+            }
+            _ => self.all_files(pr.number).await?,
+        };
+        Ok(pr.into_merged(merged_at, files))
     }
 
     /// Oldest first
@@ -976,6 +967,26 @@ struct GqlLabeling {
     label: Name,
 }
 
+/// An issue's or pull request's labelings and assignments, read as
+/// [`GqlEvent`]s.
+macro_rules! assignment_timeline {
+    () => {
+        concat!(
+            "timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+    nodes {
+      __typename
+      ... on LabeledEvent { ",
+            labeling_fields!(),
+            " }
+      ",
+            assignment_fields!(),
+            "
+    }
+  }"
+        )
+    };
+}
+
 // `orderByState` lists the open pull requests that close an issue before the
 // closed and merged ones, so that these do not crowd them out of the first
 // page.
@@ -990,17 +1001,9 @@ const ISSUE_FIELDS: &str = concat!(
   parent { number title body author { __typename login } }
   blockedBy(first: 50) { nodes { number state } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt author { __typename login } } }
-  timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
-    nodes {
-      __typename
-      ... on LabeledEvent { ",
-    labeling_fields!(),
-    " }
-      ",
-    assignment_fields!(),
+  ",
+    assignment_timeline!(),
     "
-    }
-  }
 }"
 );
 
@@ -1107,18 +1110,7 @@ impl GqlIssue {
         let i = self;
         let author = login(i.author);
         let filed = Filed::read(&author, &i.title, &i.body, linewright);
-        let events = i
-            .timeline_items
-            .nodes
-            .into_iter()
-            .filter_map(|e| match e {
-                GqlEvent::Labeled(labeling) => Some(IssueEvent::Labeled {
-                    label: labeling.label.name,
-                    at: labeling.created_at,
-                }),
-                GqlEvent::Assignment(assignment) => assignment.read().map(IssueEvent::Assignment),
-            })
-            .collect();
+        let events = events(i.timeline_items.nodes);
         Issue {
             number: Number(i.number),
             title: i.title,
@@ -1127,12 +1119,7 @@ impl GqlIssue {
             open: i.state == "OPEN",
             created_at: i.created_at,
             labels: i.labels.nodes.into_iter().map(|l| l.name).collect(),
-            assignees: i
-                .assignees
-                .nodes
-                .into_iter()
-                .map(|a| Login::new(a.login))
-                .collect(),
+            assignees: logins(i.assignees),
             comments: i.comments.nodes.into_iter().map(Comment::from).collect(),
             blocked_by: linked(i.blocked_by),
             sub_issues: linked(i.sub_issues),
@@ -1152,6 +1139,27 @@ impl GqlIssue {
                 .collect(),
         }
     }
+}
+
+fn events(nodes: Vec<GqlEvent>) -> Vec<IssueEvent> {
+    nodes
+        .into_iter()
+        .filter_map(|e| match e {
+            GqlEvent::Labeled(labeling) => Some(IssueEvent::Labeled {
+                label: labeling.label.name,
+                at: labeling.created_at,
+            }),
+            GqlEvent::Assignment(assignment) => assignment.read().map(IssueEvent::Assignment),
+        })
+        .collect()
+}
+
+fn logins(nodes: Nodes<LoginNode>) -> Vec<Login> {
+    nodes
+        .nodes
+        .into_iter()
+        .map(|a| Login::new(a.login))
+        .collect()
 }
 
 fn pull_state(
@@ -1502,7 +1510,11 @@ const MERGED_FIELDS: &str = concat!(
     closes_field!(),
     "
   labels(first: 50) { nodes { name } }
+  assignees(first: 20) { nodes { login } }
   files(first: 100) { pageInfo { hasNextPage } nodes { path } }
+  ",
+    assignment_timeline!(),
+    "
 }"
 );
 
@@ -1518,7 +1530,27 @@ struct GqlMerged {
     author: Option<Actor>,
     labels: Nodes<Name>,
     closing_issues_references: Option<Nodes<NumberNode>>,
+    assignees: Nodes<LoginNode>,
     files: Option<FilesPage>,
+    timeline_items: Nodes<GqlEvent>,
+}
+
+impl GqlMerged {
+    fn into_merged(self, merged_at: Timestamp, files: Vec<String>) -> MergedPull {
+        MergedPull {
+            number: Number(self.number),
+            title: self.title,
+            body: self.body,
+            author: login(self.author),
+            merged_at,
+            base_ref: self.base_ref_name,
+            labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
+            closes: closes(self.closing_issues_references),
+            files,
+            assignees: logins(self.assignees),
+            events: events(self.timeline_items.nodes),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -2563,6 +2595,60 @@ mod tests {
                 IssueEvent::Assignment(Assignment::Unassigned {
                     assignee: Login::new("linewright"),
                     actor: Login::new("maintainer"),
+                    at: at("2026-10-09T12:03:00Z"),
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_merged_pull_request_lists_its_assignees_and_when_each_was_assigned_unassigned_and_labeled()
+    {
+        let pr: GqlMerged = serde_json::from_value(json!({
+            "number": 5, "title": "Gadgets", "body": "",
+            "mergedAt": "2026-10-09T12:00:00Z", "updatedAt": "2026-10-09T13:00:00Z",
+            "baseRefName": "main",
+            "author": {"__typename": "User", "login": "maintainer"},
+            "closingIssuesReferences": {"nodes": []},
+            "labels": {"nodes": [{"name": "linewright"}]},
+            "assignees": {"nodes": [{"login": "linewright"}]},
+            "files": {"pageInfo": {"hasNextPage": false}, "nodes": [{"path": "docs/spec.md"}]},
+            "timelineItems": {"nodes": [
+                {"__typename": "LabeledEvent", "createdAt": "2026-10-09T11:00:00Z",
+                 "label": {"name": "linewright"}},
+                {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:01:00Z",
+                 "assignee": {"__typename": "User", "login": "linewright"}},
+                {"__typename": "UnassignedEvent", "createdAt": "2026-10-09T12:02:00Z",
+                 "actor": {"__typename": "User", "login": "maintainer"},
+                 "assignee": {"__typename": "User", "login": "linewright"}},
+                {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:03:00Z",
+                 "assignee": {"__typename": "User", "login": "linewright"}},
+            ]},
+        }))
+        .unwrap();
+        let at = |time: &str| time.parse::<Timestamp>().unwrap();
+
+        let merged = pr.into_merged(at("2026-10-09T12:00:00Z"), vec!["docs/spec.md".into()]);
+
+        assert_eq!(merged.assignees, [Login::new("linewright")]);
+        assert_eq!(
+            merged.events,
+            [
+                IssueEvent::Labeled {
+                    label: "linewright".into(),
+                    at: at("2026-10-09T11:00:00Z"),
+                },
+                IssueEvent::Assignment(Assignment::Assigned {
+                    assignee: Login::new("linewright"),
+                    at: at("2026-10-09T12:01:00Z"),
+                }),
+                IssueEvent::Assignment(Assignment::Unassigned {
+                    assignee: Login::new("linewright"),
+                    actor: Login::new("maintainer"),
+                    at: at("2026-10-09T12:02:00Z"),
+                }),
+                IssueEvent::Assignment(Assignment::Assigned {
+                    assignee: Login::new("linewright"),
                     at: at("2026-10-09T12:03:00Z"),
                 }),
             ]

@@ -93,16 +93,22 @@ changing it is how you build.
 
 1. Open a pull request that changes the spec, and merge it once it says what
    you want.
-2. Linewright cuts the change into tickets, issues small enough for one agent to
-   build well, and opens a tracking issue that lists them. The tickets are
-   worked in order of what blocks what.
+2. Linewright assigns itself to your merged pull request while it cuts the
+   change into tickets, issues small enough for one agent to build well, and
+   opens a tracking issue that lists them. Then it labels the pull request
+   `linewright:spec-processed` and unassigns itself. The tickets are worked in
+   order of what blocks what.
 3. Each ticket becomes a pull request. The tracking issue closes when every
    ticket is closed.
 
 Code that already matches the spec produces no tickets, so building something
-by hand first is fine. If Linewright cannot cut the change into tickets, it
-labels your pull request `ready-for-human` and says why; remove the label to
-have it try again.
+by hand first is fine. Unassign Linewright from the pull request to stop the
+cut. If Linewright cannot cut the change into tickets, it unassigns itself and
+says why in a comment. Either way it leaves the change alone until you assign
+Linewright to the pull request again, which has it try again, or, where
+Linewright needs the required label, apply that label again. Assigning
+Linewright to a merged spec change it has not cut has it cut the change, also
+one without the required label.
 
 Agents never change the spec. Where a ticket needs a spec change, Linewright
 files a `ready-for-human` issue saying what is missing.

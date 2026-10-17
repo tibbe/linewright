@@ -26,7 +26,9 @@ async fn an_issue_labeled_ready_for_agent_and_refreshed_after_a_poll_is_claimed_
     assert_eq!(
         actions,
         [
-            Action::Claim { issue },
+            Action::Claim {
+                item: Item::Issue(issue)
+            },
             Action::Start(Work::Implement { issue })
         ]
     );
@@ -79,7 +81,9 @@ async fn a_ticket_waiting_for_a_persons_pull_request_is_implemented_once_a_refre
     assert_eq!(
         actions,
         [
-            Action::Claim { issue },
+            Action::Claim {
+                item: Item::Issue(issue)
+            },
             Action::Start(Work::Implement { issue })
         ]
     );
@@ -155,7 +159,8 @@ async fn a_ticket_linewrights_pull_request_for_another_opened_since_the_poll_clo
     assert!(
         !actions.iter().any(|action| matches!(
             action,
-            Action::Claim { issue } | Action::Start(Work::Implement { issue }) if *issue == other
+            Action::Claim { item: Item::Issue(issue) } | Action::Start(Work::Implement { issue })
+                if *issue == other
         )),
         "{actions:?}"
     );
@@ -185,7 +190,15 @@ async fn a_spec_change_merged_since_the_poll_and_refreshed_is_cut_into_tickets()
     let pr = spec_change(&world).await;
     let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
 
-    assert_eq!(actions, [Action::Start(Work::Tickets { pr })]);
+    assert_eq!(
+        actions,
+        [
+            Action::Claim {
+                item: Item::Pull(pr)
+            },
+            Action::Start(Work::Tickets { pr })
+        ]
+    );
 }
 
 #[tokio::test]
@@ -243,8 +256,13 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
         polled,
         [
             Action::Start(Work::Rework { issue: ticket, pr }),
+            Action::Claim {
+                item: Item::Pull(spec)
+            },
             Action::Start(Work::Tickets { pr: spec }),
-            Action::Claim { issue },
+            Action::Claim {
+                item: Item::Issue(issue)
+            },
             Action::Start(Work::Implement { issue }),
         ]
     );
@@ -311,7 +329,9 @@ async fn a_poll_reads_what_changed_since_whether_refreshed_or_not() {
     assert_eq!(
         actions,
         [
-            Action::Claim { issue },
+            Action::Claim {
+                item: Item::Issue(issue)
+            },
             Action::Start(Work::Implement { issue })
         ]
     );
@@ -337,9 +357,13 @@ async fn a_refresh_before_the_first_poll_polls() {
     assert_eq!(
         actions,
         [
-            Action::Claim { issue },
+            Action::Claim {
+                item: Item::Issue(issue)
+            },
             Action::Start(Work::Implement { issue }),
-            Action::Claim { issue: other },
+            Action::Claim {
+                item: Item::Issue(other)
+            },
             Action::Start(Work::Implement { issue: other }),
         ]
     );
@@ -444,7 +468,9 @@ async fn a_refresh_naming_items_the_store_does_not_have_reads_the_others() {
     assert_eq!(
         actions,
         [
-            Action::Claim { issue },
+            Action::Claim {
+                item: Item::Issue(issue)
+            },
             Action::Start(Work::Implement { issue })
         ]
     );

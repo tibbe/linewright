@@ -148,6 +148,17 @@ pub enum Assignment {
     },
 }
 
+impl IssueEvent {
+    pub fn at(&self) -> Timestamp {
+        match self {
+            IssueEvent::Labeled { at, .. } => *at,
+            IssueEvent::Assignment(
+                Assignment::Assigned { at, .. } | Assignment::Unassigned { at, .. },
+            ) => *at,
+        }
+    }
+}
+
 impl Assignment {
     pub fn assignee(&self) -> &Login {
         match self {
@@ -482,6 +493,14 @@ pub enum Item {
     Pull(Number),
 }
 
+impl Item {
+    pub fn number(self) -> Number {
+        match self {
+            Item::Issue(number) | Item::Pull(number) => number,
+        }
+    }
+}
+
 impl fmt::Display for Item {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -502,11 +521,20 @@ pub struct MergedPull {
     pub labels: Vec<String>,
     pub closes: Vec<Number>,
     pub files: Vec<String>,
+    #[serde(default)]
+    pub assignees: Vec<Login>,
+    /// Its assignments and labelings.
+    #[serde(default)]
+    pub events: Vec<IssueEvent>,
 }
 
 impl MergedPull {
     pub fn has_label(&self, label: &str) -> bool {
         self.labels.iter().any(|l| l == label)
+    }
+
+    pub fn is_assigned(&self, login: &Login) -> bool {
+        self.assignees.contains(login)
     }
 }
 

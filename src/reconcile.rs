@@ -215,6 +215,10 @@ pub struct Memory {
     pub done_runs: Vec<DoneRun>,
     pub held: Holds,
     pub usage_limit: Option<UsageLimit>,
+    /// The cuts into tickets that ended since the snapshot was taken. The
+    /// snapshot may miss what they wrote, so each counts as in flight for
+    /// what starts, though there is nothing left of it to cancel.
+    pub ended_cuts: Vec<Number>,
 }
 
 impl Memory {
@@ -356,10 +360,7 @@ pub enum Action {
         reason: String,
     },
     Claim {
-        issue: Number,
-    },
-    ClaimPull {
-        pr: Number,
+        item: Item,
     },
     Relabel {
         issue: Number,
@@ -500,9 +501,14 @@ pub fn decisions(
         waits: BTreeMap::new(),
     };
     let running = |subject: Subject| {
+        let ended_cut = match subject {
+            Subject::SpecChange(pr) => memory.ended_cuts.contains(&pr),
+            Subject::Issue(_) | Subject::Pull(_) => false,
+        };
         live.iter()
             .find(|run| run.subject == subject)
             .map(|run| run.kind)
+            .or(ended_cut.then_some(WorkKind::Tickets))
     };
 
     for run in live {
@@ -514,15 +520,18 @@ pub fn decisions(
         }
     }
 
-    let spec_changes = pending_spec_changes(snapshot, now, policy);
-    let pending: Vec<Number> = spec_changes.iter().map(|pr| pr.number).collect();
-    for pr in spec_changes {
-        if let Some(stage) = running(Subject::SpecChange(pr.number)) {
-            plan.wait(pr.number, Wait::Run { stage });
+    // The pull request is labeled processed last, so a tracking issue
+    // without the label is a decomposition that stopped part way: one
+    // interrupted, cancelled or handed back.
+    let mut discarded = vec![];
+    for pr in snapshot
+        .merged
+        .iter()
+        .filter(|pr| !pr.has_label(label::SPEC_PROCESSED))
+    {
+        if running(Subject::SpecChange(pr.number)).is_some() {
             continue;
         }
-        // The pull request is labeled processed last, so a tracking issue
-        // without the label is a decomposition that stopped part way.
         let partial = snapshot.issues.iter().find(|i| {
             i.open
                 && i.filed
@@ -530,24 +539,36 @@ pub fn decisions(
                         spec_change: pr.number,
                     })
         });
-        match partial {
-            Some(partial) => plan.act(Action::DiscardTickets {
+        if let Some(partial) = partial {
+            plan.act(Action::DiscardTickets {
                 tracking: partial.number,
-                tickets: partial
-                    .sub_issues
-                    .iter()
-                    .filter(|t| t.open)
-                    .map(|t| t.number)
-                    .collect(),
-            }),
-            None => plan.start(Work::Tickets { pr: pr.number }),
+                tickets: open_numbers(&partial.sub_issues),
+            });
+            discarded.push(pr.number);
+        }
+    }
+
+    let spec_changes = pending_spec_changes(snapshot, now, policy);
+    let pending: Vec<Number> = spec_changes.iter().map(|pr| pr.number).collect();
+    for pr in spec_changes {
+        let work = Work::Tickets { pr: pr.number };
+        if let Some(stage) = running(Subject::SpecChange(pr.number)) {
+            plan.wait(pr.number, Wait::Run { stage });
+        } else if discarded.contains(&pr.number) {
+            // Cut again once the discarded set is closed.
+        } else if pr.is_assigned(&policy.linewright) {
+            plan.start(work);
+        } else {
+            plan.claim_and_start(Item::Pull(pr.number), work);
         }
     }
 
     for (pr, ticket) in worked_pulls(snapshot, &policy.linewright) {
         match pull_claim(pr, &policy.linewright) {
             PullClaim::Claimed => {}
-            PullClaim::NeverAssigned => plan.act(Action::ClaimPull { pr: pr.number }),
+            PullClaim::NeverAssigned => plan.act(Action::Claim {
+                item: Item::Pull(pr.number),
+            }),
             PullClaim::Unassigned => {
                 plan.wait(pr.number, Wait::Unassigned);
                 continue;
@@ -570,7 +591,8 @@ pub fn decisions(
         if let Some(stage) = cut {
             plan.wait(issue.number, Wait::Run { stage });
         }
-        let cutting = cut.is_some() || tracks.is_some_and(|sc| pending.contains(&sc));
+        let cutting = cut.is_some()
+            || tracks.is_some_and(|sc| pending.contains(&sc) || discarded.contains(&sc));
         if tracks.is_some() && !cutting && !issue.sub_issues.is_empty() {
             let open = open_numbers(&issue.sub_issues);
             if open.is_empty() {
@@ -737,10 +759,20 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
         }
         Subject::SpecChange(pr) => {
             let pr = snapshot.merged_pull(pr)?;
-            [label::SPEC_PROCESSED, label::READY_FOR_HUMAN]
-                .into_iter()
-                .find(|l| pr.has_label(l))
-                .map(|l| format!("{} was labeled `{l}`", pr.number))
+            if pr.has_label(label::SPEC_PROCESSED) {
+                Some(format!(
+                    "{} was labeled `{}`",
+                    pr.number,
+                    label::SPEC_PROCESSED
+                ))
+            } else if !pr.is_assigned(&policy.linewright) {
+                Some(format!(
+                    "{} was unassigned from {}",
+                    policy.linewright, pr.number
+                ))
+            } else {
+                None
+            }
         }
         Subject::Issue(number) => {
             let Some(issue) = snapshot.issue(number).filter(|i| i.open) else {
@@ -777,7 +809,7 @@ enum Held {
 }
 
 struct Start {
-    claim: Option<Number>,
+    claim: Option<Item>,
     rebase: Option<TriedRebase>,
     work: Work,
 }
@@ -806,10 +838,14 @@ impl Plan {
     }
 
     fn claim_and_implement(&mut self, issue: Number) {
+        self.claim_and_start(Item::Issue(issue), Work::Implement { issue });
+    }
+
+    fn claim_and_start(&mut self, item: Item, work: Work) {
         self.starts.push(Start {
-            claim: Some(issue),
+            claim: Some(item),
             rebase: None,
-            work: Work::Implement { issue },
+            work,
         });
     }
 
@@ -842,8 +878,8 @@ impl Plan {
         }
         let mut actions = self.actions;
         for start in starts.into_iter().take(room) {
-            if let Some(issue) = start.claim {
-                actions.push(Action::Claim { issue });
+            if let Some(item) = start.claim {
+                actions.push(Action::Claim { item });
             }
             if let Some(rebase) = start.rebase {
                 actions.push(Action::RememberRebase(rebase));
@@ -1382,24 +1418,42 @@ fn humanize(delta: TimeDelta) -> String {
 
 fn stopped_by_unassign(issue: &Issue, policy: &Policy) -> bool {
     let linewright = &policy.linewright;
-    let unassigned = issue
-        .events
-        .iter()
-        .filter_map(|e| match e {
-            IssueEvent::Assignment(Assignment::Unassigned {
-                assignee,
-                actor,
-                at,
-            }) if assignee == linewright && actor != linewright => Some(*at),
-            _ => None,
-        })
-        .max();
+    let unassigned = last_unassigned(&issue.events, linewright, |actor| actor != linewright);
     let labeled = issue.last_labeled(StatusLabel::ReadyForAgent);
     match (unassigned, labeled) {
         (Some(unassigned), Some(labeled)) => unassigned > labeled,
         (Some(_), None) => true,
         (None, _) => false,
     }
+}
+
+/// When `assignee` was last unassigned by an actor `by` accepts.
+fn last_unassigned(
+    events: &[IssueEvent],
+    assignee: &Login,
+    by: impl Fn(&Login) -> bool,
+) -> Option<Timestamp> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            IssueEvent::Assignment(Assignment::Unassigned {
+                assignee: unassigned,
+                actor,
+                at,
+            }) if unassigned == assignee && by(actor) => Some(*at),
+            _ => None,
+        })
+        .max()
+}
+
+fn last_labeled(events: &[IssueEvent], name: &str) -> Option<Timestamp> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            IssueEvent::Labeled { label, at } if label == name => Some(*at),
+            _ => None,
+        })
+        .max()
 }
 
 fn wants_triage(issue: &Issue, policy: &Policy) -> bool {
@@ -1459,10 +1513,15 @@ pub enum NotSpecChange {
         spec_glob: String,
     },
     Processed,
-    HandedBack,
     BeforeLookback {
         merged_at: Timestamp,
         window_opened: Timestamp,
+    },
+    /// Linewright was unassigned from it, and `required_label`, when one is
+    /// set, was not applied again since.
+    Unassigned {
+        at: Timestamp,
+        required_label: Option<String>,
     },
     RequiredLabel {
         label: String,
@@ -1477,7 +1536,6 @@ pub fn not_a_spec_change(
     policy: &Policy,
 ) -> Option<NotSpecChange> {
     let window_opened = now - policy.spec_lookback;
-    let unlabeled = policy.require_label.as_ref().filter(|l| !pr.has_label(l));
     let because = if pr.author == policy.linewright {
         NotSpecChange::Linewrights
     } else if pr.base_ref != default_branch {
@@ -1490,17 +1548,36 @@ pub fn not_a_spec_change(
         }
     } else if pr.has_label(label::SPEC_PROCESSED) {
         NotSpecChange::Processed
-    } else if pr.has_label(label::READY_FOR_HUMAN) {
-        NotSpecChange::HandedBack
     } else if pr.merged_at < window_opened {
         NotSpecChange::BeforeLookback {
             merged_at: pr.merged_at,
             window_opened,
         }
+    } else if pr.is_assigned(&policy.linewright) {
+        return None;
+    } else if let Some(at) = unassigned_since_required_label(pr, policy) {
+        NotSpecChange::Unassigned {
+            at,
+            required_label: policy.require_label.clone(),
+        }
     } else {
+        let unlabeled = policy.require_label.as_ref().filter(|l| !pr.has_label(l));
         return unlabeled.map(|label| NotSpecChange::RequiredLabel {
             label: label.clone(),
         });
     };
     Some(because)
+}
+
+/// When Linewright was last unassigned from `pr`, by anyone, if the required
+/// label, when one is set, was not applied since.
+fn unassigned_since_required_label(pr: &MergedPull, policy: &Policy) -> Option<Timestamp> {
+    let unassigned = last_unassigned(&pr.events, &policy.linewright, |_| true)?;
+    let labeled = policy
+        .require_label
+        .as_ref()
+        .and_then(|required| last_labeled(&pr.events, required));
+    labeled
+        .is_none_or(|labeled| labeled < unassigned)
+        .then_some(unassigned)
 }

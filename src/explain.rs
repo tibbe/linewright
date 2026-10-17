@@ -674,9 +674,20 @@ fn describe_not_spec_change(because: &NotSpecChange) -> String {
             "it is labeled `{}`: cut into tickets already",
             label::SPEC_PROCESSED
         ),
-        NotSpecChange::HandedBack => format!(
-            "it is labeled `{}`: handed to the maintainer",
-            label::READY_FOR_HUMAN
+        NotSpecChange::Unassigned {
+            at,
+            required_label: None,
+        } => format!(
+            "Linewright was unassigned from it {}: assign Linewright to cut it again",
+            utc(*at)
+        ),
+        NotSpecChange::Unassigned {
+            at,
+            required_label: Some(label),
+        } => format!(
+            "Linewright was unassigned from it {}, and `{label}`, the required label, was not \
+             applied since: assign Linewright or apply the label to cut it again",
+            utc(*at)
         ),
         NotSpecChange::BeforeLookback {
             merged_at,

@@ -76,8 +76,6 @@ pub struct Factory {
     memory: Memory,
     holds_record: HoldsRecord,
     kept: Option<Kept>,
-    /// The cuts into tickets that ended since the kept snapshot was taken.
-    ended: Vec<LiveRun>,
     /// The items Linewright's actions and runs changed since the kept
     /// snapshot last read them.
     written: BTreeSet<Item>,
@@ -204,7 +202,6 @@ impl Factory {
             },
             holds_record,
             kept: None,
-            ended: vec![],
             written: BTreeSet::new(),
         })
     }
@@ -226,7 +223,7 @@ impl Factory {
             .snapshot(now - shell.policy.spec_lookback)
             .await
             .context("taking a snapshot")?;
-        self.ended.clear();
+        self.memory.ended_cuts.clear();
         self.written.clear();
         let kept = Kept {
             snapshot: Arc::new(snapshot),
@@ -348,14 +345,14 @@ impl Factory {
         })
     }
 
-    /// A cut that ended since the snapshot was taken counts as in flight: the
-    /// snapshot may miss what it wrote.
     fn live_runs(&self) -> Vec<LiveRun> {
-        let in_flight = self.live.values().filter_map(|entry| match entry.running {
-            Running::Work(run) => Some(run),
-            Running::Workflow => None,
-        });
-        self.ended.iter().copied().chain(in_flight).collect()
+        self.live
+            .values()
+            .filter_map(|entry| match entry.running {
+                Running::Work(run) => Some(run),
+                Running::Workflow => None,
+            })
+            .collect()
     }
 
     fn workflows_in_flight(&self) -> Vec<WorkflowName> {
@@ -554,7 +551,7 @@ impl Factory {
             }
             // A cut writes issues the kept snapshot may lack, such as a
             // tracking issue it left part way.
-            Subject::SpecChange(_) => self.ended.push(run),
+            Subject::SpecChange(pr) => self.memory.ended_cuts.push(pr),
         }
     }
 
@@ -608,13 +605,9 @@ impl Factory {
                     }
                 }
             }
-            Action::Claim { issue } => {
-                info!(issue = issue.0, "claiming");
-                store.assign(*issue).await?;
-            }
-            Action::ClaimPull { pr } => {
-                info!(pr = pr.0, "claiming the pull request");
-                store.assign(*pr).await?;
+            Action::Claim { item } => {
+                info!(%item, "claiming");
+                store.assign(item.number()).await?;
             }
             Action::Relabel { issue, remove, add } => {
                 info!(issue = issue.0, remove, add, "relabeling");
@@ -907,8 +900,8 @@ async fn read_issue_into(
 /// write.
 fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
     match action {
-        Action::Claim { issue }
-        | Action::Relabel { issue, .. }
+        Action::Claim { item } => vec![*item],
+        Action::Relabel { issue, .. }
         | Action::RemoveStatusLabel { issue, .. }
         | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
         Action::DiscardTickets { tracking, tickets } => tickets
@@ -922,8 +915,7 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
             .flat_map(|p| p.closes.iter().map(|issue| Item::Issue(*issue)))
             .chain([Item::Pull(*pr)])
             .collect(),
-        Action::ClaimPull { pr }
-        | Action::MarkReady { pr }
+        Action::MarkReady { pr }
         | Action::MarkReadyForMergeState { pr }
         | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
         Action::HandBack { item, .. } => vec![*item],

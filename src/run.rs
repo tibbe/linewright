@@ -429,11 +429,11 @@ async fn hand_back_spec_change(
     reason: &str,
     log_tail: Option<&str>,
 ) -> Result<()> {
-    shell.store.add_label(pr, label::READY_FOR_HUMAN).await?;
+    shell.store.unassign(pr).await?;
     let body = format!(
-        "{}\n\nRemove `{}` to cut this spec change into tickets again.",
+        "{}\n\nAssign @{} to this pull request again to cut it into tickets again.",
         with_log(reason, log_tail),
-        label::READY_FOR_HUMAN
+        shell.policy.linewright
     );
     shell.store.comment(pr, &body).await
 }
@@ -814,10 +814,20 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
 }
 
 async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Result<()> {
+    file_tickets(shell, pr, tickets).await?;
+    // Labeled first, so that a stop between the two leaves the spec change
+    // processed rather than handed back.
+    shell
+        .store
+        .add_label(pr.number, label::SPEC_PROCESSED)
+        .await?;
+    shell.store.unassign(pr.number).await
+}
+
+async fn file_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Result<()> {
     let store = &shell.store;
     if tickets.tickets.is_empty() {
-        store.comment(pr.number, &tickets.comment).await?;
-        return store.add_label(pr.number, label::SPEC_PROCESSED).await;
+        return store.comment(pr.number, &tickets.comment).await;
     }
     let required: Vec<String> = shell.creation_label().await?.into_iter().collect();
     let tracking_issue = store
@@ -860,8 +870,7 @@ async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Res
                 tickets.comment
             ),
         )
-        .await?;
-    store.add_label(pr.number, label::SPEC_PROCESSED).await
+        .await
 }
 
 /// What became of the work of a run that stopped before it finished.

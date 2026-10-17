@@ -78,7 +78,10 @@ struct PullRecord {
     head_ref: String,
     state: PullState,
     labels: Vec<String>,
+    /// When each label was applied, oldest first.
+    labelings: Vec<IssueEvent>,
     assignees: Vec<Login>,
+    /// Oldest first.
     assignments: Vec<Assignment>,
     pushes: Vec<Push>,
     comments: Vec<Comment>,
@@ -607,6 +610,14 @@ impl LocalStore {
             .unwrap_or_default()
     }
 
+    pub fn pull_assignees(&self, pr: Number) -> Vec<Login> {
+        self.state()
+            .pulls
+            .get(&pr)
+            .map(|p| p.assignees.clone())
+            .unwrap_or_default()
+    }
+
     pub fn requested_reviewers(&self, pr: Number) -> Vec<Login> {
         self.state()
             .pulls
@@ -965,6 +976,10 @@ impl State {
             let pull = self.pull_mut(number)?;
             if !pull.has_label(label) {
                 pull.labels.push(label.into());
+                pull.labelings.push(IssueEvent::Labeled {
+                    label: label.into(),
+                    at: now,
+                });
             }
         }
         Ok(())
@@ -1045,6 +1060,15 @@ impl PullRecord {
         closing_references(&self.body).contains(&number)
     }
 
+    /// Its labelings and assignments, oldest first.
+    fn events(&self) -> Vec<IssueEvent> {
+        let assignments = self.assignments.iter().cloned().map(IssueEvent::Assignment);
+        let mut events: Vec<IssueEvent> =
+            self.labelings.iter().cloned().chain(assignments).collect();
+        events.sort_by_key(IssueEvent::at);
+        events
+    }
+
     fn merged(&self, default_branch: &str) -> Option<MergedPull> {
         let PullState::Merged { at } = self.state else {
             return None;
@@ -1059,6 +1083,8 @@ impl PullRecord {
             labels: self.labels.clone(),
             closes: closing_references(&self.body),
             files: self.files.clone(),
+            assignees: self.assignees.clone(),
+            events: self.events(),
         })
     }
 
@@ -1079,6 +1105,7 @@ impl PullRecord {
             head_ref: head_ref.into(),
             state: PullState::Open { draft: true },
             labels: vec![],
+            labelings: vec![],
             assignees: vec![],
             assignments: vec![],
             pushes: vec![],

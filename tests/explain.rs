@@ -1088,6 +1088,8 @@ fn merged(labels: &[&str]) -> MergedPull {
         labels: labels.iter().map(|l| l.to_string()).collect(),
         closes: vec![],
         files: vec!["docs/specs/invoices.md".into()],
+        assignees: vec![],
+        events: vec![],
     }
 }
 
@@ -1144,11 +1146,6 @@ fn a_merged_pull_request_names_the_rule_that_makes_it_no_spec_change() {
          tickets already"
     );
     assert_eq!(
-        merged_text(&view, merged(&["ready-for-human"])),
-        "left alone: it is no spec change: it is labeled `ready-for-human`: handed to the \
-         maintainer"
-    );
-    assert_eq!(
         merged_text(
             &view,
             MergedPull {
@@ -1169,6 +1166,67 @@ fn a_merged_pull_request_without_the_required_label_names_it() {
     assert_eq!(
         merged_text(&view, merged(&[])),
         "left alone: it is no spec change: it is not labeled `linewright`, the required label"
+    );
+}
+
+fn unassigned_at(minute: &str) -> MergedPull {
+    MergedPull {
+        events: vec![
+            IssueEvent::Labeled {
+                label: "linewright".into(),
+                at: at("2026-10-01T09:00:00Z"),
+            },
+            IssueEvent::Assignment(Assignment::Assigned {
+                assignee: Login::new("factory"),
+                at: at("2026-10-01T09:10:00Z"),
+            }),
+            IssueEvent::Assignment(Assignment::Unassigned {
+                assignee: Login::new("factory"),
+                actor: Login::new("factory"),
+                at: at(&format!("2026-10-01T09:{minute}:00Z")),
+            }),
+        ],
+        ..merged(&["linewright"])
+    }
+}
+
+#[test]
+fn a_merged_pull_request_linewright_was_unassigned_from_says_assigning_it_cuts_it_again() {
+    assert_eq!(
+        merged_text(&view(vec![], vec![]), unassigned_at("30")),
+        "left alone: it is no spec change: Linewright was unassigned from it 2026-10-01 \
+         09:30:00 UTC: assign Linewright to cut it again"
+    );
+}
+
+#[test]
+fn with_a_required_label_a_merged_pull_request_linewright_was_unassigned_from_names_the_label() {
+    let mut view = view(vec![], vec![]);
+    view.policy.require_label = Some("linewright".into());
+
+    assert_eq!(
+        merged_text(&view, unassigned_at("30")),
+        "left alone: it is no spec change: Linewright was unassigned from it 2026-10-01 \
+         09:30:00 UTC, and `linewright`, the required label, was not applied since: assign \
+         Linewright or apply the label to cut it again"
+    );
+}
+
+#[test]
+fn a_ready_for_human_label_on_a_merged_pull_request_does_not_keep_it_from_being_cut() {
+    let answer = explain_read(
+        &view(vec![], vec![]),
+        &[],
+        &AnyItem::Merged {
+            pull: Box::new(merged(&["ready-for-human"])),
+            tracking_issues: vec![],
+        },
+        at(NOW),
+    );
+
+    assert_eq!(
+        render_answer(&answer, false).lines().nth(1),
+        Some("state: spec change waiting for tickets")
     );
 }
 
@@ -1703,7 +1761,7 @@ fn a_spec_change_cut_again_names_its_newest_tracking_issue() {
 #[test]
 fn a_spec_change_not_cut_names_no_tracking_issue_from_a_cut_discarded_part_way() {
     let handed_back = AnyItem::Merged {
-        pull: Box::new(merged(&["ready-for-human"])),
+        pull: Box::new(unassigned_at("30")),
         tracking_issues: vec![Number(40)],
     };
 
