@@ -8,6 +8,7 @@ on:
 jobs:
   fmt:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
@@ -15,18 +16,21 @@ jobs:
 
   markdown:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: scripts/check markdown
 
   compose:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: scripts/check compose
 
   clippy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
@@ -43,7 +47,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # The tests take a few minutes; a hung one fails here rather than run
     # for hours.
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
@@ -55,6 +59,7 @@ jobs:
 
   doc:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
@@ -66,6 +71,7 @@ jobs:
   changes:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       base-image: ${{ steps.changes.outputs.base-image }}
       deploy-images: ${{ steps.changes.outputs.deploy-images }}
@@ -113,6 +119,7 @@ jobs:
     if: always()
     needs: [fmt, markdown, compose, clippy, test, doc, changes, base-image, deploy-images, binaries]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1

@@ -7,6 +7,7 @@ on:
 jobs:
   version:
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: read
     outputs:
@@ -30,6 +31,7 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -65,6 +67,7 @@ jobs:
   merge:
     needs: publish
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       packages: write
     steps:
@@ -104,6 +107,7 @@ jobs:
   release:
     needs: [merge, binaries]
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
