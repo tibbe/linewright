@@ -54,9 +54,18 @@ _Avoid_: action, automation, routine, job, scheduled task
 The condition under which a workflow runs.
 _Avoid_: event
 
-**Spec change**:
-A merged pull request that changes the spec.
-_Avoid_: spec update
+**Status label**:
+One of the four labels that say what an issue needs next: `needs-triage`,
+`needs-info`, `ready-for-human`, `ready-for-agent`.
+_Avoid_: state label, workflow label
+
+**Claim**:
+Linewright's assignment to an item: it has taken the item on.
+_Avoid_: lock, lease, take
+
+**In review**:
+An issue's status while an open pull request closes it.
+_Avoid_: pending, in progress
 
 **Ticket**:
 An issue an agent implements.

@@ -67,8 +67,7 @@ hands #43 back at once, saying which permission to grant.
   - **in flight** (`in-flight`): it has not ended.
   - **interrupted** (`interrupted`): the process running it stopped before it
     ended, such as by a crash or a kill.
-- Handing an item back is labeling it `ready-for-human` with a comment that
-  says why.
+- Handing an item back is as under [Repository](repository.md).
 - A session's result the manager cannot parse goes back to the session with
   the parse error, so it can answer again (`result-retries`).
 - Any unexpected end (a crash, a timeout, the agent giving up, a result that
@@ -83,9 +82,10 @@ hands #43 back at once, saying which permission to grant.
   far to the branch, with what its session left uncommitted as an unfinished
   commit. The next run on the branch folds the unfinished commit into its own
   commits.
-- A run is cancelled when its item stops asking for its work, as each stage
-  says, or when `serve` stops. A cancelled run posts nothing more, and one
-  whose pull request was merged or closed pushes nothing either.
+- A run is cancelled when its item stops asking for its work, as under
+  [Repository](repository.md), or when `serve` stops. A cancelled run posts
+  nothing more, and one whose pull request was merged or closed pushes nothing
+  either.
 - A restart leaves the runs in flight interrupted.
 - Runs are kept across restarts, with their outcomes and their sessions'
   transcripts.

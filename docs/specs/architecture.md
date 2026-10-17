@@ -8,8 +8,8 @@ later.
   the store and nowhere else. Each poll takes a snapshot of the store and
   reconciles it with the runs in flight; between polls the snapshot is kept,
   and a webhook delivery reads the items it names into it again and
-  reconciles. Machine state is derived from the store's facts (assignee,
-  linked PR, review and check state), never written as labels. Linewright may
+  reconciles. Machine state is derived from the store's facts, what each
+  item is now and how it got there, never written as labels. Linewright may
   keep bookkeeping no person sets under the work directory. A local
   store of plain files serves replay and tests.
 - **Functional core, imperative shell.** The reconcile step is a pure

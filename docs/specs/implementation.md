@@ -37,33 +37,31 @@ requests that have already been through review.
   codebase and proposes tickets: vertical slices sized to a session's smart
   zone, with code that already matches the spec producing none.
 - One **tracking issue** per spec change with tickets: "Spec change: <PR
-  title>", linking the PR and listing the tickets, with no role label. Each
+  title>", linking the PR and listing the tickets, with no status label. Each
   ticket is a sub-issue of it, states what to build and its acceptance
   criteria, carries `ready-for-agent`, and is linked to the tickets it is
   blocked by with GitHub's issue dependencies.
 - The PR is labeled `linewright:spec-processed` once its tickets exist, also
   when there are none, in which case no tracking issue is created.
 - A decomposition that cannot finish hands the spec change back (see
-  [Runs](runs.md)), and removing `ready-for-human` from it tries again.
+  [Repository](repository.md)).
 - A decomposition interrupted part way (the tracking issue exists, the PR is
   not labeled) is discarded, its tracking issue and tickets closed as not
   planned with a comment, and the spec change is cut again.
-- Linewright does not work on a ticket while an open pull request closes it.
-- A ticket is claimable when every issue blocking it is closed. Linewright
-  closes the tracking issue when all its sub-issues are closed.
+- Linewright closes the tracking issue when all its sub-issues are closed.
 - The decomposition is Linewright's responsibility: it runs from a merged
   spec change to the ready PRs with no human step, and a wrong set of tickets
   from a good spec is a defect in Linewright.
 
 ### Working a ticket
 
-- Claiming is adding Linewright as an assignee. A run on a ticket starts
-  from the ticket's branch when it has one, and otherwise from the default
-  branch on a new branch for the ticket. The run may discard the branch's work
-  and start again from the default branch. Once its pull request is open, the
-  work is the pull request's (see [Pull requests](pull_requests.md)).
+- A run on a ticket starts from the ticket's branch when it has one, and
+  otherwise from the default branch on a new branch for the ticket. The run
+  may discard the branch's work and start again from the default branch. Once
+  its pull request is open, the work is the pull request's (see [Pull
+  requests](pull_requests.md)).
 - The implementer reads the ticket and its comments (the triage brief, earlier
-  handbacks). Its brief names the ticket's parent issue, and for a ticket cut
+  hand-backs). Its brief names the ticket's parent issue, and for a ticket cut
   from a spec change, the spec change: pointers, not their content. The
   implementer and its reviewers read them when they need to know what the other
   tickets cover, since those own what this ticket leaves out. It implements,
@@ -77,13 +75,11 @@ requests that have already been through review.
   cannot build from is a spec gap, below. Linewright does not check the
   branch for spec changes: they show in the PR's diff, and a maintainer who
   wants a guarantee requires review of spec files in GitHub.
-- A spec gap that blocks the run (the spec cannot decide it) sends its item
-  to `ready-for-human` with the question. A gap that does not block it
+- A spec gap that blocks the run (the spec cannot decide it) hands its item
+  back with the question. A gap that does not block it
   becomes a separate `ready-for-human` issue describing the needed spec
   change, and the run continues. A gap already filed for the item and still
   open is not filed again.
-- Removing `ready-for-agent`, unassigning Linewright or closing the ticket
-  cancels its run.
 - A hand-back of a ticket with no pull request names the ticket's branch, so
   the maintainer can see what was tried, and deleting the branch starts the
   ticket's next run from the default branch. When a ticket is closed with no

@@ -23,8 +23,6 @@ brief an implementer works from.
 
 ## Decisions
 
-- Triage runs on `needs-triage` issues not authored by Linewright
-  (tickets Linewright creates are already briefed).
 - The agent reads the issue and its comments, the codebase and the spec. It
   categorizes, verifies the claim (reproduces a bug, runs the tests, checks
   whether the behavior already exists) and ends in one of three states:
@@ -47,12 +45,13 @@ brief an implementer works from.
 
 The label says who must answer, and how.
 
-- `needs-info`: the reporter answers in the thread. A reply, a comment from
-  anyone other than Linewright posted after its question, triages the issue
-  again.
-- `ready-for-human`, whoever handed the issue back: the maintainer answers
-  with a label, `ready-for-agent` to implement as decided or `needs-triage`
-  to triage again.
+- `needs-info`: the reporter answers in the thread. Linewright assigns the
+  people it asks, those GitHub lets it assign, and names them all in the
+  comment. A reply, a comment from anyone other than Linewright posted after
+  its question, puts the issue back to `needs-triage`: Linewright unassigns
+  the people it assigned and triages the issue again.
+- `ready-for-human`: the maintainer answers with a label, `ready-for-agent`
+  to implement as decided or `needs-triage` to triage again.
 
 The `triage` states of the issue lifecycle; both are labels.
 

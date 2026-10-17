@@ -20,8 +20,8 @@ When Linewright cannot finish it, a comment on the issue says why.
    time, so that the factory shares the repository rather than owning it.
 3. As an operator, I want Linewright to refuse to start when it cannot work, so
    that a misconfiguration is loud.
-4. As an operator, I want to start work by applying one label and stop it by
-   removing it, so that control needs nothing but GitHub.
+4. As an operator, I want to start work with a label or an assignment and
+   stop it by taking either away, so that control needs nothing but GitHub.
 5. As an operator, I want Linewright to start work only on the issues and pull
    requests I mark for it, so that I can adopt it a little at a time in a
    repository whose people already use its labels.
@@ -54,37 +54,50 @@ When Linewright cannot finish it, a comment on the issue says why.
 
   | label | meaning | set by |
   |---|---|---|
-  | `needs-triage` | new, not yet assessed | reporter's issue template, maintainer |
-  | `needs-info` | waiting on the reporter | Linewright |
-  | `ready-for-agent` | actionable: Linewright may claim it | maintainer, Linewright |
-  | `ready-for-human` | the maintainer must act or decide | Linewright, maintainer on Linewright's pull requests |
+  | `needs-triage` | not yet assessed | reporter's issue template, maintainer, Linewright |
+  | `needs-info` | its assessment waits on a fact from the reporter | Linewright, maintainer |
+  | `ready-for-agent` | decided: an agent could build it | maintainer, Linewright |
+  | `ready-for-human` | needs a person's decision or action | Linewright, maintainer |
   | `bug`, `enhancement` | category, in repositories without issue types | Linewright (triage), maintainer |
   | `linewright:spec-processed` | this merged PR's spec changes have been ticketed | Linewright |
   | the required label, named by `require-label` | Linewright may start work on this item | maintainer, Linewright |
 
-- For issues, the human interface is two labels: `needs-triage` asks for
-  triage and `ready-for-agent` asks for implementation. Spec changes need no
-  label: every merged pull request that touches the spec is picked up.
-  Removing `ready-for-agent`, unassigning Linewright or closing the
-  issue stops its work; after an unassignment, applying `ready-for-agent`
-  again restarts it. Linewright's pull requests are steered on the pull
-  request, as under [Pull requests](pull_requests.md).
-- With `require-label` set, Linewright starts work only on issues and pull
-  requests that carry the **required label**. It checks the label each time
-  it starts something: triaging an issue, also again after a comment;
-  claiming an issue, also again after an unassignment or a reopening; and
-  cutting a spec change into tickets, also again after a handback. Work
-  already started carries on without it, so removing the label stops
-  nothing in flight and only keeps Linewright from starting more. Linewright
-  puts the label on every issue and pull request it creates. Workflows run
-  on their schedule either way. Unset, every issue and pull request is
-  Linewright's to work.
-- Machine state is derived from GitHub, never labeled. An issue is
-  **claimed** when Linewright is among its assignees, and **in review**
-  while an open pull request closes it. Linewright's pull requests are the
-  ones its account opened.
+- The first four are the **status labels**: what an issue needs next, one at
+  a time. Whoever sets one removes the others; an issue carrying more than
+  one holds the newest, and Linewright removes the rest. Pull requests carry
+  none: a pull request's draft, review and check state say what it needs.
+- Assignees say who is working on an item. Linewright **claims** an item by
+  assigning itself and lets go of it by unassigning itself. It is assigned
+  to an open issue only while the issue's label asks for its work, and to a
+  pull request or a spec change only while it works it. A closed item keeps
+  its labels and assignees.
+- On its own, Linewright claims an issue that is unassigned, marked for it,
+  labeled for work it does, `needs-triage` for triage or `ready-for-agent`
+  for implementation, and that it can start: no open issue blocks it and no
+  open pull request closes it. An item Linewright was unassigned from, by
+  itself or by anyone, is not claimed again on its own until its status
+  label or the required label is applied again.
+- Assigning Linewright to an item by hand asks it to work the item, marked
+  for it or not and beside any other assignee. An issue it works as its
+  label says, holding one it cannot start yet; one whose label asks nothing
+  of it, it lets go of with a comment saying what the issue needs first. A
+  pull request or a spec change it goes on with.
+- A run is cancelled when its item stops asking for Linewright's work:
+  Linewright is unassigned from the item, the item is closed, or an issue's
+  label stops asking.
+- **Handing an item back** is how Linewright lets go of an item it cannot
+  finish: it labels an issue `ready-for-human`, unassigns itself from the
+  item and says why in a comment.
+- With `require-label` set, an item is **marked for Linewright** when it carries
+  the **required label**, checked each time Linewright claims an item on its
+  own. Work already started carries on without it. Linewright puts the label on
+  every issue and pull request it creates. Workflows run on their schedule
+  either way. Unset, every issue and pull request is marked for Linewright.
+- Machine state is derived from GitHub, never labeled: an issue is **in
+  review** while an open pull request closes it, and Linewright's pull
+  requests are the ones its account opened.
 - Linewright comments at every outcome: a triage result, tickets created (on
-  the tracking issue and the spec PR), a ticket handed back and why, a PR
+  the tracking issue and the spec PR), an item handed back and why, a PR
   made ready, a rework done. Claims, PRs and merges need no comment: the
   assignee, the PR and the merge are the record.
 - A comment is for people. Linewright decides nothing from what its own
@@ -113,7 +126,8 @@ stateDiagram-v2
     triage --> ready_for_human: maintainer must decide
     ready_for_human --> triage: maintainer labels needs-triage
     ready_for_human --> ready_for_agent: maintainer labels
-    ready_for_agent --> work: unblocked, Linewright assigned
-    work --> ready_for_human: cannot finish, or PR closed unmerged
+    ready_for_agent --> work: Linewright assigned
+    work --> ready_for_agent: Linewright unassigned, until labeled again
+    work --> ready_for_human: handed back, or PR closed unmerged
     work --> [*]: PR merged, issue closed
 ```

@@ -29,11 +29,11 @@ what the factory makes of it now, until it does better.
   one from GitHub; run on the factory's machine it includes the transcripts of
   the sessions that handled it.
 - `lw replay CASE --out DIR` runs the pipeline end to end against a
-  **local store** seeded from the case: the same reconcile loop as `serve`,
-  run until nothing is left to do rather than on a timer, ending when every
-  pull request is ready for review (with `--auto-merge`, merged) or every
-  issue is handed back. The local store has no branch rules, so with
-  `--auto-merge` every green pull request merges and the tickets it blocked
+  **local store** seeded from the case: the same reconcile loop as `serve`, run
+  until nothing is left to do rather than on a timer, ending when every ticket's
+  pull request is ready for review (with `--auto-merge`, merged) or the ticket
+  or its pull request is handed back. The local store has no branch rules, so
+  with `--auto-merge` every green pull request merges and the tickets it blocked
   run in turn. The implementer's own run of the repository's checks stands in
   for CI.
 - The output directory holds everything the replay produced, as plain files a

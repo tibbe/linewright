@@ -40,18 +40,16 @@ to review again; the maintainer approves and merges.
   steer it.
 - A PR is tied to issues only by GitHub's closing references, the closing
   keywords in its body and the issues linked to it by hand: it closes those
-  issues, and each waits for it while it is open.
-- A run on the PR that cannot finish hands the PR back (see [Runs](runs.md)),
-  and removing `ready-for-human` from it tries again. A maintainer who labels
-  the PR `ready-for-human` cancels its run and stops its work until they remove
-  the label.
+  issues.
+- Linewright works the PR while it is assigned to it, as under
+  [Repository](repository.md). Unassigned, the PR is left as it is;
+  assigned again, Linewright goes on and addresses what came in meanwhile.
 - Commits a person pushes to the branch are kept: every run starts from the
   branch as it is.
 - A run that changes a PR so its description no longer fits rewrites the
   description, keeping the issues it closes.
 - A PR closed without merging is the maintainer's no: each issue it closes
-  that Linewright has claimed goes to `ready-for-human`. A reopened issue
-  gets a fresh run once `ready-for-agent` is applied again.
+  that Linewright has claimed is handed back.
 
 ### CI
 
@@ -125,10 +123,10 @@ The `work` states of the issue lifecycle, derived as under
 
 ```mermaid
 stateDiagram-v2
-    [*] --> claimed: unblocked, Linewright assigned
+    [*] --> claimed: Linewright assigned
     claimed --> in_review: PR opened that closes it
-    claimed --> [*]: cannot finish, to ready-for-human
+    claimed --> [*]: cannot finish, handed back
     in_review --> claimed: PR edited not to close it
     in_review --> [*]: PR merged, issue closed
-    in_review --> [*]: PR closed unmerged, to ready-for-human
+    in_review --> [*]: PR closed unmerged, handed back
 ```

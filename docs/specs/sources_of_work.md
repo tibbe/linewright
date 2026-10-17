@@ -28,14 +28,14 @@ pipeline to work, like any others.
 - The spec is the tracked files matching the spec glob.
 - A **spec change** is a pull request that was merged into the default
   branch, touched at least one spec file, was merged within the lookback
-  window (default 7 days), has no `linewright:spec-processed` label and,
-  with `require-label` set, carries the required label, applied before or
-  after the merge. PRs Linewright authored are skipped. The spec as
+  window (default 7 days), has no `linewright:spec-processed` label and is
+  marked for Linewright (see [Repository](repository.md)). PRs Linewright
+  authored are skipped. The spec as
   merged is what gets built; a push straight to the default branch is the
   maintainer's own change, outside the factory.
-- Issues enter in two ways: with `needs-triage`, which asks for triage, and
-  with `ready-for-agent`, which asks for implementation once the issue is
-  unclaimed and unblocked.
+- Issues enter by their label, `needs-triage` for triage and
+  `ready-for-agent` for implementation, or by being assigned to Linewright,
+  as under [Repository](repository.md).
 - Workflows are a source of work too; see [Workflows](workflows.md).
 - Linewright polls, at an interval (default 60 s), and with webhooks on
   also reacts to GitHub's deliveries as they arrive; see

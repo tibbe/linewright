@@ -66,8 +66,6 @@ test. The pipeline then works those issues like any other.
 
   The agent searches the existing issues first and does not file one that
   is already open. Issues beyond `max-issues` are dropped and logged.
-  Workflow issues skip triage, like tickets: triage passes over issues
-  Linewright authored.
 
 ## Out of scope
 

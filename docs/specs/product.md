@@ -37,8 +37,8 @@ request that is reviewed, green and ready for a person.
 
 - **Spec in, PR out.** A merged spec change or a labeled issue starts the
   pipeline and a pull request ends it. Between the two the factory runs on
-  its own; when it cannot continue, it hands the item back with a label and a
-  comment that says why.
+  its own; when it cannot continue, it hands the item back with a comment
+  that says why.
 - **The spec is how the maintainer steers.** Agents build from the spec and
   leave it as it is; a spec that needs changing becomes an issue for the
   maintainer.
@@ -47,6 +47,10 @@ request that is reviewed, green and ready for a person.
 - **The work shows in GitHub.** The state of the work lives in GitHub, kept
   as a person would keep it, so that people work in the repository together
   with the factory.
+- **Labels say what an issue needs; assignees say who is working on it.**
+  Linewright joins in as a teammate would: it claims an issue that needs
+  what it can do, works an item only while it is assigned, and lets go when
+  the item needs something it cannot do.
 - **Each stage is a fresh agent session with a brief**, and work is cut so
   that every session stays in its smart zone, the part of its context window
   where it still works at full quality.
