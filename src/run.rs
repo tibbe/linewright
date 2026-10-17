@@ -762,6 +762,9 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
             ),
         ),
     };
+    // Posted before the labeling, so that a stop between the two leaves no
+    // status label without the comment it stands on.
+    store.comment(issue.number, &body).await?;
     for other in StatusLabel::ALL
         .map(StatusLabel::label)
         .into_iter()
@@ -784,7 +787,6 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
         }
     }
     store.add_label(issue.number, state).await?;
-    store.comment(issue.number, &body).await?;
     if !result.outcome.asks_for_linewright() {
         store.unassign(issue.number).await?;
     }
