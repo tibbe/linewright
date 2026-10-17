@@ -284,6 +284,74 @@ fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
     );
 }
 
+fn let_go(issue: u64) -> Action {
+    Action::LetGo {
+        issue: Number(issue),
+    }
+}
+
+#[test]
+fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_lets_go() {
+    for (older, kind) in [
+        (StatusLabel::ReadyForAgent, WorkKind::Implement),
+        (StatusLabel::NeedsTriage, WorkKind::Triage),
+    ] {
+        for newer in [StatusLabel::ReadyForHuman, StatusLabel::NeedsInfo] {
+            let world = snapshot(vec![claimed(labeled_both(older, newer))]);
+
+            assert_eq!(
+                reconcile(
+                    &world,
+                    &[live(1, kind)],
+                    &Memory::default(),
+                    &Workflows::default(),
+                    t(10),
+                    &policy()
+                ),
+                vec![
+                    Action::Cancel {
+                        subject: Subject::Issue(Number(1)),
+                        reason: format!("`{older}` was removed from #1"),
+                    },
+                    Action::RemoveStatusLabel {
+                        issue: Number(1),
+                        label: older,
+                    },
+                    let_go(1),
+                ],
+                "{older} relabeled {newer}"
+            );
+        }
+    }
+}
+
+#[test]
+fn removing_a_claimed_issues_status_label_lets_go_of_it() {
+    let world = snapshot(vec![claimed(issue(1))]);
+
+    assert_eq!(decide(&world), vec![let_go(1)]);
+}
+
+#[test]
+fn a_claimed_issue_whose_label_asks_for_linewrights_work_is_not_let_go() {
+    let mut replied = claimed(labeled(issue(3), label::NEEDS_INFO));
+    replied.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
+    let mut in_review = claimed(closed_by(ticket(4), 43, "alice"));
+    in_review.labels.push("bug".into());
+    let world = snapshot(vec![
+        claimed(labeled(issue(1), label::NEEDS_TRIAGE)),
+        claimed(ticket(2)),
+        replied,
+        in_review,
+    ]);
+
+    assert!(
+        !decide(&world)
+            .iter()
+            .any(|a| matches!(a, Action::LetGo { .. }))
+    );
+}
+
 fn merged(number: u64, files: &[&str]) -> MergedPull {
     MergedPull {
         number: Number(number),
@@ -628,19 +696,15 @@ fn unassigning_linewright_stops_the_work_until_the_label_is_applied_again() {
         label::READY_FOR_AGENT,
         3,
     );
-    let handed_back_by_linewright = unassigned_by(
+    let let_go_by_linewright = unassigned_by(
         labeled_at(ticket(4), label::READY_FOR_AGENT, 1),
         LINEWRIGHT,
         2,
     );
 
     assert_eq!(
-        decide(&snapshot(vec![
-            stopped,
-            restarted,
-            handed_back_by_linewright
-        ])),
-        vec![claim(3), implement(3), claim(4), implement(4),]
+        decide(&snapshot(vec![stopped, restarted, let_go_by_linewright])),
+        vec![claim(3), implement(3)]
     );
 }
 
@@ -2146,6 +2210,27 @@ fn a_ticket_whose_pull_request_merged_waits_for_github_to_close_it_until_labeled
     assert_eq!(at(&relabeled, 10), vec![implement(2)]);
 }
 
+fn reopened_at(mut issue: Issue, minute: i64) -> Issue {
+    issue.events.push(IssueEvent::Reopened { at: t(minute) });
+    issue
+}
+
+#[test]
+fn a_ticket_linewright_is_still_assigned_to_reopened_after_its_pull_request_merged_is_implemented_again()
+ {
+    let mut pr = pull(20, 2);
+    pr.state = PullState::Merged { at: t(5) };
+    let mut reopened = in_review(pr);
+    reopened.issues[0] = reopened_at(reopened.issues[0].clone(), 7);
+    let mut reopened_before_it_merged = reopened.clone();
+    reopened_before_it_merged.issues[0].events = vec![];
+    reopened_before_it_merged.issues[0] =
+        reopened_at(reopened_before_it_merged.issues[0].clone(), 4);
+
+    assert_eq!(at(&reopened, 10), vec![implement(2)]);
+    assert_eq!(at(&reopened_before_it_merged, 10), vec![]);
+}
+
 fn tracking(number: u64, pr: u64, tickets: &[(u64, bool)]) -> Issue {
     let mut tracking = issue(number);
     tracking.author = Login::new(LINEWRIGHT);
@@ -2396,20 +2481,31 @@ fn with_a_required_label_a_ticket_is_claimed_again_after_an_unassignment_only_if
 }
 
 #[test]
-fn with_a_required_label_a_reopened_ticket_is_implemented_again_only_if_labeled() {
-    let reopened = |required: bool| {
+fn with_a_required_label_a_reopened_ticket_is_claimed_again_only_if_labeled_but_carries_on_if_claimed()
+ {
+    let reopened = |claimed: bool, required: bool| {
         let mut pr = pull(20, 2);
         pr.state = PullState::Merged { at: t(5) };
         let mut world = in_review(pr);
-        world.issues[0] = labeled_at(world.issues[0].clone(), label::READY_FOR_AGENT, 7);
+        world.issues[0] = reopened_at(world.issues[0].clone(), 7);
+        if !claimed {
+            world.issues[0].assignees.clear();
+        }
         if required {
             world.issues[0].labels.push(REQUIRED.into());
         }
         world
     };
 
-    assert_eq!(deciding_with_label(&reopened(false)), vec![]);
-    assert_eq!(deciding_with_label(&reopened(true)), vec![implement(2)]);
+    assert_eq!(deciding_with_label(&reopened(false, false)), vec![]);
+    assert_eq!(
+        deciding_with_label(&reopened(false, true)),
+        vec![claim(2), implement(2)]
+    );
+    assert_eq!(
+        deciding_with_label(&reopened(true, false)),
+        vec![implement(2)]
+    );
 }
 
 #[test]
@@ -2636,6 +2732,7 @@ fn sessionless_actions() -> Vec<Action> {
             add: label::NEEDS_TRIAGE.into(),
         },
         Action::CloseTracking { issue: Number(9) },
+        let_go(12),
     ]
 }
 
@@ -2920,12 +3017,17 @@ fn handed_back_issues(actions: &[Action]) -> Vec<u64> {
 
 #[test]
 fn a_pull_request_closing_two_issues_is_worked_while_both_wait_for_it_whatever_their_labels() {
-    for label in [label::READY_FOR_AGENT, label::READY_FOR_HUMAN] {
+    // Linewright lets go of an issue labeled for a person, not of its pull
+    // request.
+    for (label, let_go_of) in [
+        (label::READY_FOR_AGENT, vec![]),
+        (label::READY_FOR_HUMAN, vec![let_go(42)]),
+    ] {
         let world = pull_closing_42_and_12(label);
 
         let decided = decided(&world);
 
-        assert_eq!(decided.actions, vec![fix_ci(42, 43)]);
+        assert_eq!(decided.actions, [let_go_of, vec![fix_ci(42, 43)]].concat());
         for issue in [12, 42] {
             assert_eq!(
                 decided.waits[&Number(issue)],
@@ -3267,6 +3369,38 @@ fn a_ticket_linewright_was_unassigned_from_waits_for_ready_for_agent_again() {
 }
 
 #[test]
+fn a_ticket_linewright_let_go_of_waits_for_ready_for_agent_or_the_required_label_again() {
+    let let_go = unassigned_by(
+        labeled_at(labeled(ticket(2), REQUIRED), label::READY_FOR_AGENT, 1),
+        LINEWRIGHT,
+        2,
+    );
+    let required_label_again = labeled_at(let_go.clone(), REQUIRED, 3);
+
+    assert_eq!(
+        waits(
+            &snapshot(vec![let_go]),
+            &[],
+            &Memory::default(),
+            10,
+            &requiring_label()
+        )
+        .remove(&Number(2))
+        .unwrap_or_default(),
+        [Wait::Relabel {
+            label: StatusLabel::ReadyForAgent,
+            since: Relabel::Unassigned {
+                required_label: Some(REQUIRED.into())
+            }
+        }]
+    );
+    assert_eq!(
+        deciding_with_label(&snapshot(vec![required_label_again])),
+        vec![claim(2), implement(2)]
+    );
+}
+
+#[test]
 fn a_ticket_whose_pull_request_merged_waits_for_ready_for_agent_again() {
     let mut pr = ready(pull(20, 2));
     pr.state = PullState::Merged { at: t(5) };
@@ -3332,6 +3466,11 @@ fn live_on_pull(pr: u64, kind: WorkKind) -> LiveRun {
 
 #[test]
 fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_requests_work() {
+    let fix_ci = Action::Start(Work::FixCi {
+        issue: Number(2),
+        pr: Number(20),
+        failing: vec!["test".into()],
+    });
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Failed)];
     let mut unlabeled = in_review(pr.clone());
@@ -3344,14 +3483,10 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
     );
     let fixing = [live_on_pull(20, WorkKind::FixCi)];
 
-    for world in [unlabeled, unassigned] {
+    for (world, let_go_of) in [(unlabeled, vec![let_go(2)]), (unassigned, vec![])] {
         assert_eq!(
             at(&world, 10),
-            vec![Action::Start(Work::FixCi {
-                issue: Number(2),
-                pr: Number(20),
-                failing: vec!["test".into()],
-            })]
+            [let_go_of.clone(), vec![fix_ci.clone()]].concat()
         );
         assert_eq!(
             reconcile(
@@ -3362,7 +3497,7 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
                 t(10),
                 &policy()
             ),
-            vec![]
+            let_go_of
         );
     }
 }
@@ -3370,6 +3505,21 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
 #[test]
 fn a_needs_triage_issue_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
     let mut assigned = labeled(issue(1), label::NEEDS_TRIAGE);
+    assigned.assignees.push(Login::new("alice"));
+    let world = snapshot(vec![assigned]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(
+        waits_on(&world, 1),
+        [Wait::Assignee {
+            assignee: Login::new("alice")
+        }]
+    );
+}
+
+#[test]
+fn a_ticket_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
+    let mut assigned = ticket(1);
     assigned.assignees.push(Login::new("alice"));
     let world = snapshot(vec![assigned]);
 

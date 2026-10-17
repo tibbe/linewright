@@ -358,6 +358,11 @@ pub enum Action {
     Claim {
         item: Item,
     },
+    /// Unassign Linewright from an open issue whose label no longer asks for
+    /// its work.
+    LetGo {
+        issue: Number,
+    },
     Relabel {
         issue: Number,
         remove: String,
@@ -625,6 +630,16 @@ pub fn decisions(
                 add: label::NEEDS_TRIAGE.into(),
             });
         }
+        let asked = if replied {
+            Some(Asked::Triage)
+        } else {
+            asked_work(issue)
+        };
+        if asked.is_none() && issue.is_assigned(&policy.linewright) {
+            plan.act(Action::LetGo {
+                issue: issue.number,
+            });
+        }
         let closing = snapshot.pulls_closing(issue);
         let open_closing: Vec<&ClosingPull> = closing.iter().filter(|p| p.is_open()).collect();
         if !open_closing.is_empty() {
@@ -648,13 +663,17 @@ pub fn decisions(
             if !linewrights && issue.holds(StatusLabel::ReadyForAgent) {
                 wait_for_blockers(issue, &mut plan);
             }
-        } else if replied || issue.holds(StatusLabel::NeedsTriage) {
-            triage(issue, replied, running(subject), policy, &mut plan);
-        } else if issue.holds(StatusLabel::ReadyForAgent) {
-            implementation(issue, &closing, running(subject), policy, &mut plan);
         } else {
-            for wait in labeled_waits(issue, policy) {
-                plan.wait(issue.number, wait);
+            match asked {
+                Some(Asked::Triage) => triage(issue, replied, running(subject), policy, &mut plan),
+                Some(Asked::Implementation) => {
+                    implementation(issue, &closing, running(subject), policy, &mut plan)
+                }
+                None => {
+                    for wait in labeled_waits(issue, policy) {
+                        plan.wait(issue.number, wait);
+                    }
+                }
             }
         }
     }
@@ -826,8 +845,8 @@ impl Plan {
         self.waits.entry(item).or_default().push(wait);
     }
 
-    fn wait_for(&mut self, item: Number, wait: Option<Wait>) {
-        if let Some(wait) = wait {
+    fn wait_all(&mut self, item: Number, waits: Vec<Wait>) {
+        for wait in waits {
             self.wait(item, wait);
         }
     }
@@ -906,6 +925,21 @@ fn rank(kind: WorkKind) -> u8 {
     }
 }
 
+/// The work an issue's label asks of Linewright.
+#[derive(Clone, Copy)]
+enum Asked {
+    Triage,
+    Implementation,
+}
+
+fn asked_work(issue: &Issue) -> Option<Asked> {
+    match issue.status_label()? {
+        StatusLabel::NeedsTriage => Some(Asked::Triage),
+        StatusLabel::ReadyForAgent => Some(Asked::Implementation),
+        StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => None,
+    }
+}
+
 fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
     let handed_to = if issue.holds(StatusLabel::NeedsInfo) {
         Some(Wait::Reporter)
@@ -946,32 +980,39 @@ fn triage(issue: &Issue, replied: bool, live: Option<WorkKind>, policy: &Policy,
     if issue.is_assigned(&policy.linewright) {
         return plan.start(work);
     }
-    if !issue.assignees.is_empty() {
-        for assignee in &issue.assignees {
-            plan.wait(
-                issue.number,
-                Wait::Assignee {
-                    assignee: assignee.clone(),
-                },
-            );
-        }
-        return;
+    match may_claim(issue, StatusLabel::NeedsTriage, replied, policy) {
+        Ok(()) => plan.claim_and_start(Item::Issue(issue.number), work),
+        Err(waits) => plan.wait_all(issue.number, waits),
     }
-    if !replied && unassigned_since(issue, policy, |_| true, StatusLabel::NeedsTriage) {
-        return plan.wait(
-            issue.number,
-            Wait::Relabel {
-                label: StatusLabel::NeedsTriage,
-                since: Relabel::Unassigned {
-                    required_label: policy.require_label.clone(),
-                },
+}
+
+/// Whether Linewright may claim `issue`, labeled `status`, on its own, as far
+/// as its assignees and labels go, or what it waits for first. `relabeled` is
+/// `status` applied again in this poll.
+fn may_claim(
+    issue: &Issue,
+    status: StatusLabel,
+    relabeled: bool,
+    policy: &Policy,
+) -> Result<(), Vec<Wait>> {
+    if !issue.assignees.is_empty() {
+        let assignees = issue.assignees.iter().map(|assignee| Wait::Assignee {
+            assignee: assignee.clone(),
+        });
+        return Err(assignees.collect());
+    }
+    if !relabeled && unassigned_since(issue, policy, status) {
+        return Err(vec![Wait::Relabel {
+            label: status,
+            since: Relabel::Unassigned {
+                required_label: policy.require_label.clone(),
             },
-        );
+        }]);
     }
     if !policy.may_start_on(issue) {
-        return plan.wait_for(issue.number, required_label(policy));
+        return Err(required_label(policy).into_iter().collect());
     }
-    plan.claim_and_start(Item::Issue(issue.number), work);
+    Ok(())
 }
 
 /// No open pull request closes `issue`; `closing` are the ended ones that do.
@@ -986,39 +1027,25 @@ fn implementation(
     if let Some(stage) = live {
         return plan.wait(issue.number, Wait::Run { stage });
     }
-    let linewright = &policy.linewright;
-    if !claimed
-        && unassigned_since(
-            issue,
-            policy,
-            |actor| actor != linewright,
-            StatusLabel::ReadyForAgent,
-        )
-    {
-        return plan.wait(
-            issue.number,
-            Wait::Relabel {
-                label: StatusLabel::ReadyForAgent,
-                since: Relabel::Unassigned {
-                    required_label: None,
-                },
-            },
-        );
+    if !claimed {
+        let relabeled = false;
+        if let Err(waits) = may_claim(issue, StatusLabel::ReadyForAgent, relabeled, policy) {
+            return plan.wait_all(issue.number, waits);
+        }
     }
-    if !claimed && !policy.may_start_on(issue) {
-        return plan.wait_for(issue.number, required_label(policy));
-    }
-    // GitHub closes the issue shortly after the merge; until then, or after a
-    // reopen, only applying the label again asks for more work.
+    // GitHub closes the issue shortly after the merge; until then, only
+    // applying the label again asks for more work. Reopened since, the
+    // issue is worked as any other.
     let relabeled_since = |at| {
         issue
             .last_labeled(StatusLabel::ReadyForAgent)
             .is_some_and(|l| l > at)
     };
-    if let Some(merged) = closing
-        .iter()
-        .find(|p| matches!(p.state, PullState::Merged { at } if !relabeled_since(at)))
-    {
+    let reopened_since = |at| issue.last_reopened().is_some_and(|r| r > at);
+    if let Some(merged) = closing.iter().find(|p| match p.state {
+        PullState::Merged { at } => !relabeled_since(at) && !reopened_since(at),
+        PullState::Open { .. } | PullState::Closed { .. } => false,
+    }) {
         return plan.wait(
             issue.number,
             Wait::Relabel {
@@ -1028,14 +1055,6 @@ fn implementation(
                 },
             },
         );
-    }
-    // Still claimed after a merge, the issue was reopened, and more work on
-    // it is a start.
-    let reopened = closing
-        .iter()
-        .any(|p| matches!(p.state, PullState::Merged { .. }));
-    if reopened && !policy.may_start_on(issue) {
-        return plan.wait_for(issue.number, required_label(policy));
     }
     if claimed {
         let claimed_at = last_assigned(issue, &policy.linewright);
@@ -1469,23 +1488,13 @@ fn humanize(delta: TimeDelta) -> String {
     humantime::format_duration(delta.to_std().unwrap_or_default()).to_string()
 }
 
-/// Whether Linewright was unassigned from `issue`, by an actor `by` accepts,
-/// after it was last labeled with `status`, or with the required label when
-/// `status` is `needs-triage`.
-fn unassigned_since(
-    issue: &Issue,
-    policy: &Policy,
-    by: impl Fn(&Login) -> bool,
-    status: StatusLabel,
-) -> bool {
-    let Some(unassigned) = last_unassignment(&issue.events, &policy.linewright, by) else {
+/// Whether Linewright was unassigned from `issue`, by anyone, after it was
+/// last labeled with `status` or with the required label.
+fn unassigned_since(issue: &Issue, policy: &Policy, status: StatusLabel) -> bool {
+    let Some(unassigned) = last_unassignment(&issue.events, &policy.linewright) else {
         return false;
     };
-    let required = policy
-        .require_label
-        .as_deref()
-        .filter(|_| status == StatusLabel::NeedsTriage);
-    [Some(status.label()), required]
+    [Some(status.label()), policy.require_label.as_deref()]
         .into_iter()
         .flatten()
         .filter_map(|l| last_labeling(&issue.events, l))

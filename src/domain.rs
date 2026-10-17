@@ -130,6 +130,9 @@ pub enum IssueEvent {
         label: String,
         at: Timestamp,
     },
+    Reopened {
+        at: Timestamp,
+    },
     #[serde(untagged)]
     Assignment(Assignment),
 }
@@ -152,7 +155,7 @@ pub enum Assignment {
 impl IssueEvent {
     pub fn at(&self) -> Timestamp {
         match self {
-            IssueEvent::Labeled { at, .. } => *at,
+            IssueEvent::Labeled { at, .. } | IssueEvent::Reopened { at } => *at,
             IssueEvent::Assignment(
                 Assignment::Assigned { at, .. } | Assignment::Unassigned { at, .. },
             ) => *at,
@@ -327,6 +330,16 @@ impl Issue {
 
     pub fn is_assigned(&self, login: &Login) -> bool {
         self.assignees.contains(login)
+    }
+
+    pub fn last_reopened(&self) -> Option<Timestamp> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                IssueEvent::Reopened { at } => Some(*at),
+                _ => None,
+            })
+            .max()
     }
 }
 
@@ -538,7 +551,7 @@ impl MergedPull {
         linewright: &Login,
         required_label: Option<&str>,
     ) -> Option<Timestamp> {
-        let unassigned = last_unassigned(&self.events, linewright, |_| true)?;
+        let unassigned = last_unassigned(&self.events, linewright)?;
         let labeled = required_label
             .and_then(|required| last_labeling(&self.events, required))
             .map(|(at, _)| at);
@@ -561,32 +574,23 @@ pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<(Timestamp, us
         .max()
 }
 
-/// When `assignee` was last unassigned among `events`, by an actor `by`
-/// accepts.
-pub fn last_unassigned(
-    events: &[IssueEvent],
-    assignee: &Login,
-    by: impl Fn(&Login) -> bool,
-) -> Option<Timestamp> {
-    last_unassignment(events, assignee, by).map(|(at, _)| at)
+/// When `assignee` was last unassigned among `events`, by anyone.
+pub fn last_unassigned(events: &[IssueEvent], assignee: &Login) -> Option<Timestamp> {
+    last_unassignment(events, assignee).map(|(at, _)| at)
 }
 
 /// [`last_unassigned`], with the event's place among `events` to order it
 /// against events at the same time.
-pub fn last_unassignment(
-    events: &[IssueEvent],
-    assignee: &Login,
-    by: impl Fn(&Login) -> bool,
-) -> Option<(Timestamp, usize)> {
+pub fn last_unassignment(events: &[IssueEvent], assignee: &Login) -> Option<(Timestamp, usize)> {
     events
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
             IssueEvent::Assignment(Assignment::Unassigned {
                 assignee: unassigned,
-                actor,
                 at,
-            }) if unassigned == assignee && by(actor) => Some((*at, i)),
+                ..
+            }) if unassigned == assignee => Some((*at, i)),
             _ => None,
         })
         .max()

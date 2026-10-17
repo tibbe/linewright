@@ -296,7 +296,11 @@ impl LocalStore {
     }
 
     pub fn reopen_issue_as(&self, issue: Number) -> Result<()> {
-        self.state().issue_mut(issue)?.issue.open = true;
+        let now = self.now();
+        let mut state = self.state();
+        let issue = &mut state.issue_mut(issue)?.issue;
+        issue.open = true;
+        issue.events.push(IssueEvent::Reopened { at: now });
         Ok(())
     }
 

@@ -967,17 +967,18 @@ struct GqlLabeling {
     label: Name,
 }
 
-/// An issue's or pull request's labelings and assignments, read as
-/// [`GqlEvent`]s.
+/// An issue's or pull request's labelings, assignments and reopenings, read
+/// as [`GqlEvent`]s.
 macro_rules! assignment_timeline {
     () => {
         concat!(
-            "timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+            "timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, REOPENED_EVENT]) {
     nodes {
       __typename
       ... on LabeledEvent { ",
             labeling_fields!(),
             " }
+      ... on ReopenedEvent { createdAt }
       ",
             assignment_fields!(),
             "
@@ -1043,6 +1044,8 @@ struct GqlClosingPull {
 enum GqlEvent {
     #[serde(rename = "LabeledEvent")]
     Labeled(GqlLabeling),
+    #[serde(rename = "ReopenedEvent", rename_all = "camelCase")]
+    Reopened { created_at: Timestamp },
     #[serde(untagged)]
     Assignment(GqlAssignment),
 }
@@ -1149,6 +1152,7 @@ fn events(nodes: Vec<GqlEvent>) -> Vec<IssueEvent> {
                 label: labeling.label.name,
                 at: labeling.created_at,
             }),
+            GqlEvent::Reopened { created_at } => Some(IssueEvent::Reopened { at: created_at }),
             GqlEvent::Assignment(assignment) => assignment.read().map(IssueEvent::Assignment),
         })
         .collect()

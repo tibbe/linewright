@@ -574,7 +574,6 @@ impl World {
             "Please.",
             &["ready-for-agent"],
         );
-        self.store.assign_as(ticket, "maintainer").unwrap();
         self.poll().await;
         let pr = *self
             .store

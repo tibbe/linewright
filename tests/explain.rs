@@ -841,6 +841,44 @@ fn the_json_of_an_issue_in_review_names_the_pull_request_closing_it_as_its_child
 }
 
 #[test]
+fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
+    let assigned = Issue {
+        assignees: vec![Login::new("alice")],
+        ..ticket(42, "Add invoices")
+    };
+
+    assert_eq!(
+        text(&view(vec![assigned], vec![]), 42)[1..],
+        [
+            "state: ready to claim",
+            "last read: 2026-10-01 12:00:00 UTC",
+            "waiting for: alice, who is assigned to it",
+        ]
+    );
+}
+
+#[test]
+fn a_ticket_linewright_let_go_of_waits_for_its_label_or_the_required_label_again() {
+    let let_go = Issue {
+        labels: vec!["ready-for-agent".into(), "linewright".into()],
+        events: vec![IssueEvent::Assignment(Assignment::Unassigned {
+            assignee: Login::new("factory"),
+            actor: Login::new("factory"),
+            at: at("2026-10-01T11:00:00Z"),
+        })],
+        ..ticket(42, "Add invoices")
+    };
+    let mut view = view(vec![let_go], vec![]);
+    view.policy.require_label = Some("linewright".into());
+
+    assert_eq!(
+        text(&view, 42)[3],
+        "waiting for: the maintainer: to label it `ready-for-agent` or `linewright`, the \
+         required label, again, since Linewright was unassigned"
+    );
+}
+
+#[test]
 fn an_issue_linewright_filed_labeled_needs_triage_is_tracked_for_triage() {
     let filed = Issue {
         author: Login::new("factory"),

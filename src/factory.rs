@@ -609,6 +609,13 @@ impl Factory {
                 info!(%item, "claiming");
                 store.assign(item.number()).await?;
             }
+            Action::LetGo { issue } => {
+                info!(
+                    issue = issue.0,
+                    "letting go: its label no longer asks for Linewright"
+                );
+                store.unassign(*issue).await?;
+            }
             Action::Relabel { issue, remove, add } => {
                 info!(issue = issue.0, remove, add, "relabeling");
                 store.remove_label(*issue, remove).await?;
@@ -901,7 +908,8 @@ async fn read_issue_into(
 fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
     match action {
         Action::Claim { item } => vec![*item],
-        Action::Relabel { issue, .. }
+        Action::LetGo { issue }
+        | Action::Relabel { issue, .. }
         | Action::RemoveStatusLabel { issue, .. }
         | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
         Action::DiscardTickets { tracking, tickets } => tickets

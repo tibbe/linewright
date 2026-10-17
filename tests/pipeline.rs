@@ -144,13 +144,12 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
         );
         json(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
     });
-    let ticket = world.store.open_issue(
+    world.store.open_issue(
         "maintainer",
         "Do the thing",
         "Please.",
         &["ready-for-agent"],
     );
-    world.store.assign_as(ticket, "maintainer").unwrap();
 
     world.poll().await;
 
@@ -1777,6 +1776,37 @@ async fn a_pull_request_closed_without_merging_hands_its_ticket_back() {
     );
 }
 
+#[tokio::test]
+async fn a_ticket_reopened_after_its_pull_request_merged_is_implemented_again_unrelabeled() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.store.merge_pull(pr).await.unwrap();
+    world.poll().await;
+    assert!(!world.issue(ticket).open);
+
+    world.store.reopen_issue_as(ticket).unwrap();
+    world.poll().await;
+
+    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+    let next = *world.store.pulls().last().unwrap();
+    assert_ne!(next, pr);
+}
+
+#[tokio::test]
+async fn relabeling_a_claimed_ticket_ready_for_human_lets_go_of_it_but_not_of_its_pull_request() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+
+    world.store.label_as(ticket, "ready-for-human").unwrap();
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert!(issue.assignees.is_empty());
+    assert!(issue.comments.is_empty());
+    assert!(linewright_assigned(&world, pr).await);
+}
+
 /// The file the run [`ticket_handed_back_with_its_branch`] hands back
 /// leaves on the ticket's branch.
 const EARLIER_WORK: &str = "src/partial.txt";
@@ -3279,7 +3309,6 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
         "Gadgets persist.",
         &["ready-for-agent"],
     );
-    world.store.assign_as(first, "maintainer").unwrap();
     let second = world.store.open_issue(
         "maintainer",
         "List gadgets",
@@ -3290,6 +3319,7 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
         .await
         .unwrap();
     world.poll().await;
+    world.store.assign_as(first, "maintainer").unwrap();
     let pr = *world.store.pulls().last().unwrap();
 
     world.clock.advance(chrono::TimeDelta::minutes(6));

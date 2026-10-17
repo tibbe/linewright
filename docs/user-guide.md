@@ -94,7 +94,9 @@ A comment alone starts nothing on a `ready-for-human` issue: the label is your
 decision.
 
 To give Linewright an issue directly, without triage, label it
-`ready-for-agent`.
+`ready-for-agent`. Linewright assigns itself and builds it. It leaves alone an
+issue someone else is assigned to, one an open issue blocks and one an open
+pull request closes.
 
 ## Changing the spec
 
@@ -154,8 +156,14 @@ no longer handled by that pull request, so Linewright works on it again.
 
 ## Stopping work on an issue
 
-Remove `ready-for-agent`, unassign Linewright or close the issue. Apply
-`ready-for-agent` again to restart it.
+Change or remove its label, unassign Linewright or close the issue. Once the
+label no longer asks for Linewright's work, such as when you relabel the issue
+`ready-for-human`, Linewright stops any run on it and unassigns itself. Once
+unassigned, by you or by itself, Linewright leaves the issue until
+`ready-for-agent`, or the required label, is applied again.
+
+An issue reopened after its pull request merged is worked again while
+Linewright is still assigned to it, without applying the label again.
 
 Before a pull request exists, Linewright pushes the work so far to the
 issue's branch when it stops or hands the issue back, and its comment names

@@ -232,6 +232,19 @@ fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_and_waits_for_it
 }
 
 #[test]
+fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
+    let assigned = Issue {
+        assignees: vec![Login::new("alice")],
+        ..ready_issue()
+    };
+
+    assert_eq!(
+        after_linewright(&view(vec![assigned]), "2026-10-01T12:00:30Z"),
+        ["#7: ready to claim — waiting for alice, who is assigned to it — Do the thing"]
+    );
+}
+
+#[test]
 fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_it_is() {
     let blocked = Issue {
         number: Number(8),
