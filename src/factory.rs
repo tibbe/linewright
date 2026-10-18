@@ -54,8 +54,9 @@ pub struct FactoryConfig {
     pub schedule_workflows: bool,
     pub waits_out_usage_limit: bool,
     pub session_token: SessionToken,
-    /// The runtime's own, for what reaches Linewright from a session's work
-    /// other than through the runtime.
+    /// Linewright's credentials, redacted from what a session's work prints
+    /// that reaches Linewright other than through the runtime, such as git's
+    /// output from hooks the session left in its clone.
     pub redaction: Redaction,
 }
 

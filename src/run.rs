@@ -914,6 +914,7 @@ enum Kept {
 /// ticket's branch: docs/specs/runs.md, "Ending".
 async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch: &str) -> Kept {
     reported(
+        shell,
         branch,
         push_unfinished(shell, dir, branch, upstream, PushMode::Replace).await,
     )
@@ -943,7 +944,7 @@ async fn keep_unfinished_pull_work(
         };
         push_unfinished(shell, dir, &pr.head_ref, start, lease).await
     };
-    reported(&pr.head_ref, kept.await)
+    reported(shell, &pr.head_ref, kept.await)
 }
 
 /// Commits what a stopped run's session left uncommitted, and pushes
@@ -967,9 +968,15 @@ async fn push_unfinished(
 }
 
 /// What became of a stopped run's work on `branch`, logged when it was not
-/// kept.
-fn reported(branch: &str, kept: Result<Kept>) -> Kept {
-    let kept = kept.unwrap_or_else(|e| Kept::Failed(format!("{e:#}")));
+/// kept. Git's output is redacted, as hooks the session left in its clone
+/// can print a credential.
+fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
+    let redacted = |text: &str| shell.redaction.apply(text);
+    let kept = match kept {
+        Ok(Kept::Refused(reason)) => Kept::Refused(redacted(&reason)),
+        Ok(kept) => kept,
+        Err(e) => Kept::Failed(redacted(&format!("{e:#}"))),
+    };
     match &kept {
         Kept::Refused(reason) => warn!(
             branch,

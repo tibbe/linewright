@@ -4402,3 +4402,37 @@ async fn a_blocking_spec_gap_in_a_pull_request_run_hands_the_pull_request_back()
     )
     .await;
 }
+
+#[tokio::test]
+async fn a_stopped_runs_work_that_cannot_be_kept_logs_nothing_of_a_credential_its_push_printed() {
+    let (log, _guard) = Log::capture();
+    let mut world = World::with(|config| {
+        config.redaction = Redaction::of(["ghp_s3cr3t".to_string()]);
+    })
+    .await;
+    world.runtime.on(WorkKind::Implement, |call| {
+        commit_in(&call.spec.dir, &[("src/half.txt", "half\n")], "Start");
+        refused_for_the_usage_limit()
+    });
+    world
+        .store
+        .refuse_pushes("pre-push: GH_TOKEN=ghp_s3cr3t\nerror: failed to push some refs");
+    world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+
+    world.poll().await;
+
+    let warnings = log.lines("WARN");
+    let kept = warnings
+        .iter()
+        .find(|line| line.contains("keeping the stopped run's work failed"))
+        .expect("the failed keep is logged");
+    assert!(
+        kept.contains("GH_TOKEN=[redacted]") && !kept.contains("ghp_s3cr3t"),
+        "{kept}"
+    );
+}
