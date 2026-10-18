@@ -6,18 +6,18 @@ See `README.md` for what it does. It is written in Rust and built with cargo.
 
 This project uses specification-driven development.
 
-- `docs/specs/product.md`: the product spec on one page: problem, principles
-  and the list of areas.
-- The area files in `docs/specs/`, listed in `product.md`'s Areas table: one
-  per area of the product, with its user stories and decisions.
+- `docs/specs/product.md`: the product spec on one page: problem, principles and
+  the list of areas.
+- The area files in `docs/specs/`, listed in `product.md`'s Areas table: one per
+  area of the product, with its user stories and decisions.
 - `docs/specs/architecture.md`: the architecturally significant decisions, the
   ones costly to change later, e.g. languages and frameworks.
 - `GLOSSARY.md`: the vocabulary the specs and the code use, each term defined
   once.
 
 How the code does what the specs say belongs in the code and its comments. Write
-specs as what Linewright should do, not as an account of what follows from it
-or of what other systems such as GitHub do. Keep the specs in step with
+specs as what Linewright should do, not as an account of what follows from it or
+of what other systems such as GitHub do. Keep the specs in step with
 user-visible behavior changes.
 
 Changes to specs require human approval.
@@ -39,3 +39,8 @@ Before working in one of these areas, read its guide:
 - [Commits](./docs/commits.md)
 - [Tuning the briefs](./docs/tuning-briefs.md)
 - [Releasing](./docs/releasing.md)
+
+## User-facing documentation
+
+Any user-facing documentation changes, such as `README.md` and
+`docs/user-guide.md`, require human approval.
