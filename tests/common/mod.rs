@@ -622,7 +622,8 @@ impl World {
 /// `message`, appends the GitHub tokens it was given to `dir/tokens.log`, its
 /// temporary directory to `dir/tmpdir.log`, the shell it was told to use to
 /// `dir/shell.log` and its arguments, one per line and followed by a blank
-/// line, to `dir/args.log`. Like Claude Code under its config directory
+/// line, to `dir/args.log`, and writes its environment over `dir/env.log`.
+/// Like Claude Code under its config directory
 /// (<https://code.claude.com/docs/en/sessions>), it keeps each session's
 /// transcript as `dir/projects/repo/<session>.jsonl`.
 pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
@@ -649,6 +650,7 @@ pub fn fake_claude_streaming(dir: &Path, events: &[Value]) -> std::path::PathBuf
          echo \"GH_TOKEN=${{GH_TOKEN-}} GITHUB_TOKEN=${{GITHUB_TOKEN-}}\" >> '{tokens}'\n\
          echo \"TMPDIR=${{TMPDIR-}}\" >> '{tmpdir}'\n\
          echo \"${{CLAUDE_CODE_SHELL-}}\" >> '{shell}'\n\
+         env > '{env}'\n\
          take=0\n\
          for arg in \"$@\"; do\n\
            if [ $take = 1 ]; then session=$arg; fi\n\
@@ -661,6 +663,7 @@ pub fn fake_claude_streaming(dir: &Path, events: &[Value]) -> std::path::PathBuf
         tokens = dir.join("tokens.log").display(),
         tmpdir = dir.join("tmpdir.log").display(),
         shell = dir.join("shell.log").display(),
+        env = dir.join("env.log").display(),
         args = dir.join("args.log").display(),
         projects = dir.join("projects/repo").display(),
     );

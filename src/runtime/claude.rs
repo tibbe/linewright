@@ -10,6 +10,7 @@ use tokio::process::Command;
 
 use super::{Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::domain::Timestamp;
+use crate::session_env::Given;
 use crate::store::github::TOKEN_VARIABLES;
 use crate::transcript::{self, StartedBy};
 
@@ -20,7 +21,13 @@ pub struct ClaudeCode {
     /// `None` gives sessions none, whatever Linewright's own environment
     /// holds.
     pub github_token: Option<String>,
+    /// A session starts from these alone, and what this sets itself.
+    pub environment: Given,
 }
+
+const TEMPORARY_DIRECTORY: &str = "TMPDIR";
+/// Docs: <https://code.claude.com/docs/en/settings#environment-variables>.
+const SHELL: &str = "CLAUDE_CODE_SHELL";
 
 /// <https://code.claude.com/docs/en/headless#get-structured-output>
 #[derive(Deserialize)]
@@ -196,6 +203,16 @@ impl Log {
 }
 
 impl ClaudeCode {
+    /// The variables a session is given by this itself, with or without a
+    /// GitHub token.
+    pub fn sets(github_token: bool) -> Vec<&'static str> {
+        let mut names = vec![TEMPORARY_DIRECTORY, SHELL];
+        if github_token {
+            names.extend(TOKEN_VARIABLES);
+        }
+        names
+    }
+
     async fn turn(
         &self,
         spec: &SessionSpec,
@@ -219,12 +236,13 @@ impl ClaudeCode {
             .arg(&spec.plugin)
             .args(session.args())
             .current_dir(&spec.dir)
-            .env("TMPDIR", &spec.scratch)
+            .env_clear()
+            .envs(self.environment.iter())
+            .env(TEMPORARY_DIRECTORY, &spec.scratch)
             // Claude Code otherwise picks the operator's `$SHELL`. It still
             // sources the host's `~/.bashrc`, if there is one, and has no
             // switch to stop that, so a session is not insulated from it.
-            // Docs: <https://code.claude.com/docs/en/settings#environment-variables>.
-            .env("CLAUDE_CODE_SHELL", &self.bash)
+            .env(SHELL, &self.bash)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -232,12 +250,10 @@ impl ClaudeCode {
         if let Some(model) = &self.model {
             command.args(["--model", model]);
         }
-        // Never inherit a GitHub token from Linewright's environment.
-        for variable in TOKEN_VARIABLES {
-            match &self.github_token {
-                Some(token) => command.env(variable, token),
-                None => command.env_remove(variable),
-            };
+        if let Some(token) = &self.github_token {
+            for variable in TOKEN_VARIABLES {
+                command.env(variable, token);
+            }
         }
         let mut child = command
             .spawn()

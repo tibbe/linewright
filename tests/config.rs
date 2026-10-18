@@ -4,6 +4,7 @@ use std::time::Duration;
 use clap::{CommandFactory, Parser};
 use linewright::config::{Cli, Config, LogFormat, ResolveError};
 use linewright::domain::MergeMethod;
+use linewright::session_env::SessionEnv;
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
     resolve_blaming(args, env, file).map_err(|e| e.to_string())
@@ -70,6 +71,7 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.model, None);
     assert_eq!(config.log_format, LogFormat::Json, "not a terminal");
     assert!(config.work_dir.ends_with("linewright"));
+    assert_eq!(config.session_env, SessionEnv::default());
 }
 
 #[test]
@@ -315,4 +317,72 @@ fn help_lists_the_webhook_address_with_its_default() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(line.contains("0.0.0.0:8080"), "{help}");
+}
+
+fn session_env(names: &[&str]) -> SessionEnv {
+    SessionEnv::new(names.iter().map(|name| name.to_string())).unwrap()
+}
+
+#[test]
+fn session_env_is_a_flag_the_environment_or_the_file_naming_variables() {
+    let file = Some("session-env = [\"CARGO_HOME\", \"RUSTUP_HOME\"]\n");
+    let env = [("LINEWRIGHT_SESSION_ENV", "CARGO_*,SCCACHE_DIR")];
+
+    let from_file = resolve(&[], &[], file).unwrap();
+    let from_env = resolve(&[], &env, file).unwrap();
+    let from_flag = resolve(&["--session-env", "RUSTC_WRAPPER"], &env, file).unwrap();
+
+    assert_eq!(
+        from_file.session_env,
+        session_env(&["CARGO_HOME", "RUSTUP_HOME"])
+    );
+    assert_eq!(
+        from_env.session_env,
+        session_env(&["CARGO_*", "SCCACHE_DIR"])
+    );
+    assert_eq!(from_flag.session_env, session_env(&["RUSTC_WRAPPER"]));
+}
+
+#[test]
+fn session_env_naming_a_credential_of_linewrights_is_an_error_saying_why() {
+    for name in [
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "LINEWRIGHT_SESSION_GITHUB_TOKEN",
+        "LINEWRIGHT_WEBHOOK_SECRET",
+    ] {
+        let error =
+            resolve(&["--session-env", &format!("CARGO_HOME,{name}")], &[], None).unwrap_err();
+
+        assert!(error.contains("session-env"), "{error}");
+        assert!(error.contains(&format!("`{name}`")), "{error}");
+        assert!(error.contains("never given"), "{error}");
+    }
+}
+
+#[test]
+fn a_session_env_pattern_matching_a_credential_of_linewrights_is_no_error() {
+    let config = resolve(&["--session-env", "GH_*,LINEWRIGHT_*"], &[], None);
+
+    assert!(config.is_ok());
+}
+
+#[test]
+fn help_lists_session_env_with_its_default() {
+    let help = Cli::command().render_long_help().to_string();
+
+    let line = help
+        .lines()
+        .skip_while(|line| !line.contains("--session-env"))
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(line.contains("[default: none]"), "{help}");
+}
+
+#[test]
+fn only_session_env_is_a_list_in_the_file() {
+    let error = resolve(&[], &[], Some("repo = [\"acme/widgets\"]\n")).unwrap_err();
+
+    assert!(error.contains("`repo`"), "{error}");
 }

@@ -9,6 +9,7 @@ use linewright::reconcile::{Subject, WorkKind};
 use linewright::runs::Activity;
 use linewright::runtime::claude::ClaudeCode;
 use linewright::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec};
+use linewright::session_env::{Given, SessionEnv};
 use linewright::transcript::{Prompt, What};
 use serde_json::{Value, json};
 
@@ -25,6 +26,7 @@ fn runtime_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
         bash: "/bin/bash".into(),
         model: None,
         github_token: None,
+        environment: Given::default(),
     }
 }
 
@@ -119,6 +121,7 @@ async fn a_production_session_gets_linewrights_github_token() {
         bash: "/bin/bash".into(),
         model: None,
         github_token: Some("linewright-token".into()),
+        environment: Given::default(),
     };
 
     runtime.start(&triage_session(dir.path())).await.unwrap();
@@ -126,6 +129,80 @@ async fn a_production_session_gets_linewrights_github_token() {
     assert_eq!(
         std::fs::read_to_string(dir.path().join("tokens.log")).unwrap(),
         "GH_TOKEN=linewright-token GITHUB_TOKEN=linewright-token\n"
+    );
+}
+
+/// The names of the variables the session's runtime was started with, but
+/// for those its shell sets itself.
+fn session_variables(dir: &Path) -> Vec<String> {
+    let env = std::fs::read_to_string(dir.join("env.log")).unwrap();
+    let mut names: Vec<String> = env
+        .lines()
+        .filter_map(|line| Some(line.split_once('=')?.0.to_string()))
+        .filter(|name| !["PWD", "OLDPWD", "SHLVL", "_"].contains(&name.as_str()))
+        .collect();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = std::env::var("PATH").unwrap();
+    let linewrights = [
+        ("PATH", path.as_str()),
+        ("HOME", "/home/linewright"),
+        ("LC_ALL", "C.UTF-8"),
+        ("LC_TIME", "C"),
+        ("https_proxy", "http://proxy:4750"),
+        ("ANTHROPIC_API_KEY", "sk-ant"),
+        ("ANTHROPIC_MODEL", "opus"),
+        ("CLAUDE_CONFIG_DIR", "/home/linewright/.claude"),
+        ("CARGO_HOME", "/usr/local/cargo"),
+        ("CARGO_TARGET_DIR", "/tmp/target"),
+        ("RUSTUP_HOME", "/usr/local/rustup"),
+        ("SCCACHE_DIR", "/var/cache/sccache"),
+        ("LINEWRIGHT_WEBHOOK_SECRET", SECRET),
+        ("LINEWRIGHT_SESSION_GITHUB_TOKEN", "session-token"),
+        ("MY_SECRET", "hunter2"),
+        ("TMPDIR", "/tmp"),
+        ("GH_TOKEN", "linewright-token"),
+    ];
+    let session_env =
+        SessionEnv::new(["CARGO_*", "RUSTUP_HOME", "LINEWRIGHT_*"].map(String::from)).unwrap();
+    let mut runtime = runtime_without_token(dir.path());
+    runtime.environment = session_env
+        .split(
+            linewrights.map(|(name, value)| (name.into(), value.into())),
+            &[],
+        )
+        .given;
+
+    runtime.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(
+        session_variables(dir.path()),
+        [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_MODEL",
+            "CARGO_HOME",
+            "CARGO_TARGET_DIR",
+            "CLAUDE_CODE_SHELL",
+            "CLAUDE_CONFIG_DIR",
+            "HOME",
+            "LC_ALL",
+            "LC_TIME",
+            "PATH",
+            "RUSTUP_HOME",
+            "TMPDIR",
+            "https_proxy",
+        ]
+    );
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert!(!env.contains(SECRET), "{env}");
+    assert!(
+        env.contains(&format!("TMPDIR={}\n", dir.path().join("tmp").display())),
+        "{env}"
     );
 }
 
@@ -432,6 +509,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
         bash: "/bin/bash".into(),
         model: None,
         github_token: None,
+        environment: Given::default(),
     };
     let mut session = triage_session(dir.path());
     session.deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -535,6 +613,7 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
         bash: "/bin/bash".into(),
         model: None,
         github_token: None,
+        environment: Given::default(),
     };
     let spec = triage_session(dir.path());
     let output = dir.path().join(linewright::transcript::OUTPUT);

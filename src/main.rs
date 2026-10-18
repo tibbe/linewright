@@ -549,12 +549,26 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }
 
+/// Logs the names of the variables of Linewright's environment its sessions
+/// are not given, so that an operator whose build fails only in a session
+/// sees what to add to `session-env`.
 fn runtime(config: &Config, bash: PathBuf, session_token: &SessionToken) -> ClaudeCode {
+    let github_token = session_token.given().map(str::to_string);
+    let split = config.session_env.split(
+        std::env::vars_os(),
+        &ClaudeCode::sets(github_token.is_some()),
+    );
+    info!(
+        variables = split.withheld.join(" "),
+        "agent sessions are not given these variables of Linewright's environment; \
+         `session-env` names the ones they need"
+    );
     ClaudeCode {
         program: RUNTIME.into(),
         bash,
         model: config.model.clone(),
-        github_token: session_token.given().map(str::to_string),
+        github_token,
+        environment: split.given,
     }
 }
 
@@ -599,9 +613,10 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
     let bash = require_bash()?;
     require_tool(RUNTIME).await?;
     let token = token()?;
-    let github = connect(config, token.clone()).await?;
-    let session_token = SessionToken::new(token, std::env::var(SESSION_TOKEN_VARIABLE).ok());
+    let session_token =
+        SessionToken::new(token.clone(), std::env::var(SESSION_TOKEN_VARIABLE).ok());
     let runtime = runtime(config, bash, &session_token);
+    let github = connect(config, token).await?;
     let factory_config = factory_config(
         config,
         work_dir(config, &github),

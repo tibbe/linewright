@@ -10,6 +10,7 @@ use crate::domain::{MergeMethod, Number, Timestamp, UpdateMethod};
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
+use crate::session_env::SessionEnv;
 use crate::spec_glob::SpecGlob;
 use crate::webhook::{self, Webhooks};
 use crate::workflow::WorkflowName;
@@ -214,6 +215,11 @@ pub struct Settings {
     /// A directory of briefs [default: the briefs Linewright ships]
     #[arg(long, global = true)]
     pub briefs: Option<String>,
+    /// The variables of Linewright's environment that agent sessions are given
+    /// besides the ones they always get, comma-separated; a name ending in `*`
+    /// names every variable with that prefix [default: none]
+    #[arg(long, global = true, value_name = "NAMES")]
+    pub session_env: Option<String>,
     /// Each agent session's timeout [default: 60m]
     #[arg(long, global = true)]
     pub session_timeout: Option<String>,
@@ -263,6 +269,7 @@ pub struct Config {
     pub work_dir: PathBuf,
     pub model: Option<String>,
     pub briefs: Option<PathBuf>,
+    pub session_env: SessionEnv,
     pub session_timeout: Duration,
     pub result_retries: u32,
     pub ci_grace: TimeDelta,
@@ -287,6 +294,7 @@ impl Settings {
             ("work-dir", &self.work_dir),
             ("model", &self.model),
             ("briefs", &self.briefs),
+            ("session-env", &self.session_env),
             ("session-timeout", &self.session_timeout),
             ("result-retries", &self.result_retries),
             ("ci-grace", &self.ci_grace),
@@ -304,7 +312,7 @@ impl Settings {
     }
 }
 
-const KEYS: [&str; 19] = [
+const KEYS: [&str; 20] = [
     "repo",
     "poll-interval",
     "webhook-address",
@@ -314,6 +322,7 @@ const KEYS: [&str; 19] = [
     "work-dir",
     "model",
     "briefs",
+    "session-env",
     "session-timeout",
     "result-retries",
     "ci-grace",
@@ -460,6 +469,10 @@ impl Config {
             }
             None => None,
         };
+        let session_env = get("session-env")
+            .unwrap_or_default()
+            .parse::<SessionEnv>()
+            .map_err(|e| wrong("session-env", e))?;
         let (ci_grace, ci_timeout) = (delta("ci-grace", "5m")?, delta("ci-timeout", "6h")?);
         if ci_timeout <= ci_grace {
             return Err(blame(
@@ -477,6 +490,7 @@ impl Config {
             work_dir,
             model: get("model"),
             briefs: get("briefs").map(PathBuf::from),
+            session_env,
             session_timeout: duration("session-timeout", "60m")?,
             result_retries: number("result-retries", "1")?,
             ci_grace,
@@ -538,6 +552,18 @@ fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
                 toml::Value::String(s) => s,
                 toml::Value::Integer(i) => i.to_string(),
                 toml::Value::Boolean(b) => b.to_string(),
+                // In the form its flag takes, names separated by commas.
+                toml::Value::Array(names) if key == "session-env" => names
+                    .into_iter()
+                    .map(|name| match name {
+                        toml::Value::String(name) if !name.contains(',') => Ok(name),
+                        other => bail!(
+                            "{}: the setting `{key}` holds {other}, not a variable's name",
+                            path.display()
+                        ),
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .join(","),
                 other => bail!(
                     "{}: the setting `{key}` is {other}, not a string, number or boolean",
                     path.display()

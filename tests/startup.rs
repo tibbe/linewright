@@ -113,15 +113,20 @@ fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, Str
     )
 }
 
+/// Puts the `tool` on the tests' path in `bin`.
+fn link_from_path(bin: &std::path::Path, tool: &str) {
+    let found = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|path| path.join(tool))
+        .find(|path| path.is_file())
+        .unwrap();
+    std::os::unix::fs::symlink(found, bin.join(tool)).unwrap();
+}
+
 #[test]
 fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
     let bin = tempfile::tempdir().unwrap();
     fake_claude(bin.path(), "Done.");
-    let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
-        .map(|path| path.join("git"))
-        .find(|git| git.is_file())
-        .unwrap();
-    std::os::unix::fs::symlink(git, bin.path().join("git")).unwrap();
+    link_from_path(bin.path(), "git");
 
     let (succeeded, error) = lw(
         bin.path(),
@@ -131,6 +136,38 @@ fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
 
     assert!(!succeeded, "{error}");
     assert!(error.contains("`bash` is not on the path"), "{error}");
+}
+
+#[test]
+fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_given() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_claude(bin.path(), "Done.");
+    link_from_path(bin.path(), "git");
+    link_from_path(bin.path(), "bash");
+
+    let (_, log) = lw(
+        bin.path(),
+        &["--repo", "owner/name", "--log-format", "json", "once"],
+        &[
+            ("GH_TOKEN", "linewright-token"),
+            ("MY_SECRET", "hunter2"),
+            ("LC_ALL", "C"),
+            // Fails the connection to GitHub at once, after the log.
+            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+        ],
+    );
+
+    let withheld = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|line| line["fields"]["variables"].as_str().map(String::from))
+        .unwrap_or_else(|| panic!("no variables logged: {log}"));
+    let withheld: Vec<&str> = withheld.split(' ').collect();
+    assert!(withheld.contains(&"MY_SECRET"), "{log}");
+    assert!(!withheld.contains(&"LC_ALL"), "{log}");
+    // The session is given Linewright's token.
+    assert!(!withheld.contains(&"GH_TOKEN"), "{log}");
+    assert!(!log.contains("hunter2"), "{log}");
 }
 
 #[test]
