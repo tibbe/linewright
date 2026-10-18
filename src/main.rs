@@ -524,6 +524,10 @@ async fn serve(
             );
             stopping.cancel();
             let second = signals.next().await;
+            #[expect(
+                clippy::exit,
+                reason = "a second signal exits at once, without stopping the runs in flight"
+            )]
             // 128 plus the signal's number, as a shell reports it
             // (<https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html>).
             std::process::exit(128 + second.kind().as_raw_value());

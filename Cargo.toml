@@ -16,7 +16,18 @@ path = "src/main.rs"
 unsafe_code = "forbid"
 
 [lints.clippy]
+dbg_macro = "warn"
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+exit = "warn"
+get_unwrap = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+redundant_clone = "warn"
+rest_pat_in_fully_bound_structs = "warn"
 shadow_unrelated = "warn"
+todo = "warn"
+unimplemented = "warn"
 wildcard_enum_match_arm = "warn"
 
 [dependencies]

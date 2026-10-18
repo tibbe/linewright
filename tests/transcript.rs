@@ -431,7 +431,7 @@ fn following_shows_a_tool_call_as_running_as_soon_as_it_is_made() {
     let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
 
     let one = text(&follower.update(std::slice::from_ref(&first)));
-    let two = text(&follower.update(&[first, second.clone()]));
+    let two = text(&follower.update(&[first, second]));
     let mut nothing = Follower::new("105/update-1".parse().unwrap(), Verbosity::Compact, None);
 
     assert_eq!(
