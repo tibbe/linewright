@@ -912,6 +912,7 @@ dependencies = [
 name = "linewright"
 version = "0.2.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "async-trait",
  "axum",

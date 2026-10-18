@@ -19,6 +19,7 @@ unsafe_code = "forbid"
 shadow_unrelated = "warn"
 
 [dependencies]
+aho-corasick = "1"
 anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "query", "tokio"] }

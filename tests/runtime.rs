@@ -6,6 +6,7 @@ use std::sync::Arc;
 use common::*;
 use linewright::domain::Number;
 use linewright::reconcile::{Subject, WorkKind};
+use linewright::redaction::Redaction;
 use linewright::runs::Activity;
 use linewright::runtime::claude::ClaudeCode;
 use linewright::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec};
@@ -27,6 +28,7 @@ fn runtime_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
         model: None,
         github_token: None,
         environment: Given::default(),
+        redaction: Redaction::default(),
     }
 }
 
@@ -122,6 +124,7 @@ async fn a_production_session_gets_linewrights_github_token() {
         model: None,
         github_token: Some("linewright-token".into()),
         environment: Given::default(),
+        redaction: Redaction::default(),
     };
 
     runtime.start(&triage_session(dir.path())).await.unwrap();
@@ -510,6 +513,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
         model: None,
         github_token: None,
         environment: Given::default(),
+        redaction: Redaction::default(),
     };
     let mut session = triage_session(dir.path());
     session.deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -614,6 +618,7 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
         model: None,
         github_token: None,
         environment: Given::default(),
+        redaction: Redaction::default(),
     };
     let spec = triage_session(dir.path());
     let output = dir.path().join(linewright::transcript::OUTPUT);
@@ -624,4 +629,114 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
     std::fs::write(&go, "").unwrap();
 
     assert_eq!(turn.await.unwrap().unwrap().message, "Done.");
+}
+
+const CREDENTIAL: &str = "ghp_s3cr3t";
+
+/// A session that prints `CREDENTIAL` in all it says, as one that ran `env`
+/// would, and ends with `last`, if any.
+fn runtime_printing_a_credential(dir: &Path, last: Option<Value>) -> ClaudeCode {
+    let program = dir.join("claude");
+    let said = json!({"type": "assistant", "message": {"content": [
+        {"type": "text", "text": format!("GH_TOKEN={CREDENTIAL}")},
+    ]}});
+    write_program(
+        &program,
+        &format!(
+            "#!/bin/sh\n\
+             cat > /dev/null\n\
+             echo 'GH_TOKEN={CREDENTIAL}' >&2\n\
+             cat <<'EOF'\n{said}\n{last}\nEOF\n",
+            last = last.map(|last| last.to_string()).unwrap_or_default(),
+        ),
+    );
+    ClaudeCode {
+        program: program.to_str().unwrap().into(),
+        bash: "/bin/bash".into(),
+        model: None,
+        github_token: None,
+        environment: Given::default(),
+        redaction: Redaction::of([CREDENTIAL.to_string()]),
+    }
+}
+
+#[tokio::test]
+async fn a_credential_a_session_prints_is_kept_and_answered_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_printing_a_credential(
+        dir.path(),
+        Some(json!({
+            "type": "result", "subtype": "success", "is_error": false,
+            "result": format!("It is {CREDENTIAL}."),
+        })),
+    );
+
+    let turn = runtime.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "It is [redacted].");
+    for file in [linewright::transcript::OUTPUT, "stderr.log"] {
+        let kept = std::fs::read_to_string(dir.path().join(file)).unwrap();
+        assert!(
+            !kept.contains(CREDENTIAL) && kept.contains("GH_TOKEN=[redacted]"),
+            "{file}: {kept}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_failed_sessions_log_tail_has_its_credentials_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_printing_a_credential(dir.path(), None);
+
+    let error = runtime
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::Failed { log_tail, .. } = error else {
+        panic!("expected a failure, got {error:?}");
+    };
+    assert_eq!(log_tail, "GH_TOKEN=[redacted]");
+}
+
+#[tokio::test]
+async fn a_failed_sessions_reason_has_its_credentials_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = runtime_printing_a_credential(
+        dir.path(),
+        Some(json!({
+            "type": "result", "subtype": "error_max_turns", "is_error": true,
+            "result": format!("stuck on {CREDENTIAL}"),
+        })),
+    );
+
+    let error = runtime
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::Failed { reason, .. } = error else {
+        panic!("expected a failure, got {error:?}");
+    };
+    assert_eq!(
+        reason,
+        "the session ended with `error_max_turns`: stuck on [redacted]"
+    );
+}
+
+#[tokio::test]
+async fn a_credential_that_holds_another_is_redacted_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut runtime = runtime_printing_a_credential(dir.path(), None);
+    runtime.redaction = Redaction::of(["ghp_".to_string(), CREDENTIAL.to_string()]);
+
+    let error = runtime
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::Failed { log_tail, .. } = error else {
+        panic!("expected a failure, got {error:?}");
+    };
+    assert_eq!(log_tail, "GH_TOKEN=[redacted]");
 }

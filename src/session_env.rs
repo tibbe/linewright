@@ -37,10 +37,16 @@ const TABLE: &[&str] = &[
     "CLAUDE_*",
 ];
 
-/// Whether `name` is one of Linewright's credentials, which `session-env`
-/// never passes.
+/// Linewright's own credentials, which `session-env` never passes.
+pub const NEVER_PASSED: [&str; 4] = [
+    TOKEN_VARIABLES[0],
+    TOKEN_VARIABLES[1],
+    SESSION_TOKEN_VARIABLE,
+    SECRET_VARIABLE,
+];
+
 fn never_passed(name: &str) -> bool {
-    TOKEN_VARIABLES.contains(&name) || name == SESSION_TOKEN_VARIABLE || name == SECRET_VARIABLE
+    NEVER_PASSED.contains(&name)
 }
 
 /// `pattern` is a variable's name, or a prefix when it ends in `*`.

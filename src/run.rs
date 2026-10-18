@@ -18,6 +18,7 @@ use crate::prompts::{self, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
+use crate::redaction::Redaction;
 use crate::results::{
     self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
     WorkflowIssueLabel, WorkflowResult,
@@ -45,6 +46,7 @@ pub(crate) struct Shell {
     pub work_dir: PathBuf,
     pub runs: Runs,
     pub waits_out_usage_limit: bool,
+    pub redaction: Redaction,
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
 }
 
@@ -202,7 +204,8 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 return Ending::Done;
             }
             Err(Failure::Infrastructure { error: e, .. }) if !retried => {
-                warn!(subject = ?subject, error = format!("{e:#}"), "infrastructure failure; retrying once");
+                let error = shell.redaction.apply(&format!("{e:#}"));
+                warn!(subject = ?subject, error, "infrastructure failure; retrying once");
                 retried = true;
             }
             Err(Failure::Infrastructure { error: e, note }) => {
@@ -248,8 +251,11 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
         }
     }
     let work_dir = shell.work_dir.to_string_lossy().into_owned();
-    let reason = reason.replace(&work_dir, "<work-dir>");
-    let log_tail = log_tail.map(|t| t.replace(&work_dir, "<work-dir>"));
+    // Git's output, as Linewright pushes, can come from hooks the session
+    // left in its clone.
+    let posted = |text: &str| shell.redaction.apply(text).replace(&work_dir, "<work-dir>");
+    let reason = posted(&reason);
+    let log_tail = log_tail.map(|t| posted(&t));
     info!(subject = ?subject, reason, "handing back");
     let log_tail = log_tail.as_deref();
     let handed = match subject {

@@ -159,13 +159,19 @@ fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathB
     let bin = dir.join("bin");
     std::fs::create_dir(&bin).unwrap();
     fake_claude(&bin, r#"{"tickets": [], "comment": "Nothing to build."}"#);
+    replay_with(dir, &bin, env);
+    bin
+}
+
+/// Replays the case in `dir` with the Claude Code in `bin`.
+fn replay_with(dir: &Path, bin: &Path, env: &[(&str, &str)]) {
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
     let output = Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(["replay", "case", "--out", "out"])
         .current_dir(dir)
         .env("PATH", path)
-        .env("CLAUDE_CONFIG_DIR", &bin)
+        .env("CLAUDE_CONFIG_DIR", bin)
         .envs(env.iter().copied())
         .output()
         .unwrap();
@@ -175,7 +181,79 @@ fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathB
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    bin
+}
+
+/// Each value holds `s3cr3t`, so that none is found in any form, escaped
+/// or not.
+const CREDENTIALS: [(&str, &str); 5] = [
+    ("GH_TOKEN", "gh-s3cr3t"),
+    ("GITHUB_TOKEN", "github-s3cr3t"),
+    ("LINEWRIGHT_SESSION_GITHUB_TOKEN", "session-s3cr3t"),
+    ("LINEWRIGHT_WEBHOOK_SECRET", r#"webhook "s3cr3t" \ too"#),
+    ("ANTHROPIC_API_KEY", "anthropic-s3cr3t"),
+];
+
+/// Every file under `dir`, with its contents.
+fn files_under(dir: &Path) -> Vec<(std::path::PathBuf, String)> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(files_under(&path));
+        } else {
+            let contents = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
+            files.push((path, contents));
+        }
+    }
+    files
+}
+
+#[test]
+fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    spec_change_case(dir.path(), &[]);
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    // What the session saw when it ran `env`.
+    let env: String = CREDENTIALS
+        .iter()
+        .map(|(variable, value)| format!("{variable}={value} "))
+        .collect();
+    let said =
+        json!({"type": "assistant", "message": {"content": [{"type": "text", "text": env}]}});
+    let result = json!({"tickets": [], "comment": format!("Saw {env}")}).to_string();
+    let result =
+        json!({"type": "result", "subtype": "success", "is_error": false, "result": result});
+    fake_claude_saying(&bin, &[said.clone(), result], &said, &env);
+
+    replay_with(dir.path(), &bin, &CREDENTIALS);
+
+    let out = files_under(&dir.path().join("out"));
+    for (path, contents) in &out {
+        assert!(
+            !contents.contains("s3cr3t"),
+            "a credential in {}: {contents}",
+            path.display()
+        );
+    }
+    let redacted = |name: &str| {
+        out.iter()
+            .filter(|(path, _)| path.file_name().unwrap() == name)
+            .all(|(_, contents)| contents.contains("GH_TOKEN=[redacted] "))
+    };
+    assert!(
+        ["output.jsonl", "transcript.jsonl", "stderr.log"].map(redacted) == [true; 3],
+        "{out:#?}"
+    );
+    let pull = std::fs::read_to_string(dir.path().join("out/pulls/1.md")).unwrap();
+    assert!(
+        pull.contains(
+            "Saw GH_TOKEN=[redacted] GITHUB_TOKEN=[redacted] \
+             LINEWRIGHT_SESSION_GITHUB_TOKEN=[redacted] \
+             LINEWRIGHT_WEBHOOK_SECRET=[redacted] ANTHROPIC_API_KEY=[redacted]"
+        ),
+        "{pull}"
+    );
 }
 
 #[test]
@@ -194,6 +272,17 @@ fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_ho
         std::fs::read_to_string(bin.join("tokens.log")).unwrap(),
         "GH_TOKEN= GITHUB_TOKEN=\n"
     );
+}
+
+#[test]
+fn a_replayed_session_with_linewrights_credentials_empty_keeps_all_it_said() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty = CREDENTIALS.map(|(variable, _)| (variable, ""));
+
+    replay_with_fake_claude(dir.path(), &empty);
+
+    let pull = std::fs::read_to_string(dir.path().join("out/pulls/1.md")).unwrap();
+    assert!(pull.contains("Nothing to build."), "{pull}");
 }
 
 #[test]

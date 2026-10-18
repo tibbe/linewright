@@ -22,6 +22,7 @@ use crate::reconcile::{
     Action, DoneRun, FailedMerge, LiveRun, Memory, Policy, Subject, Work, WorkKind, Workflows,
     hold_note, reconcile,
 };
+use crate::redaction::Redaction;
 use crate::run::{self, Shell, WorkflowEnd};
 use crate::runs::{self, Recorded, RunOf, Runs, Watched};
 use crate::runtime::{Runtime, UsageLimit};
@@ -53,6 +54,9 @@ pub struct FactoryConfig {
     pub schedule_workflows: bool,
     pub waits_out_usage_limit: bool,
     pub session_token: SessionToken,
+    /// The runtime's own, for what reaches Linewright from a session's work
+    /// other than through the runtime.
+    pub redaction: Redaction,
 }
 
 /// The GitHub token agent sessions are given.
@@ -236,6 +240,7 @@ impl Factory {
             runs: runs.clone(),
             work_dir: config.work_dir,
             waits_out_usage_limit: config.waits_out_usage_limit,
+            redaction: config.redaction,
             report_refusal,
         };
         Ok(Factory {

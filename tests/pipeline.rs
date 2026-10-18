@@ -4,6 +4,7 @@ use chrono::TimeDelta;
 use common::*;
 use linewright::domain::{Assignment, Issue, IssueEvent};
 use linewright::reconcile::WorkKind;
+use linewright::redaction::Redaction;
 use linewright::store::Store;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -4268,6 +4269,35 @@ async fn a_push_refused_for_a_reason_not_recognized_is_retried_once_then_handed_
             "{comment}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_hand_back_says_nothing_of_a_credential_the_sessions_work_printed() {
+    // A hook the session left in its clone can print one as Linewright
+    // pushes.
+    let mut world = World::with(|config| {
+        config.redaction = Redaction::of(["ghp_s3cr3t".to_string()]);
+    })
+    .await;
+    implement(&world);
+    world
+        .store
+        .refuse_pushes("pre-push: GH_TOKEN=ghp_s3cr3t\nerror: failed to push some refs");
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    let comment = last_comment(&issue);
+    assert!(
+        comment.contains("pre-push: GH_TOKEN=[redacted]") && !comment.contains("ghp_s3cr3t"),
+        "{comment}"
+    );
 }
 
 #[tokio::test]

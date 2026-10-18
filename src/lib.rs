@@ -24,6 +24,7 @@ pub mod logs;
 pub mod prompts;
 pub mod reconcile;
 mod records;
+pub mod redaction;
 pub mod results;
 pub mod run;
 pub mod runs;

@@ -14,6 +14,7 @@ use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, Since, W
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
+use linewright::redaction::Redaction;
 use linewright::runs::{self, Query, RepoWorkDir};
 use linewright::runtime::claude::ClaudeCode;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
@@ -479,10 +480,9 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         } => {
             let bash = require_bash()?;
             require_tool(RUNTIME).await?;
-            let session_token = SessionToken::Withheld;
-            let runtime = runtime(&config, bash, &session_token);
-            let factory_config =
-                factory_config(&config, out.clone(), OnUsageLimit::End, session_token)?;
+            let sessions = SessionCredentials::new(SessionToken::Withheld);
+            let runtime = runtime(&config, bash, &sessions);
+            let factory_config = factory_config(&config, out.clone(), OnUsageLimit::End, sessions)?;
             case::replay(
                 &case_dir,
                 &out,
@@ -549,11 +549,28 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }
 
+/// The token sessions are given and the credentials redacted from what they
+/// say, for the runtime and the factory alike.
+struct SessionCredentials {
+    token: SessionToken,
+    redaction: Redaction,
+}
+
+impl SessionCredentials {
+    /// Reads the credentials to redact from Linewright's environment.
+    fn new(token: SessionToken) -> SessionCredentials {
+        SessionCredentials {
+            token,
+            redaction: Redaction::from_env(&|key| std::env::var(key).ok()),
+        }
+    }
+}
+
 /// Logs the names of the variables of Linewright's environment its sessions
 /// are not given, so that an operator whose build fails only in a session
 /// sees what to add to `session-env`.
-fn runtime(config: &Config, bash: PathBuf, session_token: &SessionToken) -> ClaudeCode {
-    let github_token = session_token.given().map(str::to_string);
+fn runtime(config: &Config, bash: PathBuf, sessions: &SessionCredentials) -> ClaudeCode {
+    let github_token = sessions.token.given().map(str::to_string);
     let split = config.session_env.split(
         std::env::vars_os(),
         &ClaudeCode::variables_set_for_sessions(github_token.as_deref()),
@@ -569,6 +586,7 @@ fn runtime(config: &Config, bash: PathBuf, session_token: &SessionToken) -> Clau
         model: config.model.clone(),
         github_token,
         environment: split.given,
+        redaction: sessions.redaction.clone(),
     }
 }
 
@@ -576,7 +594,7 @@ fn factory_config(
     config: &Config,
     work_dir: std::path::PathBuf,
     on_usage_limit: OnUsageLimit,
-    session_token: SessionToken,
+    sessions: SessionCredentials,
 ) -> Result<FactoryConfig> {
     let briefs = match &config.briefs {
         Some(dir) => Briefs::load(dir)?,
@@ -599,7 +617,8 @@ fn factory_config(
         work_dir,
         schedule_workflows: true,
         waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
-        session_token,
+        session_token: sessions.token,
+        redaction: sessions.redaction,
     })
 }
 
@@ -613,16 +632,14 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
     let bash = require_bash()?;
     require_tool(RUNTIME).await?;
     let token = token()?;
-    let session_token =
-        SessionToken::new(token.clone(), std::env::var(SESSION_TOKEN_VARIABLE).ok());
-    let runtime = runtime(config, bash, &session_token);
+    let sessions = SessionCredentials::new(SessionToken::new(
+        token.clone(),
+        std::env::var(SESSION_TOKEN_VARIABLE).ok(),
+    ));
+    let runtime = runtime(config, bash, &sessions);
     let github = connect(config, token).await?;
-    let factory_config = factory_config(
-        config,
-        work_dir(config, &github),
-        on_usage_limit,
-        session_token,
-    )?;
+    let factory_config =
+        factory_config(config, work_dir(config, &github), on_usage_limit, sessions)?;
     Factory::start(
         Arc::new(github),
         Arc::new(runtime),

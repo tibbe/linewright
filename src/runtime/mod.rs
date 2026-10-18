@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::clock::Clock;
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
+use crate::redaction::Redaction;
 use crate::runs::Activity;
 use crate::workflow::WorkflowName;
 
@@ -65,6 +66,16 @@ pub struct Turn {
     pub log_tail: String,
 }
 
+impl Turn {
+    pub fn redacted(self, redaction: &Redaction) -> Turn {
+        Turn {
+            session: self.session,
+            message: redaction.apply(&self.message),
+            log_tail: redaction.apply(&self.log_tail),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageLimit {
     pub resets_at: Timestamp,
@@ -100,6 +111,24 @@ pub enum SessionError {
     TimedOut { log_tail: String },
     #[error("{reason}")]
     Failed { reason: String, log_tail: String },
+}
+
+impl SessionError {
+    pub fn redacted(self, redaction: &Redaction) -> SessionError {
+        match self {
+            SessionError::Infrastructure(reason) => {
+                SessionError::Infrastructure(redaction.apply(&reason))
+            }
+            SessionError::TimedOut { log_tail } => SessionError::TimedOut {
+                log_tail: redaction.apply(&log_tail),
+            },
+            SessionError::Failed { reason, log_tail } => SessionError::Failed {
+                reason: redaction.apply(&reason),
+                log_tail: redaction.apply(&log_tail),
+            },
+            error @ SessionError::UsageLimit { .. } => error,
+        }
+    }
 }
 
 #[async_trait]

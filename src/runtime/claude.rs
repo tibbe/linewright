@@ -10,6 +10,7 @@ use tokio::process::Command;
 
 use super::{Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::domain::Timestamp;
+use crate::redaction::Redaction;
 use crate::session_env::Given;
 use crate::store::github::TOKEN_VARIABLES;
 use crate::transcript::{self, StartedBy};
@@ -23,6 +24,8 @@ pub struct ClaudeCode {
     pub github_token: Option<String>,
     /// A session starts from these alone, and what Linewright sets itself.
     pub environment: Given,
+    /// Applied to all a session says before Linewright keeps or answers it.
+    pub redaction: Redaction,
 }
 
 const TEMPORARY_DIRECTORY: &str = "TMPDIR";
@@ -212,7 +215,22 @@ impl ClaudeCode {
         names
     }
 
+    /// Each line is redacted as it comes, and what the turn answers once
+    /// more: its result is text of its own, such as JSON, that can hold a
+    /// credential escaped once more than the line does.
     async fn turn(
+        &self,
+        spec: &SessionSpec,
+        session: Session<'_>,
+        prompt: &str,
+    ) -> Result<Turn, SessionError> {
+        self.unredacted_turn(spec, session, prompt)
+            .await
+            .map(|turn| turn.redacted(&self.redaction))
+            .map_err(|error| error.redacted(&self.redaction))
+    }
+
+    async fn unredacted_turn(
         &self,
         spec: &SessionSpec,
         session: Session<'_>,
@@ -283,6 +301,7 @@ impl ClaudeCode {
             let mut underway = false;
             while let Ok(Some(line)) = lines.next_line().await {
                 spec.output.heard();
+                let line = self.redaction.apply(&line);
                 if let Some(file) = output.as_mut() {
                     let _ = file.write_all(format!("{line}\n").as_bytes()).await;
                 }
@@ -313,7 +332,8 @@ impl ClaudeCode {
         let read_stderr = async {
             let mut errors = String::new();
             let _ = stderr.read_to_string(&mut errors).await;
-            log.lock().expect("the log's lock is not poisoned").errors = errors;
+            log.lock().expect("the log's lock is not poisoned").errors =
+                self.redaction.apply(&errors);
         };
         let outcome = tokio::time::timeout_at(spec.deadline, async {
             let ((result, refusal, underway), (), ()) =
@@ -322,7 +342,12 @@ impl ClaudeCode {
         })
         .await;
         let session = session.id().to_string();
-        copy_transcript(&session, &spec.record.join("transcript.jsonl")).await;
+        copy_transcript(
+            &session,
+            &spec.record.join("transcript.jsonl"),
+            &self.redaction,
+        )
+        .await;
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
         let Ok((result, refusal, underway, status)) = outcome else {
@@ -388,7 +413,7 @@ fn assistant_text(event: &serde_json::Value) -> Vec<String> {
 
 /// The transcript is at `<config>/projects/<encoded cwd>/<session>.jsonl`:
 /// <https://code.claude.com/docs/en/sessions>.
-async fn copy_transcript(session: &str, to: &Path) {
+async fn copy_transcript(session: &str, to: &Path, redaction: &Redaction) {
     let Some(config) = std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".claude")))
@@ -400,7 +425,9 @@ async fn copy_transcript(session: &str, to: &Path) {
     };
     while let Ok(Some(project)) = projects.next_entry().await {
         let transcript = project.path().join(format!("{session}.jsonl"));
-        if tokio::fs::copy(&transcript, to).await.is_ok() {
+        if let Ok(transcript) = tokio::fs::read(&transcript).await {
+            let transcript = redaction.apply(&String::from_utf8_lossy(&transcript));
+            let _ = tokio::fs::write(to, transcript).await;
             return;
         }
     }

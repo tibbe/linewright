@@ -13,6 +13,7 @@ use linewright::clock::Clock;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::reconcile::WorkKind;
+use linewright::redaction::Redaction;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::spec_glob::SpecGlob;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
@@ -436,6 +437,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         schedule_workflows: true,
         waits_out_usage_limit: false,
         session_token: SessionToken::Withheld,
+        redaction: Redaction::default(),
     }
 }
 
@@ -639,6 +641,17 @@ pub fn fake_claude(dir: &Path, message: &str) -> std::path::PathBuf {
 }
 
 pub fn fake_claude_streaming(dir: &Path, events: &[Value]) -> std::path::PathBuf {
+    fake_claude_saying(dir, events, &serde_json::json!({"type": "said"}), "")
+}
+
+/// A Claude Code that streams `events`, adds `kept` to the session's
+/// transcript and writes `errors` to standard error.
+pub fn fake_claude_saying(
+    dir: &Path,
+    events: &[Value],
+    kept: &Value,
+    errors: &str,
+) -> std::path::PathBuf {
     let stream: Vec<String> = events.iter().map(Value::to_string).collect();
     let stream = stream.join("\n");
     let program = dir.join("claude");
@@ -658,8 +671,14 @@ pub fn fake_claude_streaming(dir: &Path, events: &[Value]) -> std::path::PathBuf
            case $arg in --session-id|--resume) take=1;; esac\n\
          done\n\
          mkdir -p '{projects}'\n\
-         echo '{{\"type\":\"said\"}}' >> \"{projects}/$session.jsonl\"\n\
+         cat >> \"{projects}/$session.jsonl\" <<'EOF'\n{kept}\nEOF\n\
+         {errors}\
          cat <<'EOF'\n{stream}\nEOF\n",
+        errors = if errors.is_empty() {
+            String::new()
+        } else {
+            format!("cat >&2 <<'EOF'\n{errors}\nEOF\n")
+        },
         tokens = dir.join("tokens.log").display(),
         tmpdir = dir.join("tmpdir.log").display(),
         shell = dir.join("shell.log").display(),
