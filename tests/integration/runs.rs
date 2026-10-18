@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::path::Path;
 
@@ -44,11 +44,12 @@ async fn lw(work_dir: &Path, args: &[&str]) -> Output {
 
 fn triage_ready(world: &World) {
     world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-agent",
             "category": "bug",
             "comment": "## Agent Brief\n\n**Summary:** It crashes."
-        }))
+        })
+        .to_string())
     });
 }
 
@@ -174,11 +175,11 @@ async fn a_workflows_runs_are_numbered_under_its_name_with_their_outcomes() {
     let weekly = "weekly".parse().unwrap();
     world
         .runtime
-        .on_workflow(|_| json(json!({"summary": "Nothing to do.", "issues": []})));
+        .on_workflow(|_| Ok(json!({"summary": "Nothing to do.", "issues": []}).to_string()));
     world.factory.run_workflow(&weekly).await.unwrap();
     world
         .runtime
-        .on_workflow(|_| json(json!({"not": "a result"})));
+        .on_workflow(|_| Ok(json!({"not": "a result"}).to_string()));
     assert!(world.factory.run_workflow(&weekly).await.is_err());
 
     let output = lw(work_dir.path(), &["runs"]).await;
@@ -201,7 +202,7 @@ async fn a_workflows_runs_are_numbered_under_its_name_with_their_outcomes() {
 async fn a_run_handed_back_says_so() {
     let (mut world, work_dir) = world().await;
     world.runtime.on(WorkKind::Implement, |_| {
-        json(json!({"outcome": "gave-up", "reason": "It cannot be done."}))
+        Ok(json!({"outcome": "gave-up", "reason": "It cannot be done."}).to_string())
     });
     world
         .store
@@ -345,7 +346,7 @@ async fn a_pull_requests_runs_are_counted_per_stage_on_it() {
             &[("src/renamed.txt", "renamed again\n")],
             "Rename again",
         );
-        common::json(json!({"outcome": "done", "comment": "Renamed again."}))
+        Ok(json!({"outcome": "done", "comment": "Renamed again."}).to_string())
     });
     world.poll().await;
 

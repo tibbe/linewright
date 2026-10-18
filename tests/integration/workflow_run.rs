@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -32,8 +32,8 @@ async fn with_workflow(name: &str, text: &str) -> World {
     world
 }
 
-fn finished() -> Result<String, SessionError> {
-    json(json!({"summary": "Nothing needs doing.", "issues": []}))
+fn finished() -> String {
+    json!({"summary": "Nothing needs doing.", "issues": []}).to_string()
 }
 
 #[tokio::test]
@@ -46,7 +46,7 @@ async fn a_workflow_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the
                 .join(".linewright/workflows/weekly.md")
                 .exists()
         );
-        finished()
+        Ok(finished())
     });
 
     world
@@ -68,13 +68,13 @@ async fn a_workflow_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the
 async fn a_workflow_run_files_the_issues_its_result_returns_as_linewright() {
     let world = with_workflow("weekly", WEEKLY).await;
     world.runtime.on_workflow(|_| {
-        json(json!({
+        Ok(json!({
             "summary": "One bug looks unfixed, one needs a decision.",
             "issues": [
                 {"title": "Fix the widget count", "body": "Count them all.\n\n- [ ] All counted", "label": "ready-for-agent"},
                 {"title": "Should gadgets expire?", "body": "Recommend: yes.", "label": "ready-for-human"}
             ]
-        }))
+        }).to_string())
     });
 
     world
@@ -123,18 +123,19 @@ Look.
 ";
 
 /// A result returning three issues, one more than [`CAPPED`] files.
-fn three_issues() -> Result<String, SessionError> {
+fn three_issues() -> String {
     let issue = |title: &str| json!({"title": title, "body": "Do it.", "label": "ready-for-agent"});
-    json(json!({
+    json!({
         "summary": "Three things need doing.",
         "issues": [issue("First"), issue("Second"), issue("Third")]
-    }))
+    })
+    .to_string()
 }
 
 #[tokio::test]
 async fn a_run_files_only_the_first_max_issues_issues() {
     let world = with_workflow("weekly", CAPPED).await;
-    world.runtime.on_workflow(|_| three_issues());
+    world.runtime.on_workflow(|_| Ok(three_issues()));
 
     world
         .factory
@@ -149,7 +150,7 @@ async fn a_run_files_only_the_first_max_issues_issues() {
 #[tokio::test]
 async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
     let world = with_workflow("weekly", CAPPED).await;
-    world.runtime.on_workflow(|_| three_issues());
+    world.runtime.on_workflow(|_| Ok(three_issues()));
     let (log, _guard) = Log::capture();
 
     world
@@ -175,10 +176,11 @@ async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_
             None => "bug",
             Some(_) => "ready-for-agent",
         };
-        json(json!({
+        Ok(json!({
             "summary": "One bug.",
             "issues": [{"title": "Fix it", "body": "It is broken.", "label": label}]
-        }))
+        })
+        .to_string())
     });
 
     world
@@ -201,14 +203,15 @@ async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_
 async fn a_ready_for_agent_workflow_issue_is_implemented_on_the_next_poll_without_triage() {
     let mut world = with_workflow("weekly", WEEKLY).await;
     world.runtime.on_workflow(|_| {
-        json(json!({
+        Ok(json!({
             "summary": "One bug.",
             "issues": [{"title": "Fix it", "body": "It is broken.", "label": "ready-for-agent"}]
-        }))
+        })
+        .to_string())
     });
     world.runtime.on(WorkKind::Implement, |call| {
         commit_in(&call.spec.dir, &[("src/fixed.txt", "fixed\n")], "Fix it");
-        json(json!({"outcome": "done", "pr_title": "Fix it", "pr_body": "Fixes it."}))
+        Ok(json!({"outcome": "done", "pr_title": "Fix it", "pr_body": "Fixes it."}).to_string())
     });
     world
         .factory
@@ -231,7 +234,7 @@ async fn a_ready_for_agent_workflow_issue_is_implemented_on_the_next_poll_withou
 #[tokio::test]
 async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_open_ones() {
     let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| finished());
+    world.runtime.on_workflow(|_| Ok(finished()));
 
     world
         .factory
@@ -251,7 +254,7 @@ async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_
 #[tokio::test]
 async fn a_workflow_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
     let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| finished());
+    world.runtime.on_workflow(|_| Ok(finished()));
 
     world
         .factory
@@ -275,7 +278,7 @@ async fn time_given(text: &str) -> Duration {
         let left = left.clone();
         move |call| {
             *left.lock().unwrap() = Some(call.spec.deadline - tokio::time::Instant::now());
-            finished()
+            Ok(finished())
         }
     });
     world
@@ -291,7 +294,7 @@ async fn the_session_times_out_after_the_workflows_timeout() {
     let left = time_given(WEEKLY).await;
 
     assert!(
-        left > Duration::from_secs(59 * 60) && left <= Duration::from_secs(60 * 60),
+        left > Duration::from_mins(59) && left <= Duration::from_hours(1),
         "{left:?}"
     );
 }
@@ -302,7 +305,7 @@ async fn without_a_timeout_the_session_times_out_after_the_session_timeout() {
 
     // The `session-timeout` the test factory runs with.
     assert!(
-        left > Duration::from_secs(29 * 60) && left <= Duration::from_secs(30 * 60),
+        left > Duration::from_mins(29) && left <= Duration::from_mins(30),
         "{left:?}"
     );
 }

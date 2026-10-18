@@ -1097,11 +1097,10 @@ fn account(call: &Call) -> String {
             0 => "exit 0, no output".into(),
             n => format!("exit 0, {}", lines(n)),
         },
-        Tool::Read => lines(
-            details["file"]["numLines"]
-                .as_u64()
-                .map_or_else(|| result.text.lines().count(), |n| n as usize),
-        ),
+        Tool::Read => lines(details["file"]["numLines"].as_u64().map_or_else(
+            || result.text.lines().count(),
+            |n| usize::try_from(n).unwrap_or(usize::MAX),
+        )),
         Tool::Write => format!(
             "wrote {}",
             lines(

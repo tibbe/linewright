@@ -1,4 +1,4 @@
-mod views;
+use crate::views;
 
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
@@ -932,8 +932,8 @@ fn a_tracking_issue_with_no_tickets_and_no_cut_in_flight_is_not_tracked() {
     );
 }
 
-fn left_alone_text(view: &View, read: AnyItem) -> Vec<String> {
-    let answer = explain_read(view, &[], &read, at(NOW));
+fn left_alone_text(view: &View, read: &AnyItem) -> Vec<String> {
+    let answer = explain_read(view, &[], read, at(NOW));
     render_answer(&answer, false)
         .lines()
         .map(str::to_string)
@@ -950,7 +950,7 @@ fn a_closed_issue_is_left_alone_as_closed() {
     assert_eq!(
         left_alone_text(
             &view(vec![], vec![]),
-            AnyItem::LeftOutIssue(Box::new(closed))
+            &AnyItem::LeftOutIssue(Box::new(closed))
         ),
         [
             "#42: Add invoices",
@@ -971,7 +971,7 @@ fn an_open_issue_a_snapshot_does_not_read_names_the_labels_and_linewright() {
     assert_eq!(
         left_alone_text(
             &view(vec![], vec![]),
-            AnyItem::LeftOutIssue(Box::new(elsewhere))
+            &AnyItem::LeftOutIssue(Box::new(elsewhere))
         )[1..],
         [
             "state: open issue",
@@ -993,7 +993,7 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
     assert_eq!(
         left_alone_text(
             &view(vec![unlabeled.clone()], vec![]),
-            AnyItem::HeldIssue(Box::new(unlabeled))
+            &AnyItem::HeldIssue(Box::new(unlabeled))
         )[3],
         "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
          `ready-for-human`"
@@ -1014,7 +1014,7 @@ fn a_tracking_issue_with_no_tickets_is_left_alone_as_such() {
     assert_eq!(
         left_alone_text(
             &view(vec![tracking.clone()], vec![]),
-            AnyItem::HeldIssue(Box::new(tracking))
+            &AnyItem::HeldIssue(Box::new(tracking))
         )[1..],
         [
             "parent: #5, the spec change it tracks",
@@ -1036,7 +1036,7 @@ fn an_issue_the_read_places_in_the_pipeline_is_explained_as_read_then() {
     assert_eq!(
         left_alone_text(
             &view(vec![unlabeled], vec![]),
-            AnyItem::HeldIssue(Box::new(labeled))
+            &AnyItem::HeldIssue(Box::new(labeled))
         ),
         [
             "#42: Add invoices",
@@ -1066,7 +1066,7 @@ fn a_closed_pull_request_is_left_alone_as_closed() {
     };
 
     assert_eq!(
-        left_alone_text(&view(vec![], vec![]), AnyItem::Pull(Box::new(closed)))[1..],
+        left_alone_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(closed)))[1..],
         [
             "parent: #42, an issue it closes",
             "state: closed pull request",
@@ -1081,7 +1081,7 @@ fn a_pull_request_linewright_did_not_open_names_who_did() {
     assert_eq!(
         left_alone_text(
             &view(vec![], vec![]),
-            AnyItem::Pull(Box::new(someones_pull(43)))
+            &AnyItem::Pull(Box::new(someones_pull(43)))
         ),
         [
             "#43: Tidy up",
@@ -1100,7 +1100,7 @@ fn linewrights_pull_request_closing_no_issue_says_so() {
     };
 
     assert_eq!(
-        left_alone_text(&view(vec![], vec![]), AnyItem::Pull(Box::new(for_nothing)))[3],
+        left_alone_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(for_nothing)))[3],
         "left alone: it is Linewright's, and closes no issue Linewright could work on"
     );
 }
@@ -1115,7 +1115,7 @@ fn linewrights_older_pull_request_for_an_issue_names_the_one_it_works_through() 
     let view = view(vec![claimed], vec![older.clone(), draft(44, 42, &[])]);
 
     assert_eq!(
-        left_alone_text(&view, AnyItem::Pull(Box::new(older)))[4],
+        left_alone_text(&view, &AnyItem::Pull(Box::new(older)))[4],
         "left alone: it is Linewright's for #42, which it works on through #44"
     );
 }
@@ -1128,7 +1128,7 @@ fn merged(labels: &[&str]) -> MergedPull {
         author: Login::new("maintainer"),
         merged_at: at("2026-10-01T09:00:00Z"),
         base_ref: "main".into(),
-        labels: labels.iter().map(|l| l.to_string()).collect(),
+        labels: labels.iter().map(ToString::to_string).collect(),
         closes: vec![],
         files: vec!["docs/specs/invoices.md".into()],
         assignees: vec![],
@@ -1139,7 +1139,7 @@ fn merged(labels: &[&str]) -> MergedPull {
 fn merged_text(view: &View, pull: MergedPull) -> String {
     let lines = left_alone_text(
         view,
-        AnyItem::Merged {
+        &AnyItem::Merged {
             pull: Box::new(pull),
             tracking_issues: vec![],
         },
@@ -1367,7 +1367,7 @@ fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issue(
     assert_eq!(
         left_alone_text(
             &view(vec![claimed], vec![]),
-            AnyItem::Pull(Box::new(opened))
+            &AnyItem::Pull(Box::new(opened))
         ),
         [
             "#43: Do #42",
@@ -1395,7 +1395,7 @@ fn linewrights_pull_request_is_worked_whatever_the_labels_of_the_issue_it_is_for
         assert_eq!(
             left_alone_text(
                 &view(vec![issue], vec![]),
-                AnyItem::Pull(Box::new(open.clone()))
+                &AnyItem::Pull(Box::new(open.clone()))
             ),
             [
                 "#43: Do #42",
@@ -1504,7 +1504,7 @@ fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_closes() {
     assert_eq!(
         family_lines(&left_alone_text(
             &superseded,
-            AnyItem::Pull(Box::new(older))
+            &AnyItem::Pull(Box::new(older))
         )),
         ["parent: #42, an issue it closes"]
     );
@@ -1524,7 +1524,7 @@ fn linewrights_merged_pull_request_names_the_issue_it_closes() {
 
     let lines = left_alone_text(
         &view(vec![], vec![]),
-        AnyItem::Merged {
+        &AnyItem::Merged {
             pull: Box::new(done),
             tracking_issues: vec![],
         },
@@ -1570,7 +1570,7 @@ fn a_pull_request_someone_else_opened_names_the_issue_it_closes() {
         AnyItem::Pull(Box::new(someones_open)),
     ] {
         assert_eq!(
-            family_lines(&left_alone_text(&view(vec![], vec![]), read)),
+            family_lines(&left_alone_text(&view(vec![], vec![]), &read)),
             ["parent: #42, an issue it closes"]
         );
     }
@@ -1701,7 +1701,7 @@ fn a_closed_ticket_names_its_tracking_issue() {
         AnyItem::LeftOutIssue(Box::new(closed)),
     ] {
         assert_eq!(
-            family_lines(&left_alone_text(&view(vec![], vec![]), read)),
+            family_lines(&left_alone_text(&view(vec![], vec![]), &read)),
             ["parent: #40, its tracking issue"]
         );
     }
@@ -1761,7 +1761,7 @@ fn a_spec_change_cut_into_tickets_names_its_tracking_issue() {
         tracking_issues: vec![Number(40)],
     };
 
-    let lines = left_alone_text(&view(vec![], vec![]), processed);
+    let lines = left_alone_text(&view(vec![], vec![]), &processed);
 
     assert_eq!(
         lines[..3],
@@ -1797,7 +1797,7 @@ fn a_spec_change_cut_again_names_its_newest_tracking_issue() {
     };
 
     assert_eq!(
-        family_lines(&left_alone_text(&view(vec![], vec![]), processed)),
+        family_lines(&left_alone_text(&view(vec![], vec![]), &processed)),
         ["child: #44, its tracking issue"]
     );
 }
@@ -1810,7 +1810,7 @@ fn a_spec_change_not_cut_names_no_tracking_issue_from_a_cut_discarded_part_way()
     };
 
     assert_eq!(
-        family_lines(&left_alone_text(&view(vec![], vec![]), handed_back)),
+        family_lines(&left_alone_text(&view(vec![], vec![]), &handed_back)),
         Vec::<&str>::new()
     );
 }
@@ -1823,8 +1823,8 @@ fn implemented_42() -> Vec<Recorded> {
     )]
 }
 
-fn read_family(view: &View, recorded: &[Recorded], read: AnyItem) -> Vec<String> {
-    let answer = explain_read(view, recorded, &read, at(NOW));
+fn read_family(view: &View, recorded: &[Recorded], read: &AnyItem) -> Vec<String> {
+    let answer = explain_read(view, recorded, read, at(NOW));
     let lines = lines_of(&render_answer(&answer, false));
     family_lines(&lines)
         .into_iter()
@@ -1886,7 +1886,7 @@ fn linewrights_pull_request_names_the_issues_it_closes() {
         (AnyItem::Pull(Box::new(edited_open)), &only_12[..]),
     ] {
         assert_eq!(
-            read_family(&view(vec![], vec![]), &implemented_42(), read),
+            read_family(&view(vec![], vec![]), &implemented_42(), &read),
             parents
         );
     }
@@ -1999,7 +1999,7 @@ fn a_spec_change_cut_into_tickets_names_the_issue_it_closes_and_its_tracking_iss
     };
 
     assert_eq!(
-        read_family(&view(vec![], vec![]), &implemented_42(), read.clone()),
+        read_family(&view(vec![], vec![]), &implemented_42(), &read),
         [
             "parent: #12, an issue it closes",
             "child: #40, its tracking issue",
@@ -2048,7 +2048,7 @@ fn a_pull_request_names_each_issue_it_closes_as_a_parent() {
         },
     ] {
         assert_eq!(
-            read_family(&view(vec![], vec![]), &[], read.clone()),
+            read_family(&view(vec![], vec![]), &[], &read),
             [
                 "parent: #40, an issue it closes",
                 "parent: #41, an issue it closes",
@@ -2087,7 +2087,7 @@ fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
     assert_eq!(
         family_lines(&left_alone_text(
             &view(vec![], vec![]),
-            AnyItem::LeftOutIssue(Box::new(closed))
+            &AnyItem::LeftOutIssue(Box::new(closed))
         )),
         [
             "child: #43, a pull request that closes it",

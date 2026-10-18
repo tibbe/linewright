@@ -13,7 +13,7 @@ fn recorded() -> SessionRecord {
     }
 }
 
-fn of(sessions: Vec<SessionRecord>) -> Transcript {
+fn of(sessions: &[SessionRecord]) -> Transcript {
     Transcript {
         run: "105/implement-1".parse().unwrap(),
         in_flight: None,
@@ -23,7 +23,7 @@ fn of(sessions: Vec<SessionRecord>) -> Transcript {
 
 #[test]
 fn compact_shows_messages_in_full_and_each_tool_call_on_one_line() {
-    let shown = transcript::render(&of(vec![recorded()]), Verbosity::Compact, false);
+    let shown = transcript::render(&of(&[recorded()]), Verbosity::Compact, false);
 
     assert_eq!(
         shown,
@@ -48,7 +48,7 @@ session 1: started 2026-10-13 10:09:08 UTC
 
 #[test]
 fn verbose_adds_the_brief_the_thinking_each_tools_input_and_result_and_the_follow_ups() {
-    let shown = transcript::render(&of(vec![recorded()]), Verbosity::Full, false);
+    let shown = transcript::render(&of(&[recorded()]), Verbosity::Full, false);
 
     for part in [
         "session 1: started 2026-10-13 10:09:08 UTC\n \
@@ -96,7 +96,7 @@ fn verbose_adds_the_brief_the_thinking_each_tools_input_and_result_and_the_follo
 
 #[test]
 fn json_prints_one_object_per_entry_and_line() {
-    let transcript = of(vec![recorded()]);
+    let transcript = of(&[recorded()]);
 
     let compact: Vec<serde_json::Value> = transcript::json_lines(&transcript, Verbosity::Compact)
         .lines()
@@ -209,8 +209,8 @@ fn verbose_shows_content_of_kinds_it_has_no_line_of_its_own_for() {
         ..SessionRecord::default()
     };
 
-    let full = transcript::render(&of(vec![record.clone()]), Verbosity::Full, false);
-    let compact = transcript::render(&of(vec![record]), Verbosity::Compact, false);
+    let full = transcript::render(&of(std::slice::from_ref(&record)), Verbosity::Full, false);
+    let compact = transcript::render(&of(&[record]), Verbosity::Compact, false);
 
     assert_eq!(
         full,
@@ -390,7 +390,7 @@ fn following_a_run_that_ends_shows_each_of_its_sessions_as_logs_does() {
             .map(str::to_string)
             .collect()
     };
-    let logs = transcript::render(&of(sessions.to_vec()), Verbosity::Compact, false);
+    let logs = transcript::render(&of(&sessions), Verbosity::Compact, false);
 
     assert_eq!(
         headers(&text(&shown)),
@@ -571,7 +571,7 @@ fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
     };
     let whole = |verbosity| {
         summaries(
-            transcript::json_lines(&of(vec![record.clone()]), verbosity)
+            transcript::json_lines(&of(std::slice::from_ref(&record)), verbosity)
                 .lines()
                 .map(|line| serde_json::from_str(line).unwrap())
                 .collect(),

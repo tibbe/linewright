@@ -1,10 +1,9 @@
-mod common;
+use crate::common;
 
 use chrono::TimeDelta;
 use common::*;
 use linewright::factory::Factory;
 use linewright::reconcile::WorkKind;
-use linewright::runtime::SessionError;
 use serde_json::json;
 
 /// Ticks on the hour; the fake clock starts at 12:00.
@@ -23,8 +22,8 @@ async fn add_workflow(world: &World, name: &str, text: &str) {
         .unwrap();
 }
 
-fn finished() -> Result<String, SessionError> {
-    json(json!({"summary": "Nothing needs doing.", "issues": []}))
+fn finished() -> String {
+    json!({"summary": "Nothing needs doing.", "issues": []}).to_string()
 }
 
 async fn restart(world: &mut World) {
@@ -42,7 +41,7 @@ async fn restart(world: &mut World) {
 async fn a_workflow_runs_on_the_first_poll_after_its_schedule_ticks() {
     let mut world = World::new().await;
     add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| finished());
+    world.runtime.on_workflow(|_| Ok(finished()));
     world.poll().await;
 
     world.clock.advance(TimeDelta::hours(1));
@@ -57,7 +56,7 @@ async fn a_workflow_runs_on_the_first_poll_after_its_schedule_ticks() {
 async fn a_workflow_seen_for_the_first_time_does_not_run() {
     let mut world = World::new().await;
     add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| finished());
+    world.runtime.on_workflow(|_| Ok(finished()));
 
     world.poll().await;
 
@@ -68,7 +67,7 @@ async fn a_workflow_seen_for_the_first_time_does_not_run() {
 async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_starts() {
     let mut world = World::new().await;
     add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| finished());
+    world.runtime.on_workflow(|_| Ok(finished()));
     world.poll().await;
 
     let record = world.dir.path().join("work/workflow-runs.json");
@@ -91,7 +90,7 @@ async fn a_workflow_file_that_does_not_parse_is_skipped_and_the_others_still_run
     )
     .await;
     add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| finished());
+    world.runtime.on_workflow(|_| Ok(finished()));
     world.poll().await;
 
     world.clock.advance(TimeDelta::hours(1));
@@ -106,7 +105,7 @@ async fn a_workflow_file_that_does_not_parse_is_skipped_and_the_others_still_run
 async fn a_workflow_run_waits_for_room_under_the_ceiling_beside_the_pipelines_runs() {
     let mut world = World::with(|config| config.max_runs = 1).await;
     add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| finished());
+    world.runtime.on_workflow(|_| Ok(finished()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
     world.store.open_issue(
@@ -121,7 +120,7 @@ async fn a_workflow_run_waits_for_room_under_the_ceiling_beside_the_pipelines_ru
             &[("src/thing.txt", "done\n")],
             "Do the thing",
         );
-        json(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
+        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
     });
 
     world.poll().await;
@@ -137,7 +136,7 @@ async fn a_workflow_run_waits_for_room_under_the_ceiling_beside_the_pipelines_ru
 async fn running_a_workflow_by_hand_leaves_its_schedule_as_it_was() {
     let mut world = World::new().await;
     add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| finished());
+    world.runtime.on_workflow(|_| Ok(finished()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
 

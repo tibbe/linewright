@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use common::*;
 use linewright::domain::{MergeMethod, UpdateMethod};

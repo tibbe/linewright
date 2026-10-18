@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::path::Path;
 use std::process::Command;
@@ -101,10 +101,10 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     let runtime = Arc::new(ScriptedRuntime::default());
     runtime.on(WorkKind::Tickets, |call| {
         assert!(call.spec.prompt.contains("+Gadgets exist."));
-        json(json!({
+        Ok(json!({
             "tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}],
             "comment": "One slice."
-        }))
+        }).to_string())
     });
     runtime.on(WorkKind::Implement, |call| {
         assert!(call.spec.prompt.contains("+Gadgets exist."));
@@ -113,7 +113,10 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
             &[("src/gadgets.txt", "gadget\n")],
             "Gadgets",
         );
-        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Adds gadgets."}))
+        Ok(
+            json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Adds gadgets."})
+                .to_string(),
+        )
     });
     let out = dir.path().join("out");
 
@@ -321,7 +324,7 @@ async fn a_replay_runs_no_workflows() {
         move |_| {
             // Past the workflow's next tick, while the replay goes on.
             clock.advance(TimeDelta::hours(2));
-            json(json!({"tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}], "comment": "One slice."}))
+            Ok(json!({"tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}], "comment": "One slice."}).to_string())
         }
     });
     runtime.on(WorkKind::Implement, |call| {
@@ -330,9 +333,13 @@ async fn a_replay_runs_no_workflows() {
             &[("src/gadgets.txt", "gadget\n")],
             "Gadgets",
         );
-        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Adds gadgets."}))
+        Ok(
+            json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Adds gadgets."})
+                .to_string(),
+        )
     });
-    runtime.on_workflow(|_| json(json!({"summary": "Nothing needs doing.", "issues": []})));
+    runtime
+        .on_workflow(|_| Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string()));
     let out = dir.path().join("out");
 
     replay(
@@ -354,18 +361,21 @@ async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_
     spec_change_case(dir.path(), &[]);
     let runtime = Arc::new(ScriptedRuntime::default());
     runtime.on(WorkKind::Tickets, |_| {
-        json(json!({
+        Ok(json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
                 {"id": "list", "title": "List gadgets", "body": "List them.", "blocked_by": ["store"]}
             ],
             "comment": "Two slices."
-        }))
+        }).to_string())
     });
     runtime.on(WorkKind::Implement, |call| {
         let file = format!("src/{}.txt", subject_file(call));
         commit_in(&call.spec.dir, &[(&file, "gadget\n")], "Gadgets");
-        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Adds gadgets."}))
+        Ok(
+            json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Adds gadgets."})
+                .to_string(),
+        )
     });
     let out = dir.path().join("out");
     let mut config = config(&out);

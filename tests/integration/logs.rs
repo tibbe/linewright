@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 
@@ -29,8 +29,8 @@ fn run(id: &str, start: &str, sessions: usize) -> Recorded {
     }
 }
 
-fn picked(recorded: Vec<Recorded>, which: Which) -> Result<String, NoSuchRun> {
-    logs::pick(recorded, &which).map(|run| run.id.to_string())
+fn picked(recorded: &[Recorded], which: &Which) -> Result<String, NoSuchRun> {
+    logs::pick(recorded, which).map(|run| run.id.to_string())
 }
 
 fn item(n: u64) -> Which {
@@ -47,7 +47,7 @@ fn an_items_run_in_flight_is_the_one_shown() {
         run("2/triage-1", "12:00:00", 1),
     ];
 
-    assert_eq!(picked(recorded, item(1)).unwrap(), "1/rework-1");
+    assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/rework-1");
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn with_none_in_flight_the_latest_run_that_started_a_session_is_shown() {
         run("2/triage-1", "13:00:00", 1),
     ];
 
-    assert_eq!(picked(recorded, item(1)).unwrap(), "1/rework-1");
+    assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/rework-1");
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn with_no_run_that_started_a_session_the_latest_run_is_shown() {
         run("1/update-2", "11:00:00", 0),
     ];
 
-    assert_eq!(picked(recorded, item(1)).unwrap(), "1/update-2");
+    assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/update-2");
 }
 
 #[test]
@@ -85,19 +85,19 @@ fn a_named_run_is_the_one_shown() {
     };
 
     assert_eq!(
-        picked(recorded.clone(), named("1/implement-1", Some(1))).unwrap(),
+        picked(&recorded, &named("1/implement-1", Some(1))).unwrap(),
         "1/implement-1"
     );
     assert_eq!(
-        picked(recorded.clone(), named("weekly/1", None)).unwrap(),
+        picked(&recorded, &named("weekly/1", None)).unwrap(),
         "weekly/1"
     );
     assert_eq!(
-        picked(recorded.clone(), named("1/rework-2", None)),
+        picked(&recorded, &named("1/rework-2", None)),
         Err(NoSuchRun::NoRun("1/rework-2".parse().unwrap()))
     );
     assert_eq!(
-        picked(recorded, named("1/rework-1", Some(2))),
+        picked(&recorded, &named("1/rework-1", Some(2))),
         Err(NoSuchRun::NotOf {
             run: "1/rework-1".parse().unwrap(),
             item: Number(2),
@@ -123,13 +123,13 @@ fn a_pull_requests_runs_are_its_own() {
         item: Some(Number(3)),
     };
 
-    assert_eq!(picked(ticket_and_pull(), item(3)).unwrap(), "3/rework-2");
+    assert_eq!(picked(&ticket_and_pull(), &item(3)).unwrap(), "3/rework-2");
     assert_eq!(
-        picked(ticket_and_pull(), named("3/rework-1")).unwrap(),
+        picked(&ticket_and_pull(), &named("3/rework-1")).unwrap(),
         "3/rework-1"
     );
     assert_eq!(
-        picked(ticket_and_pull(), named("1/implement-1")),
+        picked(&ticket_and_pull(), &named("1/implement-1")),
         Err(NoSuchRun::NotOf {
             run: "1/implement-1".parse().unwrap(),
             item: Number(3),
@@ -139,14 +139,20 @@ fn a_pull_requests_runs_are_its_own() {
 
 #[test]
 fn a_tickets_runs_are_none_of_its_pull_requests() {
-    assert_eq!(picked(ticket_and_pull(), item(1)).unwrap(), "1/implement-1");
+    assert_eq!(
+        picked(&ticket_and_pull(), &item(1)).unwrap(),
+        "1/implement-1"
+    );
 }
 
 #[test]
 fn an_item_with_no_runs_has_none_to_show() {
     let recorded = vec![run("1/implement-1", "10:00:00", 1)];
 
-    assert_eq!(picked(recorded, item(2)), Err(NoSuchRun::NoRuns(Number(2))));
+    assert_eq!(
+        picked(&recorded, &item(2)),
+        Err(NoSuchRun::NoRuns(Number(2)))
+    );
 }
 
 const REPO: &str = "owner/widgets";
@@ -198,7 +204,7 @@ fn implement_as_recorded(world: &World) {
             return Ok("Done.".into());
         }
         commit_in(&call.spec.dir, &[("src/done.txt", "done\n")], "Do it");
-        json(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
+        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
     });
 }
 

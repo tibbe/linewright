@@ -235,7 +235,7 @@ impl LocalStore {
                     author: Login::new(author),
                     open: true,
                     created_at: now,
-                    labels: labels.iter().map(|l| l.to_string()).collect(),
+                    labels: labels.iter().map(ToString::to_string).collect(),
                     assignees: vec![],
                     comments: vec![],
                     blocked_by: vec![],
@@ -1723,7 +1723,7 @@ fn render_pull(pull: &Pull) -> String {
         pull.head_ref,
         pull.closes
             .iter()
-            .map(|n| n.to_string())
+            .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(", "),
         pull.checks

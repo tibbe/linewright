@@ -86,7 +86,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
 ) -> ExitCode {
     let repo = match config.required_repo() {
         Ok(repo) => repo,
-        Err(e) => return print_answer(Err(failed(e))),
+        Err(e) => return print_answer(Err(failed(&e))),
     };
     let body = match api::get_answer(&socket_dir(), repo, resource).await {
         Ok(body) => body,
@@ -99,7 +99,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
             Ok(answer) => render(&answer, colour()),
             Err(e) => {
                 let error = anyhow!("`serve`'s answer does not read as {what}: {e}");
-                return print_answer(Err(failed(error)));
+                return print_answer(Err(failed(&error)));
             }
         }
     };
@@ -189,7 +189,7 @@ async fn follow_logs(
 ) -> ExitCode {
     let work_dir = match config.repo_work_dir() {
         Ok(work_dir) => work_dir,
-        Err(e) => return print_answer(Err(failed(e))),
+        Err(e) => return print_answer(Err(failed(&e))),
     };
     let resource = format!("/logs/follow?{}", api::query_string(&query));
     let mut hang_ups = api::HangUps::default();
@@ -225,7 +225,7 @@ async fn follow_logs(
         .await;
         if let Some(event) = unread {
             let error = anyhow!("`serve`'s event does not read as a transcript line: {event:?}");
-            return print_answer(Err(failed(error)));
+            return print_answer(Err(failed(&error)));
         }
         if sent {
             hang_ups.sent();
@@ -236,7 +236,7 @@ async fn follow_logs(
             Ok(()) => tokio::time::sleep(api::ASK_AGAIN_AFTER).await,
             Err(RequestError::HungUp(e)) => {
                 if !hang_ups.ask_again() {
-                    return print_answer(Err(failed(e)));
+                    return print_answer(Err(failed(&e)));
                 }
                 tokio::time::sleep(api::ASK_AGAIN_AFTER).await;
             }
@@ -267,7 +267,7 @@ async fn follow_records(
                 }
             }
             Ok(None) => return ExitCode::SUCCESS,
-            Err(e) => return print_answer(Err(failed(e))),
+            Err(e) => return print_answer(Err(failed(&e))),
         }
     }
 }
@@ -291,7 +291,7 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
     what: &str,
     read: impl FnOnce(&RepoWorkDir) -> Result<T, E>,
 ) -> Result<Answer<T>, (u8, String)> {
-    let work_dir = config.repo_work_dir().map_err(failed)?;
+    let work_dir = config.repo_work_dir().map_err(|e| failed(&e))?;
     match api::get_answer(&socket_dir(), &work_dir.repo, resource).await {
         Ok(body) => {
             let value = serde_json::from_slice(&body)
@@ -306,14 +306,14 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
     }
 }
 
-fn failed(e: anyhow::Error) -> (u8, String) {
+fn failed(e: &anyhow::Error) -> (u8, String) {
     (1, format!("{e:#}"))
 }
 
 fn unanswered(e: Unanswered) -> (u8, String) {
     match e {
         Unanswered::NoSuch { error, .. } => (NO_SUCH_ITEM, error),
-        Unanswered::Failed(e) => failed(e),
+        Unanswered::Failed(e) => failed(&e),
     }
 }
 
@@ -321,7 +321,7 @@ fn refused(e: RequestError) -> (u8, String) {
     match e {
         RequestError::NotServing { .. } => (NOT_SERVING, e.to_string()),
         RequestError::NotFound(_) => (NO_SUCH_ITEM, e.to_string()),
-        RequestError::HungUp(e) | RequestError::Other(e) => failed(e),
+        RequestError::HungUp(e) | RequestError::Other(e) => failed(&e),
     }
 }
 
@@ -484,7 +484,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             let sessions = SessionCredentials::new(SessionToken::Withheld);
             let runtime = runtime(&config, bash, &sessions);
             let factory_config =
-                factory_config(&config, briefs, out.clone(), OnUsageLimit::End, sessions)?;
+                factory_config(&config, briefs, out.clone(), OnUsageLimit::End, sessions);
             case::replay(
                 &case_dir,
                 &out,
@@ -610,8 +610,8 @@ fn factory_config(
     work_dir: std::path::PathBuf,
     on_usage_limit: OnUsageLimit,
     sessions: SessionCredentials,
-) -> Result<FactoryConfig> {
-    Ok(FactoryConfig {
+) -> FactoryConfig {
+    FactoryConfig {
         spec_glob: config.spec_glob.clone(),
         spec_lookback: config.spec_lookback,
         max_runs: config.max_runs,
@@ -630,9 +630,10 @@ fn factory_config(
         waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
         session_token: sessions.token,
         redaction: sessions.redaction,
-    })
+    }
 }
 
+#[derive(Clone, Copy)]
 enum OnUsageLimit {
     Wait,
     End,
@@ -656,7 +657,7 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
         work_dir(config, &github),
         on_usage_limit,
         sessions,
-    )?;
+    );
     Factory::start(
         Arc::new(github),
         Arc::new(runtime),

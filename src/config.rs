@@ -359,7 +359,8 @@ impl Config {
             let variable = format!("LINEWRIGHT_{}", key.to_uppercase().replace('-', "_"));
             flags
                 .get(key)
-                .map(|v| v.to_string())
+                .copied()
+                .cloned()
                 .or_else(|| env(&variable))
                 .or_else(|| file.get(key).cloned())
         };

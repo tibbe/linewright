@@ -67,6 +67,7 @@ pub struct Turn {
 }
 
 impl Turn {
+    #[must_use]
     pub fn redacted(self, redaction: &Redaction) -> Turn {
         Turn {
             session: self.session,
@@ -114,6 +115,7 @@ pub enum SessionError {
 }
 
 impl SessionError {
+    #[must_use]
     pub fn redacted(self, redaction: &Redaction) -> SessionError {
         match self {
             SessionError::Infrastructure(reason) => {

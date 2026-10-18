@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -118,7 +117,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
             merged: vec![],
             ticket_branches: vec![],
         }),
-        read_at: Default::default(),
+        read_at: HashMap::default(),
         policy: policy(),
         polls: Polls {
             last: at("2026-10-01T12:00:00Z"),

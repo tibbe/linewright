@@ -221,7 +221,7 @@ pub struct Memory {
 
 impl Memory {
     pub fn retain_open(&mut self, snapshot: &Snapshot) {
-        let open = |pr| snapshot.pull(pr).is_some_and(|p| p.is_open());
+        let open = |pr| snapshot.pull(pr).is_some_and(Pull::is_open);
         self.failed_merges.retain(|f| open(f.pr));
         self.tried_rebases.retain(|r| open(r.pr));
         self.done_runs.retain(|r| open(r.pr));
@@ -681,7 +681,7 @@ pub fn decisions(
             match asked {
                 Ok(Asked::Triage) => triage(issue, replied, running(subject), policy, &mut plan),
                 Ok(Asked::Implementation) => {
-                    implementation(issue, &closing, running(subject), policy, &mut plan)
+                    implementation(issue, &closing, running(subject), policy, &mut plan);
                 }
                 Err(_) => {
                     for wait in labeled_waits(issue, policy) {
@@ -843,6 +843,7 @@ struct Plan {
     waits: BTreeMap<Number, Vec<Wait>>,
 }
 
+#[derive(Clone, Copy)]
 enum Held {
     UsageLimit { resets_at: Timestamp },
     Ceiling { in_flight: usize, max_runs: usize },
@@ -1306,7 +1307,7 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
                 pr: pr_number,
                 draft,
                 requires: requires.clone(),
-            })
+            });
         }
         Mergeability::Blocked { requires } => plan.wait(
             pr_number,
@@ -1316,7 +1317,7 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
             },
         ),
         Mergeability::Unknown if draft => {
-            plan.act(Action::MarkReadyForMergeState { pr: pr_number })
+            plan.act(Action::MarkReadyForMergeState { pr: pr_number });
         }
         Mergeability::Unknown => plan.wait(pr_number, merge_state),
         // Brought up to date above.
@@ -1349,7 +1350,7 @@ fn pull_claim(pr: &Pull, linewright: &Login) -> PullClaim {
 pub enum PullStop {
     Merged,
     Closed,
-    /// Linewright was unassigned from it: docs/specs/pull_requests.md, "The
+    /// Linewright was unassigned from it: `docs/specs/pull_requests.md`, "The
     /// pull request".
     Unassigned,
 }

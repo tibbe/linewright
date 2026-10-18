@@ -539,7 +539,7 @@ fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBu
         };
         match std::fs::create_dir(&dir) {
             Ok(()) => return Ok(dir),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(infra(e.into())),
         }
     }
@@ -688,13 +688,13 @@ async fn take_turn(
 async fn cancellable<T>(ctx: &Ctx, turn: impl Future<Output = T>) -> Result<T, Failure> {
     tokio::select! {
         biased;
-        _ = ctx.cancel.cancelled() => Err(Failure::Cancelled),
+        () = ctx.cancel.cancelled() => Err(Failure::Cancelled),
         output = turn => Ok(output),
     }
 }
 
 fn followup_name(record: &Path) -> String {
-    let n = (1..)
+    let n = (1..=usize::MAX)
         .find(|n| !record.join(transcript::followup_file(*n)).exists())
         .expect("a session has fewer follow-ups than numbers");
     transcript::followup_file(n)

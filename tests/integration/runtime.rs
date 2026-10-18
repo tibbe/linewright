@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -415,7 +415,7 @@ async fn a_clone_under_a_claude_directory_keeps_its_own_agent_instructions() {
     );
 }
 
-fn refused_for_the_usage_limit(rate_limit_info: Value) -> Vec<Value> {
+fn refused_for_the_usage_limit(rate_limit_info: &Value) -> Vec<Value> {
     let session = "9f4fb233-b170-4a09-8ce1-34e0a9c68e36";
     vec![
         json!({"type": "system", "subtype": "init", "session_id": session}),
@@ -435,7 +435,7 @@ fn refused_for_the_usage_limit(rate_limit_info: Value) -> Vec<Value> {
 fn rejected() -> Value {
     json!({
         "status": "rejected",
-        "resetsAt": 1791877800,
+        "resetsAt": 1_791_877_800,
         "rateLimitType": "five_hour",
         "overageStatus": "rejected",
         "isUsingOverage": false,
@@ -445,7 +445,7 @@ fn rejected() -> Value {
 #[tokio::test]
 async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_streaming(dir.path(), &refused_for_the_usage_limit(rejected()));
+    let runtime = runtime_streaming(dir.path(), &refused_for_the_usage_limit(&rejected()));
 
     let error = runtime
         .start(&triage_session(dir.path()))
@@ -462,7 +462,7 @@ async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
 #[tokio::test]
 async fn a_turn_refused_part_way_for_the_usage_limit_names_its_session_to_resume() {
     let dir = tempfile::tempdir().unwrap();
-    let mut stream = refused_for_the_usage_limit(rejected());
+    let mut stream = refused_for_the_usage_limit(&rejected());
     stream.insert(
         1,
         json!({
@@ -488,7 +488,7 @@ async fn a_refusal_that_does_not_say_when_the_limit_resets_is_an_infrastructure_
     let dir = tempfile::tempdir().unwrap();
     let runtime = runtime_streaming(
         dir.path(),
-        &refused_for_the_usage_limit(json!({"status": "rejected"})),
+        &refused_for_the_usage_limit(&json!({"status": "rejected"})),
     );
 
     let error = runtime
@@ -522,7 +522,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
         redaction: Redaction::default(),
     };
     let mut session = triage_session(dir.path());
-    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3600);
+    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
 
     let turn = tokio::spawn(async move { runtime.start(&session).await });
     // A session can take long to start on a loaded machine, so the deadline
@@ -545,7 +545,7 @@ async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
         &[
             json!({
                 "type": "rate_limit_event",
-                "rate_limit_info": {"status": "allowed_warning", "resetsAt": 1791877800},
+                "rate_limit_info": {"status": "allowed_warning", "resetsAt": 1_791_877_800},
             }),
             json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
         ],

@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use common::*;
 use linewright::reconcile::WorkKind;
@@ -17,13 +17,13 @@ async fn world(required: Option<&str>, label_exists: bool) -> World {
 
 async fn merged_spec_change(world: &World) {
     world.runtime.on(WorkKind::Tickets, |_| {
-        json(json!({
+        Ok(json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
                 {"id": "list", "title": "List gadgets", "body": "List them.", "blocked_by": ["store"]}
             ],
             "comment": "Two slices."
-        }))
+        }).to_string())
     });
     let pr = world
         .store
@@ -97,10 +97,11 @@ async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
         .unwrap();
     let _ = pr;
     world.runtime.on(WorkKind::Tickets, |_| {
-        json(json!({
+        Ok(json!({
             "tickets": [{"id": "a", "title": "A", "body": "a", "blocked_by": []}],
             "comment": "One."
-        }))
+        })
+        .to_string())
     });
 
     world.poll().await;
@@ -132,12 +133,13 @@ async fn a_missing_required_label_is_not_created_and_the_filing_completes() {
 fn implement_with_gap(world: &World) {
     world.runtime.on(WorkKind::Implement, |call| {
         commit_in(&call.spec.dir, &[("src/g.txt", "g\n")], "Add gadgets");
-        json(json!({
+        Ok(json!({
             "outcome": "done",
             "pr_title": "Add gadgets",
             "pr_body": "Gadgets.",
             "spec_gaps": [{"title": "Spec: gadget colors", "body": "Unsaid."}]
-        }))
+        })
+        .to_string())
     });
 }
 
@@ -220,13 +222,14 @@ async fn filing_workflow(required: Option<&str>, label_exists: bool) -> (World, 
         .await
         .unwrap();
     world.runtime.on_workflow(|_| {
-        json(json!({
+        Ok(json!({
             "summary": "Two.",
             "issues": [
                 {"title": "Fix it", "body": "Do.", "label": "ready-for-agent"},
                 {"title": "Decide", "body": "Hm.", "label": "ready-for-human"}
             ]
-        }))
+        })
+        .to_string())
     });
     world
         .factory

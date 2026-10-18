@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -141,7 +141,10 @@ async fn a_ticket_linewrights_pull_request_for_another_opened_since_the_poll_clo
         let file = format!("src/{}.txt", subject_file(call));
         commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
         let body = format!("Does it.\n\nCloses {other}");
-        json(serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": body}))
+        Ok(
+            serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": body})
+                .to_string(),
+        )
     });
     // The ticket's implement run takes the only free run, so the other waits
     // for one.
@@ -374,10 +377,10 @@ async fn a_refresh_before_the_first_poll_polls() {
 async fn a_spec_change_cut_since_the_poll_is_not_cut_again_by_a_refresh() {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Tickets, |_| {
-        json(serde_json::json!({
+        Ok(serde_json::json!({
             "tickets": [{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}],
             "comment": "One slice."
-        }))
+        }).to_string())
     });
     let unchanged =
         world
@@ -402,7 +405,7 @@ async fn a_rework_started_by_a_refresh_takes_the_feedback_it_read_as_already_sho
             &[("CHANGELOG.md", "- thing\n")],
             "Changelog",
         );
-        json(serde_json::json!({"outcome": "done", "comment": "Added the entry."}))
+        Ok(serde_json::json!({"outcome": "done", "comment": "Added the entry."}).to_string())
     });
 
     world
@@ -433,7 +436,7 @@ async fn a_refresh_after_a_rework_run_ends_does_not_start_it_again() {
             &[("CHANGELOG.md", "- thing\n")],
             "Changelog",
         );
-        json(serde_json::json!({"outcome": "done", "comment": "Added the entry."}))
+        Ok(serde_json::json!({"outcome": "done", "comment": "Added the entry."}).to_string())
     });
     world
         .store

@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -50,7 +50,7 @@ impl Answering {
         let since = clock.now();
         // As `common::config` has it.
         let work_dir = dir.path().join("work");
-        let serving = Serving::start(factory, Duration::from_secs(3600), pending);
+        let serving = Serving::start(factory, Duration::from_hours(1), pending);
         let api = Api::serve(
             claimed,
             Sources {
@@ -434,11 +434,12 @@ async fn with_issue_for_triage() -> World {
     world
         .runtime
         .on(linewright::reconcile::WorkKind::Triage, |_| {
-            json(serde_json::json!({
+            Ok(serde_json::json!({
                 "outcome": "ready-for-agent",
                 "category": "bug",
                 "comment": "## Agent Brief\n\n**Summary:** It crashes."
-            }))
+            })
+            .to_string())
         });
     world
         .store
@@ -489,7 +490,7 @@ async fn runs_gives_the_same_answer_with_serve_running_and_without() {
 #[tokio::test]
 async fn a_run_in_flight_is_listed_so_and_once_a_stop_cancels_it_as_cancelled() {
     let world = with_issue_for_triage().await;
-    world.runtime.takes(Duration::from_secs(60));
+    world.runtime.takes(Duration::from_mins(1));
     let answering = Answering::start(world, false).await;
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
@@ -542,7 +543,7 @@ async fn runs_of_an_item_with_none_exits_4_with_serve_running() {
 #[tokio::test]
 async fn a_run_whose_serve_died_is_listed_as_interrupted() {
     let world = with_issue_for_triage().await;
-    world.runtime.takes(Duration::from_secs(60));
+    world.runtime.takes(Duration::from_mins(1));
     let answering = Answering::start(world, false).await;
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
@@ -651,12 +652,12 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
 async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_its_tickets() {
     let mut world = World::new().await;
     world.runtime.on(linewright::reconcile::WorkKind::Tickets, |_| {
-        json(serde_json::json!({
+        Ok(serde_json::json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
             ],
             "comment": "One slice.",
-        }))
+        }).to_string())
     });
     let spec_change = world
         .store
@@ -745,11 +746,12 @@ async fn logs_gives_the_same_answer_with_serve_running_and_without() {
                 include_str!("fixtures/transcript/turn-1.jsonl"),
             )
             .unwrap();
-            json(serde_json::json!({
+            Ok(serde_json::json!({
                 "outcome": "ready-for-agent",
                 "category": "bug",
                 "comment": "## Agent Brief\n\n**Summary:** It crashes."
-            }))
+            })
+            .to_string())
         });
     let answering = Answering::start(world, false).await;
     let work_dir = answering._dir.path().join("work");

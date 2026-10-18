@@ -439,13 +439,7 @@ impl Listener {
             .fallback({
                 let tally = tally.clone();
                 move |headers, body| {
-                    answer(
-                        secret.clone(),
-                        pending.clone(),
-                        tally.clone(),
-                        headers,
-                        body,
-                    )
+                    std::future::ready(answer(&secret, &pending, &tally, &headers, &body))
                 }
             })
             .layer(DefaultBodyLimit::max(PAYLOAD_CAP));
@@ -485,12 +479,12 @@ impl Listener {
     }
 }
 
-async fn answer(
-    secret: Secret,
-    pending: Pending,
-    tally: Tally,
-    headers: HeaderMap,
-    body: Bytes,
+fn answer(
+    secret: &Secret,
+    pending: &Pending,
+    tally: &Tally,
+    headers: &HeaderMap,
+    body: &Bytes,
 ) -> (StatusCode, String) {
     let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
     let event = header("X-GitHub-Event");
@@ -505,7 +499,7 @@ async fn answer(
         content_type: header("Content-Type"),
         signature: header("X-Hub-Signature-256"),
     };
-    match receive(&secret, read_by, &body) {
+    match receive(secret, read_by, body) {
         Ok(Delivery::Accepted(subject)) => {
             info!(%subject, "accepted");
             pending.add(subject);

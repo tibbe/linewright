@@ -11,7 +11,7 @@ pub const RETRIES: u32 = 5;
 
 /// The shortest wait: GitHub asks for at least a minute when it gives no
 /// time, and a reset time is only as good as the clocks agree.
-const MINIMUM: Duration = Duration::from_secs(60);
+const MINIMUM: Duration = Duration::from_mins(1);
 
 /// `retries` is how many times it was tried again already.
 pub fn wait(

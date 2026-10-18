@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
@@ -380,10 +378,6 @@ pub fn run_ids(listed: &str) -> Vec<&str> {
         .collect()
 }
 
-pub fn json(value: Value) -> Result<String, SessionError> {
-    Ok(value.to_string())
-}
-
 pub struct World {
     pub store: Arc<LocalStore>,
     pub runtime: Arc<ScriptedRuntime>,
@@ -427,7 +421,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
         result_retries: 1,
-        session_timeout: std::time::Duration::from_secs(30 * 60),
+        session_timeout: std::time::Duration::from_mins(30),
         update_method: None,
         auto_merge: false,
         merge_method: None,
@@ -537,7 +531,7 @@ impl World {
 
 pub fn labels(issue: &Issue) -> Vec<&str> {
     let mut labels: Vec<&str> = issue.labels.iter().map(String::as_str).collect();
-    labels.sort();
+    labels.sort_unstable();
     labels
 }
 
@@ -570,7 +564,10 @@ pub fn implement(world: &World) {
             &[(&file, &format!("{done}done\n"))],
             "Do the ticket",
         );
-        json(serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
+        Ok(
+            serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."})
+                .to_string(),
+        )
     });
 }
 
@@ -615,7 +612,7 @@ impl World {
                 &[("src/renamed.txt", "renamed\n")],
                 "Rename",
             );
-            json(serde_json::json!({"outcome": "done", "comment": "Renamed."}))
+            Ok(serde_json::json!({"outcome": "done", "comment": "Renamed."}).to_string())
         });
     }
 }

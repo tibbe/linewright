@@ -102,11 +102,7 @@ macro_rules! values {
             fn value(&self, name: &str) -> Option<&str> {
                 match name {
                     $(stringify!($field) => Some(&self.$field),)*
-                    _ => {
-                        $(return <$base as Values>::value(&self.base, name);)?
-                        #[allow(unreachable_code)]
-                        None
-                    }
+                    _ => None$(.or_else(|| <$base as Values>::value(&self.base, name)))?,
                 }
             }
         }

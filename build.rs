@@ -39,9 +39,12 @@ fn commit(head: Option<String>, given: Option<String>) -> String {
 fn head_paths() -> Vec<PathBuf> {
     let mut paths = git_path("HEAD").into_iter().collect::<Vec<_>>();
     if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {
-        paths.extend(git_path(&branch).map(|loose| match loose.exists() {
-            true => loose,
-            false => loose.parent().map(Path::to_path_buf).unwrap_or(loose),
+        paths.extend(git_path(&branch).map(|loose| {
+            if loose.exists() {
+                loose
+            } else {
+                loose.parent().map(Path::to_path_buf).unwrap_or(loose)
+            }
         }));
         paths.extend(git_path("packed-refs"));
     }

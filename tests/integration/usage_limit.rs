@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -33,7 +33,7 @@ fn info_naming_the_reset(log: &Log, phrase: &str) -> Vec<String> {
 
 fn triage(world: &World) {
     world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({"outcome": "ticket", "summary": "Do it.", "type": "feature"}))
+        Ok(json!({"outcome": "ticket", "summary": "Do it.", "type": "feature"}).to_string())
     });
 }
 
@@ -80,8 +80,8 @@ fn see(turns: &Turns, call: &Call) -> usize {
 
 type Answer = Result<String, SessionError>;
 
-fn done() -> Answer {
-    json(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
+fn done() -> String {
+    json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string()
 }
 
 /// Has implementing sessions answer with `turns[n]` on their `n`th turn,
@@ -95,7 +95,7 @@ fn implement_turns(world: &World, turns: Vec<fn(&Call) -> Answer>) -> Turns {
             let n = see(&seen, call);
             let file = format!("src/turn-{n}.txt");
             commit_in(&call.spec.dir, &[(&file, "work\n")], "Work");
-            turns.get(n).map_or_else(done, |turn| turn(call))
+            turns.get(n).map_or_else(|| Ok(done()), |turn| turn(call))
         }
     });
     seen
@@ -229,7 +229,7 @@ async fn a_workflow_due_under_the_limit_waits_and_runs_at_the_first_poll_after_t
     with_hourly_workflow(&world).await;
     world
         .runtime
-        .on_workflow(|_| json(json!({"summary": "Nothing needs doing.", "issues": []})));
+        .on_workflow(|_| Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string()));
     world.poll().await;
     implement_turns(&world, vec![|_| refused_for_the_usage_limit()]);
     open_ticket(&world, "Do the thing");
@@ -390,16 +390,16 @@ async fn the_resumed_session_has_the_time_it_had_left_when_refused() {
     open_ticket(&world, "Do the thing");
     // Of the 30 minutes the test factory gives a session, the first turn
     // runs 20.
-    world.runtime.takes(Duration::from_secs(20 * 60));
+    world.runtime.takes(Duration::from_mins(20));
     world.factory.cycle().await.unwrap();
     let reset = world.clock.next_sleep().await;
 
-    tokio::time::advance(Duration::from_secs(60 * 60)).await;
+    tokio::time::advance(Duration::from_hours(1)).await;
     advance_to(&world, reset);
     world.factory.settle().await;
 
     let turns = turns.lock().unwrap().clone();
-    assert_eq!(turns[1].left, Duration::from_secs(10 * 60));
+    assert_eq!(turns[1].left, Duration::from_mins(10));
 }
 
 #[tokio::test(start_paused = true)]
@@ -427,24 +427,24 @@ async fn a_scheduled_workflow_run_resumes_with_the_time_left_of_its_own_timeout(
             if see(&seen, call) == 0 {
                 return refused_part_way(call);
             }
-            json(json!({"summary": "Nothing needs doing.", "issues": []}))
+            Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string())
         }
     });
     // The first poll sees the workflow; it is due an hour later.
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
-    world.runtime.takes(Duration::from_secs(20 * 60));
+    world.runtime.takes(Duration::from_mins(20));
     world.factory.cycle().await.unwrap();
     let reset = world.clock.next_sleep().await;
 
-    tokio::time::advance(Duration::from_secs(2 * 60 * 60)).await;
+    tokio::time::advance(Duration::from_hours(2)).await;
     advance_to(&world, reset);
     world.factory.settle().await;
 
     let turns = seen.lock().unwrap().clone();
     assert_eq!(turns.len(), 2, "{turns:?}");
     assert_eq!(turns[1].session, turns[0].session);
-    assert_eq!(turns[1].left, Duration::from_secs(40 * 60));
+    assert_eq!(turns[1].left, Duration::from_mins(40));
 }
 
 #[tokio::test]
@@ -572,10 +572,10 @@ impl Served {
     }
 }
 
-fn the_usage_limit() -> Option<UsageLimit> {
-    Some(UsageLimit {
+fn the_usage_limit() -> UsageLimit {
+    UsageLimit {
         resets_at: usage_limit_resets_at(),
-    })
+    }
 }
 
 #[tokio::test]
@@ -591,7 +591,7 @@ async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
         &["ready-for-agent"],
     );
     let served = Served::start(world).await;
-    eventually(|| served.usage_limit() == the_usage_limit()).await;
+    eventually(|| served.usage_limit() == Some(the_usage_limit())).await;
 
     implement(&served.world);
     advance_past_the_reset(&served.world, 1);

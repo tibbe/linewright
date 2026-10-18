@@ -77,7 +77,7 @@ pub enum NoSuchRun {
     NotOf { run: RunId, item: Number },
 }
 
-pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRun> {
+pub fn pick(recorded: &[Recorded], which: &Which) -> Result<Recorded, NoSuchRun> {
     match which {
         Which::Run { id, item } => {
             let run = recorded
@@ -86,7 +86,7 @@ pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRu
                 .cloned()
                 .ok_or_else(|| NoSuchRun::NoRun(id.clone()))?;
             match item {
-                Some(item) if !runs::of_item(&recorded, *item).contains(&run) => {
+                Some(item) if !runs::of_item(recorded, *item).contains(&run) => {
                     Err(NoSuchRun::NotOf {
                         run: run.id,
                         item: *item,
@@ -96,7 +96,7 @@ pub fn pick(recorded: Vec<Recorded>, which: &Which) -> Result<Recorded, NoSuchRu
             }
         }
         Which::Item(number) => {
-            let mut runs = runs::of_item(&recorded, *number);
+            let mut runs = runs::of_item(recorded, *number);
             runs.sort_by_key(|run| (run.started_at, run.id.n));
             let in_flight = runs.iter().rposition(|run| run.state == State::InFlight);
             let with_session = || runs.iter().rposition(|run| !run.sessions.is_empty());
@@ -124,7 +124,7 @@ fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
         runs.try_read_run(id)
             .with_context(|| format!("reading the record of {id}"))?;
     }
-    Ok(pick(runs.read()?, which)?)
+    Ok(pick(&runs.read()?, which)?)
 }
 
 pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsError> {

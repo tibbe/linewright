@@ -110,10 +110,8 @@ impl GitHub {
         Login::new(&self.viewer.login)
     }
 
-    fn by_linewright(&self, author: &Option<Actor>) -> bool {
-        author
-            .as_ref()
-            .is_some_and(|a| a.login == self.viewer.login && a.typename != "Bot")
+    fn by_linewright(&self, author: Option<&Actor>) -> bool {
+        author.is_some_and(|a| a.login == self.viewer.login && a.typename != "Bot")
     }
 
     fn repo_path(&self, rest: &str) -> String {
@@ -355,6 +353,10 @@ impl GitHub {
         &self,
         open_in_view: &BTreeMap<u64, GqlIssue>,
     ) -> Result<Vec<TicketBranch>> {
+        #[derive(Deserialize)]
+        struct Refs {
+            refs: Page<GqlRef>,
+        }
         let query = "query($owner: String!, $name: String!, $cursor: String) {
               repository(owner: $owner, name: $name) {
                 refs(refPrefix: \"refs/heads/\", first: 100, after: $cursor) {
@@ -367,10 +369,6 @@ impl GitHub {
                 }
               }
             }";
-        #[derive(Deserialize)]
-        struct Refs {
-            refs: Page<GqlRef>,
-        }
         let mut branches = vec![];
         let mut cursor = Value::Null;
         loop {
@@ -502,19 +500,15 @@ impl GitHub {
         #[derive(Deserialize)]
         struct Activity {
             timestamp: Timestamp,
-            activity_type: String,
+            #[serde(rename = "activity_type")]
+            kind: String,
             actor: Option<RestUser>,
         }
         let path = self.repo_path(&format!("/activity?ref=refs/heads/{branch}&per_page=30"));
         let activity: Vec<Activity> = self.rest(Method::GET, &path, None).await?;
         let mut pushes: Vec<Push> = activity
             .into_iter()
-            .filter(|a| {
-                matches!(
-                    a.activity_type.as_str(),
-                    "push" | "force_push" | "branch_creation"
-                )
-            })
+            .filter(|a| matches!(a.kind.as_str(), "push" | "force_push" | "branch_creation"))
             .filter_map(|a| {
                 Some(Push {
                     by: Login::new(a.actor?.login),
@@ -527,17 +521,17 @@ impl GitHub {
     }
 
     async fn gql_pull(&self, number: Number) -> Result<Option<GqlPull>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct One {
+            pull_request: GqlPull,
+        }
         let query = format!(
             "query($owner: String!, $name: String!, $number: Int!) {{
               repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{ ...PullFields }} }}
             }}
             {PULL_FIELDS}"
         );
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct One {
-            pull_request: GqlPull,
-        }
         let data: Option<RepoData<One>> = self
             .graphql_found(
                 &query,
@@ -548,17 +542,17 @@ impl GitHub {
     }
 
     async fn gql_merged(&self, number: Number) -> Result<Option<GqlMerged>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct One {
+            pull_request: GqlMerged,
+        }
         let query = format!(
             "query($owner: String!, $name: String!, $number: Int!) {{
               repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{ ...MergedFields }} }}
             }}
             {MERGED_FIELDS}"
         );
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct One {
-            pull_request: GqlMerged,
-        }
         let data: Option<RepoData<One>> = self
             .graphql_found(
                 &query,
@@ -569,13 +563,6 @@ impl GitHub {
     }
 
     async fn tracking_issues_of(&self, spec_change: Number) -> Result<Vec<Number>> {
-        let query = format!(
-            "query($owner: String!, $name: String!, $number: Int!) {{
-              repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{
-                {CROSS_REFERENCES_FIELD}
-              }} }}
-            }}"
-        );
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct References {
@@ -586,6 +573,13 @@ impl GitHub {
         struct One {
             pull_request: References,
         }
+        let query = format!(
+            "query($owner: String!, $name: String!, $number: Int!) {{
+              repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{
+                {CROSS_REFERENCES_FIELD}
+              }} }}
+            }}"
+        );
         let data: RepoData<One> = self
             .graphql(
                 &query,
@@ -601,16 +595,16 @@ impl GitHub {
     }
 
     async fn gql_issue(&self, number: Number) -> Result<Option<GqlIssue>> {
+        #[derive(Deserialize)]
+        struct One {
+            issue: GqlIssue,
+        }
         let query = format!(
             "query($owner: String!, $name: String!, $number: Int!) {{
               repository(owner: $owner, name: $name) {{ issue(number: $number) {{ ...IssueFields }} }}
             }}
             {ISSUE_FIELDS}"
         );
-        #[derive(Deserialize)]
-        struct One {
-            issue: GqlIssue,
-        }
         let data: Option<RepoData<One>> = self
             .graphql_found(
                 &query,
@@ -1433,7 +1427,7 @@ impl GqlPull {
             (Some("REVIEW_REQUIRED"), Some(review)) => requires.push(review),
             (_, Some(review)) if rules.code_owner_review => requires.push(review),
             (Some("REVIEW_REQUIRED" | "CHANGES_REQUESTED"), _) => {
-                requires.push(Requirement::Approval)
+                requires.push(Requirement::Approval);
             }
             _ => {}
         }
@@ -1700,11 +1694,6 @@ impl Store for GitHub {
 
     async fn settings(&self) -> Result<RepoSettings> {
         #[derive(Deserialize)]
-        struct Repo {
-            default_branch: String,
-        }
-        let repo: Repo = self.rest(Method::GET, &self.repo_path(""), None).await?;
-        #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Settings {
             issue_types: Option<Nodes<IssueType>>,
@@ -1718,6 +1707,11 @@ impl Store for GitHub {
             name: String,
             is_enabled: bool,
         }
+        #[derive(Deserialize)]
+        struct Repo {
+            default_branch: String,
+        }
+        let repo: Repo = self.rest(Method::GET, &self.repo_path(""), None).await?;
         let settings: RepoData<Settings> = self
             .graphql(
                 "query($owner: String!, $name: String!) {
@@ -1824,7 +1818,7 @@ impl Store for GitHub {
         }
         let mut pulls = vec![];
         for pr in self.open_pulls().await? {
-            if self.by_linewright(&pr.author) {
+            if self.by_linewright(pr.author.as_ref()) {
                 pulls.push(self.pull(Number(pr.number)).await?);
             }
         }
@@ -1836,7 +1830,8 @@ impl Store for GitHub {
                     .flat_map(|n| &n.nodes)
             })
             .filter(|p| {
-                matches!(p.state.as_str(), "CLOSED" | "MERGED") && self.by_linewright(&p.author)
+                matches!(p.state.as_str(), "CLOSED" | "MERGED")
+                    && self.by_linewright(p.author.as_ref())
             })
             .map(|p| p.number)
             .collect();
@@ -1895,7 +1890,7 @@ impl Store for GitHub {
         let Some(pr) = self.gql_pull(number).await? else {
             return Ok(None);
         };
-        if !self.by_linewright(&pr.author) {
+        if !self.by_linewright(pr.author.as_ref()) {
             return Ok(None);
         }
         // Must match what the snapshot holds.
@@ -1934,7 +1929,7 @@ impl Store for GitHub {
             .closed_by_pull_requests_references
             .iter()
             .flat_map(|n| &n.nodes)
-            .filter(|p| self.by_linewright(&p.author))
+            .filter(|p| self.by_linewright(p.author.as_ref()))
         {
             pulls.push(self.pull(Number(pr.number)).await?);
         }
@@ -1945,13 +1940,6 @@ impl Store for GitHub {
     }
 
     async fn open_pull_closes(&self, number: Number) -> Result<Vec<Number>> {
-        let query = concat!(
-            "query($owner: String!, $name: String!, $number: Int!) {
-              repository(owner: $owner, name: $name) { pullRequest(number: $number) { state ",
-            closes_field!(),
-            " } }
-            }"
-        );
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Closing {
@@ -1963,6 +1951,13 @@ impl Store for GitHub {
         struct One {
             pull_request: Closing,
         }
+        let query = concat!(
+            "query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) { pullRequest(number: $number) { state ",
+            closes_field!(),
+            " } }
+            }"
+        );
         let data: Option<RepoData<One>> = self
             .graphql_found(
                 query,
@@ -1981,6 +1976,12 @@ impl Store for GitHub {
         number: Number,
         merged_since: Timestamp,
     ) -> Result<Option<MergedPull>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct One {
+            default_branch_ref: Name,
+            pull_request: GqlMerged,
+        }
         let query = format!(
             "query($owner: String!, $name: String!, $number: Int!) {{
               repository(owner: $owner, name: $name) {{
@@ -1990,12 +1991,6 @@ impl Store for GitHub {
             }}
             {MERGED_FIELDS}"
         );
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct One {
-            default_branch_ref: Name,
-            pull_request: GqlMerged,
-        }
         let Some(data): Option<RepoData<One>> = self
             .graphql_found(
                 &query,
@@ -2491,7 +2486,7 @@ impl Store for GitHub {
 mod tests {
     use super::*;
 
-    fn review_required(requests: Value) -> GqlPull {
+    fn review_required(requests: &Value) -> GqlPull {
         serde_json::from_value(json!({
             "number": 20, "title": "Do the ticket", "body": "",
             "createdAt": "2026-10-09T12:00:00Z", "baseRefName": "main",
@@ -2515,7 +2510,7 @@ mod tests {
 
     #[test]
     fn a_pull_request_lists_its_assignees_and_who_assigned_and_unassigned_whom_when() {
-        let mut pr = review_required(json!([]));
+        let mut pr = review_required(&json!([]));
         pr.assignees = serde_json::from_value(json!({"nodes": [{"login": "factory"}]})).unwrap();
         pr.timeline_items = serde_json::from_value(json!({"nodes": [
             {"__typename": "AssignedEvent", "createdAt": "2026-10-09T12:05:00Z", "actor": {"__typename": "User", "login": "maintainer"}, "assignee": {"__typename": "User", "login": "factory"}},
@@ -2551,53 +2546,53 @@ mod tests {
         );
     }
 
-    fn code_owner(reviewer: Value) -> Value {
+    fn code_owner(reviewer: &Value) -> Value {
         json!({"asCodeOwner": true, "requestedReviewer": reviewer})
     }
 
-    fn displayed(requires: Vec<Requirement>) -> Vec<String> {
+    fn displayed(requires: &[Requirement]) -> Vec<String> {
         requires.iter().map(Requirement::to_string).collect()
     }
 
     #[test]
     fn a_team_requested_as_code_owner_requires_a_code_owners_review_without_naming_it() {
-        let pr = review_required(json!([code_owner(json!({"__typename": "Team"}))]));
+        let pr = review_required(&json!([code_owner(&json!({"__typename": "Team"}))]));
 
         assert_eq!(
-            displayed(pr.requirements(&BranchRules::default())),
+            displayed(&pr.requirements(&BranchRules::default())),
             ["a code owner's review"]
         );
     }
 
     #[test]
     fn users_requested_as_code_owners_are_named() {
-        let pr = review_required(json!([
-            code_owner(json!({"__typename": "User", "login": "alice"})),
-            code_owner(json!({"__typename": "User", "login": "bob"})),
+        let pr = review_required(&json!([
+            code_owner(&json!({"__typename": "User", "login": "alice"})),
+            code_owner(&json!({"__typename": "User", "login": "bob"})),
         ]));
 
         assert_eq!(
-            displayed(pr.requirements(&BranchRules::default())),
+            displayed(&pr.requirements(&BranchRules::default())),
             ["a code owner's review (@alice or @bob)"]
         );
     }
 
     #[test]
     fn a_user_requested_as_code_owner_with_a_team_is_not_named_alone() {
-        let pr = review_required(json!([
-            code_owner(json!({"__typename": "User", "login": "alice"})),
-            code_owner(json!({"__typename": "Team"})),
+        let pr = review_required(&json!([
+            code_owner(&json!({"__typename": "User", "login": "alice"})),
+            code_owner(&json!({"__typename": "Team"})),
         ]));
 
         assert_eq!(
-            displayed(pr.requirements(&BranchRules::default())),
+            displayed(&pr.requirements(&BranchRules::default())),
             ["a code owner's review"]
         );
     }
 
     #[test]
     fn a_review_required_without_code_owners_requested_requires_an_approval() {
-        let pr = review_required(json!([{
+        let pr = review_required(&json!([{
             "asCodeOwner": false,
             "requestedReviewer": {"__typename": "User", "login": "alice"},
         }]));
@@ -2608,7 +2603,7 @@ mod tests {
         );
     }
 
-    fn no_review_decision(requests: Value) -> GqlPull {
+    fn no_review_decision(requests: &Value) -> GqlPull {
         let mut pr = review_required(requests);
         pr.review_decision = None;
         pr
@@ -2624,8 +2619,8 @@ mod tests {
     #[test]
     fn a_code_owner_requested_under_rules_requiring_its_review_is_required_without_a_review_decision()
      {
-        let pr = no_review_decision(json!([code_owner(
-            json!({"__typename": "User", "login": "tibbe"})
+        let pr = no_review_decision(&json!([code_owner(
+            &json!({"__typename": "User", "login": "tibbe"})
         )]));
 
         assert_eq!(
@@ -2638,7 +2633,7 @@ mod tests {
 
     #[test]
     fn a_team_requested_as_code_owner_under_rules_requiring_its_review_is_required_unnamed() {
-        let pr = no_review_decision(json!([code_owner(json!({"__typename": "Team"}))]));
+        let pr = no_review_decision(&json!([code_owner(&json!({"__typename": "Team"}))]));
 
         assert_eq!(
             pr.requirements(&code_owner_review_ruled()),
@@ -2648,8 +2643,8 @@ mod tests {
 
     #[test]
     fn a_code_owner_requested_without_a_review_decision_or_a_rule_requiring_it_is_not_required() {
-        let pr = no_review_decision(json!([code_owner(
-            json!({"__typename": "User", "login": "tibbe"})
+        let pr = no_review_decision(&json!([code_owner(
+            &json!({"__typename": "User", "login": "tibbe"})
         )]));
 
         assert_eq!(pr.requirements(&BranchRules::default()), []);
@@ -2657,7 +2652,7 @@ mod tests {
 
     #[test]
     fn rules_requiring_a_code_owners_review_require_none_when_no_code_owner_is_requested() {
-        let pr = no_review_decision(json!([{
+        let pr = no_review_decision(&json!([{
             "asCodeOwner": false,
             "requestedReviewer": {"__typename": "User", "login": "alice"},
         }]));
@@ -2807,11 +2802,11 @@ mod tests {
         );
     }
 
-    fn ticket_with_parent(parent: Value) -> Issue {
-        ticket(parent, json!([]))
+    fn ticket_with_parent(parent: &Value) -> Issue {
+        ticket(parent, &json!([]))
     }
 
-    fn ticket(parent: Value, closing: Value) -> Issue {
+    fn ticket(parent: &Value, closing: &Value) -> Issue {
         let issue: GqlIssue = serde_json::from_value(json!({
             "number": 12, "title": "Store gadgets", "body": "Gadgets persist.",
             "createdAt": "2026-10-09T12:00:00Z", "state": "OPEN",
@@ -2832,8 +2827,8 @@ mod tests {
     #[test]
     fn a_ticket_is_closed_by_its_pull_requests_open_closed_or_merged_whoever_opened_them() {
         let issue = ticket(
-            Value::Null,
-            json!([
+            &Value::Null,
+            &json!([
                 {"number": 40, "state": "CLOSED", "isDraft": false, "mergedAt": null,
                  "closedAt": "2026-10-09T13:00:00Z",
                  "author": {"__typename": "User", "login": "alice"}},
@@ -2869,7 +2864,7 @@ mod tests {
 
     #[test]
     fn a_ticket_whose_parent_is_a_tracking_issue_knows_the_spec_change() {
-        let issue = ticket_with_parent(json!({
+        let issue = ticket_with_parent(&json!({
             "number": 11, "title": "Spec change: Gadgets",
             "body": "Tickets for the spec change in #10.\n\n- #12 Store gadgets\n",
             "author": {"__typename": "User", "login": "linewright"},
@@ -2886,7 +2881,7 @@ mod tests {
 
     #[test]
     fn a_ticket_whose_parent_a_person_opened_knows_no_spec_change() {
-        let issue = ticket_with_parent(json!({
+        let issue = ticket_with_parent(&json!({
             "number": 11, "title": "Spec change: Gadgets",
             "body": "Tickets for the spec change in #10.",
             "author": {"__typename": "User", "login": "maintainer"},
@@ -2903,7 +2898,7 @@ mod tests {
 
     #[test]
     fn a_ticket_without_a_parent_has_none() {
-        assert_eq!(ticket_with_parent(Value::Null).parent, None);
+        assert_eq!(ticket_with_parent(&Value::Null).parent, None);
     }
 
     fn referenced_by(number: u64, author: &str, title: &str, body: &str, cross: bool) -> Value {

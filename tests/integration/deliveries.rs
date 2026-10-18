@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,7 +15,7 @@ use linewright::webhook::{Listener, Pending};
 use serde_json::json;
 
 /// A poll interval no test waits out: what such a test sees, deliveries did.
-const NEVER: Duration = Duration::from_secs(3600);
+const NEVER: Duration = Duration::from_hours(1);
 
 struct Served {
     store: Arc<LocalStore>,
@@ -141,11 +141,12 @@ fn about_pull(number: Number) -> serde_json::Value {
 async fn an_issue_labeled_needs_triage_is_triaged_on_the_delivery() {
     let world = World::new().await;
     world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-human",
             "category": "bug",
             "comment": "Which widget?"
-        }))
+        })
+        .to_string())
     });
     let issue = world
         .store
@@ -178,7 +179,7 @@ async fn an_answer_to_a_triage_question_is_triaged_again_on_the_delivery() {
                 "comment": "Which widget?"
             })
         };
-        json(outcome)
+        Ok(outcome.to_string())
     });
     let issue = world
         .store
@@ -201,10 +202,10 @@ async fn an_answer_to_a_triage_question_is_triaged_again_on_the_delivery() {
 async fn a_spec_change_merged_is_cut_into_tickets_on_the_delivery() {
     let world = World::new().await;
     world.runtime.on(WorkKind::Tickets, |_| {
-        json(json!({
+        Ok(json!({
             "tickets": [{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}],
             "comment": "One slice."
-        }))
+        }).to_string())
     });
     let served = serve(world, NEVER).await;
 
@@ -278,7 +279,7 @@ async fn feedback_on_linewrights_pull_request_is_addressed_on_the_delivery() {
                 &[("CHANGELOG.md", "- thing\n")],
                 "Changelog",
             );
-            json(json!({"outcome": "done", "comment": "Added the entry."}))
+            Ok(json!({"outcome": "done", "comment": "Added the entry."}).to_string())
         });
         let served = serve(world, NEVER).await;
 
@@ -437,11 +438,12 @@ async fn merging_linewrights_pull_request_works_the_ticket_it_unblocked_on_the_d
 async fn a_delivery_replayed_late_and_twice_after_a_newer_change_takes_no_step_back() {
     let world = World::new().await;
     world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-human",
             "category": "bug",
             "comment": "Which widget?"
-        }))
+        })
+        .to_string())
     });
     implement(&world);
     let other = world
@@ -551,7 +553,7 @@ async fn a_failing_check_on_linewrights_pull_request_starts_the_ci_fix_on_the_de
         let mut world = World::new().await;
         let (_, pr) = world.ticket_in_review().await;
         world.runtime.on(WorkKind::FixCi, |_| {
-            json(json!({"outcome": "done", "comment": "Fixed the widget count."}))
+            Ok(json!({"outcome": "done", "comment": "Fixed the widget count."}).to_string())
         });
         let served = serve(world, NEVER).await;
 

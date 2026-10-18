@@ -36,7 +36,7 @@ fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions(
         workflow.schedule.next_after(utc("2026-10-01T12:00:00Z")),
         Some(utc("2026-10-05T06:00:00Z"))
     );
-    assert_eq!(workflow.timeout, Some(Duration::from_secs(60 * 60)));
+    assert_eq!(workflow.timeout, Some(Duration::from_hours(1)));
     assert_eq!(workflow.max_issues, 3);
     assert_eq!(
         workflow.instructions,

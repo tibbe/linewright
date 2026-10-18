@@ -1,4 +1,4 @@
-mod views;
+use crate::views;
 
 use linewright::domain::*;
 use linewright::reconcile::{LiveRun, Subject, WorkKind};

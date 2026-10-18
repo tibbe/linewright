@@ -1,4 +1,4 @@
-mod views;
+use crate::views;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::domain::*;
@@ -676,7 +676,7 @@ fn merged(number: u64, files: &[&str]) -> MergedPull {
         base_ref: "main".into(),
         labels: vec![],
         closes: vec![],
-        files: files.iter().map(|f| f.to_string()).collect(),
+        files: files.iter().map(ToString::to_string).collect(),
         assignees: vec![],
         events: vec![],
     }

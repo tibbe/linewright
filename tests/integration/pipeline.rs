@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use chrono::TimeDelta;
 use common::*;
@@ -13,11 +13,12 @@ use std::sync::{Arc, Mutex};
 async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-agent",
             "category": "bug",
             "comment": "## Agent Brief\n\n**Summary:** Empty widgets crash."
-        }))
+        })
+        .to_string())
     });
     let issue = world.store.open_issue(
         "reporter",
@@ -49,11 +50,12 @@ async fn triage_two_issues_drafting_in_scratch() -> Vec<(std::path::PathBuf, boo
         let empty = std::fs::read_dir(&scratch).unwrap().next().is_none();
         std::fs::write(scratch.join("comment.md"), "A draft.").unwrap();
         sessions.lock().unwrap().push((scratch, empty));
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-agent",
             "category": "bug",
             "comment": "## Agent Brief\n\n**Summary:** It crashes."
-        }))
+        })
+        .to_string())
     });
     for title in ["Crash on empty widget", "Crash on full widget"] {
         world
@@ -101,11 +103,12 @@ async fn a_sessions_scratch_directory_is_removed_when_its_run_ends() {
 async fn triage_and_implement_tasks_say_to_keep_scratch_files_in_the_temporary_directory() {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-agent",
             "category": "bug",
             "comment": "## Agent Brief\n\n**Summary:** It crashes."
-        }))
+        })
+        .to_string())
     });
     world.store.open_issue(
         "reporter",
@@ -143,7 +146,7 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
             &[("src/thing.txt", "done\n")],
             "Do the ticket",
         );
-        json(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}))
+        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
     });
     world.store.open_issue(
         "maintainer",
@@ -158,7 +161,7 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
         seen.lock().unwrap().clone(),
         Some((
             "linewright".to_string(),
-            include_str!("../briefs/plugin/skills/code-review/SKILL.md").to_string()
+            include_str!("../../briefs/plugin/skills/code-review/SKILL.md").to_string()
         ))
     );
 }
@@ -167,11 +170,12 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
 async fn each_stages_session_starts_by_invoking_its_linewright_skill() {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-human",
             "category": "bug",
             "comment": "Does it crash on every widget?"
-        }))
+        })
+        .to_string())
     });
     tickets_script(&world);
     world.store.open_issue(
@@ -229,7 +233,7 @@ fn triage_for_the_maintainer(world: &World) {
                 "comment": "Should widgets be resizable?"
             })
         };
-        json(outcome)
+        Ok(outcome.to_string())
     });
 }
 
@@ -303,11 +307,12 @@ async fn an_issue_given_a_second_status_label_keeps_only_the_newer() {
 
 fn triaged_to(world: &World, outcome: &'static str) {
     world.runtime.on(WorkKind::Triage, move |_| {
-        json(json!({
+        Ok(json!({
             "outcome": outcome,
             "category": "bug",
             "comment": "Triaged."
-        }))
+        })
+        .to_string())
     });
 }
 
@@ -368,7 +373,7 @@ fn asks(world: &World, ask: Value, comment: &'static str) {
         } else {
             json!({"outcome": "needs-info", "category": "bug", "ask": ask, "comment": comment})
         };
-        json(outcome)
+        Ok(outcome.to_string())
     });
 }
 
@@ -456,7 +461,7 @@ async fn a_result_asking_something_that_is_not_a_login_is_sent_back() {
         } else {
             "reporter"
         };
-        json(json!({"outcome": "needs-info", "category": "bug", "ask": [ask], "comment": "Which version?"}))
+        Ok(json!({"outcome": "needs-info", "category": "bug", "ask": [ask], "comment": "Which version?"}).to_string())
     });
     let issue = world
         .store
@@ -530,11 +535,12 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
     world.runtime.on(WorkKind::Triage, move |_| {
         begin.send(()).unwrap();
         released.lock().unwrap().recv().unwrap();
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-human",
             "category": "bug",
             "comment": "Triaged."
-        }))
+        })
+        .to_string())
     });
     let issue = world
         .store
@@ -559,13 +565,13 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
 
 fn tickets_script(world: &World) {
     world.runtime.on(WorkKind::Tickets, |_| {
-        json(json!({
+        Ok(json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "## What to build\n\nGadgets persist.", "blocked_by": []},
                 {"id": "list", "title": "List gadgets", "body": "## What to build\n\nList them.", "blocked_by": ["store"]}
             ],
             "comment": "Two slices: storing, then listing."
-        }))
+        }).to_string())
     });
 }
 
@@ -573,7 +579,7 @@ fn implement_script(world: &World) {
     world.runtime.on(WorkKind::Implement, |call| {
         let file = format!("src/{}.txt", subject_file(call));
         commit_in(&call.spec.dir, &[(&file, "gadget\n")], "Add gadgets");
-        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "## Summary\n\nGadgets."}))
+        Ok(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "## Summary\n\nGadgets."}).to_string())
     });
 }
 
@@ -798,7 +804,7 @@ async fn sessions_on_a_tickets_pull_request_are_briefed_with_its_parent_issue() 
             &[("src/renamed.txt", "renamed\n")],
             "Rename",
         );
-        json(json!({"outcome": "done", "comment": "Renamed."}))
+        Ok(json!({"outcome": "done", "comment": "Renamed."}).to_string())
     });
 
     world.poll().await;
@@ -876,11 +882,12 @@ async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_r
             "Rename",
         );
         let thread = format!("T{}-1", 2);
-        json(json!({
+        Ok(json!({
             "outcome": "done",
             "comment": "Renamed as asked.",
             "replies": [{"thread": thread, "body": "Renamed.", "resolve": true}]
-        }))
+        })
+        .to_string())
     });
 
     world.poll().await;
@@ -926,7 +933,7 @@ async fn reviewers_after_rework_of_comments_by(authors: &[&str]) -> Vec<Login> {
             &[("src/renamed.txt", "renamed\n")],
             "Rename",
         );
-        json(json!({"outcome": "done", "comment": "Renamed as asked."}))
+        Ok(json!({"outcome": "done", "comment": "Renamed as asked."}).to_string())
     });
 
     world.poll().await;
@@ -971,14 +978,17 @@ async fn a_rework_requests_review_from_a_person_whose_feedback_arrived_while_it_
             store
                 .comment_as("designer", pr, "Also update the README.")
                 .unwrap();
-            return json(json!({"outcome": "done", "comment": "Added the entry."}));
+            return Ok(json!({"outcome": "done", "comment": "Added the entry."}).to_string());
         }
         commit_in(
             &call.spec.dir,
             &[("README.md", "# Widgets, updated\n")],
             "README",
         );
-        json(json!({"outcome": "done", "comment": "Added the entry and updated the README."}))
+        Ok(
+            json!({"outcome": "done", "comment": "Added the entry and updated the README."})
+                .to_string(),
+        )
     });
 
     world.poll().await;
@@ -1004,11 +1014,12 @@ async fn a_rework_that_makes_the_description_out_of_date_rewrites_it() {
             &[("src/renamed.txt", "renamed\n")],
             "Rename",
         );
-        json(json!({
+        Ok(json!({
             "outcome": "done",
             "comment": "Renamed as asked.",
             "pr_body": "Does it, renamed."
-        }))
+        })
+        .to_string())
     });
 
     world.poll().await;
@@ -1082,7 +1093,7 @@ async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Numbe
         let file = format!("src/{}.txt", subject_file(call));
         commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
         let body = format!("Does it.\n\nCloses {other}");
-        json(json!({"outcome": "done", "pr_title": "Do it", "pr_body": body}))
+        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": body}).to_string())
     });
     let ticket = world.store.open_issue(
         "maintainer",
@@ -1103,7 +1114,7 @@ async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Numbe
         .await
         .unwrap();
     world.runtime.on(WorkKind::FixCi, |_| {
-        json(json!({"outcome": "done", "comment": "Fixed."}))
+        Ok(json!({"outcome": "done", "comment": "Fixed."}).to_string())
     });
     (ticket, other, pr)
 }
@@ -1235,7 +1246,10 @@ async fn a_rewritten_description_keeps_every_issue_the_pull_request_closes() {
     let (ticket, other, pr) = pull_request_closing_another_issue(&mut world).await;
     world.runtime.on(WorkKind::FixCi, |call| {
         commit_in(&call.spec.dir, &[("src/fix.txt", "fixed\n")], "Fix it");
-        json(json!({"outcome": "done", "comment": "Fixed.", "pr_body": "Does it, fixed."}))
+        Ok(
+            json!({"outcome": "done", "comment": "Fixed.", "pr_body": "Does it, fixed."})
+                .to_string(),
+        )
     });
 
     world.poll().await;
@@ -1263,7 +1277,7 @@ async fn a_run_whose_pull_request_closes_while_it_works_pushes_and_records_nothi
             "Rename",
         );
         store.close_pull_as(pr).unwrap();
-        json(json!({"outcome": "done", "comment": "Renamed as asked."}))
+        Ok(json!({"outcome": "done", "comment": "Renamed as asked."}).to_string())
     });
 
     world.poll().await;
@@ -1298,7 +1312,7 @@ async fn feedback_posted_while_the_session_works_is_addressed_before_the_push() 
             store
                 .comment_as("maintainer", pr, "Also update the README.")
                 .unwrap();
-            return json(json!({"outcome": "done", "comment": "Added the entry."}));
+            return Ok(json!({"outcome": "done", "comment": "Added the entry."}).to_string());
         }
         assert!(call.followup.unwrap().contains("Also update the README."));
         commit_in(
@@ -1306,7 +1320,10 @@ async fn feedback_posted_while_the_session_works_is_addressed_before_the_push() 
             &[("README.md", "# Widgets, updated\n")],
             "README",
         );
-        json(json!({"outcome": "done", "comment": "Added the entry and updated the README."}))
+        Ok(
+            json!({"outcome": "done", "comment": "Added the entry and updated the README."})
+                .to_string(),
+        )
     });
 
     world.poll().await;
@@ -1333,7 +1350,7 @@ async fn a_rework_that_needed_no_change_answers_its_feedback_also_after_a_restar
         .comment_as("coverage[bot]", pr, "Coverage dropped 0.1%.")
         .unwrap();
     world.runtime.on(WorkKind::Rework, |_| {
-        json(json!({"outcome": "done", "comment": "No change needed: noise."}))
+        Ok(json!({"outcome": "done", "comment": "No change needed: noise."}).to_string())
     });
 
     world.poll().await;
@@ -1353,7 +1370,7 @@ async fn feedback_posted_while_a_rework_records_its_outcome_starts_another() {
         .comment_as("coverage[bot]", pr, "Coverage dropped 0.1%.")
         .unwrap();
     world.runtime.on(WorkKind::Rework, |_| {
-        json(json!({"outcome": "done", "comment": "No change needed: noise."}))
+        Ok(json!({"outcome": "done", "comment": "No change needed: noise."}).to_string())
     });
     let (store, clock) = (world.store.clone(), world.clock.clone());
     world.store.after_linewrights_next_comment(move || {
@@ -1396,7 +1413,7 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
                 .as_nanos()
         );
         commit_in(&call.spec.dir, &[(&file, "fix\n")], "Fix the test");
-        json(json!({"outcome": "done", "comment": "Fixed the widget count."}))
+        Ok(json!({"outcome": "done", "comment": "Fixed the widget count."}).to_string())
     });
 
     for _ in 0..2 {
@@ -1609,7 +1626,7 @@ fn cut_noting_assignees(world: &World, tickets: serde_json::Value) -> Arc<Mutex<
     world.runtime.on(WorkKind::Tickets, move |_| {
         let spec_change = *store.pulls().last().expect("a spec change");
         *noted.lock().unwrap() = store.pull_assignees(spec_change);
-        json(json!({"tickets": tickets.clone(), "comment": "Cut."}))
+        Ok(json!({"tickets": tickets.clone(), "comment": "Cut."}).to_string())
     });
     seen
 }
@@ -1669,7 +1686,7 @@ async fn a_spec_change_whose_session_times_out_is_handed_back_saying_to_cut_the_
 async fn a_handed_back_spec_change_is_cut_again_once_linewright_is_assigned_again() {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Tickets, |_| {
-        json(json!({"outcome": "gave-up", "reason": "Not now."}))
+        Ok(json!({"outcome": "gave-up", "reason": "Not now."}).to_string())
     });
     let spec_pr = merge_spec_change(&world).await;
     world.poll().await;
@@ -1730,7 +1747,7 @@ async fn a_pull_request_closed_while_its_run_works_gets_no_hand_back() {
     let store = world.store.clone();
     world.runtime.on(WorkKind::Rework, move |_| {
         store.close_pull_as(pr).unwrap();
-        json(json!({"outcome": "gave-up", "reason": "Cannot rename it."}))
+        Ok(json!({"outcome": "gave-up", "reason": "Cannot rename it."}).to_string())
     });
 
     world.poll().await;
@@ -1763,7 +1780,10 @@ async fn a_branch_that_changes_the_spec_is_pushed_and_its_pull_request_opened() 
             &[("docs/spec.md", "# Spec\n\nRewritten.\n")],
             "Edit spec",
         );
-        json(json!({"outcome": "done", "pr_title": "Edit the spec", "pr_body": "Edits the spec."}))
+        Ok(
+            json!({"outcome": "done", "pr_title": "Edit the spec", "pr_body": "Edits the spec."})
+                .to_string(),
+        )
     });
     let ticket = world
         .store
@@ -1832,7 +1852,7 @@ async fn the_pull_request_is_titled_as_the_session_wrote_and_a_blank_title_is_se
         } else {
             " Report gadgets "
         };
-        json(json!({"outcome": "done", "pr_title": title, "pr_body": "Gadgets."}))
+        Ok(json!({"outcome": "done", "pr_title": title, "pr_body": "Gadgets."}).to_string())
     });
     world.store.open_issue(
         "maintainer",
@@ -1856,11 +1876,12 @@ async fn a_blocking_spec_gap_hands_the_ticket_back_keeping_the_branch_and_a_non_
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Implement, |call| {
         commit_in(&call.spec.dir, &[("src/partial.txt", "half\n")], "Start");
-        json(json!({
+        Ok(json!({
             "outcome": "blocked",
             "question": "Should gadgets expire?",
             "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
-        }))
+        })
+        .to_string())
     });
     let ticket = world
         .store
@@ -1897,11 +1918,12 @@ async fn a_blocking_spec_gap_hands_the_ticket_back_keeping_the_branch_and_a_non_
 async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions_and_not_filed_again() {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Implement, |_| {
-        json(json!({
+        Ok(json!({
             "outcome": "blocked",
             "question": "Should gadgets expire?",
             "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
-        }))
+        })
+        .to_string())
     });
     let ticket = world
         .store
@@ -2006,11 +2028,12 @@ async fn a_ticket_without_the_required_label_assigned_to_linewright_by_hand_is_i
 async fn an_issue_assigned_to_linewright_by_hand_beside_someone_else_is_triaged() {
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Triage, |_| {
-        json(json!({
+        Ok(json!({
             "outcome": "ready-for-human",
             "category": "bug",
             "comment": "Is this a bug?"
-        }))
+        })
+        .to_string())
     });
     let issue = world
         .store
@@ -2200,7 +2223,7 @@ const EARLIER_WORK: &str = "src/partial.txt";
 async fn ticket_handed_back_with_its_branch(world: &mut World) -> (Number, String) {
     world.runtime.on(WorkKind::Implement, |call| {
         commit_in(&call.spec.dir, &[(EARLIER_WORK, "half\n")], "Start");
-        json(json!({"outcome": "gave-up", "reason": "Too hard."}))
+        Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string())
     });
     let ticket = world
         .store
@@ -2242,7 +2265,7 @@ fn script_next_run(
     world.runtime.on(WorkKind::Implement, move |call| {
         *held_earlier_work.lock().unwrap() = Some(call.spec.dir.join(EARLIER_WORK).exists());
         work(&call.spec.dir);
-        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "## Summary\n\nGadgets."}))
+        Ok(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "## Summary\n\nGadgets."}).to_string())
     });
     next
 }
@@ -2432,11 +2455,11 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
             "The session's result still could not be used",
         ),
         (
-            || json(json!({"outcome": "blocked", "question": "Should gadgets expire?"})),
+            || Ok(json!({"outcome": "blocked", "question": "Should gadgets expire?"}).to_string()),
             "Should gadgets expire?",
         ),
         (
-            || json(json!({"outcome": "gave-up", "reason": "Too hard."})),
+            || Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string()),
             "Too hard.",
         ),
     ];
@@ -2492,7 +2515,7 @@ async fn cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, Number)
         start_and_leave_edits(&call.spec.dir);
         begin.send(()).unwrap();
         released.lock().unwrap().recv().unwrap();
-        json(json!({"outcome": "gave-up", "reason": "Released."}))
+        Ok(json!({"outcome": "gave-up", "reason": "Released."}).to_string())
     });
     let ticket = world
         .store
@@ -2627,7 +2650,10 @@ async fn the_next_run_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_s
             git_in(dir, &["reset", "--quiet", "--soft", "origin/main"]);
             git_in(dir, &["commit", "--quiet", "-m", "Add gadgets"]);
         }
-        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Gadgets."}))
+        Ok(
+            json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Gadgets."})
+                .to_string(),
+        )
     });
 
     relabel_ready_for_agent(&world, ticket);
@@ -2665,7 +2691,10 @@ async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_r
     let mut world = World::new().await;
     let (ticket, branch) = ticket_timed_out_with_edits(&mut world).await;
     world.runtime.on(WorkKind::Implement, |_| {
-        json(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Gadgets."}))
+        Ok(
+            json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Gadgets."})
+                .to_string(),
+        )
     });
 
     relabel_ready_for_agent(&world, ticket);
@@ -2836,11 +2865,16 @@ async fn a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_unc
             "The session's result still could not be used",
         ),
         (
-            || json(json!({"outcome": "blocked", "question": "Should it keep its old name?"})),
+            || {
+                Ok(
+                    json!({"outcome": "blocked", "question": "Should it keep its old name?"})
+                        .to_string(),
+                )
+            },
             "Should it keep its old name?",
         ),
         (
-            || json(json!({"outcome": "gave-up", "reason": "Too hard."})),
+            || Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string()),
             "Too hard.",
         ),
     ];
@@ -2881,7 +2915,7 @@ async fn rework_cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, 
         rename_and_leave_edits(&call.spec.dir);
         begin.send(()).unwrap();
         released.lock().unwrap().recv().unwrap();
-        json(json!({"outcome": "gave-up", "reason": "Released."}))
+        Ok(json!({"outcome": "gave-up", "reason": "Released."}).to_string())
     });
     world.factory.cycle().await.unwrap();
     begun.recv().await.unwrap();
@@ -2983,7 +3017,7 @@ async fn a_stopped_rework_leaves_commits_a_person_pushed_while_it_worked_and_say
                     )
                     .await
                     .unwrap();
-            })
+            });
         })
         .join()
         .unwrap();
@@ -3026,7 +3060,7 @@ async fn the_next_rework_is_told_to_fold_in_the_unfinished_commit_and_its_done_i
             git_in(&call.spec.dir, &["reset", "--quiet", "--soft", "HEAD~1"]);
             git_in(&call.spec.dir, &["commit", "--quiet", "-m", "Rename more"]);
         }
-        json(json!({"outcome": "done", "comment": "Renamed."}))
+        Ok(json!({"outcome": "done", "comment": "Renamed."}).to_string())
     });
 
     world.store.assign_as("maintainer", pr, LINEWRIGHT).unwrap();
@@ -3132,7 +3166,7 @@ async fn an_update_stopped_mid_merge_keeps_its_resolution_as_an_unfinished_commi
 #[tokio::test]
 async fn an_update_stopped_mid_rebase_keeps_the_commits_it_had_not_replayed() {
     let mut world = World::with_repository(Repository::default(), |config| {
-        config.update_method = Some(linewright::domain::UpdateMethod::Rebase)
+        config.update_method = Some(linewright::domain::UpdateMethod::Rebase);
     })
     .await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -3337,7 +3371,7 @@ async fn moved_past_with(
         let file = file.clone();
         world.runtime.on(kind, move |call| {
             resolve_in(&call.spec.dir, &[(&file, "done\nother\n")]);
-            json(json!({"outcome": "done", "comment": "Resolved the conflict."}))
+            Ok(json!({"outcome": "done", "comment": "Resolved the conflict."}).to_string())
         });
     }
     (world, pr)
@@ -3655,7 +3689,7 @@ async fn a_rebase_that_leaves_the_branch_as_it_was_pushes_nothing_and_is_not_tri
             .output()
             .unwrap();
         assert!(aborted.status.success());
-        json(json!({"outcome": "done", "comment": "The branch is fine as it is."}))
+        Ok(json!({"outcome": "done", "comment": "The branch is fine as it is."}).to_string())
     });
 
     world.poll().await;
@@ -3963,7 +3997,7 @@ async fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_a
             &[("src/renamed.txt", "renamed\n")],
             "Rename",
         );
-        json(json!({"outcome": "done", "comment": "Renamed as asked."}))
+        Ok(json!({"outcome": "done", "comment": "Renamed as asked."}).to_string())
     });
 
     world.poll().await;
@@ -4341,7 +4375,7 @@ async fn a_blocked_run_whose_work_is_refused_for_a_missing_permission_asks_its_q
     let mut world = World::new().await;
     world.runtime.on(WorkKind::Implement, |call| {
         commit_in(&call.spec.dir, &[("src/partial.txt", "half\n")], "Start");
-        json(json!({"outcome": "blocked", "question": "Should gadgets expire?"}))
+        Ok(json!({"outcome": "blocked", "question": "Should gadgets expire?"}).to_string())
     });
     world.store.refuse_pushes(&rejected(WORKFLOW_REFUSAL));
     let ticket = world
@@ -4391,7 +4425,7 @@ async fn a_rework_push_refused_for_a_missing_permission_hands_the_pull_request_b
             &[(".github/workflows/ci.yml", "on: push\n")],
             "Add CI",
         );
-        json(json!({"outcome": "done", "comment": "Added CI."}))
+        Ok(json!({"outcome": "done", "comment": "Added CI."}).to_string())
     });
     world.store.refuse_pushes(&rejected(WORKFLOW_REFUSAL));
 
@@ -4422,7 +4456,7 @@ async fn a_blocking_spec_gap_in_a_pull_request_run_hands_the_pull_request_back()
     let (ticket, pr) = world.ticket_in_review().await;
     world.rework_asked(pr);
     world.runtime.on(WorkKind::Rework, |_| {
-        json(json!({"outcome": "blocked", "question": "Should renamed widgets keep their old name?"}))
+        Ok(json!({"outcome": "blocked", "question": "Should renamed widgets keep their old name?"}).to_string())
     });
 
     world.poll().await;
