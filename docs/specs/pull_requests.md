@@ -42,8 +42,9 @@ to review again; the maintainer approves and merges.
   keywords in its body and the issues linked to it by hand: it closes those
   issues.
 - Linewright works the PR while it is assigned to it, as under
-  [Repository](repository.md). Unassigned, the PR is left as it is;
-  assigned again, Linewright goes on and addresses what came in meanwhile.
+  [Repository](repository.md). Unassigned, Linewright starts no more work
+  on the PR; assigned again, it goes on and addresses what came in
+  meanwhile.
 - Commits a person pushes to the branch are kept: every run starts from the
   branch as it is.
 - A run that changes a PR so its description no longer fits rewrites the
