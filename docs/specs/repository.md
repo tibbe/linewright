@@ -75,8 +75,9 @@ When Linewright cannot finish it, a comment on the issue says why.
 - Assignees say who is working on an item. Linewright **claims** an item by
   assigning itself and lets go of it by unassigning itself. It is assigned
   to an open issue only while the issue's label asks for its work, and to a
-  pull request or a spec change only while it works it. A closed item keeps
-  its labels and assignees.
+  pull request or a spec change only while it works it. The people it
+  assigns to an open issue, it unassigns when the issue's label asks for its
+  work again. A closed item keeps its labels and assignees.
 - On its own, Linewright claims an issue that is unassigned, marked for it,
   labeled for work it does, `needs-triage` for triage or `ready-for-agent`
   for implementation, and that it can start: no open issue blocks it and no
