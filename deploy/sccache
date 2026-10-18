@@ -1,0 +1,11 @@
+#!/bin/sh
+# Stands in for sccache, which builds here run as their RUSTC_WRAPPER, so that
+# its server always has a temporary directory that lasts.
+#
+# The first sccache command starts a server in the background that does the
+# compiling for every later one, and the server makes its temporary files in
+# that first command's TMPDIR. Linewright gives each agent session its own
+# TMPDIR and deletes it when the session ends, so a server started from a
+# session fails every compile after that.
+mkdir -p "$SCCACHE_DIR/tmp"
+TMPDIR=$SCCACHE_DIR/tmp exec /usr/local/libexec/sccache "$@"

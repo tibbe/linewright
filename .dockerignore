@@ -6,3 +6,4 @@
 !briefs/
 !rust-toolchain.toml
 !linewright.toml
+!deploy/sccache

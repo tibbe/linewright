@@ -19,9 +19,11 @@ name="sccache-v$SCCACHE_VERSION-$target-unknown-linux-musl"
 curl --proto '=https' --tlsv1.2 -sSfL -o /tmp/sccache.tar.gz \
   "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/$name.tar.gz"
 echo "$sha  /tmp/sccache.tar.gz" | sha256sum -c -
-tar -xzf /tmp/sccache.tar.gz -C /usr/local/bin --strip-components=1 "$name/sccache"
+mkdir -p /usr/local/libexec
+tar -xzf /tmp/sccache.tar.gz -C /usr/local/libexec --strip-components=1 "$name/sccache"
 rm /tmp/sccache.tar.gz
 EOF
+COPY --chmod=755 deploy/sccache /usr/local/bin/sccache
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
     RUSTC_WRAPPER=sccache SCCACHE_DIR=/var/cache/sccache
