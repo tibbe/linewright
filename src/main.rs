@@ -556,7 +556,7 @@ fn runtime(config: &Config, bash: PathBuf, session_token: &SessionToken) -> Clau
     let github_token = session_token.given().map(str::to_string);
     let split = config.session_env.split(
         std::env::vars_os(),
-        &ClaudeCode::sets(github_token.is_some()),
+        &ClaudeCode::variables_set_for_sessions(github_token.as_deref()),
     );
     info!(
         variables = split.withheld.join(" "),

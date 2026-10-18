@@ -306,16 +306,21 @@ fn the_webhook_secret_is_not_shown_in_the_config() {
     assert!(!shown.contains("s3cret"), "{shown}");
 }
 
-#[test]
-fn help_lists_the_webhook_address_with_its_default() {
+/// `lw --help` and the lines that start at `flag`'s.
+fn help_for(flag: &str) -> (String, String) {
     let help = Cli::command().render_long_help().to_string();
-
-    let line = help
+    let lines = help
         .lines()
-        .skip_while(|line| !line.contains("--webhook-address"))
+        .skip_while(|line| !line.contains(flag))
         .take(4)
         .collect::<Vec<_>>()
         .join("\n");
+    (help, lines)
+}
+
+#[test]
+fn help_lists_the_webhook_address_with_its_default() {
+    let (help, line) = help_for("--webhook-address");
     assert!(line.contains("0.0.0.0:8080"), "{help}");
 }
 
@@ -369,14 +374,7 @@ fn a_session_env_pattern_matching_a_credential_of_linewrights_is_no_error() {
 
 #[test]
 fn help_lists_session_env_with_its_default() {
-    let help = Cli::command().render_long_help().to_string();
-
-    let line = help
-        .lines()
-        .skip_while(|line| !line.contains("--session-env"))
-        .take(4)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let (help, line) = help_for("--session-env");
     assert!(line.contains("[default: none]"), "{help}");
 }
 

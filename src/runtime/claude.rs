@@ -21,7 +21,7 @@ pub struct ClaudeCode {
     /// `None` gives sessions none, whatever Linewright's own environment
     /// holds.
     pub github_token: Option<String>,
-    /// A session starts from these alone, and what this sets itself.
+    /// A session starts from these alone, and what Linewright sets itself.
     pub environment: Given,
 }
 
@@ -203,11 +203,10 @@ impl Log {
 }
 
 impl ClaudeCode {
-    /// The variables a session is given by this itself, with or without a
-    /// GitHub token.
-    pub fn sets(github_token: bool) -> Vec<&'static str> {
+    /// The variables Linewright sets for a session given `github_token`.
+    pub fn variables_set_for_sessions(github_token: Option<&str>) -> Vec<&'static str> {
         let mut names = vec![TEMPORARY_DIRECTORY, SHELL];
-        if github_token {
+        if github_token.is_some() {
             names.extend(TOKEN_VARIABLES);
         }
         names

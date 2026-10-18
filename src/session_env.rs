@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 
-use crate::store::github::TOKEN_VARIABLES;
+use crate::store::github::{SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use crate::webhook::SECRET_VARIABLE;
 
 /// The spec's table: every session is given these.
@@ -36,9 +36,6 @@ const TABLE: &[&str] = &[
     "ANTHROPIC_*",
     "CLAUDE_*",
 ];
-
-/// The GitHub token sessions are given in place of Linewright's.
-const SESSION_TOKEN_VARIABLE: &str = "LINEWRIGHT_SESSION_GITHUB_TOKEN";
 
 /// Whether `name` is one of Linewright's credentials, which `session-env`
 /// never passes.
