@@ -210,6 +210,8 @@ pub struct NewPull {
 pub trait Store: Send + Sync {
     /// Who Linewright acts as; fails when it cannot push to the repository.
     async fn identity(&self) -> Result<Identity>;
+    /// Fails, saying what it lacks, when `token` cannot read the repository.
+    async fn check_reads(&self, token: &str) -> Result<()>;
     async fn settings(&self) -> Result<RepoSettings>;
     /// Creates any of `labels` (name, description) that are missing.
     async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()>;

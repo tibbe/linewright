@@ -12,11 +12,11 @@ use linewright::case;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, Since, WorkflowCommand};
 use linewright::domain::Number;
-use linewright::factory::{Factory, FactoryConfig};
+use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::runs::{self, Query, RepoWorkDir};
 use linewright::runtime::claude::ClaudeCode;
-use linewright::store::github::{GitHub, TOKEN_VARIABLES};
+use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::webhook::{Listener, Pending};
 use linewright::{COMMAND, COMMIT, VERSION};
@@ -479,11 +479,14 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         } => {
             let bash = require_bash()?;
             require_tool(RUNTIME).await?;
-            let factory_config = factory_config(&config, out.clone(), OnUsageLimit::End)?;
+            let session_token = SessionToken::Withheld;
+            let runtime = runtime(&config, bash, &session_token);
+            let factory_config =
+                factory_config(&config, out.clone(), OnUsageLimit::End, session_token)?;
             case::replay(
                 &case_dir,
                 &out,
-                Arc::new(runtime(&config, bash, None)),
+                Arc::new(runtime),
                 Arc::new(SystemClock),
                 factory_config,
             )
@@ -546,12 +549,12 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }
 
-fn runtime(config: &Config, bash: PathBuf, github_token: Option<String>) -> ClaudeCode {
+fn runtime(config: &Config, bash: PathBuf, session_token: &SessionToken) -> ClaudeCode {
     ClaudeCode {
         program: RUNTIME.into(),
         bash,
         model: config.model.clone(),
-        github_token,
+        github_token: session_token.given().map(str::to_string),
     }
 }
 
@@ -559,6 +562,7 @@ fn factory_config(
     config: &Config,
     work_dir: std::path::PathBuf,
     on_usage_limit: OnUsageLimit,
+    session_token: SessionToken,
 ) -> Result<FactoryConfig> {
     let briefs = match &config.briefs {
         Some(dir) => Briefs::load(dir)?,
@@ -581,6 +585,7 @@ fn factory_config(
         work_dir,
         schedule_workflows: true,
         waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
+        session_token,
     })
 }
 
@@ -595,10 +600,17 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
     require_tool(RUNTIME).await?;
     let token = token()?;
     let github = connect(config, token.clone()).await?;
-    let factory_config = factory_config(config, work_dir(config, &github), on_usage_limit)?;
+    let session_token = SessionToken::new(token, std::env::var(SESSION_TOKEN_VARIABLE).ok());
+    let runtime = runtime(config, bash, &session_token);
+    let factory_config = factory_config(
+        config,
+        work_dir(config, &github),
+        on_usage_limit,
+        session_token,
+    )?;
     Factory::start(
         Arc::new(github),
-        Arc::new(runtime(config, bash, Some(token))),
+        Arc::new(runtime),
         Arc::new(SystemClock),
         factory_config,
     )

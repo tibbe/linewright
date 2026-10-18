@@ -16,9 +16,12 @@ repository on the host, which keeps the host's `.env` and
 
 1. Copy `.env.example` to `.env`, readable by its owner alone
    (`chmod 600`), and fill it in: `GH_TOKEN`, the token of
-   the factory's GitHub user, either `ANTHROPIC_API_KEY` or a
-   `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, and, for webhooks,
-   `LINEWRIGHT_WEBHOOK_SECRET` (see [Webhooks](#webhooks)).
+   the factory's GitHub user, optionally `LINEWRIGHT_SESSION_GITHUB_TOKEN`, a
+   read-only token for the agents (see the
+   [README](../README.md#a-read-only-github-token-for-sessions)), either
+   `ANTHROPIC_API_KEY` or a `CLAUDE_CODE_OAUTH_TOKEN` from
+   `claude setup-token`, and, for webhooks, `LINEWRIGHT_WEBHOOK_SECRET` (see
+   [Webhooks](#webhooks)).
 
 2. Optionally, set what this host needs in `compose.override.yaml`, such as a
    directory of the host's for the work directory, in place of a volume, owned

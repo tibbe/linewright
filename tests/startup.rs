@@ -2,7 +2,7 @@ mod common;
 
 use common::*;
 use linewright::domain::{MergeMethod, UpdateMethod};
-use linewright::factory::FactoryConfig;
+use linewright::factory::{FactoryConfig, SessionToken};
 
 async fn refused(repository: Repository, adjust: impl FnOnce(&mut FactoryConfig)) -> String {
     let started = World::start(repository, |config| {
@@ -339,4 +339,74 @@ async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() 
         ]
         .map(|description| Some(description.to_string()))
     );
+}
+
+#[tokio::test]
+async fn a_session_token_that_cannot_read_the_repository_is_an_error_naming_its_variable() {
+    let repository = Repository {
+        unreadable_by: vec!["session-token"],
+        ..Repository::default()
+    };
+
+    let started = World::start(repository, |config| {
+        config.session_token = SessionToken::Separate("session-token".into());
+    })
+    .await;
+
+    let error = format!("{:#}", started.err().expect("startup went ahead"));
+    assert!(error.contains("LINEWRIGHT_SESSION_GITHUB_TOKEN"), "{error}");
+    assert!(error.contains("read access"), "{error}");
+}
+
+#[tokio::test]
+async fn a_session_token_that_reads_the_repository_starts_without_a_warning() {
+    let (log, _guard) = Log::capture();
+
+    World::start(Repository::default(), |config| {
+        config.session_token = SessionToken::Separate("session-token".into());
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(log.lines("WARN"), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn sessions_given_linewrights_token_are_warned_of_at_startup() {
+    let (log, _guard) = Log::capture();
+
+    World::start(Repository::default(), |config| {
+        config.session_token = SessionToken::Linewright("linewright-token".into());
+    })
+    .await
+    .unwrap();
+
+    let warnings = log.lines("WARN");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains("sessions can write to GitHub"),
+        "{}",
+        warnings[0]
+    );
+    assert!(
+        warnings[0].contains("LINEWRIGHT_SESSION_GITHUB_TOKEN"),
+        "{}",
+        warnings[0]
+    );
+}
+
+#[test]
+fn sessions_are_given_the_separate_token_never_linewrights() {
+    let session_token = SessionToken::new("linewright-token".into(), Some("session-token".into()));
+
+    assert_eq!(session_token.given(), Some("session-token"));
+}
+
+#[test]
+fn without_a_separate_token_or_with_an_empty_one_sessions_are_given_linewrights() {
+    let unset = SessionToken::new("linewright-token".into(), None);
+    let empty = SessionToken::new("linewright-token".into(), Some(String::new()));
+
+    assert_eq!(unset.given(), Some("linewright-token"));
+    assert_eq!(empty.given(), Some("linewright-token"));
 }

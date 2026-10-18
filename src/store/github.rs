@@ -28,6 +28,10 @@ const API: &str = "https://api.github.com";
 /// In `gh`'s order (<https://cli.github.com/manual/gh_help_environment>).
 pub const TOKEN_VARIABLES: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 
+/// The token agent sessions are given in place of Linewright's.
+pub const SESSION_TOKEN_VARIABLE: &str = "LINEWRIGHT_SESSION_GITHUB_TOKEN";
+
+#[derive(Clone)]
 pub struct GitHub {
     http: reqwest::Client,
     token: String,
@@ -1661,6 +1665,37 @@ impl Store for GitHub {
                 self.viewer.id, self.viewer.login
             ),
         })
+    }
+
+    /// GitHub answers a token that cannot see a private repository as if
+    /// it did not exist (<https://docs.github.com/en/rest/repos/repos#get-a-repository>).
+    async fn check_reads(&self, token: &str) -> Result<()> {
+        let reader = GitHub {
+            token: token.to_string(),
+            ..self.clone()
+        };
+        match reader.rest_ok(Method::GET, &self.repo_path(""), None).await {
+            Ok(()) => Ok(()),
+            Err(e) => match e.downcast_ref::<ErrorResponse>() {
+                Some(response)
+                    if [
+                        StatusCode::UNAUTHORIZED,
+                        StatusCode::FORBIDDEN,
+                        StatusCode::NOT_FOUND,
+                    ]
+                    .contains(&response.status) =>
+                {
+                    bail!(
+                        "the token cannot read {}/{}: it needs read access to the repository \
+                         ({})",
+                        self.owner,
+                        self.name,
+                        response.message()
+                    )
+                }
+                _ => Err(e),
+            },
+        }
     }
 
     async fn settings(&self) -> Result<RepoSettings> {

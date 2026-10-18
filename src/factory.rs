@@ -27,6 +27,7 @@ use crate::runs::{self, Recorded, RunOf, Runs, Watched};
 use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
+use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::store::{CloseReason, IssueRead, Store};
 use crate::webhook::{self, Pending};
 use crate::workflow::{self, LastRuns, Workflow, WorkflowFiles, WorkflowName};
@@ -51,6 +52,46 @@ pub struct FactoryConfig {
     pub work_dir: PathBuf,
     pub schedule_workflows: bool,
     pub waits_out_usage_limit: bool,
+    pub session_token: SessionToken,
+}
+
+/// The GitHub token agent sessions are given.
+#[derive(Clone)]
+pub enum SessionToken {
+    /// Linewright's own, which can write to GitHub.
+    Linewright(String),
+    /// The operator's token for sessions, from [`SESSION_TOKEN_VARIABLE`].
+    Separate(String),
+    /// None, as in a replay, whose sessions do not read GitHub.
+    Withheld,
+}
+
+impl SessionToken {
+    /// `separate` is [`SESSION_TOKEN_VARIABLE`]'s value; empty, it is unset.
+    pub fn new(linewright: String, separate: Option<String>) -> SessionToken {
+        match separate {
+            Some(token) if !token.is_empty() => SessionToken::Separate(token),
+            _ => SessionToken::Linewright(linewright),
+        }
+    }
+
+    pub fn given(&self) -> Option<&str> {
+        match self {
+            SessionToken::Linewright(token) | SessionToken::Separate(token) => Some(token),
+            SessionToken::Withheld => None,
+        }
+    }
+}
+
+/// Without the token, so that no log shows it.
+impl std::fmt::Debug for SessionToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SessionToken::Linewright(_) => "Linewright",
+            SessionToken::Separate(_) => "Separate",
+            SessionToken::Withheld => "Withheld",
+        })
+    }
 }
 
 enum Running {
@@ -119,6 +160,17 @@ impl Factory {
         config: FactoryConfig,
     ) -> Result<Factory> {
         let identity = store.identity().await.context("checking the token")?;
+        match &config.session_token {
+            SessionToken::Separate(token) => store
+                .check_reads(token)
+                .await
+                .with_context(|| format!("checking {SESSION_TOKEN_VARIABLE}"))?,
+            SessionToken::Linewright(_) => warn!(
+                "sessions can write to GitHub: they are given Linewright's token; set \
+                 {SESSION_TOKEN_VARIABLE} to a token that only reads to keep them from it"
+            ),
+            SessionToken::Withheld => {}
+        }
         let mut settings = store
             .settings()
             .await

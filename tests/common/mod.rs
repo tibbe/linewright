@@ -11,7 +11,7 @@ use linewright::api::Served;
 use linewright::briefs::Briefs;
 use linewright::clock::Clock;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
-use linewright::factory::{Factory, FactoryConfig};
+use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::reconcile::WorkKind;
 use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::spec_glob::SpecGlob;
@@ -394,6 +394,8 @@ pub struct World {
 pub struct Repository {
     pub linear_history: bool,
     pub allowed_merge_methods: MergeMethods,
+    /// GitHub tokens that cannot read the repository.
+    pub unreadable_by: Vec<&'static str>,
 }
 
 impl Repository {
@@ -410,6 +412,7 @@ impl Default for Repository {
         Repository {
             linear_history: false,
             allowed_merge_methods: MergeMethods::all(),
+            unreadable_by: vec![],
         }
     }
 }
@@ -432,6 +435,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         work_dir: work_dir.to_path_buf(),
         schedule_workflows: true,
         waits_out_usage_limit: false,
+        session_token: SessionToken::Withheld,
     }
 }
 
@@ -489,6 +493,9 @@ impl World {
             )
             .await
             .unwrap();
+        for token in repository.unreadable_by {
+            store.refuse_reads_by(token);
+        }
         let runtime = Arc::new(ScriptedRuntime::default());
         let mut config = config(&dir.path().join("work"));
         adjust(&mut config);

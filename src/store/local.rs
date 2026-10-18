@@ -49,6 +49,8 @@ struct State {
     items_read: usize,
     unreadable: Option<String>,
     pushes_refused: Option<String>,
+    /// GitHub tokens that cannot read the repository.
+    unreadable_by: Vec<String>,
     /// People GitHub would refuse to assign, such as those without access.
     unassignable: Vec<Login>,
     after_comment: Option<Box<dyn FnOnce() + Send>>,
@@ -145,6 +147,7 @@ impl LocalStore {
                 items_read: 0,
                 unreadable: None,
                 pushes_refused: None,
+                unreadable_by: vec![],
                 unassignable: vec![],
                 after_comment: None,
             }),
@@ -506,6 +509,11 @@ impl LocalStore {
     /// `output` is what `git push` reports.
     pub fn refuse_pushes(&self, output: &str) {
         self.state().pushes_refused = Some(output.to_string());
+    }
+
+    /// Refuses to let `token` read the repository.
+    pub fn refuse_reads_by(&self, token: &str) {
+        self.state().unreadable_by.push(token.to_string());
     }
 
     /// Refuses to assign `login` to anything from now on.
@@ -1170,6 +1178,13 @@ impl Store for LocalStore {
             email: format!("{login}@users.noreply.github.com"),
             login,
         })
+    }
+
+    async fn check_reads(&self, token: &str) -> Result<()> {
+        if self.state().unreadable_by.iter().any(|t| t == token) {
+            bail!("the token cannot read the repository: it needs read access to it");
+        }
+        Ok(())
     }
 
     async fn settings(&self) -> Result<RepoSettings> {
