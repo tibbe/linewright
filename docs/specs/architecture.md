@@ -45,20 +45,20 @@ later.
   maintainer who wants stricter guards sets them in GitHub, such as required
   reviews on spec files.
 - **Briefs are files read at startup**: the skills, forked from
-  `mattpocock/skills` (`triage`, `to-tickets`, `implement`, `code-review`,
-  `pr`, `tdd`) with their MIT notice, and the prompts Linewright sends a
-  session, each a template holding its task and result contract. Each stage's
-  session invokes its stage's skill, as a person would invoke the original,
-  with the task and the result contract. The skills that
-  skill calls (`tdd`, `code-review`, `pr`) are given to the session as skills
-  under a `linewright:` namespace and invoked as the originals invoke them, and
-  the repository's own skills are available to every session and sub-agent.
-  These are the only skills a session or sub-agent has, and it has only the
-  tools its work needs: the runtime's other skills and tools take up its context
-  and compete with Linewright's skills. No
-  person takes part in a session: a decision an original puts to a person is
-  made by an agent or handed back as an outcome, and judging an agent's own
-  work, as review does, falls to agents in fresh contexts.
+  `mattpocock/skills` (`triage`, `to-tickets`, `implement`, `code-review`, `pr`,
+  `tdd`) with their MIT notice, and the prompts Linewright sends a session, each
+  a template holding its task and result contract. A session whose work a skill
+  covers invokes it, as a person would invoke the original, with the task and
+  the result contract; an update's prompt is its whole brief. The skills a skill
+  calls (`tdd`, `code-review`, `pr`) are given to the session as skills under a
+  `linewright:` namespace and invoked as the originals invoke them, and the
+  repository's own skills are available to every session and sub-agent. These
+  are the only skills a session or sub-agent has, and it has only the tools its
+  work needs: the runtime's other skills and tools take up its context and
+  compete with Linewright's skills. No person takes part in a session: a
+  decision an original puts to a person is made by an agent or handed back as an
+  outcome, and judging an agent's own work, as review does, falls to agents in
+  fresh contexts.
 - **Every session's transcript is kept**: the runtime's own record of the
   session, copied beside the session's brief and result under the work
   directory.

@@ -3430,6 +3430,17 @@ fn told_to_finish(world: &World, kind: WorkKind) -> Vec<&'static str> {
 }
 
 #[tokio::test]
+async fn an_update_run_is_given_the_update_alone_without_a_skill_to_work_by() {
+    let (mut world, _) = moved_past(Repository::default(), None, true).await;
+
+    world.poll().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Update);
+    assert_eq!(prompts.len(), 1);
+    assert!(!prompts[0].contains("/linewright:"), "{}", prompts[0]);
+}
+
+#[tokio::test]
 async fn an_operators_prompt_is_the_one_the_session_gets() {
     let briefs = briefs_with("update.md", |text| {
         format!("Use the repository's own skill.\n\n{text}")

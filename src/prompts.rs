@@ -350,6 +350,8 @@ pub struct Prompts {
     unfinished_or_discard: Template<Commits>,
     conflict_rebase: Template<Stopped>,
     conflict_merge: Template<Stopped>,
+    update_rebase: Template<Stopped>,
+    update_merge: Template<Stopped>,
     full_log: Template<FullLog>,
     filed_gaps: Template<FiledGaps>,
     fold_unfinished: Template<Commits>,
@@ -375,6 +377,8 @@ impl Prompts {
             unfinished_or_discard: template!(source, "parts/unfinished-or-discard.md")?,
             conflict_rebase: template!(source, "parts/conflict-rebase.md")?,
             conflict_merge: template!(source, "parts/conflict-merge.md")?,
+            update_rebase: template!(source, "parts/update-rebase.md")?,
+            update_merge: template!(source, "parts/update-merge.md")?,
             full_log: template!(source, "parts/full-log.md")?,
             filed_gaps: template!(source, "parts/filed-gaps.md")?,
             fold_unfinished: template!(source, "parts/fold-unfinished.md")?,
@@ -477,9 +481,12 @@ pub fn pull_work(
             base: pull_request(first_update(*conflict)),
             failures: render_failures(prompts, failures),
         }),
-        PullTask::Update(conflict) => prompts
-            .update
-            .fill(&pull_request(first_update(Some(conflict)))),
+        PullTask::Update(conflict) => prompts.update.fill(&pull_request(stopped(
+            &prompts.update_rebase,
+            &prompts.update_merge,
+            repo,
+            conflict,
+        ))),
     }
 }
 

@@ -1,4 +1,12 @@
-/linewright:implement
+# Update
+
+Bring a pull request's branch up to date with the default branch. You may read
+GitHub but must not write to it or push: Linewright pushes your commits and
+posts what your result says.
+
+Resolve the conflicts keeping both sides' intent. Run the repository's checks
+and fix what the update broke, then finish the update as your task says. Don't
+abort it.
 
 ---
 
@@ -7,7 +15,7 @@
 - Default branch: `{{default_branch}}`
 - Spec: the tracked files matching `{{spec_glob}}`
 - Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
-- Branch: `{{branch}}`, the head of pull request {{pr}} "{{pr_title}}". The fixed point for review is `origin/{{default_branch}}`.{{unfinished}}
+- Branch: `{{branch}}`, the head of pull request {{pr}} "{{pr_title}}".{{unfinished}}
 
 {{conflict}}
 
