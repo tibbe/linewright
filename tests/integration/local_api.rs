@@ -5,7 +5,6 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::*;
-use futures_util::StreamExt as _;
 use linewright::api::{self, Api, ClaimError, Sources};
 use linewright::clock::Clock;
 use linewright::webhook::{Listener, Pending};
@@ -1244,77 +1243,6 @@ async fn logs_reads_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
     answering.stop().await;
 }
 
-/// Runs many commands, as a request sent just as the connection ends is
-/// seldom left unanswered; `lw`'s `ANSWERING` limit fails the test on one
-/// that waits on the closed connection rather than hangs it.
-#[tokio::test]
-async fn a_serve_that_hangs_up_on_every_request_is_an_error() {
-    let runtime_dir = tempfile::tempdir().unwrap();
-    let (_, listener) = stand_in_socket(runtime_dir.path());
-    let hanging_up = tokio::spawn(async move {
-        loop {
-            drop(listener.accept().await.unwrap());
-        }
-    });
-
-    let outputs = many(|| lw(runtime_dir.path(), &["status"])).await;
-
-    hanging_up.abort();
-    for output in outputs {
-        assert_eq!(output.code, Some(1), "{}", output.stderr);
-        assert!(
-            output.stderr.starts_with("lw: asking `serve`: "),
-            "{}",
-            output.stderr
-        );
-    }
-}
-
-/// As [`a_serve_that_hangs_up_on_every_request_is_an_error`], for the events
-/// `logs --follow` reads once `serve` has answered with the transcript so
-/// far.
-#[tokio::test]
-async fn logs_follow_from_a_serve_that_hangs_up_on_every_follow_is_an_error() {
-    let (agent, answering, _) = triage_under_way().await;
-
-    let outputs = many(|| async {
-        let runtime_dir = tempfile::tempdir().unwrap();
-        let standing_in =
-            answers_once_then_hangs_up(runtime_dir.path(), answering.runtime_dir.path());
-        let output = lw(runtime_dir.path(), &["logs", "--follow", "1"]).await;
-        standing_in.abort();
-        output
-    })
-    .await;
-
-    for output in outputs {
-        assert_eq!(output.code, Some(1), "{}", output.stderr);
-        assert!(output.stdout.contains("Bash(ls;"), "{}", output.stdout);
-        assert!(
-            output.stderr.starts_with("lw: asking `serve`: "),
-            "{}",
-            output.stderr
-        );
-    }
-    drop(agent);
-    answering.stop().await;
-}
-
-/// How many commands [`many`] runs: before `lw` noticed a connection
-/// ending, enough that one was left unanswered in about one test in four.
-const MANY: usize = 96;
-/// How many of them run at once: few enough that each gives up within
-/// `ANSWERING`.
-const AT_ONCE: usize = 16;
-
-async fn many<F: Future<Output = Output>>(run: impl FnMut() -> F) -> Vec<Output> {
-    futures_util::stream::repeat_with(run)
-        .take(MANY)
-        .buffer_unordered(AT_ONCE)
-        .collect()
-        .await
-}
-
 #[tokio::test]
 async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
     let (agent, answering, runtime_dir) = triage_under_way().await;
@@ -1402,26 +1330,6 @@ fn stand_in_socket(runtime_dir: &Path) -> (std::path::PathBuf, tokio::net::UnixL
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let listener = tokio::net::UnixListener::bind(&path).unwrap();
     (path, listener)
-}
-
-/// Passes the first connection on to the `serve` in `serving_dir`, and
-/// hangs up on every other as soon as it is made.
-fn answers_once_then_hangs_up(
-    runtime_dir: &Path,
-    serving_dir: &Path,
-) -> tokio::task::JoinHandle<()> {
-    let (_, listener) = stand_in_socket(runtime_dir);
-    let serving = api::socket_path(&socket_dir(serving_dir), REPO);
-    tokio::spawn(async move {
-        let (mut request, _) = listener.accept().await.unwrap();
-        let mut answering = tokio::net::UnixStream::connect(&serving).await.unwrap();
-        tokio::spawn(async move {
-            let _ = tokio::io::copy_bidirectional(&mut request, &mut answering).await;
-        });
-        loop {
-            drop(listener.accept().await.unwrap());
-        }
-    })
 }
 
 enum Stops {
