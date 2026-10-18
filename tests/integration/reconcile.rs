@@ -230,6 +230,69 @@ fn needs_triage_applied_by_hand_after_a_question_unassigns_the_people_asked() {
 }
 
 #[test]
+fn ready_for_agent_applied_by_hand_after_a_question_unassigns_the_people_asked() {
+    let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
+    asked = labeled_at(
+        labeled(asked, label::READY_FOR_AGENT),
+        label::READY_FOR_AGENT,
+        3,
+    );
+    asked.comments = vec![triage_comment(1)];
+
+    assert_eq!(
+        decide(&snapshot(vec![asked])),
+        vec![
+            Action::RemoveStatusLabel {
+                issue: Number(1),
+                label: StatusLabel::NeedsInfo,
+            },
+            unassign_asked(1, &["reporter"]),
+            claim(1),
+            implement(1),
+        ]
+    );
+}
+
+#[test]
+fn ready_for_human_after_a_question_keeps_the_people_asked_until_ready_for_agent_is_applied() {
+    let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
+    asked.comments = vec![triage_comment(1)];
+    asked.labels = vec![label::READY_FOR_HUMAN.into()];
+    asked = labeled_at(asked, label::READY_FOR_HUMAN, 3);
+
+    assert_eq!(decide(&snapshot(vec![asked.clone()])), vec![]);
+
+    asked.labels = vec![label::READY_FOR_AGENT.into()];
+    asked = labeled_at(asked, label::READY_FOR_AGENT, 5);
+
+    assert_eq!(
+        decide(&snapshot(vec![asked])),
+        vec![unassign_asked(1, &["reporter"]), claim(1), implement(1)]
+    );
+}
+
+#[test]
+fn ready_for_agent_after_a_question_leaves_a_person_someone_else_assigned() {
+    let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    asked = assigned_by(asked, "maintainer", "maintainer", 0);
+    asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
+    asked.comments = vec![triage_comment(1)];
+    asked.labels = vec![label::READY_FOR_AGENT.into()];
+    asked = labeled_at(asked, label::READY_FOR_AGENT, 3);
+    let world = snapshot(vec![asked]);
+
+    assert_eq!(decide(&world), vec![unassign_asked(1, &["reporter"])]);
+    assert_eq!(
+        waits_on(&world, 1),
+        [Wait::Assignee {
+            assignee: Login::new("maintainer"),
+        }]
+    );
+}
+
+#[test]
 fn no_one_is_unassigned_before_a_reply() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
@@ -2777,6 +2840,26 @@ fn with_a_required_label_only_a_labeled_issue_answered_after_a_triage_question_i
             claim(2),
             triage(2),
         ]
+    );
+}
+
+#[test]
+fn with_a_required_label_only_a_labeled_issue_relabeled_after_a_question_has_the_people_asked_unassigned()
+ {
+    let mut unlabeled = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
+    unlabeled = assigned_by(unlabeled, "reporter", LINEWRIGHT, 1);
+    unlabeled.comments = vec![triage_comment(1)];
+    unlabeled.labels = vec![label::READY_FOR_AGENT.into()];
+    unlabeled = labeled_at(unlabeled, label::READY_FOR_AGENT, 3);
+    let mut retriaged = unlabeled.clone();
+    retriaged.number = Number(2);
+    retriaged.labels = vec![label::NEEDS_TRIAGE.into()];
+    let mut with_label = labeled(unlabeled.clone(), REQUIRED);
+    with_label.number = Number(3);
+
+    assert_eq!(
+        deciding_with_label(&snapshot(vec![unlabeled, retriaged, with_label])),
+        vec![unassign_asked(3, &["reporter"]), claim(3), implement(3)]
     );
 }
 

@@ -372,7 +372,7 @@ pub enum Action {
         add: String,
     },
     /// Unassign the people Linewright asked a `needs-info` question, once
-    /// the issue is back to triage.
+    /// the issue's label asks for Linewright's work again.
     UnassignAsked {
         issue: Number,
         assignees: Vec<Login>,
@@ -632,7 +632,12 @@ pub fn decisions(
             });
         }
         let replied = has_reply_to_needs_info(issue, policy);
-        let issue = &*let_go_of_people_asked(issue, replied, policy, &mut plan);
+        let asked = if replied {
+            Ok(Asked::Triage)
+        } else {
+            asked_work(issue.status_label())
+        };
+        let issue = &*let_go_of_people_asked(issue, asked, policy, &mut plan);
         if replied {
             plan.act(Action::Relabel {
                 issue: issue.number,
@@ -640,11 +645,6 @@ pub fn decisions(
                 add: label::NEEDS_TRIAGE.into(),
             });
         }
-        let asked = if replied {
-            Ok(Asked::Triage)
-        } else {
-            asked_work(issue.status_label())
-        };
         if let Err(unasked) = asked
             && issue.is_assigned(&policy.linewright)
         {
@@ -1559,17 +1559,18 @@ fn unassigned_since(issue: &Issue, policy: &Policy, status: StatusLabel) -> bool
         .is_none_or(|labeled| unassigned > labeled)
 }
 
-/// `issue` without the people its `needs-info` question asked, unassigning
-/// them, once it is back to triage by a reply (`replied`) or by hand.
+/// `issue` without the people Linewright assigned to it, those its
+/// `needs-info` question asked, unassigning them when its label asks for
+/// Linewright's work again (`asked`), by a reply or by hand, and Linewright
+/// may start on it.
 fn let_go_of_people_asked<'a>(
     issue: &'a Issue,
-    replied: bool,
+    asked: Result<Asked, Unasked>,
     policy: &Policy,
     plan: &mut Plan,
 ) -> Cow<'a, Issue> {
-    let retriaged = issue.holds(StatusLabel::NeedsTriage) && policy.may_start_on(issue);
     let people_asked = issue.assigned_by(&policy.linewright);
-    if !(replied || retriaged) || people_asked.is_empty() {
+    if asked.is_err() || !policy.may_start_on(issue) || people_asked.is_empty() {
         return Cow::Borrowed(issue);
     }
     // Unassigned before the relabeling, so that a stop between the two
