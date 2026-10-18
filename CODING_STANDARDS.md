@@ -22,16 +22,23 @@ layer that calls them.
 
 ### Where tests go
 
-A test belongs in one of three places. Everything else is covered through
-them and gets no test of its own.
+A test checks a promise the code makes to someone outside it, at the seam
+where the code makes it, with expected values taken from that party, never
+from the code. Everything else (helpers, private functions, one module's
+internals) is covered through these tests and gets no test of its own.
 
-- **The functional core, end to end on its data model**: give the decision
-  function a state of the world and check the decisions it returns.
-- **The system, end to end at the user's level**: drive it as a user would (a
-  labeled issue, a merged PR) against a fake of each external system (GitHub,
-  the agent runtime, the clock) and check what the user would see.
-- **Internal libraries**: a frequently used internal abstraction, not a helper
-  function.
+- **The user, through the system**: drive it as a user would (a labeled issue,
+  a merged PR) against a fake of each external system (GitHub, the agent
+  runtime, the clock) and check what the user would see.
+- **The user, through the functional core**: give the decision function a
+  state of the world and check the decisions it returns. Every case is cheap
+  to reach there.
+- **An external system, through its adapter**: what the adapter reads from or
+  writes to the system, such as GitHub's GraphQL and REST JSON, on payloads
+  taken from that system (recorded, or its documented examples), not written
+  by hand. The fakes stand in for the adapters, so no other test runs them.
+- **An internal library's callers, through its interface**: for a library used
+  throughout the code, not a helper function.
 
 ### Anti-patterns
 
