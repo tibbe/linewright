@@ -439,9 +439,10 @@ impl Parser {
     }
 
     fn push(&mut self, turn: usize, parent: Option<&[usize]>, entry: Entry) {
-        let id = match &entry.what {
-            What::Tool(call) => Some(call.id.clone()),
-            _ => None,
+        let id = if let What::Tool(call) = &entry.what {
+            Some(call.id.clone())
+        } else {
+            None
         };
         let entries = match parent {
             Some(path) => &mut call_at(&mut self.session.turns[turn].entries, path).entries,
@@ -484,7 +485,9 @@ fn result_content(content: &Value) -> (String, Vec<Value>) {
                 .collect();
             (texts.join("\n"), other.into_iter().cloned().collect())
         }
-        _ => (String::new(), vec![]),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => {
+            (String::new(), vec![])
+        }
     }
 }
 
@@ -1124,8 +1127,18 @@ fn account(call: &Call) -> String {
             Some("async_launched") => in_background("started in the background"),
             _ => one_line(&result.text, ARGUMENT_CHARS),
         },
-        _ if result.text.trim().is_empty() => "done".into(),
-        _ => one_line(&result.text, ARGUMENT_CHARS),
+        Tool::Grep
+        | Tool::Glob
+        | Tool::WebFetch
+        | Tool::WebSearch
+        | Tool::ToolSearch
+        | Tool::Other(_) => {
+            if result.text.trim().is_empty() {
+                "done".into()
+            } else {
+                one_line(&result.text, ARGUMENT_CHARS)
+            }
+        }
     }
 }
 

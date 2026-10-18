@@ -555,16 +555,19 @@ fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
                 // In the form its flag takes, names separated by commas.
                 toml::Value::Array(names) if key == "session-env" => names
                     .into_iter()
-                    .map(|name| match name {
-                        toml::Value::String(name) if !name.contains(',') => Ok(name),
-                        other => bail!(
-                            "{}: the setting `{key}` holds {other}, not a variable's name",
+                    .map(|name| match name.as_str() {
+                        Some(variable) if !variable.contains(',') => Ok(variable.to_string()),
+                        Some(_) | None => bail!(
+                            "{}: the setting `{key}` holds {name}, not a variable's name",
                             path.display()
                         ),
                     })
                     .collect::<Result<Vec<_>>>()?
                     .join(","),
-                other => bail!(
+                other @ (toml::Value::Float(_)
+                | toml::Value::Datetime(_)
+                | toml::Value::Array(_)
+                | toml::Value::Table(_)) => bail!(
                     "{}: the setting `{key}` is {other}, not a string, number or boolean",
                     path.display()
                 ),

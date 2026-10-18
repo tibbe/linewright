@@ -226,11 +226,11 @@ impl ScriptedRuntime {
         // A script may block, waiting for its test to let it go on. On a
         // multi-threaded runtime it gives up its worker meanwhile, else the
         // tasks queued on that worker wait with it.
-        let message = match tokio::runtime::Handle::current().runtime_flavor() {
-            tokio::runtime::RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| script(&call))
-            }
-            _ => script(&call),
+        let flavor = tokio::runtime::Handle::current().runtime_flavor();
+        let message = if flavor == tokio::runtime::RuntimeFlavor::MultiThread {
+            tokio::task::block_in_place(|| script(&call))
+        } else {
+            script(&call)
         }?;
         Ok(Turn {
             session,

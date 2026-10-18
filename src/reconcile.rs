@@ -816,7 +816,11 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
             };
             let wanted = match run.kind {
                 WorkKind::Triage => StatusLabel::NeedsTriage,
-                _ => StatusLabel::ReadyForAgent,
+                WorkKind::Tickets
+                | WorkKind::Implement
+                | WorkKind::Rework
+                | WorkKind::FixCi
+                | WorkKind::Update => StatusLabel::ReadyForAgent,
             };
             if !issue.holds(wanted) {
                 Some(format!("`{wanted}` was removed from {number}"))

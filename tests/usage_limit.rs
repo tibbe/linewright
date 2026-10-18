@@ -46,9 +46,12 @@ fn open_ticket(world: &World, title: &str) -> Number {
 fn started(actions: &[Action]) -> Vec<Subject> {
     actions
         .iter()
-        .filter_map(|action| match action {
-            Action::Start(work) => Some(work.subject()),
-            _ => None,
+        .filter_map(|action| {
+            if let Action::Start(work) = action {
+                Some(work.subject())
+            } else {
+                None
+            }
         })
         .collect()
 }

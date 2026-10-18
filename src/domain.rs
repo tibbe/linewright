@@ -439,9 +439,12 @@ impl Issue {
     pub fn last_reopened(&self) -> Option<Timestamp> {
         self.events
             .iter()
-            .filter_map(|e| match e {
-                IssueEvent::Reopened { at } => Some(*at),
-                _ => None,
+            .filter_map(|e| {
+                if let IssueEvent::Reopened { at } = e {
+                    Some(*at)
+                } else {
+                    None
+                }
             })
             .max()
     }
@@ -716,9 +719,14 @@ pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<EventOrder> {
     events
         .iter()
         .enumerate()
-        .filter_map(|(i, e)| match e {
-            IssueEvent::Labeled { label, at } if label == name => Some(EventOrder::new(*at, i)),
-            _ => None,
+        .filter_map(|(i, e)| {
+            if let IssueEvent::Labeled { label, at } = e
+                && label == name
+            {
+                Some(EventOrder::new(*at, i))
+            } else {
+                None
+            }
         })
         .max()
 }
@@ -737,13 +745,18 @@ pub fn last_assignment<'a>(
     events
         .iter()
         .enumerate()
-        .filter_map(|(i, e)| match e {
-            IssueEvent::Assignment(Assignment::Assigned {
+        .filter_map(|(i, e)| {
+            if let IssueEvent::Assignment(Assignment::Assigned {
                 assignee: assigned,
                 actor,
                 at,
-            }) if assigned == assignee => Some((EventOrder::new(*at, i), actor)),
-            _ => None,
+            }) = e
+                && assigned == assignee
+            {
+                Some((EventOrder::new(*at, i), actor))
+            } else {
+                None
+            }
         })
         .max_by_key(|(order, _)| *order)
 }
@@ -759,13 +772,18 @@ pub fn last_unassignment(events: &[IssueEvent], assignee: &Login) -> Option<Even
     events
         .iter()
         .enumerate()
-        .filter_map(|(i, e)| match e {
-            IssueEvent::Assignment(Assignment::Unassigned {
+        .filter_map(|(i, e)| {
+            if let IssueEvent::Assignment(Assignment::Unassigned {
                 assignee: unassigned,
                 at,
                 ..
-            }) if unassigned == assignee => Some(EventOrder::new(*at, i)),
-            _ => None,
+            }) = e
+                && unassigned == assignee
+            {
+                Some(EventOrder::new(*at, i))
+            } else {
+                None
+            }
         })
         .max()
 }

@@ -818,24 +818,25 @@ impl LocalStore {
             (state.pull_mut(number)?.clone(), default_branch)
         };
         let head_sha = self.rev(&record.head_ref).await.unwrap_or_default();
-        let mergeability = match (record.state, &record.blocked) {
-            (PullState::Open { .. }, _) if record.merge_state_pending => Mergeability::Unknown,
-            (PullState::Open { .. }, blocked) => {
-                match self.mergeability(&default_branch, &record.head_ref).await? {
-                    Mergeability::Clean if let Some(requires) = blocked => Mergeability::Blocked {
+        let mergeability = match record.state {
+            PullState::Open { .. } if record.merge_state_pending => Mergeability::Unknown,
+            PullState::Open { .. } => {
+                let found = self.mergeability(&default_branch, &record.head_ref).await?;
+                match &record.blocked {
+                    Some(requires) if found == Mergeability::Clean => Mergeability::Blocked {
                         requires: requires.clone(),
                     },
-                    other => other,
+                    Some(_) | None => found,
                 }
             }
-            _ => Mergeability::Clean,
+            PullState::Merged { .. } | PullState::Closed { .. } => Mergeability::Clean,
         };
         let rebaseability = match record.state {
             PullState::Open { .. } => {
                 self.rebaseability(&default_branch, &record.head_ref)
                     .await?
             }
-            _ => Rebaseability::Unknown,
+            PullState::Merged { .. } | PullState::Closed { .. } => Rebaseability::Unknown,
         };
         let checks = record
             .checks
@@ -1610,7 +1611,7 @@ impl Store for LocalStore {
         match state {
             PullState::Open { draft: false } => {}
             PullState::Open { draft: true } => bail!("{pr} is a draft"),
-            _ => bail!("{pr} is not open"),
+            PullState::Merged { .. } | PullState::Closed { .. } => bail!("{pr} is not open"),
         }
         if self.rev(&head_ref).await? != head {
             bail!("the head of {pr} is no longer {head}");

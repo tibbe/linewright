@@ -1256,7 +1256,7 @@ async fn pull_work(
             .check_failures(pr.number, names)
             .await
             .map_err(infra)?,
-        _ => vec![],
+        Task::Rework | Task::Update => vec![],
     };
     let feedback = new_feedback(pr, linewright, ctx.reworked);
     let mut feedback_authors = feedback_people(&feedback, linewright);

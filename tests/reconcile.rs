@@ -1123,9 +1123,12 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
         &policy(),
     )
     .into_iter()
-    .filter_map(|a| match a {
-        Action::Cancel { subject, .. } => Some(subject),
-        _ => None,
+    .filter_map(|a| {
+        if let Action::Cancel { subject, .. } = a {
+            Some(subject)
+        } else {
+            None
+        }
     })
     .collect();
 
@@ -1156,9 +1159,12 @@ fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_linewright_is_un
         &policy(),
     )
     .into_iter()
-    .filter_map(|a| match a {
-        Action::Cancel { subject, reason } => Some((subject, reason)),
-        _ => None,
+    .filter_map(|a| {
+        if let Action::Cancel { subject, reason } = a {
+            Some((subject, reason))
+        } else {
+            None
+        }
     })
     .collect();
 
@@ -1322,9 +1328,12 @@ fn closed(mut issue: Issue) -> Issue {
 fn deleted_branches(actions: Vec<Action>) -> Vec<String> {
     actions
         .into_iter()
-        .filter_map(|a| match a {
-            Action::DeleteBranch { branch } => Some(branch.into()),
-            _ => None,
+        .filter_map(|a| {
+            if let Action::DeleteBranch { branch } = a {
+                Some(branch.into())
+            } else {
+                None
+            }
         })
         .collect()
 }
@@ -3325,12 +3334,16 @@ fn fix_ci(issue: u64, pr: u64) -> Action {
 fn handed_back_issues(actions: &[Action]) -> Vec<u64> {
     actions
         .iter()
-        .filter_map(|a| match a {
-            Action::HandBack {
+        .filter_map(|a| {
+            if let Action::HandBack {
                 item: Item::Issue(number),
                 ..
-            } => Some(number.0),
-            _ => None,
+            } = a
+            {
+                Some(number.0)
+            } else {
+                None
+            }
         })
         .collect()
 }

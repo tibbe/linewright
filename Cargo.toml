@@ -17,6 +17,7 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 shadow_unrelated = "warn"
+wildcard_enum_match_arm = "warn"
 
 [dependencies]
 aho-corasick = "1"

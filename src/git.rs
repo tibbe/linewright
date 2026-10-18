@@ -128,7 +128,7 @@ pub async fn update(dir: &Path, default_branch: &str, rule: UpdateRule) -> Resul
                     git(dir, &["merge", "--abort"]).await?;
                     update_with(dir, &upstream, UpdateMethod::Rebase).await
                 }
-                updated => Ok(updated),
+                updated @ (Updated::UpToDate | Updated::Updated) => Ok(updated),
             }
         }
     }
