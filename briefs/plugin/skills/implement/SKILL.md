@@ -49,8 +49,9 @@ Apply every finding, unless it is **wrong on the facts**: it misreads the code,
 cites a rule or a ticket or spec line that doesn't say what it claims, or asks
 for a change that would break something the ticket or spec requires. Preferring
 your design, or judging the change not worth making, does not make a finding
-wrong. For each finding you don't apply, say which and quote the evidence that
-it is wrong. A finding the spec doesn't settle is not a spec gap unless it is a
+wrong. For each finding you don't apply, put it and the quote that shows it is
+wrong in your result's `declined_findings`; a finding you can't quote such
+evidence against, you apply. A finding the spec doesn't settle is not a spec gap unless it is a
 product decision: a reasonable maintainer could want either answer, and the
 answer changes what a user sees. Otherwise apply it like any other finding. A
 finding that is a spec gap is not a fix.

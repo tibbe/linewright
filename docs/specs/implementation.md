@@ -66,7 +66,8 @@ requests that have already been through review.
   implementer and its reviewers read them when they need to know what the other
   tickets cover, since those own what this ticket leaves out. It implements,
   runs the repository's checks, has the work reviewed once, in fresh contexts
-  for both standards and spec, applies the findings, and commits.
+  for both standards and spec, applies every finding it cannot show is wrong
+  on the facts, and commits.
 - Of the spec, the implementer reads the glossary and the parts its work
   touches, not the whole spec. For a ticket cut from a spec change, its brief
   also holds the spec change's spec diff, and the files the diff changes are
