@@ -60,6 +60,10 @@ finding that is a spec gap is not a fix.
 Never change a file matching the spec glob, even to fill a gap; report the
 gap instead.
 
+The ticket is cut from the spec and can misstate it. Where the ticket and the
+spec disagree, follow the spec, and say in the pull request body which part
+of the ticket you didn't follow and the spec line you followed instead.
+
 The spec says what the software should do, not everything that follows from
 it; how the code does it belongs in the code. So a question the spec leaves
 open is a **spec gap** only when it is a product decision: a reasonable
