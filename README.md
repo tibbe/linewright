@@ -13,6 +13,7 @@ whatever shell you use.
 
 ```sh
 export GH_TOKEN=...            # that account's token (or GITHUB_TOKEN)
+export LINEWRIGHT_SESSION_GITHUB_TOKEN=...  # optional: agents' token, see Secrets
 export ANTHROPIC_API_KEY=...   # or any login Claude Code already has
 cargo install --path .
 lw --repo owner/name serve
@@ -72,7 +73,8 @@ macOS on Apple silicon.
   `CLAUDE.md` files in directories above their clones. They read the
   repository's `AGENTS.md`, `CLAUDE.md`, `.claude/` and `.mcp.json`, plus any
   managed policy, and auto-memory is always off. Put what sessions need in the
-  environment (variables, and `ANTHROPIC_API_KEY` in place of an
+  environment (variables named in `session-env`, see
+  [Secrets](#secrets), and `ANTHROPIC_API_KEY` in place of an
   `apiKeyHelper`) or the repository (its `.claude/settings.json` or
   `.mcp.json`).
 - Webhooks are optional; see [Webhooks](#webhooks).
@@ -88,6 +90,58 @@ macOS on Apple silicon.
   `linewright`, uid and gid 1000; to give a work directory on the host another
   owner, build it with the `LINEWRIGHT_UID` and `LINEWRIGHT_GID` build
   arguments. `deploy/` runs Linewright on itself in a locked-down container.
+
+## Secrets
+
+Agent sessions get only the environment variables they need, and Linewright
+redacts its credentials from transcripts, its log and what it posts.
+
+### A read-only GitHub token for sessions
+
+Without `LINEWRIGHT_SESSION_GITHUB_TOKEN`, sessions use Linewright's own
+token, which can write, and Linewright warns at startup. Where GitHub allows
+it, set it to a read-only token:
+
+| repository owned by | `LINEWRIGHT_SESSION_GITHUB_TOKEN` |
+|---|---|
+| an organization Linewright's account is a member of | a [fine-grained token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) from that account, for that repository, with Read-only access to Actions, Commit statuses, Contents, Issues and Pull requests |
+| an organization Linewright's account is an outside collaborator of | a classic token with the `repo` scope from a second account that has the Read role on the repository |
+| a personal account | leave it unset: GitHub offers no read-only token there |
+
+A fine-grained token
+[can't call the Checks API](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens),
+so sessions holding one can't list a pull request's checks with `gh pr checks`.
+They still read GitHub Actions' runs and logs and commit statuses. The failures
+of the checks Linewright asks a session to fix are in its brief.
+
+### Variables your build needs
+
+Sessions get the basic variables of a shell (such as `PATH`, `HOME` and the
+locale), the proxy and certificate variables, and Claude Code's own
+(`ANTHROPIC_*`, `CLAUDE_*`). Name the rest in `session-env`; a name ending in
+`*` names every variable with that prefix. At startup Linewright logs the names
+of the variables it keeps from sessions, so a build that fails only in a
+session shows there what to add.
+
+| for | add to `session-env` |
+|---|---|
+| Rust | `CARGO_HOME`, `RUSTUP_HOME` |
+| Java | `JAVA_HOME` |
+| Claude Code on Amazon Bedrock | `AWS_*` |
+| Claude Code on Google Vertex AI | `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS` |
+
+For a Rust project, `linewright.toml` would have:
+
+```toml
+session-env = ["CARGO_HOME", "RUSTUP_HOME"]
+```
+
+### Credentials outside Linewright
+
+Sessions can read Claude Code's credential and every file of the user
+Linewright runs as. Give Linewright a Claude Code credential of its own, and
+run it as a user, or in a container, without other credentials such as
+`~/.config/gh`, `~/.netrc`, `~/.aws` or `~/.git-credentials`.
 
 ## Webhooks
 

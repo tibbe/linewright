@@ -39,6 +39,12 @@ When Linewright cannot finish it, a comment on the issue says why.
     `--auto-merge`, the account must not be able to bypass the default
     branch's rules (no admin rights, not on a ruleset's bypass list), or the
     reviews they require are skipped.
+  - Optionally, a GitHub token for agent sessions
+    (`LINEWRIGHT_SESSION_GITHUB_TOKEN`), which they are given in place of
+    Linewright's, so that what a session may do on GitHub, such as only
+    read, is the operator's to choose. Without one, sessions are given
+    Linewright's token, and Linewright warns at startup that sessions can
+    write to GitHub.
   - Spec files: tracked Markdown matching the spec glob (default
     `docs/**/*.md`).
 - Used when present: the files the agents' briefs rely on,
@@ -105,7 +111,8 @@ When Linewright cannot finish it, a comment on the issue says why.
   waits for is in the labels, assignees, pushes and pull requests.
 - Comments contain only what belongs to the repository: no run ids, hosts or
   links to the factory.
-- Startup checks: the token can push to the repository and, with
+- Startup checks: the token can push to the repository; the sessions' token,
+  when set, can read it; and, with
   `--auto-merge`, the repository allows the merge method and the update method
   keeps the branch mergeable with it (`update-branch` `merge` cannot keep a
   branch rebase-mergeable); with webhooks on, `serve` can listen on

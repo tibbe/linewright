@@ -23,6 +23,8 @@ from Linewright's base image with the project's toolchain added.
 
 ## Decisions
 
+### Commands
+
 - The command is `lw`, with these commands:
 
   | command | what it does |
@@ -38,13 +40,15 @@ from Linewright's base image with the project's toolchain added.
   | `replay` | run a case against a local store (see [Replay](replay.md)) |
 - SIGINT (Ctrl-C) or SIGTERM stops `serve` once the action in progress is
   done, cancelling the runs in flight; a second one exits at once.
-- Configuration: every setting is a flag, an environment variable
-  (`LINEWRIGHT_<FLAG>`) or a key in a TOML config file (`--config`, default
-  `linewright.toml` in the working directory), with precedence flag, then
-  environment, then file, then default. Credentials are the environment
-  variables their tools already use, so an existing setup is picked up:
-  `GITHUB_TOKEN` or `GH_TOKEN` as `gh` reads them, and `ANTHROPIC_API_KEY`. The
-  webhook secret has no such variable and is `LINEWRIGHT_WEBHOOK_SECRET`.
+- `--version` and the server's first log line name the version and the
+  commit it was built from.
+
+### Configuration
+
+- Every setting is a flag, an environment variable (`LINEWRIGHT_<FLAG>`) or a
+  key in a TOML config file (`--config`, default `linewright.toml` in the
+  working directory), with precedence flag, then environment, then file, then
+  default.
 
   | setting | default |
   |---|---|
@@ -57,6 +61,7 @@ from Linewright's base image with the project's toolchain added.
   | `work-dir` | `linewright/` under the user's data directory |
   | `model` | one model for every stage |
   | `briefs` (a directory) | the briefs Linewright ships |
+  | `session-env` (variable names) | none |
   | `session-timeout` | 60m |
   | `result-retries` | 1 |
   | `ci-grace` | 5m |
@@ -68,11 +73,43 @@ from Linewright's base image with the project's toolchain added.
   | `require-label` | none: every issue and pull request |
   | `log-format` (`text`, `json`) | `text` on a terminal, `json` otherwise |
 
+- Credentials are the environment variables their tools already use, so an
+  existing setup is picked up: `GITHUB_TOKEN` or `GH_TOKEN` as `gh` reads
+  them, and `ANTHROPIC_API_KEY`. The webhook secret has no such variable and
+  is `LINEWRIGHT_WEBHOOK_SECRET`, and the GitHub token agent sessions are
+  given in place of Linewright's (see [Repository](repository.md)) is
+  `LINEWRIGHT_SESSION_GITHUB_TOKEN`.
 - Every time and duration given to Linewright, as a setting or as a
   command's argument, takes the same forms: a time in RFC 3339
   (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC (`2026-10-14`),
   and a duration as the settings' defaults write one, such as `90s`, `30m`,
   `6h` or `7d`.
+
+### Sessions' environment
+
+- An agent session's environment holds only the variables of Linewright's
+  environment that this table or `session-env` names, and what Linewright sets
+  itself: the session's GitHub token, when it has one, as `GH_TOKEN` and
+  `GITHUB_TOKEN`, and its own temporary directory as `TMPDIR`. A name ending in
+  `*` names every variable with that prefix.
+
+  | variables | what for |
+  |---|---|
+  | `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL` | finding programs and the user's home |
+  | `LANG`, `LANGUAGE`, `LC_*`, `TZ` | locale and time zone |
+  | `TERM` | the terminal tools format for |
+  | `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` | where tools keep their configuration and caches |
+  | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, in either case | reaching the network through the host's proxy |
+  | `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS` | trusting the host's certificate authorities |
+  | `ANTHROPIC_*`, `CLAUDE_*` | the agent runtime's configuration and credentials |
+
+- `session-env` never passes Linewright's GitHub tokens or the webhook
+  secret: a pattern skips them, and naming one is an error at startup.
+- At startup Linewright logs the names, never the values, of the variables
+  in its environment that sessions are not given.
+
+### Running
+
 - Linewright runs wherever `git`, `bash`, the agent runtime and the project's
   toolchain are on the path: directly on a machine, or in a container whose
   image the operator builds with those in it. Agents' commands run in `bash`,
@@ -81,8 +118,6 @@ from Linewright's base image with the project's toolchain added.
   and structured (JSON lines) for machines, by the `log-format` setting.
   With webhooks on, that includes the address it listens on, each delivery
   and what it names, and each delivery refused and why.
-- `--version` and the server's first log line name the version and the
-  commit it was built from.
 - Agents run without permission prompts; the container is the isolation
   when one is used.
 - Unix-like systems: Linux and macOS.
@@ -90,4 +125,7 @@ from Linewright's base image with the project's toolchain added.
 ## Out of scope
 
 - One container per run, instead of agents as processes beside the manager.
+- Keeping sessions from credentials in files Linewright's user can read, such
+  as `~/.config/gh/hosts.yml` or `~/.aws/credentials`. A container, or a user
+  of its own that holds no other credentials, is the isolation.
 - How Linewright is released (`docs/releasing.md`).

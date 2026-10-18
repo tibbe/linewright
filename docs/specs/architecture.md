@@ -34,8 +34,12 @@ later.
   the store. Only the manager writes to the store; prose for people goes to
   comments. A result that does not parse is sent back to the session with the
   error, a bounded number of times.
-- **Agents are trusted, and rules are kept by the brief.** Agents and
-  maintainers are not adversaries; a rule is enforced in code only where
+- **Agents get the capabilities their work needs, and are limited where that
+  costs their work nothing.** An agent that debugs, researches and reviews
+  needs a shell, the web and GitHub, so it has them, and is trusted to use
+  them as its brief says. What it does not need, such as Linewright's other
+  credentials or a token that writes to GitHub, it is not given. A rule is
+  enforced in code only where it limits what a session is given, or where
   Linewright would malfunction without it. Anything else, such as an agent
   writing to GitHub outside its result, is the brief's to prevent, and a
   maintainer who wants stricter guards sets them in GitHub, such as required

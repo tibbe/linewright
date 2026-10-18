@@ -89,6 +89,10 @@ hands #43 back at once, saying which permission to grant.
 - A restart leaves the runs in flight interrupted.
 - Runs are kept across restarts, with their outcomes and their sessions'
   transcripts.
+- Everything Linewright keeps or posts from a session has the values of the
+  credentials Linewright reads from its environment replaced by
+  `[redacted]`. A session runs on the agent runtime's credential, so its
+  agent can read that credential in its own shell.
 
 ### Usage limit
 
