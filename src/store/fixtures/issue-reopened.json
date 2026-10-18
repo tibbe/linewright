@@ -1,0 +1,96 @@
+{
+  "number": 11777,
+  "title": "Documentation for `documentation` field is misleading",
+  "body": "The [docs for the `documentation` field](https://doc.rust-lang.org/cargo/reference/manifest.html#the-documentation-field) say\r\n\r\n> If no URL is specified in the manifest file, [crates.io](https://crates.io/) will automatically link your crate to the corresponding [docs.rs](https://docs.rs/) page.\r\n\r\nThis sounds as if setting no URL is equivalent to setting the docs.rs URL. That is however not the case: in the crates.io [search result list](https://crates.io/search?q=mycrate), the \"Documentation\" link will only show up if `documentation` is explicitly set in the toml file.\r\n\r\nI am not sure if this is a bug in the cargo docs or the crates.io frontend, but it is certainly surprising.",
+  "createdAt": "2023-02-27T14:56:43Z",
+  "state": "OPEN",
+  "author": {
+    "__typename": "User",
+    "login": "RalfJung"
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "A-documenting-cargo-itself"
+      },
+      {
+        "name": "S-blocked-external"
+      }
+    ]
+  },
+  "assignees": {
+    "nodes": []
+  },
+  "comments": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "epage"
+        },
+        "body": "Seeing as the individual crate pages will list documentation, I would personally chalk this up as a crates.io bug.\r\n\r\nFrom #11685, my suspicion is that this is either an optimization or an oversight.  Apparently, adding the docs.rs link to the crate's page is done via Javascript and I imagine doing that for every crate on a search page might be a bit much.",
+        "createdAt": "2023-02-27T15:15:20Z"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "heisen-li"
+        },
+        "body": "@rustbot label A-documenting-cargo-itself",
+        "createdAt": "2024-04-09T11:02:05Z"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "RalfJung"
+        },
+        "body": "This should be reopened since https://github.com/rust-lang/cargo/pull/14562 got reverted.",
+        "createdAt": "2024-09-19T06:04:39Z"
+      }
+    ]
+  },
+  "subIssues": {
+    "nodes": []
+  },
+  "parent": null,
+  "blockedBy": {
+    "nodes": []
+  },
+  "closedByPullRequestsReferences": {
+    "nodes": [
+      {
+        "number": 14561,
+        "state": "MERGED",
+        "isDraft": false,
+        "mergedAt": "2024-09-18T12:19:44Z",
+        "closedAt": "2024-09-18T12:19:44Z",
+        "author": {
+          "__typename": "User",
+          "login": "RalfJung"
+        }
+      }
+    ]
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2024-04-09T11:02:07Z",
+        "label": {
+          "name": "A-documenting-cargo-itself"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2024-04-10T01:18:27Z",
+        "label": {
+          "name": "S-blocked-external"
+        }
+      },
+      {
+        "__typename": "ReopenedEvent",
+        "createdAt": "2024-09-19T12:01:27Z"
+      }
+    ]
+  }
+}

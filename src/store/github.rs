@@ -2692,6 +2692,35 @@ mod tests {
         assert!(rules.code_owner_review);
     }
 
+    /// `fixtures/issue-reopened.json` is `IssueFields` as GitHub returned it
+    /// for <https://github.com/rust-lang/cargo/issues/11777>, closed by a merged
+    /// pull request and reopened.
+    #[test]
+    fn an_issue_lists_its_reopenings_among_its_labelings() {
+        let issue: GqlIssue =
+            serde_json::from_str(include_str!("fixtures/issue-reopened.json")).unwrap();
+
+        let issue = issue.into_issue(&Login::new("linewright"));
+
+        let at = |t: &str| t.parse::<Timestamp>().unwrap();
+        assert_eq!(
+            issue.events,
+            [
+                IssueEvent::Labeled {
+                    label: "A-documenting-cargo-itself".into(),
+                    at: at("2024-04-09T11:02:07Z"),
+                },
+                IssueEvent::Labeled {
+                    label: "S-blocked-external".into(),
+                    at: at("2024-04-10T01:18:27Z"),
+                },
+                IssueEvent::Reopened {
+                    at: at("2024-09-19T12:01:27Z"),
+                },
+            ]
+        );
+    }
+
     #[test]
     fn an_issue_lists_its_labelings_unlabelings_and_assignments_with_who_made_them() {
         let issue: GqlIssue = serde_json::from_value(json!({
