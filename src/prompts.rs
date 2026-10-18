@@ -1,6 +1,10 @@
-use std::fmt::Write;
+use std::collections::BTreeSet;
+use std::fmt::{self, Write};
+use std::marker::PhantomData;
+use std::path::Path;
 
-use crate::briefs::Briefs;
+use anyhow::{Context, Result, bail};
+
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::Feedback;
@@ -50,230 +54,492 @@ impl<'a> Ticket<'a> {
 }
 
 pub enum PullTask<'a> {
-    Rework(Feedback<'a>),
-    FixCi(&'a [CheckFailure]),
-    /// Only bring the branch up to date: the session resolves the conflict.
-    Update,
+    /// `conflict` is where the update the run starts with stopped, if it did.
+    Rework {
+        feedback: Feedback<'a>,
+        conflict: Option<&'a Conflict>,
+    },
+    FixCi {
+        failures: &'a [CheckFailure],
+        conflict: Option<&'a Conflict>,
+    },
+    /// Only bring the branch up to date: the session resolves the conflict
+    /// the update stopped on.
+    Update(&'a Conflict),
 }
 
-const TRIAGE: &str = "/linewright:triage";
-const TO_TICKETS: &str = "/linewright:to-tickets";
-const IMPLEMENT: &str = "/linewright:implement";
+/// Where the prompts are read from.
+#[derive(Clone, Copy)]
+pub enum Source<'a> {
+    /// The prompts built into Linewright.
+    Shipped,
+    /// A directory laid out as `briefs/prompts/` is.
+    Dir(&'a Path),
+}
 
-pub fn triage(repo: &Repo, issue: &Issue, categories: &[String]) -> String {
-    let mut task = String::new();
-    task_facts(&mut task, repo);
-    let _ = writeln!(
-        task,
-        "- Categories to choose from: {}\n",
-        categories
+/// The values a template's placeholders are filled with.
+trait Values {
+    /// The placeholders, one per value.
+    fn names() -> Vec<&'static str>;
+    fn value(&self, name: &str) -> Option<&str>;
+}
+
+/// Declares the values of a template: a field per placeholder, after those of
+/// `base`, if given, which it holds as `base`.
+macro_rules! values {
+    ($(#[$doc:meta])* $name:ident $(: $base:ident)? { $($field:ident),* $(,)? }) => {
+        $(#[$doc])*
+        struct $name {
+            $(base: $base,)?
+            $($field: String,)*
+        }
+
+        impl Values for $name {
+            fn names() -> Vec<&'static str> {
+                [$(<$base as Values>::names(),)? vec![$(stringify!($field)),*]].concat()
+            }
+
+            fn value(&self, name: &str) -> Option<&str> {
+                match name {
+                    $(stringify!($field) => Some(&self.$field),)*
+                    _ => {
+                        $(return <$base as Values>::value(&self.base, name);)?
+                        #[allow(unreachable_code)]
+                        None
+                    }
+                }
+            }
+        }
+    };
+}
+
+values!(Facts {
+    default_branch,
+    spec_glob
+});
+values!(Triage: Facts {
+    categories,
+    issue,
+    category_choices,
+    author
+});
+values!(Tickets: Facts {
+    number,
+    title,
+    author,
+    body,
+    spec_diff
+});
+values!(Implement: Facts {
+    branch,
+    holding,
+    ticket
+});
+values!(
+    /// An update's, and the start of a rework's and a fix's.
+    PullRequest: Facts {
+        branch,
+        pr,
+        pr_title,
+        unfinished,
+        conflict,
+        description,
+        ticket
+    }
+);
+values!(Rework: PullRequest {
+    feedback,
+    conversation
+});
+values!(FixCi: PullRequest { failures });
+values!(WorkflowRun: Facts {
+    max_issues,
+    name,
+    instructions
+});
+values!(DefaultBranch { default_branch });
+values!(ExistingBranch {
+    default_branch,
+    unfinished
+});
+values!(Commits { commits });
+values!(Stopped {
+    default_branch,
+    files
+});
+values!(FullLog { job, repo });
+values!(FiledGaps { gaps });
+values!(ParseError { error });
+values!(LooseEnds { problem });
+values!(NoValues {});
+values!(LateFeedback {
+    feedback,
+    conversation
+});
+
+impl Facts {
+    fn of(repo: &Repo) -> Facts {
+        Facts {
+            default_branch: repo.default_branch.into(),
+            spec_glob: repo.spec_glob.into(),
+        }
+    }
+}
+
+/// A prompt, or a part of one, from `briefs/prompts/`: Markdown with a
+/// `{{name}}` placeholder for each of the values `V`.
+struct Template<V> {
+    text: String,
+    values: PhantomData<fn(&V)>,
+}
+
+impl<V> Clone for Template<V> {
+    fn clone(&self) -> Self {
+        Template {
+            text: self.text.clone(),
+            values: PhantomData,
+        }
+    }
+}
+
+impl<V> fmt::Debug for Template<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Template").field(&self.text).finish()
+    }
+}
+
+/// [`Template::read`] for the template at `$path` under `briefs/prompts/`,
+/// which Linewright ships.
+macro_rules! template {
+    ($source:expr, $path:literal) => {
+        Template::read(
+            $source,
+            $path,
+            include_str!(concat!("../briefs/prompts/", $path)),
+        )
+    };
+}
+
+impl<V: Values> Template<V> {
+    /// The template at `path` in `source`, which ships as `shipped`. A part
+    /// or a follow-up is used without its trailing newline.
+    fn read(source: Source, path: &str, shipped: &str) -> Result<Template<V>> {
+        let text = match source {
+            Source::Shipped => shipped.to_string(),
+            Source::Dir(dir) => {
+                let file = dir.join(path);
+                std::fs::read_to_string(&file)
+                    .with_context(|| format!("reading the brief {}", file.display()))?
+            }
+        };
+        let text = if path.contains('/') {
+            text.trim_end().to_string()
+        } else {
+            text
+        };
+        Template::parse(text).with_context(|| format!("reading the prompt {path}"))
+    }
+
+    /// Fails unless `text`'s placeholders are exactly the values'.
+    fn parse(text: String) -> Result<Template<V>> {
+        let names = V::names();
+        let found: BTreeSet<&str> = placeholders(&text).map(|(_, name, _)| name).collect();
+        let unknown: Vec<&str> = found
+            .iter()
+            .filter(|n| !names.contains(n))
+            .copied()
+            .collect();
+        let missing: Vec<&str> = names
+            .iter()
+            .filter(|n| !found.contains(*n))
+            .copied()
+            .collect();
+        if !unknown.is_empty() {
+            bail!("it has unknown placeholders: {}", braced(&unknown));
+        }
+        if !missing.is_empty() {
+            bail!("it lacks the placeholders {}", braced(&missing));
+        }
+        Ok(Template {
+            text,
+            values: PhantomData,
+        })
+    }
+
+    /// Fills each placeholder with its value. A placeholder alone on its line
+    /// that is filled with nothing takes the line with it, and the blank line
+    /// after it, so an optional paragraph leaves no gap.
+    fn fill(&self, values: &V) -> String {
+        let value = |name: &str| {
+            values
+                .value(name)
+                .expect("a parsed template has only its values' placeholders")
+        };
+        let mut filled = String::with_capacity(self.text.len());
+        let mut lines = self.text.split_inclusive('\n').peekable();
+        while let Some(line) = lines.next() {
+            if let Some(name) = alone(line)
+                && value(name).is_empty()
+            {
+                lines.next_if(|next| next.trim().is_empty());
+                continue;
+            }
+            let mut rest = line;
+            while let Some((start, name, end)) = placeholders(rest).next() {
+                filled.push_str(&rest[..start]);
+                filled.push_str(value(name));
+                rest = &rest[end..];
+            }
+            filled.push_str(rest);
+        }
+        filled
+    }
+}
+
+/// Each `{{name}}` in `text`: where it starts, its name and where it ends.
+fn placeholders(text: &str) -> impl Iterator<Item = (usize, &str, usize)> {
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        while let Some(found) = text[from..].find("{{") {
+            let start = from + found;
+            from = start + 2;
+            let name_len = text[from..]
+                .find(|c: char| !(c.is_ascii_lowercase() || c == '_'))
+                .unwrap_or(text.len() - from);
+            if name_len > 0 && text[from + name_len..].starts_with("}}") {
+                let end = from + name_len + 2;
+                let name = &text[from..from + name_len];
+                from = end;
+                return Some((start, name, end));
+            }
+        }
+        None
+    })
+}
+
+/// The placeholder that is all of `line`, if one is.
+fn alone(line: &str) -> Option<&str> {
+    let line = line.trim_end_matches(['\n', '\r']);
+    match placeholders(line).next() {
+        Some((0, name, end)) if end == line.len() => Some(name),
+        _ => None,
+    }
+}
+
+fn braced(names: &[&str]) -> String {
+    names
+        .iter()
+        .map(|n| format!("`{{{{{n}}}}}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The prompts Linewright sends sessions, and the parts it builds them from.
+#[derive(Clone, Debug)]
+pub struct Prompts {
+    triage: Template<Triage>,
+    tickets: Template<Tickets>,
+    implement: Template<Implement>,
+    rework: Template<Rework>,
+    fix_ci: Template<FixCi>,
+    update: Template<PullRequest>,
+    workflow: Template<WorkflowRun>,
+    new_branch: Template<DefaultBranch>,
+    existing_branch: Template<ExistingBranch>,
+    unfinished: Template<Commits>,
+    unfinished_or_discard: Template<Commits>,
+    conflict_rebase: Template<Stopped>,
+    conflict_merge: Template<Stopped>,
+    full_log: Template<FullLog>,
+    filed_gaps: Template<FiledGaps>,
+    fold_unfinished: Template<Commits>,
+    parse_error: Template<ParseError>,
+    loose_ends: Template<LooseEnds>,
+    usage_limit_reset: Template<NoValues>,
+    late_feedback: Template<LateFeedback>,
+}
+
+impl Prompts {
+    pub fn read(source: Source) -> Result<Prompts> {
+        Ok(Prompts {
+            triage: template!(source, "triage.md")?,
+            tickets: template!(source, "tickets.md")?,
+            implement: template!(source, "implement.md")?,
+            rework: template!(source, "rework.md")?,
+            fix_ci: template!(source, "fix-ci.md")?,
+            update: template!(source, "update.md")?,
+            workflow: template!(source, "workflow.md")?,
+            new_branch: template!(source, "parts/new-branch.md")?,
+            existing_branch: template!(source, "parts/existing-branch.md")?,
+            unfinished: template!(source, "parts/unfinished.md")?,
+            unfinished_or_discard: template!(source, "parts/unfinished-or-discard.md")?,
+            conflict_rebase: template!(source, "parts/conflict-rebase.md")?,
+            conflict_merge: template!(source, "parts/conflict-merge.md")?,
+            full_log: template!(source, "parts/full-log.md")?,
+            filed_gaps: template!(source, "parts/filed-gaps.md")?,
+            fold_unfinished: template!(source, "parts/fold-unfinished.md")?,
+            parse_error: template!(source, "follow-ups/parse-error.md")?,
+            loose_ends: template!(source, "follow-ups/loose-ends.md")?,
+            usage_limit_reset: template!(source, "follow-ups/usage-limit-reset.md")?,
+            late_feedback: template!(source, "follow-ups/late-feedback.md")?,
+        })
+    }
+}
+
+pub fn triage(prompts: &Prompts, repo: &Repo, issue: &Issue, categories: &[String]) -> String {
+    let mut rendered = String::new();
+    write_issue(&mut rendered, "The issue", issue);
+    prompts.triage.fill(&Triage {
+        base: Facts::of(repo),
+        categories: categories
             .iter()
             .map(|c| format!("`{c}`"))
             .collect::<Vec<_>>()
-            .join(", ")
-    );
-    write_issue(&mut task, "The issue", issue);
-    let contract = format!(
-        r#"{{
-  "outcome": "ready-for-agent" | "needs-info" | "ready-for-human",
-  "category": {},
-  "comment": "<the Markdown comment to post on the issue>",
-  "ask": ["<for needs-info: the login of each person the question is for>"]
-}}
-
-`ask` is for `needs-info` only. Leave it out to ask the reporter, @{}."#,
-        categories
+            .join(", "),
+        issue: rendered.trim_end().into(),
+        category_choices: categories
             .iter()
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(" | "),
-        issue.author
-    );
-    compose(TRIAGE, &task, &contract)
+        author: issue.author.to_string(),
+    })
 }
 
-pub fn tickets(repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
-    let mut task = String::new();
-    task_facts(&mut task, repo);
-    let _ = writeln!(
-        task,
-        "\n### The spec change: {} {}\n\nMerged by its author @{} into `{}`.\n\n{}\n",
-        pr.number,
-        pr.title,
-        pr.author,
-        repo.default_branch,
-        or_none(&pr.body),
-    );
-    write_spec_diff(&mut task, "#### Spec diff", spec_diff);
-    let contract = r#"{
-  "tickets": [
-    {
-      "id": "<a short id of your choosing, unique among the tickets>",
-      "title": "<the ticket's title>",
-      "body": "<the ticket's Markdown body>",
-      "blocked_by": ["<ids of the tickets that must be merged first>"]
-    }
-  ],
-  "comment": "<Markdown summary of the breakdown, or why no tickets are needed>"
+pub fn tickets(prompts: &Prompts, repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
+    prompts.tickets.fill(&Tickets {
+        base: Facts::of(repo),
+        number: pr.number.to_string(),
+        title: pr.title.clone(),
+        author: pr.author.to_string(),
+        body: or_none(&pr.body).into(),
+        spec_diff: spec_diff.trim_end().into(),
+    })
 }
 
-`tickets` is empty when the code already does what the spec change asks."#;
-    compose(TO_TICKETS, &task, contract)
-}
-
-pub fn implement(repo: &Repo, ticket: &Ticket, branch: &str, start: &BranchStart) -> String {
-    let mut task = String::new();
-    task_facts(&mut task, repo);
-    let default_branch = repo.default_branch;
+pub fn implement(
+    prompts: &Prompts,
+    repo: &Repo,
+    ticket: &Ticket,
+    branch: &str,
+    start: &BranchStart,
+) -> String {
     let holding = match start {
-        BranchStart::New => format!("fresh from `{default_branch}`."),
-        BranchStart::Existing { unfinished } => {
-            let mut holding = format!(
-                "holding earlier runs' work on the ticket; its comments say what they tried. Build on that work, or, if it is not worth keeping, reset the branch to `origin/{default_branch}` and start again."
-            );
-            if let Some(unfinished) = unfinished {
-                let _ = write!(
-                    holding,
-                    " The branch holds {}: what an earlier run's session left uncommitted when it stopped. Fold it into your own commits, for example by resetting softly to before it and committing the work properly, or discard it with the rest. No pull request opens while the branch holds an unfinished commit.",
-                    unfinished_commits(unfinished)
-                );
-            }
-            holding
-        }
+        BranchStart::New => prompts.new_branch.fill(&DefaultBranch {
+            default_branch: repo.default_branch.into(),
+        }),
+        BranchStart::Existing { unfinished } => prompts.existing_branch.fill(&ExistingBranch {
+            default_branch: repo.default_branch.into(),
+            unfinished: unfinished_sentence(&prompts.unfinished_or_discard, unfinished.as_ref()),
+        }),
     };
-    let _ = writeln!(
-        task,
-        "- Branch: `{branch}`, {holding} The fixed point for review is `origin/{default_branch}`.\n",
-    );
-    write_ticket(&mut task, ticket);
-    compose(IMPLEMENT, &task, IMPLEMENT_CONTRACT)
+    prompts.implement.fill(&Implement {
+        base: Facts::of(repo),
+        branch: branch.into(),
+        holding,
+        ticket: render_ticket(prompts, ticket),
+    })
 }
-
-const IMPLEMENT_CONTRACT: &str = r#"One of:
-
-{ "outcome": "done", "pr_title": "<the pull request title, per the linewright:pr skill>", "pr_body": "<the pull request body, per the linewright:pr skill, without a closing reference to the ticket: Linewright adds it>", "spec_gaps": [SPEC_GAP] }
-{ "outcome": "blocked", "question": "<the question the maintainer must answer>", "spec_gaps": [SPEC_GAP] }
-{ "outcome": "gave-up", "reason": "<why the work cannot be done>" }
-
-where SPEC_GAP is { "title": "<issue title>", "body": "<the spec change needed, in Markdown>" }
-and `spec_gaps` lists the gaps that did not block the ticket (often none)."#;
 
 pub fn pull_work(
+    prompts: &Prompts,
     repo: &Repo,
     ticket: &Ticket,
     pr: &Pull,
     work: &PullTask,
-    conflict: Option<&Conflict>,
     unfinished: Option<&UnfinishedCommits>,
 ) -> String {
-    let mut task = String::new();
-    task_facts(&mut task, repo);
-    let _ = write!(
-        task,
-        "- Branch: `{}`, the head of pull request {} \"{}\". The fixed point for review is `origin/{}`.",
-        pr.head_ref, pr.number, pr.title, repo.default_branch
-    );
-    if let Some(unfinished) = unfinished {
-        let _ = write!(
-            task,
-            " The branch holds {}: what an earlier run's session left uncommitted when it stopped. Fold it into your own commits, for example by resetting softly to before it and committing the work properly.",
-            unfinished_commits(unfinished)
-        );
-    }
-    task.push_str("\n\n");
-    if let Some(conflict) = conflict {
-        let (verb, finish) = match conflict.method {
-            UpdateMethod::Rebase => (
-                "A rebase onto",
-                "`GIT_EDITOR=true git rebase --continue`, resolving any later commit it stops on the same way",
-            ),
-            UpdateMethod::Merge => ("A merge of", "`git commit`"),
-        };
-        let _ = writeln!(
-            task,
-            "**First, finish bringing the branch up to date.** {verb} `origin/{}` stopped on conflicts in {}. Resolve them keeping both sides' intent, run the checks, and finish with {finish}. Don't abort it.\n",
-            repo.default_branch,
-            conflict
-                .files
-                .iter()
-                .map(|f| format!("`{f}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
+    let pull_request = |conflict: String| PullRequest {
+        base: Facts::of(repo),
+        branch: pr.head_ref.clone(),
+        pr: pr.number.to_string(),
+        pr_title: pr.title.clone(),
+        unfinished: unfinished_sentence(&prompts.unfinished, unfinished),
+        conflict,
+        description: or_none(&pr.body).into(),
+        ticket: render_ticket(prompts, ticket),
+    };
+    let first_update = |conflict: Option<&Conflict>| {
+        conflict
+            .map(|c| stopped(&prompts.conflict_rebase, &prompts.conflict_merge, repo, c))
+            .unwrap_or_default()
+    };
     match work {
-        PullTask::Rework(feedback) => write_feedback(&mut task, pr, feedback),
-        PullTask::FixCi(failures) => {
-            task.push_str("### Failing CI\n\nThese checks fail on the pull request's head. Make them pass.\n\n");
-            for failure in *failures {
-                let _ = writeln!(
-                    task,
-                    "#### `{}`\n\n{}\n",
-                    failure.name,
-                    or_none(&failure.summary)
-                );
-                let Some(log) = &failure.log else { continue };
-                let _ = writeln!(task, "```\n{}\n```\n", log.step_output.trim_end());
-                if let Some(full) = &log.full {
-                    let _ = writeln!(
-                        task,
-                        "The full log: `gh run view --job {} --repo {} --log`\n",
-                        full.job, full.repo
-                    );
-                }
-            }
+        PullTask::Rework { feedback, conflict } => {
+            let (feedback, conversation) = render_feedback(pr, feedback);
+            prompts.rework.fill(&Rework {
+                base: pull_request(first_update(*conflict)),
+                feedback,
+                conversation,
+            })
         }
-        PullTask::Update => {}
+        PullTask::FixCi { failures, conflict } => prompts.fix_ci.fill(&FixCi {
+            base: pull_request(first_update(*conflict)),
+            failures: render_failures(prompts, failures),
+        }),
+        PullTask::Update(conflict) => prompts
+            .update
+            .fill(&pull_request(first_update(Some(conflict)))),
     }
-    let _ = writeln!(
-        task,
-        "### The pull request's description\n\n{}\n",
-        or_none(&pr.body)
-    );
-    write_ticket(&mut task, ticket);
-    let contract = r#"One of:
-
-{ "outcome": "done", "comment": "<Markdown summary of what you changed, for the pull request>", "pr_body": "<only when your change made the description out of date: the whole body rewritten, per the linewright:pr skill>", "replies": [REPLY], "spec_gaps": [SPEC_GAP] }
-{ "outcome": "blocked", "question": "<the question the maintainer must answer>", "spec_gaps": [SPEC_GAP] }
-{ "outcome": "gave-up", "reason": "<why the work cannot be done>" }
-
-where REPLY is { "thread": "<thread id>", "body": "<your reply in that thread>", "resolve": <true to resolve it> }
-and SPEC_GAP is { "title": "<issue title>", "body": "<the spec change needed, in Markdown>" }.
-Reply in every thread with new feedback. Resolve only threads a bot opened: people resolve their own.
-Leave `pr_body` out when the description still fits."#;
-    compose(IMPLEMENT, &task, contract)
 }
 
-pub fn workflow(briefs: &Briefs, repo: &Repo, workflow: &Workflow) -> String {
-    let mut task = String::new();
-    task_facts(&mut task, repo);
-    let _ = writeln!(
-        task,
-        "- Issues: at most {}.\n\n### The workflow `{}`\n\n{}",
-        workflow.max_issues,
-        workflow.name,
-        or_none(&workflow.instructions)
-    );
-    let contract = r#"{
-  "summary": "<Markdown: what you did and found>",
-  "issues": [ISSUE]
+/// Where `conflict`'s update stopped and how to finish it, from the part for
+/// its method.
+fn stopped(
+    rebase: &Template<Stopped>,
+    merge: &Template<Stopped>,
+    repo: &Repo,
+    conflict: &Conflict,
+) -> String {
+    let part = match conflict.method {
+        UpdateMethod::Rebase => rebase,
+        UpdateMethod::Merge => merge,
+    };
+    part.fill(&Stopped {
+        default_branch: repo.default_branch.into(),
+        files: conflict
+            .files
+            .iter()
+            .map(|f| format!("`{f}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    })
 }
 
-where ISSUE is { "title": "<issue title>", "body": "<the issue's Markdown body>", "label": "ready-for-agent" | "ready-for-human" }
-and `issues` lists the issues to file (often none)."#;
-    compose(&briefs.workflow, &task, contract)
+/// The sentence `part` says of the `unfinished` commits, led by a space to
+/// follow the one before it, or nothing.
+fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedCommits>) -> String {
+    unfinished
+        .map(|u| {
+            format!(
+                " {}",
+                part.fill(&Commits {
+                    commits: unfinished_commits(u)
+                })
+            )
+        })
+        .unwrap_or_default()
 }
 
-pub fn parse_error(error: &str) -> String {
-    format!(
-        "Your final message could not be used: {error}\n\nAnswer again with only the result JSON object."
-    )
+pub fn workflow(prompts: &Prompts, repo: &Repo, workflow: &Workflow) -> String {
+    prompts.workflow.fill(&WorkflowRun {
+        base: Facts::of(repo),
+        max_issues: workflow.max_issues.to_string(),
+        name: workflow.name.to_string(),
+        instructions: or_none(&workflow.instructions).into(),
+    })
 }
 
-pub fn loose_ends(problem: &str) -> String {
-    format!(
-        "Your work is not finished: {problem}\n\nFix that, then answer again with only the result JSON object."
-    )
+pub fn parse_error(prompts: &Prompts, error: &str) -> String {
+    prompts.parse_error.fill(&ParseError {
+        error: error.into(),
+    })
+}
+
+pub fn loose_ends(prompts: &Prompts, problem: &str) -> String {
+    prompts.loose_ends.fill(&LooseEnds {
+        problem: problem.into(),
+    })
 }
 
 /// Names the unfinished `commits`, as in "the unfinished commit `abc1234`".
@@ -290,42 +556,25 @@ pub fn unfinished_commits(commits: &UnfinishedCommits) -> String {
 
 /// What a `done` answer is sent back with while the branch still holds the
 /// `unfinished` commits.
-pub fn fold_unfinished(unfinished: &UnfinishedCommits) -> String {
-    loose_ends(&format!(
-        "the branch still holds {}, from an earlier run; fold it into your own commits.",
-        unfinished_commits(unfinished)
-    ))
+pub fn fold_unfinished(prompts: &Prompts, unfinished: &UnfinishedCommits) -> String {
+    loose_ends(
+        prompts,
+        &prompts.fold_unfinished.fill(&Commits {
+            commits: unfinished_commits(unfinished),
+        }),
+    )
 }
 
-pub fn usage_limit_reset() -> String {
-    "The usage limit that stopped you has reset. Carry on where you stopped, and answer as your task says.".into()
+pub fn usage_limit_reset(prompts: &Prompts) -> String {
+    prompts.usage_limit_reset.fill(&NoValues {})
 }
 
-pub fn late_feedback(pr: &Pull, feedback: &Feedback) -> String {
-    let mut text = String::from(
-        "New feedback arrived on the pull request while you worked. Address it as well, commit, and answer again with only the result JSON object, covering all your work and replying in every thread with new feedback.\n\n",
-    );
-    write_feedback(&mut text, pr, feedback);
-    text
-}
-
-fn compose(brief: &str, task: &str, contract: &str) -> String {
-    let mut prompt = String::from(brief.trim());
-    let _ = write!(
-        prompt,
-        "\n\n---\n\n# Your task\n\n{}\n\n---\n\n# Result\n\nEnd your session with a final message that is a single JSON object and nothing else:\n\n```\n{}\n```\n",
-        task.trim(),
-        contract.trim()
-    );
-    prompt
-}
-
-fn task_facts(task: &mut String, repo: &Repo) {
-    let _ = writeln!(
-        task,
-        "- Default branch: `{}`\n- Spec: the tracked files matching `{}`\n- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.",
-        repo.default_branch, repo.spec_glob
-    );
+pub fn late_feedback(prompts: &Prompts, pr: &Pull, feedback: &Feedback) -> String {
+    let (feedback, conversation) = render_feedback(pr, feedback);
+    prompts.late_feedback.fill(&LateFeedback {
+        feedback,
+        conversation,
+    })
 }
 
 fn write_issue(task: &mut String, heading: &str, issue: &Issue) {
@@ -350,8 +599,10 @@ fn write_issue(task: &mut String, heading: &str, issue: &Issue) {
     }
 }
 
-fn write_ticket(task: &mut String, ticket: &Ticket) {
-    write_issue(task, "The ticket", ticket.issue);
+/// The ticket as a task shows it, without trailing whitespace.
+fn render_ticket(prompts: &Prompts, ticket: &Ticket) -> String {
+    let mut task = String::new();
+    write_issue(&mut task, "The ticket", ticket.issue);
     if let Some(parent) = ticket.issue.parent {
         let _ = match parent.spec_change {
             Some(spec_change) => writeln!(
@@ -363,45 +614,65 @@ fn write_ticket(task: &mut String, ticket: &Ticket) {
         };
     }
     if let Some(spec_diff) = &ticket.spec_diff {
-        write_spec_diff(task, "#### The spec change's spec diff", spec_diff);
-    }
-    write_filed_gaps(task, &ticket.filed_gaps);
-}
-
-fn write_spec_diff(task: &mut String, heading: &str, spec_diff: &str) {
-    let _ = writeln!(
-        task,
-        "{heading}\n\n```diff\n{}\n```\n",
-        spec_diff.trim_end()
-    );
-}
-
-fn write_filed_gaps(task: &mut String, gaps: &[&Issue]) {
-    if gaps.is_empty() {
-        return;
-    }
-    task.push_str(
-        "### Spec gaps already filed\n\nThese are open issues for the maintainer. Don't list them in `spec_gaps` again.\n\n",
-    );
-    for gap in gaps {
         let _ = writeln!(
             task,
-            "#### {} {}\n\n{}\n",
-            gap.number,
-            gap.title,
-            gap.body.trim()
+            "#### The spec change's spec diff\n\n```diff\n{}\n```\n",
+            spec_diff.trim_end()
         );
     }
+    if !ticket.filed_gaps.is_empty() {
+        let mut gaps = String::new();
+        for gap in &ticket.filed_gaps {
+            let _ = writeln!(
+                gaps,
+                "#### {} {}\n\n{}\n",
+                gap.number,
+                gap.title,
+                gap.body.trim()
+            );
+        }
+        task.push_str(&prompts.filed_gaps.fill(&FiledGaps {
+            gaps: gaps.trim_end().into(),
+        }));
+    }
+    task.trim_end().to_string()
 }
 
-fn write_feedback(task: &mut String, pr: &Pull, feedback: &Feedback) {
-    task.push_str("### Feedback to address\n\n");
+fn render_failures(prompts: &Prompts, failures: &[CheckFailure]) -> String {
+    let mut task = String::new();
+    for failure in failures {
+        let _ = writeln!(
+            task,
+            "#### `{}`\n\n{}\n",
+            failure.name,
+            or_none(&failure.summary)
+        );
+        let Some(log) = &failure.log else { continue };
+        let _ = writeln!(task, "```\n{}\n```\n", log.step_output.trim_end());
+        if let Some(full) = &log.full {
+            let _ = writeln!(
+                task,
+                "{}\n",
+                prompts.full_log.fill(&FullLog {
+                    job: full.job.to_string(),
+                    repo: full.repo.clone(),
+                })
+            );
+        }
+    }
+    task.trim_end().to_string()
+}
+
+/// The `feedback` to address and the pull request's conversation so far, each
+/// without trailing whitespace.
+fn render_feedback(pr: &Pull, feedback: &Feedback) -> (String, String) {
+    let mut new = String::new();
     for comment in &feedback.comments {
-        write_comment(task, comment);
+        write_comment(&mut new, comment);
     }
     for review in &feedback.reviews {
         let _ = writeln!(
-            task,
+            new,
             "**Review by @{}** ({:?}, {}):\n\n{}\n",
             review.author,
             review.state,
@@ -409,30 +680,34 @@ fn write_feedback(task: &mut String, pr: &Pull, feedback: &Feedback) {
             or_none(&review.body)
         );
     }
-    for (thread, new) in &feedback.threads {
+    for (thread, comments) in &feedback.threads {
         let _ = writeln!(
-            task,
+            new,
             "**Thread `{}` on `{}`**, new comments:\n",
             thread.id, thread.path
         );
-        for comment in new {
-            write_comment(task, comment);
+        for comment in comments {
+            write_comment(&mut new, comment);
         }
     }
-    task.push_str("### The pull request's conversation so far\n\n");
+    let mut conversation = String::new();
     for comment in &pr.comments {
-        write_comment(task, comment);
+        write_comment(&mut conversation, comment);
     }
     for thread in pr.threads.iter().filter(|t| !t.resolved) {
         let _ = writeln!(
-            task,
+            conversation,
             "#### Open thread `{}` on `{}`\n",
             thread.id, thread.path
         );
         for comment in &thread.comments {
-            write_comment(task, comment);
+            write_comment(&mut conversation, comment);
         }
     }
+    (
+        new.trim_end().to_string(),
+        conversation.trim_end().to_string(),
+    )
 }
 
 fn write_comment(task: &mut String, comment: &Comment) {

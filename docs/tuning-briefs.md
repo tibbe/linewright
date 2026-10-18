@@ -1,6 +1,8 @@
 # Tuning the briefs
 
-Each stage's agent works from a brief in [`briefs/`](../briefs/). To try a
+Each stage's agent works from a brief in [`briefs/`](../briefs/): the skills
+in `plugin/` and the prompts in `prompts/`, as its README describes. A
+`--briefs` directory is laid out the same way, with every file in it. To try a
 change against a real case:
 
 ```sh

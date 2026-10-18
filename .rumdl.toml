@@ -7,3 +7,8 @@ line-length = 80
 tables = false
 code-blocks = false
 reflow = true
+
+# A prompt template's line breaks are the prompt's: a part filled in mid-line
+# would break its sentence where the template wrapped.
+[per-file-ignores]
+"briefs/prompts/**" = ["MD013"]

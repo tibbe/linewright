@@ -37,3 +37,32 @@ Search the existing issues first, and don't return one that is already open.
 Keep to the number of issues your task allows; when you find more, hand back
 the most important ones. Linewright opens each issue's body with a line naming
 the workflow, so leave that out.
+
+---
+
+# Your task
+
+- Default branch: `{{default_branch}}`
+- Spec: the tracked files matching `{{spec_glob}}`
+- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
+- Issues: at most {{max_issues}}.
+
+### The workflow `{{name}}`
+
+{{instructions}}
+
+---
+
+# Result
+
+End your session with a final message that is a single JSON object and nothing else:
+
+```
+{
+  "summary": "<Markdown: what you did and found>",
+  "issues": [ISSUE]
+}
+
+where ISSUE is { "title": "<issue title>", "body": "<the issue's Markdown body>", "label": "ready-for-agent" | "ready-for-human" }
+and `issues` lists the issues to file (often none).
+```

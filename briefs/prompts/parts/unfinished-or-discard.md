@@ -1,0 +1,1 @@
+The branch holds {{commits}}: what an earlier run's session left uncommitted when it stopped. Fold it into your own commits, for example by resetting softly to before it and committing the work properly, or discard it with the rest. No pull request opens while the branch holds an unfinished commit.

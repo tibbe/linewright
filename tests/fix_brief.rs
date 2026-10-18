@@ -60,11 +60,14 @@ fn section(failures: &[CheckFailure], name: &str) -> String {
         spec_glob: "docs/specs/**/*.md",
     };
     let brief = prompts::pull_work(
+        &linewright::briefs::Briefs::shipped().prompts,
         &repo,
         &ticket,
         &pull(),
-        &PullTask::FixCi(failures),
-        None,
+        &PullTask::FixCi {
+            failures,
+            conflict: None,
+        },
         None,
     );
     let heading = format!("#### `{name}`\n");

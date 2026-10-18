@@ -44,10 +44,12 @@ later.
   writing to GitHub outside its result, is the brief's to prevent, and a
   maintainer who wants stricter guards sets them in GitHub, such as required
   reviews on spec files.
-- **Briefs are files read at startup**, forked from `mattpocock/skills`
-  (`triage`, `to-tickets`, `implement`, `code-review`, `pr`, `tdd`) with their
-  MIT notice. Each stage's session invokes its stage's skill, as a person would
-  invoke the original, with the task and the result contract. The skills that
+- **Briefs are files read at startup**: the skills, forked from
+  `mattpocock/skills` (`triage`, `to-tickets`, `implement`, `code-review`,
+  `pr`, `tdd`) with their MIT notice, and the prompts Linewright sends a
+  session, each a template holding its task and result contract. Each stage's
+  session invokes its stage's skill, as a person would invoke the original,
+  with the task and the result contract. The skills that
   skill calls (`tdd`, `code-review`, `pr`) are given to the session as skills
   under a `linewright:` namespace and invoked as the originals invoke them, and
   the repository's own skills are available to every session and sub-agent.

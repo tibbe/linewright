@@ -557,8 +557,9 @@ impl From<anyhow::Error> for Rejection {
     }
 }
 
-fn parse_retry(error: String) -> Rejection {
-    Rejection::Retry(prompts::parse_error(&error))
+/// Sends a result that does not parse back to the session with its `error`.
+fn parse_retry(shell: &Shell) -> impl Fn(String) -> Rejection + '_ {
+    |error| Rejection::Retry(prompts::parse_error(&shell.briefs.prompts, &error))
 }
 
 async fn converse<T, F, Fut>(
@@ -675,7 +676,7 @@ async fn take_turn(
                 info!(subject, %resets_at, "usage limit reset; resuming the session");
                 step = Step::Resume {
                     session,
-                    prompt: prompts::usage_limit_reset(),
+                    prompt: prompts::usage_limit_reset(&shell.briefs.prompts),
                 };
             }
             None => info!(subject, %resets_at, "usage limit reset; taking the refused turn again"),
@@ -738,11 +739,11 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
-    let prompt = prompts::triage(&shell.repo(), issue, &categories);
+    let prompt = prompts::triage(&shell.briefs.prompts, &shell.repo(), issue, &categories);
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let categories = &categories;
     let (result, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        results::parse_triage(&message, categories).map_err(parse_retry)
+        results::parse_triage(&message, categories).map_err(parse_retry(shell))
     })
     .await?;
     // The session may end as the run is cancelled, too late to stop it.
@@ -817,10 +818,10 @@ async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failur
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let diff = spec_diff(shell, pr).await?;
-    let prompt = prompts::tickets(&shell.repo(), pr, &diff);
+    let prompt = prompts::tickets(&shell.briefs.prompts, &shell.repo(), pr, &diff);
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let (tickets, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        results::parse_tickets(&message).map_err(parse_retry)
+        results::parse_tickets(&message).map_err(parse_retry(shell))
     })
     .await?;
     record_tickets(shell, pr, tickets).await.map_err(apply)
@@ -1019,25 +1020,31 @@ async fn implement(
     let start = git::check_out_branch(&ws.dir, &branch, &upstream)
         .await
         .map_err(infra)?;
-    let prompt = prompts::implement(&shell.repo(), ticket, &branch, &start);
+    let prompt = prompts::implement(
+        &shell.briefs.prompts,
+        &shell.repo(),
+        ticket,
+        &branch,
+        &start,
+    );
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let (dir, base) = (&ws.dir, &upstream);
     let conversation = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        let result: ImplementResult = results::parse(&message).map_err(parse_retry)?;
+        let result: ImplementResult = results::parse(&message).map_err(parse_retry(shell))?;
         if !matches!(result, ImplementResult::Done { .. }) {
             return Ok(result);
         }
         if let Some(problem) = git::loose_ends(dir).await? {
-            return Err(Rejection::Retry(prompts::loose_ends(&problem)));
+            return Err(Rejection::Retry(prompts::loose_ends(&shell.briefs.prompts, &problem)));
         }
         if git::commits_ahead(dir, base).await? == 0 {
-            return Err(Rejection::Retry(prompts::loose_ends(
+            return Err(Rejection::Retry(prompts::loose_ends(&shell.briefs.prompts,
                 "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
             )));
         }
         let unfinished = git::unfinished_commits(dir, base, "HEAD").await?;
         if let Some(unfinished) = unfinished {
-            return Err(Rejection::Retry(prompts::fold_unfinished(&unfinished)));
+            return Err(Rejection::Retry(prompts::fold_unfinished(&shell.briefs.prompts, &unfinished)));
         }
         Ok(result)
     })
@@ -1176,6 +1183,41 @@ enum Task<'a> {
     Update,
 }
 
+/// Pushes an update that needed no session, unless it changed nothing or
+/// feedback arrived meanwhile.
+async fn push_update(
+    shell: &Shell,
+    ctx: &Ctx,
+    pr: &Pull,
+    dir: &Path,
+    start: &str,
+) -> Result<(), Failure> {
+    let store = &shell.store;
+    let linewright = &shell.policy.linewright;
+    if git::head(dir).await.map_err(infra)? == start {
+        info!(pr = pr.number.0, "already up to date");
+        return Ok(());
+    }
+    let fresh = store.pull(pr.number).await.map_err(infra)?;
+    if stopped(&fresh, linewright).is_some() {
+        return Err(Failure::Cancelled);
+    }
+    if !late(&new_feedback(&fresh, linewright, ctx.reworked), ctx.as_of).is_empty() {
+        info!(
+            pr = pr.number.0,
+            "feedback arrived; leaving the update to a rework run"
+        );
+        return Ok(());
+    }
+    let lease = PushMode::Lease {
+        expected: start.to_string(),
+    };
+    store
+        .push(dir, &pr.head_ref, lease)
+        .await
+        .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Reassign))
+}
+
 async fn pull_work(
     shell: &Shell,
     ctx: &Ctx,
@@ -1209,27 +1251,6 @@ async fn pull_work(
     let lease = PushMode::Lease {
         expected: start.clone(),
     };
-    if matches!(task, Task::Update) && conflict.is_none() {
-        if git::head(&ws.dir).await.map_err(infra)? == start {
-            info!(pr = pr.number.0, "already up to date");
-            return Ok(());
-        }
-        let fresh = store.pull(pr.number).await.map_err(infra)?;
-        if stopped(&fresh, linewright).is_some() {
-            return Err(Failure::Cancelled);
-        }
-        if !late(&new_feedback(&fresh, linewright, ctx.reworked), ctx.as_of).is_empty() {
-            info!(
-                pr = pr.number.0,
-                "feedback arrived; leaving the update to a rework run"
-            );
-            return Ok(());
-        }
-        return store
-            .push(&ws.dir, &pr.head_ref, lease)
-            .await
-            .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Reassign));
-    }
     let failures = match task {
         Task::FixCi(names) => store
             .check_failures(pr.number, names)
@@ -1239,10 +1260,17 @@ async fn pull_work(
     };
     let feedback = new_feedback(pr, linewright, ctx.reworked);
     let mut feedback_authors = feedback_people(&feedback, linewright);
-    let pull_task = match task {
-        Task::Rework => PullTask::Rework(feedback),
-        Task::FixCi(_) => PullTask::FixCi(&failures),
-        Task::Update => PullTask::Update,
+    let pull_task = match (task, &conflict) {
+        (Task::Rework, conflict) => PullTask::Rework {
+            feedback,
+            conflict: conflict.as_ref(),
+        },
+        (Task::FixCi(_), conflict) => PullTask::FixCi {
+            failures: &failures,
+            conflict: conflict.as_ref(),
+        },
+        (Task::Update, Some(conflict)) => PullTask::Update(conflict),
+        (Task::Update, None) => return push_update(shell, ctx, pr, &ws.dir, &start).await,
     };
     let dir = &ws.dir;
     let upstream = shell.upstream();
@@ -1253,11 +1281,11 @@ async fn pull_work(
         .await
         .map_err(infra)?;
     let prompt = prompts::pull_work(
+        &shell.briefs.prompts,
         &shell.repo(),
         ticket,
         pr,
         &pull_task,
-        conflict.as_ref(),
         left_unfinished.as_ref(),
     );
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
@@ -1265,18 +1293,24 @@ async fn pull_work(
     let before = git::work_state(dir).await.map_err(infra)?;
     let upstream = &upstream;
     let accept = |message: String, pr_threads: Vec<String>| async move {
-        let result: PullWorkResult = results::parse(&message).map_err(parse_retry)?;
+        let result: PullWorkResult = results::parse(&message).map_err(parse_retry(shell))?;
         let PullWorkResult::Done { replies, .. } = &result else {
             return Ok(result);
         };
         if let Some(problem) = git::loose_ends(dir).await? {
-            return Err(Rejection::Retry(prompts::loose_ends(&problem)));
+            return Err(Rejection::Retry(prompts::loose_ends(
+                &shell.briefs.prompts,
+                &problem,
+            )));
         }
         if let Some(unfinished) = git::unfinished_commits(dir, upstream, "HEAD").await? {
-            return Err(Rejection::Retry(prompts::fold_unfinished(&unfinished)));
+            return Err(Rejection::Retry(prompts::fold_unfinished(
+                &shell.briefs.prompts,
+                &unfinished,
+            )));
         }
         if let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread)) {
-            return Err(parse_retry(format!(
+            return Err(parse_retry(shell)(format!(
                 "`{}` is not a thread on the pull request",
                 unknown.thread
             )));
@@ -1311,7 +1345,7 @@ async fn pull_work(
             shown_until = read_at;
             feedback_authors.extend(feedback_people(&arrived, linewright));
             threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
-            let followup = prompts::late_feedback(&pr_now, &arrived);
+            let followup = prompts::late_feedback(&shell.briefs.prompts, &pr_now, &arrived);
             let step = Step::Resume {
                 session: turn.session.clone(),
                 prompt: followup,
@@ -1495,11 +1529,11 @@ pub(crate) async fn workflow(
     let session = async {
         let purpose = Purpose::Workflow(workflow.name.clone());
         let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-        let prompt = prompts::workflow(&shell.briefs, &shell.repo(), workflow);
+        let prompt = prompts::workflow(&shell.briefs.prompts, &shell.repo(), workflow);
         let timeout = workflow.timeout.unwrap_or(shell.session_timeout);
         let mut spec = session_spec(shell, &ctx, purpose, &ws, prompt, timeout)?;
         let (result, _) = converse(shell, &ctx, &mut spec, Step::Start, |message| async move {
-            results::parse(&message).map_err(parse_retry)
+            results::parse(&message).map_err(parse_retry(shell))
         })
         .await?;
         record_workflow(shell, workflow, &result)

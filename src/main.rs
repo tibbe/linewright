@@ -478,11 +478,13 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             case: case_dir,
             out,
         } => {
+            let briefs = briefs(&config)?;
             let bash = require_bash()?;
             require_tool(RUNTIME).await?;
             let sessions = SessionCredentials::new(SessionToken::Withheld);
             let runtime = runtime(&config, bash, &sessions);
-            let factory_config = factory_config(&config, out.clone(), OnUsageLimit::End, sessions)?;
+            let factory_config =
+                factory_config(&config, briefs, out.clone(), OnUsageLimit::End, sessions)?;
             case::replay(
                 &case_dir,
                 &out,
@@ -590,16 +592,21 @@ fn runtime(config: &Config, bash: PathBuf, sessions: &SessionCredentials) -> Cla
     }
 }
 
+/// Read before anything else at startup, so a mistake in them is found at once.
+fn briefs(config: &Config) -> Result<Briefs> {
+    match &config.briefs {
+        Some(dir) => Briefs::load(dir),
+        None => Ok(Briefs::shipped()),
+    }
+}
+
 fn factory_config(
     config: &Config,
+    briefs: Briefs,
     work_dir: std::path::PathBuf,
     on_usage_limit: OnUsageLimit,
     sessions: SessionCredentials,
 ) -> Result<FactoryConfig> {
-    let briefs = match &config.briefs {
-        Some(dir) => Briefs::load(dir)?,
-        None => Briefs::shipped(),
-    };
     Ok(FactoryConfig {
         spec_glob: config.spec_glob.clone(),
         spec_lookback: config.spec_lookback,
@@ -628,6 +635,7 @@ enum OnUsageLimit {
 }
 
 async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory> {
+    let briefs = briefs(config)?;
     require_tool("git").await?;
     let bash = require_bash()?;
     require_tool(RUNTIME).await?;
@@ -638,8 +646,13 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
     ));
     let runtime = runtime(config, bash, &sessions);
     let github = connect(config, token).await?;
-    let factory_config =
-        factory_config(config, work_dir(config, &github), on_usage_limit, sessions)?;
+    let factory_config = factory_config(
+        config,
+        briefs,
+        work_dir(config, &github),
+        on_usage_limit,
+        sessions,
+    )?;
     Factory::start(
         Arc::new(github),
         Arc::new(runtime),

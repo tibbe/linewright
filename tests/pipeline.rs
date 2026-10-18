@@ -158,7 +158,7 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
         seen.lock().unwrap().clone(),
         Some((
             "linewright".to_string(),
-            include_str!("../briefs/skills/code-review/SKILL.md").to_string()
+            include_str!("../briefs/plugin/skills/code-review/SKILL.md").to_string()
         ))
     );
 }
@@ -3415,11 +3415,11 @@ fn told_to_finish(world: &World, kind: WorkKind) -> Vec<&'static str> {
         .iter()
         .filter_map(|prompt| {
             if prompt.contains("A rebase onto `origin/main` stopped on conflicts in")
-                && prompt.contains("finish with `GIT_EDITOR=true git rebase --continue`")
+                && prompt.contains("with `GIT_EDITOR=true git rebase --continue`")
             {
                 Some("rebase")
             } else if prompt.contains("A merge of `origin/main` stopped on conflicts in")
-                && prompt.contains("finish with `git commit`")
+                && prompt.contains("with `git commit`")
             {
                 Some("merge")
             } else {
@@ -3427,6 +3427,30 @@ fn told_to_finish(world: &World, kind: WorkKind) -> Vec<&'static str> {
             }
         })
         .collect()
+}
+
+#[tokio::test]
+async fn an_operators_prompt_is_the_one_the_session_gets() {
+    let briefs = briefs_with("update.md", |text| {
+        format!("Use the repository's own skill.\n\n{text}")
+    });
+    let (mut world, _) = moved_past_with(
+        Repository::default(),
+        |config| config.briefs = linewright::briefs::Briefs::load(briefs.path()).unwrap(),
+        true,
+    )
+    .await;
+
+    world.poll().await;
+
+    let prompts = world.runtime.prompts(WorkKind::Update);
+    assert_eq!(prompts.len(), 1);
+    assert!(
+        prompts[0].starts_with("Use the repository's own skill.\n\n"),
+        "{}",
+        prompts[0]
+    );
+    assert_eq!(told_to_finish(&world, WorkKind::Update), ["rebase"]);
 }
 
 #[tokio::test]

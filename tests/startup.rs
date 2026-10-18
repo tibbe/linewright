@@ -447,3 +447,49 @@ fn without_a_separate_token_or_with_an_empty_one_sessions_are_given_linewrights(
     assert_eq!(unset.given(), Some("linewright-token"));
     assert_eq!(empty.given(), Some("linewright-token"));
 }
+
+#[test]
+fn a_prompt_with_a_placeholder_linewright_does_not_fill_is_an_error_naming_it() {
+    let briefs = briefs_with("update.md", |text| text.replace("{{ticket}}", "{{tikcet}}"));
+
+    let (succeeded, error) = lw(
+        std::path::Path::new(""),
+        &[
+            "--repo",
+            "owner/name",
+            "--briefs",
+            briefs.path().to_str().unwrap(),
+            "once",
+        ],
+        &[],
+    );
+
+    assert!(!succeeded, "{error}");
+    assert!(
+        error.contains("reading the prompt update.md: it has unknown placeholders: `{{tikcet}}`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
+    let briefs = briefs_with("triage.md", |text| text.replace("{{issue}}", ""));
+
+    let (succeeded, error) = lw(
+        std::path::Path::new(""),
+        &[
+            "--repo",
+            "owner/name",
+            "--briefs",
+            briefs.path().to_str().unwrap(),
+            "once",
+        ],
+        &[],
+    );
+
+    assert!(!succeeded, "{error}");
+    assert!(
+        error.contains("reading the prompt triage.md: it lacks the placeholders `{{issue}}`"),
+        "{error}"
+    );
+}

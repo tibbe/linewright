@@ -1,0 +1,1 @@
+**First, finish bringing the branch up to date.** A rebase onto `origin/{{default_branch}}` stopped on conflicts in {{files}}. Resolve them keeping both sides' intent, run the checks, and finish with `GIT_EDITOR=true git rebase --continue`, resolving any later commit it stops on the same way. Don't abort it.

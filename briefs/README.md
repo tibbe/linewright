@@ -1,10 +1,18 @@
 # Briefs
 
-A skill per stage and a brief for workflow runs, read at startup from the
-`briefs` setting (default: these, built into the binary). Each skill is a fork
-of a skill from [`mattpocock/skills`](https://github.com/mattpocock/skills)
-(commit `f3fc5632`), under its MIT license (`LICENSE`), made non-interactive
-for Linewright:
+What Linewright gives its agents, read at startup from the `briefs` setting
+(default: these, built into the binary):
+
+- `plugin/`: the skills, a Claude Code plugin given to every session;
+- `prompts/`: what Linewright sends a session, from its first message to the
+  follow-ups, each with the result contract Linewright parses.
+
+## `plugin/`
+
+A skill per stage. Each is a fork of a skill from
+[`mattpocock/skills`](https://github.com/mattpocock/skills) (commit
+`f3fc5632`), under its MIT license (`plugin/LICENSE`), made non-interactive for
+Linewright:
 
 - each decision the original puts to a person is made by an agent or handed
   back as an outcome, and judging an agent's own work, as review does, falls
@@ -13,11 +21,11 @@ for Linewright:
   (the JSON the session ends with), and what it needs from the tracker comes
   in the task Linewright gives it.
 
-This directory is a Claude Code plugin, `linewright`, and every session is given
-a copy of it. Each stage's session starts by invoking its skill, such as
-`/linewright:implement`, which calls `linewright:tdd`, `linewright:code-review`
-and `linewright:pr`. The namespace keeps them apart from the runtime's own
-skills and the repository's, which sessions can use too.
+The plugin is named `linewright`, and every session is given a copy of it. A
+prompt starts by invoking its stage's skill, such as `/linewright:implement`,
+which calls `linewright:tdd`, `linewright:code-review` and `linewright:pr`. The
+namespace keeps them apart from the runtime's own skills and the repository's,
+which sessions can use too.
 
 | file | forked from | used by |
 |---|---|---|
@@ -27,8 +35,28 @@ skills and the repository's, which sessions can use too.
 | `skills/tdd/` | `tdd` | called by `implement` |
 | `skills/code-review/` | `code-review` | called by `implement` |
 | `skills/pr/` | `pr` | the result's pull request title and body |
-| `workflow.md` | Linewright's own | workflow runs |
 
-Linewright gives each stage's skill the task (the issue, pull request or spec
-diff) and the result contract as its input, and appends them to the workflow
-brief, so a skill or brief says how to work, not what the result looks like.
+A skill says how to work, not what the result looks like: that is the prompt's.
+
+## `prompts/`
+
+Linewright's own. Each prompt is the session's first message as sent, with a
+`{{name}}` placeholder for each value Linewright fills in, such as the ticket or
+the default branch. The placeholders a prompt has are fixed: Linewright refuses
+to start with a prompt that lacks one or has one it doesn't know.
+
+| file | sent to |
+|---|---|
+| `triage.md` | triage |
+| `tickets.md` | tickets |
+| `implement.md` | implementation |
+| `rework.md` | rework |
+| `fix-ci.md` | CI fixes |
+| `update.md` | an update's conflict |
+| `workflow.md` | workflow runs |
+| `parts/` | filled into the prompts above, such as a conflict's instructions |
+| `follow-ups/` | a session sent back to work, such as for a result that doesn't parse |
+
+A placeholder alone on its line that is filled with nothing takes the line, and
+the blank line after it, with it. A prompt's line breaks are the session's, so
+the prompts are not wrapped.

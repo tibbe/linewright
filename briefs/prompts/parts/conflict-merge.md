@@ -1,0 +1,1 @@
+**First, finish bringing the branch up to date.** A merge of `origin/{{default_branch}}` stopped on conflicts in {{files}}. Resolve them keeping both sides' intent, run the checks, and finish with `git commit`. Don't abort it.
