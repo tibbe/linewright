@@ -32,6 +32,12 @@ fn runtime_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
     }
 }
 
+/// Waits until the session whose record is `record` has streamed `text`.
+async fn until_said(record: &Path, text: &str) {
+    let output = record.join(linewright::transcript::OUTPUT);
+    eventually(|| std::fs::read_to_string(&output).is_ok_and(|output| output.contains(text))).await;
+}
+
 fn turn_args(dir: &Path) -> Vec<Vec<String>> {
     std::fs::read_to_string(dir.join("args.log"))
         .unwrap()
@@ -516,9 +522,14 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
         redaction: Redaction::default(),
     };
     let mut session = triage_session(dir.path());
-    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3600);
 
-    let error = runtime.start(&session).await.unwrap_err();
+    let turn = tokio::spawn(async move { runtime.start(&session).await });
+    // A session can take long to start on a loaded machine, so the deadline
+    // comes, with the clock paused, only once it has spoken.
+    until_said(dir.path(), "Still reading.").await;
+    tokio::time::pause();
+    let error = turn.await.unwrap().unwrap_err();
 
     let SessionError::TimedOut { log_tail } = error else {
         panic!("expected a timeout, got {error:?}");
@@ -621,11 +632,9 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
         redaction: Redaction::default(),
     };
     let spec = triage_session(dir.path());
-    let output = dir.path().join(linewright::transcript::OUTPUT);
 
     let turn = tokio::spawn(async move { runtime.start(&spec).await });
-    eventually(|| std::fs::read_to_string(&output).is_ok_and(|output| output.contains("Looking.")))
-        .await;
+    until_said(dir.path(), "Looking.").await;
     std::fs::write(&go, "").unwrap();
 
     assert_eq!(turn.await.unwrap().unwrap().message, "Done.");
