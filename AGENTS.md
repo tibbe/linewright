@@ -9,7 +9,8 @@ This project uses specification-driven development.
 - `docs/specs/product.md`: the product spec on one page: problem, principles and
   the list of areas.
 - The area files in `docs/specs/`, listed in `product.md`'s Areas table: one per
-  area of the product, with its user stories and decisions.
+  area of the product, with its user stories and, a section per topic, what
+  Linewright does in it.
 - `docs/specs/architecture.md`: the architecturally significant decisions, the
   ones costly to change later, e.g. languages and frameworks.
 - `GLOSSARY.md`: the vocabulary the specs and the code use, each term defined
