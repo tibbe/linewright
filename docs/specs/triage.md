@@ -21,43 +21,45 @@ brief an implementer works from.
 4. As an operator, I want duplicates and already-fixed issues flagged rather
    than closed, so that no reporter is turned away by a machine.
 
-## Decisions
+## Outcomes
 
-- The agent reads the issue and its comments, the codebase and the spec. It
-  categorizes, verifies the claim (reproduces a bug, runs the tests, checks
-  whether the behavior already exists) and ends in one of three states:
-  - `ready-for-agent`, with a **triage brief** comment: summary, current and
-    desired behavior, acceptance criteria, out of scope.
-  - `needs-info`, with a comment addressed to the reporter: what is
-    established, what is still needed.
-  - `ready-for-human`, with a recommendation: the questions a maintainer must
-    answer, or why the issue is not for an agent (duplicate, already
-    implemented, needs a spec change, should be rejected).
+The agent reads the issue and its comments, the codebase and the spec,
+categorizes, verifies the claim (reproduces a bug, runs the tests, checks
+whether the behavior already exists) and ends in one of three states.
 
-  Facts come before decisions: while the reporter still owes a fact, the
+| State             | Comment                                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ready-for-agent` | a triage brief: summary, current and desired behavior, acceptance criteria, out of scope                                                                                |
+| `needs-info`      | addressed to the reporter: what is established, what is still needed                                                                                                    |
+| `ready-for-human` | a recommendation: the questions a maintainer must answer, or why the issue is not for an agent (duplicate, already implemented, needs a spec change, should be rejected) |
+
+- **Facts before decisions.** While the reporter still owes a fact, the
   outcome is `needs-info`, asking only for it, even if a maintainer's
   decision will follow, because the decision usually depends on the facts.
-- The category is the repository's issue type (Bug, Feature, Task) where the
-  repository has issue types, and the `bug` or `enhancement` label otherwise.
-- Triage leaves issues open and repository files as they are.
+- **Category.** The category is the repository's issue type (Bug, Feature,
+  Task) where the repository has issue types, and the `bug` or `enhancement`
+  label otherwise.
+- **Left as they are.** Triage leaves issues open and repository files as
+  they are.
 
-### Answers
+## Answers
 
 The label says who must answer, and how.
 
-- `needs-info`: the reporter answers in the thread. Linewright assigns the
-  people it asks, those GitHub lets it assign, and names them all in the
+- **`needs-info`.** The reporter answers in the thread. Linewright assigns
+  the people it asks, those GitHub lets it assign, and names them all in the
   comment. A reply, a comment from anyone other than Linewright posted after
   its question, puts the issue back to `needs-triage`.
-- `ready-for-human`: the maintainer answers with a label, `ready-for-agent`
-  to implement as decided or `needs-triage` to triage again.
+- **`ready-for-human`.** The maintainer answers with a label,
+  `ready-for-agent` to implement as decided or `needs-triage` to triage
+  again.
 
 The `triage` states of the issue lifecycle; both are labels.
 
-```mermaid
-stateDiagram-v2
-    [*] --> needs_triage
-    needs_triage --> needs_info: reporter owes a fact
-    needs_info --> needs_triage: a person comments
-    needs_triage --> [*]: ready-for-agent or ready-for-human
-```
+| State          | Event                                | Next              | Effect |
+| -------------- | ------------------------------------ | ----------------- | ------ |
+| —              | `needs-triage` applied               | `needs-triage`    |        |
+| `needs-triage` | reporter owes a fact                 | `needs-info`      |        |
+| `needs-info`   | a person comments                    | `needs-triage`    |        |
+| `needs-triage` | triage ends in `ready-for-agent`     | `ready-for-agent` |        |
+| `needs-triage` | triage ends in `ready-for-human`     | `ready-for-human` |        |
