@@ -350,6 +350,26 @@ fn a_replayed_session_runs_its_commands_in_bash_whatever_the_operators_shell() {
     );
 }
 
+#[test]
+fn a_replayed_session_cannot_update_the_harness_whatever_session_env_passes() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let bin = replay_with_fake_claude(
+        dir.path(),
+        &[
+            ("DISABLE_UPDATES", "0"),
+            ("LINEWRIGHT_SESSION_ENV", "DISABLE_UPDATES"),
+        ],
+    );
+
+    let env = std::fs::read_to_string(bin.join("env.log")).unwrap();
+    let values: Vec<&str> = env
+        .lines()
+        .filter(|line| line.starts_with("DISABLE_UPDATES="))
+        .collect();
+    assert_eq!(values, ["DISABLE_UPDATES=1"], "{env}");
+}
+
 #[tokio::test]
 async fn a_replay_runs_no_automations() {
     let dir = tempfile::tempdir().unwrap();

@@ -40,7 +40,6 @@ apt-get install -y --no-install-recommends \
   "claude-code=${CLAUDE_CODE_VERSION}-1" "gh=${GH_VERSION}"
 rm -rf /var/lib/apt/lists/*
 EOF
-ENV DISABLE_AUTOUPDATER=1
 ARG LINEWRIGHT_UID=1000 LINEWRIGHT_GID=1000
 RUN (getent group "$LINEWRIGHT_GID" >/dev/null || groupadd --gid "$LINEWRIGHT_GID" linewright) \
     && useradd --uid "$LINEWRIGHT_UID" --gid "$LINEWRIGHT_GID" \

@@ -152,6 +152,7 @@ fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_g
             ("GH_TOKEN", "linewright-token"),
             ("MY_SECRET", "hunter2"),
             ("LC_ALL", "C"),
+            ("DISABLE_UPDATES", "0"),
             // Fails the connection to GitHub at once, after the log.
             ("HTTPS_PROXY", "http://127.0.0.1:1"),
         ],
@@ -165,6 +166,8 @@ fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_g
     let withheld: Vec<&str> = withheld.split(' ').collect();
     assert!(withheld.contains(&"MY_SECRET"), "{log}");
     assert!(!withheld.contains(&"LC_ALL"), "{log}");
+    // Linewright sets it for every session.
+    assert!(!withheld.contains(&"DISABLE_UPDATES"), "{log}");
     // The session is given Linewright's token.
     assert!(!withheld.contains(&"GH_TOKEN"), "{log}");
     assert!(!log.contains("hunter2"), "{log}");

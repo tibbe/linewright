@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -31,6 +32,31 @@ pub struct ClaudeCode {
 const TEMPORARY_DIRECTORY: &str = "TMPDIR";
 /// Docs: <https://code.claude.com/docs/en/settings#environment-variables>.
 const SHELL: &str = "CLAUDE_CODE_SHELL";
+/// Unlike `DISABLE_AUTOUPDATER`, also blocks `claude update`. Docs:
+/// <https://code.claude.com/docs/en/env-vars>.
+const NO_UPDATES: &str = "DISABLE_UPDATES";
+
+/// What Linewright sets for a session, over any variable of the same name
+/// `environment` gives it.
+fn set_for_session<'a>(
+    scratch: &'a Path,
+    bash: &'a Path,
+    github_token: Option<&'a str>,
+) -> Vec<(&'static str, &'a OsStr)> {
+    let mut variables = vec![
+        (TEMPORARY_DIRECTORY, scratch.as_os_str()),
+        // Claude Code otherwise picks the operator's `$SHELL`. It still
+        // sources the host's `~/.bashrc`, if there is one, and has no
+        // switch to stop that, so a session is not insulated from it.
+        (SHELL, bash.as_os_str()),
+        // Every session runs the Claude Code the operator installed.
+        (NO_UPDATES, OsStr::new("1")),
+    ];
+    if let Some(token) = github_token {
+        variables.extend(TOKEN_VARIABLES.map(|variable| (variable, OsStr::new(token))));
+    }
+    variables
+}
 
 /// <https://code.claude.com/docs/en/headless#get-structured-output>
 #[derive(Deserialize)]
@@ -208,11 +234,10 @@ impl Log {
 impl ClaudeCode {
     /// The variables Linewright sets for a session given `github_token`.
     pub fn variables_set_for_sessions(github_token: Option<&str>) -> Vec<&'static str> {
-        let mut names = vec![TEMPORARY_DIRECTORY, SHELL];
-        if github_token.is_some() {
-            names.extend(TOKEN_VARIABLES);
-        }
-        names
+        set_for_session(Path::new(""), Path::new(""), github_token)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
     }
 
     /// Each line is redacted as it comes, and what the turn answers once
@@ -255,22 +280,17 @@ impl ClaudeCode {
             .current_dir(&spec.dir)
             .env_clear()
             .envs(self.environment.iter())
-            .env(TEMPORARY_DIRECTORY, &spec.scratch)
-            // Claude Code otherwise picks the operator's `$SHELL`. It still
-            // sources the host's `~/.bashrc`, if there is one, and has no
-            // switch to stop that, so a session is not insulated from it.
-            .env(SHELL, &self.bash)
+            .envs(set_for_session(
+                &spec.scratch,
+                &self.bash,
+                self.github_token.as_deref(),
+            ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         if let Some(model) = &self.model {
             command.args(["--model", model]);
-        }
-        if let Some(token) = &self.github_token {
-            for variable in TOKEN_VARIABLES {
-                command.env(variable, token);
-            }
         }
         let mut child = command
             .spawn()

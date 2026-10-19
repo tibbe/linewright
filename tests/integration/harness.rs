@@ -198,6 +198,7 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() 
             "CARGO_TARGET_DIR",
             "CLAUDE_CODE_SHELL",
             "CLAUDE_CONFIG_DIR",
+            "DISABLE_UPDATES",
             "HOME",
             "LC_ALL",
             "LC_TIME",
@@ -213,6 +214,7 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() 
         env.contains(&format!("TMPDIR={}\n", dir.path().join("tmp").display())),
         "{env}"
     );
+    assert!(env.contains("DISABLE_UPDATES=1\n"), "{env}");
 }
 
 #[tokio::test]
