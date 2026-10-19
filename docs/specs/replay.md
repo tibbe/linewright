@@ -21,31 +21,42 @@ what the factory makes of it now, until it does better.
 4. As an operator, I want to edit the briefs between runs without rebuilding
    Linewright, so that iterating is editing a file.
 
-## Decisions
+## Cases
 
-- A **case** is a directory holding the repository at a commit and the
-  event: a spec change (the PR's title, body and the commits it merged) or an
-  issue (its text and comments). `lw capture <repo>#<N> DIR` writes
-  one from GitHub; run on the factory's machine it includes the transcripts of
-  the sessions that handled it.
-- `lw replay CASE --out DIR` runs the pipeline end to end against a
-  **local store** seeded from the case: the same reconcile loop as `serve`, run
-  until nothing is left to do rather than on a timer, ending when every ticket's
-  pull request is ready for review (with `--auto-merge`, merged) or the ticket
-  or its pull request is handed back. The local store has no branch rules, so
-  with `--auto-merge` every green pull request merges and the tickets it blocked
-  run in turn. The implementer's own run of the repository's checks stands in
-  for CI.
-- The output directory holds everything the replay produced, as plain files a
-  coding agent reads directly.
-- Replay runs the whole pipeline; what a stage did is read from its transcript.
-- Agents see only the case: a session reads issues, comments and spec diffs
-  from its brief and hands back tickets, comments and PR bodies in its
-  result, and the manager alone writes to the store. In replay agents get no
-  GitHub credentials, so a session reads no newer state than the case and
-  cannot touch the repository. Workflows, whose agents read GitHub, are not
-  captured or replayed.
-- Briefs are files Linewright reads at startup from the `briefs` directory
-  setting, so a change needs no rebuild.
-- Linewright keeps every run's transcripts (see [Runs](runs.md)), so a case
-  can be captured with its transcripts later.
+A case is a directory holding the repository at a commit and the event: a
+spec change (the PR's title, body and the commits it merged) or an issue (its
+text and comments).
+
+- **Capturing.** `lw capture <repo>#<N> DIR` writes one from GitHub; run on
+  the factory's machine it includes the transcripts of the sessions that
+  handled it.
+- **Transcripts.** Linewright keeps every run's transcripts (see
+  [Runs](runs.md)), so a case can be captured with its transcripts later.
+
+## Replaying
+
+`lw replay CASE --out DIR` runs the pipeline end to end against a local store
+seeded from the case.
+
+- **The loop.** The same reconcile loop as `serve`, run until nothing is left
+  to do rather than on a timer, ending when every ticket's pull request is
+  ready for review (with `--auto-merge`, merged) or the ticket or its pull
+  request is handed back.
+- **Merging.** The local store has no branch rules, so with `--auto-merge`
+  every green pull request merges and the tickets it blocked run in turn.
+- **CI.** The implementer's own run of the repository's checks stands in for
+  CI.
+- **The output.** The output directory holds everything the replay produced,
+  as plain files a coding agent reads directly. Replay runs the whole
+  pipeline; what a stage did is read from its transcript.
+- **What agents see.** Agents see only the case: a session reads issues,
+  comments and spec diffs from its brief and hands back tickets, comments and
+  PR bodies in its result, and the manager alone writes to the store. In
+  replay agents get no GitHub credentials, so a session reads no newer state
+  than the case and cannot touch the repository. Workflows, whose agents read
+  GitHub, are not captured or replayed.
+
+## Briefs
+
+Briefs are files Linewright reads at startup from the `briefs` directory
+setting, so a change needs no rebuild.
