@@ -7,6 +7,7 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::automation::Automation;
 use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::credentials::{Credentials, Held};
@@ -20,8 +21,8 @@ use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
 use crate::results::{
-    self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
-    WorkflowIssueLabel, WorkflowResult,
+    self, AutomationIssueLabel, AutomationResult, ImplementResult, PullWorkResult, SpecGap,
+    Tickets, TriageOutcome, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs};
 use crate::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
@@ -32,7 +33,6 @@ use crate::store::{
 };
 use crate::tracking;
 use crate::transcript;
-use crate::workflow::Workflow;
 
 pub(crate) struct Shell {
     pub store: Arc<dyn Store>,
@@ -545,7 +545,7 @@ pub fn subject_name(subject: Subject) -> String {
 pub fn purpose_name(purpose: &Purpose) -> String {
     match purpose {
         Purpose::Work { subject, .. } => subject_name(*subject),
-        Purpose::Workflow(name) => format!("workflow-{name}"),
+        Purpose::Automation(name) => format!("workflow-{name}"),
     }
 }
 
@@ -554,7 +554,7 @@ pub fn purpose_name(purpose: &Purpose) -> String {
 fn timeout_setting(purpose: &Purpose) -> &'static str {
     match purpose {
         Purpose::Work { .. } => "`session-timeout`",
-        Purpose::Workflow(_) => "the workflow's `timeout`",
+        Purpose::Automation(_) => "the workflow's `timeout`",
     }
 }
 
@@ -565,7 +565,7 @@ fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBu
         .map_err(infra)?;
     let kind = match purpose {
         Purpose::Work { kind, .. } => kind.name(),
-        Purpose::Workflow(_) => "workflow",
+        Purpose::Automation(_) => "workflow",
     };
     let base = format!("{}-{kind}", now.format("%Y%m%dT%H%M%SZ"));
     for n in 1.. {
@@ -1682,18 +1682,18 @@ async fn record_pull_work(
     Ok(())
 }
 
-pub(crate) enum WorkflowEnd {
-    Finished(WorkflowResult),
+pub(crate) enum AutomationEnd {
+    Finished(AutomationResult),
     UsageLimit(UsageLimit),
 }
 
-/// A workflow run has no issue to hand back, so a run that fails is an error.
-pub(crate) async fn workflow(
+/// An automation run has no issue to hand back, so a run that fails is an error.
+pub(crate) async fn automation(
     shell: &Shell,
-    workflow: &Workflow,
+    automation: &Automation,
     run: Running,
     cancel: CancellationToken,
-) -> Result<WorkflowEnd> {
+) -> Result<AutomationEnd> {
     let ctx = Ctx {
         as_of: shell.clock.now(),
         reworked: None,
@@ -1701,16 +1701,16 @@ pub(crate) async fn workflow(
         run,
     };
     let session = async {
-        let purpose = Purpose::Workflow(workflow.name.clone());
+        let purpose = Purpose::Automation(automation.name.clone());
         let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-        let prompt = prompts::workflow(&shell.briefs.prompts, &shell.repo(), workflow);
-        let timeout = workflow.timeout.unwrap_or(shell.session_timeout);
+        let prompt = prompts::automation(&shell.briefs.prompts, &shell.repo(), automation);
+        let timeout = automation.timeout.unwrap_or(shell.session_timeout);
         let mut spec = session_spec(shell, &ctx, purpose, &ws, prompt, timeout)?;
         let (result, _) = converse(shell, &ctx, &mut spec, Step::Start, |message| async move {
             results::parse(&message).map_err(parse_retry(shell))
         })
         .await?;
-        record_workflow(shell, workflow, &result)
+        record_automation(shell, automation, &result)
             .await
             .map_err(apply)?;
         Ok(result)
@@ -1726,8 +1726,8 @@ pub(crate) async fn workflow(
     };
     ctx.run.end(shell.clock.now(), ending);
     match ended {
-        Ok(result) => Ok(WorkflowEnd::Finished(result)),
-        Err(Failure::UsageLimit(limit)) => Ok(WorkflowEnd::UsageLimit(limit)),
+        Ok(result) => Ok(AutomationEnd::Finished(result)),
+        Err(Failure::UsageLimit(limit)) => Ok(AutomationEnd::UsageLimit(limit)),
         Err(Failure::Infrastructure { error: e, .. } | Failure::Apply { error: e, .. }) => Err(e),
         Err(Failure::HandBack { reason, log_tail }) => Err(
             match log_tail.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
@@ -1739,17 +1739,17 @@ pub(crate) async fn workflow(
     }
 }
 
-async fn record_workflow(
+async fn record_automation(
     shell: &Shell,
-    workflow: &Workflow,
-    result: &WorkflowResult,
+    automation: &Automation,
+    result: &AutomationResult,
 ) -> Result<()> {
-    let cap = (workflow.max_issues as usize).min(result.issues.len());
+    let cap = (automation.max_issues as usize).min(result.issues.len());
     let (filed, dropped) = result.issues.split_at(cap);
     for issue in filed {
         let state = match issue.label {
-            WorkflowIssueLabel::ReadyForAgent => label::READY_FOR_AGENT,
-            WorkflowIssueLabel::ReadyForHuman => label::READY_FOR_HUMAN,
+            AutomationIssueLabel::ReadyForAgent => label::READY_FOR_AGENT,
+            AutomationIssueLabel::ReadyForHuman => label::READY_FOR_HUMAN,
         };
         let number = shell
             .store
@@ -1757,7 +1757,7 @@ async fn record_workflow(
                 title: issue.title.clone(),
                 body: format!(
                     "{}\n\nFiled by the workflow `{}`.",
-                    issue.body, workflow.name
+                    issue.body, automation.name
                 ),
                 labels: [state.into()]
                     .into_iter()
@@ -1766,7 +1766,7 @@ async fn record_workflow(
             })
             .await?;
         info!(
-            workflow = %workflow.name,
+            workflow = %automation.name,
             issue = %number,
             title = issue.title,
             "workflow issue filed"
@@ -1774,8 +1774,8 @@ async fn record_workflow(
     }
     for issue in dropped {
         warn!(
-            workflow = %workflow.name,
-            max_issues = workflow.max_issues,
+            workflow = %automation.name,
+            max_issues = automation.max_issues,
             title = issue.title,
             "workflow issue dropped: the run returned more than max-issues"
         );

@@ -10,7 +10,7 @@ use linewright::api::{self, Api, EventId, RequestError, Resume, Served, Sources,
 use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
-use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, Since, WorkflowCommand};
+use linewright::config::{AutomationCommand, Cli, Command, Config, LogFormat, ResolveError, Since};
 use linewright::credentials::Credentials;
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
@@ -453,12 +453,12 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             factory.settle().await;
             Ok(())
         }
-        Command::Workflow {
-            command: WorkflowCommand::Run { name },
+        Command::Automation {
+            command: AutomationCommand::Run { name },
         } => {
             start(&config, OnUsageLimit::End)
                 .await?
-                .run_workflow(&name)
+                .run_automation(&name)
                 .await
         }
         Command::Capture { target, dir } => {
@@ -626,7 +626,7 @@ fn factory_config(
         require_label: config.require_label.clone(),
         briefs,
         work_dir,
-        schedule_workflows: true,
+        schedule_automations: true,
         waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
         session_token: sessions.token,
         credentials: sessions.credentials,

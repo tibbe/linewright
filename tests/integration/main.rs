@@ -1,3 +1,6 @@
+mod automation_file;
+mod automation_run;
+mod automation_schedule;
 mod committed_credentials;
 mod common;
 mod config;
@@ -22,6 +25,3 @@ mod transcript;
 mod usage_limit;
 mod views;
 mod webhook;
-mod workflow_file;
-mod workflow_run;
-mod workflow_schedule;

@@ -9,7 +9,7 @@ use serde_json::json;
 /// Ticks on the hour; the fake clock starts at 12:00.
 const HOURLY: &str = "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n";
 
-async fn add_workflow(world: &World, name: &str, text: &str) {
+async fn add_automation(world: &World, name: &str, text: &str) {
     world
         .store
         .commit(
@@ -38,36 +38,36 @@ async fn restart(world: &mut World) {
 }
 
 #[tokio::test]
-async fn a_workflow_runs_on_the_first_poll_after_its_schedule_ticks() {
+async fn a_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
     let mut world = World::new().await;
-    add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| Ok(finished()));
+    add_automation(&world, "hourly", HOURLY).await;
+    world.runtime.on_automation(|_| Ok(finished()));
     world.poll().await;
 
     world.clock.advance(TimeDelta::hours(1));
     world.poll().await;
 
-    let prompts = world.runtime.workflow_prompts();
+    let prompts = world.runtime.automation_prompts();
     assert_eq!(prompts.len(), 1);
     assert!(prompts[0].contains("Look around."), "{}", prompts[0]);
 }
 
 #[tokio::test]
-async fn a_workflow_seen_for_the_first_time_does_not_run() {
+async fn a_automation_seen_for_the_first_time_does_not_run() {
     let mut world = World::new().await;
-    add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| Ok(finished()));
+    add_automation(&world, "hourly", HOURLY).await;
+    world.runtime.on_automation(|_| Ok(finished()));
 
     world.poll().await;
 
-    assert_eq!(world.runtime.workflow_prompts(), Vec::<String>::new());
+    assert_eq!(world.runtime.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
 async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_starts() {
     let mut world = World::new().await;
-    add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| Ok(finished()));
+    add_automation(&world, "hourly", HOURLY).await;
+    world.runtime.on_automation(|_| Ok(finished()));
     world.poll().await;
 
     let record = world.dir.path().join("work/workflow-runs.json");
@@ -77,35 +77,35 @@ async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_star
     world.poll().await;
     world.poll().await;
 
-    assert_eq!(world.runtime.workflow_prompts().len(), 1);
+    assert_eq!(world.runtime.automation_prompts().len(), 1);
 }
 
 #[tokio::test]
-async fn a_workflow_file_that_does_not_parse_is_skipped_and_the_others_still_run() {
+async fn a_automation_file_that_does_not_parse_is_skipped_and_the_others_still_run() {
     let mut world = World::new().await;
-    add_workflow(
+    add_automation(
         &world,
         "broken",
         "---\non:\n  schedule: \"every hour\"\n---\nLook.\n",
     )
     .await;
-    add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| Ok(finished()));
+    add_automation(&world, "hourly", HOURLY).await;
+    world.runtime.on_automation(|_| Ok(finished()));
     world.poll().await;
 
     world.clock.advance(TimeDelta::hours(1));
     world.poll().await;
 
-    let prompts = world.runtime.workflow_prompts();
+    let prompts = world.runtime.automation_prompts();
     assert_eq!(prompts.len(), 1);
     assert!(prompts[0].contains("Look around."), "{}", prompts[0]);
 }
 
 #[tokio::test]
-async fn a_workflow_run_waits_for_room_under_the_ceiling_beside_the_pipelines_runs() {
+async fn a_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines_runs() {
     let mut world = World::with(|config| config.max_runs = 1).await;
-    add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| Ok(finished()));
+    add_automation(&world, "hourly", HOURLY).await;
+    world.runtime.on_automation(|_| Ok(finished()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
     world.store.open_issue(
@@ -124,28 +124,28 @@ async fn a_workflow_run_waits_for_room_under_the_ceiling_beside_the_pipelines_ru
     });
 
     world.poll().await;
-    let while_implementing = world.runtime.workflow_prompts().len();
+    let while_implementing = world.runtime.automation_prompts().len();
     world.poll().await;
 
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
     assert_eq!(while_implementing, 0);
-    assert_eq!(world.runtime.workflow_prompts().len(), 1);
+    assert_eq!(world.runtime.automation_prompts().len(), 1);
 }
 
 #[tokio::test]
-async fn running_a_workflow_by_hand_leaves_its_schedule_as_it_was() {
+async fn running_a_automation_by_hand_leaves_its_schedule_as_it_was() {
     let mut world = World::new().await;
-    add_workflow(&world, "hourly", HOURLY).await;
-    world.runtime.on_workflow(|_| Ok(finished()));
+    add_automation(&world, "hourly", HOURLY).await;
+    world.runtime.on_automation(|_| Ok(finished()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
 
     world
         .factory
-        .run_workflow(&"hourly".parse().unwrap())
+        .run_automation(&"hourly".parse().unwrap())
         .await
         .unwrap();
     world.poll().await;
 
-    assert_eq!(world.runtime.workflow_prompts().len(), 2);
+    assert_eq!(world.runtime.automation_prompts().len(), 2);
 }

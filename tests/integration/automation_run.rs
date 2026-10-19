@@ -3,7 +3,9 @@ use crate::common;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use clap::Parser;
 use common::*;
+use linewright::config::Cli;
 use linewright::reconcile::WorkKind;
 use linewright::runtime::SessionError;
 use serde_json::json;
@@ -17,7 +19,7 @@ max-issues: 3
 Look at the bugs fixed in the past week ...
 ";
 
-async fn with_workflow(name: &str, text: &str) -> World {
+async fn with_automation(name: &str, text: &str) -> World {
     let world = World::new().await;
     world
         .store
@@ -37,9 +39,10 @@ fn finished() -> String {
 }
 
 #[tokio::test]
-async fn a_workflow_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the_default_branch() {
-    let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|call| {
+async fn a_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the_default_branch()
+{
+    let world = with_automation("weekly", WEEKLY).await;
+    world.runtime.on_automation(|call| {
         assert!(
             call.spec
                 .dir
@@ -51,11 +54,11 @@ async fn a_workflow_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the
 
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
 
-    let prompts = world.runtime.workflow_prompts();
+    let prompts = world.runtime.automation_prompts();
     assert_eq!(prompts.len(), 1);
     assert!(
         prompts[0].contains("Look at the bugs fixed in the past week ..."),
@@ -65,9 +68,9 @@ async fn a_workflow_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the
 }
 
 #[tokio::test]
-async fn a_workflow_run_files_the_issues_its_result_returns_as_linewright() {
-    let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| {
+async fn a_automation_run_files_the_issues_its_result_returns_as_linewright() {
+    let world = with_automation("weekly", WEEKLY).await;
+    world.runtime.on_automation(|_| {
         Ok(json!({
             "summary": "One bug looks unfixed, one needs a decision.",
             "issues": [
@@ -79,7 +82,7 @@ async fn a_workflow_run_files_the_issues_its_result_returns_as_linewright() {
 
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
 
@@ -134,12 +137,12 @@ fn three_issues() -> String {
 
 #[tokio::test]
 async fn a_run_files_only_the_first_max_issues_issues() {
-    let world = with_workflow("weekly", CAPPED).await;
-    world.runtime.on_workflow(|_| Ok(three_issues()));
+    let world = with_automation("weekly", CAPPED).await;
+    world.runtime.on_automation(|_| Ok(three_issues()));
 
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
 
@@ -149,13 +152,13 @@ async fn a_run_files_only_the_first_max_issues_issues() {
 
 #[tokio::test]
 async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
-    let world = with_workflow("weekly", CAPPED).await;
-    world.runtime.on_workflow(|_| Ok(three_issues()));
+    let world = with_automation("weekly", CAPPED).await;
+    world.runtime.on_automation(|_| Ok(three_issues()));
     let (log, _guard) = Log::capture();
 
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
 
@@ -170,8 +173,8 @@ async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
 
 #[tokio::test]
 async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_the_error() {
-    let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|call| {
+    let world = with_automation("weekly", WEEKLY).await;
+    world.runtime.on_automation(|call| {
         let label = match call.followup {
             None => "bug",
             Some(_) => "ready-for-agent",
@@ -185,11 +188,11 @@ async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_
 
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
 
-    let prompts = world.runtime.workflow_prompts();
+    let prompts = world.runtime.automation_prompts();
     assert_eq!(prompts.len(), 2);
     assert!(
         prompts[1]
@@ -200,9 +203,9 @@ async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_
 }
 
 #[tokio::test]
-async fn a_ready_for_agent_workflow_issue_is_implemented_on_the_next_poll_without_triage() {
-    let mut world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| {
+async fn a_ready_for_agent_automation_issue_is_implemented_on_the_next_poll_without_triage() {
+    let mut world = with_automation("weekly", WEEKLY).await;
+    world.runtime.on_automation(|_| {
         Ok(json!({
             "summary": "One bug.",
             "issues": [{"title": "Fix it", "body": "It is broken.", "label": "ready-for-agent"}]
@@ -215,7 +218,7 @@ async fn a_ready_for_agent_workflow_issue_is_implemented_on_the_next_poll_withou
     });
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
     let issue = world.store.issues()[0].number;
@@ -236,16 +239,16 @@ async fn a_ready_for_agent_workflow_issue_is_implemented_on_the_next_poll_withou
 
 #[tokio::test]
 async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_open_ones() {
-    let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| Ok(finished()));
+    let world = with_automation("weekly", WEEKLY).await;
+    world.runtime.on_automation(|_| Ok(finished()));
 
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
 
-    let prompt = &world.runtime.workflow_prompts()[0];
+    let prompt = &world.runtime.automation_prompts()[0];
     assert!(
         prompt.contains(
             "Search the existing issues first, and don't return one that is already open."
@@ -255,13 +258,13 @@ async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_
 }
 
 #[tokio::test]
-async fn a_workflow_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
-    let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| Ok(finished()));
+async fn a_automation_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
+    let world = with_automation("weekly", WEEKLY).await;
+    world.runtime.on_automation(|_| Ok(finished()));
 
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
 
@@ -275,9 +278,9 @@ async fn a_workflow_runs_kept_its_brief_result_and_transcript_under_the_work_dir
 }
 
 async fn time_given(text: &str) -> Duration {
-    let world = with_workflow("weekly", text).await;
+    let world = with_automation("weekly", text).await;
     let left = Arc::new(Mutex::new(None));
-    world.runtime.on_workflow({
+    world.runtime.on_automation({
         let left = left.clone();
         move |call| {
             *left.lock().unwrap() = Some(call.spec.deadline - tokio::time::Instant::now());
@@ -286,14 +289,14 @@ async fn time_given(text: &str) -> Duration {
     });
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
     left.lock().unwrap().expect("the session ran")
 }
 
 #[tokio::test]
-async fn the_session_times_out_after_the_workflows_timeout() {
+async fn the_session_times_out_after_the_automations_timeout() {
     let left = time_given(WEEKLY).await;
 
     assert!(
@@ -314,25 +317,25 @@ async fn without_a_timeout_the_session_times_out_after_the_session_timeout() {
 }
 
 #[tokio::test]
-async fn an_unknown_workflow_fails_naming_its_file() {
-    let world = with_workflow("weekly", WEEKLY).await;
+async fn an_unknown_automation_fails_naming_its_file() {
+    let world = with_automation("weekly", WEEKLY).await;
 
     let error = format!(
         "{:#}",
         world
             .factory
-            .run_workflow(&"daily".parse().unwrap())
+            .run_automation(&"daily".parse().unwrap())
             .await
             .unwrap_err()
     );
 
     assert!(error.contains(".linewright/workflows/daily.md"), "{error}");
-    assert_eq!(world.runtime.workflow_prompts(), Vec::<String>::new());
+    assert_eq!(world.runtime.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
-async fn a_workflow_file_that_does_not_parse_fails_saying_why() {
-    let world = with_workflow(
+async fn a_automation_file_that_does_not_parse_fails_saying_why() {
+    let world = with_automation(
         "weekly",
         "---\non:\n  schedule: \"every monday\"\n---\nLook.\n",
     )
@@ -342,19 +345,19 @@ async fn a_workflow_file_that_does_not_parse_fails_saying_why() {
         "{:#}",
         world
             .factory
-            .run_workflow(&"weekly".parse().unwrap())
+            .run_automation(&"weekly".parse().unwrap())
             .await
             .unwrap_err()
     );
 
     assert!(error.contains("every monday"), "{error}");
-    assert_eq!(world.runtime.workflow_prompts(), Vec::<String>::new());
+    assert_eq!(world.runtime.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
 async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_out() {
-    let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| {
+    let world = with_automation("weekly", WEEKLY).await;
+    world.runtime.on_automation(|_| {
         Err(SessionError::TimedOut {
             log_tail: String::new(),
         })
@@ -364,7 +367,7 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
         "{:#}",
         world
             .factory
-            .run_workflow(&"weekly".parse().unwrap())
+            .run_automation(&"weekly".parse().unwrap())
             .await
             .unwrap_err()
     );
@@ -374,13 +377,13 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
         error.contains("or the workflow's `timeout` may need to be longer"),
         "{error}"
     );
-    assert_eq!(world.runtime.workflow_prompts().len(), 1);
+    assert_eq!(world.runtime.automation_prompts().len(), 1);
 }
 
 #[tokio::test]
 async fn a_session_that_fails_fails_the_run() {
-    let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| {
+    let world = with_automation("weekly", WEEKLY).await;
+    world.runtime.on_automation(|_| {
         Err(SessionError::Failed {
             reason: "it crashed".into(),
             log_tail: String::new(),
@@ -391,7 +394,7 @@ async fn a_session_that_fails_fails_the_run() {
         "{:#}",
         world
             .factory
-            .run_workflow(&"weekly".parse().unwrap())
+            .run_automation(&"weekly".parse().unwrap())
             .await
             .unwrap_err()
     );
@@ -401,20 +404,23 @@ async fn a_session_that_fails_fails_the_run() {
 
 #[tokio::test]
 async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
-    let world = with_workflow("weekly", WEEKLY).await;
+    let world = with_automation("weekly", WEEKLY).await;
     world
         .runtime
-        .on_workflow(|_| Ok("I looked; all is well.".into()));
+        .on_automation(|_| Ok("I looked; all is well.".into()));
 
-    let error = world.factory.run_workflow(&"weekly".parse().unwrap()).await;
+    let error = world
+        .factory
+        .run_automation(&"weekly".parse().unwrap())
+        .await;
 
     assert!(error.is_err());
     // The first answer and one follow-up, the test factory's `result-retries`.
-    assert_eq!(world.runtime.workflow_prompts().len(), 2);
+    assert_eq!(world.runtime.automation_prompts().len(), 2);
 }
 
 #[test]
-fn the_help_lists_workflow_run_name() {
+fn the_help_says_how_to_run_one_now() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .arg("--help")
         .output()
@@ -424,23 +430,31 @@ fn the_help_lists_workflow_run_name() {
     assert!(help.contains("`workflow run NAME`"), "{help}");
 }
 
+#[test]
+fn the_command_that_runs_one_now_keeps_its_name() {
+    assert!(Cli::try_parse_from(["lw", "workflow", "run", "weekly"]).is_ok());
+    assert!(Cli::try_parse_from(["lw", "automation", "run", "weekly"]).is_err());
+}
+
 #[tokio::test]
 async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
-    let world = with_workflow("weekly", WEEKLY).await;
-    world.runtime.on_workflow(|_| refused_for_the_usage_limit());
+    let world = with_automation("weekly", WEEKLY).await;
+    world
+        .runtime
+        .on_automation(|_| refused_for_the_usage_limit());
     let (log, _guard) = Log::capture();
 
     // A run that waited for the reset would never return: the fake clock
     // stands still.
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
 
     let ended = log.usage_limit_warnings();
     assert_eq!(ended.len(), 1, "{ended:?}");
     assert!(log.lines("ERROR").is_empty(), "{:?}", log.lines("ERROR"));
-    assert_eq!(world.runtime.workflow_prompts().len(), 1, "not retried");
+    assert_eq!(world.runtime.automation_prompts().len(), 1, "not retried");
     assert_eq!(world.store.issues(), []);
 }

@@ -11,6 +11,7 @@ pub const VERSION_AND_COMMIT: &str = concat!(
 );
 
 pub mod api;
+pub mod automation;
 pub mod briefs;
 pub mod case;
 pub mod clock;
@@ -38,4 +39,3 @@ pub mod store;
 pub mod tracking;
 pub mod transcript;
 pub mod webhook;
-pub mod workflow;

@@ -101,14 +101,14 @@ type Script = Arc<dyn Fn(&Call) -> Result<String, SessionError> + Send + Sync>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ScriptKey {
     Work(WorkKind),
-    Workflow,
+    Automation,
 }
 
 impl ScriptKey {
     fn of(spec: &SessionSpec) -> ScriptKey {
         match spec.purpose {
             Purpose::Work { kind, .. } => ScriptKey::Work(kind),
-            Purpose::Workflow(_) => ScriptKey::Workflow,
+            Purpose::Automation(_) => ScriptKey::Automation,
         }
     }
 }
@@ -145,11 +145,11 @@ impl ScriptedRuntime {
         self.script(ScriptKey::Work(kind), script);
     }
 
-    pub fn on_workflow(
+    pub fn on_automation(
         &self,
         script: impl Fn(&Call) -> Result<String, SessionError> + Send + Sync + 'static,
     ) {
-        self.script(ScriptKey::Workflow, script);
+        self.script(ScriptKey::Automation, script);
     }
 
     fn script(
@@ -176,8 +176,8 @@ impl ScriptedRuntime {
         self.prompts_for(ScriptKey::Work(kind))
     }
 
-    pub fn workflow_prompts(&self) -> Vec<String> {
-        self.prompts_for(ScriptKey::Workflow)
+    pub fn automation_prompts(&self) -> Vec<String> {
+        self.prompts_for(ScriptKey::Automation)
     }
 
     fn prompts_for(&self, key: ScriptKey) -> Vec<String> {
@@ -448,7 +448,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         require_label: None,
         briefs: Briefs::shipped(),
         work_dir: work_dir.to_path_buf(),
-        schedule_workflows: true,
+        schedule_automations: true,
         waits_out_usage_limit: false,
         session_token: SessionToken::Withheld,
         credentials: Credentials::default(),

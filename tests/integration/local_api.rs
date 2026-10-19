@@ -163,7 +163,7 @@ async fn get(runtime_dir: &Path, host: &str, resource: &str) -> (u16, String) {
     (status, String::from_utf8(body.to_vec()).unwrap())
 }
 
-async fn with_ticket_and_workflow() -> World {
+async fn with_ticket_and_automation() -> World {
     let world = World::new().await;
     world.store.open_issue(
         "maintainer",
@@ -188,8 +188,8 @@ async fn with_ticket_and_workflow() -> World {
 }
 
 #[tokio::test]
-async fn status_shows_linewright_then_the_tracked_items_then_the_workflows() {
-    let answering = Answering::start(with_ticket_and_workflow().await, false).await;
+async fn status_shows_linewright_then_the_tracked_items_then_the_automations() {
+    let answering = Answering::start(with_ticket_and_automation().await, false).await;
 
     let output = answering.lw(&["status"]).await;
 
@@ -225,7 +225,7 @@ async fn status_shows_linewright_then_the_tracked_items_then_the_workflows() {
 
 #[tokio::test]
 async fn status_to_a_pipe_is_not_coloured() {
-    let answering = Answering::start(with_ticket_and_workflow().await, false).await;
+    let answering = Answering::start(with_ticket_and_automation().await, false).await;
 
     let output = answering.lw(&["status"]).await;
 
@@ -235,7 +235,7 @@ async fn status_to_a_pipe_is_not_coloured() {
 
 #[tokio::test]
 async fn status_json_prints_the_api_answer_as_it_is() {
-    let answering = Answering::start(with_ticket_and_workflow().await, false).await;
+    let answering = Answering::start(with_ticket_and_automation().await, false).await;
     let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/status").await;
 
     let output = answering.lw(&["status", "--json"]).await;
@@ -585,7 +585,7 @@ async fn a_resource_serve_does_not_have_is_an_error_not_a_missing_item() {
 
 #[tokio::test]
 async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewright_waits_for() {
-    let answering = Answering::start(with_ticket_and_workflow().await, false).await;
+    let answering = Answering::start(with_ticket_and_automation().await, false).await;
 
     let output = answering.lw(&["explain", "1"]).await;
 
@@ -610,7 +610,7 @@ async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewr
 
 #[tokio::test]
 async fn explain_json_prints_the_api_answer_as_it_is() {
-    let answering = Answering::start(with_ticket_and_workflow().await, false).await;
+    let answering = Answering::start(with_ticket_and_automation().await, false).await;
     let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/items/1").await;
 
     let output = answering.lw(&["explain", "1", "--json"]).await;
@@ -629,7 +629,7 @@ async fn explain_json_prints_the_api_answer_as_it_is() {
 
 #[tokio::test]
 async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_now() {
-    let world = with_ticket_and_workflow().await;
+    let world = with_ticket_and_automation().await;
     let closed = world
         .store
         .open_issue("maintainer", "Old idea", "Maybe.", &["ready-for-agent"]);

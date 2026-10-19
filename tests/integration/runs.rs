@@ -157,7 +157,7 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
 }
 
 #[tokio::test]
-async fn a_workflows_runs_are_numbered_under_its_name_with_their_outcomes() {
+async fn a_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
     let (world, work_dir) = world().await;
     world
         .store
@@ -175,12 +175,12 @@ async fn a_workflows_runs_are_numbered_under_its_name_with_their_outcomes() {
     let weekly = "weekly".parse().unwrap();
     world
         .runtime
-        .on_workflow(|_| Ok(json!({"summary": "Nothing to do.", "issues": []}).to_string()));
-    world.factory.run_workflow(&weekly).await.unwrap();
+        .on_automation(|_| Ok(json!({"summary": "Nothing to do.", "issues": []}).to_string()));
+    world.factory.run_automation(&weekly).await.unwrap();
     world
         .runtime
-        .on_workflow(|_| Ok(json!({"not": "a result"}).to_string()));
-    assert!(world.factory.run_workflow(&weekly).await.is_err());
+        .on_automation(|_| Ok(json!({"not": "a result"}).to_string()));
+    assert!(world.factory.run_automation(&weekly).await.is_err());
 
     let output = lw(work_dir.path(), &["runs"]).await;
 
@@ -456,8 +456,8 @@ fn work(item: u64, stage: WorkKind, n: u32, start: &str) -> Recorded {
 fn weekly(n: u32, start: &str) -> Recorded {
     Recorded {
         id: RunId {
-            of: RunOf::Workflow {
-                workflow: "weekly".parse().unwrap(),
+            of: RunOf::Automation {
+                automation: "weekly".parse().unwrap(),
             },
             n,
         },

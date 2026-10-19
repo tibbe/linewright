@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::api::Served;
+use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastRuns};
 use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::credentials::Credentials;
@@ -20,10 +21,10 @@ use crate::domain::{
 };
 use crate::holds::Holds;
 use crate::reconcile::{
-    Action, DoneRun, FailedMerge, LiveRun, Memory, Policy, Subject, Work, WorkKind, Workflows,
+    Action, Automations, DoneRun, FailedMerge, LiveRun, Memory, Policy, Subject, Work, WorkKind,
     hold_note, reconcile,
 };
-use crate::run::{self, Shell, WorkflowEnd};
+use crate::run::{self, AutomationEnd, Shell};
 use crate::runs::{self, Recorded, RunOf, Runs, Watched};
 use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
@@ -31,7 +32,6 @@ use crate::status::{Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::store::{CloseReason, IssueRead, Store};
 use crate::webhook::{self, Pending};
-use crate::workflow::{self, LastRuns, Workflow, WorkflowFiles, WorkflowName};
 
 #[derive(Clone, Debug)]
 pub struct FactoryConfig {
@@ -51,7 +51,7 @@ pub struct FactoryConfig {
     pub require_label: Option<String>,
     pub briefs: Briefs,
     pub work_dir: PathBuf,
-    pub schedule_workflows: bool,
+    pub schedule_automations: bool,
     pub waits_out_usage_limit: bool,
     pub session_token: SessionToken,
     /// Linewright's credentials, refused in the commits a session's result
@@ -102,7 +102,7 @@ impl std::fmt::Debug for SessionToken {
 
 enum Running {
     Work(LiveRun),
-    Workflow,
+    Automation,
 }
 
 struct LiveEntry {
@@ -117,9 +117,9 @@ pub struct Factory {
     refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
     live: HashMap<Id, LiveEntry>,
     stopping: CancellationToken,
-    schedule_workflows: bool,
+    schedule_automations: bool,
     last_runs: LastRuns,
-    workflow_files: WorkflowFiles,
+    automation_files: AutomationFiles,
     memory: Memory,
     holds_record: HoldsRecord,
     kept: Option<Kept>,
@@ -202,7 +202,7 @@ impl Factory {
             merge_method = %settings.merge_method,
             "started"
         );
-        let last_runs = if config.schedule_workflows {
+        let last_runs = if config.schedule_automations {
             LastRuns::load(&config.work_dir)
         } else {
             LastRuns::default()
@@ -251,9 +251,9 @@ impl Factory {
             refusals,
             live: HashMap::new(),
             stopping: CancellationToken::new(),
-            schedule_workflows: config.schedule_workflows,
+            schedule_automations: config.schedule_automations,
             last_runs,
-            workflow_files: WorkflowFiles::default(),
+            automation_files: AutomationFiles::default(),
             memory: Memory {
                 done_runs: done_runs(&runs),
                 held: held.unwrap_or_default(),
@@ -289,7 +289,7 @@ impl Factory {
             taken_at: now,
             read_at: HashMap::new(),
         };
-        let defined = self.workflows().await;
+        let defined = self.automations().await;
         Ok(self.reconcile(kept, defined, now).await)
     }
 
@@ -399,7 +399,7 @@ impl Factory {
             memory: self.memory.clone(),
             live,
             in_flight,
-            workflows: self.workflow_files.clone(),
+            automations: self.automation_files.clone(),
             last_runs: self.last_runs.clone(),
         })
     }
@@ -409,16 +409,16 @@ impl Factory {
             .values()
             .filter_map(|entry| match entry.running {
                 Running::Work(run) => Some(run),
-                Running::Workflow => None,
+                Running::Automation => None,
             })
             .collect()
     }
 
-    fn workflows_in_flight(&self) -> Vec<WorkflowName> {
+    fn automations_in_flight(&self) -> Vec<AutomationName> {
         self.live
             .values()
             .filter_map(|entry| match &entry.watched.id.of {
-                RunOf::Workflow { workflow } => Some(workflow.clone()),
+                RunOf::Automation { automation } => Some(automation.clone()),
                 RunOf::Work { .. } => None,
             })
             .collect()
@@ -427,7 +427,7 @@ impl Factory {
     async fn reconcile(
         &mut self,
         kept: Kept,
-        defined: Vec<Workflow>,
+        defined: Vec<Automation>,
         now: Timestamp,
     ) -> Vec<Action> {
         let kept = self.kept.insert(kept).clone();
@@ -436,10 +436,10 @@ impl Factory {
             info!(%resets_at, "usage limit reset; sessions start again");
         }
         let live = self.live_runs();
-        let workflows = Workflows {
+        let automations = Automations {
             defined,
             last_runs: self.last_runs.clone(),
-            in_flight: self.workflows_in_flight(),
+            in_flight: self.automations_in_flight(),
         };
         self.take_shown_holds(snapshot);
         self.memory.retain_open(snapshot);
@@ -448,7 +448,7 @@ impl Factory {
             snapshot,
             &live,
             &self.memory,
-            &workflows,
+            &automations,
             now,
             &self.shell.policy,
         );
@@ -464,7 +464,7 @@ impl Factory {
         actions
     }
 
-    pub async fn run_workflow(&self, name: &WorkflowName) -> Result<()> {
+    pub async fn run_automation(&self, name: &AutomationName) -> Result<()> {
         let shell = &self.shell;
         let branch = &shell.settings.default_branch;
         let path = name.path();
@@ -474,38 +474,38 @@ impl Factory {
             .await
             .with_context(|| format!("reading {path}"))?
             .with_context(|| format!("there is no workflow `{name}`: `{branch}` has no {path}"))?;
-        let workflow =
-            workflow::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
+        let automation =
+            automation::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
         run_and_log(
             shell,
-            &workflow,
-            begin_workflow(shell, name)?,
+            &automation,
+            begin_automation(shell, name)?,
             self.stopping.clone(),
         )
         .await
         .with_context(|| format!("the run of the workflow `{name}` failed"))
     }
 
-    async fn workflows(&mut self) -> Vec<Workflow> {
-        if !self.schedule_workflows {
+    async fn automations(&mut self) -> Vec<Automation> {
+        if !self.schedule_automations {
             return vec![];
         }
         let branch = &self.shell.settings.default_branch;
-        self.workflow_files = match workflow::read(self.shell.store.as_ref(), branch).await {
+        self.automation_files = match automation::read(self.shell.store.as_ref(), branch).await {
             Ok(files) => files,
             Err(e) => {
                 error!(error = format!("{e:#}"), "listing the workflows failed");
-                WorkflowFiles::default()
+                AutomationFiles::default()
             }
         };
-        for file in &self.workflow_files.unparsed {
+        for file in &self.automation_files.unparsed {
             warn!(
                 path = file.path,
                 error = file.reason,
                 "skipping a workflow file"
             );
         }
-        self.workflow_files.parsed.clone()
+        self.automation_files.parsed.clone()
     }
 
     pub fn is_idle(&self) -> bool {
@@ -782,22 +782,22 @@ impl Factory {
                 self.last_runs = last_runs.clone();
                 last_runs.save(&self.shell.work_dir)?;
             }
-            Action::RunWorkflow(workflow) => {
-                let running = begin_workflow(&self.shell, &workflow.name)?;
+            Action::RunAutomation(automation) => {
+                let running = begin_automation(&self.shell, &automation.name)?;
                 let watched = running.watched();
                 let cancel = CancellationToken::new();
                 let shell = self.shell.clone();
                 let handle = self.runs.spawn({
-                    let (workflow, cancel) = (workflow.clone(), cancel.clone());
+                    let (automation, cancel) = (automation.clone(), cancel.clone());
                     // A run that fails is logged; there is nothing to hand back.
                     async move {
-                        let _ = run_and_log(&shell, &workflow, running, cancel).await;
+                        let _ = run_and_log(&shell, &automation, running, cancel).await;
                     }
                 });
                 self.live.insert(
                     handle.id(),
                     LiveEntry {
-                        running: Running::Workflow,
+                        running: Running::Automation,
                         watched,
                         cancel,
                     },
@@ -816,12 +816,12 @@ fn done_runs(runs: &Runs) -> Vec<DoneRun> {
     recorded.iter().filter_map(Recorded::done_on_pull).collect()
 }
 
-fn begin_workflow(shell: &Shell, name: &WorkflowName) -> Result<runs::Running> {
+fn begin_automation(shell: &Shell, name: &AutomationName) -> Result<runs::Running> {
     shell
         .runs
         .begin(
-            RunOf::Workflow {
-                workflow: name.clone(),
+            RunOf::Automation {
+                automation: name.clone(),
             },
             shell.clock.now(),
         )
@@ -830,18 +830,18 @@ fn begin_workflow(shell: &Shell, name: &WorkflowName) -> Result<runs::Running> {
 
 async fn run_and_log(
     shell: &Shell,
-    workflow: &Workflow,
+    automation: &Automation,
     running: runs::Running,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let name = &workflow.name;
+    let name = &automation.name;
     info!(workflow = %name, run = %running.id(), "workflow run started");
-    match run::workflow(shell, workflow, running, cancel).await {
-        Ok(WorkflowEnd::Finished(result)) => {
+    match run::automation(shell, automation, running, cancel).await {
+        Ok(AutomationEnd::Finished(result)) => {
             info!(workflow = %name, summary = result.summary, "workflow run finished");
             Ok(())
         }
-        Ok(WorkflowEnd::UsageLimit(limit)) => {
+        Ok(AutomationEnd::UsageLimit(limit)) => {
             warn!(
                 workflow = %name,
                 resets_at = %limit.resets_at,
@@ -1001,6 +1001,6 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         | Action::RememberRebase(_)
         | Action::DeleteBranch { .. }
         | Action::RecordLastRuns(_)
-        | Action::RunWorkflow(_) => vec![],
+        | Action::RunAutomation(_) => vec![],
     }
 }

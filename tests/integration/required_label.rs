@@ -209,7 +209,10 @@ max-issues: 3
 Look at the bugs.
 ";
 
-async fn filing_workflow(required: Option<&str>, label_exists: bool) -> (World, Vec<Vec<String>>) {
+async fn filing_automation(
+    required: Option<&str>,
+    label_exists: bool,
+) -> (World, Vec<Vec<String>>) {
     let world = world(required, label_exists).await;
     world
         .store
@@ -221,7 +224,7 @@ async fn filing_workflow(required: Option<&str>, label_exists: bool) -> (World, 
         )
         .await
         .unwrap();
-    world.runtime.on_workflow(|_| {
+    world.runtime.on_automation(|_| {
         Ok(json!({
             "summary": "Two.",
             "issues": [
@@ -233,7 +236,7 @@ async fn filing_workflow(required: Option<&str>, label_exists: bool) -> (World, 
     });
     world
         .factory
-        .run_workflow(&"weekly".parse().unwrap())
+        .run_automation(&"weekly".parse().unwrap())
         .await
         .unwrap();
     let all = all_labels(&world);
@@ -241,8 +244,8 @@ async fn filing_workflow(required: Option<&str>, label_exists: bool) -> (World, 
 }
 
 #[tokio::test]
-async fn workflow_filed_issues_carry_the_required_label() {
-    let (_, all) = filing_workflow(Some(REQUIRED), true).await;
+async fn automation_filed_issues_carry_the_required_label() {
+    let (_, all) = filing_automation(Some(REQUIRED), true).await;
     assert_eq!(
         all,
         [
@@ -253,8 +256,8 @@ async fn workflow_filed_issues_carry_the_required_label() {
 }
 
 #[tokio::test]
-async fn workflow_filed_issues_are_filed_without_a_missing_required_label() {
-    let (world, all) = filing_workflow(Some(REQUIRED), false).await;
+async fn automation_filed_issues_are_filed_without_a_missing_required_label() {
+    let (world, all) = filing_automation(Some(REQUIRED), false).await;
     assert_eq!(
         all,
         [
@@ -266,8 +269,8 @@ async fn workflow_filed_issues_are_filed_without_a_missing_required_label() {
 }
 
 #[tokio::test]
-async fn unset_workflow_filed_issues_carry_only_their_state_label() {
-    let (_, all) = filing_workflow(None, true).await;
+async fn unset_automation_filed_issues_carry_only_their_state_label() {
+    let (_, all) = filing_automation(None, true).await;
     assert_eq!(
         all,
         [

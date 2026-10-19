@@ -18,8 +18,8 @@ pub const DIR: &str = ".linewright/workflows";
 const DEFAULT_MAX_ISSUES: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Workflow {
-    pub name: WorkflowName,
+pub struct Automation {
+    pub name: AutomationName,
     pub schedule: Schedule,
     /// `None` is the `session-timeout` setting.
     pub timeout: Option<Duration>,
@@ -49,42 +49,42 @@ impl Schedule {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct WorkflowName(String);
+pub struct AutomationName(String);
 
-impl WorkflowName {
+impl AutomationName {
     pub fn path(&self) -> String {
         format!("{DIR}/{}.md", self.0)
     }
 }
 
-impl FromStr for WorkflowName {
+impl FromStr for AutomationName {
     type Err = String;
 
-    fn from_str(name: &str) -> Result<WorkflowName, String> {
+    fn from_str(name: &str) -> Result<AutomationName, String> {
         if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
             return Err(format!(
                 "{name:?} is not a workflow's name: the name of a file in `{DIR}`, without `.md`"
             ));
         }
-        Ok(WorkflowName(name.to_string()))
+        Ok(AutomationName(name.to_string()))
     }
 }
 
-impl TryFrom<String> for WorkflowName {
+impl TryFrom<String> for AutomationName {
     type Error = String;
 
-    fn try_from(name: String) -> Result<WorkflowName, String> {
+    fn try_from(name: String) -> Result<AutomationName, String> {
         name.parse()
     }
 }
 
-impl From<WorkflowName> for String {
-    fn from(name: WorkflowName) -> String {
+impl From<AutomationName> for String {
+    fn from(name: AutomationName) -> String {
         name.0
     }
 }
 
-impl fmt::Display for WorkflowName {
+impl fmt::Display for AutomationName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -92,19 +92,19 @@ impl fmt::Display for WorkflowName {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct LastRuns(BTreeMap<WorkflowName, Timestamp>);
+pub struct LastRuns(BTreeMap<AutomationName, Timestamp>);
 
 impl LastRuns {
-    pub fn get(&self, name: &WorkflowName) -> Option<Timestamp> {
+    pub fn get(&self, name: &AutomationName) -> Option<Timestamp> {
         self.0.get(name).copied()
     }
 
-    pub fn record(&mut self, name: &WorkflowName, at: Timestamp) {
+    pub fn record(&mut self, name: &AutomationName, at: Timestamp) {
         self.0.insert(name.clone(), at);
     }
 
     /// Empty when the record is missing or unreadable, which is logged: every
-    /// workflow then counts as seen for the first time.
+    /// automation then counts as seen for the first time.
     pub fn load(work_dir: &Path) -> LastRuns {
         records::load(&last_runs_path(work_dir), WHAT).unwrap_or_default()
     }
@@ -120,15 +120,15 @@ fn last_runs_path(work_dir: &Path) -> PathBuf {
     work_dir.join("workflow-runs.json")
 }
 
-impl FromIterator<(WorkflowName, Timestamp)> for LastRuns {
-    fn from_iter<I: IntoIterator<Item = (WorkflowName, Timestamp)>>(runs: I) -> LastRuns {
+impl FromIterator<(AutomationName, Timestamp)> for LastRuns {
+    fn from_iter<I: IntoIterator<Item = (AutomationName, Timestamp)>>(runs: I) -> LastRuns {
         LastRuns(runs.into_iter().collect())
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct WorkflowFiles {
-    pub parsed: Vec<Workflow>,
+pub struct AutomationFiles {
+    pub parsed: Vec<Automation>,
     pub unparsed: Vec<Unparsed>,
 }
 
@@ -140,14 +140,14 @@ pub struct Unparsed {
 
 /// Fails only when the directory cannot be listed: a file that cannot be
 /// read is one that does not parse.
-pub async fn read(store: &dyn Store, branch: &str) -> Result<WorkflowFiles> {
-    let mut files = WorkflowFiles::default();
+pub async fn read(store: &dyn Store, branch: &str) -> Result<AutomationFiles> {
+    let mut files = AutomationFiles::default();
     for file in store.list_files(branch, DIR).await? {
         let Some(name) = file.strip_suffix(".md") else {
             continue;
         };
         let parsed = async {
-            let name: WorkflowName = name.parse().map_err(anyhow::Error::msg)?;
+            let name: AutomationName = name.parse().map_err(anyhow::Error::msg)?;
             let text = store
                 .read_file(branch, &name.path())
                 .await?
@@ -155,7 +155,7 @@ pub async fn read(store: &dyn Store, branch: &str) -> Result<WorkflowFiles> {
             parse(&name, &text)
         };
         match parsed.await {
-            Ok(workflow) => files.parsed.push(workflow),
+            Ok(automation) => files.parsed.push(automation),
             Err(e) => files.unparsed.push(Unparsed {
                 path: format!("{DIR}/{file}"),
                 reason: format!("{e:#}"),
@@ -179,7 +179,7 @@ struct Trigger {
     schedule: String,
 }
 
-pub fn parse(name: &WorkflowName, text: &str) -> Result<Workflow> {
+pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
     let (front, body) = split_front_matter(text)
         .context("the file does not open with YAML front matter between `---` lines")?;
     let front: FrontMatter =
@@ -191,7 +191,7 @@ pub fn parse(name: &WorkflowName, text: &str) -> Result<Workflow> {
                 .with_context(|| format!("`timeout` is {t:?}, not a duration such as 60m"))
         })
         .transpose()?;
-    Ok(Workflow {
+    Ok(Automation {
         name: name.clone(),
         schedule: Schedule::parse(&front.on.schedule)?,
         timeout,

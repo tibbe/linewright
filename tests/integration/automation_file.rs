@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use linewright::workflow::{Workflow, WorkflowName, parse};
+use linewright::automation::{Automation, AutomationName, parse};
 
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
@@ -9,7 +9,7 @@ fn utc(text: &str) -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-fn name(name: &str) -> WorkflowName {
+fn name(name: &str) -> AutomationName {
     name.parse().unwrap()
 }
 
@@ -28,50 +28,50 @@ Look at the bugs fixed in the past week ...
 
 #[test]
 fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions() {
-    let workflow: Workflow = parse(&name("weekly"), SPEC_EXAMPLE).unwrap();
+    let automation: Automation = parse(&name("weekly"), SPEC_EXAMPLE).unwrap();
 
-    assert_eq!(workflow.name.to_string(), "weekly");
+    assert_eq!(automation.name.to_string(), "weekly");
     // 2026-10-01 is a Thursday: the next Monday 06:00 UTC is the 5th.
     assert_eq!(
-        workflow.schedule.next_after(utc("2026-10-01T12:00:00Z")),
+        automation.schedule.next_after(utc("2026-10-01T12:00:00Z")),
         Some(utc("2026-10-05T06:00:00Z"))
     );
-    assert_eq!(workflow.timeout, Some(Duration::from_hours(1)));
-    assert_eq!(workflow.max_issues, 3);
+    assert_eq!(automation.timeout, Some(Duration::from_hours(1)));
+    assert_eq!(automation.max_issues, 3);
     assert_eq!(
-        workflow.instructions,
+        automation.instructions,
         "Look at the bugs fixed in the past week ...\n"
     );
 }
 
 #[test]
-fn without_a_timeout_or_an_issue_cap_a_workflow_takes_the_defaults() {
-    let workflow = parse(
+fn without_a_timeout_or_an_issue_cap_a_automation_takes_the_defaults() {
+    let automation = parse(
         &name("nightly"),
         "---\non:\n  schedule: \"30 2 * * *\"\n---\nTidy up.\n",
     )
     .unwrap();
 
-    assert_eq!(workflow.timeout, None, "the `session-timeout` setting");
-    assert_eq!(workflow.max_issues, 3);
+    assert_eq!(automation.timeout, None, "the `session-timeout` setting");
+    assert_eq!(automation.max_issues, 3);
 }
 
 #[test]
 fn the_schedule_is_in_utc() {
-    let workflow = parse(
+    let automation = parse(
         &name("nightly"),
         "---\non:\n  schedule: \"30 2 * * *\"\nmax-issues: 1\n---\nTidy up.\n",
     )
     .unwrap();
 
     assert_eq!(
-        workflow
+        automation
             .schedule
             .next_after(utc("2026-10-01T03:00:00+02:00")),
         // 01:00 UTC: 02:30 UTC is the same day.
         Some(utc("2026-10-01T02:30:00Z"))
     );
-    assert_eq!(workflow.max_issues, 1);
+    assert_eq!(automation.max_issues, 1);
 }
 
 #[test]

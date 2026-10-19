@@ -351,7 +351,7 @@ fn a_replayed_session_runs_its_commands_in_bash_whatever_the_operators_shell() {
 }
 
 #[tokio::test]
-async fn a_replay_runs_no_workflows() {
+async fn a_replay_runs_no_automations() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(
         dir.path(),
@@ -365,7 +365,7 @@ async fn a_replay_runs_no_workflows() {
     runtime.on(WorkKind::Tickets, {
         let clock = clock.clone();
         move |_| {
-            // Past the workflow's next tick, while the replay goes on.
+            // Past the automation's next tick, while the replay goes on.
             clock.advance(TimeDelta::hours(2));
             Ok(json!({"tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}], "comment": "One slice."}).to_string())
         }
@@ -381,8 +381,9 @@ async fn a_replay_runs_no_workflows() {
                 .to_string(),
         )
     });
-    runtime
-        .on_workflow(|_| Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string()));
+    runtime.on_automation(|_| {
+        Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string())
+    });
     let out = dir.path().join("out");
 
     replay(
@@ -395,7 +396,7 @@ async fn a_replay_runs_no_workflows() {
     .await
     .unwrap();
 
-    assert_eq!(runtime.workflow_prompts(), Vec::<String>::new());
+    assert_eq!(runtime.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]

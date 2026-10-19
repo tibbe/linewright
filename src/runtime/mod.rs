@@ -6,17 +6,17 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::automation::AutomationName;
 use crate::clock::Clock;
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
 use crate::runs::Activity;
-use crate::workflow::WorkflowName;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
     Work { subject: Subject, kind: WorkKind },
-    Workflow(WorkflowName),
+    Automation(AutomationName),
 }
 
 #[derive(Clone, Debug)]

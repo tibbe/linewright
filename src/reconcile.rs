@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
+use crate::automation::{Automation, AutomationName, LastRuns};
 use crate::domain::{
     Assignment, BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, Item, Linked, Login,
     MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Rebaseability,
@@ -14,7 +15,6 @@ use crate::domain::{
 use crate::holds::Holds;
 use crate::runtime::UsageLimit;
 use crate::spec_glob::SpecGlob;
-use crate::workflow::{LastRuns, Workflow, WorkflowName};
 
 #[derive(Clone, Debug)]
 pub struct Policy {
@@ -344,10 +344,10 @@ pub struct DoneRun {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Workflows {
-    pub defined: Vec<Workflow>,
+pub struct Automations {
+    pub defined: Vec<Automation>,
     pub last_runs: LastRuns,
-    pub in_flight: Vec<WorkflowName>,
+    pub in_flight: Vec<AutomationName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -418,7 +418,7 @@ pub enum Action {
         branch: TicketBranchName,
     },
     RecordLastRuns(LastRuns),
-    RunWorkflow(Box<Workflow>),
+    RunAutomation(Box<Automation>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -501,18 +501,18 @@ pub fn reconcile(
     snapshot: &Snapshot,
     live: &[LiveRun],
     memory: &Memory,
-    workflows: &Workflows,
+    automations: &Automations,
     now: Timestamp,
     policy: &Policy,
 ) -> Vec<Action> {
-    decisions(snapshot, live, memory, workflows, now, policy).actions
+    decisions(snapshot, live, memory, automations, now, policy).actions
 }
 
 pub fn decisions(
     snapshot: &Snapshot,
     live: &[LiveRun],
     memory: &Memory,
-    workflows: &Workflows,
+    automations: &Automations,
     now: Timestamp,
     policy: &Policy,
 ) -> Decisions {
@@ -716,7 +716,7 @@ pub fn decisions(
         }
     }
 
-    let in_flight = live.len() + workflows.in_flight.len();
+    let in_flight = live.len() + automations.in_flight.len();
     let (room, held) = match memory.usage_limit.filter(|_| memory.holds_starts(now)) {
         Some(UsageLimit { resets_at }) => (0, Held::UsageLimit { resets_at }),
         None => (
@@ -728,7 +728,7 @@ pub fn decisions(
         ),
     };
     let (mut decisions, room) = plan.into_decisions(room, held);
-    decisions.actions.extend(schedule(workflows, now, room));
+    decisions.actions.extend(schedule(automations, now, room));
     decisions
 }
 
@@ -739,41 +739,41 @@ pub enum NextRun {
     Never,
 }
 
-pub fn next_run(workflow: &Workflow, last: Timestamp, now: Timestamp) -> NextRun {
-    match workflow.schedule.next_after(last) {
+pub fn next_run(automation: &Automation, last: Timestamp, now: Timestamp) -> NextRun {
+    match automation.schedule.next_after(last) {
         Some(tick) if tick <= now => NextRun::Due,
         Some(tick) => NextRun::At(tick),
         None => NextRun::Never,
     }
 }
 
-fn schedule(workflows: &Workflows, now: Timestamp, room: usize) -> Vec<Action> {
-    let mut last_runs = workflows.last_runs.clone();
+fn schedule(automations: &Automations, now: Timestamp, room: usize) -> Vec<Action> {
+    let mut last_runs = automations.last_runs.clone();
     let mut due = vec![];
-    for workflow in &workflows.defined {
-        let Some(last) = workflows.last_runs.get(&workflow.name) else {
-            last_runs.record(&workflow.name, now);
+    for automation in &automations.defined {
+        let Some(last) = automations.last_runs.get(&automation.name) else {
+            last_runs.record(&automation.name, now);
             continue;
         };
-        let running = workflows.in_flight.contains(&workflow.name);
-        if next_run(workflow, last, now) == NextRun::Due && !running {
-            due.push(workflow);
+        let running = automations.in_flight.contains(&automation.name);
+        if next_run(automation, last, now) == NextRun::Due && !running {
+            due.push(automation);
         }
     }
     due.sort_by(|a, b| a.name.cmp(&b.name));
     let runs: Vec<Action> = due
         .into_iter()
         .take(room)
-        .map(|workflow| {
-            last_runs.record(&workflow.name, now);
-            Action::RunWorkflow(Box::new(workflow.clone()))
+        .map(|automation| {
+            last_runs.record(&automation.name, now);
+            Action::RunAutomation(Box::new(automation.clone()))
         })
         .collect();
     // The record follows the runs: a stop between the two leaves the
-    // workflow due, to run again after the restart, rather than recorded as
+    // automation due, to run again after the restart, rather than recorded as
     // run with no run started.
     let mut actions = runs;
-    if last_runs != workflows.last_runs {
+    if last_runs != automations.last_runs {
         actions.push(Action::RecordLastRuns(last_runs));
     }
     actions

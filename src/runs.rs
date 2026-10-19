@@ -7,24 +7,30 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use crate::automation::AutomationName;
 use crate::domain::{Number, Timestamp};
 use crate::reconcile::{DoneRun, WorkKind};
 use crate::records;
 use crate::status::{Paint, utc};
-use crate::workflow::WorkflowName;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RunOf {
-    Work { item: Number, stage: WorkKind },
-    Workflow { workflow: WorkflowName },
+    Work {
+        item: Number,
+        stage: WorkKind,
+    },
+    Automation {
+        #[serde(rename = "workflow")]
+        automation: AutomationName,
+    },
 }
 
 impl RunOf {
     pub fn item(&self) -> Option<Number> {
         match self {
             RunOf::Work { item, .. } => Some(*item),
-            RunOf::Workflow { .. } => None,
+            RunOf::Automation { .. } => None,
         }
     }
 }
@@ -48,8 +54,8 @@ impl std::str::FromStr for RunId {
                 (RunOf::Work { item, stage }, n)
             }
             None => {
-                let workflow = head.parse()?;
-                (RunOf::Workflow { workflow }, tail)
+                let automation = head.parse()?;
+                (RunOf::Automation { automation }, tail)
             }
         };
         let n = n.parse().map_err(|_| not_one())?;
@@ -75,7 +81,7 @@ impl fmt::Display for RunId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.of {
             RunOf::Work { item, stage } => write!(f, "{}/{}-{}", item.0, stage.name(), self.n),
-            RunOf::Workflow { workflow } => write!(f, "{workflow}/{}", self.n),
+            RunOf::Automation { automation } => write!(f, "{automation}/{}", self.n),
         }
     }
 }
@@ -128,7 +134,9 @@ impl Runs {
     fn dir_of(&self, of: &RunOf) -> PathBuf {
         match of {
             RunOf::Work { item, .. } => self.dir().join("items").join(item.0.to_string()),
-            RunOf::Workflow { workflow } => self.dir().join("workflows").join(workflow.to_string()),
+            RunOf::Automation { automation } => {
+                self.dir().join("workflows").join(automation.to_string())
+            }
         }
     }
 
@@ -211,7 +219,7 @@ impl Runs {
 fn file_prefix(of: &RunOf) -> String {
     match of {
         RunOf::Work { stage, .. } => format!("{}-", stage.name()),
-        RunOf::Workflow { .. } => String::new(),
+        RunOf::Automation { .. } => String::new(),
     }
 }
 
@@ -357,7 +365,7 @@ impl RunInFlight {
 fn describe_of(of: &RunOf) -> String {
     match of {
         RunOf::Work { item, stage } => format!("{item} {}", stage.name()),
-        RunOf::Workflow { workflow } => format!("workflow {workflow}"),
+        RunOf::Automation { automation } => format!("workflow {automation}"),
     }
 }
 

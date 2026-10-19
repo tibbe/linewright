@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use linewright::automation::{AutomationFiles, LastRuns};
 use linewright::domain::*;
 use linewright::reconcile::{LiveRun, Memory, Policy, Subject, WorkKind};
 use linewright::runs::InFlight;
 use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{Polls, View};
-use linewright::workflow::{LastRuns, WorkflowFiles};
 
 /// 2026-10-01 is a Thursday.
 pub fn at(time: &str) -> Timestamp {
@@ -126,7 +126,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
         memory: Memory::default(),
         live: vec![],
         in_flight: vec![],
-        workflows: WorkflowFiles::default(),
+        automations: AutomationFiles::default(),
         last_runs: LastRuns::default(),
     }
 }

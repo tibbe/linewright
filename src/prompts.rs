@@ -5,12 +5,12 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
+use crate::automation::Automation;
 use crate::credentials::Held;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::Feedback;
 use crate::store::FoundSecrets;
-use crate::workflow::Workflow;
 
 pub struct Repo<'a> {
     pub default_branch: &'a str,
@@ -150,7 +150,7 @@ values!(Rework: PullRequest {
     conversation
 });
 values!(FixCi: PullRequest { failures });
-values!(WorkflowRun: Facts {
+values!(AutomationRun: Facts {
     max_issues,
     name,
     instructions
@@ -347,7 +347,7 @@ pub struct Prompts {
     rework: Template<Rework>,
     fix_ci: Template<FixCi>,
     update: Template<PullRequest>,
-    workflow: Template<WorkflowRun>,
+    automation: Template<AutomationRun>,
     new_branch: Template<DefaultBranch>,
     existing_branch: Template<ExistingBranch>,
     unfinished: Template<Commits>,
@@ -376,7 +376,7 @@ impl Prompts {
             rework: template!(source, "rework.md")?,
             fix_ci: template!(source, "fix-ci.md")?,
             update: template!(source, "update.md")?,
-            workflow: template!(source, "workflow.md")?,
+            automation: template!(source, "workflow.md")?,
             new_branch: template!(source, "parts/new-branch.md")?,
             existing_branch: template!(source, "parts/existing-branch.md")?,
             unfinished: template!(source, "parts/unfinished.md")?,
@@ -536,12 +536,12 @@ fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedC
         .unwrap_or_default()
 }
 
-pub fn workflow(prompts: &Prompts, repo: &Repo, workflow: &Workflow) -> String {
-    prompts.workflow.fill(&WorkflowRun {
+pub fn automation(prompts: &Prompts, repo: &Repo, automation: &Automation) -> String {
+    prompts.automation.fill(&AutomationRun {
         base: Facts::of(repo),
-        max_issues: workflow.max_issues.to_string(),
-        name: workflow.name.to_string(),
-        instructions: or_none(&workflow.instructions).into(),
+        max_issues: automation.max_issues.to_string(),
+        name: automation.name.to_string(),
+        instructions: or_none(&automation.instructions).into(),
     })
 }
 

@@ -1,11 +1,11 @@
 use crate::views;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use linewright::automation::{Automation, LastRuns};
 use linewright::domain::*;
 use linewright::reconcile::*;
 use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
-use linewright::workflow::{LastRuns, Workflow};
 
 const LINEWRIGHT: &str = "factory";
 
@@ -72,7 +72,7 @@ fn decide(snapshot: &Snapshot) -> Vec<Action> {
         snapshot,
         &[],
         &Memory::default(),
-        &Workflows::default(),
+        &Automations::default(),
         t(10),
         &policy(),
     )
@@ -446,7 +446,7 @@ fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
             &world,
             &[live(1, WorkKind::Triage)],
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy()
         ),
@@ -484,7 +484,7 @@ fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_l
                     &world,
                     &[live(1, kind)],
                     &Memory::default(),
-                    &Workflows::default(),
+                    &Automations::default(),
                     t(10),
                     &policy()
                 ),
@@ -851,7 +851,7 @@ fn a_ready_for_human_label_on_a_spec_change_stops_nothing() {
             &world,
             &cutting(5),
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy()
         ),
@@ -873,7 +873,7 @@ fn a_cut_that_ended_since_the_snapshot_is_neither_started_again_nor_cancelled() 
             &world,
             &[],
             &memory,
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy()
         ),
@@ -913,7 +913,7 @@ fn unassigning_linewright_from_a_spec_change_cancels_its_cut() {
             &world,
             &cutting(5),
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy()
         ),
@@ -958,7 +958,7 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
             &world,
             &cutting(5),
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy()
         ),
@@ -1031,7 +1031,7 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
             &world,
             &live,
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy()
         ),
@@ -1143,7 +1143,7 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
             &world,
             &busy,
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy()
         ),
@@ -1181,7 +1181,7 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
         &world,
         &runs,
         &Memory::default(),
-        &Workflows::default(),
+        &Automations::default(),
         t(10),
         &policy(),
     )
@@ -1217,7 +1217,7 @@ fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_linewright_is_un
         &world,
         &runs,
         &Memory::default(),
-        &Workflows::default(),
+        &Automations::default(),
         t(10),
         &policy(),
     )
@@ -1289,7 +1289,7 @@ fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
             &world,
             &runs,
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy(),
         ),
@@ -1452,7 +1452,7 @@ fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
         &world,
         &[live(1, WorkKind::Implement)],
         &Memory::default(),
-        &Workflows::default(),
+        &Automations::default(),
         t(10),
         &policy(),
     );
@@ -1490,7 +1490,7 @@ fn a_tickets_run_is_cancelled_when_its_spec_change_is_marked_processed() {
             &world,
             &runs,
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy()
         )
@@ -1554,7 +1554,7 @@ fn at(world: &Snapshot, minute: i64) -> Vec<Action> {
         world,
         &[],
         &Memory::default(),
-        &Workflows::default(),
+        &Automations::default(),
         t(minute),
         &policy(),
     )
@@ -1602,7 +1602,14 @@ fn done(pr: u64, kind: WorkKind, minute: i64) -> DoneRun {
 }
 
 fn deciding_at(world: &Snapshot, memory: &Memory, policy: &Policy, minute: i64) -> Vec<Action> {
-    reconcile(world, &[], memory, &Workflows::default(), t(minute), policy)
+    reconcile(
+        world,
+        &[],
+        memory,
+        &Automations::default(),
+        t(minute),
+        policy,
+    )
 }
 
 fn after_runs(world: &Snapshot, runs: &[DoneRun], minute: i64) -> Vec<Action> {
@@ -2659,8 +2666,8 @@ fn a_tracking_issue_is_closed_when_all_its_tickets_are() {
     );
 }
 
-fn hourly(name: &str) -> Workflow {
-    linewright::workflow::parse(
+fn hourly(name: &str) -> Automation {
+    linewright::automation::parse(
         &name.parse().unwrap(),
         "---\non:\n  schedule: \"0 * * * *\"\n---\nLook.\n",
     )
@@ -2673,8 +2680,8 @@ fn last_runs(runs: &[(&str, i64)]) -> LastRuns {
         .collect()
 }
 
-fn workflows(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Workflows {
-    Workflows {
+fn automations(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Automations {
+    Automations {
         defined: defined.iter().map(|name| hourly(name)).collect(),
         last_runs: last_runs(last),
         in_flight: in_flight.iter().map(|name| name.parse().unwrap()).collect(),
@@ -2682,40 +2689,40 @@ fn workflows(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Work
 }
 
 /// The decisions at `minute` past 12:00, when ticks fall on the hour.
-fn scheduled(workflows: &Workflows, minute: i64) -> Vec<Action> {
+fn scheduled(automations: &Automations, minute: i64) -> Vec<Action> {
     reconcile(
         &snapshot(vec![]),
         &[],
         &Memory::default(),
-        workflows,
+        automations,
         t(minute),
         &policy(),
     )
 }
 
 #[test]
-fn a_workflow_whose_schedule_ticked_since_its_last_run_runs_and_the_run_is_recorded() {
-    let world = workflows(&["hourly"], &[("hourly", 30)], &[]);
+fn a_automation_whose_schedule_ticked_since_its_last_run_runs_and_the_run_is_recorded() {
+    let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(
         scheduled(&world, 70),
         vec![
-            Action::RunWorkflow(Box::new(hourly("hourly"))),
+            Action::RunAutomation(Box::new(hourly("hourly"))),
             Action::RecordLastRuns(last_runs(&[("hourly", 70)])),
         ]
     );
 }
 
 #[test]
-fn a_workflow_whose_schedule_has_not_ticked_since_its_last_run_waits() {
-    let world = workflows(&["hourly"], &[("hourly", 30)], &[]);
+fn a_automation_whose_schedule_has_not_ticked_since_its_last_run_waits() {
+    let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(scheduled(&world, 59), vec![]);
 }
 
 #[test]
-fn a_workflow_seen_for_the_first_time_does_not_run_and_counts_as_run_then() {
-    let world = workflows(&["hourly"], &[], &[]);
+fn a_automation_seen_for_the_first_time_does_not_run_and_counts_as_run_then() {
+    let world = automations(&["hourly"], &[], &[]);
 
     assert_eq!(
         scheduled(&world, 70),
@@ -2726,12 +2733,12 @@ fn a_workflow_seen_for_the_first_time_does_not_run_and_counts_as_run_then() {
 #[test]
 fn ticks_missed_since_the_last_run_collapse_into_one_run() {
     // Five ticks, 13:00 to 17:00, since the last run at 12:30.
-    let world = workflows(&["hourly"], &[("hourly", 30)], &[]);
+    let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(
         scheduled(&world, 310),
         vec![
-            Action::RunWorkflow(Box::new(hourly("hourly"))),
+            Action::RunAutomation(Box::new(hourly("hourly"))),
             Action::RecordLastRuns(last_runs(&[("hourly", 310)])),
         ]
     );
@@ -2740,30 +2747,30 @@ fn ticks_missed_since_the_last_run_collapse_into_one_run() {
 #[test]
 fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
     // The run in flight started at 12:30; 13:00 and 14:00 tick meanwhile.
-    let running = workflows(&["hourly"], &[("hourly", 30)], &["hourly"]);
-    let ended = workflows(&["hourly"], &[("hourly", 30)], &[]);
+    let running = automations(&["hourly"], &[("hourly", 30)], &["hourly"]);
+    let ended = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(scheduled(&running, 130), vec![]);
     assert_eq!(
         scheduled(&ended, 131),
         vec![
-            Action::RunWorkflow(Box::new(hourly("hourly"))),
+            Action::RunAutomation(Box::new(hourly("hourly"))),
             Action::RecordLastRuns(last_runs(&[("hourly", 131)])),
         ]
     );
 }
 
 #[test]
-fn workflow_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves() {
-    // A ceiling of 4: two pipeline runs and one workflow run in flight, a
-    // ticket to implement, and two workflows due.
+fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves() {
+    // A ceiling of 4: two pipeline runs and one automation run in flight, a
+    // ticket to implement, and two automations due.
     let world = snapshot(vec![
         claimed(ticket(1)),
         claimed(ticket(8)),
         claimed(ticket(9)),
     ]);
     let busy = [live(8, WorkKind::Implement), live(9, WorkKind::Implement)];
-    let due = workflows(&["a", "b", "c"], &[("a", 30), ("b", 30), ("c", 30)], &["a"]);
+    let due = automations(&["a", "b", "c"], &[("a", 30), ("b", 30), ("c", 30)], &["a"]);
     let quieter = snapshot(vec![claimed(ticket(8)), claimed(ticket(9))]);
 
     assert_eq!(
@@ -2773,17 +2780,17 @@ fn workflow_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves(
     assert_eq!(
         reconcile(&quieter, &busy, &Memory::default(), &due, t(70), &policy()),
         vec![
-            Action::RunWorkflow(Box::new(hourly("b"))),
+            Action::RunAutomation(Box::new(hourly("b"))),
             Action::RecordLastRuns(last_runs(&[("a", 30), ("b", 70), ("c", 30)])),
         ]
     );
 }
 
 #[test]
-fn a_workflow_seen_for_the_first_time_is_recorded_even_with_no_room() {
+fn a_automation_seen_for_the_first_time_is_recorded_even_with_no_room() {
     let tickets = snapshot([1, 2, 3, 4].map(|n| claimed(ticket(n))).to_vec());
     let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
-    let world = workflows(&["hourly"], &[], &[]);
+    let world = automations(&["hourly"], &[], &[]);
 
     assert_eq!(
         reconcile(
@@ -2973,7 +2980,7 @@ fn removing_the_required_label_cancels_no_run_in_flight() {
         &world,
         &runs,
         &Memory::default(),
-        &Workflows::default(),
+        &Automations::default(),
         t(10),
         &requiring_label(),
     );
@@ -3057,7 +3064,7 @@ fn removing_the_required_label_does_not_cancel_a_cut_under_way() {
             &world,
             &cutting(5),
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &requiring_label()
         ),
@@ -3083,7 +3090,7 @@ fn pending_spec_changes_agree_with_the_required_label() {
     assert_eq!(numbers(&policy()), vec![Number(1), Number(2)]);
 }
 
-fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
+fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Automations) {
     let mut answered = labeled(issue(1), label::NEEDS_INFO);
     answered.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
     let mut reworked = ready(pull(20, 2));
@@ -3107,7 +3114,7 @@ fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Workflows) {
     (
         world,
         vec![live(12, WorkKind::Implement)],
-        workflows(&["hourly"], &[("hourly", 30)], &[]),
+        automations(&["hourly"], &[("hourly", 30)], &[]),
     )
 }
 
@@ -3128,13 +3135,13 @@ fn under_usage_limit_until(resets_at: i64) -> Memory {
 /// The decisions at 13:10 with room for every run, under a usage limit
 /// that resets at `resets_at` minutes past 12:00.
 fn under_usage_limit(resets_at: i64) -> Vec<Action> {
-    let (world, live, workflows) = work_of_every_kind();
+    let (world, live, automations) = work_of_every_kind();
     let policy = Policy {
         max_runs: 10,
         ..policy()
     };
     let memory = under_usage_limit_until(resets_at);
-    reconcile(&world, &live, &memory, &workflows, t(70), &policy)
+    reconcile(&world, &live, &memory, &automations, t(70), &policy)
 }
 
 fn sessionless_actions() -> Vec<Action> {
@@ -3178,7 +3185,7 @@ fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions
 }
 
 #[test]
-fn once_the_usage_limit_resets_every_run_starts_and_the_due_workflow_runs() {
+fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
     let starts: Vec<Action> = under_usage_limit(70)
         .into_iter()
         .filter(|a| {
@@ -3206,7 +3213,7 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_workflow_runs() {
             claim(3),
             implement(3),
             implement(4),
-            Action::RunWorkflow(Box::new(hourly("hourly"))),
+            Action::RunAutomation(Box::new(hourly("hourly"))),
             Action::RecordLastRuns(last_runs(&[("hourly", 70)])),
         ]
     );
@@ -3222,7 +3229,7 @@ fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
             &in_review(pr),
             &[],
             &under_usage_limit_until(80),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &merging_by(MergeMethod::Merge),
         ),
@@ -3263,7 +3270,7 @@ fn waits(
         world,
         live,
         memory,
-        &Workflows::default(),
+        &Automations::default(),
         t(minute),
         policy,
     )
@@ -3400,7 +3407,7 @@ fn decided(world: &Snapshot) -> Decisions {
         world,
         &[],
         &Memory::default(),
-        &Workflows::default(),
+        &Automations::default(),
         t(10),
         &policy(),
     )
@@ -3858,7 +3865,7 @@ fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_no
         &world,
         &[],
         &Memory::default(),
-        &Workflows::default(),
+        &Automations::default(),
         t(10),
         &policy(),
     );
@@ -3909,7 +3916,7 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
                 &world,
                 &fixing,
                 &Memory::default(),
-                &Workflows::default(),
+                &Automations::default(),
                 t(10),
                 &policy()
             ),
@@ -4114,7 +4121,7 @@ fn a_triage_run_is_cancelled_when_linewright_is_unassigned_and_not_otherwise() {
             &world,
             &runs,
             &Memory::default(),
-            &Workflows::default(),
+            &Automations::default(),
             t(10),
             &policy(),
         ),

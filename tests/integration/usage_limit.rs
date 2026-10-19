@@ -213,7 +213,7 @@ async fn when_several_runs_are_refused_the_latest_reset_holds() {
 /// Ticks on the hour; the fake clock starts at 12:00.
 const HOURLY: &str = "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n";
 
-async fn with_hourly_workflow(world: &World) {
+async fn with_hourly_automation(world: &World) {
     world
         .store
         .commit(
@@ -227,12 +227,12 @@ async fn with_hourly_workflow(world: &World) {
 }
 
 #[tokio::test]
-async fn a_workflow_due_under_the_limit_waits_and_runs_at_the_first_poll_after_the_reset() {
+async fn a_automation_due_under_the_limit_waits_and_runs_at_the_first_poll_after_the_reset() {
     let mut world = World::serving().await;
-    with_hourly_workflow(&world).await;
-    world
-        .runtime
-        .on_workflow(|_| Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string()));
+    with_hourly_automation(&world).await;
+    world.runtime.on_automation(|_| {
+        Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string())
+    });
     world.poll().await;
     implement_turns(&world, vec![|_| refused_for_the_usage_limit()]);
     open_ticket(&world, "Do the thing");
@@ -244,14 +244,14 @@ async fn a_workflow_due_under_the_limit_waits_and_runs_at_the_first_poll_after_t
 
     world.clock.advance(TimeDelta::hours(2));
     world.factory.cycle().await.unwrap();
-    assert_eq!(world.runtime.workflow_prompts(), Vec::<String>::new());
+    assert_eq!(world.runtime.automation_prompts(), Vec::<String>::new());
     assert_eq!(last_runs().unwrap(), before, "not recorded as run");
 
     advance_past_the_reset(&world, 1);
     world.factory.settle().await;
     world.poll().await;
 
-    assert_eq!(world.runtime.workflow_prompts().len(), 1);
+    assert_eq!(world.runtime.automation_prompts().len(), 1);
 }
 
 #[tokio::test]
@@ -406,9 +406,9 @@ async fn the_resumed_session_has_the_time_it_had_left_when_refused() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_scheduled_workflow_run_resumes_with_the_time_left_of_its_own_timeout() {
+async fn a_scheduled_automation_run_resumes_with_the_time_left_of_its_own_timeout() {
     let mut world = World::serving().await;
-    // The workflow's own timeout is an hour, of which the first turn runs
+    // The automation's own timeout is an hour, of which the first turn runs
     // 20 minutes.
     world
         .store
@@ -424,7 +424,7 @@ async fn a_scheduled_workflow_run_resumes_with_the_time_left_of_its_own_timeout(
         .await
         .unwrap();
     let seen = Turns::default();
-    world.runtime.on_workflow({
+    world.runtime.on_automation({
         let seen = seen.clone();
         move |call| {
             if see(&seen, call) == 0 {
@@ -433,7 +433,7 @@ async fn a_scheduled_workflow_run_resumes_with_the_time_left_of_its_own_timeout(
             Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string())
         }
     });
-    // The first poll sees the workflow; it is due an hour later.
+    // The first poll sees the automation; it is due an hour later.
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
     world.runtime.takes(Duration::from_mins(20));

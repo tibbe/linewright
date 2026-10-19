@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::TimeDelta;
 use clap::{Args, Parser, Subcommand};
 
+use crate::automation::AutomationName;
 use crate::domain::{MergeMethod, Number, Timestamp, UpdateMethod};
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
@@ -13,7 +14,6 @@ use crate::runs::{RepoWorkDir, RunId};
 use crate::session_env::SessionEnv;
 use crate::spec_glob::SpecGlob;
 use crate::webhook::{self, Webhooks};
-use crate::workflow::WorkflowName;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -90,9 +90,10 @@ pub enum Command {
         follow: bool,
     },
     /// Workflows: `workflow run NAME` runs one now, then exits.
-    Workflow {
+    #[command(name = "workflow")]
+    Automation {
         #[command(subcommand)]
-        command: WorkflowCommand,
+        command: AutomationCommand,
     },
     /// Write a case from a spec change or issue on GitHub: `owner/name#N`.
     Capture { target: String, dir: PathBuf },
@@ -171,12 +172,12 @@ impl Args for Which {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum WorkflowCommand {
+pub enum AutomationCommand {
     /// Run the workflow in `.linewright/workflows/NAME.md` on the default
     /// branch once, now, then exit; its schedule stays as it was.
     Run {
         #[arg(value_name = "NAME")]
-        name: WorkflowName,
+        name: AutomationName,
     },
 }
 

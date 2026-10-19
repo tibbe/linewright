@@ -1,18 +1,18 @@
 use crate::views;
 
+use linewright::automation::{AutomationFiles, LastRuns, Unparsed};
 use linewright::domain::*;
 use linewright::reconcile::{LiveRun, Subject, WorkKind};
 use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
-use linewright::workflow::{LastRuns, Unparsed, WorkflowFiles};
 use views::{at, closed_by, implementing, in_flight, limited_until, relabeled, ticket};
 
-fn files(workflows: &[(&str, &str)], unparsed: &[(&str, &str)]) -> WorkflowFiles {
-    WorkflowFiles {
-        parsed: workflows
+fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationFiles {
+    AutomationFiles {
+        parsed: automations
             .iter()
             .map(|&(name, cron)| {
-                linewright::workflow::parse(
+                linewright::automation::parse(
                     &name.parse().unwrap(),
                     &format!("---\non:\n  schedule: \"{cron}\"\n---\nLook.\n"),
                 )
@@ -383,9 +383,9 @@ fn each_tracked_item_says_in_one_line_what_linewright_waits_for_on_it() {
 }
 
 #[test]
-fn a_workflow_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
+fn a_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
     let view = View {
-        workflows: files(&[("weekly", "0 6 * * 1")], &[]),
+        automations: files(&[("weekly", "0 6 * * 1")], &[]),
         last_runs: last_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
         ..view(vec![])
     };
@@ -400,9 +400,9 @@ fn a_workflow_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
 }
 
 #[test]
-fn a_workflow_whose_schedule_ticked_since_its_last_run_is_due_now() {
+fn a_automation_whose_schedule_ticked_since_its_last_run_is_due_now() {
     let view = View {
-        workflows: files(&[("hourly", "0 * * * *")], &[]),
+        automations: files(&[("hourly", "0 * * * *")], &[]),
         last_runs: last_runs(&[("hourly", "2026-10-01T11:30:00Z")]),
         ..view(vec![])
     };
@@ -417,9 +417,9 @@ fn a_workflow_whose_schedule_ticked_since_its_last_run_is_due_now() {
 }
 
 #[test]
-fn a_workflow_whose_schedule_never_ticks_again_has_no_next_run() {
+fn a_automation_whose_schedule_never_ticks_again_has_no_next_run() {
     let view = View {
-        workflows: files(&[("leap", "0 0 30 2 *")], &[]),
+        automations: files(&[("leap", "0 0 30 2 *")], &[]),
         last_runs: last_runs(&[("leap", "2026-09-28T06:00:00Z")]),
         ..view(vec![])
     };
@@ -434,9 +434,9 @@ fn a_workflow_whose_schedule_never_ticks_again_has_no_next_run() {
 }
 
 #[test]
-fn a_workflow_with_no_recorded_run_is_shown_as_not_run_yet() {
+fn a_automation_with_no_recorded_run_is_shown_as_not_run_yet() {
     let view = View {
-        workflows: files(&[("hourly", "0 * * * *")], &[]),
+        automations: files(&[("hourly", "0 * * * *")], &[]),
         ..view(vec![])
     };
 
@@ -447,9 +447,9 @@ fn a_workflow_with_no_recorded_run_is_shown_as_not_run_yet() {
 }
 
 #[test]
-fn the_items_come_before_the_workflows_by_name_then_the_files_that_do_not_parse() {
+fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_parse() {
     let view = View {
-        workflows: files(
+        automations: files(
             &[("weekly", "0 6 * * 1"), ("hourly", "0 * * * *")],
             &[(".linewright/workflows/broken.md", "no front matter")],
         ),
@@ -477,7 +477,7 @@ fn the_items_come_before_the_workflows_by_name_then_the_files_that_do_not_parse(
 #[test]
 fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
     let view = View {
-        workflows: files(
+        automations: files(
             &[],
             &[(".linewright/workflows/broken.md", "no front matter")],
         ),
@@ -499,7 +499,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
         refused: 2,
     };
     let view = View {
-        workflows: files(&[("weekly", "0 6 * * 1")], &[("x.md", "bad")]),
+        automations: files(&[("weekly", "0 6 * * 1")], &[("x.md", "bad")]),
         last_runs: last_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
         in_flight: vec![
             in_flight(
@@ -526,7 +526,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
 #[test]
 fn the_json_names_each_fact() {
     let view = View {
-        workflows: files(&[("weekly", "0 6 * * 1")], &[]),
+        automations: files(&[("weekly", "0 6 * * 1")], &[]),
         last_runs: last_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
         live: vec![LiveRun {
             subject: Subject::Issue(Number(42)),

@@ -4,17 +4,17 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::automation::{AutomationFiles, AutomationName, LastRuns};
 use crate::domain::{
     CheckState, Filed, Issue, Item, Login, Number, Pull, PullState, Snapshot, StatusLabel,
     Timestamp, label,
 };
 use crate::reconcile::{
-    Decisions, LiveRun, Memory, NextRun, Policy, Relabel, Wait, Workflows, decisions, next_run,
+    Automations, Decisions, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions, next_run,
     open_pull_for, pending_spec_changes, worked_pulls,
 };
 use crate::runs::{InFlight, RunInFlight, RunOf};
 use crate::webhook::Received;
-use crate::workflow::{LastRuns, WorkflowFiles, WorkflowName};
 
 #[derive(Clone, Debug)]
 pub struct Serving {
@@ -36,34 +36,34 @@ pub struct View {
     /// cut that ended since the snapshot was taken counts too.
     pub live: Vec<LiveRun>,
     pub in_flight: Vec<InFlight>,
-    pub workflows: WorkflowFiles,
+    pub automations: AutomationFiles,
     pub last_runs: LastRuns,
 }
 
 impl View {
     pub fn decisions(&self, now: Timestamp) -> Decisions {
-        let workflows = Workflows {
-            defined: self.workflows.parsed.clone(),
+        let automations = Automations {
+            defined: self.automations.parsed.clone(),
             last_runs: self.last_runs.clone(),
-            in_flight: self.workflows_in_flight().collect(),
+            in_flight: self.automations_in_flight().collect(),
         };
         decisions(
             &self.snapshot,
             &self.live,
             &self.memory,
-            &workflows,
+            &automations,
             now,
             &self.policy,
         )
     }
 
     pub fn runs_in_flight(&self) -> usize {
-        self.live.len() + self.workflows_in_flight().count()
+        self.live.len() + self.automations_in_flight().count()
     }
 
-    fn workflows_in_flight(&self) -> impl Iterator<Item = WorkflowName> {
+    fn automations_in_flight(&self) -> impl Iterator<Item = AutomationName> {
         self.in_flight.iter().filter_map(|run| match &run.id.of {
-            RunOf::Workflow { workflow } => Some(workflow.clone()),
+            RunOf::Automation { automation } => Some(automation.clone()),
             RunOf::Work { .. } => None,
         })
     }
@@ -82,8 +82,10 @@ pub struct Status {
     pub runs: Vec<RunInFlight>,
     /// The other items Linewright tracks: those with no run in flight.
     pub items: Vec<Tracked>,
-    pub workflows: Vec<WorkflowRuns>,
-    pub unparsed_workflows: Vec<UnparsedWorkflow>,
+    #[serde(rename = "workflows")]
+    pub automations: Vec<AutomationRuns>,
+    #[serde(rename = "unparsed_workflows")]
+    pub unparsed_automations: Vec<UnparsedAutomation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,7 +188,7 @@ pub enum Ci {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowRuns {
+pub struct AutomationRuns {
     pub name: String,
     #[serde(flatten)]
     pub runs: Runs,
@@ -209,7 +211,7 @@ pub enum Runs {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UnparsedWorkflow {
+pub struct UnparsedAutomation {
     pub path: String,
     pub reason: String,
 }
@@ -237,19 +239,19 @@ pub fn status(
             linewright,
             runs: vec![],
             items: vec![],
-            workflows: vec![],
-            unparsed_workflows: vec![],
+            automations: vec![],
+            unparsed_automations: vec![],
         };
     };
-    let mut workflows: Vec<WorkflowRuns> = view
-        .workflows
+    let mut automations: Vec<AutomationRuns> = view
+        .automations
         .parsed
         .iter()
-        .map(|workflow| WorkflowRuns {
-            name: workflow.name.to_string(),
-            runs: match view.last_runs.get(&workflow.name) {
+        .map(|automation| AutomationRuns {
+            name: automation.name.to_string(),
+            runs: match view.last_runs.get(&automation.name) {
                 None => Runs::NotRunYet,
-                Some(last_run) => match next_run(workflow, last_run, now) {
+                Some(last_run) => match next_run(automation, last_run, now) {
                     NextRun::Due => Runs::Due { last_run },
                     NextRun::At(next_run) => Runs::Scheduled { last_run, next_run },
                     NextRun::Never => Runs::Ended { last_run },
@@ -257,17 +259,17 @@ pub fn status(
             },
         })
         .collect();
-    workflows.sort_by(|a, b| a.name.cmp(&b.name));
-    let mut unparsed_workflows: Vec<UnparsedWorkflow> = view
-        .workflows
+    automations.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut unparsed_automations: Vec<UnparsedAutomation> = view
+        .automations
         .unparsed
         .iter()
-        .map(|file| UnparsedWorkflow {
+        .map(|file| UnparsedAutomation {
             path: file.path.clone(),
             reason: file.reason.clone(),
         })
         .collect();
-    unparsed_workflows.sort_by(|a, b| a.path.cmp(&b.path));
+    unparsed_automations.sort_by(|a, b| a.path.cmp(&b.path));
     let mut runs: Vec<RunInFlight> = view.in_flight.iter().map(|run| run.at(now)).collect();
     runs.sort_by_key(|run| (run.started_at, run.id.to_string()));
     Status {
@@ -277,8 +279,8 @@ pub fn status(
             .into_iter()
             .filter(|item| !view.has_run_in_flight(item.number))
             .collect(),
-        workflows,
-        unparsed_workflows,
+        automations,
+        unparsed_automations,
     }
 }
 
@@ -398,7 +400,7 @@ pub fn render(status: &Status, colour: bool) -> String {
                 )
             })
             .collect(),
-        workflow_lines(status, paint),
+        automation_lines(status, paint),
     ];
     let mut text = String::new();
     for section in sections.iter().filter(|section| !section.is_empty()) {
@@ -467,9 +469,9 @@ fn linewright_lines(linewright: &Linewright, paint: Paint) -> Vec<String> {
     lines
 }
 
-fn workflow_lines(status: &Status, paint: Paint) -> Vec<String> {
-    let runs = status.workflows.iter().flat_map(|workflow| {
-        let (last, next) = match workflow.runs {
+fn automation_lines(status: &Status, paint: Paint) -> Vec<String> {
+    let runs = status.automations.iter().flat_map(|automation| {
+        let (last, next) = match automation.runs {
             Runs::NotRunYet => (
                 "none yet, its schedule starts when a poll first sees it".into(),
                 None,
@@ -481,12 +483,12 @@ fn workflow_lines(status: &Status, paint: Paint) -> Vec<String> {
                 Some("none, its schedule ticks no more".into()),
             ),
         };
-        let name = &workflow.name;
+        let name = &automation.name;
         std::iter::once(format!("workflow {name} last run: {last}"))
             .chain(next.map(|next| format!("workflow {name} next run: {next}")))
     });
     let unparsed = status
-        .unparsed_workflows
+        .unparsed_automations
         .iter()
         .map(|file| paint.red(&format!("{}: does not parse: {}", file.path, file.reason)));
     runs.chain(unparsed).collect()
