@@ -27,7 +27,8 @@ use crate::runs::{Ending, Running, Runs};
 use crate::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::spec_gap;
 use crate::store::{
-    AnyItem, Categories, Identity, NewIssue, NewPull, PushError, PushMode, RepoSettings, Store,
+    AnyItem, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError, PushMode,
+    RepoSettings, Store,
 };
 use crate::tracking;
 use crate::transcript;
@@ -145,13 +146,43 @@ fn infra(error: anyhow::Error) -> Failure {
     }
 }
 
-fn push_failure(branch: &str, error: PushError, again: TryAgain) -> Failure {
-    match error {
-        PushError::MissingPermission { reason } => Failure::HandBack {
+/// What became of a push.
+enum Pushed {
+    Done,
+    /// GitHub's push protection refused it over the secrets it found,
+    /// redacted.
+    Protected(FoundSecrets),
+    /// GitHub refused it for a missing permission, saying why.
+    Refused(String),
+    Failed(anyhow::Error),
+}
+
+async fn push(shell: &Shell, dir: &Path, branch: &str, mode: PushMode) -> Pushed {
+    match shell.store.push(dir, branch, mode).await {
+        Ok(()) => Pushed::Done,
+        Err(PushError::PushProtection { secrets }) => {
+            Pushed::Protected(secrets.redacted(shell.credentials.redaction()))
+        }
+        Err(PushError::MissingPermission { reason }) => Pushed::Refused(reason),
+        Err(PushError::Failed(e)) => Pushed::Failed(e),
+    }
+}
+
+/// The failure of a push of `branch` that did not succeed, handed back with
+/// how to `again` when GitHub refused it.
+fn pushed(branch: &str, pushed: Pushed, again: TryAgain) -> Result<(), Failure> {
+    match pushed {
+        Pushed::Done => Ok(()),
+        Pushed::Refused(reason) => Err(Failure::HandBack {
             reason: refused_push(branch, &reason, again),
             log_tail: None,
-        },
-        PushError::Failed(e) => infra(e),
+        }),
+        // Only an update that needed no session pushes without one to send
+        // it back to, and its commits GitHub already took.
+        Pushed::Protected(secrets) => Err(infra(anyhow::anyhow!(
+            "GitHub's push protection refused the push over a secret: {secrets}"
+        ))),
+        Pushed::Failed(e) => Err(infra(e)),
     }
 }
 
@@ -579,8 +610,24 @@ where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, Rejection>>,
 {
+    converse_counting(shell, ctx, spec, first, &mut 0, accept).await
+}
+
+/// As [`converse`], counting the follow-ups the result is sent back with in
+/// `retries`, which holds those it was sent back with before.
+async fn converse_counting<T, F, Fut>(
+    shell: &Shell,
+    ctx: &Ctx,
+    spec: &mut SessionSpec,
+    first: Step,
+    retries: &mut u32,
+    accept: F,
+) -> Result<(T, Turn), Failure>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Result<T, Rejection>>,
+{
     let mut turn = take_turn(shell, ctx, spec, first).await?;
-    let mut retries = 0;
     loop {
         match accept(turn.message.clone()).await {
             Ok(result) => {
@@ -591,24 +638,51 @@ where
                 return Ok((result, turn));
             }
             Err(Rejection::Fail(failure)) => return Err(failure),
-            Err(Rejection::Retry(followup)) if retries < shell.result_retries => {
-                retries += 1;
-                let step = Step::Resume {
-                    session: turn.session.clone(),
-                    prompt: followup,
-                };
-                turn = take_turn(shell, ctx, spec, step).await?;
-            }
             Err(Rejection::Retry(followup)) => {
-                return Err(Failure::HandBack {
-                    reason: format!(
-                        "The session's result still could not be used after {retries} follow-up(s).\n\n{followup}"
-                    ),
-                    log_tail: Some(tail(&scrub(&turn.message, &spec.dir), 40)),
-                });
+                let step = send_back(shell, spec, &turn, followup, retries)?;
+                turn = take_turn(shell, ctx, spec, step).await?;
             }
         }
     }
+}
+
+/// The step that sends the result `turn` answered with back to its session
+/// with `followup`, counted in `retries`, or the hand-back once that is past
+/// `result-retries`.
+fn send_back(
+    shell: &Shell,
+    spec: &SessionSpec,
+    turn: &Turn,
+    followup: String,
+    retries: &mut u32,
+) -> Result<Step, Failure> {
+    if *retries < shell.result_retries {
+        *retries += 1;
+        return Ok(Step::Resume {
+            session: turn.session.clone(),
+            prompt: followup,
+        });
+    }
+    Err(Failure::HandBack {
+        reason: format!(
+            "The session's result still could not be used after {retries} follow-up(s).\n\n{followup}"
+        ),
+        log_tail: Some(tail(&scrub(&turn.message, &spec.dir), 40)),
+    })
+}
+
+/// The step that sends a result whose push GitHub's push protection refused
+/// over `secrets` back to its session, as [`send_back`], or the hand-back
+/// saying the work was not kept.
+fn send_back_protected(
+    shell: &Shell,
+    spec: &SessionSpec,
+    turn: &Turn,
+    secrets: &FoundSecrets,
+    retries: &mut u32,
+) -> Result<Step, Failure> {
+    let followup = prompts::pushed_secret(&shell.briefs.prompts, secrets);
+    send_back(shell, spec, turn, followup, retries).map_err(|f| f.noted(&protected_note(secrets)))
 }
 
 enum Step {
@@ -913,6 +987,9 @@ enum Kept {
     Pushed,
     /// The work holds a credential, so it was not pushed.
     Held(Held),
+    /// GitHub's push protection refused the push over the secrets it found,
+    /// redacted.
+    Protected(FoundSecrets),
     /// GitHub refused the push for a missing permission, saying why.
     Refused(String),
     /// Committing or pushing the work failed, saying why.
@@ -977,10 +1054,11 @@ async fn push_unfinished(
     if let Some(held) = held_credential(shell, dir, &bases).await? {
         return Ok(Kept::Held(held));
     }
-    match shell.store.push(dir, branch, mode).await {
-        Ok(()) => Ok(Kept::Pushed),
-        Err(PushError::MissingPermission { reason }) => Ok(Kept::Refused(reason)),
-        Err(PushError::Failed(e)) => Err(e),
+    match push(shell, dir, branch, mode).await {
+        Pushed::Done => Ok(Kept::Pushed),
+        Pushed::Protected(secrets) => Ok(Kept::Protected(secrets)),
+        Pushed::Refused(reason) => Ok(Kept::Refused(reason)),
+        Pushed::Failed(e) => Err(e),
     }
 }
 
@@ -1007,6 +1085,10 @@ fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
             reason, "GitHub refused to keep the stopped run's work"
         ),
         Kept::Failed(error) => warn!(branch, error, "keeping the stopped run's work failed"),
+        Kept::Protected(secrets) => info!(
+            branch,
+            %secrets, "GitHub's push protection refused the stopped run's work over a secret"
+        ),
         Kept::Held(held) => info!(
             branch,
             variable = held.variable,
@@ -1028,11 +1110,21 @@ fn kept_note(branch: &str, kept: &Kept, try_again: TryAgain) -> String {
              credential, to `{}`.",
             held.commit, held.variable, held.file
         ),
+        Kept::Protected(secrets) => protected_note(secrets),
         Kept::Refused(reason) => format!("\n\n{}", refused_push(branch, reason, try_again)),
         Kept::Failed(error) => {
             format!("\n\nKeeping the work so far on the branch `{branch}` failed: {error}")
         }
     }
+}
+
+/// What a hand-back adds to say the work was not kept, as GitHub's push
+/// protection found `secrets` in it.
+fn protected_note(secrets: &FoundSecrets) -> String {
+    format!(
+        "\n\nThe work so far was not kept, as it holds a secret: GitHub's push protection \
+         found {secrets}."
+    )
 }
 
 async fn implement(
@@ -1062,36 +1154,63 @@ async fn implement(
     );
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let (dir, base) = (&ws.dir, &upstream);
-    let conversation = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
+    let accept = |message: String| async move {
         let result: ImplementResult = results::parse(&message).map_err(parse_retry(shell))?;
         if !matches!(result, ImplementResult::Done { .. }) {
             return Ok(result);
         }
         if let Some(problem) = git::loose_ends(dir).await? {
-            return Err(Rejection::Retry(prompts::loose_ends(&shell.briefs.prompts, &problem)));
+            return Err(Rejection::Retry(prompts::loose_ends(
+                &shell.briefs.prompts,
+                &problem,
+            )));
         }
         if git::commits_ahead(dir, base).await? == 0 {
-            return Err(Rejection::Retry(prompts::loose_ends(&shell.briefs.prompts,
+            return Err(Rejection::Retry(prompts::loose_ends(
+                &shell.briefs.prompts,
                 "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
             )));
         }
         let unfinished = git::unfinished_commits(dir, base, "HEAD").await?;
         if let Some(unfinished) = unfinished {
-            return Err(Rejection::Retry(prompts::fold_unfinished(&shell.briefs.prompts, &unfinished)));
+            return Err(Rejection::Retry(prompts::fold_unfinished(
+                &shell.briefs.prompts,
+                &unfinished,
+            )));
         }
         if let Some(held) = held_credential(shell, dir, &[base]).await? {
-            return Err(Rejection::Retry(prompts::held_credential(&shell.briefs.prompts, &held)));
+            return Err(Rejection::Retry(prompts::held_credential(
+                &shell.briefs.prompts,
+                &held,
+            )));
         }
         Ok(result)
-    })
-    .await;
+    };
     let keep = async || {
         let kept = keep_unfinished_work(shell, &ws.dir, &upstream, &branch).await;
         kept_note(&branch, &kept, TryAgain::Relabel)
     };
-    let (result, turn) = match conversation {
-        Ok(conversation) => conversation,
-        Err(failure) => return Err(failure.noted(&keep().await)),
+    // A finished result is pushed while its session can still be resumed,
+    // so that one GitHub refuses over a secret goes back to it.
+    let (mut step, mut retries) = (Step::Start, 0);
+    let (result, turn) = loop {
+        let conversation = converse_counting(shell, ctx, &mut spec, step, &mut retries, &accept);
+        let (result, turn) = match conversation.await {
+            Ok(conversation) => conversation,
+            Err(failure) => return Err(failure.noted(&keep().await)),
+        };
+        if !matches!(result, ImplementResult::Done { .. }) {
+            break (result, turn);
+        }
+        match push(shell, &ws.dir, &branch, PushMode::Replace).await {
+            Pushed::Protected(secrets) => {
+                step = send_back_protected(shell, &spec, &turn, &secrets, &mut retries)?;
+            }
+            other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
+                pushed(&branch, other, TryAgain::Relabel)?;
+                break (result, turn);
+            }
+        }
     };
     let store = &shell.store;
     match result {
@@ -1100,10 +1219,6 @@ async fn implement(
             pr_body,
             spec_gaps,
         } => {
-            store
-                .push(&ws.dir, &branch, PushMode::Replace)
-                .await
-                .map_err(|e| push_failure(&branch, e, TryAgain::Relabel))?;
             let pr = store
                 .open_pull(NewPull {
                     head: branch.clone(),
@@ -1248,10 +1363,8 @@ async fn push_update(
     let lease = PushMode::Lease {
         expected: start.to_string(),
     };
-    store
-        .push(dir, &pr.head_ref, lease)
-        .await
-        .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Reassign))
+    let outcome = push(shell, dir, &pr.head_ref, lease).await;
+    pushed(&pr.head_ref, outcome, TryAgain::Reassign)
 }
 
 async fn pull_work(
@@ -1359,56 +1472,81 @@ async fn pull_work(
         }
         Ok(result)
     };
-    let ended: Result<_, Failure> = async {
-        let (mut result, mut turn) = converse(shell, ctx, &mut spec, Step::Start, |m| {
-            accept(m, threads.clone())
-        })
-        .await?;
-        // Feedback posted after the snapshot the brief came from would be
-        // older than the push that follows, so it goes to the session before
-        // anything is pushed, for as long as it keeps coming within the
-        // session's time.
-        let mut shown_until = ctx.as_of;
-        loop {
-            let read_at = shell.clock.now();
-            let pr_now = store.pull(pr.number).await.map_err(infra)?;
-            if pull_stop(&pr_now, linewright).is_some()
-                || !matches!(result, PullWorkResult::Done { .. })
-            {
-                return Ok((result, turn, pr_now, read_at));
-            }
-            let arrived = late(
-                &new_feedback(&pr_now, linewright, ctx.reworked),
-                shown_until,
-            );
-            if arrived.is_empty() {
-                return Ok((result, turn, pr_now, read_at));
-            }
-            shown_until = read_at;
-            feedback_authors.extend(feedback_people(&arrived, linewright));
-            threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
-            let followup = prompts::late_feedback(&shell.briefs.prompts, &pr_now, &arrived);
-            let step = Step::Resume {
-                session: turn.session.clone(),
-                prompt: followup,
-            };
-            (result, turn) =
-                converse(shell, ctx, &mut spec, step, |m| accept(m, threads.clone())).await?;
-        }
-    }
-    .await;
     let keep = async || {
         let kept = keep_unfinished_pull_work(shell, dir, pr, &start, &before).await;
         kept_note(&pr.head_ref, &kept, TryAgain::Reassign)
     };
-    let (result, turn, pr_now, read_at) = match ended {
-        Ok(ended) => ended,
-        Err(failure) => return Err(failure.noted(&keep().await)),
+    let mut shown_until = ctx.as_of;
+    // A finished result is pushed while its session can still be resumed,
+    // as for an implement run.
+    let (mut step, mut retries) = (Step::Start, 0);
+    let (result, turn, pr_now, read_at) = loop {
+        let ended: Result<_, Failure> = async {
+            let (mut result, mut turn) =
+                converse_counting(shell, ctx, &mut spec, step, &mut retries, |m| {
+                    accept(m, threads.clone())
+                })
+                .await?;
+            // Feedback posted after the snapshot the brief came from would
+            // be older than the push that follows, so it goes to the session
+            // before anything is pushed, for as long as it keeps coming
+            // within the session's time.
+            loop {
+                let read_at = shell.clock.now();
+                let pr_now = store.pull(pr.number).await.map_err(infra)?;
+                if pull_stop(&pr_now, linewright).is_some()
+                    || !matches!(result, PullWorkResult::Done { .. })
+                {
+                    return Ok((result, turn, pr_now, read_at));
+                }
+                let arrived = late(
+                    &new_feedback(&pr_now, linewright, ctx.reworked),
+                    shown_until,
+                );
+                if arrived.is_empty() {
+                    return Ok((result, turn, pr_now, read_at));
+                }
+                shown_until = read_at;
+                feedback_authors.extend(feedback_people(&arrived, linewright));
+                threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
+                let followup = prompts::late_feedback(&shell.briefs.prompts, &pr_now, &arrived);
+                let resume = Step::Resume {
+                    session: turn.session.clone(),
+                    prompt: followup,
+                };
+                // The answer to new feedback is a new result.
+                retries = 0;
+                (result, turn) =
+                    converse_counting(shell, ctx, &mut spec, resume, &mut retries, |m| {
+                        accept(m, threads.clone())
+                    })
+                    .await?;
+            }
+        }
+        .await;
+        let (result, turn, pr_now, read_at) = match ended {
+            Ok(ended) => ended,
+            Err(failure) => return Err(failure.noted(&keep().await)),
+        };
+        if stopped(&pr_now, linewright).is_some() {
+            keep().await;
+            return Err(Failure::Cancelled);
+        }
+        if !matches!(result, PullWorkResult::Done { .. })
+            || git::head(dir).await.map_err(infra)? == start
+        {
+            break (result, turn, pr_now, read_at);
+        }
+        match push(shell, dir, &pr.head_ref, lease.clone()).await {
+            Pushed::Protected(secrets) => {
+                step = send_back_protected(shell, &spec, &turn, &secrets, &mut retries)?;
+            }
+            other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
+                pushed(&pr.head_ref, other, TryAgain::Reassign)?;
+                break (result, turn, pr_now, read_at);
+            }
+        }
     };
-    if stopped(&pr_now, linewright).is_some() {
-        keep().await;
-        return Err(Failure::Cancelled);
-    }
     match result {
         PullWorkResult::Done {
             comment,
@@ -1416,12 +1554,6 @@ async fn pull_work(
             replies,
             spec_gaps,
         } => {
-            if git::head(dir).await.map_err(infra)? != start {
-                store
-                    .push(dir, &pr.head_ref, lease)
-                    .await
-                    .map_err(|e| push_failure(&pr.head_ref, e, TryAgain::Reassign))?;
-            }
             if let Some(body) = pr_body {
                 store
                     .edit_body(pr.number, &closing(&body, &pr_now.closes))

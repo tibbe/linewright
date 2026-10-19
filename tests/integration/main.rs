@@ -8,6 +8,7 @@ mod local_api;
 mod local_store;
 mod logs;
 mod pipeline;
+mod push_protection;
 mod rate_limit;
 mod reconcile;
 mod refresh;

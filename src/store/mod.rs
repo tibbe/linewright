@@ -12,6 +12,7 @@ use crate::domain::{
     CheckFailure, Issue, Item, Login, MergeMethod, MergeMethods, MergedPull, Number, Pull,
     Snapshot, Timestamp, UpdateMethod, UpdateRule,
 };
+use crate::redaction::Redaction;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
@@ -111,17 +112,102 @@ pub enum PushMode {
 pub enum PushError {
     #[error("GitHub refused the push for a missing permission: {reason}")]
     MissingPermission { reason: String },
+    #[error("GitHub's push protection refused the push over a secret: {secrets}")]
+    PushProtection { secrets: FoundSecrets },
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
 
 impl PushError {
     pub fn from_git(error: anyhow::Error) -> PushError {
-        match missing_permission(&format!("{error:#}")) {
-            Some(reason) => PushError::MissingPermission { reason },
+        let output = format!("{error:#}");
+        if let Some(reason) = missing_permission(&output) {
+            return PushError::MissingPermission { reason };
+        }
+        match found_secrets(&output) {
+            Some(secrets) => PushError::PushProtection { secrets },
             None => PushError::Failed(error),
         }
     }
+}
+
+/// A secret GitHub's push protection found in a commit pushed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoundSecret {
+    /// The secret's type, as GitHub names it, such as `GitHub Personal
+    /// Access Token`.
+    pub kind: String,
+    /// The commit's full name.
+    pub commit: String,
+    /// The file, followed by `:` and the line, as GitHub gives it.
+    pub path: String,
+}
+
+/// The secrets GitHub's push protection found in a push, at least one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoundSecrets(Vec<FoundSecret>);
+
+impl FoundSecrets {
+    pub fn iter(&self) -> impl Iterator<Item = &FoundSecret> {
+        self.0.iter()
+    }
+
+    /// The secrets, with `redaction` applied to what GitHub says of them.
+    #[must_use]
+    pub fn redacted(&self, redaction: &Redaction) -> FoundSecrets {
+        FoundSecrets(
+            self.iter()
+                .map(|secret| FoundSecret {
+                    kind: redaction.apply(&secret.kind),
+                    commit: redaction.apply(&secret.commit),
+                    path: redaction.apply(&secret.path),
+                })
+                .collect(),
+        )
+    }
+}
+
+impl std::fmt::Display for FoundSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let found: Vec<String> = self
+            .iter()
+            .map(|s| format!("{} in the commit `{}`, at `{}`", s.kind, s.commit, s.path))
+            .collect();
+        write!(f, "{}", found.join("; "))
+    }
+}
+
+/// The secrets named in the output of a `git push` GitHub's push protection
+/// refused, each under a `—— <type> ——` heading with its `- commit:` and
+/// `path:` locations
+/// (<https://docs.github.com/code-security/secret-scanning/working-with-secret-scanning-and-push-protection/working-with-push-protection-from-the-command-line>).
+/// A refusal that names none is not recognized.
+fn found_secrets(output: &str) -> Option<FoundSecrets> {
+    let mut lines = output
+        .lines()
+        .map(str::trim)
+        .map(|line| line.strip_prefix("remote:").unwrap_or(line).trim());
+    lines.find(|line| line.ends_with("GITHUB PUSH PROTECTION"))?;
+    let mut found = vec![];
+    let mut kind = "";
+    let mut commit = None;
+    for line in lines {
+        if let Some(heading) = line.strip_prefix("——") {
+            kind = heading.trim_matches(|c: char| c == '—' || c.is_whitespace());
+        } else if let Some(name) = line.strip_prefix("- commit:") {
+            commit = Some(name.trim());
+        } else if let Some(path) = line.strip_prefix("path:")
+            && let Some(commit) = commit.take()
+            && !kind.is_empty()
+        {
+            found.push(FoundSecret {
+                kind: kind.to_string(),
+                commit: commit.to_string(),
+                path: path.trim().to_string(),
+            });
+        }
+    }
+    (!found.is_empty()).then_some(FoundSecrets(found))
 }
 
 /// GitHub's reason in the output of a `git push` it refused because the
@@ -288,4 +374,30 @@ pub trait Store: Send + Sync {
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()>;
     async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()>;
     async fn resolve_thread(&self, pr: Number, thread: &str) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_push_githubs_push_protection_refuses_names_each_secret_by_its_type_commit_and_path() {
+        let output = include_str!("fixtures/push-protection.txt");
+        let error = PushError::from_git(anyhow::anyhow!(
+            "git push --quiet origin HEAD:refs/heads/344-send-the-result-back-to-the-session-when \
+             --force failed: {output}"
+        ));
+
+        let PushError::PushProtection { secrets } = error else {
+            panic!("not recognized as push protection: {error:?}");
+        };
+        assert_eq!(
+            secrets.iter().collect::<Vec<_>>(),
+            [&FoundSecret {
+                kind: "GitHub Personal Access Token".to_string(),
+                commit: "8479b4565e1a22d92de1bb6edb317cdc4dc64212".to_string(),
+                path: "tests/integration/push_protection.rs:22".to_string(),
+            }]
+        );
+    }
 }

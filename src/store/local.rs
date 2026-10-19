@@ -511,6 +511,10 @@ impl LocalStore {
         self.state().pushes_refused = Some(output.to_string());
     }
 
+    pub fn accept_pushes(&self) {
+        self.state().pushes_refused = None;
+    }
+
     /// Refuses to let `token` read the repository.
     pub fn refuse_reads_by(&self, token: &str) {
         self.state().unreadable_by.push(token.to_string());
