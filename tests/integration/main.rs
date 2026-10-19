@@ -1,3 +1,4 @@
+mod committed_credentials;
 mod common;
 mod config;
 mod deliveries;

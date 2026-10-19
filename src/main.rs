@@ -11,11 +11,10 @@ use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, Since, WorkflowCommand};
-use linewright::credentials::credentials;
+use linewright::credentials::Credentials;
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
-use linewright::redaction::Redaction;
 use linewright::runs::{self, Query, RepoWorkDir};
 use linewright::runtime::claude::ClaudeCode;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
@@ -556,11 +555,11 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }
 
-/// The token sessions are given and the credentials redacted from what they
-/// say, for the runtime and the factory alike.
+/// The token sessions are given and Linewright's credentials, redacted from
+/// what they say, for the runtime and the factory alike.
 struct SessionCredentials {
     token: SessionToken,
-    redaction: Redaction,
+    credentials: Credentials,
 }
 
 impl SessionCredentials {
@@ -568,7 +567,7 @@ impl SessionCredentials {
     fn new(token: SessionToken) -> SessionCredentials {
         SessionCredentials {
             token,
-            redaction: Redaction::of(&credentials(std::env::vars_os())),
+            credentials: Credentials::of(std::env::vars_os()),
         }
     }
 }
@@ -593,7 +592,7 @@ fn runtime(config: &Config, bash: PathBuf, sessions: &SessionCredentials) -> Cla
         model: config.model.clone(),
         github_token,
         environment: split.given,
-        redaction: sessions.redaction.clone(),
+        redaction: sessions.credentials.redaction().clone(),
     }
 }
 
@@ -630,7 +629,7 @@ fn factory_config(
         schedule_workflows: true,
         waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
         session_token: sessions.token,
-        redaction: sessions.redaction,
+        credentials: sessions.credentials,
     }
 }
 

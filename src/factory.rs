@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 use crate::api::Served;
 use crate::briefs::Briefs;
 use crate::clock::Clock;
+use crate::credentials::Credentials;
 use crate::domain::{
     Item, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
@@ -22,7 +23,6 @@ use crate::reconcile::{
     Action, DoneRun, FailedMerge, LiveRun, Memory, Policy, Subject, Work, WorkKind, Workflows,
     hold_note, reconcile,
 };
-use crate::redaction::Redaction;
 use crate::run::{self, Shell, WorkflowEnd};
 use crate::runs::{self, Recorded, RunOf, Runs, Watched};
 use crate::runtime::{Runtime, UsageLimit};
@@ -54,10 +54,11 @@ pub struct FactoryConfig {
     pub schedule_workflows: bool,
     pub waits_out_usage_limit: bool,
     pub session_token: SessionToken,
-    /// Linewright's credentials, redacted from what a session's work prints
-    /// that reaches Linewright other than through the runtime, such as git's
+    /// Linewright's credentials, refused in the commits a session's result
+    /// would push, and redacted from what a session's work prints that
+    /// reaches Linewright other than through the runtime, such as git's
     /// output from hooks the session left in its clone.
-    pub redaction: Redaction,
+    pub credentials: Credentials,
 }
 
 /// The GitHub token agent sessions are given.
@@ -241,7 +242,7 @@ impl Factory {
             runs: runs.clone(),
             work_dir: config.work_dir,
             waits_out_usage_limit: config.waits_out_usage_limit,
-            redaction: config.redaction,
+            credentials: config.credentials,
             report_refusal,
         };
         Ok(Factory {

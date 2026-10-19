@@ -8,7 +8,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use linewright::api::Served;
 use linewright::briefs::Briefs;
 use linewright::clock::Clock;
-use linewright::credentials::credentials;
+use linewright::credentials::Credentials;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::reconcile::WorkKind;
@@ -23,13 +23,18 @@ use tokio_util::sync::CancellationToken;
 
 pub const LINEWRIGHT: &str = "factory";
 
-/// The redaction of an environment holding `variables`.
-pub fn redaction_of(variables: &[(&str, &str)]) -> Redaction {
-    Redaction::of(&credentials(
+/// The credentials of an environment holding `variables`.
+pub fn credentials_of(variables: &[(&str, &str)]) -> Credentials {
+    Credentials::of(
         variables
             .iter()
             .map(|(name, value)| (name.into(), value.into())),
-    ))
+    )
+}
+
+/// The redaction of an environment holding `variables`.
+pub fn redaction_of(variables: &[(&str, &str)]) -> Redaction {
+    credentials_of(variables).redaction().clone()
 }
 
 pub struct FakeClock {
@@ -314,6 +319,11 @@ impl Log {
         (log, tracing::subscriber::set_default(subscriber))
     }
 
+    /// All that was logged.
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+
     /// The lines logged at `level`, such as `WARN`.
     pub fn lines(&self, level: &str) -> Vec<String> {
         String::from_utf8_lossy(&self.0.lock().unwrap())
@@ -441,7 +451,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         schedule_workflows: true,
         waits_out_usage_limit: false,
         session_token: SessionToken::Withheld,
-        redaction: Redaction::default(),
+        credentials: Credentials::default(),
     }
 }
 

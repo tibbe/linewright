@@ -5,6 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
+use crate::credentials::Held;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::Feedback;
@@ -167,6 +168,11 @@ values!(FullLog { job, repo });
 values!(FiledGaps { gaps });
 values!(ParseError { error });
 values!(LooseEnds { problem });
+values!(HeldCredential {
+    commit,
+    variable,
+    file
+});
 values!(NoValues {});
 values!(LateFeedback {
     feedback,
@@ -351,6 +357,7 @@ pub struct Prompts {
     full_log: Template<FullLog>,
     filed_gaps: Template<FiledGaps>,
     fold_unfinished: Template<Commits>,
+    held_credential: Template<HeldCredential>,
     parse_error: Template<ParseError>,
     loose_ends: Template<LooseEnds>,
     usage_limit_reset: Template<NoValues>,
@@ -378,6 +385,7 @@ impl Prompts {
             full_log: template!(source, "parts/full-log.md")?,
             filed_gaps: template!(source, "parts/filed-gaps.md")?,
             fold_unfinished: template!(source, "parts/fold-unfinished.md")?,
+            held_credential: template!(source, "parts/held-credential.md")?,
             parse_error: template!(source, "follow-ups/parse-error.md")?,
             loose_ends: template!(source, "follow-ups/loose-ends.md")?,
             usage_limit_reset: template!(source, "follow-ups/usage-limit-reset.md")?,
@@ -564,6 +572,19 @@ pub fn fold_unfinished(prompts: &Prompts, unfinished: &UnfinishedCommits) -> Str
         prompts,
         &prompts.fold_unfinished.fill(&Commits {
             commits: unfinished_commits(unfinished),
+        }),
+    )
+}
+
+/// What a `done` answer is sent back with while its commits hold a
+/// credential, as `held` says.
+pub fn held_credential(prompts: &Prompts, held: &Held) -> String {
+    loose_ends(
+        prompts,
+        &prompts.held_credential.fill(&HeldCredential {
+            commit: held.commit.clone(),
+            variable: held.variable.clone(),
+            file: held.file.clone(),
         }),
     )
 }

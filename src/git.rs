@@ -454,3 +454,91 @@ pub async fn unfinished_commits(
         rest: commits.collect(),
     }))
 }
+
+/// Lines a commit adds to a file, one after another.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Addition {
+    /// The commit's abbreviated name.
+    pub commit: String,
+    pub file: String,
+    /// The lines, joined by newlines, so that a value that spans them is
+    /// found whole.
+    pub text: String,
+}
+
+/// What the commits on `tip` past each of `past` add, oldest commit first. A
+/// merge adds only what it holds that none of its parents did, as its
+/// resolution of a conflict does. Binary files add nothing.
+pub async fn additions(dir: &Path, tip: &str, past: &[&str]) -> Result<Vec<Addition>> {
+    let mut args = vec![
+        "-c",
+        "core.quotePath=false",
+        "log",
+        "--reverse",
+        "--format=%x00%h",
+        "--patch",
+        "--cc",
+        "--unified=0",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        tip,
+        "--not",
+    ];
+    args.extend(past);
+    args.push("--");
+    Ok(parse_additions(&git(dir, &args).await?))
+}
+
+/// The additions in `log`, as [`additions`] has git print it: each commit's
+/// name after a NUL, then its patch, or combined patch for a merge
+/// (<https://git-scm.com/docs/git-diff#_combined_diff_format>).
+fn parse_additions(log: &str) -> Vec<Addition> {
+    let mut additions = vec![];
+    let mut commit = "";
+    let mut file = String::new();
+    // The width of the hunk lines' prefix, one column per parent, once in a
+    // hunk.
+    let mut columns: Option<usize> = None;
+    // The added lines since the last line that was not one.
+    let mut run: Vec<&str> = vec![];
+    for line in log.lines() {
+        if let Some(width) = columns
+            && let Some((prefix, rest)) = line.split_at_checked(width)
+            && prefix.contains('+')
+        {
+            run.push(rest);
+            continue;
+        }
+        end_run(&mut additions, &mut run, commit, &file);
+        if let Some(name) = line.strip_prefix('\0') {
+            commit = name;
+            columns = None;
+        } else if line.starts_with("diff ") {
+            columns = None;
+        } else if columns.is_none()
+            && let Some(path) = line.strip_prefix("+++ ")
+        {
+            let path = path.trim_matches('"');
+            file = path.strip_prefix("b/").unwrap_or(path).to_string();
+        } else if line.starts_with("@@") {
+            columns = Some(line.chars().take_while(|c| *c == '@').count() - 1);
+        }
+    }
+    end_run(&mut additions, &mut run, commit, &file);
+    additions
+}
+
+/// Adds the `run` of lines `commit` adds to `file` to `additions`, if any,
+/// and starts the next.
+fn end_run(additions: &mut Vec<Addition>, run: &mut Vec<&str>, commit: &str, file: &str) {
+    if !run.is_empty() {
+        additions.push(Addition {
+            commit: commit.to_string(),
+            file: file.to_string(),
+            text: run.join("\n"),
+        });
+        run.clear();
+    }
+}

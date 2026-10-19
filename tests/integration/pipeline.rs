@@ -4362,7 +4362,7 @@ async fn a_hand_back_says_nothing_of_a_credential_the_sessions_work_printed() {
     // A hook the session left in its clone can print one as Linewright
     // pushes.
     let mut world = World::with(|config| {
-        config.redaction = redaction_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
+        config.credentials = credentials_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
     })
     .await;
     implement(&world);
@@ -4493,7 +4493,7 @@ async fn a_blocking_spec_gap_in_a_pull_request_run_hands_the_pull_request_back()
 async fn a_stopped_runs_work_that_cannot_be_kept_logs_nothing_of_a_credential_its_push_printed() {
     let (log, _guard) = Log::capture();
     let mut world = World::with(|config| {
-        config.redaction = redaction_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
+        config.credentials = credentials_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
     })
     .await;
     world.runtime.on(WorkKind::Implement, |call| {

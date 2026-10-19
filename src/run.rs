@@ -9,6 +9,7 @@ use tracing::{info, warn};
 
 use crate::briefs::Briefs;
 use crate::clock::Clock;
+use crate::credentials::{Credentials, Held};
 use crate::domain::{
     Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp, addressed_to,
     closing_references, label,
@@ -18,7 +19,6 @@ use crate::prompts::{self, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
-use crate::redaction::Redaction;
 use crate::results::{
     self, ImplementResult, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
     WorkflowIssueLabel, WorkflowResult,
@@ -46,7 +46,7 @@ pub(crate) struct Shell {
     pub work_dir: PathBuf,
     pub runs: Runs,
     pub waits_out_usage_limit: bool,
-    pub redaction: Redaction,
+    pub credentials: Credentials,
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
 }
 
@@ -204,7 +204,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 return Ending::Done;
             }
             Err(Failure::Infrastructure { error: e, .. }) if !retried => {
-                let error = shell.redaction.apply(&format!("{e:#}"));
+                let error = shell.credentials.redaction().apply(&format!("{e:#}"));
                 warn!(subject = ?subject, error, "infrastructure failure; retrying once");
                 retried = true;
             }
@@ -253,7 +253,13 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
     let work_dir = shell.work_dir.to_string_lossy().into_owned();
     // Git's output, as Linewright pushes, can come from hooks the session
     // left in its clone.
-    let posted = |text: &str| shell.redaction.apply(text).replace(&work_dir, "<work-dir>");
+    let posted = |text: &str| {
+        shell
+            .credentials
+            .redaction()
+            .apply(text)
+            .replace(&work_dir, "<work-dir>")
+    };
     let reason = posted(&reason);
     let log_tail = log_tail.map(|t| posted(&t));
     info!(subject = ?subject, reason, "handing back");
@@ -961,6 +967,14 @@ async fn push_unfinished(
     if git::commits_ahead(dir, past).await? == 0 {
         return Ok(Kept::Nothing);
     }
+    if let Some(held) = held_credential(shell, dir, &[past]).await? {
+        info!(
+            branch,
+            variable = held.variable,
+            "the stopped run's work holds a credential; it is not kept"
+        );
+        return Ok(Kept::Nothing);
+    }
     match shell.store.push(dir, branch, mode).await {
         Ok(()) => Ok(Kept::Pushed),
         Err(PushError::MissingPermission { reason }) => Ok(Kept::Refused(reason)),
@@ -968,11 +982,18 @@ async fn push_unfinished(
     }
 }
 
+/// The first credential the commits on the clone's `HEAD` past each of
+/// `past` add: docs/specs/runs.md, "A result the manager can't accept".
+async fn held_credential(shell: &Shell, dir: &Path, past: &[&str]) -> Result<Option<Held>> {
+    let additions = git::additions(dir, "HEAD", past).await?;
+    Ok(shell.credentials.held(&additions))
+}
+
 /// What became of a stopped run's work on `branch`, logged when it was not
 /// kept. Git's output is redacted, as hooks the session left in its clone
 /// can print a credential.
 fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
-    let redacted = |text: &str| shell.redaction.apply(text);
+    let redacted = |text: &str| shell.credentials.redaction().apply(text);
     let kept = match kept {
         Ok(Kept::Refused(reason)) => Kept::Refused(redacted(&reason)),
         Ok(kept) => kept,
@@ -1045,6 +1066,9 @@ async fn implement(
         let unfinished = git::unfinished_commits(dir, base, "HEAD").await?;
         if let Some(unfinished) = unfinished {
             return Err(Rejection::Retry(prompts::fold_unfinished(&shell.briefs.prompts, &unfinished)));
+        }
+        if let Some(held) = held_credential(shell, dir, &[base]).await? {
+            return Err(Rejection::Retry(prompts::held_credential(&shell.briefs.prompts, &held)));
         }
         Ok(result)
     })
@@ -1291,7 +1315,7 @@ async fn pull_work(
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
     let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
     let before = git::work_state(dir).await.map_err(infra)?;
-    let upstream = &upstream;
+    let (upstream, base) = (&upstream, start.as_str());
     let accept = |message: String, pr_threads: Vec<String>| async move {
         let result: PullWorkResult = results::parse(&message).map_err(parse_retry(shell))?;
         let PullWorkResult::Done { replies, .. } = &result else {
@@ -1307,6 +1331,12 @@ async fn pull_work(
             return Err(Rejection::Retry(prompts::fold_unfinished(
                 &shell.briefs.prompts,
                 &unfinished,
+            )));
+        }
+        if let Some(held) = held_credential(shell, dir, &[base, upstream]).await? {
+            return Err(Rejection::Retry(prompts::held_credential(
+                &shell.briefs.prompts,
+                &held,
             )));
         }
         if let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread)) {

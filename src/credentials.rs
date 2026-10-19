@@ -3,6 +3,9 @@
 
 use std::ffi::OsString;
 
+use crate::git::Addition;
+use crate::redaction::Redaction;
+
 const SUFFIXES: [&str; 4] = ["_TOKEN", "_KEY", "_SECRET", "_PASSWORD"];
 
 /// A variable of Linewright's environment named as a credential, and its
@@ -29,16 +32,58 @@ impl std::fmt::Debug for Credential {
     }
 }
 
-/// The credentials among `vars`, Linewright's environment as
-/// [`std::env::vars_os`] gives it. Empty values are skipped, as every text
-/// holds the empty string, and so are names or values that are not UTF-8,
-/// which no text Linewright handles holds as they are.
-pub fn credentials(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<Credential> {
-    vars.into_iter()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-        .filter(|(name, value)| {
-            !value.is_empty() && SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+/// Linewright's credentials, and their redaction.
+#[derive(Clone, Debug, Default)]
+pub struct Credentials {
+    list: Vec<Credential>,
+    redaction: Redaction,
+}
+
+impl Credentials {
+    /// The credentials among `vars`, Linewright's environment as
+    /// [`std::env::vars_os`] gives it. Empty values are skipped, as every
+    /// text holds the empty string, and so are names or values that are not
+    /// UTF-8, which no text Linewright handles holds as they are.
+    pub fn of(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Credentials {
+        let list: Vec<Credential> = vars
+            .into_iter()
+            .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+            .filter(|(name, value)| {
+                !value.is_empty() && SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+            })
+            .map(|(name, value)| Credential { name, value })
+            .collect();
+        Credentials {
+            redaction: Redaction::of(&list),
+            list,
+        }
+    }
+
+    pub fn redaction(&self) -> &Redaction {
+        &self.redaction
+    }
+
+    /// The first of `additions` that holds one of the credentials.
+    pub fn held(&self, additions: &[Addition]) -> Option<Held> {
+        additions.iter().find_map(|addition| {
+            let credential = self
+                .list
+                .iter()
+                .find(|c| addition.text.contains(c.value()))?;
+            Some(Held {
+                variable: credential.name.clone(),
+                file: addition.file.clone(),
+                commit: addition.commit.clone(),
+            })
         })
-        .map(|(name, value)| Credential { name, value })
-        .collect()
+    }
+}
+
+/// A credential a commit adds to a file, named but not given.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Held {
+    pub variable: String,
+    pub file: String,
+    /// The commit's abbreviated name.
+    pub commit: String,
 }
