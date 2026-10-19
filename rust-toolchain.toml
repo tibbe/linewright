@@ -2,6 +2,6 @@
 # and formatting land in a deliberate upgrade, not in an unrelated change
 # (https://doc.rust-lang.org/cargo/guide/continuous-integration.html).
 [toolchain]
-channel = "1.97.1"
+channel = "1.99.1"
 profile = "minimal"
 components = ["rustfmt", "clippy"]

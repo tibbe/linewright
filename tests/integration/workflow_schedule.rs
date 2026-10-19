@@ -60,7 +60,7 @@ async fn a_workflow_seen_for_the_first_time_does_not_run() {
 
     world.poll().await;
 
-    assert!(world.runtime.workflow_prompts().is_empty());
+    assert_eq!(world.runtime.workflow_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]

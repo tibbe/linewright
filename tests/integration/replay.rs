@@ -352,7 +352,7 @@ async fn a_replay_runs_no_workflows() {
     .await
     .unwrap();
 
-    assert!(runtime.workflow_prompts().is_empty());
+    assert_eq!(runtime.workflow_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]

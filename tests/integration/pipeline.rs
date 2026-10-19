@@ -559,8 +559,8 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
 
     let issue = world.issue(issue);
     assert_eq!(labels(&issue), ["needs-triage"]);
-    assert!(issue.comments.is_empty());
-    assert!(issue.assignees.is_empty());
+    assert_eq!(issue.comments, []);
+    assert_eq!(issue.assignees, []);
 }
 
 fn tickets_script(world: &World) {
@@ -1467,7 +1467,7 @@ async fn linewright_assigned(world: &World, pr: Number) -> bool {
 
 async fn assert_handed_back(world: &World, ticket: Number, pr: Number, comment: &str) {
     assert!(!linewright_assigned(world, pr).await);
-    assert!(world.store.pull_labels(pr).is_empty());
+    assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
     assert_eq!(last_pull_comment(world, pr).await, comment);
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-agent"]);
@@ -1734,7 +1734,7 @@ async fn unassigning_linewright_from_a_spec_change_while_it_is_cut_cancels_the_c
     world.factory.settle().await;
 
     assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
-    assert!(world.store.snapshot_pull(spec_pr).await.comments.is_empty());
+    assert_eq!(world.store.snapshot_pull(spec_pr).await.comments, []);
     world.poll().await;
     assert_eq!(world.runtime.prompts(WorkKind::Tickets).len(), 1);
 }
@@ -1996,8 +1996,8 @@ async fn relabeling_a_claimed_ticket_ready_for_human_lets_go_of_it_but_not_of_it
 
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-human"]);
-    assert!(issue.assignees.is_empty());
-    assert!(issue.comments.is_empty());
+    assert_eq!(issue.assignees, []);
+    assert_eq!(issue.comments, []);
     assert!(linewright_assigned(&world, pr).await);
 }
 
@@ -2012,7 +2012,10 @@ async fn a_ticket_without_the_required_label_assigned_to_linewright_by_hand_is_i
         &["ready-for-agent"],
     );
     world.poll().await;
-    assert!(world.runtime.prompts(WorkKind::Implement).is_empty());
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Implement),
+        Vec::<String>::new()
+    );
 
     world
         .store
@@ -2040,7 +2043,10 @@ async fn an_issue_assigned_to_linewright_by_hand_beside_someone_else_is_triaged(
         .open_issue("reporter", "It broke", "It broke.", &["needs-triage"]);
     world.store.assign_as("maintainer", issue, "alice").unwrap();
     world.poll().await;
-    assert!(world.runtime.prompts(WorkKind::Triage).is_empty());
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Triage),
+        Vec::<String>::new()
+    );
 
     world
         .store
@@ -2079,9 +2085,12 @@ async fn a_blocked_ticket_assigned_to_linewright_by_hand_is_held_assigned_until_
 
     world.poll().await;
 
-    assert!(world.runtime.prompts(WorkKind::Implement).is_empty());
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Implement),
+        Vec::<String>::new()
+    );
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
-    assert!(world.issue(ticket).comments.is_empty());
+    assert_eq!(world.issue(ticket).comments, []);
 
     world.store.close_issue_as(blocker).unwrap();
     world.poll().await;
@@ -2112,8 +2121,8 @@ async fn removing_the_label_of_a_ticket_assigned_to_linewright_by_hand_lets_go_o
     world.poll().await;
 
     let issue = world.issue(ticket);
-    assert!(issue.assignees.is_empty());
-    assert!(issue.comments.is_empty());
+    assert_eq!(issue.assignees, []);
+    assert_eq!(issue.comments, []);
 }
 
 #[tokio::test]
@@ -2141,8 +2150,8 @@ async fn relabeling_a_ticket_assigned_to_linewright_by_hand_lets_go_of_it_silent
     world.poll().await;
 
     let issue = world.issue(ticket);
-    assert!(issue.assignees.is_empty());
-    assert!(issue.comments.is_empty());
+    assert_eq!(issue.assignees, []);
+    assert_eq!(issue.comments, []);
 }
 
 #[tokio::test]
@@ -2182,8 +2191,14 @@ async fn an_issue_whose_label_asks_nothing_assigned_to_linewright_by_hand_is_let
             "{issue:?}"
         );
     }
-    assert!(world.runtime.prompts(WorkKind::Triage).is_empty());
-    assert!(world.runtime.prompts(WorkKind::Implement).is_empty());
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Triage),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Implement),
+        Vec::<String>::new()
+    );
 }
 
 #[tokio::test]
@@ -2205,7 +2220,10 @@ async fn reassigning_linewright_after_unassigning_it_implements_the_ticket_again
         .unassign_as("maintainer", ticket, LINEWRIGHT)
         .unwrap();
     world.poll().await;
-    assert!(world.runtime.prompts(WorkKind::Implement).is_empty());
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Implement),
+        Vec::<String>::new()
+    );
 
     world
         .store
@@ -2502,7 +2520,7 @@ async fn a_run_that_ends_for_the_usage_limit_leaves_its_uncommitted_edits_as_an_
     world.poll().await;
 
     assert_edits_kept_as_unfinished(&world, &format!("{}-gadgets", ticket.0)).await;
-    assert!(world.issue(ticket).comments.is_empty());
+    assert_eq!(world.issue(ticket).comments, []);
 }
 
 /// Starts a ticket's run, which leaves edits uncommitted, and has `cancel`
@@ -2540,7 +2558,7 @@ async fn a_cancelled_run_leaves_its_uncommitted_edits_as_an_unfinished_commit() 
     .await;
 
     assert_edits_kept_as_unfinished(&world, &format!("{}-gadgets", ticket.0)).await;
-    assert!(world.issue(ticket).comments.is_empty());
+    assert_eq!(world.issue(ticket).comments, []);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2700,7 +2718,7 @@ async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_r
     relabel_ready_for_agent(&world, ticket);
     world.poll().await;
 
-    assert!(world.store.pulls().is_empty());
+    assert_eq!(world.store.pulls(), []);
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-human"]);
     let comment = last_comment(&issue);
@@ -4255,7 +4273,7 @@ async fn a_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once_w
             ticket.0
         )
     );
-    assert!(world.store.pulls().is_empty());
+    assert_eq!(world.store.pulls(), []);
 }
 
 async fn implemented_with_pushes_refused(output: &str) -> (World, linewright::domain::Number) {

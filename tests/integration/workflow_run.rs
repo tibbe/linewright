@@ -228,7 +228,10 @@ async fn a_ready_for_agent_workflow_issue_is_implemented_on_the_next_poll_withou
         .last()
         .expect("a pull request was opened");
     assert_eq!(world.store.snapshot_pull(pr).await.closes, [issue]);
-    assert!(world.runtime.prompts(WorkKind::Triage).is_empty());
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Triage),
+        Vec::<String>::new()
+    );
 }
 
 #[tokio::test]
@@ -324,7 +327,7 @@ async fn an_unknown_workflow_fails_naming_its_file() {
     );
 
     assert!(error.contains(".linewright/workflows/daily.md"), "{error}");
-    assert!(world.runtime.workflow_prompts().is_empty());
+    assert_eq!(world.runtime.workflow_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -345,7 +348,7 @@ async fn a_workflow_file_that_does_not_parse_fails_saying_why() {
     );
 
     assert!(error.contains("every monday"), "{error}");
-    assert!(world.runtime.workflow_prompts().is_empty());
+    assert_eq!(world.runtime.workflow_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -439,5 +442,5 @@ async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
     assert_eq!(ended.len(), 1, "{ended:?}");
     assert!(log.lines("ERROR").is_empty(), "{:?}", log.lines("ERROR"));
     assert_eq!(world.runtime.workflow_prompts().len(), 1, "not retried");
-    assert!(world.store.issues().is_empty());
+    assert_eq!(world.store.issues(), []);
 }

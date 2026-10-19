@@ -409,7 +409,7 @@ async fn a_wrong_command_line_exits_2() {
 
         assert_eq!(output.code, Some(2), "{args:?}: {}", output.stderr);
         assert_eq!(output.stdout, "");
-        assert!(!output.stderr.is_empty());
+        assert_ne!(output.stderr, "");
     }
 }
 

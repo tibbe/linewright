@@ -122,7 +122,7 @@ async fn before_the_reset_a_poll_starts_no_run_and_claims_no_issue() {
     let actions = world.factory.cycle().await.unwrap();
 
     assert_eq!(started(&actions), []);
-    assert!(world.issue(fresh).assignees.is_empty());
+    assert_eq!(world.issue(fresh).assignees, []);
     assert_eq!(labels(&world.issue(new)), ["needs-triage"]);
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
 }
@@ -135,7 +135,7 @@ async fn before_the_reset_a_refresh_starts_no_run_and_claims_no_issue() {
     let actions = world.factory.refresh([Item::Issue(fresh)]).await.unwrap();
 
     assert_eq!(actions, []);
-    assert!(world.issue(fresh).assignees.is_empty());
+    assert_eq!(world.issue(fresh).assignees, []);
 }
 
 #[tokio::test]
@@ -156,7 +156,10 @@ async fn before_the_reset_actions_that_start_no_session_are_still_taken() {
     world.factory.cycle().await.unwrap();
 
     assert_eq!(labels(&world.issue(asked)), ["needs-triage"]);
-    assert!(world.runtime.prompts(WorkKind::Triage).is_empty());
+    assert_eq!(
+        world.runtime.prompts(WorkKind::Triage),
+        Vec::<String>::new()
+    );
 }
 
 #[tokio::test]
@@ -241,7 +244,7 @@ async fn a_workflow_due_under_the_limit_waits_and_runs_at_the_first_poll_after_t
 
     world.clock.advance(TimeDelta::hours(2));
     world.factory.cycle().await.unwrap();
-    assert!(world.runtime.workflow_prompts().is_empty());
+    assert_eq!(world.runtime.workflow_prompts(), Vec::<String>::new());
     assert_eq!(last_runs().unwrap(), before, "not recorded as run");
 
     advance_past_the_reset(&world, 1);
@@ -295,7 +298,7 @@ async fn a_session_refused_part_way_resumes_after_the_reset_in_the_same_clone() 
         let read = world.store.read_file(&branch, file).await.unwrap();
         assert_eq!(read.as_deref(), Some("work\n"), "{file}");
     }
-    assert!(world.issue(ticket).comments.is_empty());
+    assert_eq!(world.issue(ticket).comments, []);
     let refused = log.usage_limit_warnings();
     assert_eq!(refused.len(), 1, "{refused:?}");
     assert!(
@@ -468,8 +471,8 @@ async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_bran
         .await
         .unwrap();
     assert_eq!(read.as_deref(), Some("work\n"));
-    assert!(world.issue(ticket).comments.is_empty());
-    assert!(world.store.pulls().is_empty());
+    assert_eq!(world.issue(ticket).comments, []);
+    assert_eq!(world.store.pulls(), []);
     let cancelled: Vec<_> = log
         .lines("INFO")
         .into_iter()
@@ -492,7 +495,7 @@ async fn a_stop_during_the_wait_drops_the_run() {
     let branch = format!("{}-do-the-thing", ticket.0);
     let read = store.read_file(&branch, "src/turn-0.txt").await.unwrap();
     assert_eq!(read.as_deref(), Some("work\n"), "its branch is kept");
-    assert!(store.pulls().is_empty());
+    assert_eq!(store.pulls(), []);
 }
 
 #[tokio::test]
@@ -530,7 +533,7 @@ async fn once_ends_the_refused_run_without_waiting() {
     world.poll().await;
 
     assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
-    assert!(world.issue(ticket).comments.is_empty());
+    assert_eq!(world.issue(ticket).comments, []);
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
 }
 
