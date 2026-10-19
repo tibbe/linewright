@@ -19,6 +19,7 @@ use crate::credentials::Credentials;
 use crate::domain::{
     Item, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
+use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
 use crate::holds::Holds;
 use crate::reconcile::{
@@ -59,6 +60,8 @@ pub struct FactoryConfig {
     /// reaches Linewright other than through the harness, such as git's
     /// output from hooks the session left in its clone.
     pub credentials: Credentials,
+    /// What drains and stops the factory.
+    pub ends: Ends,
 }
 
 /// The GitHub token agent sessions are given.
@@ -125,8 +128,7 @@ pub struct Factory {
     runs: JoinSet<()>,
     refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
     live: HashMap<Id, LiveEntry>,
-    stopping: CancellationToken,
-    draining: CancellationToken,
+    ends: Ends,
     schedule_automations: bool,
     last_runs: LastRuns,
     automation_files: AutomationFiles,
@@ -260,8 +262,7 @@ impl Factory {
             runs: JoinSet::new(),
             refusals,
             live: HashMap::new(),
-            stopping: CancellationToken::new(),
-            draining: CancellationToken::new(),
+            ends: config.ends,
             schedule_automations: config.schedule_automations,
             last_runs,
             automation_files: AutomationFiles::default(),
@@ -279,13 +280,17 @@ impl Factory {
     /// Cancelling it lets the action in progress finish, so no action is left
     /// half done.
     pub fn stopping(&self) -> CancellationToken {
-        self.stopping.clone()
+        self.ends.stopping()
+    }
+
+    pub fn ends(&self) -> Ends {
+        self.ends.clone()
     }
 
     /// Cancelling it begins a drain: no item is claimed and no run starts
     /// from then on, and [`Factory::serve`] returns once no run is in flight.
     pub fn draining(&self) -> CancellationToken {
-        self.draining.clone()
+        self.ends.draining()
     }
 
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
@@ -353,8 +358,8 @@ impl Factory {
         pending: &Pending,
         served: &tokio::sync::watch::Sender<Option<Served>>,
     ) -> ServeEnd {
-        let stopping = self.stopping.clone();
-        let draining = self.draining.clone();
+        let stopping = self.ends.stopping();
+        let draining = self.ends.draining();
         while !stopping.is_cancelled() {
             // The poll reads what deliveries named before it as well.
             pending.take();
@@ -403,7 +408,7 @@ impl Factory {
 
     /// Takes a drain asked for into memory, once.
     fn note_drain(&mut self) {
-        if !self.draining.is_cancelled() || self.memory.drain.is_some() {
+        if !self.ends.draining().is_cancelled() || self.memory.drain.is_some() {
             return;
         }
         self.memory.drain = Some(Drain {
@@ -505,7 +510,7 @@ impl Factory {
         let mut planned_draining = self.memory.drain.is_some();
         let mut next = 0;
         while let Some(action) = actions.get(next).cloned() {
-            if self.stopping.is_cancelled() {
+            if self.ends.stopping().is_cancelled() {
                 break;
             }
             self.note_drain();
@@ -544,7 +549,7 @@ impl Factory {
             shell,
             &automation,
             begin_automation(shell, name)?,
-            self.stopping.clone(),
+            self.ends.stopping(),
         )
         .await
         .with_context(|| format!("the run of the automation `{name}` failed"))

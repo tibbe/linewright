@@ -316,6 +316,32 @@ fn help_shows_the_command_as_lw() {
 }
 
 #[test]
+fn help_lists_drain_and_serve_as_polling_until_drained_or_stopped() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
+        .arg("--help")
+        .output()
+        .unwrap();
+
+    let printed = String::from_utf8(output.stdout).unwrap();
+    let described = |command: &str| {
+        printed
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix(command))
+            .map(str::trim)
+    };
+    assert_eq!(
+        described("serve "),
+        Some("Poll the repository until drained or stopped"),
+        "{printed}"
+    );
+    assert_eq!(
+        described("drain "),
+        Some("Tell the running `serve` to drain"),
+        "{printed}"
+    );
+}
+
+#[test]
 fn an_error_the_program_prints_itself_starts_with_lw() {
     let dir = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))

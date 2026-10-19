@@ -452,6 +452,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         waits_out_usage_limit: false,
         session_token: SessionToken::Withheld,
         credentials: Credentials::default(),
+        ends: linewright::ending::Ends::new(),
     }
 }
 
@@ -882,6 +883,11 @@ impl Serving {
 
     pub async fn stop(self) -> ServeEnd {
         self.stopping.cancel();
+        self.finished().await
+    }
+
+    /// Waits for serving to end, however long that takes.
+    pub async fn finished(self) -> ServeEnd {
         self.handle.await.unwrap()
     }
 

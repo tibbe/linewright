@@ -13,7 +13,7 @@ use crate::reconcile::{
     Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
     next_run, open_pull_for, pending_spec_changes, worked_pulls,
 };
-use crate::runs::{InFlight, RunInFlight, RunOf};
+use crate::runs::{InFlight, RunId, RunInFlight, RunOf};
 use crate::webhook::Received;
 
 #[derive(Clone, Debug)]
@@ -84,6 +84,12 @@ pub struct Status {
     pub items: Vec<Tracked>,
     pub automations: Vec<AutomationRuns>,
     pub unparsed_automations: Vec<UnparsedAutomation>,
+}
+
+impl Status {
+    pub fn run_ids(&self) -> Vec<RunId> {
+        self.runs.iter().map(|run| run.id.clone()).collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

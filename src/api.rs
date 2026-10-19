@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Extension, Router};
 use futures_util::StreamExt as _;
 use http_body_util::{BodyExt, Empty};
@@ -24,6 +24,8 @@ use tracing::{error, info};
 
 use crate::clock::Clock;
 use crate::domain::Number;
+use crate::drain::{Taken, Was};
+use crate::ending::{self, Ends};
 use crate::explain;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
 use crate::runs::{self, ListError, RepoWorkDir, Runs, Watched};
@@ -142,6 +144,10 @@ impl Served {
         Served { view, store, runs }
     }
 
+    pub fn run_ids(&self) -> Vec<runs::RunId> {
+        self.runs.iter().map(|run| run.id.clone()).collect()
+    }
+
     pub fn view_now(&self) -> View {
         View {
             in_flight: self.runs.iter().map(Watched::read).collect(),
@@ -159,6 +165,8 @@ pub struct Sources {
     pub deliveries: Option<Tally>,
     pub clock: Arc<dyn Clock>,
     pub work_dir: RepoWorkDir,
+    /// What a drain asked for goes through.
+    pub ends: Ends,
 }
 
 pub struct Api {
@@ -183,6 +191,7 @@ impl Api {
             .route("/items/{number}", get(answer_item))
             .route("/logs", get(answer_logs))
             .route("/logs/follow", get(follow_logs))
+            .route("/drain", post(take_drain))
             .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
             .layer(middleware::from_fn(local_only))
             // Ends the transcripts being followed, so that stopping waits
@@ -200,7 +209,7 @@ impl Api {
                 }
             }
         });
-        info!(socket = %path.display(), "answering the monitoring commands");
+        info!(socket = %path.display(), "answering the monitoring commands and `drain`");
         Api {
             path,
             stop,
@@ -232,6 +241,27 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
         sources.clock.now(),
     );
     json_response(StatusCode::OK, &answer)
+}
+
+async fn take_drain(State(sources): State<Sources>) -> Response {
+    let (ending, _) = sources.ends.on(ending::Event::Drain);
+    let Some(was) = Was::of(ending) else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "`serve` is exiting at once",
+        );
+    };
+    let runs = sources
+        .served
+        .borrow()
+        .as_ref()
+        .map_or_else(Vec::new, Served::run_ids);
+    let taken = Taken {
+        was,
+        serving_since: sources.serving.since,
+        runs,
+    };
+    json_response(StatusCode::OK, &taken)
 }
 
 async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Query>) -> Response {
@@ -580,10 +610,16 @@ impl HangUps {
     }
 }
 
+/// Not asked again on a hang-up, unlike [`get_answer`]: what was posted
+/// may have been taken, its answer lost.
+pub async fn post_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
+    ask(dir, repo, hyper::Method::POST, resource).await
+}
+
 pub async fn get_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
     let mut hang_ups = HangUps::default();
     loop {
-        match ask(dir, repo, resource).await {
+        match ask(dir, repo, hyper::Method::GET, resource).await {
             Err(RequestError::HungUp(_)) if hang_ups.ask_again() => {
                 tokio::time::sleep(ASK_AGAIN_AFTER).await;
             }
@@ -592,8 +628,13 @@ pub async fn get_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes,
     }
 }
 
-async fn ask(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
-    let response = send(connect(dir, repo).await?, resource, None).await?;
+async fn ask(
+    dir: &Path,
+    repo: &str,
+    method: hyper::Method,
+    resource: &str,
+) -> Result<Bytes, RequestError> {
+    let response = send(connect(dir, repo).await?, method, resource, None).await?;
     let status = response.status();
     let body = response
         .into_body()
@@ -621,7 +662,13 @@ pub async fn get_events(
     last_id: Option<&str>,
     mut on_event: impl FnMut(ServerEvent),
 ) -> Result<(), RequestError> {
-    let response = send(connect(dir, repo).await?, resource, last_id).await?;
+    let response = send(
+        connect(dir, repo).await?,
+        hyper::Method::GET,
+        resource,
+        last_id,
+    )
+    .await?;
     let status = response.status();
     let content_type = response
         .headers()
@@ -712,6 +759,7 @@ async fn connect(dir: &Path, repo: &str) -> Result<UnixStream, RequestError> {
 
 async fn send(
     stream: UnixStream,
+    method: hyper::Method,
     resource: &str,
     last_id: Option<&str>,
 ) -> Result<hyper::Response<hyper::body::Incoming>, RequestError> {
@@ -719,7 +767,10 @@ async fn send(
         .await
         .context("talking to `serve`")?;
     let mut connection = tokio::spawn(connection);
-    let mut request = hyper::Request::get(resource).header(header::HOST, "localhost");
+    let mut request = hyper::Request::builder()
+        .method(method)
+        .uri(resource)
+        .header(header::HOST, "localhost");
     if let Some(id) = last_id {
         request = request.header(LAST_EVENT_ID, id);
     }

@@ -30,10 +30,23 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Poll the repository until stopped.
+    /// Poll the repository until drained or stopped.
     Serve,
     /// Run one poll cycle and the runs it starts, then exit.
     Once,
+    /// Tell the running `serve` to drain.
+    ///
+    /// `serve` claims no item and starts no run, and exits once no run is in
+    /// flight. Prints the runs it waits for and each as it ends, and returns
+    /// once `serve` has exited.
+    Drain {
+        /// Return once `serve` has taken the request.
+        #[arg(long)]
+        no_wait: bool,
+        /// Print one JSON object per line.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show what the running `serve` is doing and what holds it back.
     Status {
         /// Print `serve`'s answer as JSON, as it sent it.

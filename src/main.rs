@@ -13,7 +13,8 @@ use linewright::clock::{Clock, SystemClock};
 use linewright::config::{AutomationCommand, Cli, Command, Config, LogFormat, ResolveError, Since};
 use linewright::credentials::Credentials;
 use linewright::domain::Number;
-use linewright::ending::{Ending, Signal, Step};
+use linewright::drain::{self, Said, Taken, Waiting};
+use linewright::ending::{Ends, Event, Signal, Step};
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
@@ -96,12 +97,9 @@ async fn ask<T: serde::de::DeserializeOwned>(
     let text = if json {
         String::from_utf8_lossy(&body).into_owned()
     } else {
-        match serde_json::from_slice::<T>(&body) {
+        match read_as::<T>(&body, what) {
             Ok(answer) => render(&answer, colour()),
-            Err(e) => {
-                let error = anyhow!("`serve`'s answer does not read as {what}: {e}");
-                return print_answer(Err(failed(&error)));
-            }
+            Err(e) => return print_answer(Err(e)),
         }
     };
     print!("{text}");
@@ -109,6 +107,66 @@ async fn ask<T: serde::de::DeserializeOwned>(
         println!();
     }
     ExitCode::SUCCESS
+}
+
+/// How often `drain` asks what is in flight while it waits.
+const DRAIN_ASKS_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
+
+async fn drain(config: &Config, no_wait: bool, json: bool) -> ExitCode {
+    let say = |lines: &[Said]| {
+        for said in lines {
+            if json {
+                print!("{}", drain::json(said));
+            } else {
+                print!("{}", drain::render(said, colour()));
+            }
+        }
+        let _ = std::io::stdout().flush();
+    };
+    let repo = match config.required_repo() {
+        Ok(repo) => repo,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let dir = socket_dir();
+    let taken = match api::post_answer(&dir, repo, "/drain").await {
+        Ok(body) => match read_as::<Taken>(&body, "a drain taken") {
+            Ok(taken) => taken,
+            Err(e) => return print_answer(Err(e)),
+        },
+        Err(e) => return print_answer(Err(refused(e))),
+    };
+    let mut waiting = Waiting::default();
+    say(&[Said::Taken { was: taken.was }]);
+    say(&waiting.seen(&taken.runs));
+    if no_wait {
+        return ExitCode::SUCCESS;
+    }
+    loop {
+        tokio::time::sleep(DRAIN_ASKS_EVERY).await;
+        let status = match api::get_answer(&dir, repo, "/status").await {
+            Ok(body) => match read_as::<status::Status>(&body, "a status") {
+                Ok(status) => Some(status),
+                Err(e) => return print_answer(Err(e)),
+            },
+            Err(RequestError::NotServing { .. }) => None,
+            // Asked again: a `serve` that hangs up is about to exit.
+            Err(RequestError::HungUp(_)) => continue,
+            Err(e) => return print_answer(Err(refused(e))),
+        };
+        // One started since, as a supervisor restarts it, is another.
+        match status.filter(|status| status.linewright.serving_since == taken.serving_since) {
+            Some(status) => say(&waiting.seen(&status.run_ids())),
+            None => {
+                say(&waiting.exited());
+                return ExitCode::SUCCESS;
+            }
+        }
+    }
+}
+
+fn read_as<T: serde::de::DeserializeOwned>(body: &[u8], what: &str) -> Result<T, (u8, String)> {
+    serde_json::from_slice(body)
+        .map_err(|e| (1, format!("`serve`'s answer does not read as {what}: {e}")))
 }
 
 async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
@@ -295,8 +353,7 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
     let work_dir = config.repo_work_dir().map_err(|e| failed(&e))?;
     match api::get_answer(&socket_dir(), &work_dir.repo, resource).await {
         Ok(body) => {
-            let value = serde_json::from_slice(&body)
-                .map_err(|e| (1, format!("`serve`'s answer does not read as {what}: {e}")))?;
+            let value = read_as(&body, what)?;
             Ok(Answer::Served { body, value })
         }
         Err(RequestError::NotServing { .. }) => match read(&work_dir).map_err(Into::into) {
@@ -375,6 +432,9 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             let resource = "/status";
             return Ok(ask(&config, resource, "a status", json, status::render).await);
         }
+        Command::Drain { no_wait, json } => {
+            return Ok(drain(&config, no_wait, json).await);
+        }
         Command::Explain { number, json } => {
             let resource = format!("/items/{number}");
             let what = "an explanation";
@@ -414,6 +474,8 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             // `lw` can be PID 1, which the kernel sends no signal it
             // has no handler for.
             let signals = Signals::new().context("listening for stop signals")?;
+            let ends = Ends::new();
+            end_on(signals, ends.clone());
             let clock: Arc<dyn Clock> = Arc::new(SystemClock);
             let since = clock.now();
             // Before anything else, so that a second `serve` for the
@@ -439,9 +501,10 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                     deliveries: listener.as_ref().map(Listener::tally),
                     clock,
                     work_dir,
+                    ends: ends.clone(),
                 },
             );
-            let stopped = serve(&config, signals, &pending, &served).await;
+            let stopped = serve(&config, &ends, &pending, &served).await;
             if let Some(listener) = listener {
                 listener.stop().await;
             }
@@ -449,7 +512,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             stopped
         }
         Command::Once => {
-            let mut factory = start(&config, OnUsageLimit::End).await?;
+            let mut factory = start(&config, OnUsageLimit::End, Ends::new()).await?;
             factory.cycle().await?;
             factory.settle().await;
             Ok(())
@@ -457,7 +520,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         Command::Automation {
             command: AutomationCommand::Run { name },
         } => {
-            start(&config, OnUsageLimit::End)
+            start(&config, OnUsageLimit::End, Ends::new())
                 .await?
                 .run_automation(&name)
                 .await
@@ -484,8 +547,14 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             require_tool(HARNESS_PROGRAM).await?;
             let sessions = SessionCredentials::new(SessionToken::Withheld);
             let harness = harness(&config, bash, &sessions);
-            let factory_config =
-                factory_config(&config, briefs, out.clone(), OnUsageLimit::End, sessions);
+            let factory_config = factory_config(
+                &config,
+                briefs,
+                out.clone(),
+                OnUsageLimit::End,
+                sessions,
+                Ends::new(),
+            );
             case::replay(
                 &case_dir,
                 &out,
@@ -503,54 +572,18 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
 
 async fn serve(
     config: &Config,
-    mut signals: Signals,
+    ends: &Ends,
     pending: &Pending,
     served: &tokio::sync::watch::Sender<Option<Served>>,
 ) -> Result<()> {
-    // No run can be in flight yet, so every signal ends `serve` alike.
+    // No run can be in flight yet, so every drain or stop ends `serve` alike.
     let mut factory = tokio::select! {
-        factory = start(config, OnUsageLimit::Wait) => factory?,
-        signal = signals.next() => {
-            info!(signal = signal.name(), "ended while starting");
+        factory = start(config, OnUsageLimit::Wait, ends.clone()) => factory?,
+        () = ends.drain_or_stop_begun() => {
+            info!("ended while starting");
             return Ok(());
         }
     };
-    let stopping = factory.stopping();
-    let draining = factory.draining();
-    tokio::spawn(async move {
-        let mut state = Ending::Serving;
-        loop {
-            let signal = signals.next().await;
-            let step;
-            (state, step) = state.on(signal);
-            match step {
-                Step::Drain => {
-                    info!(
-                        signal = signal.name(),
-                        "draining: exiting once no run is in flight; \
-                         SIGINT or SIGTERM stops instead"
-                    );
-                    draining.cancel();
-                }
-                Step::Stop => {
-                    info!(
-                        signal = signal.name(),
-                        "stopping after the action in progress; \
-                         a second SIGINT or SIGTERM exits at once"
-                    );
-                    stopping.cancel();
-                }
-                Step::Nothing => info!(signal = signal.name(), "already ending; nothing more"),
-                Step::Exit => {
-                    #[expect(
-                        clippy::exit,
-                        reason = "a second signal exits at once, without stopping the runs in flight"
-                    )]
-                    std::process::exit(signal.exit_status());
-                }
-            }
-        }
-    });
     match factory.serve(config.poll_interval, pending, served).await {
         ServeEnd::Drained => {}
         ServeEnd::Stop => {
@@ -559,6 +592,22 @@ async fn serve(
         }
     }
     Ok(())
+}
+
+/// Takes each signal as `ends` has it, exiting at once when it says so.
+fn end_on(mut signals: Signals, ends: Ends) {
+    tokio::spawn(async move {
+        loop {
+            let signal = signals.next().await;
+            if let (_, Step::Exit) = ends.on(Event::Signal(signal)) {
+                #[expect(
+                    clippy::exit,
+                    reason = "a second signal exits at once, without stopping the runs in flight"
+                )]
+                std::process::exit(signal.exit_status());
+            }
+        }
+    });
 }
 
 /// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.
@@ -632,6 +681,7 @@ fn factory_config(
     work_dir: std::path::PathBuf,
     on_usage_limit: OnUsageLimit,
     sessions: SessionCredentials,
+    ends: Ends,
 ) -> FactoryConfig {
     FactoryConfig {
         spec_glob: config.spec_glob.clone(),
@@ -652,6 +702,7 @@ fn factory_config(
         waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
         session_token: sessions.token,
         credentials: sessions.credentials,
+        ends,
     }
 }
 
@@ -661,7 +712,7 @@ enum OnUsageLimit {
     End,
 }
 
-async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory> {
+async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Result<Factory> {
     let briefs = briefs(config)?;
     require_tool("git").await?;
     let bash = require_bash()?;
@@ -679,6 +730,7 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
         work_dir(config, &github),
         on_usage_limit,
         sessions,
+        ends,
     );
     Factory::start(
         Arc::new(github),
