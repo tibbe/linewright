@@ -23,20 +23,30 @@ pipeline to work, like any others.
 5. As an operator, I want agents to run on a schedule with instructions I write,
    so that recurring work happens without me.
 
-## Decisions
+## Spec changes
 
-- The spec is the tracked files matching the spec glob.
-- A **spec change** is a pull request that was merged into the default
-  branch, touched at least one spec file, was merged within the lookback
-  window (default 7 days), has no `linewright:spec-processed` label and is
-  marked for Linewright (see [Repository](repository.md)). PRs Linewright
-  authored are skipped. The spec as
-  merged is what gets built; a push straight to the default branch is the
-  maintainer's own change, outside the factory.
-- Issues enter by their label, `needs-triage` for triage and
-  `ready-for-agent` for implementation, or by being assigned to Linewright,
-  as under [Repository](repository.md).
-- Workflows are a source of work too; see [Workflows](workflows.md).
-- Linewright polls, at an interval (default 60 s), and with webhooks on
-  also reacts to GitHub's deliveries as they arrive; see
-  [Webhooks](webhooks.md).
+The spec is the tracked files matching the spec glob, and the spec as merged
+is what gets built.
+
+- **A spec change.** A pull request that was merged into the default branch,
+  touched at least one spec file, was merged within the lookback window
+  (default 7 days), has no `linewright:spec-processed` label and is marked
+  for Linewright (see [Repository](repository.md)). PRs Linewright authored
+  are skipped.
+- **A push to the default branch.** A push straight to the default branch is
+  the maintainer's own change, outside the factory.
+
+## Issues
+
+Issues enter by their label, `needs-triage` for triage and `ready-for-agent`
+for implementation, or by being assigned to Linewright, as under
+[Repository](repository.md).
+
+## Workflows
+
+Workflows are a source of work too; see [Workflows](workflows.md).
+
+## Polling
+
+Linewright polls, at an interval (default 60 s), and with webhooks on also
+reacts to GitHub's deliveries as they arrive; see [Webhooks](webhooks.md).
