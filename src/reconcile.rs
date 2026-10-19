@@ -213,6 +213,8 @@ pub struct Memory {
     pub done_runs: Vec<DoneRun>,
     pub held: Holds,
     pub usage_limit: Option<UsageLimit>,
+    /// Set from when a drain of `serve` begins until it exits.
+    pub drain: Option<Drain>,
     /// The cuts into tickets that ended since the snapshot was taken. The
     /// snapshot may miss what they wrote, so each counts as in flight for
     /// what starts, though there is nothing left of it to cancel.
@@ -261,6 +263,13 @@ impl Memory {
         }
         self.usage_limit.take().map(|limit| limit.resets_at)
     }
+}
+
+/// A drain of `serve` under way: no item is claimed and no run starts
+/// (`docs/specs/operation.md`, "Stopping").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Drain {
+    pub since: Timestamp,
 }
 
 /// The newest, when several close the issue.
@@ -435,6 +444,8 @@ pub enum Wait {
     UsageLimit {
         resets_at: Timestamp,
     },
+    /// Ends only with a restart of `serve`.
+    Drain,
     Blocker {
         issue: Number,
     },
@@ -516,8 +527,23 @@ pub fn decisions(
     now: Timestamp,
     policy: &Policy,
 ) -> Decisions {
+    let in_flight = live.len() + automations.in_flight.len();
+    let usage_limit = memory.usage_limit.filter(|_| memory.holds_starts(now));
+    let (room, held) = match (memory.drain, usage_limit) {
+        // The drain outlasts any usage limit.
+        (Some(_), _) => (0, Held::Drain),
+        (None, Some(UsageLimit { resets_at })) => (0, Held::UsageLimit { resets_at }),
+        (None, None) => (
+            policy.max_runs.saturating_sub(in_flight),
+            Held::Ceiling {
+                in_flight,
+                max_runs: policy.max_runs,
+            },
+        ),
+    };
     let mut plan = Plan {
         now,
+        held,
         actions: vec![],
         starts: vec![],
         waits: BTreeMap::new(),
@@ -588,9 +614,7 @@ pub fn decisions(
     for (pr, ticket) in worked_pulls(snapshot, &policy.linewright) {
         match pull_claim(pr, &policy.linewright) {
             PullClaim::Claimed => {}
-            PullClaim::NeverAssigned => plan.act(Action::Claim {
-                item: Item::Pull(pr.number),
-            }),
+            PullClaim::NeverAssigned => plan.claim(Item::Pull(pr.number)),
             PullClaim::Unassigned => {
                 plan.wait(pr.number, Wait::Unassigned);
                 continue;
@@ -716,20 +740,52 @@ pub fn decisions(
         }
     }
 
-    let in_flight = live.len() + automations.in_flight.len();
-    let (room, held) = match memory.usage_limit.filter(|_| memory.holds_starts(now)) {
-        Some(UsageLimit { resets_at }) => (0, Held::UsageLimit { resets_at }),
-        None => (
-            policy.max_runs.saturating_sub(in_flight),
-            Held::Ceiling {
-                in_flight,
-                max_runs: policy.max_runs,
-            },
-        ),
-    };
-    let (mut decisions, room) = plan.into_decisions(room, held);
+    let (mut decisions, room) = plan.into_decisions(room);
     decisions.actions.extend(schedule(automations, now, room));
     decisions
+}
+
+/// The rest of a plan made before a drain began, as the drain has it: with
+/// no claim and no run, and the automations' last runs as `recorded` holds
+/// them for the runs it holds back, so that they run after the restart.
+pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastRuns) -> Vec<Action> {
+    let held_back: Vec<AutomationName> = rest
+        .iter()
+        .filter_map(|action| {
+            if let Action::RunAutomation(automation) = action {
+                Some(automation.name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    rest.into_iter()
+        .filter_map(|action| match action {
+            Action::Start(_)
+            | Action::Claim { .. }
+            | Action::RememberRebase(_)
+            | Action::RunAutomation(_) => None,
+            Action::RecordLastRuns(mut last_runs) => {
+                for name in &held_back {
+                    last_runs.restore(name, recorded);
+                }
+                (last_runs != *recorded).then_some(Action::RecordLastRuns(last_runs))
+            }
+            Action::Cancel { .. }
+            | Action::LetGo { .. }
+            | Action::Relabel { .. }
+            | Action::UnassignAsked { .. }
+            | Action::RemoveStatusLabel { .. }
+            | Action::HandBack { .. }
+            | Action::MarkReady { .. }
+            | Action::Merge { .. }
+            | Action::MarkReadyForMergeState { .. }
+            | Action::HoldForReview { .. }
+            | Action::CloseTracking { .. }
+            | Action::DiscardTickets { .. }
+            | Action::DeleteBranch { .. } => Some(action),
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -838,6 +894,8 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
 
 struct Plan {
     now: Timestamp,
+    /// What holds back the starts beyond the room for them.
+    held: Held,
     actions: Vec<Action>,
     starts: Vec<Start>,
     waits: BTreeMap<Number, Vec<Wait>>,
@@ -846,6 +904,7 @@ struct Plan {
 #[derive(Clone, Copy)]
 enum Held {
     UsageLimit { resets_at: Timestamp },
+    Drain,
     Ceiling { in_flight: usize, max_runs: usize },
 }
 
@@ -860,8 +919,21 @@ impl Plan {
         self.actions.push(action);
     }
 
+    /// A wait already noted for `item` is noted once.
     fn wait(&mut self, item: Number, wait: Wait) {
-        self.waits.entry(item).or_default().push(wait);
+        let waits = self.waits.entry(item).or_default();
+        if !waits.contains(&wait) {
+            waits.push(wait);
+        }
+    }
+
+    /// A claim on its own, outside any start, which a drain holds back too.
+    fn claim(&mut self, item: Item) {
+        if matches!(self.held, Held::Drain) {
+            self.wait(item.number(), Wait::Drain);
+        } else {
+            self.act(Action::Claim { item });
+        }
     }
 
     fn wait_all(&mut self, item: Number, waits: Vec<Wait>) {
@@ -899,13 +971,14 @@ impl Plan {
     }
 
     /// Also returns the room left.
-    fn into_decisions(mut self, room: usize, held: Held) -> (Decisions, usize) {
+    fn into_decisions(mut self, room: usize) -> (Decisions, usize) {
         let mut starts = std::mem::take(&mut self.starts);
         starts.sort_by_key(|s| (rank(s.work.kind()), s.work.subject()));
         let room_left = room.saturating_sub(starts.len());
         let started = starts.len().min(room);
-        let wait = match held {
+        let wait = match self.held {
             Held::UsageLimit { resets_at } => Wait::UsageLimit { resets_at },
+            Held::Drain => Wait::Drain,
             Held::Ceiling {
                 in_flight,
                 max_runs,

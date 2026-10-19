@@ -496,3 +496,57 @@ fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
         "{error}"
     );
 }
+
+#[test]
+fn sigquit_while_serve_is_starting_ends_it_with_status_0() {
+    let bin = tempfile::tempdir().unwrap();
+    link_from_path(bin.path(), "git");
+    link_from_path(bin.path(), "bash");
+    let started = bin.path().join("claude.started");
+    // Startup waits on `claude --version`, which hangs.
+    write_program(
+        &bin.path().join("claude"),
+        &format!(
+            "#!/bin/sh\n: > '{}'\nexec /bin/sleep 30\n",
+            started.display()
+        ),
+    );
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let mut serve = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
+        .args(["--repo", "owner/name", "serve"])
+        .current_dir(runtime_dir.path())
+        .env("PATH", bin.path())
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("GH_TOKEN", "token")
+        .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let starting = std::time::Instant::now();
+    while !started.exists() {
+        assert!(
+            starting.elapsed().as_secs() < 10,
+            "startup never ran claude"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    let sent = std::process::Command::new("kill")
+        .args(["-QUIT", &serve.id().to_string()])
+        .status()
+        .unwrap();
+
+    assert!(sent.success());
+    let sent_at = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = serve.try_wait().unwrap() {
+            break status;
+        }
+        if sent_at.elapsed().as_secs() >= 10 {
+            serve.kill().unwrap();
+            panic!("serve did not end");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(status.code(), Some(0), "{status}");
+}

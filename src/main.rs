@@ -13,7 +13,8 @@ use linewright::clock::{Clock, SystemClock};
 use linewright::config::{AutomationCommand, Cli, Command, Config, LogFormat, ResolveError, Since};
 use linewright::credentials::Credentials;
 use linewright::domain::Number;
-use linewright::factory::{Factory, FactoryConfig, SessionToken};
+use linewright::ending::{Ending, Signal, Step};
+use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::runs::{self, Query, RepoWorkDir};
@@ -22,7 +23,7 @@ use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::webhook::{Listener, Pending};
 use linewright::{COMMAND, COMMIT, VERSION};
 use linewright::{explain, status};
-use tokio::signal::unix::{Signal, SignalKind, signal};
+use tokio::signal::unix::signal;
 use tracing::{error, info};
 
 const HARNESS_PROGRAM: &str = "claude";
@@ -412,7 +413,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             // Listening before startup, which talks to GitHub: in a container
             // `lw` can be PID 1, which the kernel sends no signal it
             // has no handler for.
-            let signals = StopSignals::new().context("listening for stop signals")?;
+            let signals = Signals::new().context("listening for stop signals")?;
             let clock: Arc<dyn Clock> = Arc::new(SystemClock);
             let since = clock.now();
             // Before anything else, so that a second `serve` for the
@@ -502,40 +503,61 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
 
 async fn serve(
     config: &Config,
-    mut signals: StopSignals,
+    mut signals: Signals,
     pending: &Pending,
     served: &tokio::sync::watch::Sender<Option<Served>>,
 ) -> Result<()> {
+    // No run can be in flight yet, so every signal ends `serve` alike.
     let mut factory = tokio::select! {
         factory = start(config, OnUsageLimit::Wait) => factory?,
         signal = signals.next() => {
-            info!(signal = signal.name(), "stopped while starting");
+            info!(signal = signal.name(), "ended while starting");
             return Ok(());
         }
     };
     let stopping = factory.stopping();
-    tokio::spawn({
-        let stopping = stopping.clone();
-        async move {
-            let first = signals.next().await;
-            info!(
-                signal = first.name(),
-                "stopping after the action in progress; a second signal exits at once"
-            );
-            stopping.cancel();
-            let second = signals.next().await;
-            #[expect(
-                clippy::exit,
-                reason = "a second signal exits at once, without stopping the runs in flight"
-            )]
-            // 128 plus the signal's number, as a shell reports it
-            // (<https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html>).
-            std::process::exit(128 + second.kind().as_raw_value());
+    let draining = factory.draining();
+    tokio::spawn(async move {
+        let mut state = Ending::Serving;
+        loop {
+            let signal = signals.next().await;
+            let step;
+            (state, step) = state.on(signal);
+            match step {
+                Step::Drain => {
+                    info!(
+                        signal = signal.name(),
+                        "draining: exiting once no run is in flight; \
+                         SIGINT or SIGTERM stops instead"
+                    );
+                    draining.cancel();
+                }
+                Step::Stop => {
+                    info!(
+                        signal = signal.name(),
+                        "stopping after the action in progress; \
+                         a second SIGINT or SIGTERM exits at once"
+                    );
+                    stopping.cancel();
+                }
+                Step::Nothing => info!(signal = signal.name(), "already ending; nothing more"),
+                Step::Exit => {
+                    #[expect(
+                        clippy::exit,
+                        reason = "a second signal exits at once, without stopping the runs in flight"
+                    )]
+                    std::process::exit(signal.exit_status());
+                }
+            }
         }
     });
-    factory.serve(config.poll_interval, pending, served).await;
-    info!("stopping: cancelling the runs in flight");
-    factory.stop().await;
+    match factory.serve(config.poll_interval, pending, served).await {
+        ServeEnd::Drained => {}
+        ServeEnd::Stop => {
+            info!("stopping: cancelling the runs in flight");
+            factory.stop().await;
+        }
+    }
     Ok(())
 }
 
@@ -667,47 +689,28 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
     .await
 }
 
-struct StopSignals {
-    interrupt: Signal,
-    terminate: Signal,
+struct Signals {
+    quit: tokio::signal::unix::Signal,
+    interrupt: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
 }
 
-#[derive(Clone, Copy)]
-enum StopSignal {
-    Interrupt,
-    Terminate,
-}
-
-impl StopSignal {
-    fn name(self) -> &'static str {
-        match self {
-            StopSignal::Interrupt => "SIGINT",
-            StopSignal::Terminate => "SIGTERM",
-        }
-    }
-
-    fn kind(self) -> SignalKind {
-        match self {
-            StopSignal::Interrupt => SignalKind::interrupt(),
-            StopSignal::Terminate => SignalKind::terminate(),
-        }
-    }
-}
-
-impl StopSignals {
-    fn new() -> std::io::Result<StopSignals> {
-        Ok(StopSignals {
-            interrupt: signal(StopSignal::Interrupt.kind())?,
-            terminate: signal(StopSignal::Terminate.kind())?,
+impl Signals {
+    fn new() -> std::io::Result<Signals> {
+        Ok(Signals {
+            quit: signal(Signal::Quit.kind())?,
+            interrupt: signal(Signal::Interrupt.kind())?,
+            terminate: signal(Signal::Terminate.kind())?,
         })
     }
 
     /// Signals that arrive before the last one was read count as one, so two
     /// sent back to back are a single stop.
-    async fn next(&mut self) -> StopSignal {
+    async fn next(&mut self) -> Signal {
         tokio::select! {
-            _ = self.interrupt.recv() => StopSignal::Interrupt,
-            _ = self.terminate.recv() => StopSignal::Terminate,
+            _ = self.quit.recv() => Signal::Quit,
+            _ = self.interrupt.recv() => Signal::Interrupt,
+            _ = self.terminate.recv() => Signal::Terminate,
         }
     }
 }

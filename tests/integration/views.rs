@@ -5,7 +5,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use linewright::automation::{AutomationFiles, LastRuns};
 use linewright::domain::*;
 use linewright::harness::UsageLimit;
-use linewright::reconcile::{LiveRun, Memory, Policy, Subject, WorkKind};
+use linewright::reconcile::{Drain, LiveRun, Memory, Policy, Subject, WorkKind};
 use linewright::runs::InFlight;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{Polls, View};
@@ -104,6 +104,13 @@ pub fn limited_until(resets_at: &str) -> Memory {
         usage_limit: Some(UsageLimit {
             resets_at: at(resets_at),
         }),
+        ..Memory::default()
+    }
+}
+
+pub fn draining_since(since: &str) -> Memory {
+    Memory {
+        drain: Some(Drain { since: at(since) }),
         ..Memory::default()
     }
 }

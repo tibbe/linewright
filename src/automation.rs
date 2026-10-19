@@ -103,6 +103,16 @@ impl LastRuns {
         self.0.insert(name.clone(), at);
     }
 
+    /// As `recorded` has `name`'s last run, or none.
+    pub fn restore(&mut self, name: &AutomationName, recorded: &LastRuns) {
+        match recorded.get(name) {
+            Some(at) => self.record(name, at),
+            None => {
+                self.0.remove(name);
+            }
+        }
+    }
+
     /// Empty when the record is missing or unreadable, which is logged: every
     /// automation then counts as seen for the first time. Until the record is
     /// first saved, the one an earlier version kept stands in for it.

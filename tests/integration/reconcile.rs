@@ -3161,11 +3161,9 @@ fn sessionless_actions() -> Vec<Action> {
     ]
 }
 
-#[test]
-fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions_are_taken() {
-    let actions = under_usage_limit(80);
-
-    let (handed_back, others): (Vec<Action>, Vec<Action>) = actions.into_iter().partition(|a| {
+/// The hand-backs of pull requests, and the other actions.
+fn pull_hand_backs_apart(actions: Vec<Action>) -> (Vec<Action>, Vec<Action>) {
+    actions.into_iter().partition(|a| {
         matches!(
             a,
             Action::HandBack {
@@ -3173,7 +3171,13 @@ fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions
                 ..
             }
         )
-    });
+    })
+}
+
+#[test]
+fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions_are_taken() {
+    let (handed_back, others) = pull_hand_backs_apart(under_usage_limit(80));
+
     assert_eq!(others, sessionless_actions());
     assert!(matches!(
         handed_back.as_slice(),
@@ -3234,6 +3238,114 @@ fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
             &merging_by(MergeMethod::Merge),
         ),
         vec![merge(20, true)]
+    );
+}
+
+fn draining() -> Memory {
+    Memory {
+        drain: Some(Drain { since: t(60) }),
+        done_runs: fixed_twice(),
+        ..Memory::default()
+    }
+}
+
+#[test]
+fn while_draining_no_run_starts_and_no_item_is_claimed_but_other_actions_are_taken() {
+    let (world, live, automations) = work_of_every_kind();
+    let policy = Policy {
+        max_runs: 10,
+        ..policy()
+    };
+
+    let actions = reconcile(&world, &live, &draining(), &automations, t(70), &policy);
+
+    let (handed_back, others) = pull_hand_backs_apart(actions);
+    assert_eq!(others, sessionless_actions());
+    assert_eq!(handed_back.len(), 1, "{handed_back:?}");
+}
+
+#[test]
+fn while_draining_a_pull_request_never_assigned_is_not_claimed_and_waits_for_the_drain() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Failed)];
+    pr.assignees.clear();
+    pr.assignments.clear();
+    let world = in_review(pr);
+
+    let decided = decisions(
+        &world,
+        &[],
+        &draining(),
+        &Automations::default(),
+        t(70),
+        &policy(),
+    );
+
+    assert_eq!(decided.actions, vec![]);
+    assert_eq!(decided.waits.get(&Number(20)), Some(&vec![Wait::Drain]));
+}
+
+#[test]
+fn a_drain_begun_part_way_through_a_plan_holds_back_the_rest_of_its_claims_and_runs() {
+    let rest = vec![
+        claim(3),
+        implement(3),
+        let_go(12),
+        Action::RunAutomation(Box::new(hourly("weekly"))),
+        Action::RecordLastRuns(last_runs(&[("daily", 70), ("hourly", 70), ("weekly", 70)])),
+    ];
+    // `hourly` ran before the drain began; `daily` is first seen.
+    let recorded = last_runs(&[("hourly", 10), ("weekly", 10)]);
+
+    assert_eq!(
+        held_back_by_drain(rest, &recorded),
+        vec![
+            let_go(12),
+            Action::RecordLastRuns(last_runs(&[("daily", 70), ("hourly", 70), ("weekly", 10)])),
+        ]
+    );
+}
+
+#[test]
+fn a_drain_begun_part_way_through_a_plan_leaves_the_last_runs_as_they_were_when_it_held_back_all() {
+    let rest = vec![
+        Action::RunAutomation(Box::new(hourly("weekly"))),
+        Action::RecordLastRuns(last_runs(&[("weekly", 70)])),
+    ];
+
+    assert_eq!(
+        held_back_by_drain(rest, &last_runs(&[("weekly", 10)])),
+        vec![]
+    );
+}
+
+#[test]
+fn while_draining_a_green_pull_request_is_merged_still() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Passed)];
+
+    assert_eq!(
+        reconcile(
+            &in_review(pr),
+            &[],
+            &draining(),
+            &Automations::default(),
+            t(10),
+            &merging_by(MergeMethod::Merge),
+        ),
+        vec![merge(20, true)]
+    );
+}
+
+#[test]
+fn while_draining_under_the_usage_limit_too_work_waits_for_the_drain() {
+    let world = snapshot(vec![claimed(ticket(1))]);
+    let mut memory = draining();
+    memory.hold_until(t(150));
+
+    assert_eq!(
+        waits(&world, &[], &memory, 70, &policy()).remove(&Number(1)),
+        Some(vec![Wait::Drain])
     );
 }
 

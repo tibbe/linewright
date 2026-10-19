@@ -5,6 +5,8 @@ mod committed_credentials;
 mod common;
 mod config;
 mod deliveries;
+mod drain;
+mod ending;
 mod explain;
 mod fix_brief;
 mod harness;

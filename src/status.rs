@@ -10,8 +10,8 @@ use crate::domain::{
     Timestamp, label,
 };
 use crate::reconcile::{
-    Automations, Decisions, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions, next_run,
-    open_pull_for, pending_spec_changes, worked_pulls,
+    Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
+    next_run, open_pull_for, pending_spec_changes, worked_pulls,
 };
 use crate::runs::{InFlight, RunInFlight, RunOf};
 use crate::webhook::Received;
@@ -93,6 +93,8 @@ pub struct Linewright {
     pub polls: Option<Polls>,
     /// Set only while a usage limit is in force.
     pub usage_limit_resets_at: Option<Timestamp>,
+    /// Set only while a drain is under way.
+    pub drain: Option<Drain>,
     pub runs_in_flight: usize,
     pub max_runs: usize,
     /// Set only with webhooks on.
@@ -228,6 +230,7 @@ pub fn status(
             .and_then(|v| v.memory.usage_limit)
             .map(|limit| limit.resets_at)
             .filter(|resets_at| now < *resets_at),
+        drain: view.and_then(|v| v.memory.drain),
         runs_in_flight: view.map_or(0, View::runs_in_flight),
         max_runs: serving.max_runs,
         webhooks,
@@ -453,6 +456,9 @@ fn linewright_lines(linewright: &Linewright, paint: Paint) -> Vec<String> {
     if let Some(resets_at) = linewright.usage_limit_resets_at {
         lines.push(paint.yellow(&format!("usage limit: in force until {}", utc(resets_at))));
     }
+    if let Some(drain) = linewright.drain {
+        lines.push(paint.yellow(&format!("drain: under way since {}", utc(drain.since))));
+    }
     lines.push(format!(
         "runs in flight: {} of {}",
         linewright.runs_in_flight, linewright.max_runs
@@ -522,6 +528,7 @@ pub(crate) fn describe_wait(wait: &Wait) -> String {
             max_runs,
         } => format!("a free run: {in_flight} of {max_runs} in flight"),
         Wait::UsageLimit { resets_at } => format!("the usage limit, until {}", utc(*resets_at)),
+        Wait::Drain => "the drain, until `serve` restarts".into(),
         Wait::Blocker { issue } => format!("{issue}, which blocks it"),
         Wait::Assignee { assignee } => format!("{assignee}, who is assigned to it"),
         Wait::ClosingPullRequest { pull_request } => format!("{pull_request}, which closes it"),

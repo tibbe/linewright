@@ -18,6 +18,7 @@ pub mod clock;
 pub mod config;
 pub mod credentials;
 pub mod domain;
+pub mod ending;
 pub mod explain;
 pub mod factory;
 pub mod git;

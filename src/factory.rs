@@ -22,8 +22,8 @@ use crate::domain::{
 use crate::harness::{Harness, UsageLimit};
 use crate::holds::Holds;
 use crate::reconcile::{
-    Action, Automations, DoneRun, FailedMerge, LiveRun, Memory, Policy, Subject, Work, WorkKind,
-    hold_note, reconcile,
+    Action, Automations, DoneRun, Drain, FailedMerge, LiveRun, Memory, Policy, Subject, Work,
+    WorkKind, held_back_by_drain, hold_note, reconcile,
 };
 use crate::run::{self, AutomationEnd, Shell};
 use crate::runs::{self, Recorded, RunOf, Runs, Watched};
@@ -111,12 +111,22 @@ struct LiveEntry {
     cancel: CancellationToken,
 }
 
+/// Why [`Factory::serve`] returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServeEnd {
+    /// A drain began and no run is in flight any more.
+    Drained,
+    /// The runs in flight, if any, are left for [`Factory::stop`] to cancel.
+    Stop,
+}
+
 pub struct Factory {
     shell: Arc<Shell>,
     runs: JoinSet<()>,
     refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
     live: HashMap<Id, LiveEntry>,
     stopping: CancellationToken,
+    draining: CancellationToken,
     schedule_automations: bool,
     last_runs: LastRuns,
     automation_files: AutomationFiles,
@@ -251,6 +261,7 @@ impl Factory {
             refusals,
             live: HashMap::new(),
             stopping: CancellationToken::new(),
+            draining: CancellationToken::new(),
             schedule_automations: config.schedule_automations,
             last_runs,
             automation_files: AutomationFiles::default(),
@@ -269,6 +280,12 @@ impl Factory {
     /// half done.
     pub fn stopping(&self) -> CancellationToken {
         self.stopping.clone()
+    }
+
+    /// Cancelling it begins a drain: no item is claimed and no run starts
+    /// from then on, and [`Factory::serve`] returns once no run is in flight.
+    pub fn draining(&self) -> CancellationToken {
+        self.draining.clone()
     }
 
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
@@ -335,8 +352,9 @@ impl Factory {
         poll_interval: Duration,
         pending: &Pending,
         served: &tokio::sync::watch::Sender<Option<Served>>,
-    ) {
+    ) -> ServeEnd {
         let stopping = self.stopping.clone();
+        let draining = self.draining.clone();
         while !stopping.is_cancelled() {
             // The poll reads what deliveries named before it as well.
             pending.take();
@@ -347,9 +365,16 @@ impl Factory {
             let next_poll_at = self.shell.clock.now() + poll_interval;
             served.send_replace(self.served(next_poll_at));
             loop {
+                if self.drained() {
+                    info!("drained: no run is in flight");
+                    return ServeEnd::Drained;
+                }
                 tokio::select! {
                     () = tokio::time::sleep_until(next_poll) => break,
                     () = stopping.cancelled() => break,
+                    () = draining.cancelled(), if self.memory.drain.is_none() => {
+                        self.note_drain();
+                    }
                     subjects = pending.next() => {
                         if let Err(e) = self.refresh(subjects).await {
                             error!(
@@ -369,6 +394,30 @@ impl Factory {
                 served.send_replace(self.served(next_poll_at));
             }
         }
+        ServeEnd::Stop
+    }
+
+    fn drained(&self) -> bool {
+        self.memory.drain.is_some() && self.runs.is_empty()
+    }
+
+    /// Takes a drain asked for into memory, once.
+    fn note_drain(&mut self) {
+        if !self.draining.is_cancelled() || self.memory.drain.is_some() {
+            return;
+        }
+        self.memory.drain = Some(Drain {
+            since: self.shell.clock.now(),
+        });
+        let runs: Vec<String> = self
+            .live
+            .values()
+            .map(|entry| entry.watched.id.to_string())
+            .collect();
+        info!(
+            runs = runs.join(" "),
+            "drain begins: no item is claimed and no run starts; waiting for the runs in flight"
+        );
     }
 
     fn served(&self, next_poll: Timestamp) -> Option<Served> {
@@ -435,6 +484,7 @@ impl Factory {
         if let Some(resets_at) = self.memory.lift_usage_limit(now) {
             info!(%resets_at, "usage limit reset; sessions start again");
         }
+        self.note_drain();
         let live = self.live_runs();
         let automations = Automations {
             defined,
@@ -444,7 +494,7 @@ impl Factory {
         self.take_shown_holds(snapshot);
         self.memory.retain_open(snapshot);
         self.record_holds();
-        let actions = reconcile(
+        let mut actions = reconcile(
             snapshot,
             &live,
             &self.memory,
@@ -452,14 +502,26 @@ impl Factory {
             now,
             &self.shell.policy,
         );
-        for action in &actions {
+        let mut planned_draining = self.memory.drain.is_some();
+        let mut next = 0;
+        while let Some(action) = actions.get(next).cloned() {
             if self.stopping.is_cancelled() {
                 break;
             }
-            self.written.extend(written(action, snapshot));
-            if let Err(e) = self.execute(action, &kept).await {
+            self.note_drain();
+            if !planned_draining && self.memory.drain.is_some() {
+                // Begun since the plan was made: the rest of the plan is
+                // taken as the drain has it.
+                let rest = actions.split_off(next);
+                actions.extend(held_back_by_drain(rest, &self.last_runs));
+                planned_draining = true;
+                continue;
+            }
+            self.written.extend(written(&action, snapshot));
+            if let Err(e) = self.execute(&action, &kept).await {
                 error!(action = ?action, error = format!("{e:#}"), "action failed");
             }
+            next += 1;
         }
         actions
     }
@@ -590,11 +652,19 @@ impl Factory {
             }
         };
         let Some(LiveEntry {
-            running: Running::Work(run),
-            watched,
-            ..
+            running, watched, ..
         }) = self.live.remove(&id)
         else {
+            return;
+        };
+        if self.memory.drain.is_some() {
+            info!(
+                run = %watched.id,
+                still_in_flight = self.live.len(),
+                "a run the drain waits for ended"
+            );
+        }
+        let Running::Work(run) = running else {
             return;
         };
         let done = self.shell.runs.read_run(&watched.id);

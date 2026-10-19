@@ -2,10 +2,12 @@ use crate::views;
 
 use linewright::automation::{AutomationFiles, LastRuns, Unparsed};
 use linewright::domain::*;
-use linewright::reconcile::{LiveRun, Subject, WorkKind};
+use linewright::reconcile::{LiveRun, Memory, Subject, WorkKind};
 use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
-use views::{at, closed_by, implementing, in_flight, limited_until, relabeled, ticket};
+use views::{
+    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, ticket,
+};
 
 fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationFiles {
     AutomationFiles {
@@ -115,6 +117,59 @@ fn a_usage_limit_in_force_is_shown_with_its_reset() {
             "usage limit: in force until 2026-10-01 14:30:00 UTC",
             "runs in flight: 0 of 4",
         ]
+    );
+}
+
+#[test]
+fn a_drain_under_way_is_shown_with_since_when_after_the_usage_limit() {
+    let view = View {
+        memory: Memory {
+            usage_limit: limited_until("2026-10-01T14:30:00Z").usage_limit,
+            ..draining_since("2026-10-01T12:00:20Z")
+        },
+        ..view(vec![])
+    };
+
+    let lines = text(Some(&view), "2026-10-01T12:00:30Z");
+
+    assert_eq!(
+        lines[3..],
+        [
+            "usage limit: in force until 2026-10-01 14:30:00 UTC",
+            "drain: under way since 2026-10-01 12:00:20 UTC",
+            "runs in flight: 0 of 4",
+        ]
+    );
+}
+
+#[test]
+fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
+    let draining = View {
+        memory: draining_since("2026-10-01T12:00:20Z"),
+        ..view(vec![])
+    };
+    let now = at("2026-10-01T12:00:30Z");
+
+    let shown = serde_json::to_value(status(&serving(), None, Some(&draining), now)).unwrap();
+    let none = serde_json::to_value(status(&serving(), None, Some(&view(vec![])), now)).unwrap();
+
+    assert_eq!(
+        shown["linewright"]["drain"],
+        serde_json::json!({"since": "2026-10-01T12:00:20Z"})
+    );
+    assert_eq!(none["linewright"]["drain"], serde_json::Value::Null);
+}
+
+#[test]
+fn while_draining_an_item_waits_for_the_drain() {
+    let view = View {
+        memory: draining_since("2026-10-01T12:00:20Z"),
+        ..view(vec![ready_issue()])
+    };
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:00:30Z"),
+        ["#7: ready to claim — waiting for the drain, until `serve` restarts — Do the thing"]
     );
 }
 
@@ -554,6 +609,7 @@ fn the_json_names_each_fact() {
                     "next": "2026-10-01T12:01:00Z",
                 },
                 "usage_limit_resets_at": null,
+                "drain": null,
                 "runs_in_flight": 2,
                 "max_runs": 4,
                 "webhooks": null,

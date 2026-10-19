@@ -10,7 +10,7 @@ use linewright::briefs::Briefs;
 use linewright::clock::Clock;
 use linewright::credentials::Credentials;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
-use linewright::factory::{Factory, FactoryConfig, SessionToken};
+use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::harness::{Harness, Purpose, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::reconcile::WorkKind;
 use linewright::redaction::Redaction;
@@ -837,7 +837,8 @@ pub async fn eventually_async<F: Future<Output = bool>>(done: impl Fn() -> F) {
 
 pub struct Serving {
     stopping: CancellationToken,
-    handle: JoinHandle<()>,
+    draining: CancellationToken,
+    handle: JoinHandle<ServeEnd>,
     pub served: tokio::sync::watch::Receiver<Option<Served>>,
 }
 
@@ -848,21 +849,40 @@ impl Serving {
         pending: Pending,
     ) -> Serving {
         let stopping = factory.stopping();
+        let draining = factory.draining();
         let (sender, served) = tokio::sync::watch::channel(None);
         let handle = tokio::spawn(async move {
-            factory.serve(poll_interval, &pending, &sender).await;
+            let end = factory.serve(poll_interval, &pending, &sender).await;
             factory.stop().await;
+            end
         });
         Serving {
             stopping,
+            draining,
             handle,
             served,
         }
     }
 
-    pub async fn stop(self) {
+    pub fn drain(&self) {
+        self.draining.cancel();
+    }
+
+    pub fn has_ended(&self) -> bool {
+        self.handle.is_finished()
+    }
+
+    /// Waits for serving to end of its own accord.
+    pub async fn ended(self) -> ServeEnd {
+        tokio::time::timeout(std::time::Duration::from_secs(10), self.handle)
+            .await
+            .expect("serving ends")
+            .unwrap()
+    }
+
+    pub async fn stop(self) -> ServeEnd {
         self.stopping.cancel();
-        self.handle.await.unwrap();
+        self.handle.await.unwrap()
     }
 
     pub async fn kill(self) {

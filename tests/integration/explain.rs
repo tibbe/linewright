@@ -5,7 +5,9 @@ use linewright::explain::{Answer, Explanation, explain, explain_read, render, re
 use linewright::runs::{Ending, Recorded, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
-use views::{at, closed_by, implementing, in_flight, limited_until, relabeled, ticket, view};
+use views::{
+    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, ticket, view,
+};
 
 fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
     Pull {
@@ -136,6 +138,19 @@ fn work_held_back_waits_for_a_free_run_or_the_usage_limit() {
     assert_eq!(
         text(&limited, 42)[3],
         "waiting for: the usage limit, until 2026-10-01 14:30:00 UTC"
+    );
+}
+
+#[test]
+fn while_draining_work_held_back_waits_for_the_drain() {
+    let draining = View {
+        memory: draining_since("2026-10-01T11:59:00Z"),
+        ..view(vec![ticket(42, "Add invoices")], vec![])
+    };
+
+    assert_eq!(
+        text(&draining, 42)[3],
+        "waiting for: the drain, until `serve` restarts"
     );
 }
 
