@@ -3,9 +3,6 @@ name: tdd
 description: Test-driven development. Use when the user wants to build features or fix bugs test-first, mentions "red-green-refactor", or wants integration tests.
 ---
 
-<!-- Forked from mattpocock/skills, skills/engineering/tdd (MIT, see LICENSE).
-Made non-interactive for Linewright. -->
-
 # Test-Driven Development
 
 TDD is the red → green loop. This skill is the reference that makes that loop

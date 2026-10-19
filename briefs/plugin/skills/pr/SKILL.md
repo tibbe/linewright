@@ -9,9 +9,6 @@ metadata:
     url: "https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md"
 ---
 
-<!-- Forked from mattpocock/skills, skills/engineering/pr (MIT, see LICENSE;
-its Summary visuals credit Dex Horthy's show-me skill, see CREDITS.md). -->
-
 The title says what the change does, in the imperative and the domain language
 ("Report input that isn't UTF-8"), not the symptom a report described ("tally
 crashes on a Latin-1 file").

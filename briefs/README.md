@@ -21,6 +21,9 @@ Linewright:
   (the JSON the session ends with), and what it needs from the tracker comes
   in the task Linewright gives it.
 
+A skill is otherwise upstream's text, so that a diff against upstream shows
+what the fork changed.
+
 The plugin is named `linewright`, and every session is given a copy of it. A
 prompt starts by invoking its stage's skill, such as `/linewright:implement`,
 which calls `linewright:tdd`, `linewright:code-review` and `linewright:pr`. The

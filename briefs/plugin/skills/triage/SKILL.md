@@ -4,9 +4,6 @@ description: Move issues and external PRs through a state machine of triage role
 disable-model-invocation: true
 ---
 
-<!-- Forked from mattpocock/skills, skills/engineering/triage (MIT, see
-LICENSE). Made non-interactive for Linewright. -->
-
 # Triage
 
 You triage one issue: categorize it, verify its claim and end in one of three

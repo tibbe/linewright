@@ -4,9 +4,6 @@ description: "Implement a piece of work based on a spec or set of tickets."
 disable-model-invocation: true
 ---
 
-<!-- Forked from mattpocock/skills, skills/engineering/implement (MIT, see
-LICENSE). Made non-interactive for Linewright. -->
-
 # Implement
 
 Implement the work your task describes, on the branch that is checked out.

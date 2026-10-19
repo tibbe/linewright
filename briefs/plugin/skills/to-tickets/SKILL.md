@@ -4,15 +4,6 @@ description: Break a plan, spec, or the current conversation into a set of trace
 disable-model-invocation: true
 ---
 
-<!-- Forked from mattpocock/skills, skills/engineering/to-tickets (MIT, see
-LICENSE). Made non-interactive for Linewright, changing only:
-
-- the source: the merged spec change in the task, not the conversation;
-- step 4: the agent checks the breakdown itself, as nobody approves it;
-- step 5: the tickets go in the result, which Linewright publishes, so the
-  tracker-specific publishing, the local-file template and the issue
-  template's Parent and Blocked by sections are gone. -->
-
 # To Tickets
 
 Break the spec change in your task into a set of **tickets**: tracer-bullet vertical slices, each declaring the tickets that **block** it.

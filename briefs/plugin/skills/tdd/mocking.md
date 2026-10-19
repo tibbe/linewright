@@ -1,6 +1,3 @@
-<!-- Forked from mattpocock/skills, skills/engineering/tdd/mocking.md (MIT, see
-LICENSE). -->
-
 # When to Mock
 
 Mock at **system boundaries** only:

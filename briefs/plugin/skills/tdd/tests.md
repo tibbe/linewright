@@ -1,6 +1,3 @@
-<!-- Forked from mattpocock/skills, skills/engineering/tdd/tests.md (MIT, see
-LICENSE). -->
-
 # Good and Bad Tests
 
 ## Good Tests
