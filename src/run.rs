@@ -911,6 +911,8 @@ async fn file_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Resul
 enum Kept {
     Nothing,
     Pushed,
+    /// The work holds a credential, so it was not pushed.
+    Held(Held),
     /// GitHub refused the push for a missing permission, saying why.
     Refused(String),
     /// Committing or pushing the work failed, saying why.
@@ -923,14 +925,14 @@ async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch:
     reported(
         shell,
         branch,
-        push_unfinished(shell, dir, branch, upstream, PushMode::Replace).await,
+        push_unfinished(shell, dir, branch, upstream, &[], PushMode::Replace).await,
     )
 }
 
 /// Keeps the work of a run on a pull request that stopped before it finished
 /// on the pull request's branch, unless its session changed nothing since
-/// the clone stood at `before` or the pull request closed: docs/specs/runs.md,
-/// "Ending". The push leases the branch at `start`, so commits others pushed
+/// the clone stood at `before`, the pull request closed or the work holds a
+/// credential: docs/specs/runs.md, "Ending". The push leases the branch at `start`, so commits others pushed
 /// since are not overwritten.
 async fn keep_unfinished_pull_work(
     shell: &Shell,
@@ -949,31 +951,31 @@ async fn keep_unfinished_pull_work(
         let lease = PushMode::Lease {
             expected: start.to_string(),
         };
-        push_unfinished(shell, dir, &pr.head_ref, start, lease).await
+        let upstream = shell.upstream();
+        push_unfinished(shell, dir, &pr.head_ref, start, &[&upstream], lease).await
     };
     reported(shell, &pr.head_ref, kept.await)
 }
 
 /// Commits what a stopped run's session left uncommitted, and pushes
-/// `branch` with `mode` when that leaves it past `past`.
+/// `branch` with `mode` when that leaves it past `past`, unless the commits
+/// the push adds hold a credential. Those are the commits past `past` and
+/// past each of `taken_in`, the branches the work took in.
 async fn push_unfinished(
     shell: &Shell,
     dir: &Path,
     branch: &str,
     past: &str,
+    taken_in: &[&str],
     mode: PushMode,
 ) -> Result<Kept> {
     git::commit_unfinished(dir).await?;
     if git::commits_ahead(dir, past).await? == 0 {
         return Ok(Kept::Nothing);
     }
-    if let Some(held) = held_credential(shell, dir, &[past]).await? {
-        info!(
-            branch,
-            variable = held.variable,
-            "the stopped run's work holds a credential; it is not kept"
-        );
-        return Ok(Kept::Nothing);
+    let bases = [&[past], taken_in].concat();
+    if let Some(held) = held_credential(shell, dir, &bases).await? {
+        return Ok(Kept::Held(held));
     }
     match shell.store.push(dir, branch, mode).await {
         Ok(()) => Ok(Kept::Pushed),
@@ -1005,6 +1007,11 @@ fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
             reason, "GitHub refused to keep the stopped run's work"
         ),
         Kept::Failed(error) => warn!(branch, error, "keeping the stopped run's work failed"),
+        Kept::Held(held) => info!(
+            branch,
+            variable = held.variable,
+            "the stopped run's work holds a credential; it is not kept"
+        ),
         Kept::Nothing | Kept::Pushed => {}
     }
     kept
@@ -1016,6 +1023,11 @@ fn kept_note(branch: &str, kept: &Kept, try_again: TryAgain) -> String {
     match kept {
         Kept::Nothing => String::new(),
         Kept::Pushed => format!("\n\nThe work so far is on the branch `{branch}`."),
+        Kept::Held(held) => format!(
+            "\n\nThe work so far was not kept: the commit `{}` adds the value of `{}`, a \
+             credential, to `{}`.",
+            held.commit, held.variable, held.file
+        ),
         Kept::Refused(reason) => format!("\n\n{}", refused_push(branch, reason, try_again)),
         Kept::Failed(error) => {
             format!("\n\nKeeping the work so far on the branch `{branch}` failed: {error}")

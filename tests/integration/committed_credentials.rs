@@ -18,17 +18,21 @@ async fn world_with_credential() -> World {
     .await
 }
 
+/// Writes the credential to `.npmrc`, leaving it uncommitted.
+fn write_credential(dir: &Path) {
+    std::fs::write(
+        dir.join(".npmrc"),
+        format!("//registry.npmjs.org/:_authToken={CREDENTIAL}\n"),
+    )
+    .unwrap();
+}
+
 /// Commits the credential to `.npmrc`, returning the commit's abbreviated
 /// name.
 fn commit_credential(dir: &Path) -> String {
-    commit_in(
-        dir,
-        &[(
-            ".npmrc",
-            &format!("//registry.npmjs.org/:_authToken={CREDENTIAL}\n"),
-        )],
-        "Publish to npm",
-    );
+    write_credential(dir);
+    git_in(dir, &["add", ".npmrc"]);
+    git_in(dir, &["commit", "--quiet", "-m", "Publish to npm"]);
     git_out(dir, &["rev-parse", "--short", "HEAD"])
 }
 
@@ -318,11 +322,111 @@ async fn a_credential_whose_value_spans_lines_is_found_whole() {
     assert_eq!(world.store.pulls(), []);
 }
 
+/// Asserts that `comment` says the work so far was not kept for the
+/// credential in `.npmrc`, naming the commit that holds it, which is
+/// `commit` when given.
+fn assert_says_not_kept(comment: &str, commit: Option<&str>) {
+    let (_, rest) = comment
+        .split_once("\n\nThe work so far was not kept: the commit `")
+        .unwrap_or_else(|| panic!("{comment}"));
+    let (named, rest) = rest.split_once('`').unwrap();
+    assert!(
+        named.len() >= 7 && named.chars().all(|c| c.is_ascii_hexdigit()),
+        "{comment}"
+    );
+    if let Some(commit) = commit {
+        assert_eq!(named, commit);
+    }
+    assert!(
+        rest.starts_with(" adds the value of `NPM_TOKEN`, a credential, to `.npmrc`."),
+        "{comment}"
+    );
+}
+
 #[tokio::test]
-async fn a_run_that_stops_with_a_credential_in_its_commits_keeps_nothing() {
+async fn an_implement_run_that_stops_with_a_credential_in_its_commits_keeps_nothing_and_says_why() {
+    let mut world = world_with_credential().await;
+    let committed = Arc::new(Mutex::new(String::new()));
+    world.runtime.on(WorkKind::Implement, {
+        let committed = committed.clone();
+        move |call| {
+            *committed.lock().unwrap() = commit_credential(&call.spec.dir);
+            Err(linewright::runtime::SessionError::TimedOut {
+                log_tail: String::new(),
+            })
+        }
+    });
+    let ticket = world
+        .store
+        .open_issue("maintainer", "Publish", "", &["ready-for-agent"]);
+
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    assert_eq!(labels(&issue), ["ready-for-human"]);
+    let commit = committed.lock().unwrap().clone();
+    assert_says_not_kept(last_comment(&issue), Some(&commit));
+    assert_eq!(branches(&world.store.repository()), ["main"]);
+    assert_credential_kept_out(&world).await;
+}
+
+#[tokio::test]
+async fn an_implement_run_that_blocks_with_a_credential_left_uncommitted_keeps_nothing_and_says_why()
+ {
     let mut world = world_with_credential().await;
     world.runtime.on(WorkKind::Implement, |call| {
-        commit_credential(&call.spec.dir);
+        let dir = &call.spec.dir;
+        commit_in(dir, &[("README.md", "Published to npm.\n")], "Start");
+        write_credential(dir);
+        Ok(json!({"outcome": "blocked", "question": "Which registry?"}).to_string())
+    });
+    let ticket = world
+        .store
+        .open_issue("maintainer", "Publish", "", &["ready-for-agent"]);
+
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    let comment = last_comment(&issue);
+    assert!(comment.contains("Which registry?"), "{comment}");
+    assert_says_not_kept(comment, None);
+    assert_eq!(branches(&world.store.repository()), ["main"]);
+    assert_credential_kept_out(&world).await;
+}
+
+#[tokio::test]
+async fn a_rework_that_gives_up_with_a_credential_in_its_work_pushes_nothing_to_its_pull_request_and_says_why()
+ {
+    let mut world = world_with_credential().await;
+    let (_, pr) = world.ticket_in_review().await;
+    let head = world.store.snapshot_pull(pr).await.head_sha;
+    world
+        .store
+        .comment_as("maintainer", pr, "Publish it too.")
+        .unwrap();
+    world.runtime.on(WorkKind::Rework, |call| {
+        write_credential(&call.spec.dir);
+        Ok(json!({"outcome": "gave-up", "reason": "No registry."}).to_string())
+    });
+
+    world.poll().await;
+
+    assert_eq!(world.store.snapshot_pull(pr).await.head_sha, head);
+    let comment = last_pull_comment(&world, pr).await;
+    assert!(comment.contains("No registry."), "{comment}");
+    assert_says_not_kept(&comment, None);
+    assert_credential_kept_out(&world).await;
+}
+
+#[tokio::test]
+async fn a_run_that_stops_with_work_that_holds_no_credential_still_keeps_it() {
+    let mut world = world_with_credential().await;
+    world.runtime.on(WorkKind::Implement, |call| {
+        std::fs::write(
+            call.spec.dir.join(".npmrc"),
+            "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n",
+        )
+        .unwrap();
         Err(linewright::runtime::SessionError::TimedOut {
             log_tail: String::new(),
         })
@@ -333,7 +437,52 @@ async fn a_run_that_stops_with_a_credential_in_its_commits_keeps_nothing() {
 
     world.poll().await;
 
-    assert_eq!(labels(&world.issue(ticket)), ["ready-for-human"]);
-    assert_eq!(branches(&world.store.repository()), ["main"]);
-    assert_credential_kept_out(&world).await;
+    let branch = format!("{}-publish", ticket.0);
+    assert_eq!(
+        world.store.file(&branch, ".npmrc").await.unwrap(),
+        "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n"
+    );
+    let comment = last_comment(&world.issue(ticket)).to_string();
+    assert!(
+        comment.ends_with(&format!("The work so far is on the branch `{branch}`.")),
+        "{comment}"
+    );
+}
+
+#[tokio::test]
+async fn a_rework_that_stops_keeps_its_work_though_the_default_branch_it_took_in_holds_a_credential()
+ {
+    let mut world = world_with_credential().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .commit(
+            "alice",
+            "main",
+            &[(".npmrc", &format!("_authToken={CREDENTIAL}\n"))],
+            "Publish",
+        )
+        .await
+        .unwrap();
+    world
+        .store
+        .comment_as("maintainer", pr, "Publish it too.")
+        .unwrap();
+    world.runtime.on(WorkKind::Rework, |call| {
+        std::fs::write(call.spec.dir.join("notes.txt"), "half done\n").unwrap();
+        Ok(json!({"outcome": "gave-up", "reason": "No registry."}).to_string())
+    });
+
+    world.poll().await;
+
+    let head_ref = world.store.snapshot_pull(pr).await.head_ref;
+    assert_eq!(
+        world.store.file(&head_ref, "notes.txt").await.unwrap(),
+        "half done\n"
+    );
+    let comment = last_pull_comment(&world, pr).await;
+    assert!(
+        comment.contains(&format!("The work so far is on the branch `{head_ref}`.")),
+        "{comment}"
+    );
 }
