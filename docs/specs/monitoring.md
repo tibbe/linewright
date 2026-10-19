@@ -45,15 +45,22 @@ same host.
 `status` shows what Linewright is doing and what holds it back, in this
 order:
 
-1. Linewright: since when `serve` has run, the last poll and the next, the
-   usage limit while one is in force and when it resets, and the runs in
-   flight out of `max-runs`. With webhooks on, also the time of the last
-   delivery accepted and the number refused since `serve` started.
+1. Linewright itself: the facts in the table below.
 2. Each run in flight: its run ID, item, stage, how long it has run and its
    quiet time, how long since its agent last produced output.
 3. Each other open item Linewright tracks: where it is in the pipeline and, in
    one line, what Linewright is waiting for on it.
 4. The automations, as [Automations](automations.md) describes.
+
+| Fact about Linewright                          | Shown                  |
+| ---------------------------------------------- | ---------------------- |
+| since when `serve` has run                     | always                 |
+| the last poll and the next                     | always                 |
+| the usage limit and when it resets             | while one is in force  |
+| the drain, since when, and its deadline if set | while one is under way |
+| the runs in flight out of `max-runs`           | always                 |
+| the time of the last delivery accepted         | with webhooks on       |
+| the deliveries refused since `serve` started   | with webhooks on       |
 
 ## explain
 
@@ -66,7 +73,8 @@ order:
   - where it is in the pipeline, in the states of the issue lifecycle under
     [Repository](repository.md), and when `serve` last read it;
   - each thing Linewright waits for before it acts on #N next, naming what
-    ends the wait, such as "the usage limit, until 14:30 UTC";
+    ends the wait, such as "the usage limit, until 14:30 UTC" or "the drain,
+    until `serve` restarts";
   - its run in flight, with its quiet time;
   - its latest three past runs, as `runs N` lists them.
 - **An item Linewright leaves.** For an item Linewright does not act on,

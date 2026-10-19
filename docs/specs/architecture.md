@@ -135,13 +135,14 @@ Automations sit beside the pipeline, not under one trigger model.
 
 ## The local API
 
-`serve` answers questions about itself through a local API: its view of the
-repository, its runs and their transcripts.
+`serve` answers questions about itself through a local API, its view of the
+repository, its runs and their transcripts, and takes the operator's requests
+of it, such as a drain.
 
-- **Clients.** The monitoring commands are its clients. The API must also be
-  able to serve a web UI, reached from a browser through `ssh -L` to the socket,
-  and an MCP server, a `lw mcp` subcommand on stdio that is a client of the
-  socket.
+- **Clients.** The monitoring commands and `drain` are its clients. The API must
+  also be able to serve a web UI, reached from a browser through `ssh -L` to the
+  socket, and an MCP server, a `lw mcp` subcommand on stdio that is a client of
+  the socket.
 
 | aspect | decision |
 |---|---|
@@ -167,3 +168,9 @@ configured in layers.
 - **Configuration is layered**: flags, `LINEWRIGHT_*` environment variables, a
   TOML file, defaults, parsed once into one typed value.
 - **Credentials come from the environment only.**
+- **SIGQUIT drains and SIGTERM stops.**
+- **Why.** Supervisors send SIGTERM and, seconds later, SIGKILL. Killed
+  mid-drain, `serve` leaves its runs interrupted and their unfinished work
+  unpushed; a stop pushes it in time. The cost: an operator who wants the
+  supervisor's stop to drain sets its stop signal to SIGQUIT and its timeout
+  to match, as nginx and GitLab Runner document.

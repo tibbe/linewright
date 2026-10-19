@@ -20,6 +20,8 @@ from Linewright's base image with the project's toolchain added.
    and coding agents can drive and debug it.
 6. As an operator, I want the server's log to say what it is doing and why, so
    that I can debug it without GitHub.
+7. As an operator, I want to replace the binary without wasting the work in
+   flight, so that an upgrade costs no agent sessions.
 
 ## Commands
 
@@ -27,8 +29,9 @@ The command is `lw`.
 
 | command               | what it does                                                             |
 | --------------------- | ------------------------------------------------------------------------ |
-| `serve`               | poll until stopped                                                       |
+| `serve`               | poll until drained or stopped (see [Stopping](#stopping))                |
 | `once`                | one poll cycle, then exit                                                |
+| `drain`               | tell `serve` to drain (see [Stopping](#stopping))                        |
 | `status`              | show what Linewright is doing (see [Monitoring](monitoring.md))          |
 | `explain N`           | show where an item stands and why (see [Monitoring](monitoring.md))      |
 | `runs [N]`            | list the runs (see [Monitoring](monitoring.md))                          |
@@ -37,11 +40,39 @@ The command is `lw`.
 | `capture`             | write a case from GitHub (see [Replay](replay.md))                       |
 | `replay`              | run a case against a local store (see [Replay](replay.md))               |
 
-- **Stopping.** SIGINT (Ctrl-C) or SIGTERM stops `serve` once the action in
-  progress is done, cancelling the runs in flight; a second one exits at
-  once.
 - **The version.** `--version` and the server's first log line name the
   version and the commit it was built from.
+
+## Stopping
+
+`serve` ends in one of three ways, each more abrupt than the last: a drain,
+which wastes no work; a stop, which keeps unfinished work; and an exit at
+once.
+
+| State    | Event                           | Next     | Effect                                                                              |
+| -------- | ------------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| serving  | SIGQUIT or `drain`              | draining | claims no item and starts no run; exits once no run is in flight                    |
+| serving  | SIGINT (Ctrl-C) or SIGTERM      | stopping | cancels the runs in flight once the action in progress is done; exits once they end |
+| draining | SIGQUIT or `drain`              | draining | nothing more                                                                        |
+| draining | SIGINT, SIGTERM or the deadline | stopping | as from serving                                                                     |
+| stopping | SIGQUIT or `drain`              | stopping | nothing more                                                                        |
+| stopping | SIGINT or SIGTERM               | exited   | at once                                                                             |
+
+- **Draining.** All else `serve` does goes on until it exits, polls and
+  deliveries included, and it waits for every run in flight however long,
+  one waiting out the usage limit included.
+- **Exit status.** 0 after a drain or a stop; 128 plus the signal's number
+  after an exit at once.
+- **`drain`.** `drain` asks the `serve` of the configured `repo` on the same
+  host to drain, prints the runs it waits for and each as it ends, and
+  returns once `serve` has exited; `--no-wait` returns once `serve` has taken
+  the request. Ending `drain` itself leaves the drain in place, and a `drain`
+  sent to a `serve` already draining or stopping says so and waits the same
+  way. Its output and exit statuses are the monitoring commands'
+  ([Monitoring](monitoring.md)).
+- **`--timeout`.** `drain --timeout 2h` sets a deadline, after which the
+  drain becomes a stop; `drain` still returns 0, saying so. Without one, a
+  drain waits however long. The latest `drain` sets the deadline.
 
 ## Configuration
 
@@ -143,3 +174,5 @@ image the operator builds with those in it.
   as `~/.config/gh/hosts.yml` or `~/.aws/credentials`. A container, or a user
   of its own that holds no other credentials, is the isolation.
 - How Linewright is released (`docs/releasing.md`).
+- Calling off a drain; the restart it ends in takes the work up again.
+- A setting that bounds every drain; the bound is each request's.

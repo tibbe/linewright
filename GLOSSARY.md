@@ -99,3 +99,15 @@ The cap a subscription puts on how much its agents may run in a window, such
 as five hours or a week, beyond which the harness refuses sessions until
 a stated reset time.
 _Avoid_: rate limit, session limit, quota
+
+### Operation
+
+**Drain**:
+The ending of `serve` that begins no new work and lets the runs in flight
+end.
+_Avoid_: graceful shutdown, graceful stop, soft stop, warm shutdown
+
+**Stop**:
+The ending of `serve` that cuts the runs in flight short, keeping their
+unfinished work.
+_Avoid_: forceful stop, fast shutdown, cold shutdown, hard stop
