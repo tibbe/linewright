@@ -100,7 +100,7 @@ itself: the session's GitHub token, when it has one, as `GH_TOKEN` and
 | `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`   | where tools keep their configuration and caches    |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, in either case     | reaching the network through the host's proxy      |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`                   | trusting the host's certificate authorities        |
-| `ANTHROPIC_*`, `CLAUDE_*`                                                | the agent runtime's configuration and credentials  |
+| `ANTHROPIC_*`, `CLAUDE_*`                                                | the harness's configuration and credentials        |
 
 - **Patterns.** A name ending in `*` names every variable with that prefix.
 - **Never passed.** `session-env` never passes Linewright's GitHub tokens or
@@ -111,7 +111,7 @@ itself: the session's GitHub token, when it has one, as `GH_TOKEN` and
 
 ## Running
 
-Linewright runs wherever `git`, `bash`, the agent runtime and the project's
+Linewright runs wherever `git`, `bash`, the harness and the project's
 toolchain are on the path: directly on a machine, or in a container whose
 image the operator builds with those in it.
 

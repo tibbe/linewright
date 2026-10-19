@@ -98,7 +98,7 @@ A run ends in one of these outcomes, each with its name in JSON.
 
 ## Usage limit
 
-When the agent runtime refuses a session for the usage limit and says when
+When the harness refuses a session for the usage limit and says when
 the limit resets, Linewright starts no session until then, and claims no
 tickets.
 

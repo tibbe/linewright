@@ -21,8 +21,16 @@ A GitHub user who files an issue.
 _Avoid_: customer, author
 
 **Agent**:
-A program that works on code on its own, such as Claude Code.
-_Avoid_: bot, worker
+What works on code on its own in a session: the model, acting through the
+harness.
+_Avoid_: bot, worker, assistant, model, LLM, the AI, Claude
+
+**Harness**:
+The program that runs an agent's sessions: the loop, tools, context and
+permission gating around the model, such as Claude Code. The agent harness,
+not an evaluation harness.
+_Avoid_: agent runtime, runtime, scaffold, engine, CLI, binary, coding agent,
+coding tool, framework, platform, assistant
 
 **Session**:
 An agent's work in one context, from its first prompt to its last.
@@ -87,6 +95,6 @@ _Avoid_: epic
 
 **Usage limit**:
 The cap a subscription puts on how much its agents may run in a window, such
-as five hours or a week, beyond which the agent runtime refuses sessions until
+as five hours or a week, beyond which the harness refuses sessions until
 a stated reset time.
 _Avoid_: rate limit, session limit, quota

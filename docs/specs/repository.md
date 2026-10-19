@@ -49,7 +49,7 @@ it.
 - **Used when present.** The files the agents' briefs rely on,
   `CODING_STANDARDS.md` (what code review holds changes to) and `GLOSSARY.md`
   (the vocabulary agents read before exploring), and CI as checks on pull
-  requests. The agent instructions and configuration the runtime reads from
+  requests. The agent instructions and configuration the harness reads from
   the repository apply as in any session. The operator's own Claude Code
   setup does not, and sessions keep no memory of their own: what later
   sessions should know belongs in the repository.

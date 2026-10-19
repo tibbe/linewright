@@ -13,8 +13,8 @@ observes.
 - **Rust, with GitHub's REST and GraphQL APIs in-process.**
 - **Functional core, imperative shell.** The reconcile step is a pure function
   from a snapshot, the live runs and the clock to a list of actions. The store,
-  git, the agent runtime and the clock sit behind interfaces with a real and a
-  fake implementation.
+  git, the harness and the clock sit behind interfaces with a real and a fake
+  implementation.
 
 ## State
 
@@ -41,11 +41,12 @@ lives in the store and nowhere else.
 
 ## Agent sessions
 
-Each stage's agent is a headless Claude Code session, and what it does depends
-only on its brief, the repository and what it reads during the session.
+The harness is Claude Code. Each stage's agent works in one headless session,
+and what it does depends only on its brief, the repository and what it reads
+during the session.
 
 - **One session per stage**, each in its own clone, without permission prompts,
-  behind one runtime interface. The model is configuration.
+  behind one harness interface. The model is configuration.
 - **Isolation.** Sessions running at once cannot disturb each other, and a
   session never depends on what an earlier session left behind or on the host's
   user-level setup. Isolation is of what sessions can observe of each other, not
@@ -61,12 +62,12 @@ only on its brief, the repository and what it reads during the session.
   namespace and invoked as the originals invoke them.
 - **A session's skills and tools.** A session or sub-agent has Linewright's
   skills and the repository's own, and only the tools its work needs.
-- **Why.** The runtime's other skills and tools take up the session's context
+- **Why.** The harness's other skills and tools take up the session's context
   and compete with Linewright's skills.
 - **No person takes part in a session.** A decision an original skill puts to a
   person is made by an agent or handed back as an outcome, and judging an
   agent's own work, as review does, falls to agents in fresh contexts.
-- **Every session's transcript is kept**: the runtime's own record of the
+- **Every session's transcript is kept**: the harness's own record of the
   session, copied beside the session's brief and result under the work
   directory.
 
@@ -160,8 +161,8 @@ repository, its runs and their transcripts.
 Linewright runs on a host or in a container the operator builds, and is
 configured in layers.
 
-- **The base image.** A published base image (`lw`, the agent runtime, and the
-  tools coding agents expect: `git`, `gh`, `python3`) is the starting point for
+- **The base image.** A published base image (`lw`, the harness, and the tools
+  coding agents expect: `git`, `gh`, `python3`) is the starting point for
   the operator's image.
 - **Configuration is layered**: flags, `LINEWRIGHT_*` environment variables, a
   TOML file, defaults, parsed once into one typed value.
