@@ -12,11 +12,13 @@ esac
 
 # The tools below are fetched from their releases and checked against these
 # hashes, so this is the one place their versions are set: rumdl
-# (https://github.com/rvben/rumdl) and Docker Compose
+# (https://github.com/rvben/rumdl), Docker Compose
 # (https://github.com/docker/compose), which validates a compose file without
-# a Docker daemon.
+# a Docker daemon, and cargo-nextest (https://nexte.st), which names and kills
+# a hung test.
 rumdl_version=0.2.79
 compose_version=5.6.0
+nextest_version=0.9.148
 
 has_sha256() {
   local actual
@@ -90,6 +92,23 @@ compose() {
   "$dir/docker-compose" "$@"
 }
 
+nextest() {
+  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/linewright/nextest-$nextest_version" target sha archive
+  if [ ! -x "$dir/cargo-nextest" ]; then
+    case "$(uname -sm)" in
+    "Darwin arm64" | "Darwin x86_64") target=universal-apple-darwin sha=6c23b7fb4ca82c571fc8dfedbab45bfa773d45918f933170c85d21cd7f4b852b ;;
+    "Linux aarch64" | "Linux arm64") target=aarch64-unknown-linux-musl sha=94676506ceaed01746d78cfe9ed124ee841b2932fd18d9d10f438a347bd9ba5e ;;
+    "Linux x86_64") target=x86_64-unknown-linux-musl sha=bf92cb81450872d960ffa13857a83084d557ec0cdc141663d263bb23ef756f97 ;;
+    *) no_release "cargo-nextest $nextest_version" || return 1 ;;
+    esac
+    archive="cargo-nextest-$nextest_version-$target.tar.gz"
+    install_tool "$dir" cargo-nextest \
+      "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$nextest_version/$archive" \
+      "$sha" cargo-nextest || return 1
+  fi
+  "$dir/cargo-nextest" nextest "$@"
+}
+
 check_fmt() {
   if $fix; then cargo fmt; else cargo fmt --check -- --color=never; fi
 }
@@ -115,8 +134,11 @@ check_compose() {
 }
 
 check_clippy() { cargo clippy --all-targets --locked --quiet; }
-check_test() { cargo test --locked --quiet; }
-check_doc() { cargo doc --no-deps --locked --quiet; }
+check_test() { nextest run --locked --cargo-quiet --no-input-handler; }
+# nextest doesn't run doctests.
+check_doc() {
+  cargo doc --no-deps --locked --quiet && cargo test --doc --locked --quiet
+}
 
 stages=("fmt markdown compose" "clippy" "test doc")
 
@@ -146,7 +168,16 @@ log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 for i in "${!stages[@]}"; do
   for name in ${stages[$i]}; do
-    if "check_$name" >"$log" 2>&1; then
+    # The tests print only what failed, was slow or hung, and as it happens,
+    # so a hang still names its test.
+    if [ "$name" = test ]; then
+      if check_test; then
+        passed="$passed $name"
+      else
+        printf '✗ %s\n' "$name"
+        failed="$failed $name"
+      fi
+    elif "check_$name" >"$log" 2>&1; then
       passed="$passed $name"
     else
       printf '✗ %s\n' "$name"

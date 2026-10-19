@@ -1,0 +1,8 @@
+# https://nexte.st/docs/configuration/reference/
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 2 }
+global-timeout = "5m"
+status-level = "leak"
+final-status-level = "leak"
+failure-output = "immediate"
+fail-fast = false
