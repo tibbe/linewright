@@ -69,12 +69,15 @@ A run ends in one of these outcomes, each with its name in JSON.
 
 - **Handing back.** Handing an item back is as under
   [Repository](repository.md).
-- **A result that does not parse.** A session's result the manager cannot
-  parse goes back to the session with the parse error, so it can answer again
-  (`result-retries`).
+- **A result the manager can't accept.** A session's result the manager
+  cannot parse, or whose work holds a credential
+  ([Architecture](architecture.md)), whether Linewright finds it or GitHub
+  refuses the push over it, goes back to the session with the reason, so it
+  can answer again (`result-retries`). The reason names the variable, the
+  file and the commit.
 - **Unexpected ends.** Any unexpected end (a crash, a timeout, the agent
-  giving up, a result that still does not parse) hands the run's item back
-  with the reason and the tail of the log.
+  giving up, a result still not accepted) hands the run's item back with the
+  reason and the tail of the log.
 - **Retries.** A failure is retried once first only when a retry could end
   differently, as an infrastructure failure could. One a retry cannot change
   is handed back at once, and the comment says what the maintainer can do
@@ -83,7 +86,8 @@ A run ends in one of these outcomes, each with its name in JSON.
 - **Unfinished work.** A run that works on a branch and ends before it
   finishes pushes its work so far to the branch, with what its session left
   uncommitted as an unfinished commit. The next run on the branch folds the
-  unfinished commit into its own commits.
+  unfinished commit into its own commits. Work that holds a credential is
+  not pushed.
 - **Cancelling.** A run is cancelled when its item stops asking for its work,
   as under [Repository](repository.md), or when `serve` stops. A cancelled
   run posts nothing more, and one whose pull request was merged or closed
@@ -91,10 +95,6 @@ A run ends in one of these outcomes, each with its name in JSON.
 - **Restarts.** A restart leaves the runs in flight interrupted.
 - **Kept.** Runs are kept across restarts, with their outcomes and their
   sessions' transcripts.
-- **Redaction.** Everything Linewright keeps or posts from a session has the
-  values of the credentials Linewright reads from its environment replaced by
-  `[redacted]`. A session runs on the agent runtime's credential, so its
-  agent can read that credential in its own shell.
 
 ## Usage limit
 

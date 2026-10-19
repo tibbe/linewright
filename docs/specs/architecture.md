@@ -32,8 +32,8 @@ later.
   is JSON the manager parses and applies: the outcome, tickets, comments, the
   PR's title and body. The manager pushes the branch and opens the PR through
   the store. Only the manager writes to the store; prose for people goes to
-  comments. A result that does not parse is sent back to the session with the
-  error, a bounded number of times.
+  comments. A result the manager can't accept is sent back to the session
+  with the reason, a bounded number of times.
 - **Agents get the capabilities their work needs, and are limited where that
   costs their work nothing.** An agent that debugs, researches and reviews
   needs a shell, the web and GitHub, so it has them, and is trusted to use
@@ -44,6 +44,13 @@ later.
   writing to GitHub outside its result, is the brief's to prevent, and a
   maintainer who wants stricter guards sets them in GitHub, such as required
   reviews on spec files.
+- **What Linewright keeps, logs or posts has credentials replaced by
+  `[redacted]`**, except the commits it pushes: those are the agent's work,
+  so a commit holding a credential is refused rather than rewritten
+  ([Runs](runs.md)). A credential is the value of a variable in Linewright's
+  environment whose name ends in `_TOKEN`, `_KEY`, `_SECRET` or `_PASSWORD`;
+  names rather than a declared list, so that the secrets an operator passes
+  sessions are covered without a setting. Redaction is best effort.
 - **Briefs are files read at startup**: the skills, forked from
   `mattpocock/skills` (`triage`, `to-tickets`, `implement`, `code-review`, `pr`,
   `tdd`) with their MIT notice, and the prompts Linewright sends a session, each
