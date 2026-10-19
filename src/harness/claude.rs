@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-use super::{Runtime, SessionError, SessionSpec, Turn, UsageLimit};
+use super::{Harness, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::domain::Timestamp;
 use crate::redaction::Redaction;
 use crate::session_env::Given;
@@ -377,7 +377,7 @@ impl ClaudeCode {
                         .is_some_and(|s| !s.is_null()) =>
             {
                 Err(SessionError::Infrastructure(format!(
-                    "the agent runtime's API failed ({})",
+                    "the harness's API failed ({})",
                     event.result.unwrap_or(event.subtype)
                 )))
             }
@@ -391,8 +391,8 @@ impl ClaudeCode {
             }),
             None => Err(SessionError::Failed {
                 reason: match status {
-                    Ok(status) => format!("the agent runtime exited ({status}) without a result"),
-                    Err(e) => format!("the agent runtime could not be waited for: {e}"),
+                    Ok(status) => format!("the harness exited ({status}) without a result"),
+                    Err(e) => format!("the harness could not be waited for: {e}"),
                 },
                 log_tail: log.tail(),
             }),
@@ -435,7 +435,7 @@ async fn copy_transcript(session: &str, to: &Path, redaction: &Redaction) {
 }
 
 #[async_trait]
-impl Runtime for ClaudeCode {
+impl Harness for ClaudeCode {
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError> {
         let session = uuid::Uuid::new_v4().to_string();
         self.turn(spec, Session::Start(&session), &spec.prompt)

@@ -7,8 +7,8 @@ use std::time::Duration;
 use common::*;
 use linewright::domain::{CheckState, Issue, Login, Mergeability, Number, PullState, ReviewState};
 use linewright::factory::Factory;
+use linewright::harness::{Harness, SessionError, SessionSpec, Turn};
 use linewright::reconcile::WorkKind;
-use linewright::runtime::{Runtime, SessionError, SessionSpec, Turn};
 use linewright::store::Store;
 use linewright::store::local::LocalStore;
 use linewright::webhook::{Listener, Pending};
@@ -19,7 +19,7 @@ const NEVER: Duration = Duration::from_hours(1);
 
 struct Served {
     store: Arc<LocalStore>,
-    runtime: Arc<ScriptedRuntime>,
+    harness: Arc<ScriptedHarness>,
     listener: Listener,
     serving: Serving,
     _dir: tempfile::TempDir,
@@ -30,7 +30,7 @@ struct Served {
 async fn serve(world: World, poll_interval: Duration) -> Served {
     let World {
         store,
-        runtime,
+        harness,
         factory,
         dir,
         ..
@@ -48,7 +48,7 @@ async fn serve(world: World, poll_interval: Duration) -> Served {
     eventually(|| store.snapshots_taken() > polled).await;
     Served {
         store,
-        runtime,
+        harness,
         listener,
         serving,
         _dir: dir,
@@ -140,7 +140,7 @@ fn about_pull(number: Number) -> serde_json::Value {
 #[tokio::test]
 async fn an_issue_labeled_needs_triage_is_triaged_on_the_delivery() {
     let world = World::new().await;
-    world.runtime.on(WorkKind::Triage, |_| {
+    world.harness.on(WorkKind::Triage, |_| {
         Ok(json!({
             "outcome": "ready-for-human",
             "category": "bug",
@@ -165,7 +165,7 @@ async fn an_issue_labeled_needs_triage_is_triaged_on_the_delivery() {
 #[tokio::test]
 async fn an_answer_to_a_triage_question_is_triaged_again_on_the_delivery() {
     let world = World::new().await;
-    world.runtime.on(WorkKind::Triage, |call| {
+    world.harness.on(WorkKind::Triage, |call| {
         let outcome = if call.spec.prompt.contains("The round one.") {
             json!({
                 "outcome": "ready-for-agent",
@@ -201,7 +201,7 @@ async fn an_answer_to_a_triage_question_is_triaged_again_on_the_delivery() {
 #[tokio::test]
 async fn a_spec_change_merged_is_cut_into_tickets_on_the_delivery() {
     let world = World::new().await;
-    world.runtime.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Tickets, |_| {
         Ok(json!({
             "tickets": [{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}],
             "comment": "One slice."
@@ -272,7 +272,7 @@ async fn feedback_on_linewrights_pull_request_is_addressed_on_the_delivery() {
     for give in feedback {
         let mut world = World::new().await;
         let (_, pr) = world.ticket_in_review().await;
-        world.runtime.on(WorkKind::Rework, |call| {
+        world.harness.on(WorkKind::Rework, |call| {
             assert!(call.spec.prompt.contains("Add a changelog entry."));
             commit_in(
                 &call.spec.dir,
@@ -286,7 +286,7 @@ async fn feedback_on_linewrights_pull_request_is_addressed_on_the_delivery() {
         let (event, body) = give(&served.store, pr);
         served.deliver(event, body).await;
 
-        eventually(|| served.runtime.prompts(WorkKind::Rework).len() == 1).await;
+        eventually(|| served.harness.prompts(WorkKind::Rework).len() == 1).await;
         assert_eq!(served.store.snapshots_taken(), 2, "{event}");
         served.stop().await;
     }
@@ -308,7 +308,7 @@ impl Drop for Stops {
 }
 
 #[async_trait::async_trait]
-impl Runtime for Endless {
+impl Harness for Endless {
     async fn start(&self, _: &SessionSpec) -> Result<Turn, SessionError> {
         self.started.fetch_add(1, Ordering::SeqCst);
         let _stops = Stops(self.stopped.clone());
@@ -323,10 +323,10 @@ impl Runtime for Endless {
 #[tokio::test]
 async fn closing_an_issue_stops_its_run_on_the_delivery() {
     let mut world = World::new().await;
-    let runtime = Arc::new(Endless::default());
+    let harness = Arc::new(Endless::default());
     world.factory = Factory::start(
         world.store.clone(),
-        runtime.clone(),
+        harness.clone(),
         world.clock.clone(),
         config(&world.dir.path().join("endless")),
     )
@@ -339,12 +339,12 @@ async fn closing_an_issue_stops_its_run_on_the_delivery() {
         &["ready-for-agent"],
     );
     let served = serve(world, NEVER).await;
-    eventually(|| runtime.started.load(Ordering::SeqCst) == 1).await;
+    eventually(|| harness.started.load(Ordering::SeqCst) == 1).await;
 
     served.store.close_issue_as(issue).unwrap();
     served.deliver("issues", about_issue(issue)).await;
 
-    eventually(|| runtime.stopped.load(Ordering::SeqCst) == 1).await;
+    eventually(|| harness.stopped.load(Ordering::SeqCst) == 1).await;
     assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }
@@ -437,7 +437,7 @@ async fn merging_linewrights_pull_request_works_the_ticket_it_unblocked_on_the_d
 #[tokio::test]
 async fn a_delivery_replayed_late_and_twice_after_a_newer_change_takes_no_step_back() {
     let world = World::new().await;
-    world.runtime.on(WorkKind::Triage, |_| {
+    world.harness.on(WorkKind::Triage, |_| {
         Ok(json!({
             "outcome": "ready-for-human",
             "category": "bug",
@@ -472,7 +472,7 @@ async fn a_delivery_replayed_late_and_twice_after_a_newer_change_takes_no_step_b
     served.deliver("issues", about_issue(other)).await;
     eventually(|| claimed(&served.store, other)).await;
 
-    assert_eq!(served.runtime.prompts(WorkKind::Triage).len(), 1);
+    assert_eq!(served.harness.prompts(WorkKind::Triage).len(), 1);
     let issue = served.issue(issue);
     assert_eq!(labels(&issue), ["bug", "ready-for-human"]);
     assert_eq!(issue.comments.len(), comments);
@@ -552,15 +552,15 @@ async fn a_failing_check_on_linewrights_pull_request_starts_the_ci_fix_on_the_de
     for event in CI_EVENTS {
         let mut world = World::new().await;
         let (_, pr) = world.ticket_in_review().await;
-        world.runtime.on(WorkKind::FixCi, |_| {
+        world.harness.on(WorkKind::FixCi, |_| {
             Ok(json!({"outcome": "done", "comment": "Fixed the widget count."}).to_string())
         });
         let served = serve(world, NEVER).await;
 
         served.report_check(pr, CheckState::Failed, event).await;
 
-        eventually(|| served.runtime.prompts(WorkKind::FixCi).len() == 1).await;
-        let prompt = &served.runtime.prompts(WorkKind::FixCi)[0];
+        eventually(|| served.harness.prompts(WorkKind::FixCi).len() == 1).await;
+        let prompt = &served.harness.prompts(WorkKind::FixCi)[0];
         assert!(prompt.contains("widgets == 2"), "{event}: {prompt}");
         assert_eq!(served.store.snapshots_taken(), 2, "{event}");
         served.stop().await;

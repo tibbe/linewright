@@ -69,7 +69,7 @@ fn files_under(dir: &Path) -> Vec<PathBuf> {
 /// Neither a prompt, a comment nor a kept record holds the credential.
 async fn assert_credential_kept_out(world: &World) {
     for kind in [WorkKind::Implement, WorkKind::Rework] {
-        for prompt in world.runtime.prompts(kind) {
+        for prompt in world.harness.prompts(kind) {
             assert!(!prompt.contains(CREDENTIAL), "{prompt}");
         }
     }
@@ -100,7 +100,7 @@ async fn an_implement_run_whose_commits_hold_a_credential_is_sent_back_before_it
     let store = world.store.repository();
     let committed = Arc::new(Mutex::new(String::new()));
     let pushed_before_followup = Arc::new(Mutex::new(None));
-    world.runtime.on(WorkKind::Implement, {
+    world.harness.on(WorkKind::Implement, {
         let committed = committed.clone();
         let pushed_before_followup = pushed_before_followup.clone();
         move |call| {
@@ -128,7 +128,7 @@ async fn an_implement_run_whose_commits_hold_a_credential_is_sent_back_before_it
 
     world.poll().await;
 
-    let prompts = world.runtime.prompts(WorkKind::Implement);
+    let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
     let commit = committed.lock().unwrap().clone();
     assert!(prompts[1].contains(&reason(&commit)), "{}", prompts[1]);
@@ -151,7 +151,7 @@ async fn an_implement_run_whose_commits_still_hold_a_credential_after_its_follow
     let (log, _guard) = Log::capture();
     let mut world = world_with_credential().await;
     let committed = Arc::new(Mutex::new(String::new()));
-    world.runtime.on(WorkKind::Implement, {
+    world.harness.on(WorkKind::Implement, {
         let committed = committed.clone();
         move |call| {
             if call.followup.is_none() {
@@ -169,7 +169,7 @@ async fn an_implement_run_whose_commits_still_hold_a_credential_after_its_follow
 
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-human"]);
     let comment = last_comment(&issue);
@@ -200,7 +200,7 @@ async fn a_rework_whose_commits_hold_a_credential_pushes_nothing_to_its_pull_req
         .comment_as("maintainer", pr, "Publish it too.")
         .unwrap();
     let committed = Arc::new(Mutex::new(String::new()));
-    world.runtime.on(WorkKind::Rework, {
+    world.harness.on(WorkKind::Rework, {
         let committed = committed.clone();
         move |call| {
             if call.followup.is_none() {
@@ -212,7 +212,7 @@ async fn a_rework_whose_commits_hold_a_credential_pushes_nothing_to_its_pull_req
 
     world.poll().await;
 
-    let prompts = world.runtime.prompts(WorkKind::Rework);
+    let prompts = world.harness.prompts(WorkKind::Rework);
     assert_eq!(prompts.len(), 2);
     let commit = committed.lock().unwrap().clone();
     assert!(prompts[1].contains(&reason(&commit)), "{}", prompts[1]);
@@ -234,7 +234,7 @@ async fn a_rework_that_takes_a_credential_out_of_its_commits_when_sent_back_push
         .store
         .comment_as("maintainer", pr, "Publish it too.")
         .unwrap();
-    world.runtime.on(WorkKind::Rework, |call| {
+    world.harness.on(WorkKind::Rework, |call| {
         let dir = &call.spec.dir;
         if call.followup.is_none() {
             commit_credential(dir);
@@ -251,7 +251,7 @@ async fn a_rework_that_takes_a_credential_out_of_its_commits_when_sent_back_push
 
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 2);
     let head_ref = world.store.snapshot_pull(pr).await.head_ref;
     assert_eq!(
         world.store.file(&head_ref, ".npmrc").await.unwrap(),
@@ -280,7 +280,7 @@ async fn a_rework_is_not_sent_back_for_a_credential_its_pull_request_already_hel
 
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
     assert_eq!(
         world
             .store
@@ -298,7 +298,7 @@ async fn a_credential_whose_value_spans_lines_is_found_whole() {
         config.credentials = credentials_of(&[("DEPLOY_KEY", key)]);
     })
     .await;
-    world.runtime.on(WorkKind::Implement, move |call| {
+    world.harness.on(WorkKind::Implement, move |call| {
         commit_in(
             &call.spec.dir,
             &[("deploy/key.pem", &format!("{key}\n"))],
@@ -312,7 +312,7 @@ async fn a_credential_whose_value_spans_lines_is_found_whole() {
 
     world.poll().await;
 
-    let prompts = world.runtime.prompts(WorkKind::Implement);
+    let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
     assert!(
         prompts[1].contains("adds the value of `DEPLOY_KEY`, a credential, to `deploy/key.pem`"),
@@ -347,11 +347,11 @@ fn assert_says_not_kept(comment: &str, commit: Option<&str>) {
 async fn an_implement_run_that_stops_with_a_credential_in_its_commits_keeps_nothing_and_says_why() {
     let mut world = world_with_credential().await;
     let committed = Arc::new(Mutex::new(String::new()));
-    world.runtime.on(WorkKind::Implement, {
+    world.harness.on(WorkKind::Implement, {
         let committed = committed.clone();
         move |call| {
             *committed.lock().unwrap() = commit_credential(&call.spec.dir);
-            Err(linewright::runtime::SessionError::TimedOut {
+            Err(linewright::harness::SessionError::TimedOut {
                 log_tail: String::new(),
             })
         }
@@ -374,7 +374,7 @@ async fn an_implement_run_that_stops_with_a_credential_in_its_commits_keeps_noth
 async fn an_implement_run_that_blocks_with_a_credential_left_uncommitted_keeps_nothing_and_says_why()
  {
     let mut world = world_with_credential().await;
-    world.runtime.on(WorkKind::Implement, |call| {
+    world.harness.on(WorkKind::Implement, |call| {
         let dir = &call.spec.dir;
         commit_in(dir, &[("README.md", "Published to npm.\n")], "Start");
         write_credential(dir);
@@ -404,7 +404,7 @@ async fn a_rework_that_gives_up_with_a_credential_in_its_work_pushes_nothing_to_
         .store
         .comment_as("maintainer", pr, "Publish it too.")
         .unwrap();
-    world.runtime.on(WorkKind::Rework, |call| {
+    world.harness.on(WorkKind::Rework, |call| {
         write_credential(&call.spec.dir);
         Ok(json!({"outcome": "gave-up", "reason": "No registry."}).to_string())
     });
@@ -421,13 +421,13 @@ async fn a_rework_that_gives_up_with_a_credential_in_its_work_pushes_nothing_to_
 #[tokio::test]
 async fn a_run_that_stops_with_work_that_holds_no_credential_still_keeps_it() {
     let mut world = world_with_credential().await;
-    world.runtime.on(WorkKind::Implement, |call| {
+    world.harness.on(WorkKind::Implement, |call| {
         std::fs::write(
             call.spec.dir.join(".npmrc"),
             "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n",
         )
         .unwrap();
-        Err(linewright::runtime::SessionError::TimedOut {
+        Err(linewright::harness::SessionError::TimedOut {
             log_tail: String::new(),
         })
     });
@@ -468,7 +468,7 @@ async fn a_rework_that_stops_keeps_its_work_though_the_default_branch_it_took_in
         .store
         .comment_as("maintainer", pr, "Publish it too.")
         .unwrap();
-    world.runtime.on(WorkKind::Rework, |call| {
+    world.harness.on(WorkKind::Rework, |call| {
         std::fs::write(call.spec.dir.join("notes.txt"), "half done\n").unwrap();
         Ok(json!({"outcome": "gave-up", "reason": "No registry."}).to_string())
     });

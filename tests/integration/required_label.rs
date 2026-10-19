@@ -16,7 +16,7 @@ async fn world(required: Option<&str>, label_exists: bool) -> World {
 }
 
 async fn merged_spec_change(world: &World) {
-    world.runtime.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Tickets, |_| {
         Ok(json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
@@ -96,7 +96,7 @@ async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
         .await
         .unwrap();
     let _ = pr;
-    world.runtime.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Tickets, |_| {
         Ok(json!({
             "tickets": [{"id": "a", "title": "A", "body": "a", "blocked_by": []}],
             "comment": "One."
@@ -131,7 +131,7 @@ async fn a_missing_required_label_is_not_created_and_the_filing_completes() {
 }
 
 fn implement_with_gap(world: &World) {
-    world.runtime.on(WorkKind::Implement, |call| {
+    world.harness.on(WorkKind::Implement, |call| {
         commit_in(&call.spec.dir, &[("src/g.txt", "g\n")], "Add gadgets");
         Ok(json!({
             "outcome": "done",
@@ -224,7 +224,7 @@ async fn filing_automation(
         )
         .await
         .unwrap();
-    world.runtime.on_automation(|_| {
+    world.harness.on_automation(|_| {
         Ok(json!({
             "summary": "Two.",
             "issues": [

@@ -134,7 +134,7 @@ impl SessionError {
 }
 
 #[async_trait]
-pub trait Runtime: Send + Sync {
+pub trait Harness: Send + Sync {
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError>;
     async fn resume(
         &self,

@@ -12,8 +12,8 @@ use crate::domain::{
     UpdateMethod, UpdateRule, label, last_assigned, last_assignment, last_labeling,
     last_unassignment,
 };
+use crate::harness::UsageLimit;
 use crate::holds::Holds;
-use crate::runtime::UsageLimit;
 use crate::spec_glob::SpecGlob;
 
 #[derive(Clone, Debug)]

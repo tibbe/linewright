@@ -11,9 +11,9 @@ use linewright::clock::Clock;
 use linewright::credentials::Credentials;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
+use linewright::harness::{Harness, Purpose, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::reconcile::WorkKind;
 use linewright::redaction::Redaction;
-use linewright::runtime::{Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use linewright::spec_glob::SpecGlob;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::{Address, Listener, Pending, Secret, Webhooks};
@@ -114,7 +114,7 @@ impl ScriptKey {
 }
 
 #[derive(Default)]
-pub struct ScriptedRuntime {
+pub struct ScriptedHarness {
     scripts: Mutex<HashMap<ScriptKey, Script>>,
     prompts: Mutex<Vec<(ScriptKey, String)>>,
     started: std::sync::atomic::AtomicUsize,
@@ -136,7 +136,7 @@ impl HeldTurn {
     }
 }
 
-impl ScriptedRuntime {
+impl ScriptedHarness {
     pub fn on(
         &self,
         kind: WorkKind,
@@ -254,7 +254,7 @@ impl ScriptedRuntime {
 }
 
 #[async_trait]
-impl Runtime for ScriptedRuntime {
+impl Harness for ScriptedHarness {
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError> {
         let n = self
             .started
@@ -357,7 +357,7 @@ pub fn refused_part_way(call: &Call) -> Result<String, SessionError> {
     refused_until(usage_limit_resets_at(), Some(call))
 }
 
-/// The end of a turn the runtime refuses for the usage limit that resets at
+/// The end of a turn the harness refuses for the usage limit that resets at
 /// `resets_at`: part way through `call`, or before the turn began.
 pub fn refused_until(
     resets_at: Timestamp,
@@ -400,7 +400,7 @@ pub fn run_ids(listed: &str) -> Vec<&str> {
 
 pub struct World {
     pub store: Arc<LocalStore>,
-    pub runtime: Arc<ScriptedRuntime>,
+    pub harness: Arc<ScriptedHarness>,
     pub clock: Arc<FakeClock>,
     pub factory: Factory,
     pub dir: tempfile::TempDir,
@@ -512,13 +512,13 @@ impl World {
         for token in repository.unreadable_by {
             store.refuse_reads_by(token);
         }
-        let runtime = Arc::new(ScriptedRuntime::default());
+        let harness = Arc::new(ScriptedHarness::default());
         let mut config = config(&dir.path().join("work"));
         adjust(&mut config);
-        let factory = Factory::start(store.clone(), runtime.clone(), clock.clone(), config).await?;
+        let factory = Factory::start(store.clone(), harness.clone(), clock.clone(), config).await?;
         Ok(World {
             store,
-            runtime,
+            harness,
             clock,
             factory,
             dir,
@@ -530,7 +530,7 @@ impl World {
         adjust(&mut config);
         self.factory = Factory::start(
             self.store.clone(),
-            self.runtime.clone(),
+            self.harness.clone(),
             self.clock.clone(),
             config,
         )
@@ -576,7 +576,7 @@ pub fn subject_file(call: &Call) -> String {
 
 /// Each run adds to what its ticket's branch holds.
 pub fn implement(world: &World) {
-    world.runtime.on(WorkKind::Implement, |call| {
+    world.harness.on(WorkKind::Implement, |call| {
         let file = format!("src/{}.txt", subject_file(call));
         let done = std::fs::read_to_string(call.spec.dir.join(&file)).unwrap_or_default();
         commit_in(
@@ -626,7 +626,7 @@ impl World {
         self.store
             .comment_as("maintainer", pr, "Rename it.")
             .unwrap();
-        self.runtime.on(WorkKind::Rework, |call| {
+        self.harness.on(WorkKind::Rework, |call| {
             commit_in(
                 &call.spec.dir,
                 &[("src/renamed.txt", "renamed\n")],

@@ -431,7 +431,7 @@ async fn a_wrong_setting_outside_the_command_line_exits_1() {
 async fn with_issue_for_triage() -> World {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     world
-        .runtime
+        .harness
         .on(linewright::reconcile::WorkKind::Triage, |_| {
             Ok(serde_json::json!({
                 "outcome": "ready-for-agent",
@@ -489,7 +489,7 @@ async fn runs_gives_the_same_answer_with_serve_running_and_without() {
 #[tokio::test]
 async fn a_run_in_flight_is_listed_so_and_once_a_stop_cancels_it_as_cancelled() {
     let world = with_issue_for_triage().await;
-    world.runtime.takes(Duration::from_mins(1));
+    world.harness.takes(Duration::from_mins(1));
     let answering = Answering::start(world, false).await;
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
@@ -542,7 +542,7 @@ async fn runs_of_an_item_with_none_exits_4_with_serve_running() {
 #[tokio::test]
 async fn a_run_whose_serve_died_is_listed_as_interrupted() {
     let world = with_issue_for_triage().await;
-    world.runtime.takes(Duration::from_mins(1));
+    world.harness.takes(Duration::from_mins(1));
     let answering = Answering::start(world, false).await;
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
@@ -650,7 +650,7 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
 #[tokio::test]
 async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_its_tickets() {
     let mut world = World::new().await;
-    world.runtime.on(linewright::reconcile::WorkKind::Tickets, |_| {
+    world.harness.on(linewright::reconcile::WorkKind::Tickets, |_| {
         Ok(serde_json::json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
@@ -738,7 +738,7 @@ async fn explain_without_serve_running_exits_3_saying_so() {
 async fn logs_gives_the_same_answer_with_serve_running_and_without() {
     let world = with_issue_for_triage().await;
     world
-        .runtime
+        .harness
         .on(linewright::reconcile::WorkKind::Triage, |call| {
             std::fs::write(
                 call.spec.record.join(linewright::transcript::OUTPUT),
@@ -818,7 +818,7 @@ fn quiet_for_seconds(line: &str) -> bool {
 #[tokio::test]
 async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_output() {
     let world = with_issue_for_triage().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let clock = world.clock.clone();
     let answering = Answering::start(world, false).await;
     let run = "1/triage-1: #1 triage, running for ";
@@ -971,7 +971,7 @@ fn turn_1() -> Vec<String> {
 #[tokio::test]
 async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_produces_it() {
     let world = with_issue_for_triage().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();
     // The marker, the start event and the first Bash call, with its result.
@@ -1031,7 +1031,7 @@ async fn with_pull_request_for_rework() -> World {
 #[tokio::test]
 async fn a_pull_requests_runs_and_logs_are_its_own_with_serve_running_and_without() {
     let world = with_pull_request_for_rework().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     agent.writes(&turn_1().concat());
     drop(agent);
     let answering = Answering::start(world, false).await;
@@ -1096,7 +1096,7 @@ async fn a_pull_requests_runs_and_logs_are_its_own_with_serve_running_and_withou
 #[tokio::test]
 async fn logs_follow_of_a_pull_request_follows_its_run_in_flight() {
     let world = with_pull_request_for_rework().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();
     agent.writes(&turn[..4].concat());
@@ -1170,7 +1170,7 @@ fn event(id: Option<&str>, event: &str, data: &str) -> api::ServerEvent {
 #[tokio::test]
 async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_id() {
     let world = with_issue_for_triage().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let runtime_dir = answering.runtime_dir.path();
     let turn = turn_1();
@@ -1288,7 +1288,7 @@ async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_part_way_as
 
 async fn triage_under_way() -> (HeldTurn, Answering, tempfile::TempDir) {
     let world = with_issue_for_triage().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     agent.writes(&turn_1()[..4].concat());
     eventually_async(|| async {
@@ -1382,7 +1382,7 @@ fn stops_as_asked(
 #[tokio::test]
 async fn logs_follow_json_verbose_carries_on_from_the_records_once_serve_stops() {
     let world = with_issue_for_triage().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();
     agent.writes(&turn[..6].concat());
@@ -1449,7 +1449,7 @@ async fn logs_follow_json_verbose_carries_on_from_the_records_once_serve_stops()
 #[tokio::test]
 async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
     let world = with_issue_for_triage().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();
     agent.writes(&turn[..4].concat());
@@ -1504,7 +1504,7 @@ async fn logs_of_a_named_run_whose_record_does_not_read_exits_1_through_serve() 
 #[tokio::test]
 async fn logs_of_a_session_yet_to_write_anything_counts_it_as_started() {
     let world = with_issue_for_triage().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let has_a_session = || {
         files_named(answering._dir.path(), "items/1/triage-1.json")
@@ -1533,7 +1533,7 @@ async fn logs_of_a_session_yet_to_write_anything_counts_it_as_started() {
 #[tokio::test]
 async fn logs_follow_of_a_session_yet_to_write_anything_shows_its_header_once() {
     let world = with_issue_for_triage().await;
-    let agent = world.runtime.hold();
+    let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let has_a_session = || {
         files_named(answering._dir.path(), "items/1/triage-1.json")

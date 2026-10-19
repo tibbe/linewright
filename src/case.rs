@@ -10,9 +10,9 @@ use crate::clock::Clock;
 use crate::domain::{Login, MergeMethods, Number, UpdateMethod, UpdateRule, label};
 use crate::factory::{Factory, FactoryConfig};
 use crate::git;
+use crate::harness::Harness;
 use crate::reconcile::Subject;
 use crate::run::subject_name;
-use crate::runtime::Runtime;
 use crate::store::github::GitHub;
 use crate::store::local::{LocalStore, Seed};
 use crate::store::{Categories, Store};
@@ -244,7 +244,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 pub async fn replay(
     case_dir: &Path,
     out: &Path,
-    runtime: Arc<dyn Runtime>,
+    harness: Arc<dyn Harness>,
     clock: Arc<dyn Clock>,
     mut config: FactoryConfig,
 ) -> Result<()> {
@@ -309,7 +309,7 @@ pub async fn replay(
     // Automations, whose agents read GitHub, are not captured or replayed.
     config.schedule_automations = false;
     config.work_dir = out.canonicalize()?;
-    let mut factory = Factory::start(store.clone(), runtime, clock, config).await?;
+    let mut factory = Factory::start(store.clone(), harness, clock, config).await?;
     for cycle in 1..=500 {
         let actions = factory.cycle().await?;
         store.export().await?;

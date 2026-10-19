@@ -9,8 +9,8 @@ use common::*;
 use linewright::clock::Clock;
 use linewright::domain::{Item, Login, Number, Timestamp};
 use linewright::factory::Factory;
+use linewright::harness::{SessionError, UsageLimit};
 use linewright::reconcile::{Action, Subject, WorkKind};
-use linewright::runtime::{SessionError, UsageLimit};
 use linewright::store::Store;
 use linewright::webhook::Pending;
 use serde_json::json;
@@ -32,7 +32,7 @@ fn info_naming_the_reset(log: &Log, phrase: &str) -> Vec<String> {
 }
 
 fn triage(world: &World) {
-    world.runtime.on(WorkKind::Triage, |_| {
+    world.harness.on(WorkKind::Triage, |_| {
         Ok(json!({"outcome": "ticket", "summary": "Do it.", "type": "feature"}).to_string())
     });
 }
@@ -89,7 +89,7 @@ fn done() -> String {
 /// commits a file named for its turn first. Returns the turns they took.
 fn implement_turns(world: &World, turns: Vec<fn(&Call) -> Answer>) -> Turns {
     let seen = Turns::default();
-    world.runtime.on(WorkKind::Implement, {
+    world.harness.on(WorkKind::Implement, {
         let seen = seen.clone();
         move |call| {
             let n = see(&seen, call);
@@ -157,7 +157,7 @@ async fn before_the_reset_actions_that_start_no_session_are_still_taken() {
 
     assert_eq!(labels(&world.issue(asked)), ["needs-triage"]);
     assert_eq!(
-        world.runtime.prompts(WorkKind::Triage),
+        world.harness.prompts(WorkKind::Triage),
         Vec::<String>::new()
     );
 }
@@ -230,7 +230,7 @@ async fn with_hourly_automation(world: &World) {
 async fn a_automation_due_under_the_limit_waits_and_runs_at_the_first_poll_after_the_reset() {
     let mut world = World::serving().await;
     with_hourly_automation(&world).await;
-    world.runtime.on_automation(|_| {
+    world.harness.on_automation(|_| {
         Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string())
     });
     world.poll().await;
@@ -244,14 +244,14 @@ async fn a_automation_due_under_the_limit_waits_and_runs_at_the_first_poll_after
 
     world.clock.advance(TimeDelta::hours(2));
     world.factory.cycle().await.unwrap();
-    assert_eq!(world.runtime.automation_prompts(), Vec::<String>::new());
+    assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
     assert_eq!(last_runs().unwrap(), before, "not recorded as run");
 
     advance_past_the_reset(&world, 1);
     world.factory.settle().await;
     world.poll().await;
 
-    assert_eq!(world.runtime.automation_prompts().len(), 1);
+    assert_eq!(world.harness.automation_prompts().len(), 1);
 }
 
 #[tokio::test]
@@ -260,7 +260,7 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
 
     world.factory = Factory::start(
         world.store.clone(),
-        world.runtime.clone(),
+        world.harness.clone(),
         world.clock.clone(),
         linewright::factory::FactoryConfig {
             waits_out_usage_limit: true,
@@ -271,7 +271,7 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
     .unwrap();
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     assert_eq!(world.store.pulls().len(), 1);
 }
 
@@ -332,7 +332,7 @@ async fn a_session_refused_on_its_first_turn_takes_it_again_in_the_same_clone() 
     assert_eq!(turns.len(), 2, "{turns:?}");
     assert_eq!(turns[1].dir, turns[0].dir);
     assert_eq!(turns[1].followup, None, "started, not resumed");
-    let prompts = world.runtime.prompts(WorkKind::Implement);
+    let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts[1], prompts[0], "the brief again");
     assert_eq!(world.store.pulls().len(), 1);
     let again = info_naming_the_reset(&log, "taking the refused turn again");
@@ -358,7 +358,7 @@ async fn a_session_refused_again_at_the_reset_waits_until_the_new_reset() {
     world.factory.settle().await;
 
     assert_eq!(next, usage_limit_resets_at() + TimeDelta::hours(5));
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 3);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 3);
     assert_eq!(world.store.pulls().len(), 1);
 }
 
@@ -393,7 +393,7 @@ async fn the_resumed_session_has_the_time_it_had_left_when_refused() {
     open_ticket(&world, "Do the thing");
     // Of the 30 minutes the test factory gives a session, the first turn
     // runs 20.
-    world.runtime.takes(Duration::from_mins(20));
+    world.harness.takes(Duration::from_mins(20));
     world.factory.cycle().await.unwrap();
     let reset = world.clock.next_sleep().await;
 
@@ -424,7 +424,7 @@ async fn a_scheduled_automation_run_resumes_with_the_time_left_of_its_own_timeou
         .await
         .unwrap();
     let seen = Turns::default();
-    world.runtime.on_automation({
+    world.harness.on_automation({
         let seen = seen.clone();
         move |call| {
             if see(&seen, call) == 0 {
@@ -436,7 +436,7 @@ async fn a_scheduled_automation_run_resumes_with_the_time_left_of_its_own_timeou
     // The first poll sees the automation; it is due an hour later.
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
-    world.runtime.takes(Duration::from_mins(20));
+    world.harness.takes(Duration::from_mins(20));
     world.factory.cycle().await.unwrap();
     let reset = world.clock.next_sleep().await;
 
@@ -463,7 +463,7 @@ async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_bran
     world.factory.cycle().await.unwrap();
     world.factory.settle().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     let branch = format!("{}-do-the-thing", ticket.0);
     let read = world
         .store
@@ -532,7 +532,7 @@ async fn once_ends_the_refused_run_without_waiting() {
 
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     assert_eq!(world.issue(ticket).comments, []);
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
 }
@@ -546,7 +546,7 @@ impl Served {
     async fn start(world: World) -> Served {
         let factory = Factory::start(
             world.store.clone(),
-            world.runtime.clone(),
+            world.harness.clone(),
             world.clock.clone(),
             linewright::factory::FactoryConfig {
                 waits_out_usage_limit: true,
@@ -585,7 +585,7 @@ fn the_usage_limit() -> UsageLimit {
 async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
     let world = World::new().await;
     world
-        .runtime
+        .harness
         .on(WorkKind::Implement, |_| refused_for_the_usage_limit());
     world.store.open_issue(
         "maintainer",

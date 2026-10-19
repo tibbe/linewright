@@ -192,7 +192,7 @@ async fn lw(work_dir: &Path, args: &[&str]) -> Output {
 /// ends in an answer that is not a result, and its second, after the
 /// follow-up, in one that is.
 fn implement_as_recorded(world: &World) {
-    world.runtime.on(WorkKind::Implement, |call| {
+    world.harness.on(WorkKind::Implement, |call| {
         let turn = match call.followup {
             None => include_str!("fixtures/transcript/turn-1.jsonl"),
             Some(_) => include_str!("fixtures/transcript/turn-2.jsonl"),

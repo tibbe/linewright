@@ -16,6 +16,7 @@ use crate::domain::{
     closing_references, label,
 };
 use crate::git::{self, Updated, WorkState};
+use crate::harness::{Harness, OutputWatch, Purpose, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::prompts::{self, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
@@ -25,7 +26,6 @@ use crate::results::{
     Tickets, TriageOutcome, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs};
-use crate::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::spec_gap;
 use crate::store::{
     AnyItem, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError, PushMode,
@@ -36,7 +36,7 @@ use crate::transcript;
 
 pub(crate) struct Shell {
     pub store: Arc<dyn Store>,
-    pub runtime: Arc<dyn Runtime>,
+    pub harness: Arc<dyn Harness>,
     pub clock: Arc<dyn Clock>,
     pub policy: Policy,
     pub briefs: Briefs,
@@ -705,11 +705,11 @@ async fn take_turn(
         let turn = match &step {
             Step::Start => {
                 record(spec, transcript::BRIEF, &spec.prompt);
-                cancellable(ctx, shell.runtime.start(spec)).await?
+                cancellable(ctx, shell.harness.start(spec)).await?
             }
             Step::Resume { session, prompt } => {
                 record(spec, &followup_name(&spec.record), prompt);
-                cancellable(ctx, shell.runtime.resume(spec, session, prompt)).await?
+                cancellable(ctx, shell.harness.resume(spec, session, prompt)).await?
             }
         };
         let (limit, underway) = match turn {

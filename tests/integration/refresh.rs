@@ -136,7 +136,7 @@ async fn a_ticket_linewrights_pull_request_for_another_opened_since_the_poll_clo
     );
     let (release, released) = mpsc::channel::<()>();
     let released = Mutex::new(released);
-    world.runtime.on(WorkKind::Implement, move |call| {
+    world.harness.on(WorkKind::Implement, move |call| {
         released.lock().unwrap().recv().unwrap();
         let file = format!("src/{}.txt", subject_file(call));
         commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
@@ -240,7 +240,7 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
         .unwrap();
     let mut poller = Factory::start(
         world.store.clone(),
-        world.runtime.clone(),
+        world.harness.clone(),
         world.clock.clone(),
         config(&world.dir.path().join("poller")),
     )
@@ -376,7 +376,7 @@ async fn a_refresh_before_the_first_poll_polls() {
 #[tokio::test]
 async fn a_spec_change_cut_since_the_poll_is_not_cut_again_by_a_refresh() {
     let mut world = World::new().await;
-    world.runtime.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Tickets, |_| {
         Ok(serde_json::json!({
             "tickets": [{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}],
             "comment": "One slice."
@@ -399,7 +399,7 @@ async fn a_rework_started_by_a_refresh_takes_the_feedback_it_read_as_already_sho
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
     world.poll().await;
-    world.runtime.on(WorkKind::Rework, |call| {
+    world.harness.on(WorkKind::Rework, |call| {
         commit_in(
             &call.spec.dir,
             &[("CHANGELOG.md", "- thing\n")],
@@ -416,7 +416,7 @@ async fn a_rework_started_by_a_refresh_takes_the_feedback_it_read_as_already_sho
     world.factory.settle().await;
 
     assert_eq!(
-        world.runtime.prompts(WorkKind::Rework).len(),
+        world.harness.prompts(WorkKind::Rework).len(),
         1,
         "one session, not resumed"
     );
@@ -430,7 +430,7 @@ async fn a_refresh_after_a_rework_run_ends_does_not_start_it_again() {
         world
             .store
             .open_issue("maintainer", "Leave it", "Later.", &["ready-for-human"]);
-    world.runtime.on(WorkKind::Rework, |call| {
+    world.harness.on(WorkKind::Rework, |call| {
         commit_in(
             &call.spec.dir,
             &[("CHANGELOG.md", "- thing\n")],
@@ -502,10 +502,10 @@ fn gated(world: &World, kind: WorkKind) -> Gate {
     let (release, released) = mpsc::channel();
     let released = Mutex::new(released);
     let (begin, begun) = tokio::sync::mpsc::unbounded_channel();
-    world.runtime.on(kind, move |_| {
+    world.harness.on(kind, move |_| {
         let _ = begin.send(());
         released.lock().unwrap().recv().unwrap();
-        Err(linewright::runtime::SessionError::Failed {
+        Err(linewright::harness::SessionError::Failed {
             reason: "released".into(),
             log_tail: String::new(),
         })
@@ -680,7 +680,7 @@ async fn unassigning_linewright_from_a_pull_request_cancels_its_run_and_its_work
     gate.release();
     world.factory.settle().await;
     world.poll().await;
-    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
     assert!(
         !world
             .store
@@ -695,8 +695,8 @@ async fn unassigning_linewright_from_a_pull_request_cancels_its_run_and_its_work
 
     world.rework_asked(pr);
     world.poll().await;
-    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
     world.store.assign_as("maintainer", pr, "factory").unwrap();
     world.poll().await;
-    assert_eq!(world.runtime.prompts(WorkKind::Rework).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 2);
 }

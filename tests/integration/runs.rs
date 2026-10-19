@@ -43,7 +43,7 @@ async fn lw(work_dir: &Path, args: &[&str]) -> Output {
 }
 
 fn triage_ready(world: &World) {
-    world.runtime.on(WorkKind::Triage, |_| {
+    world.harness.on(WorkKind::Triage, |_| {
         Ok(json!({
             "outcome": "ready-for-agent",
             "category": "bug",
@@ -94,7 +94,7 @@ async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
     let config = common::config(&work_dir.path().join(REPO));
     world.factory = linewright::factory::Factory::start(
         world.store.clone(),
-        world.runtime.clone(),
+        world.harness.clone(),
         world.clock.clone(),
         config,
     )
@@ -174,11 +174,11 @@ async fn a_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
         .unwrap();
     let weekly = "weekly".parse().unwrap();
     world
-        .runtime
+        .harness
         .on_automation(|_| Ok(json!({"summary": "Nothing to do.", "issues": []}).to_string()));
     world.factory.run_automation(&weekly).await.unwrap();
     world
-        .runtime
+        .harness
         .on_automation(|_| Ok(json!({"not": "a result"}).to_string()));
     assert!(world.factory.run_automation(&weekly).await.is_err());
 
@@ -201,7 +201,7 @@ async fn a_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
 #[tokio::test]
 async fn a_run_handed_back_says_so() {
     let (mut world, work_dir) = world().await;
-    world.runtime.on(WorkKind::Implement, |_| {
+    world.harness.on(WorkKind::Implement, |_| {
         Ok(json!({"outcome": "gave-up", "reason": "It cannot be done."}).to_string())
     });
     world
@@ -340,7 +340,7 @@ async fn a_pull_requests_runs_are_counted_per_stage_on_it() {
         .store
         .comment_as("maintainer", pr, "Rename it again.")
         .unwrap();
-    world.runtime.on(WorkKind::Rework, |call| {
+    world.harness.on(WorkKind::Rework, |call| {
         commit_in(
             &call.spec.dir,
             &[("src/renamed.txt", "renamed again\n")],

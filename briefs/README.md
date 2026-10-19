@@ -27,7 +27,7 @@ what the fork changed.
 The plugin is named `linewright`, and every session is given a copy of it. A
 prompt starts by invoking its stage's skill, such as `/linewright:implement`,
 which calls `linewright:tdd`, `linewright:code-review` and `linewright:pr`. The
-namespace keeps them apart from the runtime's own skills and the repository's,
+namespace keeps them apart from the harness's own skills and the repository's,
 which sessions can use too.
 
 | file | forked from | used by |

@@ -6,8 +6,8 @@ use std::time::Duration;
 use clap::Parser;
 use common::*;
 use linewright::config::Cli;
+use linewright::harness::SessionError;
 use linewright::reconcile::WorkKind;
-use linewright::runtime::SessionError;
 use serde_json::json;
 
 const WEEKLY: &str = "---
@@ -42,7 +42,7 @@ fn finished() -> String {
 async fn a_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the_default_branch()
 {
     let world = with_automation("weekly", WEEKLY).await;
-    world.runtime.on_automation(|call| {
+    world.harness.on_automation(|call| {
         assert!(
             call.spec
                 .dir
@@ -58,7 +58,7 @@ async fn a_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_t
         .await
         .unwrap();
 
-    let prompts = world.runtime.automation_prompts();
+    let prompts = world.harness.automation_prompts();
     assert_eq!(prompts.len(), 1);
     assert!(
         prompts[0].contains("Look at the bugs fixed in the past week ..."),
@@ -70,7 +70,7 @@ async fn a_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_t
 #[tokio::test]
 async fn a_automation_run_files_the_issues_its_result_returns_as_linewright() {
     let world = with_automation("weekly", WEEKLY).await;
-    world.runtime.on_automation(|_| {
+    world.harness.on_automation(|_| {
         Ok(json!({
             "summary": "One bug looks unfixed, one needs a decision.",
             "issues": [
@@ -138,7 +138,7 @@ fn three_issues() -> String {
 #[tokio::test]
 async fn a_run_files_only_the_first_max_issues_issues() {
     let world = with_automation("weekly", CAPPED).await;
-    world.runtime.on_automation(|_| Ok(three_issues()));
+    world.harness.on_automation(|_| Ok(three_issues()));
 
     world
         .factory
@@ -153,7 +153,7 @@ async fn a_run_files_only_the_first_max_issues_issues() {
 #[tokio::test]
 async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
     let world = with_automation("weekly", CAPPED).await;
-    world.runtime.on_automation(|_| Ok(three_issues()));
+    world.harness.on_automation(|_| Ok(three_issues()));
     let (log, _guard) = Log::capture();
 
     world
@@ -174,7 +174,7 @@ async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
 #[tokio::test]
 async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_the_error() {
     let world = with_automation("weekly", WEEKLY).await;
-    world.runtime.on_automation(|call| {
+    world.harness.on_automation(|call| {
         let label = match call.followup {
             None => "bug",
             Some(_) => "ready-for-agent",
@@ -192,7 +192,7 @@ async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_
         .await
         .unwrap();
 
-    let prompts = world.runtime.automation_prompts();
+    let prompts = world.harness.automation_prompts();
     assert_eq!(prompts.len(), 2);
     assert!(
         prompts[1]
@@ -205,14 +205,14 @@ async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_
 #[tokio::test]
 async fn a_ready_for_agent_automation_issue_is_implemented_on_the_next_poll_without_triage() {
     let mut world = with_automation("weekly", WEEKLY).await;
-    world.runtime.on_automation(|_| {
+    world.harness.on_automation(|_| {
         Ok(json!({
             "summary": "One bug.",
             "issues": [{"title": "Fix it", "body": "It is broken.", "label": "ready-for-agent"}]
         })
         .to_string())
     });
-    world.runtime.on(WorkKind::Implement, |call| {
+    world.harness.on(WorkKind::Implement, |call| {
         commit_in(&call.spec.dir, &[("src/fixed.txt", "fixed\n")], "Fix it");
         Ok(json!({"outcome": "done", "pr_title": "Fix it", "pr_body": "Fixes it."}).to_string())
     });
@@ -232,7 +232,7 @@ async fn a_ready_for_agent_automation_issue_is_implemented_on_the_next_poll_with
         .expect("a pull request was opened");
     assert_eq!(world.store.snapshot_pull(pr).await.closes, [issue]);
     assert_eq!(
-        world.runtime.prompts(WorkKind::Triage),
+        world.harness.prompts(WorkKind::Triage),
         Vec::<String>::new()
     );
 }
@@ -240,7 +240,7 @@ async fn a_ready_for_agent_automation_issue_is_implemented_on_the_next_poll_with
 #[tokio::test]
 async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_open_ones() {
     let world = with_automation("weekly", WEEKLY).await;
-    world.runtime.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(finished()));
 
     world
         .factory
@@ -248,7 +248,7 @@ async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_
         .await
         .unwrap();
 
-    let prompt = &world.runtime.automation_prompts()[0];
+    let prompt = &world.harness.automation_prompts()[0];
     assert!(
         prompt.contains(
             "Search the existing issues first, and don't return one that is already open."
@@ -260,7 +260,7 @@ async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_
 #[tokio::test]
 async fn a_automation_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
     let world = with_automation("weekly", WEEKLY).await;
-    world.runtime.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(finished()));
 
     world
         .factory
@@ -280,7 +280,7 @@ async fn a_automation_runs_kept_its_brief_result_and_transcript_under_the_work_d
 async fn time_given(text: &str) -> Duration {
     let world = with_automation("weekly", text).await;
     let left = Arc::new(Mutex::new(None));
-    world.runtime.on_automation({
+    world.harness.on_automation({
         let left = left.clone();
         move |call| {
             *left.lock().unwrap() = Some(call.spec.deadline - tokio::time::Instant::now());
@@ -330,7 +330,7 @@ async fn an_unknown_automation_fails_naming_its_file() {
     );
 
     assert!(error.contains(".linewright/workflows/daily.md"), "{error}");
-    assert_eq!(world.runtime.automation_prompts(), Vec::<String>::new());
+    assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -351,13 +351,13 @@ async fn a_automation_file_that_does_not_parse_fails_saying_why() {
     );
 
     assert!(error.contains("every monday"), "{error}");
-    assert_eq!(world.runtime.automation_prompts(), Vec::<String>::new());
+    assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
 async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_out() {
     let world = with_automation("weekly", WEEKLY).await;
-    world.runtime.on_automation(|_| {
+    world.harness.on_automation(|_| {
         Err(SessionError::TimedOut {
             log_tail: String::new(),
         })
@@ -377,13 +377,13 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
         error.contains("or the workflow's `timeout` may need to be longer"),
         "{error}"
     );
-    assert_eq!(world.runtime.automation_prompts().len(), 1);
+    assert_eq!(world.harness.automation_prompts().len(), 1);
 }
 
 #[tokio::test]
 async fn a_session_that_fails_fails_the_run() {
     let world = with_automation("weekly", WEEKLY).await;
-    world.runtime.on_automation(|_| {
+    world.harness.on_automation(|_| {
         Err(SessionError::Failed {
             reason: "it crashed".into(),
             log_tail: String::new(),
@@ -406,7 +406,7 @@ async fn a_session_that_fails_fails_the_run() {
 async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
     let world = with_automation("weekly", WEEKLY).await;
     world
-        .runtime
+        .harness
         .on_automation(|_| Ok("I looked; all is well.".into()));
 
     let error = world
@@ -416,7 +416,7 @@ async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
 
     assert!(error.is_err());
     // The first answer and one follow-up, the test factory's `result-retries`.
-    assert_eq!(world.runtime.automation_prompts().len(), 2);
+    assert_eq!(world.harness.automation_prompts().len(), 2);
 }
 
 #[test]
@@ -440,7 +440,7 @@ fn the_command_that_runs_one_now_keeps_its_name() {
 async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
     let world = with_automation("weekly", WEEKLY).await;
     world
-        .runtime
+        .harness
         .on_automation(|_| refused_for_the_usage_limit());
     let (log, _guard) = Log::capture();
 
@@ -455,6 +455,6 @@ async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
     let ended = log.usage_limit_warnings();
     assert_eq!(ended.len(), 1, "{ended:?}");
     assert!(log.lines("ERROR").is_empty(), "{:?}", log.lines("ERROR"));
-    assert_eq!(world.runtime.automation_prompts().len(), 1, "not retried");
+    assert_eq!(world.harness.automation_prompts().len(), 1, "not retried");
     assert_eq!(world.store.issues(), []);
 }

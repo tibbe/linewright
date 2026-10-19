@@ -14,9 +14,9 @@ use linewright::config::{AutomationCommand, Cli, Command, Config, LogFormat, Res
 use linewright::credentials::Credentials;
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
+use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::runs::{self, Query, RepoWorkDir};
-use linewright::runtime::claude::ClaudeCode;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::webhook::{Listener, Pending};
@@ -25,7 +25,7 @@ use linewright::{explain, status};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing::{error, info};
 
-const RUNTIME: &str = "claude";
+const HARNESS_PROGRAM: &str = "claude";
 
 /// Clap exits with 2 too for a command line it cannot parse.
 const WRONG_COMMAND_LINE: u8 = 2;
@@ -480,15 +480,15 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         } => {
             let briefs = briefs(&config)?;
             let bash = require_bash()?;
-            require_tool(RUNTIME).await?;
+            require_tool(HARNESS_PROGRAM).await?;
             let sessions = SessionCredentials::new(SessionToken::Withheld);
-            let runtime = runtime(&config, bash, &sessions);
+            let harness = harness(&config, bash, &sessions);
             let factory_config =
                 factory_config(&config, briefs, out.clone(), OnUsageLimit::End, sessions);
             case::replay(
                 &case_dir,
                 &out,
-                Arc::new(runtime),
+                Arc::new(harness),
                 Arc::new(SystemClock),
                 factory_config,
             )
@@ -556,7 +556,7 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
 }
 
 /// The token sessions are given and Linewright's credentials, redacted from
-/// what they say, for the runtime and the factory alike.
+/// what they say, for the harness and the factory alike.
 struct SessionCredentials {
     token: SessionToken,
     credentials: Credentials,
@@ -575,7 +575,7 @@ impl SessionCredentials {
 /// Logs the names of the variables of Linewright's environment its sessions
 /// are not given, so that an operator whose build fails only in a session
 /// sees what to add to `session-env`.
-fn runtime(config: &Config, bash: PathBuf, sessions: &SessionCredentials) -> ClaudeCode {
+fn harness(config: &Config, bash: PathBuf, sessions: &SessionCredentials) -> ClaudeCode {
     let github_token = sessions.token.given().map(str::to_string);
     let split = config.session_env.split(
         std::env::vars_os(),
@@ -587,7 +587,7 @@ fn runtime(config: &Config, bash: PathBuf, sessions: &SessionCredentials) -> Cla
          `session-env` names the ones they need"
     );
     ClaudeCode {
-        program: RUNTIME.into(),
+        program: HARNESS_PROGRAM.into(),
         bash,
         model: config.model.clone(),
         github_token,
@@ -643,13 +643,13 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
     let briefs = briefs(config)?;
     require_tool("git").await?;
     let bash = require_bash()?;
-    require_tool(RUNTIME).await?;
+    require_tool(HARNESS_PROGRAM).await?;
     let token = token()?;
     let sessions = SessionCredentials::new(SessionToken::new(
         token.clone(),
         std::env::var(SESSION_TOKEN_VARIABLE).ok(),
     ));
-    let runtime = runtime(config, bash, &sessions);
+    let harness = harness(config, bash, &sessions);
     let github = connect(config, token).await?;
     let factory_config = factory_config(
         config,
@@ -660,7 +660,7 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit) -> Result<Factory>
     );
     Factory::start(
         Arc::new(github),
-        Arc::new(runtime),
+        Arc::new(harness),
         Arc::new(SystemClock),
         factory_config,
     )

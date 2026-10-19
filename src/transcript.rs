@@ -28,7 +28,7 @@ pub enum StartedBy {
     FollowUp,
 }
 
-/// The line the runtime writes to [`OUTPUT`] before each turn's events: when
+/// The line the harness writes to [`OUTPUT`] before each turn's events: when
 /// the turn started, and what started it.
 #[derive(Serialize, Deserialize)]
 struct TurnMarker {
@@ -93,7 +93,7 @@ impl SessionRecord {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         }
-        // The runtime writes UTF-8, so what is read up to a character still
+        // The harness writes UTF-8, so what is read up to a character still
         // being written keeps its length.
         if let Err(e) = std::str::from_utf8(&added)
             && e.error_len().is_none()

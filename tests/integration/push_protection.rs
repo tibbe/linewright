@@ -46,7 +46,7 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_is_sent_back_a
  {
     let mut world = World::new().await;
     let store = world.store.clone();
-    world.runtime.on(WorkKind::Implement, move |call| {
+    world.harness.on(WorkKind::Implement, move |call| {
         let dir = &call.spec.dir;
         if call.followup.is_none() {
             commit_token(dir);
@@ -66,7 +66,7 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_is_sent_back_a
 
     world.poll().await;
 
-    let prompts = world.runtime.prompts(WorkKind::Implement);
+    let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
     assert!(
         prompts[1].contains(&format!(
@@ -91,7 +91,7 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
  {
     let mut world = World::new().await;
     let store = world.store.clone();
-    world.runtime.on(WorkKind::Implement, move |call| {
+    world.harness.on(WorkKind::Implement, move |call| {
         if call.followup.is_none() {
             commit_token(&call.spec.dir);
             store.refuse_pushes(REFUSAL);
@@ -107,7 +107,7 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
 
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["ready-for-human"]);
     let comment = last_comment(&issue);
@@ -133,7 +133,7 @@ async fn a_rework_whose_push_github_refuses_over_a_secret_is_sent_back_and_pushe
     let (_, pr) = world.ticket_in_review().await;
     world.rework_asked(pr);
     let store = world.store.clone();
-    world.runtime.on(WorkKind::Rework, move |call| {
+    world.harness.on(WorkKind::Rework, move |call| {
         let dir = &call.spec.dir;
         if call.followup.is_none() {
             commit_token(dir);
@@ -147,7 +147,7 @@ async fn a_rework_whose_push_github_refuses_over_a_secret_is_sent_back_and_pushe
 
     world.poll().await;
 
-    let prompts = world.runtime.prompts(WorkKind::Rework);
+    let prompts = world.harness.prompts(WorkKind::Rework);
     assert_eq!(prompts.len(), 2);
     assert!(
         prompts[1].contains("GitHub's push protection refused the push over a secret: "),
@@ -174,7 +174,7 @@ async fn a_fix_ci_run_whose_push_github_still_refuses_after_its_follow_ups_hands
         .await
         .unwrap();
     let store = world.store.clone();
-    world.runtime.on(WorkKind::FixCi, move |call| {
+    world.harness.on(WorkKind::FixCi, move |call| {
         if call.followup.is_none() {
             commit_token(&call.spec.dir);
             store.refuse_pushes(REFUSAL);
@@ -184,7 +184,7 @@ async fn a_fix_ci_run_whose_push_github_still_refuses_after_its_follow_ups_hands
 
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::FixCi).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::FixCi).len(), 2);
     assert_eq!(world.store.snapshot_pull(pr).await.head_sha, before);
     let comment = last_pull_comment(&world, pr).await;
     assert!(
@@ -199,7 +199,7 @@ async fn a_fix_ci_run_whose_push_github_still_refuses_after_its_follow_ups_hands
 #[tokio::test]
 async fn a_blocked_run_whose_work_github_refuses_over_a_secret_says_the_work_was_not_kept_for_it() {
     let mut world = World::new().await;
-    world.runtime.on(WorkKind::Implement, |call| {
+    world.harness.on(WorkKind::Implement, |call| {
         commit_token(&call.spec.dir);
         Ok(json!({"outcome": "blocked", "question": "Which token?"}).to_string())
     });
@@ -211,7 +211,7 @@ async fn a_blocked_run_whose_work_github_refuses_over_a_secret_says_the_work_was
     world.poll().await;
 
     let issue = world.issue(ticket);
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     assert_eq!(labels(&issue), ["ready-for-human"]);
     assert_eq!(
         last_comment(&issue),
@@ -229,7 +229,7 @@ async fn what_github_reports_of_a_secret_is_redacted() {
     })
     .await;
     let store = world.store.clone();
-    world.runtime.on(WorkKind::Implement, move |call| {
+    world.harness.on(WorkKind::Implement, move |call| {
         if call.followup.is_none() {
             commit_token(&call.spec.dir);
             store.refuse_pushes(REFUSAL);
@@ -245,7 +245,7 @@ async fn what_github_reports_of_a_secret_is_redacted() {
 
     world.poll().await;
 
-    let prompts = world.runtime.prompts(WorkKind::Implement);
+    let prompts = world.harness.prompts(WorkKind::Implement);
     assert!(
         prompts[1].contains("`tests/integration/[redacted].rs:22`")
             && !prompts[1].contains("push_protection"),
@@ -265,7 +265,7 @@ async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_
  {
     let mut world = World::new().await;
     let store = world.store.clone();
-    world.runtime.on(WorkKind::Implement, move |call| {
+    world.harness.on(WorkKind::Implement, move |call| {
         if call.followup.is_none() {
             return Ok("Done, I think.".to_string());
         }
@@ -282,7 +282,7 @@ async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_
 
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")

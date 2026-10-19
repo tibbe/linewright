@@ -20,7 +20,7 @@ impl Redaction {
         let mut patterns = Vec::new();
         for credential in credentials {
             let value = credential.value().to_string();
-            // The runtime's events and transcript write text in JSON strings,
+            // The harness's events and transcript write text in JSON strings,
             // and a session's result is often JSON itself, so a credential
             // can be escaped twice.
             let once = json_escaped(&value);

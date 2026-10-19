@@ -19,6 +19,7 @@ use crate::credentials::Credentials;
 use crate::domain::{
     Item, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
+use crate::harness::{Harness, UsageLimit};
 use crate::holds::Holds;
 use crate::reconcile::{
     Action, Automations, DoneRun, FailedMerge, LiveRun, Memory, Policy, Subject, Work, WorkKind,
@@ -26,7 +27,6 @@ use crate::reconcile::{
 };
 use crate::run::{self, AutomationEnd, Shell};
 use crate::runs::{self, Recorded, RunOf, Runs, Watched};
-use crate::runtime::{Runtime, UsageLimit};
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
@@ -56,7 +56,7 @@ pub struct FactoryConfig {
     pub session_token: SessionToken,
     /// Linewright's credentials, refused in the commits a session's result
     /// would push, and redacted from what a session's work prints that
-    /// reaches Linewright other than through the runtime, such as git's
+    /// reaches Linewright other than through the harness, such as git's
     /// output from hooks the session left in its clone.
     pub credentials: Credentials,
 }
@@ -161,7 +161,7 @@ impl Kept {
 impl Factory {
     pub async fn start(
         store: Arc<dyn Store>,
-        runtime: Arc<dyn Runtime>,
+        harness: Arc<dyn Harness>,
         clock: Arc<dyn Clock>,
         config: FactoryConfig,
     ) -> Result<Factory> {
@@ -232,7 +232,7 @@ impl Factory {
                 require_label: config.require_label,
             },
             store,
-            runtime,
+            harness,
             clock,
             briefs: config.briefs,
             identity,

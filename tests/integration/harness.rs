@@ -5,23 +5,23 @@ use std::sync::Arc;
 
 use common::*;
 use linewright::domain::Number;
+use linewright::harness::claude::ClaudeCode;
+use linewright::harness::{Harness, OutputWatch, Purpose, SessionError, SessionSpec};
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
 use linewright::runs::Activity;
-use linewright::runtime::claude::ClaudeCode;
-use linewright::runtime::{OutputWatch, Purpose, Runtime, SessionError, SessionSpec};
 use linewright::session_env::{Given, SessionEnv};
 use linewright::transcript::{Prompt, What};
 use serde_json::{Value, json};
 
-fn runtime_without_token(dir: &Path) -> ClaudeCode {
-    runtime_streaming(
+fn harness_without_token(dir: &Path) -> ClaudeCode {
+    harness_streaming(
         dir,
         &[json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."})],
     )
 }
 
-fn runtime_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
+fn harness_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
     ClaudeCode {
         program: fake_claude_streaming(dir, events).to_str().unwrap().into(),
         bash: "/bin/bash".into(),
@@ -95,7 +95,7 @@ fn triage_session_heard(dir: &Path, activity: &Activity) -> SessionSpec {
 #[tokio::test]
 async fn each_line_the_agent_streams_is_heard_as_it_comes() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_streaming(
+    let harness = harness_streaming(
         dir.path(),
         &[
             json!({"type": "system", "subtype": "init"}),
@@ -105,7 +105,7 @@ async fn each_line_the_agent_streams_is_heard_as_it_comes() {
     );
     let activity = Activity::default();
 
-    runtime
+    harness
         .start(&triage_session_heard(dir.path(), &activity))
         .await
         .unwrap();
@@ -124,7 +124,7 @@ async fn each_line_the_agent_streams_is_heard_as_it_comes() {
 async fn a_production_session_gets_linewrights_github_token() {
     let dir = tempfile::tempdir().unwrap();
     let program = fake_claude(dir.path(), "Done.");
-    let runtime = ClaudeCode {
+    let harness = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
         model: None,
@@ -133,7 +133,7 @@ async fn a_production_session_gets_linewrights_github_token() {
         redaction: Redaction::default(),
     };
 
-    runtime.start(&triage_session(dir.path())).await.unwrap();
+    harness.start(&triage_session(dir.path())).await.unwrap();
 
     assert_eq!(
         std::fs::read_to_string(dir.path().join("tokens.log")).unwrap(),
@@ -141,7 +141,7 @@ async fn a_production_session_gets_linewrights_github_token() {
     );
 }
 
-/// The names of the variables the session's runtime was started with, but
+/// The names of the variables the session's harness was started with, but
 /// for those its shell sets itself.
 fn session_variables(dir: &Path) -> Vec<String> {
     let env = std::fs::read_to_string(dir.join("env.log")).unwrap();
@@ -179,15 +179,15 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() 
     ];
     let session_env =
         SessionEnv::new(["CARGO_*", "RUSTUP_HOME", "LINEWRIGHT_*"].map(String::from)).unwrap();
-    let mut runtime = runtime_without_token(dir.path());
-    runtime.environment = session_env
+    let mut harness = harness_without_token(dir.path());
+    harness.environment = session_env
         .split(
             linewrights.map(|(name, value)| (name.into(), value.into())),
             &[],
         )
         .given;
 
-    runtime.start(&triage_session(dir.path())).await.unwrap();
+    harness.start(&triage_session(dir.path())).await.unwrap();
 
     assert_eq!(
         session_variables(dir.path()),
@@ -218,11 +218,11 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() 
 #[tokio::test]
 async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_directory() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_without_token(dir.path());
+    let harness = harness_without_token(dir.path());
     let spec = triage_session(dir.path());
 
-    let turn = runtime.start(&spec).await.unwrap();
-    runtime
+    let turn = harness.start(&spec).await.unwrap();
+    harness
         .resume(&spec, &turn.session, "Answer again.")
         .await
         .unwrap();
@@ -237,11 +237,11 @@ async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_dire
 #[tokio::test]
 async fn every_turn_of_a_session_is_given_its_plugin() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_without_token(dir.path());
+    let harness = harness_without_token(dir.path());
     let spec = triage_session(dir.path());
 
-    let turn = runtime.start(&spec).await.unwrap();
-    runtime
+    let turn = harness.start(&spec).await.unwrap();
+    harness
         .resume(&spec, &turn.session, "Answer again.")
         .await
         .unwrap();
@@ -259,11 +259,11 @@ async fn every_turn_of_a_session_is_given_its_plugin() {
 #[tokio::test]
 async fn every_turn_reads_only_the_repositorys_configuration_and_keeps_no_memory() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_without_token(dir.path());
+    let harness = harness_without_token(dir.path());
     let spec = triage_session(dir.path());
 
-    let turn = runtime.start(&spec).await.unwrap();
-    runtime
+    let turn = harness.start(&spec).await.unwrap();
+    harness
         .resume(&spec, &turn.session, "Your answer did not parse.")
         .await
         .unwrap();
@@ -286,9 +286,9 @@ async fn every_turn_reads_only_the_repositorys_configuration_and_keeps_no_memory
 #[tokio::test]
 async fn every_turn_leaves_out_what_no_brief_uses() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_without_token(dir.path());
+    let harness = harness_without_token(dir.path());
 
-    runtime.start(&triage_session(dir.path())).await.unwrap();
+    harness.start(&triage_session(dir.path())).await.unwrap();
 
     let passed = settings(&turn_args(dir.path())[0]);
     assert_eq!(
@@ -330,11 +330,11 @@ async fn every_turn_leaves_out_what_no_brief_uses() {
 }
 
 #[tokio::test]
-async fn every_turn_leaves_out_the_skills_the_runtime_ships() {
+async fn every_turn_leaves_out_the_skills_the_harness_ships() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_without_token(dir.path());
+    let harness = harness_without_token(dir.path());
 
-    runtime.start(&triage_session(dir.path())).await.unwrap();
+    harness.start(&triage_session(dir.path())).await.unwrap();
 
     let overrides = &settings(&turn_args(dir.path())[0])["skillOverrides"];
     // The skills Claude Code ships that turning off bundled skills keeps.
@@ -363,9 +363,9 @@ async fn agent_instructions_above_the_clone_do_not_reach_a_session() {
         .prefix("work [a]{b}*?")
         .tempdir()
         .unwrap();
-    let runtime = runtime_without_token(dir.path());
+    let harness = harness_without_token(dir.path());
 
-    runtime.start(&triage_session(dir.path())).await.unwrap();
+    harness.start(&triage_session(dir.path())).await.unwrap();
 
     let excludes = instruction_excludes(&turn_args(dir.path())[0]);
     let parent = dir.path().canonicalize().unwrap();
@@ -395,9 +395,9 @@ async fn a_clone_under_a_claude_directory_keeps_its_own_agent_instructions() {
     let dir = tempfile::tempdir().unwrap();
     let work = dir.path().join(".claude/work");
     std::fs::create_dir_all(&work).unwrap();
-    let runtime = runtime_without_token(dir.path());
+    let harness = harness_without_token(dir.path());
 
-    runtime.start(&triage_session(&work)).await.unwrap();
+    harness.start(&triage_session(&work)).await.unwrap();
 
     let excludes = instruction_excludes(&turn_args(dir.path())[0]);
     let parent = dir.path().canonicalize().unwrap();
@@ -445,9 +445,9 @@ fn rejected() -> Value {
 #[tokio::test]
 async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_streaming(dir.path(), &refused_for_the_usage_limit(&rejected()));
+    let harness = harness_streaming(dir.path(), &refused_for_the_usage_limit(&rejected()));
 
-    let error = runtime
+    let error = harness
         .start(&triage_session(dir.path()))
         .await
         .unwrap_err();
@@ -470,9 +470,9 @@ async fn a_turn_refused_part_way_for_the_usage_limit_names_its_session_to_resume
             "message": {"content": [{"type": "text", "text": "Reading the ticket."}]},
         }),
     );
-    let runtime = runtime_streaming(dir.path(), &stream);
+    let harness = harness_streaming(dir.path(), &stream);
 
-    let error = runtime
+    let error = harness
         .resume(&triage_session(dir.path()), "c0ffee", "Go on.")
         .await
         .unwrap_err();
@@ -486,19 +486,41 @@ async fn a_turn_refused_part_way_for_the_usage_limit_names_its_session_to_resume
 #[tokio::test]
 async fn a_refusal_that_does_not_say_when_the_limit_resets_is_an_infrastructure_failure() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_streaming(
+    let harness = harness_streaming(
         dir.path(),
         &refused_for_the_usage_limit(&json!({"status": "rejected"})),
     );
 
-    let error = runtime
+    let error = harness
         .start(&triage_session(dir.path()))
         .await
         .unwrap_err();
 
-    assert!(
-        matches!(error, SessionError::Infrastructure(_)),
-        "expected an infrastructure failure, got {error:?}"
+    let SessionError::Infrastructure(reason) = error else {
+        panic!("expected an infrastructure failure, got {error:?}");
+    };
+    assert_eq!(
+        reason,
+        "the harness's API failed (You've hit your session limit \u{b7} resets 7:50am (UTC))"
+    );
+}
+
+#[tokio::test]
+async fn a_session_that_ends_without_a_result_says_the_harness_exited() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &[]);
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::Failed { reason, .. } = error else {
+        panic!("expected a failure, got {error:?}");
+    };
+    assert_eq!(
+        reason,
+        "the harness exited (exit status: 0) without a result"
     );
 }
 
@@ -513,7 +535,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
          echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Still reading.\"}]}}'\n\
          exec sleep 30\n",
     );
-    let runtime = ClaudeCode {
+    let harness = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
         model: None,
@@ -524,7 +546,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
     let mut session = triage_session(dir.path());
     session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
 
-    let turn = tokio::spawn(async move { runtime.start(&session).await });
+    let turn = tokio::spawn(async move { harness.start(&session).await });
     // A session can take long to start on a loaded machine, so the deadline
     // comes, with the clock paused, only once it has spoken.
     until_said(dir.path(), "Still reading.").await;
@@ -540,7 +562,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
 #[tokio::test]
 async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_streaming(
+    let harness = harness_streaming(
         dir.path(),
         &[
             json!({
@@ -551,7 +573,7 @@ async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
         ],
     );
 
-    let turn = runtime.start(&triage_session(dir.path())).await.unwrap();
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
 
     assert_eq!(turn.message, "Done.");
 }
@@ -559,7 +581,7 @@ async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
 #[tokio::test]
 async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_streaming(
+    let harness = harness_streaming(
         dir.path(),
         &[
             json!({"type": "system", "subtype": "init", "cwd": "/clone"}),
@@ -573,8 +595,8 @@ async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it
     );
     let spec = triage_session(dir.path());
 
-    let turn = runtime.start(&spec).await.unwrap();
-    runtime
+    let turn = harness.start(&spec).await.unwrap();
+    harness
         .resume(&spec, &turn.session, "Answer again.")
         .await
         .unwrap();
@@ -623,7 +645,7 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
             json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
         ),
     );
-    let runtime = ClaudeCode {
+    let harness = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
         model: None,
@@ -633,7 +655,7 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
     };
     let spec = triage_session(dir.path());
 
-    let turn = tokio::spawn(async move { runtime.start(&spec).await });
+    let turn = tokio::spawn(async move { harness.start(&spec).await });
     until_said(dir.path(), "Looking.").await;
     std::fs::write(&go, "").unwrap();
 
@@ -644,7 +666,7 @@ const CREDENTIAL: &str = "ghp_s3cr3t";
 
 /// A session that prints `CREDENTIAL` in all it says, as one that ran `env`
 /// would, and ends with `last`, if any.
-fn runtime_printing_a_credential(dir: &Path, last: Option<Value>) -> ClaudeCode {
+fn harness_printing_a_credential(dir: &Path, last: Option<Value>) -> ClaudeCode {
     let program = dir.join("claude");
     let said = json!({"type": "assistant", "message": {"content": [
         {"type": "text", "text": format!("GH_TOKEN={CREDENTIAL}")},
@@ -672,7 +694,7 @@ fn runtime_printing_a_credential(dir: &Path, last: Option<Value>) -> ClaudeCode 
 #[tokio::test]
 async fn a_credential_a_session_prints_is_kept_and_answered_redacted() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_printing_a_credential(
+    let harness = harness_printing_a_credential(
         dir.path(),
         Some(json!({
             "type": "result", "subtype": "success", "is_error": false,
@@ -680,7 +702,7 @@ async fn a_credential_a_session_prints_is_kept_and_answered_redacted() {
         })),
     );
 
-    let turn = runtime.start(&triage_session(dir.path())).await.unwrap();
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
 
     assert_eq!(turn.message, "It is [redacted].");
     for file in [linewright::transcript::OUTPUT, "stderr.log"] {
@@ -695,9 +717,9 @@ async fn a_credential_a_session_prints_is_kept_and_answered_redacted() {
 #[tokio::test]
 async fn a_failed_sessions_log_tail_has_its_credentials_redacted() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_printing_a_credential(dir.path(), None);
+    let harness = harness_printing_a_credential(dir.path(), None);
 
-    let error = runtime
+    let error = harness
         .start(&triage_session(dir.path()))
         .await
         .unwrap_err();
@@ -711,7 +733,7 @@ async fn a_failed_sessions_log_tail_has_its_credentials_redacted() {
 #[tokio::test]
 async fn a_failed_sessions_reason_has_its_credentials_redacted() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = runtime_printing_a_credential(
+    let harness = harness_printing_a_credential(
         dir.path(),
         Some(json!({
             "type": "result", "subtype": "error_max_turns", "is_error": true,
@@ -719,7 +741,7 @@ async fn a_failed_sessions_reason_has_its_credentials_redacted() {
         })),
     );
 
-    let error = runtime
+    let error = harness
         .start(&triage_session(dir.path()))
         .await
         .unwrap_err();
@@ -736,10 +758,10 @@ async fn a_failed_sessions_reason_has_its_credentials_redacted() {
 #[tokio::test]
 async fn a_credential_that_holds_another_is_redacted_whole() {
     let dir = tempfile::tempdir().unwrap();
-    let mut runtime = runtime_printing_a_credential(dir.path(), None);
-    runtime.redaction = redaction_of(&[("GH_TOKEN", CREDENTIAL), ("GH_PREFIX_TOKEN", "ghp_")]);
+    let mut harness = harness_printing_a_credential(dir.path(), None);
+    harness.redaction = redaction_of(&[("GH_TOKEN", CREDENTIAL), ("GH_PREFIX_TOKEN", "ghp_")]);
 
-    let error = runtime
+    let error = harness
         .start(&triage_session(dir.path()))
         .await
         .unwrap_err();

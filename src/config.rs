@@ -78,7 +78,7 @@ pub enum Command {
         which: Which,
         /// Show everything the transcript holds: also the thinking, each
         /// tool's full input and result, the brief and follow-ups, and the
-        /// runtime's other events.
+        /// harness's other events.
         #[arg(long)]
         verbose: bool,
         /// Print one JSON object per transcript entry and line.
@@ -210,7 +210,7 @@ pub struct Settings {
     /// Where clones and session transcripts go [default: linewright/ under the user's data directory]
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
-    /// The model for every stage [default: the agent runtime's]
+    /// The model for every stage [default: the harness's]
     #[arg(long, global = true)]
     pub model: Option<String>,
     /// A directory of briefs [default: the briefs Linewright ships]

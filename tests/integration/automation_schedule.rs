@@ -29,7 +29,7 @@ fn finished() -> String {
 async fn restart(world: &mut World) {
     world.factory = Factory::start(
         world.store.clone(),
-        world.runtime.clone(),
+        world.harness.clone(),
         world.clock.clone(),
         config(&world.dir.path().join("work")),
     )
@@ -41,13 +41,13 @@ async fn restart(world: &mut World) {
 async fn a_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.runtime.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(finished()));
     world.poll().await;
 
     world.clock.advance(TimeDelta::hours(1));
     world.poll().await;
 
-    let prompts = world.runtime.automation_prompts();
+    let prompts = world.harness.automation_prompts();
     assert_eq!(prompts.len(), 1);
     assert!(prompts[0].contains("Look around."), "{}", prompts[0]);
 }
@@ -56,18 +56,18 @@ async fn a_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
 async fn a_automation_seen_for_the_first_time_does_not_run() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.runtime.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(finished()));
 
     world.poll().await;
 
-    assert_eq!(world.runtime.automation_prompts(), Vec::<String>::new());
+    assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
 async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_starts() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.runtime.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(finished()));
     world.poll().await;
 
     let record = world.dir.path().join("work/workflow-runs.json");
@@ -77,7 +77,7 @@ async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_star
     world.poll().await;
     world.poll().await;
 
-    assert_eq!(world.runtime.automation_prompts().len(), 1);
+    assert_eq!(world.harness.automation_prompts().len(), 1);
 }
 
 #[tokio::test]
@@ -90,13 +90,13 @@ async fn a_automation_file_that_does_not_parse_is_skipped_and_the_others_still_r
     )
     .await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.runtime.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(finished()));
     world.poll().await;
 
     world.clock.advance(TimeDelta::hours(1));
     world.poll().await;
 
-    let prompts = world.runtime.automation_prompts();
+    let prompts = world.harness.automation_prompts();
     assert_eq!(prompts.len(), 1);
     assert!(prompts[0].contains("Look around."), "{}", prompts[0]);
 }
@@ -105,7 +105,7 @@ async fn a_automation_file_that_does_not_parse_is_skipped_and_the_others_still_r
 async fn a_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines_runs() {
     let mut world = World::with(|config| config.max_runs = 1).await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.runtime.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(finished()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
     world.store.open_issue(
@@ -114,7 +114,7 @@ async fn a_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines_
         "Please.",
         &["ready-for-agent"],
     );
-    world.runtime.on(WorkKind::Implement, |call| {
+    world.harness.on(WorkKind::Implement, |call| {
         commit_in(
             &call.spec.dir,
             &[("src/thing.txt", "done\n")],
@@ -124,19 +124,19 @@ async fn a_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines_
     });
 
     world.poll().await;
-    let while_implementing = world.runtime.automation_prompts().len();
+    let while_implementing = world.harness.automation_prompts().len();
     world.poll().await;
 
-    assert_eq!(world.runtime.prompts(WorkKind::Implement).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     assert_eq!(while_implementing, 0);
-    assert_eq!(world.runtime.automation_prompts().len(), 1);
+    assert_eq!(world.harness.automation_prompts().len(), 1);
 }
 
 #[tokio::test]
 async fn running_a_automation_by_hand_leaves_its_schedule_as_it_was() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.runtime.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(finished()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
 
@@ -147,5 +147,5 @@ async fn running_a_automation_by_hand_leaves_its_schedule_as_it_was() {
         .unwrap();
     world.poll().await;
 
-    assert_eq!(world.runtime.automation_prompts().len(), 2);
+    assert_eq!(world.harness.automation_prompts().len(), 2);
 }

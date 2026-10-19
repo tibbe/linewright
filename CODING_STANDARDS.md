@@ -28,8 +28,8 @@ from the code. Everything else (helpers, private functions, one module's
 internals) is covered through these tests and gets no test of its own.
 
 - **The user, through the system**: drive it as a user would (a labeled issue,
-  a merged PR) against a fake of each external system (GitHub, the agent
-  runtime, the clock) and check what the user would see.
+  a merged PR) against a fake of each external system (GitHub, the harness,
+  the clock) and check what the user would see.
 - **The user, through the functional core**: give the decision function a
   state of the world and check the decisions it returns. Every case is cheap
   to reach there.

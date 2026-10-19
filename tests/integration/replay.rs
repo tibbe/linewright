@@ -98,15 +98,15 @@ fn spec_change_case_allowing(
 async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_records_as_files() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(dir.path(), &[]);
-    let runtime = Arc::new(ScriptedRuntime::default());
-    runtime.on(WorkKind::Tickets, |call| {
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on(WorkKind::Tickets, |call| {
         assert!(call.spec.prompt.contains("+Gadgets exist."));
         Ok(json!({
             "tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}],
             "comment": "One slice."
         }).to_string())
     });
-    runtime.on(WorkKind::Implement, |call| {
+    harness.on(WorkKind::Implement, |call| {
         assert!(call.spec.prompt.contains("+Gadgets exist."));
         commit_in(
             &call.spec.dir,
@@ -123,7 +123,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     replay(
         &dir.path().join("case"),
         &out,
-        runtime,
+        harness,
         Arc::new(FakeClock::new()),
         config(&out),
     )
@@ -361,8 +361,8 @@ async fn a_replay_runs_no_automations() {
         )],
     );
     let clock = Arc::new(FakeClock::new());
-    let runtime = Arc::new(ScriptedRuntime::default());
-    runtime.on(WorkKind::Tickets, {
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on(WorkKind::Tickets, {
         let clock = clock.clone();
         move |_| {
             // Past the automation's next tick, while the replay goes on.
@@ -370,7 +370,7 @@ async fn a_replay_runs_no_automations() {
             Ok(json!({"tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}], "comment": "One slice."}).to_string())
         }
     });
-    runtime.on(WorkKind::Implement, |call| {
+    harness.on(WorkKind::Implement, |call| {
         commit_in(
             &call.spec.dir,
             &[("src/gadgets.txt", "gadget\n")],
@@ -381,7 +381,7 @@ async fn a_replay_runs_no_automations() {
                 .to_string(),
         )
     });
-    runtime.on_automation(|_| {
+    harness.on_automation(|_| {
         Ok(json!({"summary": "Nothing needs doing.", "issues": []}).to_string())
     });
     let out = dir.path().join("out");
@@ -389,22 +389,22 @@ async fn a_replay_runs_no_automations() {
     replay(
         &dir.path().join("case"),
         &out,
-        runtime.clone(),
+        harness.clone(),
         clock,
         config(&out),
     )
     .await
     .unwrap();
 
-    assert_eq!(runtime.automation_prompts(), Vec::<String>::new());
+    assert_eq!(harness.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
 async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_it_blocked() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(dir.path(), &[]);
-    let runtime = Arc::new(ScriptedRuntime::default());
-    runtime.on(WorkKind::Tickets, |_| {
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on(WorkKind::Tickets, |_| {
         Ok(json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
@@ -413,7 +413,7 @@ async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_
             "comment": "Two slices."
         }).to_string())
     });
-    runtime.on(WorkKind::Implement, |call| {
+    harness.on(WorkKind::Implement, |call| {
         let file = format!("src/{}.txt", subject_file(call));
         commit_in(&call.spec.dir, &[(&file, "gadget\n")], "Gadgets");
         Ok(
@@ -428,7 +428,7 @@ async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_
     replay(
         &dir.path().join("case"),
         &out,
-        runtime,
+        harness,
         Arc::new(FakeClock::new()),
         config,
     )
@@ -456,7 +456,7 @@ async fn a_replay_with_auto_merge_refuses_a_merge_method_the_case_repository_doe
     let error = replay(
         &dir.path().join("case"),
         &out,
-        Arc::new(ScriptedRuntime::default()),
+        Arc::new(ScriptedHarness::default()),
         Arc::new(FakeClock::new()),
         config,
     )

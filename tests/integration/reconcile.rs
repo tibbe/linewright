@@ -3,8 +3,8 @@ use crate::views;
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::automation::{Automation, LastRuns};
 use linewright::domain::*;
+use linewright::harness::UsageLimit;
 use linewright::reconcile::*;
-use linewright::runtime::UsageLimit;
 use linewright::spec_glob::SpecGlob;
 
 const LINEWRIGHT: &str = "factory";
