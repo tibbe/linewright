@@ -90,7 +90,8 @@ default.
 An agent session's environment holds only the variables of Linewright's
 environment that this table or `session-env` names, and what Linewright sets
 itself: the session's GitHub token, when it has one, as `GH_TOKEN` and
-`GITHUB_TOKEN`, and its own temporary directory as `TMPDIR`.
+`GITHUB_TOKEN`, its own temporary directory as `TMPDIR`, and the harness's
+settings that the rules under [Running](#running) need, such as the shell.
 
 | variables                                                                | what for                                           |
 | ------------------------------------------------------------------------ | -------------------------------------------------- |
@@ -103,6 +104,12 @@ itself: the session's GitHub token, when it has one, as `GH_TOKEN` and
 | `ANTHROPIC_*`, `CLAUDE_*`                                                | the harness's configuration and credentials        |
 
 - **Patterns.** A name ending in `*` names every variable with that prefix.
+- **The harness's namespaces.** Of the harness's variables, the table passes
+  those in the namespaces it owns; a setting outside them, such as
+  `DISABLE_TELEMETRY`, the operator names in `session-env` like any other
+  variable.
+- **Linewright's own win.** A variable Linewright sets itself replaces one of
+  the same name the table or `session-env` passes.
 - **Never passed.** `session-env` never passes Linewright's GitHub tokens or
   the webhook secret: a pattern skips them, and naming one is an error at
   startup.
@@ -117,6 +124,9 @@ image the operator builds with those in it.
 
 - **The shell.** Agents' commands run in `bash`, whatever shell the operator
   uses.
+- **As installed.** A session never updates the harness, in the background
+  or on an agent's command: every session runs the harness the operator
+  installed.
 - **The log.** The server logs each decision and action, readable for a
   person tailing it and structured (JSON lines) for machines, by the
   `log-format` setting. With webhooks on, that includes the address it

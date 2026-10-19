@@ -118,8 +118,12 @@ of the checks Linewright asks a session to fix are in its brief.
 
 Sessions get the basic variables of a shell (such as `PATH`, `HOME` and the
 locale), the proxy and certificate variables, and Claude Code's own
-(`ANTHROPIC_*`, `CLAUDE_*`). Name the rest in `session-env`; a name ending in
-`*` names every variable with that prefix. At startup Linewright logs the names
+`ANTHROPIC_*` and `CLAUDE_*`. Name the rest in `session-env`; a name ending in
+`*` names every variable with that prefix. Claude Code's settings outside
+those prefixes, such as `DISABLE_TELEMETRY`, are part of the rest: name them
+too, or set them in a
+[managed settings file](https://code.claude.com/docs/en/managed-settings),
+which sessions read. At startup Linewright logs the names
 of the variables it keeps from sessions, so a build that fails only in a
 session shows there what to add.
 
@@ -129,6 +133,7 @@ session shows there what to add.
 | Java | `JAVA_HOME` |
 | Claude Code on Amazon Bedrock | `AWS_*` |
 | Claude Code on Google Vertex AI | `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS` |
+| Claude Code's other settings | their names, such as `DISABLE_TELEMETRY` or `BASH_DEFAULT_TIMEOUT_MS` |
 
 For a Rust project, `linewright.toml` would have:
 
