@@ -13,7 +13,8 @@ The person who runs Linewright.
 _Avoid_: admin, user
 
 **Maintainer**:
-The person who owns the repository.
+A person who steers the repository: writes its spec, labels its issues, and
+reviews and merges its pull requests.
 _Avoid_: owner, reviewer, human
 
 **Reporter**:
