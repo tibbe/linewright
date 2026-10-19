@@ -25,41 +25,42 @@ test that hangs.
    where I extract fields, so that I spend little context and can script
    against them.
 
-## Decisions
+## Commands
 
-### Commands
+The monitoring commands talk to the `serve` of the configured `repo` on the
+same host.
 
-- The monitoring commands are:
+| command     | what it shows                                     |
+| ----------- | ------------------------------------------------- |
+| `status`    | what Linewright is doing and what holds it back   |
+| `explain N` | where issue or pull request #N stands and why     |
+| `runs [N]`  | the runs, all or #N's                             |
+| `logs N`    | the transcript of #N's run                        |
 
-  | command | what it shows |
-  |---|---|
-  | `status` | what Linewright is doing and what holds it back |
-  | `explain N` | where issue or pull request #N stands and why |
-  | `runs [N]` | the runs, all or #N's |
-  | `logs N` | the transcript of #N's run |
+- **Without `serve`.** `status` and `explain` need it running; `runs` and
+  `logs` work either way.
 
-- The commands talk to the `serve` of the configured `repo` on the same host.
-  `status` and `explain` need it running; `runs` and `logs` work either way.
+## status
 
-### status
+`status` shows what Linewright is doing and what holds it back, in this
+order:
 
-- `status` shows, in order:
-  - Linewright: since when `serve` has run, the last poll and the next, the
-    usage limit while one is in force and when it resets, and the runs in
-    flight out of `max-runs`. With webhooks on, also the time of the last
-    delivery accepted and the number refused since `serve` started.
-  - Each run in flight: its run ID, item, stage, how long it has run and its
-    **quiet time**, how long since its agent last produced output.
-  - Each other open item Linewright tracks: where it is in the pipeline and, in
-    one line, what Linewright is waiting for on it.
-  - The workflows, as [Workflows](workflows.md) describes.
+1. Linewright: since when `serve` has run, the last poll and the next, the
+   usage limit while one is in force and when it resets, and the runs in
+   flight out of `max-runs`. With webhooks on, also the time of the last
+   delivery accepted and the number refused since `serve` started.
+2. Each run in flight: its run ID, item, stage, how long it has run and its
+   quiet time, how long since its agent last produced output.
+3. Each other open item Linewright tracks: where it is in the pipeline and, in
+   one line, what Linewright is waiting for on it.
+4. The workflows, as [Workflows](workflows.md) describes.
 
-### explain
+## explain
 
 `explain N` brings together what Linewright knows about #N, and points to
 `runs` and `logs` for the detail.
 
-- `explain N` shows, for issue or pull request #N:
+- **What it shows.** For issue or pull request #N:
   - its parents and its children in the pipeline, such as the issues a pull
     request closes, or the pull requests that close a ticket;
   - where it is in the pipeline, in the states of the issue lifecycle under
@@ -68,67 +69,77 @@ test that hangs.
     ends the wait, such as "the usage limit, until 14:30 UTC";
   - its run in flight, with its quiet time;
   - its latest three past runs, as `runs N` lists them.
-- For an item Linewright does not act on, `serve` reads #N from GitHub and
-  `explain` says why Linewright leaves it, naming the fact or setting that keeps
-  it out.
+- **An item Linewright leaves.** For an item Linewright does not act on,
+  `serve` reads #N from GitHub and `explain` says why Linewright leaves it,
+  naming the fact or setting that keeps it out.
 
-### runs
+## runs
 
-- `runs` lists every run, newest first, including runs that started no session:
-  its run ID, item, stage, start, duration and outcome. `runs N` lists #N's.
-  `--stage`, `--since` and `--limit` narrow the list. `--since` keeps the runs
-  that started at or after a time, or a duration ago.
-- A run's outcome is one of those under [Runs](runs.md), by its name, and in
-  JSON by its name in JSON.
-- A run's duration is how long it ran, or for a run in flight how long it has
-  run so far. An interrupted run has none: in JSON, `duration_seconds` is null.
-- A run ID is `<item>/<stage>-<n>`, the `n`th run of that stage on that item,
-  such as `43/rework-2`, or `<workflow>/<n>` for a workflow's runs, with the
-  stages under [Runs](runs.md).
+`runs` lists every run, newest first, including runs that started no session:
+its run ID, item, stage, start, duration and outcome.
 
-### logs
+- **One item.** `runs N` lists #N's.
+- **Narrowing.** `--stage`, `--since` and `--limit` narrow the list.
+  `--since` keeps the runs that started at or after a time, or a duration
+  ago.
+- **Outcome.** A run's outcome is one of those under [Runs](runs.md), by its
+  name, and in JSON by its name in JSON.
+- **Duration.** A run's duration is how long it ran, or for a run in flight
+  how long it has run so far. An interrupted run has none: in JSON,
+  `duration_seconds` is null.
+- **Run ID.** A run ID is `<item>/<stage>-<n>`, the `n`th run of that stage
+  on that item, such as `43/rework-2`, or `<workflow>/<n>` for a workflow's
+  runs, with the stages under [Runs](runs.md).
 
-- `logs N` shows the transcript of #N's run in flight, or else of its latest run
-  that started a session. `--run ID` picks another run.
-- `logs` shows a session as the agent itself shows it, as far as text that
-  only ever grows allows, and `logs --json` gives what the agent gives about
-  it, following the agent's own JSON output. The decisions below settle where
-  that leaves a choice.
-- The transcript shows each of the run's sessions in order, and marks each turn
-  after the first with the follow-up that started it.
-- Each line starts with the time since its session started. The agent's
-  messages show in full. Each tool call shows on one line: the tool, its main
-  argument and a short account of its result, such as the lines read or the
-  exit status, or `running` while the call has not returned. A sub-agent's
-  work shows indented under the call that started it.
-- `--verbose` shows everything the transcript holds, including the agent's
-  thinking, each tool's full input and result, and the brief and follow-ups.
-- `--follow` shows the transcript so far, then each entry as it happens, and
-  ends when the run ends. A tool call shows once it is made, and again with
-  its account, at the time, once it returns or ends in the background.
-- For a run that started no session, `logs` says so.
+## logs
 
-### Output
+`logs N` shows the transcript of #N's run in flight, or else of its latest run
+that started a session.
 
-- The commands print text whether or not their output is a terminal: one fact
-  per line as `label: value`, items as `#N`, runs by run ID, and colour only on
-  a terminal.
-- A list cut to a limit ends with a line saying how many entries it left out
-  and how to show them.
-- `--json` prints the same answer as JSON; `logs --json` prints one JSON object
-  per transcript entry and line. Each of a tool call's objects carries the ID
-  the agent gives the call, and a sub-agent's objects carry the ID of the call
-  that started it. A field, once printed, keeps its name and meaning; new
-  fields may be added.
-- Errors go to standard error. The exit status is:
+- **Another run.** `--run ID` picks another run.
+- **As the agent shows it.** `logs` shows a session as the agent itself shows
+  it, as far as text that only ever grows allows, and `logs --json` gives
+  what the agent gives about it, following the agent's own JSON output. The
+  rules below settle where that leaves a choice.
+- **Sessions and turns.** The transcript shows each of the run's sessions in
+  order, and marks each turn after the first with the follow-up that started
+  it.
+- **Lines.** Each line starts with the time since its session started. The
+  agent's messages show in full. Each tool call shows on one line: the tool,
+  its main argument and a short account of its result, such as the lines
+  read or the exit status, or `running` while the call has not returned. A
+  sub-agent's work shows indented under the call that started it.
+- **`--verbose`.** It shows everything the transcript holds, including the
+  agent's thinking, each tool's full input and result, and the brief and
+  follow-ups.
+- **`--follow`.** It shows the transcript so far, then each entry as it
+  happens, and ends when the run ends. A tool call shows once it is made, and
+  again with its account, at the time, once it returns or ends in the
+  background.
+- **No session.** For a run that started no session, `logs` says so.
 
-  | status | meaning |
-  |---|---|
-  | 0 | success |
-  | 1 | any other error |
-  | 2 | the command line is wrong |
-  | 3 | `serve` is not running for the repository |
-  | 4 | no such item or run |
+## Output
+
+The commands print text whether or not their output is a terminal: one fact
+per line as `label: value`, items as `#N`, runs by run ID, and colour only on
+a terminal.
+
+- **Cut lists.** A list cut to a limit ends with a line saying how many
+  entries it left out and how to show them.
+- **`--json`.** It prints the same answer as JSON; `logs --json` prints one
+  JSON object per transcript entry and line. Each of a tool call's objects
+  carries the ID the agent gives the call, and a sub-agent's objects carry
+  the ID of the call that started it. A field, once printed, keeps its name
+  and meaning; new fields may be added.
+- **Errors.** They go to standard error. The exit status is:
+
+  | status | meaning                                      |
+  | ------ | -------------------------------------------- |
+  | 0      | success                                      |
+  | 1      | any other error                              |
+  | 2      | the command line is wrong                    |
+  | 3      | `serve` is not running for the repository    |
+  | 4      | no such item or run                          |
 
 ## Out of scope
 
