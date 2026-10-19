@@ -8,6 +8,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use linewright::api::Served;
 use linewright::briefs::Briefs;
 use linewright::clock::Clock;
+use linewright::credentials::credentials;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp};
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::reconcile::WorkKind;
@@ -21,6 +22,15 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 pub const LINEWRIGHT: &str = "factory";
+
+/// The redaction of an environment holding `variables`.
+pub fn redaction_of(variables: &[(&str, &str)]) -> Redaction {
+    Redaction::of(&credentials(
+        variables
+            .iter()
+            .map(|(name, value)| (name.into(), value.into())),
+    ))
+}
 
 pub struct FakeClock {
     now: Mutex<Timestamp>,

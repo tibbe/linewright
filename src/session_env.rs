@@ -37,8 +37,9 @@ const TABLE: &[&str] = &[
     "CLAUDE_*",
 ];
 
-/// Linewright's own credentials, which `session-env` never passes.
-pub const NEVER_PASSED: [&str; 4] = [
+/// The variables Linewright reads its own GitHub tokens and webhook secret
+/// from, which `session-env` never passes.
+const NEVER_PASSED: [&str; 4] = [
     TOKEN_VARIABLES[0],
     TOKEN_VARIABLES[1],
     SESSION_TOKEN_VARIABLE,

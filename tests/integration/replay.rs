@@ -260,6 +260,49 @@ fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted()
 }
 
 #[test]
+fn a_replayed_session_leaves_redacted_every_variable_named_as_a_credential_and_no_other() {
+    let dir = tempfile::tempdir().unwrap();
+    spec_change_case(dir.path(), &[]);
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let env = [
+        ("LINEWRIGHT_SESSION_ENV", "NPM_*"),
+        ("NPM_TOKEN", "npm-s3cr3t"),
+        ("DATABASE_PASSWORD", "db-s3cr3t"),
+        ("SIGNING_KEY", "signing-s3cr3t"),
+        ("NPM_REGISTRY", "registry.example.com"),
+        ("TOKEN_ISSUER", "issuer.example.com"),
+        ("EMPTY_SECRET", ""),
+    ];
+    let saw = "NPM_TOKEN=npm-s3cr3t DATABASE_PASSWORD=db-s3cr3t SIGNING_KEY=signing-s3cr3t \
+               NPM_REGISTRY=registry.example.com TOKEN_ISSUER=issuer.example.com EMPTY_SECRET=";
+    let result = json!({"tickets": [], "comment": format!("Saw {saw}")}).to_string();
+    let result =
+        json!({"type": "result", "subtype": "success", "is_error": false, "result": result});
+    let said =
+        json!({"type": "assistant", "message": {"content": [{"type": "text", "text": saw}]}});
+    fake_claude_saying(&bin, &[said.clone(), result], &said, saw);
+
+    replay_with(dir.path(), &bin, &env);
+
+    for (path, contents) in files_under(&dir.path().join("out")) {
+        assert!(
+            !contents.contains("s3cr3t"),
+            "a credential in {}: {contents}",
+            path.display()
+        );
+    }
+    let pull = std::fs::read_to_string(dir.path().join("out/pulls/1.md")).unwrap();
+    assert!(
+        pull.contains(
+            "Saw NPM_TOKEN=[redacted] DATABASE_PASSWORD=[redacted] SIGNING_KEY=[redacted] \
+             NPM_REGISTRY=registry.example.com TOKEN_ISSUER=issuer.example.com EMPTY_SECRET="
+        ),
+        "{pull}"
+    );
+}
+
+#[test]
 fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_holds() {
     let dir = tempfile::tempdir().unwrap();
 

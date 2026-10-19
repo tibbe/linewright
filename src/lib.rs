@@ -15,6 +15,7 @@ pub mod briefs;
 pub mod case;
 pub mod clock;
 pub mod config;
+pub mod credentials;
 pub mod domain;
 pub mod explain;
 pub mod factory;

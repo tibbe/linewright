@@ -1,13 +1,11 @@
-//! Keeping Linewright's credentials out of what it keeps or posts from a
-//! session (`docs/specs/runs.md`).
+//! Keeping Linewright's credentials out of what it keeps, logs or posts
+//! (`docs/specs/architecture.md`, the redaction decision).
 
 use aho_corasick::{AhoCorasick, MatchKind};
 
-use crate::session_env::NEVER_PASSED;
+use crate::credentials::Credential;
 
 pub const REDACTED: &str = "[redacted]";
-
-const API_KEY_VARIABLE: &str = "ANTHROPIC_API_KEY";
 
 /// Replaces the credentials' values with [`REDACTED`]. The default redacts
 /// nothing.
@@ -18,17 +16,10 @@ pub struct Redaction {
 }
 
 impl Redaction {
-    /// The credentials Linewright reads from its environment: those sessions
-    /// are never given, and the runtime's, which they are.
-    pub fn from_env(var: &dyn Fn(&str) -> Option<String>) -> Redaction {
-        let variables = NEVER_PASSED.into_iter().chain([API_KEY_VARIABLE]);
-        Redaction::of(variables.filter_map(var))
-    }
-
-    /// Empty values are skipped, as every text holds the empty string.
-    pub fn of(values: impl IntoIterator<Item = String>) -> Redaction {
+    pub fn of(credentials: &[Credential]) -> Redaction {
         let mut patterns = Vec::new();
-        for value in values.into_iter().filter(|value| !value.is_empty()) {
+        for credential in credentials {
+            let value = credential.value().to_string();
             // The runtime's events and transcript write text in JSON strings,
             // and a session's result is often JSON itself, so a credential
             // can be escaped twice.

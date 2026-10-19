@@ -11,6 +11,7 @@ use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{Cli, Command, Config, LogFormat, ResolveError, Since, WorkflowCommand};
+use linewright::credentials::credentials;
 use linewright::domain::Number;
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
@@ -567,7 +568,7 @@ impl SessionCredentials {
     fn new(token: SessionToken) -> SessionCredentials {
         SessionCredentials {
             token,
-            redaction: Redaction::from_env(&|key| std::env::var(key).ok()),
+            redaction: Redaction::of(&credentials(std::env::vars_os())),
         }
     }
 }

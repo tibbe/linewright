@@ -665,7 +665,7 @@ fn runtime_printing_a_credential(dir: &Path, last: Option<Value>) -> ClaudeCode 
         model: None,
         github_token: None,
         environment: Given::default(),
-        redaction: Redaction::of([CREDENTIAL.to_string()]),
+        redaction: redaction_of(&[("GH_TOKEN", CREDENTIAL)]),
     }
 }
 
@@ -737,7 +737,7 @@ async fn a_failed_sessions_reason_has_its_credentials_redacted() {
 async fn a_credential_that_holds_another_is_redacted_whole() {
     let dir = tempfile::tempdir().unwrap();
     let mut runtime = runtime_printing_a_credential(dir.path(), None);
-    runtime.redaction = Redaction::of(["ghp_".to_string(), CREDENTIAL.to_string()]);
+    runtime.redaction = redaction_of(&[("GH_TOKEN", CREDENTIAL), ("GH_PREFIX_TOKEN", "ghp_")]);
 
     let error = runtime
         .start(&triage_session(dir.path()))
