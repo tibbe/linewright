@@ -25,17 +25,17 @@ from Linewright's base image with the project's toolchain added.
 
 The command is `lw`.
 
-| command             | what it does                                                             |
-| ------------------- | ------------------------------------------------------------------------ |
-| `serve`             | poll until stopped                                                       |
-| `once`              | one poll cycle, then exit                                                |
-| `status`            | show what Linewright is doing (see [Monitoring](monitoring.md))          |
-| `explain N`         | show where an item stands and why (see [Monitoring](monitoring.md))      |
-| `runs [N]`          | list the runs (see [Monitoring](monitoring.md))                          |
-| `logs N`            | show a run's transcript (see [Monitoring](monitoring.md))                |
-| `workflow run NAME` | run one workflow now (see [Workflows](workflows.md))                     |
-| `capture`           | write a case from GitHub (see [Replay](replay.md))                       |
-| `replay`            | run a case against a local store (see [Replay](replay.md))               |
+| command               | what it does                                                             |
+| --------------------- | ------------------------------------------------------------------------ |
+| `serve`               | poll until stopped                                                       |
+| `once`                | one poll cycle, then exit                                                |
+| `status`              | show what Linewright is doing (see [Monitoring](monitoring.md))          |
+| `explain N`           | show where an item stands and why (see [Monitoring](monitoring.md))      |
+| `runs [N]`            | list the runs (see [Monitoring](monitoring.md))                          |
+| `logs N`              | show a run's transcript (see [Monitoring](monitoring.md))                |
+| `automation run NAME` | run one automation now (see [Automations](automations.md))               |
+| `capture`             | write a case from GitHub (see [Replay](replay.md))                       |
+| `replay`              | run a case against a local store (see [Replay](replay.md))               |
 
 - **Stopping.** SIGINT (Ctrl-C) or SIGTERM stops `serve` once the action in
   progress is done, cancelling the runs in flight; a second one exits at

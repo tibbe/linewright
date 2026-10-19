@@ -1,12 +1,12 @@
-# Workflows
+# Automations
 
-Workflows are for work the pipeline doesn't start on its own: work the
+Automations are for work the pipeline doesn't start on its own: work the
 maintainer describes in prose for an agent to do when a trigger fires. They
 live in the repository, so adding or changing one is a reviewed change, and
 they stay outside the pipeline, feeding it the way a person would, by filing
 issues.
 
-For example, a workflow that runs every Monday morning looks at the bugs
+For example, an automation that runs every Monday morning looks at the bugs
 fixed in the past week and files an issue for each that lacks a regression
 test. The pipeline then works those issues like any other.
 
@@ -14,16 +14,16 @@ test. The pipeline then works those issues like any other.
 
 1. As an operator, I want an agent to run on a schedule with instructions I
    write, so that recurring work happens without me.
-2. As an operator, I want a workflow able to hand work to the pipeline, so that
-   it is built and reviewed like any other work.
-3. As an operator, I want workflows defined in the repository, so that adding
+2. As an operator, I want an automation able to hand work to the pipeline, so
+   that it is built and reviewed like any other work.
+3. As an operator, I want automations defined in the repository, so that adding
    one is a reviewed change, versioned with the code.
-4. As an operator, I want to run a workflow by hand, so that I can try its
+4. As an operator, I want to run an automation by hand, so that I can try its
    instructions without waiting for its schedule.
 
-## The workflow file
+## The automation file
 
-A workflow is a Markdown file in `.linewright/workflows/` on the default
+An automation is a Markdown file in `.linewright/automations/` on the default
 branch: its name is the file's name, its YAML front matter says when it runs,
 and its body is the agent's instructions.
 
@@ -44,22 +44,22 @@ Look at the bugs fixed in the past week ...
 | `max-issues`  | the most issues one run files           | 3                 |
 
 - **A file that does not parse.** It is logged and skipped; the other
-  workflows run.
-- **`status`.** It shows each workflow with its last and next run, and each
+  automations run.
+- **`status`.** It shows each automation with its last and next run, and each
   file that does not parse.
 - **The trigger.** `on` is a schedule, the only kind for now.
 
 ## Scheduling
 
-A workflow is due when a tick of its schedule has passed since its last run.
+An automation is due when a tick of its schedule has passed since its last run.
 
 - **Missed ticks.** Ticks missed while Linewright was down, or while a run of
-  the workflow was in flight, collapse into one run.
-- **A new workflow.** A workflow seen for the first time counts as run then,
-  so adding one does not start it at once.
-- **The last run.** Linewright records each workflow's last run under the
+  the automation was in flight, collapse into one run.
+- **A new automation.** An automation seen for the first time counts as run
+  then, so adding one does not start it at once.
+- **The last run.** Linewright records each automation's last run under the
   work directory.
-- **By hand.** `lw workflow run NAME` runs one workflow now and exits, and
+- **By hand.** `lw automation run NAME` runs one automation now and exits, and
   leaves its schedule as it was.
 
 ## Runs
@@ -68,10 +68,10 @@ A run is one agent session in a fresh clone of the default branch, counted
 against the ceiling on simultaneous runs.
 
 - **The brief.** The agent does what its instructions say. Its brief carries
-  nothing of earlier runs: a workflow that looks back says how far in its
+  nothing of earlier runs: an automation that looks back says how far in its
   instructions.
 - **Filing issues.** A run may hand the pipeline work by filing issues, each
-  saying which workflow filed it:
+  saying which automation filed it:
   - `ready-for-agent`, for work an agent can do: what to build and its
     acceptance criteria, like a ticket.
   - `ready-for-human`, when a person must decide or help.
@@ -82,5 +82,5 @@ against the ceiling on simultaneous runs.
 ## Out of scope
 
 - Other triggers, such as a merged pull request touching certain paths.
-- Workflows that open pull requests; they hand code changes to the pipeline
+- Automations that open pull requests; they hand code changes to the pipeline
   as issues.

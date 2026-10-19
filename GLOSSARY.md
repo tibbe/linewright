@@ -48,19 +48,19 @@ An issue or pull request.
 _Avoid_: issuable
 
 **Run**:
-Work toward one outcome, on one item or for one workflow.
+Work toward one outcome, on one item or for one automation.
 _Avoid_: job, task, build, execution
 
 **Stage**:
 A part of the pipeline that a run does, such as triage.
 _Avoid_: phase, step
 
-**Workflow**:
+**Automation**:
 Instructions for an agent, paired with a trigger that says when they run.
-_Avoid_: action, automation, routine, job, scheduled task
+_Avoid_: workflow, action, routine, job, scheduled task
 
 **Trigger**:
-The condition under which a workflow runs.
+The condition under which an automation runs.
 _Avoid_: event
 
 **Status label**:

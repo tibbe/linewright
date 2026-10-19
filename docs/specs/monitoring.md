@@ -53,7 +53,7 @@ order:
    quiet time, how long since its agent last produced output.
 3. Each other open item Linewright tracks: where it is in the pipeline and, in
    one line, what Linewright is waiting for on it.
-4. The workflows, as [Workflows](workflows.md) describes.
+4. The automations, as [Automations](automations.md) describes.
 
 ## explain
 
@@ -88,7 +88,7 @@ its run ID, item, stage, start, duration and outcome.
   how long it has run so far. An interrupted run has none: in JSON,
   `duration_seconds` is null.
 - **Run ID.** A run ID is `<item>/<stage>-<n>`, the `n`th run of that stage
-  on that item, such as `43/rework-2`, or `<workflow>/<n>` for a workflow's
+  on that item, such as `43/rework-2`, or `<automation>/<n>` for an automation's
   runs, with the stages under [Runs](runs.md).
 
 ## logs
@@ -150,6 +150,6 @@ a terminal.
 - A record of each decision Linewright makes on an item; the log holds them.
 - Warnings about, or actions on, a run that stays quiet; the session timeout
   ends it.
-- Answers from `once` and `workflow run` while they run.
+- Answers from `once` and `automation run` while they run.
 - Direction, not the first version: commands that run single pieces of
   Linewright, so that a coding agent changing Linewright can verify its change.

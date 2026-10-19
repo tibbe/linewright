@@ -1,7 +1,7 @@
 # Runs
 
 A run is one piece of Linewright's work: one stage on one issue or pull
-request, or one workflow. Whatever the stage, runs share how they are
+request, or one automation. Whatever the stage, runs share how they are
 limited, how they end and what happens when they fail.
 
 For example, a fix-ci run on #43 has its push refused because Linewright's
@@ -24,8 +24,8 @@ hands #43 back at once, saying which permission to grant.
 
 ## Stages
 
-A run does one stage on one item, or runs one workflow; a workflow's run has
-no item.
+A run does one stage on one item, or runs one automation; an automation's run
+has no item.
 
 | stage       | what its run does                                                               |
 | ----------- | ------------------------------------------------------------------------------- |
@@ -45,10 +45,10 @@ no item.
 Limits bound what runs cost: how many run at once, and how long a session
 runs.
 
-- **Concurrency.** A ceiling on simultaneous runs, workflow runs included
+- **Concurrency.** A ceiling on simultaneous runs, automation runs included
   (`max-runs`).
 - **Session timeout.** Each agent session has a timeout on the time it runs
-  (`session-timeout`), unless its workflow sets its own. The timeout bounds
+  (`session-timeout`), unless its automation sets its own. The timeout bounds
   what a run costs and ends a session that stalls, so a run that times out is
   not retried: it hands its item back, and the comment says the work may need
   cutting smaller or a longer timeout.
@@ -62,8 +62,8 @@ A run ends in one of these outcomes, each with its name in JSON.
 | done                      | `done`        | it did its work, or found none left to do. A triage run is done whatever it decides. |
 | handed back               | `handed-back` | it could not finish and handed its item back.                                      |
 | cancelled                 | `cancelled`   | its item stopped asking for the work, or `serve` was stopped.                      |
-| ended for the usage limit | `usage-limit` | its session was refused for the usage limit under `once` or `workflow run`.        |
-| failed                    | `failed`      | it could not finish, and nothing on GitHub says so, such as a workflow's run.      |
+| ended for the usage limit | `usage-limit` | its session was refused for the usage limit under `once` or `automation run`.      |
+| failed                    | `failed`      | it could not finish, and nothing on GitHub says so, such as an automation's run.   |
 | in flight                 | `in-flight`   | it has not ended.                                                                  |
 | interrupted               | `interrupted` | the process running it stopped before it ended, such as by a crash or a kill.      |
 
@@ -108,7 +108,7 @@ tickets.
 - **A reset time already passed.** It is waited out for a short time.
 - **No reset time.** A refusal that does not say when the limit resets is an
   infrastructure failure.
-- **Only `serve` waits.** Under `once` and `workflow run`, the refused run
+- **Only `serve` waits.** Under `once` and `automation run`, the refused run
   ends for the usage limit.
 - **Restarts.** A restart forgets the limit.
 

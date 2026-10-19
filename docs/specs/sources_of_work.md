@@ -6,8 +6,8 @@ is how anyone asks for a fix; neither needs a separate request to Linewright.
 For example, the maintainer merges a pull request that adds a section to the
 spec, and Linewright picks it up and starts building it.
 
-The maintainer can also describe work as workflows in the repository. An
-agent runs each workflow when its trigger fires and files issues for the
+The maintainer can also describe work as automations in the repository. An
+agent runs each automation when its trigger fires and files issues for the
 pipeline to work, like any others.
 
 ## User Stories
@@ -42,9 +42,9 @@ Issues enter by their label, `needs-triage` for triage and `ready-for-agent`
 for implementation, or by being assigned to Linewright, as under
 [Repository](repository.md).
 
-## Workflows
+## Automations
 
-Workflows are a source of work too; see [Workflows](workflows.md).
+Automations are a source of work too; see [Automations](automations.md).
 
 ## Polling
 

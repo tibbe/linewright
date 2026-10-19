@@ -80,7 +80,7 @@ To stop a triage, unassign Linewright, remove `needs-triage` or close the
 issue. Once unassigned, Linewright leaves the issue until `needs-triage`, or
 the required label, is applied again, or until you assign it again.
 
-Issues Linewright files itself, such as a workflow's, are triaged the same
+Issues Linewright files itself, such as an automation's, are triaged the same
 way when they carry `needs-triage`.
 
 Linewright never closes an issue you filed. A duplicate, or something that
@@ -197,8 +197,8 @@ the branch to have it start over. Closing the issue deletes it.
 
 ## Recurring work
 
-For engineering. A workflow is a Markdown file in `.linewright/workflows/`
+For engineering. An automation is a Markdown file in `.linewright/automations/`
 that tells an agent what to do on a schedule, such as filing an issue for each
 bug fixed last week without a regression test. The issues it files say which
-workflow filed them, and are worked like any others. See
-[Workflows](specs/workflows.md).
+automation filed them, and are worked like any others. See
+[Automations](specs/automations.md).

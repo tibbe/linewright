@@ -56,7 +56,7 @@ request that is reviewed, green and ready for a person.
   where it still works at full quality.
 - **Unattended.** Agents run without permission prompts, directly on a host
   or in a container, as the operator chooses.
-- **Workflows beside the pipeline.** Workflows in the repository run agents
+- **Automations beside the pipeline.** Automations in the repository run agents
   on a trigger with instructions the maintainer writes, and may hand work to
   the pipeline.
 - **Runs again on request.** A spec change the factory handled can be
@@ -80,7 +80,7 @@ The pipeline, end to end:
 flowchart LR
     spec[Spec PR merged] --> impl[Implement, review, commit]
     issue[Issue labeled needs-triage] --> triage[Triage]
-    workflow[Workflow] -.-> ready
+    automation[Automation] -.-> ready
     triage --> ready[Issue labeled ready-for-agent]
     ready --> impl
     impl --> draft[Draft PR, CI green]
@@ -98,7 +98,7 @@ flowchart LR
 | [Sources of work](sources_of_work.md) | What starts work. |
 | [Webhooks](webhooks.md) | GitHub telling Linewright about changes as they happen. |
 | [Triage](triage.md) | Deciding what happens to a new issue. |
-| [Workflows](workflows.md) | Running agents on a trigger with the maintainer's instructions. |
+| [Automations](automations.md) | Running agents on a trigger with the maintainer's instructions. |
 | [Implementation](implementation.md) | Turning spec changes and tickets into reviewed, committed branches. |
 | [Pull requests](pull_requests.md) | Taking the work from a pull request to a merge. |
 | [Runs](runs.md) | What holds for every piece of work Linewright does, whatever its stage. |

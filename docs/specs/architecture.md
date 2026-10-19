@@ -118,12 +118,12 @@ their work nothing.
 - **Identity is a user account**: a token for a GitHub user dedicated to
   Linewright, whose assignments are its claims.
 
-## Workflows
+## Automations
 
-Workflows sit beside the pipeline, not under one trigger model.
+Automations sit beside the pipeline, not under one trigger model.
 
 - **The pipeline's entry conditions are fixed** by the product spec.
-- **A workflow run is one-shot**, and reaches the pipeline only through the
+- **An automation run is one-shot**, and reaches the pipeline only through the
   issues it files, which the pipeline works without knowing where they came
   from.
 - **Why.** The pipeline is Linewright's responsibility, so making its entry
