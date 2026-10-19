@@ -7,6 +7,10 @@ on:
 
 jobs:
   fmt:
+    needs: changes
+    # Not on a pull request that changes only documentation. The output is
+    # empty on a push, which skips `changes`, so the job runs then.
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -29,6 +33,8 @@ jobs:
       - run: scripts/check compose
 
   clippy:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -40,6 +46,8 @@ jobs:
       - run: scripts/check clippy
 
   test:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +66,8 @@ jobs:
       - run: scripts/check test
 
   doc:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -76,6 +86,7 @@ jobs:
       base-image: ${{ steps.changes.outputs.base-image }}
       deploy-images: ${{ steps.changes.outputs.deploy-images }}
       binaries: ${{ steps.changes.outputs.binaries }}
+      rust: ${{ steps.changes.outputs.rust }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -92,6 +103,10 @@ jobs:
               linewright.toml deploy $workflows/deploy-images.yml $workflows/docker.yml $workflows/ci.yml)"
             echo "binaries=$(changed Cargo.toml Cargo.lock rust-toolchain.toml \
               $workflows/binaries.yml $workflows/release.yml $workflows/ci.yml)"
+            # Everything but documentation and the deployment: the briefs,
+            # though Markdown, are compiled in.
+            echo "rust=$(changed . ':!docs' ':!deploy' ':!.agents' ':!.claude' \
+              ':!.linewright' ':(exclude,glob)*.md')"
           } >> "$GITHUB_OUTPUT"
 
   base-image:
