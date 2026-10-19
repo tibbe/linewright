@@ -358,8 +358,10 @@ impl Factory {
         pending: &Pending,
         served: &tokio::sync::watch::Sender<Option<Served>>,
     ) -> ServeEnd {
-        let stopping = self.ends.stopping();
-        let draining = self.ends.draining();
+        let ends = self.ends.clone();
+        let clock = self.shell.clock.clone();
+        let stopping = ends.stopping();
+        let draining = ends.draining();
         while !stopping.is_cancelled() {
             // The poll reads what deliveries named before it as well.
             pending.take();
@@ -380,6 +382,8 @@ impl Factory {
                     () = draining.cancelled(), if self.memory.drain.is_none() => {
                         self.note_drain();
                     }
+                    // Turns the drain into a stop, which the loop then takes.
+                    () = ends.deadline_passed(clock.as_ref()) => {}
                     subjects = pending.next() => {
                         if let Err(e) = self.refresh(subjects).await {
                             error!(

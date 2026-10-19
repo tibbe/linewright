@@ -1,12 +1,61 @@
 //! What `lw drain` says as it waits for `serve` to drain
 //! (`docs/specs/operation.md`, "Stopping").
 
+use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::Timestamp;
-use crate::ending::Ending;
+use crate::ending::{Ending, StopBy};
 use crate::runs::RunId;
 use crate::status::Paint;
+
+/// A drain request to the local API.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Asked {
+    /// With none, the drain waits however long.
+    pub timeout: Option<Timeout>,
+}
+
+/// How long until a drain becomes a stop, in milliseconds on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "i64", from = "i64")]
+pub struct Timeout(TimeDelta);
+
+impl Timeout {
+    /// As `--timeout` has it, such as 2h.
+    pub fn parse(value: &str) -> Result<Timeout, String> {
+        humantime::parse_duration(value)
+            .ok()
+            .and_then(|timeout| TimeDelta::from_std(timeout).ok())
+            .map(Timeout)
+            .ok_or_else(|| format!("{value:?} is not a duration (2h)"))
+    }
+
+    /// `None` for a deadline beyond any time there is.
+    pub fn deadline(self, from: Timestamp) -> Option<Timestamp> {
+        from.checked_add_signed(self.0)
+    }
+}
+
+impl From<Timeout> for i64 {
+    fn from(timeout: Timeout) -> i64 {
+        timeout.0.num_milliseconds()
+    }
+}
+
+impl From<i64> for Timeout {
+    fn from(ms: i64) -> Timeout {
+        Timeout(TimeDelta::milliseconds(ms))
+    }
+}
+
+/// The local API's answer, once a stop begins or `serve` stops answering,
+/// to what began the stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stop {
+    /// `None` if `serve` stops answering without a stop, as after a drain.
+    pub by: Option<StopBy>,
+}
 
 /// The local API's answer to a drain request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,8 +81,8 @@ impl Was {
     pub fn of(ending: Ending) -> Option<Was> {
         match ending {
             Ending::Serving => Some(Was::Serving),
-            Ending::Draining => Some(Was::Draining),
-            Ending::Stopping => Some(Was::Stopping),
+            Ending::Draining { .. } => Some(Was::Draining),
+            Ending::Stopping { .. } => Some(Was::Stopping),
             Ending::Exited => None,
         }
     }
@@ -52,6 +101,8 @@ pub enum Said {
     Ended {
         run: RunId,
     },
+    /// The drain's deadline passed with runs in flight.
+    BecameAStop,
     /// `serve` has exited: its socket is gone.
     Exited,
 }
@@ -90,6 +141,14 @@ impl Waiting {
     }
 }
 
+/// What `drain` says once `serve` begins to stop, by what if anything.
+pub fn stop_begun(by: Option<StopBy>) -> Vec<Said> {
+    match by {
+        Some(StopBy::Deadline) => vec![Said::BecameAStop],
+        Some(StopBy::Signal) | None => vec![],
+    }
+}
+
 /// As `label: value`, ending in a newline.
 pub fn render(said: &Said, colour: bool) -> String {
     let paint = Paint(colour);
@@ -101,6 +160,7 @@ pub fn render(said: &Said, colour: bool) -> String {
         },
         Said::WaitingFor { run } => format!("waiting for: {run}"),
         Said::Ended { run } => format!("ended: {run}"),
+        Said::BecameAStop => paint.yellow("drain: became a stop at its deadline"),
         Said::Exited => "serve: exited".into(),
     };
     format!("{line}\n")

@@ -1,11 +1,14 @@
 //! How `serve` ends, on the signals it is sent and the drains `lw drain`
 //! asks for (`docs/specs/operation.md`, "Stopping").
 
-use std::sync::{Arc, Mutex};
-
+use serde::{Deserialize, Serialize};
 use tokio::signal::unix::SignalKind;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+use crate::clock::Clock;
+use crate::domain::Timestamp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Signal {
@@ -42,15 +45,21 @@ impl Signal {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     Signal(Signal),
-    /// A drain asked for through the local API.
-    Drain,
+    /// A drain asked for through the local API, which sets the drain's
+    /// deadline, or leaves it with none.
+    Drain {
+        deadline: Option<Timestamp>,
+    },
+    /// The deadline of a drain has passed.
+    Deadline(Timestamp),
 }
 
 impl Event {
     fn name(self) -> &'static str {
         match self {
             Event::Signal(signal) => signal.name(),
-            Event::Drain => "`drain`",
+            Event::Drain { .. } => "`drain`",
+            Event::Deadline(_) => "the drain's deadline",
         }
     }
 }
@@ -60,17 +69,35 @@ impl Event {
 pub enum Ending {
     #[default]
     Serving,
-    Draining,
-    Stopping,
+    /// Becomes a stop once `deadline`, if any, passes.
+    Draining {
+        deadline: Option<Timestamp>,
+    },
+    Stopping {
+        by: StopBy,
+    },
     Exited,
 }
 
-/// What a signal has `serve` do.
+/// What began a stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StopBy {
+    Signal,
+    Deadline,
+}
+
+/// What an event has `serve` do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
     Drain,
+    /// The drain under way takes the latest `drain`'s deadline, or none.
+    SetDeadline,
     Stop,
     Nothing,
+    /// A deadline passed that a later `drain` replaced, or that came after
+    /// the stop began.
+    PassedUnheeded,
     Exit,
 }
 
@@ -78,30 +105,67 @@ impl Ending {
     pub fn on(self, event: Event) -> (Ending, Step) {
         use Signal::{Interrupt, Quit, Terminate};
         match (self, event) {
-            (Ending::Serving, Event::Signal(Quit) | Event::Drain) => {
-                (Ending::Draining, Step::Drain)
+            (Ending::Serving, Event::Signal(Quit)) => {
+                (Ending::Draining { deadline: None }, Step::Drain)
             }
-            (Ending::Serving | Ending::Draining, Event::Signal(Interrupt | Terminate)) => {
-                (Ending::Stopping, Step::Stop)
+            (Ending::Serving, Event::Drain { deadline }) => {
+                (Ending::Draining { deadline }, Step::Drain)
             }
-            (Ending::Draining | Ending::Stopping, Event::Signal(Quit) | Event::Drain) => {
-                (self, Step::Nothing)
+            (Ending::Serving | Ending::Draining { .. }, Event::Signal(Interrupt | Terminate)) => {
+                (Ending::Stopping { by: StopBy::Signal }, Step::Stop)
             }
+            // The latest `drain` sets the deadline.
+            (Ending::Draining { .. }, Event::Drain { deadline }) => {
+                (Ending::Draining { deadline }, Step::SetDeadline)
+            }
+            (Ending::Draining { deadline }, Event::Deadline(passed))
+                if deadline == Some(passed) =>
+            {
+                (
+                    Ending::Stopping {
+                        by: StopBy::Deadline,
+                    },
+                    Step::Stop,
+                )
+            }
+            (
+                Ending::Serving | Ending::Draining { .. } | Ending::Stopping { .. },
+                Event::Deadline(_),
+            ) => (self, Step::PassedUnheeded),
+            (Ending::Draining { .. } | Ending::Stopping { .. }, Event::Signal(Quit))
+            | (Ending::Stopping { .. }, Event::Drain { .. }) => (self, Step::Nothing),
             // A process that has exited reads no more signals.
-            (Ending::Stopping, Event::Signal(Interrupt | Terminate)) | (Ending::Exited, _) => {
-                (Ending::Exited, Step::Exit)
-            }
+            (Ending::Stopping { .. }, Event::Signal(Interrupt | Terminate))
+            | (Ending::Exited, _) => (Ending::Exited, Step::Exit),
+        }
+    }
+
+    /// The deadline of the drain under way, if it has one.
+    pub fn deadline(self) -> Option<Timestamp> {
+        match self {
+            Ending::Draining { deadline } => deadline,
+            Ending::Serving | Ending::Stopping { .. } | Ending::Exited => None,
         }
     }
 }
 
 /// Where `serve` is in ending, shared by what asks it to end: it takes each
 /// event as [`Ending::on`] has it, logging what it does.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Ends {
-    state: Arc<Mutex<Ending>>,
+    state: watch::Sender<Ending>,
     draining: CancellationToken,
     stopping: CancellationToken,
+}
+
+impl Default for Ends {
+    fn default() -> Ends {
+        Ends {
+            state: watch::Sender::new(Ending::default()),
+            draining: CancellationToken::new(),
+            stopping: CancellationToken::new(),
+        }
+    }
 }
 
 impl Ends {
@@ -119,24 +183,41 @@ impl Ends {
         self.stopping.clone()
     }
 
+    /// The deadline of the drain under way, if it has one.
+    pub fn deadline(&self) -> Option<Timestamp> {
+        self.state.borrow().deadline()
+    }
+
     /// Returns where `serve` was in ending, and the step `event` takes, which
     /// is left to the caller only if it is [`Step::Exit`].
     pub fn on(&self, event: Event) -> (Ending, Step) {
-        let mut state = self.state.lock().expect("no holder of the lock panics");
-        let was = *state;
-        let step;
-        (*state, step) = was.on(event);
-        drop(state);
+        let mut was = Ending::default();
+        let mut now = Ending::default();
+        let mut step = Step::Nothing;
+        self.state.send_if_modified(|state| {
+            was = *state;
+            (now, step) = was.on(event);
+            *state = now;
+            now != was
+        });
         let by = event.name();
+        let deadline = now.deadline().map(|at| at.to_rfc3339());
         match step {
             Step::Drain => {
                 info!(
                     by,
+                    deadline,
                     "draining: exiting once no run is in flight; \
                      SIGINT or SIGTERM stops instead"
                 );
                 self.draining.cancel();
             }
+            Step::SetDeadline => info!(
+                by,
+                deadline,
+                replaced = was.deadline().map(|at| at.to_rfc3339()),
+                "already draining; the deadline is the latest `drain`'s"
+            ),
             Step::Stop => {
                 info!(
                     by,
@@ -146,7 +227,7 @@ impl Ends {
                 self.stopping.cancel();
             }
             Step::Nothing => info!(by, "already ending; nothing more"),
-            Step::Exit => {}
+            Step::PassedUnheeded | Step::Exit => {}
         }
         (was, step)
     }
@@ -156,6 +237,40 @@ impl Ends {
         tokio::select! {
             () = self.draining.cancelled() => {}
             () = self.stopping.cancelled() => {}
+        }
+    }
+
+    /// Waits until a stop begins, and says what began it: `None` once
+    /// `serve` is exiting at once.
+    pub async fn stop_begun(&self) -> Option<StopBy> {
+        self.stopping.cancelled().await;
+        match *self.state.borrow() {
+            Ending::Stopping { by } => Some(by),
+            Ending::Serving | Ending::Draining { .. } | Ending::Exited => None,
+        }
+    }
+
+    /// Waits on `clock` until the deadline of the drain under way passes,
+    /// whichever `drain` set it, and takes it, which turns the drain into a
+    /// stop.
+    pub async fn deadline_passed(&self, clock: &dyn Clock) {
+        let mut state = self.state.subscribe();
+        loop {
+            let set = state.borrow_and_update().deadline();
+            let changed = state.changed();
+            match set {
+                Some(at) => tokio::select! {
+                    () = clock.sleep_until(at) => {
+                        self.on(Event::Deadline(at));
+                        return;
+                    }
+                    _ = changed => {}
+                },
+                None => {
+                    // The sender lives as long as `self`.
+                    let _ = changed.await;
+                }
+            }
         }
     }
 }

@@ -18,6 +18,7 @@ struct Answering {
     serving: Serving,
     api: Api,
     ends: Ends,
+    clock: std::sync::Arc<FakeClock>,
     listener: Option<Listener>,
     runtime_dir: tempfile::TempDir,
     _dir: tempfile::TempDir,
@@ -70,7 +71,7 @@ impl Answering {
                 serving: linewright::status::Serving { since, max_runs: 4 },
                 served: serving.served.clone(),
                 deliveries: listener.as_ref().map(Listener::tally),
-                clock,
+                clock: clock.clone(),
                 work_dir: linewright::runs::RepoWorkDir {
                     base: work_dir,
                     repo: REPO.into(),
@@ -87,6 +88,7 @@ impl Answering {
             serving,
             api,
             ends,
+            clock,
             listener,
             runtime_dir,
             _dir: dir,
@@ -1845,11 +1847,7 @@ async fn status_shows_a_drain_from_drain_as_one_from_sigquit() {
         );
         let since = json["since"].as_str().unwrap_or_default();
         assert!(since.starts_with("2026-10-01T12:"), "{json}");
-        assert_eq!(
-            json.as_object().map(serde_json::Map::len),
-            Some(1),
-            "{json}"
-        );
+        assert_eq!(json["deadline"], serde_json::Value::Null, "{json}");
     }
     from_drain.stop().await;
     from_sigquit.stop().await;
@@ -1906,4 +1904,190 @@ async fn drain_returns_once_serve_has_exited_though_another_has_started_since() 
         "drain: begun\nwaiting for: 1/triage-1\nended: 1/triage-1\nserve: exited\n"
     );
     restarted.stop().await;
+}
+
+#[tokio::test]
+async fn a_drain_whose_run_outlasts_its_timeout_becomes_a_stop_at_the_deadline() {
+    let (_agent, answering) = triage_held().await;
+    let work_dir = answering._dir.path().join("work");
+    let Answering {
+        serving,
+        api,
+        clock,
+        runtime_dir,
+        _dir,
+        ..
+    } = answering;
+    let drain = Watching::start(runtime_dir.path(), &["drain", "--timeout", "1h"]);
+    drain.shows("waiting for: 1/triage-1\n").await;
+
+    clock.advance(chrono::TimeDelta::hours(2));
+    let end = within(STOPPING, "serve stops", serving.finished()).await;
+    let runs = lw(
+        runtime_dir.path(),
+        &["--work-dir", work_dir.to_str().unwrap(), "runs"],
+    )
+    .await;
+    within(STOPPING, "the API stops", api.stop()).await;
+    let (code, shown, stderr) = drain.exits().await;
+
+    assert_eq!(end, ServeEnd::Stop);
+    assert!(
+        runs.stdout.starts_with("1/triage-1: cancelled — "),
+        "{}",
+        runs.stdout
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        shown,
+        "drain: begun\nwaiting for: 1/triage-1\ndrain: became a stop at its deadline\n\
+         ended: 1/triage-1\nserve: exited\n"
+    );
+}
+
+#[tokio::test]
+async fn a_drain_whose_run_ends_before_its_timeout_is_an_ordinary_drain() {
+    let (agent, answering) = triage_held().await;
+    let runtime_dir = answering.runtime_dir.path().to_path_buf();
+    let exited = answering.exits_once_served();
+
+    let drain = Watching::start(&runtime_dir, &["drain", "--timeout", "1h"]);
+    drain.shows("waiting for: 1/triage-1\n").await;
+    drop(agent);
+    let (code, shown, stderr) = drain.exits().await;
+
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        shown,
+        "drain: begun\nwaiting for: 1/triage-1\nended: 1/triage-1\nserve: exited\n"
+    );
+    assert_eq!(
+        within(STOPPING, "serve exits", exited).await.unwrap(),
+        ServeEnd::Drained
+    );
+}
+
+/// The JSON `status` shows of the drain under way.
+async fn drain_shown(answering: &Answering) -> (String, serde_json::Value) {
+    let text = answering.lw(&["status"]).await.stdout;
+    let json = answering.lw(&["status", "--json"]).await.stdout;
+    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let line = drain_line(&text).unwrap_or_default().to_string();
+    (line, json["linewright"]["drain"].clone())
+}
+
+#[tokio::test]
+async fn status_shows_the_deadline_of_a_drain_with_a_timeout() {
+    let (_agent, answering) = triage_held().await;
+
+    let drained = answering
+        .lw(&["drain", "--no-wait", "--timeout", "1h"])
+        .await;
+    let (line, json) = drain_shown(&answering).await;
+
+    assert_eq!(drained.code, Some(0), "{}", drained.stderr);
+    assert!(
+        line.starts_with("drain: under way since 2026-10-01 12:")
+            && line.contains("; deadline 2026-10-01 13:"),
+        "{line}"
+    );
+    assert!(
+        json["deadline"]
+            .as_str()
+            .is_some_and(|at| at.starts_with("2026-10-01T13:")),
+        "{json}"
+    );
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn a_later_drain_with_a_longer_timeout_sets_the_deadline() {
+    let (_agent, answering) = triage_held().await;
+    answering
+        .lw(&["drain", "--no-wait", "--timeout", "1h"])
+        .await;
+
+    let later = answering
+        .lw(&["drain", "--no-wait", "--timeout", "3h"])
+        .await;
+    answering.clock.advance(chrono::TimeDelta::hours(2));
+    let (line, json) = drain_shown(&answering).await;
+
+    assert_eq!(later.code, Some(0), "{}", later.stderr);
+    assert!(line.contains("; deadline 2026-10-01 15:"), "{line}");
+    assert!(
+        json["deadline"]
+            .as_str()
+            .is_some_and(|at| at.starts_with("2026-10-01T15:")),
+        "{json}"
+    );
+    assert!(!answering.serving.has_ended());
+    let Answering {
+        serving,
+        api,
+        clock,
+        ..
+    } = answering;
+    clock.advance(chrono::TimeDelta::hours(2));
+    assert_eq!(
+        within(STOPPING, "serve stops", serving.finished()).await,
+        ServeEnd::Stop
+    );
+    within(STOPPING, "the API stops", api.stop()).await;
+}
+
+#[tokio::test]
+async fn a_later_drain_without_a_timeout_leaves_the_drain_with_no_deadline() {
+    let (agent, answering) = triage_held().await;
+    answering
+        .lw(&["drain", "--no-wait", "--timeout", "1h"])
+        .await;
+
+    let later = answering.lw(&["drain", "--no-wait"]).await;
+    answering.clock.advance(chrono::TimeDelta::hours(2));
+    let (line, json) = drain_shown(&answering).await;
+
+    assert_eq!(later.code, Some(0), "{}", later.stderr);
+    assert!(line.starts_with("drain: under way since "), "{line}");
+    assert!(!line.contains("deadline"), "{line}");
+    assert_eq!(json["deadline"], serde_json::Value::Null, "{json}");
+    assert!(!answering.serving.has_ended());
+    let exited = answering.exits_once_served();
+    drop(agent);
+    assert_eq!(
+        within(STOPPING, "serve exits", exited).await.unwrap(),
+        ServeEnd::Drained
+    );
+}
+
+#[tokio::test]
+async fn a_drain_with_a_timeout_to_serve_already_stopping_sets_no_deadline() {
+    let (_agent, answering) = triage_held().await;
+    answering.ends.on(Event::Signal(Signal::Terminate));
+
+    let drained = answering
+        .lw(&["drain", "--no-wait", "--timeout", "1h"])
+        .await;
+
+    assert_eq!(drained.code, Some(0), "{}", drained.stderr);
+    assert_eq!(
+        drained.stdout.lines().next(),
+        Some("stop: already under way")
+    );
+    assert_eq!(answering.ends.deadline(), None);
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn a_timeout_that_is_not_a_duration_exits_2() {
+    let runtime_dir = tempfile::tempdir().unwrap();
+
+    let output = lw(runtime_dir.path(), &["drain", "--timeout", "soon"]).await;
+
+    assert_eq!(output.code, Some(2), "{}", output.stderr);
+    assert!(
+        output.stderr.contains("\"soon\" is not a duration"),
+        "{}",
+        output.stderr
+    );
 }

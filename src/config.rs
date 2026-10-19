@@ -8,6 +8,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
 use crate::domain::{MergeMethod, Number, Timestamp, UpdateMethod};
+use crate::drain::Timeout;
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
@@ -43,6 +44,11 @@ pub enum Command {
         /// Return once `serve` has taken the request.
         #[arg(long)]
         no_wait: bool,
+        /// After this long, such as 2h, the drain becomes a stop: the runs in
+        /// flight are cancelled, keeping their unfinished work. Replaces the
+        /// deadline of a drain already under way.
+        #[arg(long, value_name = "DURATION", value_parser = Timeout::parse)]
+        timeout: Option<Timeout>,
         /// Print one JSON object per line.
         #[arg(long)]
         json: bool,

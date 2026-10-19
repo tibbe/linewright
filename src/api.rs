@@ -24,7 +24,7 @@ use tracing::{error, info};
 
 use crate::clock::Clock;
 use crate::domain::Number;
-use crate::drain::{Taken, Was};
+use crate::drain::{Asked, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::explain;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
@@ -192,6 +192,7 @@ impl Api {
             .route("/logs", get(answer_logs))
             .route("/logs/follow", get(follow_logs))
             .route("/drain", post(take_drain))
+            .route("/stop", get(answer_stop))
             .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
             .layer(middleware::from_fn(local_only))
             // Ends the transcripts being followed, so that stopping waits
@@ -238,13 +239,23 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
         &sources.serving,
         webhooks,
         view.as_ref(),
+        sources.ends.deadline(),
         sources.clock.now(),
     );
     json_response(StatusCode::OK, &answer)
 }
 
-async fn take_drain(State(sources): State<Sources>) -> Response {
-    let (ending, _) = sources.ends.on(ending::Event::Drain);
+async fn take_drain(State(sources): State<Sources>, Query(asked): Query<Asked>) -> Response {
+    let deadline = match asked.timeout {
+        None => None,
+        Some(timeout) => {
+            let Some(deadline) = timeout.deadline(sources.clock.now()) else {
+                return error_response(StatusCode::BAD_REQUEST, "the timeout is too long");
+            };
+            Some(deadline)
+        }
+    };
+    let (ending, _) = sources.ends.on(ending::Event::Drain { deadline });
     let Some(was) = Was::of(ending) else {
         return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -262,6 +273,19 @@ async fn take_drain(State(sources): State<Sources>) -> Response {
         runs,
     };
     json_response(StatusCode::OK, &taken)
+}
+
+/// Answers once a stop begins, or `serve` stops answering, so that `drain`
+/// learns of a stop however soon `serve` exits after it.
+async fn answer_stop(
+    State(sources): State<Sources>,
+    Extension(stopping): Extension<CancellationToken>,
+) -> Response {
+    let by = tokio::select! {
+        by = sources.ends.stop_begun() => by,
+        () = stopping.cancelled() => None,
+    };
+    json_response(StatusCode::OK, &Stop { by })
 }
 
 async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Query>) -> Response {
@@ -614,6 +638,16 @@ impl HangUps {
 /// may have been taken, its answer lost.
 pub async fn post_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
     ask(dir, repo, hyper::Method::POST, resource).await
+}
+
+/// Not asked again on a hang-up, unlike [`get_answer`], for an answer that
+/// waits until `serve` stops answering.
+pub async fn get_answer_once(
+    dir: &Path,
+    repo: &str,
+    resource: &str,
+) -> Result<Bytes, RequestError> {
+    ask(dir, repo, hyper::Method::GET, resource).await
 }
 
 pub async fn get_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {

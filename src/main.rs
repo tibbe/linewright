@@ -13,8 +13,8 @@ use linewright::clock::{Clock, SystemClock};
 use linewright::config::{AutomationCommand, Cli, Command, Config, LogFormat, ResolveError, Since};
 use linewright::credentials::Credentials;
 use linewright::domain::Number;
-use linewright::drain::{self, Said, Taken, Waiting};
-use linewright::ending::{Ends, Event, Signal, Step};
+use linewright::drain::{self, Asked, Said, Stop, Taken, Timeout, Waiting, Was};
+use linewright::ending::{Ends, Event, Signal, Step, StopBy};
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
@@ -112,7 +112,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
 /// How often `drain` asks what is in flight while it waits.
 const DRAIN_ASKS_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 
-async fn drain(config: &Config, no_wait: bool, json: bool) -> ExitCode {
+async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: bool) -> ExitCode {
     let say = |lines: &[Said]| {
         for said in lines {
             if json {
@@ -128,7 +128,8 @@ async fn drain(config: &Config, no_wait: bool, json: bool) -> ExitCode {
         Err(e) => return print_answer(Err(failed(&e))),
     };
     let dir = socket_dir();
-    let taken = match api::post_answer(&dir, repo, "/drain").await {
+    let resource = format!("/drain?{}", api::query_string(&Asked { timeout }));
+    let taken = match api::post_answer(&dir, repo, &resource).await {
         Ok(body) => match read_as::<Taken>(&body, "a drain taken") {
             Ok(taken) => taken,
             Err(e) => return print_answer(Err(e)),
@@ -141,8 +142,29 @@ async fn drain(config: &Config, no_wait: bool, json: bool) -> ExitCode {
     if no_wait {
         return ExitCode::SUCCESS;
     }
+    // Answered as the stop begins, however soon `serve` exits after it.
+    let mut stop = (taken.was != Was::Stopping).then(|| {
+        let (dir, repo) = (dir.clone(), repo.to_string());
+        tokio::spawn(async move {
+            let body = api::get_answer_once(&dir, &repo, "/stop").await.ok()?;
+            read_as::<Stop>(&body, "a stop").ok()?.by
+        })
+    });
+    let stop_begun =
+        |by: Result<Option<StopBy>, tokio::task::JoinError>| drain::stop_begun(by.ok().flatten());
     loop {
-        tokio::time::sleep(DRAIN_ASKS_EVERY).await;
+        if let Some(answering) = &mut stop {
+            tokio::select! {
+                () = tokio::time::sleep(DRAIN_ASKS_EVERY) => {}
+                answered = answering => {
+                    stop = None;
+                    say(&stop_begun(answered));
+                    continue;
+                }
+            }
+        } else {
+            tokio::time::sleep(DRAIN_ASKS_EVERY).await;
+        }
         let status = match api::get_answer(&dir, repo, "/status").await {
             Ok(body) => match read_as::<status::Status>(&body, "a status") {
                 Ok(status) => Some(status),
@@ -157,6 +179,10 @@ async fn drain(config: &Config, no_wait: bool, json: bool) -> ExitCode {
         match status.filter(|status| status.linewright.serving_since == taken.serving_since) {
             Some(status) => say(&waiting.seen(&status.run_ids())),
             None => {
+                // Answered before `serve` stopped answering.
+                if let Some(answering) = stop.take() {
+                    say(&stop_begun(answering.await));
+                }
                 say(&waiting.exited());
                 return ExitCode::SUCCESS;
             }
@@ -432,8 +458,12 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             let resource = "/status";
             return Ok(ask(&config, resource, "a status", json, status::render).await);
         }
-        Command::Drain { no_wait, json } => {
-            return Ok(drain(&config, no_wait, json).await);
+        Command::Drain {
+            no_wait,
+            timeout,
+            json,
+        } => {
+            return Ok(drain(&config, no_wait, timeout, json).await);
         }
         Command::Explain { number, json } => {
             let resource = format!("/items/{number}");

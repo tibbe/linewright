@@ -100,7 +100,7 @@ pub struct Linewright {
     /// Set only while a usage limit is in force.
     pub usage_limit_resets_at: Option<Timestamp>,
     /// Set only while a drain is under way.
-    pub drain: Option<Drain>,
+    pub drain: Option<DrainShown>,
     pub runs_in_flight: usize,
     pub max_runs: usize,
     /// Set only with webhooks on.
@@ -222,11 +222,21 @@ pub struct UnparsedAutomation {
     pub reason: String,
 }
 
-/// `view` is `None` before the first poll.
+/// A drain under way, as `status` shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DrainShown {
+    pub since: Timestamp,
+    /// When the drain becomes a stop, if it has a deadline.
+    pub deadline: Option<Timestamp>,
+}
+
+/// `view` is `None` before the first poll; `drain_deadline` is the deadline
+/// of the drain under way, if any.
 pub fn status(
     serving: &Serving,
     webhooks: Option<Received>,
     view: Option<&View>,
+    drain_deadline: Option<Timestamp>,
     now: Timestamp,
 ) -> Status {
     let linewright = Linewright {
@@ -236,7 +246,12 @@ pub fn status(
             .and_then(|v| v.memory.usage_limit)
             .map(|limit| limit.resets_at)
             .filter(|resets_at| now < *resets_at),
-        drain: view.and_then(|v| v.memory.drain),
+        drain: view
+            .and_then(|v| v.memory.drain)
+            .map(|Drain { since }| DrainShown {
+                since,
+                deadline: drain_deadline,
+            }),
         runs_in_flight: view.map_or(0, View::runs_in_flight),
         max_runs: serving.max_runs,
         webhooks,
@@ -463,7 +478,13 @@ fn linewright_lines(linewright: &Linewright, paint: Paint) -> Vec<String> {
         lines.push(paint.yellow(&format!("usage limit: in force until {}", utc(resets_at))));
     }
     if let Some(drain) = linewright.drain {
-        lines.push(paint.yellow(&format!("drain: under way since {}", utc(drain.since))));
+        let deadline = drain
+            .deadline
+            .map_or(String::new(), |at| format!("; deadline {}", utc(at)));
+        lines.push(paint.yellow(&format!(
+            "drain: under way since {}{deadline}",
+            utc(drain.since)
+        )));
     }
     lines.push(format!(
         "runs in flight: {} of {}",

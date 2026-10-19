@@ -57,7 +57,7 @@ fn text(view: Option<&View>, now: &str) -> Vec<String> {
 }
 
 fn text_with(webhooks: Option<Received>, view: Option<&View>, now: &str) -> Vec<String> {
-    let answer = status(&serving(), webhooks, view, at(now));
+    let answer = status(&serving(), webhooks, view, None, at(now));
     render(&answer, false).lines().map(str::to_string).collect()
 }
 
@@ -150,14 +150,39 @@ fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
     };
     let now = at("2026-10-01T12:00:30Z");
 
-    let shown = serde_json::to_value(status(&serving(), None, Some(&draining), now)).unwrap();
-    let none = serde_json::to_value(status(&serving(), None, Some(&view(vec![])), now)).unwrap();
+    let shown = serde_json::to_value(status(&serving(), None, Some(&draining), None, now)).unwrap();
+    let none =
+        serde_json::to_value(status(&serving(), None, Some(&view(vec![])), None, now)).unwrap();
 
     assert_eq!(
         shown["linewright"]["drain"],
-        serde_json::json!({"since": "2026-10-01T12:00:20Z"})
+        serde_json::json!({"since": "2026-10-01T12:00:20Z", "deadline": null})
     );
     assert_eq!(none["linewright"]["drain"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_drain_with_a_deadline_shows_it_in_text_and_json() {
+    let draining = View {
+        memory: draining_since("2026-10-01T12:00:20Z"),
+        ..view(vec![])
+    };
+    let now = at("2026-10-01T12:00:30Z");
+    let deadline = Some(at("2026-10-01T14:00:20Z"));
+
+    let answer = status(&serving(), None, Some(&draining), deadline, now);
+    let shown = serde_json::to_value(&answer).unwrap();
+    let text = render(&answer, false);
+
+    assert_eq!(
+        shown["linewright"]["drain"],
+        serde_json::json!({"since": "2026-10-01T12:00:20Z", "deadline": "2026-10-01T14:00:20Z"})
+    );
+    assert!(
+        text.lines().any(|line| line
+            == "drain: under way since 2026-10-01 12:00:20 UTC; deadline 2026-10-01 14:00:20 UTC"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -180,7 +205,13 @@ fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
         ..view(vec![])
     };
 
-    let answer = status(&serving(), None, Some(&view), at("2026-10-01T12:00:30Z"));
+    let answer = status(
+        &serving(),
+        None,
+        Some(&view),
+        None,
+        at("2026-10-01T12:00:30Z"),
+    );
 
     assert_eq!(answer.linewright.usage_limit_resets_at, None);
 }
@@ -538,7 +569,13 @@ fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
         ),
         ..view(vec![ready_issue()])
     };
-    let answer = status(&serving(), None, Some(&view), at("2026-10-01T12:10:00Z"));
+    let answer = status(
+        &serving(),
+        None,
+        Some(&view),
+        None,
+        at("2026-10-01T12:10:00Z"),
+    );
 
     let coloured = render(&answer, true);
     let plain = render(&answer, false);
@@ -570,6 +607,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
         &serving(),
         Some(webhooks),
         Some(&view),
+        None,
         at("2026-10-01T12:10:00Z"),
     );
 
@@ -597,7 +635,13 @@ fn the_json_names_each_fact() {
         ],
         ..view(vec![ready_issue()])
     };
-    let answer = status(&serving(), None, Some(&view), at("2026-10-01T12:10:00Z"));
+    let answer = status(
+        &serving(),
+        None,
+        Some(&view),
+        None,
+        at("2026-10-01T12:10:00Z"),
+    );
 
     assert_eq!(
         serde_json::to_value(&answer).unwrap(),
