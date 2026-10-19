@@ -21,106 +21,110 @@ from Linewright's base image with the project's toolchain added.
 6. As an operator, I want the server's log to say what it is doing and why, so
    that I can debug it without GitHub.
 
-## Decisions
+## Commands
 
-### Commands
+The command is `lw`.
 
-- The command is `lw`, with these commands:
+| command             | what it does                                                             |
+| ------------------- | ------------------------------------------------------------------------ |
+| `serve`             | poll until stopped                                                       |
+| `once`              | one poll cycle, then exit                                                |
+| `status`            | show what Linewright is doing (see [Monitoring](monitoring.md))          |
+| `explain N`         | show where an item stands and why (see [Monitoring](monitoring.md))      |
+| `runs [N]`          | list the runs (see [Monitoring](monitoring.md))                          |
+| `logs N`            | show a run's transcript (see [Monitoring](monitoring.md))                |
+| `workflow run NAME` | run one workflow now (see [Workflows](workflows.md))                     |
+| `capture`           | write a case from GitHub (see [Replay](replay.md))                       |
+| `replay`            | run a case against a local store (see [Replay](replay.md))               |
 
-  | command | what it does |
-  |---|---|
-  | `serve` | poll until stopped |
-  | `once` | one poll cycle, then exit |
-  | `status` | show what Linewright is doing (see [Monitoring](monitoring.md)) |
-  | `explain N` | show where an item stands and why (see [Monitoring](monitoring.md)) |
-  | `runs [N]` | list the runs (see [Monitoring](monitoring.md)) |
-  | `logs N` | show a run's transcript (see [Monitoring](monitoring.md)) |
-  | `workflow run NAME` | run one workflow now (see [Workflows](workflows.md)) |
-  | `capture` | write a case from GitHub (see [Replay](replay.md)) |
-  | `replay` | run a case against a local store (see [Replay](replay.md)) |
-- SIGINT (Ctrl-C) or SIGTERM stops `serve` once the action in progress is
-  done, cancelling the runs in flight; a second one exits at once.
-- `--version` and the server's first log line name the version and the
-  commit it was built from.
+- **Stopping.** SIGINT (Ctrl-C) or SIGTERM stops `serve` once the action in
+  progress is done, cancelling the runs in flight; a second one exits at
+  once.
+- **The version.** `--version` and the server's first log line name the
+  version and the commit it was built from.
 
-### Configuration
+## Configuration
 
-- Every setting is a flag, an environment variable (`LINEWRIGHT_<FLAG>`) or a
-  key in a TOML config file (`--config`, default `linewright.toml` in the
-  working directory), with precedence flag, then environment, then file, then
-  default.
+Every setting is a flag, an environment variable (`LINEWRIGHT_<FLAG>`) or a
+key in a TOML config file (`--config`, default `linewright.toml` in the
+working directory), with precedence flag, then environment, then file, then
+default.
 
-  | setting | default |
-  |---|---|
-  | `repo` (`owner/name`) | required |
-  | `poll-interval` | 60s |
-  | `webhook-address` | `0.0.0.0:8080` |
-  | `spec-glob` | `docs/**/*.md` |
-  | `spec-lookback` | 7d |
-  | `max-runs` | 4 |
-  | `work-dir` | `linewright/` under the user's data directory |
-  | `model` | one model for every stage |
-  | `briefs` (a directory) | the briefs Linewright ships |
-  | `session-env` (variable names) | none |
-  | `session-timeout` | 60m |
-  | `result-retries` | 1 |
-  | `ci-grace` | 5m |
-  | `ci-timeout` | 6h |
-  | `ci-attempts` | 2 |
-  | `update-branch` (`rebase`, `merge`) | from the repository's settings |
-  | `auto-merge` | off |
-  | `merge-method` (`merge`, `squash`, `rebase`) | from the repository's settings |
-  | `require-label` | none: every issue and pull request |
-  | `log-format` (`text`, `json`) | `text` on a terminal, `json` otherwise |
+| setting                                      | default                                     |
+| -------------------------------------------- | ------------------------------------------- |
+| `repo` (`owner/name`)                        | required                                    |
+| `poll-interval`                              | 60s                                         |
+| `webhook-address`                            | `0.0.0.0:8080`                              |
+| `spec-glob`                                  | `docs/**/*.md`                              |
+| `spec-lookback`                              | 7d                                          |
+| `max-runs`                                   | 4                                           |
+| `work-dir`                                   | `linewright/` under the user's data directory |
+| `model`                                      | one model for every stage                   |
+| `briefs` (a directory)                       | the briefs Linewright ships                 |
+| `session-env` (variable names)               | none                                        |
+| `session-timeout`                            | 60m                                         |
+| `result-retries`                             | 1                                           |
+| `ci-grace`                                   | 5m                                          |
+| `ci-timeout`                                 | 6h                                          |
+| `ci-attempts`                                | 2                                           |
+| `update-branch` (`rebase`, `merge`)          | from the repository's settings              |
+| `auto-merge`                                 | off                                         |
+| `merge-method` (`merge`, `squash`, `rebase`) | from the repository's settings              |
+| `require-label`                              | none: every issue and pull request          |
+| `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
-- Credentials are the environment variables their tools already use, so an
-  existing setup is picked up: `GITHUB_TOKEN` or `GH_TOKEN` as `gh` reads
-  them, and `ANTHROPIC_API_KEY`. The webhook secret has no such variable and
-  is `LINEWRIGHT_WEBHOOK_SECRET`, and the GitHub token agent sessions are
-  given in place of Linewright's (see [Repository](repository.md)) is
-  `LINEWRIGHT_SESSION_GITHUB_TOKEN`.
-- Every time and duration given to Linewright, as a setting or as a
-  command's argument, takes the same forms: a time in RFC 3339
-  (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC (`2026-10-14`),
-  and a duration as the settings' defaults write one, such as `90s`, `30m`,
-  `6h` or `7d`.
+- **Credentials.** They are the environment variables their tools already
+  use, so an existing setup is picked up: `GITHUB_TOKEN` or `GH_TOKEN` as
+  `gh` reads them, and `ANTHROPIC_API_KEY`. The webhook secret has no such
+  variable and is `LINEWRIGHT_WEBHOOK_SECRET`, and the GitHub token agent
+  sessions are given in place of Linewright's (see
+  [Repository](repository.md)) is `LINEWRIGHT_SESSION_GITHUB_TOKEN`.
+- **Times and durations.** Every time and duration given to Linewright, as a
+  setting or as a command's argument, takes the same forms: a time in RFC
+  3339 (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC
+  (`2026-10-14`), and a duration as the settings' defaults write one, such as
+  `90s`, `30m`, `6h` or `7d`.
 
-### Sessions' environment
+## Sessions' environment
 
-- An agent session's environment holds only the variables of Linewright's
-  environment that this table or `session-env` names, and what Linewright sets
-  itself: the session's GitHub token, when it has one, as `GH_TOKEN` and
-  `GITHUB_TOKEN`, and its own temporary directory as `TMPDIR`. A name ending in
-  `*` names every variable with that prefix.
+An agent session's environment holds only the variables of Linewright's
+environment that this table or `session-env` names, and what Linewright sets
+itself: the session's GitHub token, when it has one, as `GH_TOKEN` and
+`GITHUB_TOKEN`, and its own temporary directory as `TMPDIR`.
 
-  | variables | what for |
-  |---|---|
-  | `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL` | finding programs and the user's home |
-  | `LANG`, `LANGUAGE`, `LC_*`, `TZ` | locale and time zone |
-  | `TERM` | the terminal tools format for |
-  | `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` | where tools keep their configuration and caches |
-  | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, in either case | reaching the network through the host's proxy |
-  | `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS` | trusting the host's certificate authorities |
-  | `ANTHROPIC_*`, `CLAUDE_*` | the agent runtime's configuration and credentials |
+| variables                                                                | what for                                           |
+| ------------------------------------------------------------------------ | -------------------------------------------------- |
+| `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`                               | finding programs and the user's home               |
+| `LANG`, `LANGUAGE`, `LC_*`, `TZ`                                         | locale and time zone                               |
+| `TERM`                                                                   | the terminal tools format for                      |
+| `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`   | where tools keep their configuration and caches    |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, in either case     | reaching the network through the host's proxy      |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`                   | trusting the host's certificate authorities        |
+| `ANTHROPIC_*`, `CLAUDE_*`                                                | the agent runtime's configuration and credentials  |
 
-- `session-env` never passes Linewright's GitHub tokens or the webhook
-  secret: a pattern skips them, and naming one is an error at startup.
-- At startup Linewright logs the names, never the values, of the variables
-  in its environment that sessions are not given.
+- **Patterns.** A name ending in `*` names every variable with that prefix.
+- **Never passed.** `session-env` never passes Linewright's GitHub tokens or
+  the webhook secret: a pattern skips them, and naming one is an error at
+  startup.
+- **Logged at startup.** At startup Linewright logs the names, never the
+  values, of the variables in its environment that sessions are not given.
 
-### Running
+## Running
 
-- Linewright runs wherever `git`, `bash`, the agent runtime and the project's
-  toolchain are on the path: directly on a machine, or in a container whose
-  image the operator builds with those in it. Agents' commands run in `bash`,
-  whatever shell the operator uses.
-- The server logs each decision and action, readable for a person tailing it
-  and structured (JSON lines) for machines, by the `log-format` setting.
-  With webhooks on, that includes the address it listens on, each delivery
-  and what it names, and each delivery refused and why.
-- Agents run without permission prompts; the container is the isolation
-  when one is used.
-- Unix-like systems: Linux and macOS.
+Linewright runs wherever `git`, `bash`, the agent runtime and the project's
+toolchain are on the path: directly on a machine, or in a container whose
+image the operator builds with those in it.
+
+- **The shell.** Agents' commands run in `bash`, whatever shell the operator
+  uses.
+- **The log.** The server logs each decision and action, readable for a
+  person tailing it and structured (JSON lines) for machines, by the
+  `log-format` setting. With webhooks on, that includes the address it
+  listens on, each delivery and what it names, and each delivery refused and
+  why.
+- **Permissions.** Agents run without permission prompts; the container is
+  the isolation when one is used.
+- **Systems.** Unix-like systems: Linux and macOS.
 
 ## Out of scope
 
