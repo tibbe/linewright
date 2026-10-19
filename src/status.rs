@@ -82,9 +82,7 @@ pub struct Status {
     pub runs: Vec<RunInFlight>,
     /// The other items Linewright tracks: those with no run in flight.
     pub items: Vec<Tracked>,
-    #[serde(rename = "workflows")]
     pub automations: Vec<AutomationRuns>,
-    #[serde(rename = "unparsed_workflows")]
     pub unparsed_automations: Vec<UnparsedAutomation>,
 }
 
@@ -484,8 +482,8 @@ fn automation_lines(status: &Status, paint: Paint) -> Vec<String> {
             ),
         };
         let name = &automation.name;
-        std::iter::once(format!("workflow {name} last run: {last}"))
-            .chain(next.map(|next| format!("workflow {name} next run: {next}")))
+        std::iter::once(format!("automation {name} last run: {last}"))
+            .chain(next.map(|next| format!("automation {name} next run: {next}")))
     });
     let unparsed = status
         .unparsed_automations

@@ -177,10 +177,10 @@ async fn with_ticket_and_automation() -> World {
             "maintainer",
             "main",
             &[(
-                ".linewright/workflows/weekly.md",
+                ".linewright/automations/weekly.md",
                 "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
             )],
-            "Add a workflow",
+            "Add an automation",
         )
         .await
         .unwrap();
@@ -209,8 +209,8 @@ async fn status_shows_linewright_then_the_tracked_items_then_the_automations() {
             "",
             "#1",
             "",
-            "workflow weekly last run",
-            "workflow weekly next run",
+            "automation weekly last run",
+            "automation weekly next run",
         ],
         "{}",
         output.stdout

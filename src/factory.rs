@@ -473,7 +473,9 @@ impl Factory {
             .read_file(branch, &path)
             .await
             .with_context(|| format!("reading {path}"))?
-            .with_context(|| format!("there is no workflow `{name}`: `{branch}` has no {path}"))?;
+            .with_context(|| {
+                format!("there is no automation `{name}`: `{branch}` has no {path}")
+            })?;
         let automation =
             automation::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
         run_and_log(
@@ -483,7 +485,7 @@ impl Factory {
             self.stopping.clone(),
         )
         .await
-        .with_context(|| format!("the run of the workflow `{name}` failed"))
+        .with_context(|| format!("the run of the automation `{name}` failed"))
     }
 
     async fn automations(&mut self) -> Vec<Automation> {
@@ -494,7 +496,7 @@ impl Factory {
         self.automation_files = match automation::read(self.shell.store.as_ref(), branch).await {
             Ok(files) => files,
             Err(e) => {
-                error!(error = format!("{e:#}"), "listing the workflows failed");
+                error!(error = format!("{e:#}"), "listing the automations failed");
                 AutomationFiles::default()
             }
         };
@@ -502,7 +504,7 @@ impl Factory {
             warn!(
                 path = file.path,
                 error = file.reason,
-                "skipping a workflow file"
+                "skipping an automation file"
             );
         }
         self.automation_files.parsed.clone()
@@ -825,7 +827,7 @@ fn begin_automation(shell: &Shell, name: &AutomationName) -> Result<runs::Runnin
             },
             shell.clock.now(),
         )
-        .with_context(|| format!("recording the run of the workflow `{name}`"))
+        .with_context(|| format!("recording the run of the automation `{name}`"))
 }
 
 async fn run_and_log(
@@ -835,22 +837,22 @@ async fn run_and_log(
     cancel: CancellationToken,
 ) -> Result<()> {
     let name = &automation.name;
-    info!(workflow = %name, run = %running.id(), "workflow run started");
+    info!(automation = %name, run = %running.id(), "automation run started");
     match run::automation(shell, automation, running, cancel).await {
         Ok(AutomationEnd::Finished(result)) => {
-            info!(workflow = %name, summary = result.summary, "workflow run finished");
+            info!(automation = %name, summary = result.summary, "automation run finished");
             Ok(())
         }
         Ok(AutomationEnd::UsageLimit(limit)) => {
             warn!(
-                workflow = %name,
+                automation = %name,
                 resets_at = %limit.resets_at,
-                "workflow run ended for the usage limit"
+                "automation run ended for the usage limit"
             );
             Ok(())
         }
         Err(e) => {
-            error!(workflow = %name, error = format!("{e:#}"), "workflow run failed");
+            error!(automation = %name, error = format!("{e:#}"), "automation run failed");
             Err(e)
         }
     }

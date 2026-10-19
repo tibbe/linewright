@@ -157,7 +157,7 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
 }
 
 #[tokio::test]
-async fn a_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
+async fn an_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
     let (world, work_dir) = world().await;
     world
         .store
@@ -165,10 +165,10 @@ async fn a_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
             "maintainer",
             "main",
             &[(
-                ".linewright/workflows/weekly.md",
+                ".linewright/automations/weekly.md",
                 "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
             )],
-            "Add a workflow",
+            "Add an automation",
         )
         .await
         .unwrap();
@@ -187,12 +187,12 @@ async fn a_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}", output.stdout);
     assert!(
-        lines[0].starts_with("weekly/2: failed — workflow weekly, started "),
+        lines[0].starts_with("weekly/2: failed — automation weekly, started "),
         "{}",
         output.stdout
     );
     assert!(
-        lines[1].starts_with("weekly/1: done — workflow weekly, started "),
+        lines[1].starts_with("weekly/1: done — automation weekly, started "),
         "{}",
         output.stdout
     );
@@ -672,4 +672,60 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
         (Some(0), "")
     );
     assert_eq!(no_stage.code, Some(2), "{}", no_stage.stderr);
+}
+
+#[tokio::test]
+async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are_counted_on_from() {
+    let (world, work_dir) = world().await;
+    // Where, and as what, the previous version recorded an automation's run.
+    let old = work_dir.path().join(REPO).join("runs/workflows/weekly");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(
+        old.join("1.json"),
+        json!({
+            "workflow": "weekly",
+            "n": 1,
+            "started_at": "2026-09-28T06:00:00Z",
+            "end": {"at": "2026-09-28T06:05:00Z", "ending": "done"},
+            "sessions": [],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(
+                ".linewright/automations/weekly.md",
+                "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
+            )],
+            "Add an automation",
+        )
+        .await
+        .unwrap();
+    world
+        .harness
+        .on_automation(|_| Ok(json!({"summary": "Nothing to do.", "issues": []}).to_string()));
+    world
+        .factory
+        .run_automation(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+
+    let output = lw(work_dir.path(), &["runs"]).await;
+
+    let lines: Vec<&str> = output.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{}", output.stdout);
+    assert!(
+        lines[0].starts_with("weekly/2: done — automation weekly, started "),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        lines[1].starts_with("weekly/1: done — automation weekly, started 2026-09-28"),
+        "{}",
+        output.stdout
+    );
 }

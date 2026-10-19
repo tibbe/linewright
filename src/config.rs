@@ -89,8 +89,7 @@ pub enum Command {
         #[arg(long)]
         follow: bool,
     },
-    /// Workflows: `workflow run NAME` runs one now, then exits.
-    #[command(name = "workflow")]
+    /// Automations: `automation run NAME` runs one now, then exits.
     Automation {
         #[command(subcommand)]
         command: AutomationCommand,
@@ -173,8 +172,8 @@ impl Args for Which {
 
 #[derive(Subcommand, Debug)]
 pub enum AutomationCommand {
-    /// Run the workflow in `.linewright/workflows/NAME.md` on the default
-    /// branch once, now, then exit; its schedule stays as it was.
+    /// Run the automation in `.linewright/automations/NAME.md` on the
+    /// default branch once, now, then exit; its schedule stays as it was.
     Run {
         #[arg(value_name = "NAME")]
         name: AutomationName,

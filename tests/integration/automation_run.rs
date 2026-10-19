@@ -26,8 +26,8 @@ async fn with_automation(name: &str, text: &str) -> World {
         .commit(
             "maintainer",
             "main",
-            &[(&format!(".linewright/workflows/{name}.md"), text)],
-            "Add a workflow",
+            &[(&format!(".linewright/automations/{name}.md"), text)],
+            "Add an automation",
         )
         .await
         .unwrap();
@@ -39,14 +39,14 @@ fn finished() -> String {
 }
 
 #[tokio::test]
-async fn a_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the_default_branch()
+async fn an_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the_default_branch()
 {
     let world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|call| {
         assert!(
             call.spec
                 .dir
-                .join(".linewright/workflows/weekly.md")
+                .join(".linewright/automations/weekly.md")
                 .exists()
         );
         Ok(finished())
@@ -65,10 +65,56 @@ async fn a_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_t
         "{}",
         prompts[0]
     );
+    assert!(
+        prompts[0].contains("### The automation `weekly`"),
+        "{}",
+        prompts[0]
+    );
+    assert!(
+        prompts[0].contains("one of the maintainer's automations"),
+        "{}",
+        prompts[0]
+    );
 }
 
 #[tokio::test]
-async fn a_automation_run_files_the_issues_its_result_returns_as_linewright() {
+async fn an_operators_automation_prompt_is_the_one_the_session_gets() {
+    let briefs = briefs_with("automation.md", |text| {
+        format!("Mind the schedule.\n\n{text}")
+    });
+    let world = World::with(|config| {
+        config.briefs = linewright::briefs::Briefs::load(briefs.path()).unwrap();
+    })
+    .await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(".linewright/automations/weekly.md", WEEKLY)],
+            "Add an automation",
+        )
+        .await
+        .unwrap();
+    world.harness.on_automation(|_| Ok(finished()));
+
+    world
+        .factory
+        .run_automation(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+
+    let prompts = world.harness.automation_prompts();
+    assert_eq!(prompts.len(), 1);
+    assert!(
+        prompts[0].starts_with("Mind the schedule.\n\n"),
+        "{}",
+        prompts[0]
+    );
+}
+
+#[tokio::test]
+async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
     let world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|_| {
         Ok(json!({
@@ -105,13 +151,13 @@ async fn a_automation_run_files_the_issues_its_result_returns_as_linewright() {
                 "Fix the widget count",
                 vec!["ready-for-agent"],
                 LINEWRIGHT,
-                "Count them all.\n\n- [ ] All counted\n\nFiled by the workflow `weekly`."
+                "Count them all.\n\n- [ ] All counted\n\nFiled by the automation `weekly`."
             ),
             (
                 "Should gadgets expire?",
                 vec!["ready-for-human"],
                 LINEWRIGHT,
-                "Recommend: yes.\n\nFiled by the workflow `weekly`."
+                "Recommend: yes.\n\nFiled by the automation `weekly`."
             ),
         ]
     );
@@ -258,7 +304,7 @@ async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_
 }
 
 #[tokio::test]
-async fn a_automation_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
+async fn an_automation_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
     let world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|_| Ok(finished()));
 
@@ -268,7 +314,7 @@ async fn a_automation_runs_kept_its_brief_result_and_transcript_under_the_work_d
         .await
         .unwrap();
 
-    let sessions = world.dir.path().join("work/sessions/workflow-weekly");
+    let sessions = world.dir.path().join("work/sessions/automation-weekly");
     let records: Vec<_> = std::fs::read_dir(&sessions).unwrap().collect();
     assert_eq!(records.len(), 1);
     let record = records[0].as_ref().unwrap().path();
@@ -329,12 +375,16 @@ async fn an_unknown_automation_fails_naming_its_file() {
             .unwrap_err()
     );
 
-    assert!(error.contains(".linewright/workflows/daily.md"), "{error}");
+    assert!(error.contains("there is no automation `daily`"), "{error}");
+    assert!(
+        error.contains(".linewright/automations/daily.md"),
+        "{error}"
+    );
     assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
 }
 
 #[tokio::test]
-async fn a_automation_file_that_does_not_parse_fails_saying_why() {
+async fn an_automation_file_that_does_not_parse_fails_saying_why() {
     let world = with_automation(
         "weekly",
         "---\non:\n  schedule: \"every monday\"\n---\nLook.\n",
@@ -374,7 +424,7 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
 
     assert!(error.contains("it timed out"), "{error}");
     assert!(
-        error.contains("or the workflow's `timeout` may need to be longer"),
+        error.contains("or the automation's `timeout` may need to be longer"),
         "{error}"
     );
     assert_eq!(world.harness.automation_prompts().len(), 1);
@@ -427,13 +477,14 @@ fn the_help_says_how_to_run_one_now() {
         .unwrap();
 
     let help = String::from_utf8_lossy(&output.stdout);
-    assert!(help.contains("`workflow run NAME`"), "{help}");
+    assert!(help.contains("`automation run NAME`"), "{help}");
 }
 
 #[test]
-fn the_command_that_runs_one_now_keeps_its_name() {
-    assert!(Cli::try_parse_from(["lw", "workflow", "run", "weekly"]).is_ok());
-    assert!(Cli::try_parse_from(["lw", "automation", "run", "weekly"]).is_err());
+fn the_command_that_runs_one_now_is_named_after_automations() {
+    assert!(Cli::try_parse_from(["lw", "automation", "run", "weekly"]).is_ok());
+    // The command's old name, which the spec gives no alias.
+    assert!(Cli::try_parse_from(["lw", "workflow", "run", "weekly"]).is_err());
 }
 
 #[tokio::test]

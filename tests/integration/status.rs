@@ -185,7 +185,7 @@ fn each_run_in_flight_follows_the_linewright_section_with_how_long_it_has_run_an
         after_linewright(&view, "2026-10-01T12:05:00Z"),
         [
             "42/rework-2: #42 rework, running for 1h 5m, quiet for 25m",
-            "weekly/3: workflow weekly, running for 5m, quiet for 1s",
+            "weekly/3: automation weekly, running for 5m, quiet for 1s",
             "43/triage-1: #43 triage, running for 0s, no session yet",
             "",
             "#7: ready to claim — Do the thing",
@@ -383,7 +383,7 @@ fn each_tracked_item_says_in_one_line_what_linewright_waits_for_on_it() {
 }
 
 #[test]
-fn a_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
+fn an_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
         last_runs: last_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
@@ -393,14 +393,14 @@ fn a_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
-            "workflow weekly last run: 2026-09-28 06:00:02 UTC",
-            "workflow weekly next run: 2026-10-05 06:00:00 UTC",
+            "automation weekly last run: 2026-09-28 06:00:02 UTC",
+            "automation weekly next run: 2026-10-05 06:00:00 UTC",
         ]
     );
 }
 
 #[test]
-fn a_automation_whose_schedule_ticked_since_its_last_run_is_due_now() {
+fn an_automation_whose_schedule_ticked_since_its_last_run_is_due_now() {
     let view = View {
         automations: files(&[("hourly", "0 * * * *")], &[]),
         last_runs: last_runs(&[("hourly", "2026-10-01T11:30:00Z")]),
@@ -410,14 +410,14 @@ fn a_automation_whose_schedule_ticked_since_its_last_run_is_due_now() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
         [
-            "workflow hourly last run: 2026-10-01 11:30:00 UTC",
-            "workflow hourly next run: due now",
+            "automation hourly last run: 2026-10-01 11:30:00 UTC",
+            "automation hourly next run: due now",
         ]
     );
 }
 
 #[test]
-fn a_automation_whose_schedule_never_ticks_again_has_no_next_run() {
+fn an_automation_whose_schedule_never_ticks_again_has_no_next_run() {
     let view = View {
         automations: files(&[("leap", "0 0 30 2 *")], &[]),
         last_runs: last_runs(&[("leap", "2026-09-28T06:00:00Z")]),
@@ -427,14 +427,14 @@ fn a_automation_whose_schedule_never_ticks_again_has_no_next_run() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
         [
-            "workflow leap last run: 2026-09-28 06:00:00 UTC",
-            "workflow leap next run: none, its schedule ticks no more",
+            "automation leap last run: 2026-09-28 06:00:00 UTC",
+            "automation leap next run: none, its schedule ticks no more",
         ]
     );
 }
 
 #[test]
-fn a_automation_with_no_recorded_run_is_shown_as_not_run_yet() {
+fn an_automation_with_no_recorded_run_is_shown_as_not_run_yet() {
     let view = View {
         automations: files(&[("hourly", "0 * * * *")], &[]),
         ..view(vec![])
@@ -442,7 +442,7 @@ fn a_automation_with_no_recorded_run_is_shown_as_not_run_yet() {
 
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
-        ["workflow hourly last run: none yet, its schedule starts when a poll first sees it"]
+        ["automation hourly last run: none yet, its schedule starts when a poll first sees it"]
     );
 }
 
@@ -451,7 +451,7 @@ fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_pars
     let view = View {
         automations: files(
             &[("weekly", "0 6 * * 1"), ("hourly", "0 * * * *")],
-            &[(".linewright/workflows/broken.md", "no front matter")],
+            &[(".linewright/automations/broken.md", "no front matter")],
         ),
         last_runs: last_runs(&[
             ("weekly", "2026-09-28T06:00:00Z"),
@@ -465,11 +465,11 @@ fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_pars
         [
             "#7: ready to claim — Do the thing",
             "",
-            "workflow hourly last run: 2026-10-01 12:00:00 UTC",
-            "workflow hourly next run: 2026-10-01 13:00:00 UTC",
-            "workflow weekly last run: 2026-09-28 06:00:00 UTC",
-            "workflow weekly next run: 2026-10-05 06:00:00 UTC",
-            ".linewright/workflows/broken.md: does not parse: no front matter",
+            "automation hourly last run: 2026-10-01 12:00:00 UTC",
+            "automation hourly next run: 2026-10-01 13:00:00 UTC",
+            "automation weekly last run: 2026-09-28 06:00:00 UTC",
+            "automation weekly next run: 2026-10-05 06:00:00 UTC",
+            ".linewright/automations/broken.md: does not parse: no front matter",
         ]
     );
 }
@@ -479,7 +479,7 @@ fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
     let view = View {
         automations: files(
             &[],
-            &[(".linewright/workflows/broken.md", "no front matter")],
+            &[(".linewright/automations/broken.md", "no front matter")],
         ),
         ..view(vec![ready_issue()])
     };
@@ -569,7 +569,7 @@ fn the_json_names_each_fact() {
                 },
                 {
                     "id": "weekly/3",
-                    "workflow": "weekly",
+                    "automation": "weekly",
                     "started_at": "2026-10-01T12:09:00Z",
                     "duration_seconds": 60,
                     "quiet_seconds": null,
@@ -583,7 +583,7 @@ fn the_json_names_each_fact() {
                     "waiting_for": [],
                 },
             ],
-            "workflows": [
+            "automations": [
                 {
                     "name": "weekly",
                     "schedule": "scheduled",
@@ -591,7 +591,7 @@ fn the_json_names_each_fact() {
                     "next_run": "2026-10-05T06:00:00Z",
                 },
             ],
-            "unparsed_workflows": [],
+            "unparsed_automations": [],
         })
     );
 }

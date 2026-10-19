@@ -545,7 +545,7 @@ pub fn subject_name(subject: Subject) -> String {
 pub fn purpose_name(purpose: &Purpose) -> String {
     match purpose {
         Purpose::Work { subject, .. } => subject_name(*subject),
-        Purpose::Automation(name) => format!("workflow-{name}"),
+        Purpose::Automation(name) => format!("automation-{name}"),
     }
 }
 
@@ -554,7 +554,7 @@ pub fn purpose_name(purpose: &Purpose) -> String {
 fn timeout_setting(purpose: &Purpose) -> &'static str {
     match purpose {
         Purpose::Work { .. } => "`session-timeout`",
-        Purpose::Automation(_) => "the workflow's `timeout`",
+        Purpose::Automation(_) => "the automation's `timeout`",
     }
 }
 
@@ -565,7 +565,7 @@ fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBu
         .map_err(infra)?;
     let kind = match purpose {
         Purpose::Work { kind, .. } => kind.name(),
-        Purpose::Automation(_) => "workflow",
+        Purpose::Automation(_) => "automation",
     };
     let base = format!("{}-{kind}", now.format("%Y%m%dT%H%M%SZ"));
     for n in 1.. {
@@ -1756,7 +1756,7 @@ async fn record_automation(
             .create_issue(NewIssue {
                 title: issue.title.clone(),
                 body: format!(
-                    "{}\n\nFiled by the workflow `{}`.",
+                    "{}\n\nFiled by the automation `{}`.",
                     issue.body, automation.name
                 ),
                 labels: [state.into()]
@@ -1766,18 +1766,18 @@ async fn record_automation(
             })
             .await?;
         info!(
-            workflow = %automation.name,
+            automation = %automation.name,
             issue = %number,
             title = issue.title,
-            "workflow issue filed"
+            "automation issue filed"
         );
     }
     for issue in dropped {
         warn!(
-            workflow = %automation.name,
+            automation = %automation.name,
             max_issues = automation.max_issues,
             title = issue.title,
-            "workflow issue dropped: the run returned more than max-issues"
+            "automation issue dropped: the run returned more than max-issues"
         );
     }
     Ok(())

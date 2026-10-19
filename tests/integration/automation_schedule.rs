@@ -15,8 +15,8 @@ async fn add_automation(world: &World, name: &str, text: &str) {
         .commit(
             "maintainer",
             "main",
-            &[(&format!(".linewright/workflows/{name}.md"), text)],
-            "Add a workflow",
+            &[(&format!(".linewright/automations/{name}.md"), text)],
+            "Add an automation",
         )
         .await
         .unwrap();
@@ -38,7 +38,7 @@ async fn restart(world: &mut World) {
 }
 
 #[tokio::test]
-async fn a_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
+async fn an_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
     world.harness.on_automation(|_| Ok(finished()));
@@ -53,7 +53,7 @@ async fn a_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
 }
 
 #[tokio::test]
-async fn a_automation_seen_for_the_first_time_does_not_run() {
+async fn an_automation_seen_for_the_first_time_does_not_run() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
     world.harness.on_automation(|_| Ok(finished()));
@@ -70,7 +70,7 @@ async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_star
     world.harness.on_automation(|_| Ok(finished()));
     world.poll().await;
 
-    let record = world.dir.path().join("work/workflow-runs.json");
+    let record = world.dir.path().join("work/automation-runs.json");
     assert!(std::fs::read_to_string(record).unwrap().contains("hourly"));
     world.clock.advance(TimeDelta::hours(5));
     restart(&mut world).await;
@@ -81,7 +81,7 @@ async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_star
 }
 
 #[tokio::test]
-async fn a_automation_file_that_does_not_parse_is_skipped_and_the_others_still_run() {
+async fn an_automation_file_that_does_not_parse_is_skipped_and_the_others_still_run() {
     let mut world = World::new().await;
     add_automation(
         &world,
@@ -102,7 +102,7 @@ async fn a_automation_file_that_does_not_parse_is_skipped_and_the_others_still_r
 }
 
 #[tokio::test]
-async fn a_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines_runs() {
+async fn an_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines_runs() {
     let mut world = World::with(|config| config.max_runs = 1).await;
     add_automation(&world, "hourly", HOURLY).await;
     world.harness.on_automation(|_| Ok(finished()));
@@ -133,7 +133,7 @@ async fn a_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines_
 }
 
 #[tokio::test]
-async fn running_a_automation_by_hand_leaves_its_schedule_as_it_was() {
+async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
     world.harness.on_automation(|_| Ok(finished()));
@@ -148,4 +148,24 @@ async fn running_a_automation_by_hand_leaves_its_schedule_as_it_was() {
     world.poll().await;
 
     assert_eq!(world.harness.automation_prompts().len(), 2);
+}
+
+#[tokio::test]
+async fn the_last_runs_the_previous_version_recorded_are_kept() {
+    let mut world = World::new().await;
+    add_automation(&world, "hourly", HOURLY).await;
+    world.harness.on_automation(|_| Ok(finished()));
+    // Where the previous version recorded the last runs.
+    let work_dir = world.dir.path().join("work");
+    std::fs::create_dir_all(&work_dir).unwrap();
+    std::fs::write(
+        work_dir.join("workflow-runs.json"),
+        r#"{"hourly": "2026-10-01T11:00:00Z"}"#,
+    )
+    .unwrap();
+    restart(&mut world).await;
+
+    world.poll().await;
+
+    assert_eq!(world.harness.automation_prompts().len(), 1);
 }

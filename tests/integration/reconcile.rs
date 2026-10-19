@@ -2701,7 +2701,7 @@ fn scheduled(automations: &Automations, minute: i64) -> Vec<Action> {
 }
 
 #[test]
-fn a_automation_whose_schedule_ticked_since_its_last_run_runs_and_the_run_is_recorded() {
+fn an_automation_whose_schedule_ticked_since_its_last_run_runs_and_the_run_is_recorded() {
     let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(
@@ -2714,14 +2714,14 @@ fn a_automation_whose_schedule_ticked_since_its_last_run_runs_and_the_run_is_rec
 }
 
 #[test]
-fn a_automation_whose_schedule_has_not_ticked_since_its_last_run_waits() {
+fn an_automation_whose_schedule_has_not_ticked_since_its_last_run_waits() {
     let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(scheduled(&world, 59), vec![]);
 }
 
 #[test]
-fn a_automation_seen_for_the_first_time_does_not_run_and_counts_as_run_then() {
+fn an_automation_seen_for_the_first_time_does_not_run_and_counts_as_run_then() {
     let world = automations(&["hourly"], &[], &[]);
 
     assert_eq!(
@@ -2787,7 +2787,7 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
 }
 
 #[test]
-fn a_automation_seen_for_the_first_time_is_recorded_even_with_no_room() {
+fn an_automation_seen_for_the_first_time_is_recorded_even_with_no_room() {
     let tickets = snapshot([1, 2, 3, 4].map(|n| claimed(ticket(n))).to_vec());
     let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
     let world = automations(&["hourly"], &[], &[]);

@@ -219,15 +219,15 @@ async fn with_hourly_automation(world: &World) {
         .commit(
             "maintainer",
             "main",
-            &[(".linewright/workflows/hourly.md", HOURLY)],
-            "Add a workflow",
+            &[(".linewright/automations/hourly.md", HOURLY)],
+            "Add an automation",
         )
         .await
         .unwrap();
 }
 
 #[tokio::test]
-async fn a_automation_due_under_the_limit_waits_and_runs_at_the_first_poll_after_the_reset() {
+async fn an_automation_due_under_the_limit_waits_and_runs_at_the_first_poll_after_the_reset() {
     let mut world = World::serving().await;
     with_hourly_automation(&world).await;
     world.harness.on_automation(|_| {
@@ -238,7 +238,7 @@ async fn a_automation_due_under_the_limit_waits_and_runs_at_the_first_poll_after
     open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
     world.clock.next_sleep().await;
-    let path = world.dir.path().join("work/workflow-runs.json");
+    let path = world.dir.path().join("work/automation-runs.json");
     let last_runs = || std::fs::read_to_string(&path);
     let before = last_runs().unwrap();
 
@@ -416,10 +416,10 @@ async fn a_scheduled_automation_run_resumes_with_the_time_left_of_its_own_timeou
             "maintainer",
             "main",
             &[(
-                ".linewright/workflows/hourly.md",
+                ".linewright/automations/hourly.md",
                 "---\non:\n  schedule: \"0 * * * *\"\ntimeout: 60m\n---\nLook around.\n",
             )],
-            "Add a workflow",
+            "Add an automation",
         )
         .await
         .unwrap();

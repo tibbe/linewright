@@ -376,7 +376,7 @@ impl Prompts {
             rework: template!(source, "rework.md")?,
             fix_ci: template!(source, "fix-ci.md")?,
             update: template!(source, "update.md")?,
-            automation: template!(source, "workflow.md")?,
+            automation: template!(source, "automation.md")?,
             new_branch: template!(source, "parts/new-branch.md")?,
             existing_branch: template!(source, "parts/existing-branch.md")?,
             unfinished: template!(source, "parts/unfinished.md")?,

@@ -219,8 +219,8 @@ async fn filing_automation(
         .commit(
             "maintainer",
             "main",
-            &[(".linewright/workflows/weekly.md", WEEKLY)],
-            "Add a workflow",
+            &[(".linewright/automations/weekly.md", WEEKLY)],
+            "Add an automation",
         )
         .await
         .unwrap();

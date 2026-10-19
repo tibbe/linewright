@@ -356,7 +356,7 @@ async fn a_replay_runs_no_automations() {
     spec_change_case(
         dir.path(),
         &[(
-            ".linewright/workflows/hourly.md",
+            ".linewright/automations/hourly.md",
             "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n",
         )],
     );

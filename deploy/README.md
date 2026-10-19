@@ -100,7 +100,7 @@ From another machine, run each command in the host's clone:
   started a session, `--run ID` another run's, and `--verbose` all of it.
 - Each agent session's record, under
   `/data/OWNER/NAME/sessions/` in the container. There is a directory for
-  each issue (`issue-N`), spec PR (`pr-N`) and workflow (`workflow-NAME`),
+  each issue (`issue-N`), spec PR (`pr-N`) and automation (`automation-NAME`),
   and in it one for each session, named by its start time (UTC) and kind:
   - `brief.md`: what the session was asked, and `followup-N.md` after it;
   - `output.jsonl`: its output, written as it runs;

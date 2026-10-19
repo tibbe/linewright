@@ -13,7 +13,7 @@ use crate::domain::Timestamp;
 use crate::records;
 use crate::store::Store;
 
-pub const DIR: &str = ".linewright/workflows";
+pub const DIR: &str = ".linewright/automations";
 
 const DEFAULT_MAX_ISSUES: u32 = 3;
 
@@ -63,7 +63,7 @@ impl FromStr for AutomationName {
     fn from_str(name: &str) -> Result<AutomationName, String> {
         if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
             return Err(format!(
-                "{name:?} is not a workflow's name: the name of a file in `{DIR}`, without `.md`"
+                "{name:?} is not an automation's name: the name of a file in `{DIR}`, without `.md`"
             ));
         }
         Ok(AutomationName(name.to_string()))
@@ -104,9 +104,16 @@ impl LastRuns {
     }
 
     /// Empty when the record is missing or unreadable, which is logged: every
-    /// automation then counts as seen for the first time.
+    /// automation then counts as seen for the first time. Until the record is
+    /// first saved, the one an earlier version kept stands in for it.
     pub fn load(work_dir: &Path) -> LastRuns {
-        records::load(&last_runs_path(work_dir), WHAT).unwrap_or_default()
+        let path = last_runs_path(work_dir);
+        let path = if path.exists() {
+            path
+        } else {
+            old_last_runs_path(work_dir)
+        };
+        records::load(&path, WHAT).unwrap_or_default()
     }
 
     pub fn save(&self, work_dir: &Path) -> Result<()> {
@@ -114,9 +121,15 @@ impl LastRuns {
     }
 }
 
-const WHAT: &str = "the workflows' last runs";
+const WHAT: &str = "the automations' last runs";
 
 fn last_runs_path(work_dir: &Path) -> PathBuf {
+    work_dir.join("automation-runs.json")
+}
+
+/// Where versions before automations were renamed from workflows kept the
+/// record: read until the record is first saved, never written to.
+fn old_last_runs_path(work_dir: &Path) -> PathBuf {
     work_dir.join("workflow-runs.json")
 }
 
@@ -183,7 +196,7 @@ pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
     let (front, body) = split_front_matter(text)
         .context("the file does not open with YAML front matter between `---` lines")?;
     let front: FrontMatter =
-        serde_yaml_ng::from_str(front).context("the front matter is not a workflow's")?;
+        serde_yaml_ng::from_str(front).context("the front matter is not an automation's")?;
     let timeout = front
         .timeout
         .map(|t| {

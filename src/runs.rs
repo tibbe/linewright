@@ -21,7 +21,9 @@ pub enum RunOf {
         stage: WorkKind,
     },
     Automation {
-        #[serde(rename = "workflow")]
+        // The name in records written before the rename, as with
+        // `OLD_AUTOMATIONS`.
+        #[serde(alias = "workflow")]
         automation: AutomationName,
     },
 }
@@ -135,8 +137,20 @@ impl Runs {
         match of {
             RunOf::Work { item, .. } => self.dir().join("items").join(item.0.to_string()),
             RunOf::Automation { automation } => {
-                self.dir().join("workflows").join(automation.to_string())
+                self.dir().join(AUTOMATIONS).join(automation.to_string())
             }
+        }
+    }
+
+    /// Where an earlier version kept the runs of `of`, if anywhere else.
+    fn old_dir_of(&self, of: &RunOf) -> Option<PathBuf> {
+        match of {
+            RunOf::Work { .. } => None,
+            RunOf::Automation { automation } => Some(
+                self.dir()
+                    .join(OLD_AUTOMATIONS)
+                    .join(automation.to_string()),
+            ),
         }
     }
 
@@ -144,7 +158,12 @@ impl Runs {
         let dir = self.dir_of(&of);
         std::fs::create_dir_all(&dir).context("creating the runs' directory")?;
         let prefix = file_prefix(&of);
-        let mut n = numbers(&dir, &prefix).max().unwrap_or(0) + 1;
+        let old_dir = self.old_dir_of(&of);
+        let mut n = numbers(&dir, &prefix)
+            .chain(old_dir.iter().flat_map(|old| numbers(old, &prefix)))
+            .max()
+            .unwrap_or(0)
+            + 1;
         // Creating the lock reserves the number, against another process
         // numbering a run at the same time.
         let (lock, lock_path) = loop {
@@ -180,8 +199,12 @@ impl Runs {
     }
 
     fn path_of(&self, id: &RunId) -> PathBuf {
-        self.dir_of(&id.of)
-            .join(format!("{}{}.json", file_prefix(&id.of), id.n))
+        let file = format!("{}{}.json", file_prefix(&id.of), id.n);
+        let path = self.dir_of(&id.of).join(&file);
+        match self.old_dir_of(&id.of) {
+            Some(old) if !path.exists() && old.join(&file).exists() => old.join(file),
+            _ => path,
+        }
     }
 
     /// A record that does not read is logged and taken as missing.
@@ -201,7 +224,7 @@ impl Runs {
     /// A record that does not read is logged and skipped.
     pub fn read(&self) -> Result<Vec<Recorded>> {
         let mut recorded = vec![];
-        for kind in ["items", "workflows"] {
+        for kind in ["items", AUTOMATIONS, OLD_AUTOMATIONS] {
             for dir in entries(&self.dir().join(kind))? {
                 for path in entries(&dir)? {
                     if path.extension().is_some_and(|e| e == "json")
@@ -215,6 +238,12 @@ impl Runs {
         Ok(recorded)
     }
 }
+
+const AUTOMATIONS: &str = "automations";
+
+/// Where versions before automations were renamed from workflows kept
+/// automations' runs: read beside [`AUTOMATIONS`], never written to.
+const OLD_AUTOMATIONS: &str = "workflows";
 
 fn file_prefix(of: &RunOf) -> String {
     match of {
@@ -365,7 +394,7 @@ impl RunInFlight {
 fn describe_of(of: &RunOf) -> String {
     match of {
         RunOf::Work { item, stage } => format!("{item} {}", stage.name()),
-        RunOf::Automation { automation } => format!("workflow {automation}"),
+        RunOf::Automation { automation } => format!("automation {automation}"),
     }
 }
 

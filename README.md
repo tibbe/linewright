@@ -25,20 +25,21 @@ static `musl` for Alpine and older distributions) on x86_64 and aarch64, and
 macOS on Apple silicon.
 
 - `lw serve` polls until stopped; `once` runs one poll cycle and the
-  runs it starts; each poll also runs the workflows in `.linewright/workflows/`
-  that are due on their schedule. `workflow run NAME` runs the workflow in
-  `.linewright/workflows/NAME.md` once, now. One `serve` runs per repository
+  runs it starts; each poll also runs the automations in
+  `.linewright/automations/` that are due on their schedule.
+  `automation run NAME` runs the automation in
+  `.linewright/automations/NAME.md` once, now. One `serve` runs per repository
   on a host.
 - `status` asks the running `serve` of the repository what it is doing: since
   when it has run, its polls, the usage limit while one is in force, how many
   runs are in flight, the deliveries with webhooks on, each run in flight with
   how long it has run and its quiet time, how long since its agent last produced
   output, the items it tracks, where each is and what Linewright waits for on
-  it, and each workflow with its last and next run and any workflow file that
-  does not parse. `explain N` asks it where issue or pull request #N stands,
-  when it last read it, each thing Linewright waits for before it acts on it
-  next, such as a free run, the usage limit, CI or the maintainer, its run in
-  flight with its quiet time and its past runs as `runs N` lists them. For an
+  it, and each automation with its last and next run and any automation file
+  that does not parse. `explain N` asks it where issue or pull request #N
+  stands, when it last read it, each thing Linewright waits for before it acts
+  on it next, such as a free run, the usage limit, CI or the maintainer, its run
+  in flight with its quiet time and its past runs as `runs N` lists them. For an
   item it does not track, `serve` reads #N from GitHub and `explain` says why
   Linewright leaves it alone, such as a missing label, a closed item, someone
   else's pull request or a merged one that is no spec change; it exits 4 when
@@ -48,7 +49,7 @@ macOS on Apple silicon.
   the temporary directory without it.
 - `runs [N]` lists the runs, newest first, or issue or pull request #N's:
   each run's ID (`43/rework-2`, the second rework run on pull request #43, or
-  `weekly/3` for a workflow's), its item, stage, start, duration and outcome,
+  `weekly/3` for an automation's), its item, stage, start, duration and outcome,
   including runs that started no session. `--stage`, `--since` and `--limit`
   narrow the list, and `--json` prints it as JSON. It asks the running
   `serve` or, with none running, reads the records `serve` keeps under the

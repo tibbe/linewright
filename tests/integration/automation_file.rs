@@ -45,7 +45,7 @@ fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions(
 }
 
 #[test]
-fn without_a_timeout_or_an_issue_cap_a_automation_takes_the_defaults() {
+fn without_a_timeout_or_an_issue_cap_an_automation_takes_the_defaults() {
     let automation = parse(
         &name("nightly"),
         "---\non:\n  schedule: \"30 2 * * *\"\n---\nTidy up.\n",
@@ -107,7 +107,7 @@ fn bad_yaml_does_not_parse() {
     let error = error("---\non: [schedule\n---\nLook.\n");
 
     assert!(
-        error.contains("the front matter is not a workflow's"),
+        error.contains("the front matter is not an automation's"),
         "{error}"
     );
 }

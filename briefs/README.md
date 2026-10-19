@@ -56,7 +56,7 @@ to start with a prompt that lacks one or has one it doesn't know.
 | `rework.md` | rework |
 | `fix-ci.md` | CI fixes |
 | `update.md` | an update's conflict, with no skill: the prompt is the brief |
-| `workflow.md` | workflow runs |
+| `automation.md` | automation runs |
 | `parts/` | filled into the prompts above, such as a conflict's instructions |
 | `follow-ups/` | a session sent back to work, such as for a result that doesn't parse |
 
