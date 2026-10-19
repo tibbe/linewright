@@ -41,11 +41,18 @@ Give each ticket its **blocking edges**: the other tickets that must complete be
 
 ### 4. Check the breakdown
 
-Nobody approves the breakdown: agents start on the tickets as soon as Linewright publishes them. Write out the proposed breakdown as a numbered list. For each ticket, show:
+Nobody approves the breakdown: agents start on the tickets as soon as Linewright publishes them, every unblocked ticket at once, each on its own branch. Write out the proposed breakdown as a numbered list. For each ticket, show:
 
 - **Title**: short descriptive name
 - **Blocked by**: which other tickets (if any) must complete first
 - **What it delivers**: the end-to-end behaviour this ticket makes work
+- **Touches**: the files it changes and the types and interfaces it adds
+
+Apply these rules, in order:
+
+1. **Shared work goes first.** When two tickets would add the same type or interface, move it into a prefactor ticket that blocks both.
+2. **Tickets that change the same file run one after the other.** Merge them into one ticket; when the merged ticket would not fit a single fresh context window, make one block the other instead.
+3. **Cut fewer tickets.** Put small work of the same shape in one ticket, and when unsure whether to split, keep it whole.
 
 Ask yourself:
 
@@ -53,7 +60,7 @@ Ask yourself:
 - Are the blocking edges correct: does each ticket only depend on tickets that genuinely gate it?
 - Should any tickets be merged or split further?
 
-Iterate until you would approve the breakdown.
+Iterate until every two tickets that could run at the same time (neither blocks the other, directly or through other tickets) change different files and add different types.
 
 ### 5. Return the tickets in your result
 
