@@ -22,9 +22,7 @@ requests, the rework starts within seconds.
 Setting the webhook secret turns webhooks on.
 
 - **The webhook.** The maintainer creates the repository's webhook by hand,
-  in the repository's settings: creating one takes admin rights on the
-  repository, which Linewright's account does not need and, with
-  `--auto-merge`, must not have. Linewright cannot see the webhook, so a
+  in the repository's settings. Linewright cannot see the webhook, so a
   misconfigured one shows as deliveries that never arrive, or that arrive and
   are refused, which the webhook's Recent Deliveries on GitHub and
   Linewright's log both show.
