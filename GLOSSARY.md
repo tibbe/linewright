@@ -63,9 +63,19 @@ _Avoid_: state label, workflow label
 Linewright's assignment to an item: it has taken the item on.
 _Avoid_: lock, lease, take
 
+**Hand-back**:
+Linewright's letting go of an item it cannot finish, with the reason, for a
+person to take on.
+_Avoid_: handoff, escalation, reassignment
+
 **In review**:
 An issue's status while an open pull request closes it.
 _Avoid_: pending, in progress
+
+**Marked for Linewright**:
+An item Linewright may start work on of its own accord: every item, or, where
+the operator requires a label, those carrying it.
+_Avoid_: enabled, trusted
 
 **Ticket**:
 An issue an agent implements.
