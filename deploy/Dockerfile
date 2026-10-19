@@ -3,7 +3,7 @@
 FROM runtime
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libc6-dev curl \
+    && apt-get install -y --no-install-recommends gcc libc6-dev curl procps \
     && rm -rf /var/lib/apt/lists/*
 # sccache, so each session's fresh clone compiles the dependencies from the
 # cache that earlier sessions filled, not from scratch.
