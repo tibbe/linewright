@@ -1034,20 +1034,19 @@ async fn design_issue(
         } => {
             let store = &shell.store;
             let n = issue.number;
-            let comment = match &cut {
-                IssueWork::AsItIs => design,
+            match &cut {
+                IssueWork::AsItIs => store.comment(n, &design).await,
                 IssueWork::Cut(Cut { tickets, comment }) => {
-                    let filed = async {
+                    async {
                         let required: Vec<String> =
                             shell.creation_label().await?.into_iter().collect();
-                        file_tickets_under(shell, n, tickets, &required).await
+                        let filed = file_tickets_under(shell, n, tickets, &required).await?;
+                        publish_cut(shell, n, &design, &filed, comment).await
                     }
                     .await
-                    .map_err(apply)?;
-                    with_tickets(&design, &filed, comment)
                 }
-            };
-            store.comment(n, &comment).await.map_err(apply)?;
+            }
+            .map_err(apply)?;
             file_spec_gaps(shell, &spec_gaps, &filed_gaps)
                 .await
                 .map_err(apply)?;
@@ -1123,9 +1122,7 @@ async fn file_tickets(
     store
         .edit_body(tracking_issue, &tracking::body(pr.number, &list))
         .await?;
-    store
-        .comment(tracking_issue, &with_tickets(design, &list, comment))
-        .await?;
+    publish_cut(shell, tracking_issue, design, &list, comment).await?;
     store
         .comment(
             pr.number,
@@ -1138,7 +1135,8 @@ async fn file_tickets(
 }
 
 /// Files `tickets` as sub-issues of `tracking_issue`, labeled `required`
-/// and each linked to the tickets blocking it, and returns them in order.
+/// and each linked to the tickets blocking it, and returns them in order,
+/// not yet ready: [`publish_cut`] readies them.
 async fn file_tickets_under(
     shell: &Shell,
     tracking_issue: Number,
@@ -1164,16 +1162,37 @@ async fn file_tickets_under(
             title: ticket.title.clone(),
         });
     }
+    Ok(list)
+}
+
+/// Posts the design of work cut into `tickets` on their `tracking_issue`,
+/// then readies them.
+async fn publish_cut(
+    shell: &Shell,
+    tracking_issue: Number,
+    design: &str,
+    tickets: &[FiledTicket],
+    comment: &str,
+) -> Result<()> {
+    let store = &shell.store;
+    store
+        .comment(tracking_issue, &with_tickets(design, tickets, comment))
+        .await?;
     // Tickets get `ready-for-agent` only once every edge exists, so no poll
-    // sees a ticket unblocked before its blockers are linked, and only once
-    // they are designed, so that none is taken for an issue to design.
-    for ticket in &list {
+    // sees a ticket unblocked before its blockers are linked; once the design
+    // is on the tracking issue, so that their implementers read it
+    // (docs/specs/implementation.md, "What the implementer reads"); and only
+    // once they are designed, so that none is taken for an issue to design.
+    // A stop before then leaves the item undesigned, and its cut is discarded
+    // with these tickets, ready or not (docs/specs/design.md, "Discarding a
+    // cut").
+    for ticket in tickets {
         store.add_label(ticket.number, label::DESIGNED).await?;
         store
             .add_label(ticket.number, label::READY_FOR_AGENT)
             .await?;
     }
-    Ok(list)
+    Ok(())
 }
 
 /// The design of work cut into `tickets`, with them in order and why

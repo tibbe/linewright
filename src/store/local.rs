@@ -55,6 +55,14 @@ struct State {
     /// People GitHub would refuse to assign, such as those without access.
     unassignable: Vec<Login>,
     after_comment: Option<Box<dyn FnOnce() + Send>>,
+    after_labeling: Option<AfterLabeling>,
+}
+
+/// What to run once Linewright next adds `label` to `number`.
+struct AfterLabeling {
+    number: Number,
+    label: String,
+    then: Box<dyn FnOnce() + Send>,
 }
 
 #[derive(Clone, Serialize)]
@@ -161,6 +169,7 @@ impl LocalStore {
                 unreadable_by: vec![],
                 unassignable: vec![],
                 after_comment: None,
+                after_labeling: None,
             }),
         })
     }
@@ -540,6 +549,20 @@ impl LocalStore {
 
     pub fn after_linewrights_next_comment(&self, then: impl FnOnce() + Send + 'static) {
         self.state().after_comment = Some(Box::new(then));
+    }
+
+    /// Runs `then` once Linewright next adds `label` to `number`.
+    pub fn after_labeling(
+        &self,
+        number: Number,
+        label: &str,
+        then: impl FnOnce() + Send + 'static,
+    ) {
+        self.state().after_labeling = Some(AfterLabeling {
+            number,
+            label: label.to_string(),
+            then: Box::new(then),
+        });
     }
 
     pub fn accept_merges(&self, pr: Number) {
@@ -1560,7 +1583,21 @@ impl Store for LocalStore {
 
     async fn add_label(&self, number: Number, label: &str) -> Result<()> {
         let now = self.now();
-        self.state().add_label(number, label, now)
+        let then = {
+            let mut state = self.state();
+            state.add_label(number, label, now)?;
+            match state.after_labeling.take() {
+                Some(hook) if hook.number == number && hook.label == label => Some(hook.then),
+                other => {
+                    state.after_labeling = other;
+                    None
+                }
+            }
+        };
+        if let Some(then) = then {
+            then();
+        }
+        Ok(())
     }
 
     async fn remove_label(&self, number: Number, label: &str) -> Result<()> {

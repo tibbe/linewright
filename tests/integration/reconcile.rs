@@ -988,6 +988,57 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
     );
 }
 
+/// As a design files it before readying it: with no label yet.
+fn unreadied_ticket(number: u64) -> Issue {
+    let mut ticket = issue(number);
+    ticket.author = Login::new(LINEWRIGHT);
+    ticket
+}
+
+#[test]
+fn a_spec_change_cut_stopped_before_its_tickets_are_readied_is_discarded_with_them() {
+    let mut world = snapshot(vec![
+        tracking(9, 5, &[(10, true), (11, true)]),
+        unreadied_ticket(10),
+        blocked_by(unreadied_ticket(11), 10, true),
+    ]);
+    world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
+
+    assert_eq!(
+        decide(&world),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::SpecChange {
+                pr: Number(5),
+                tracking: Number(9),
+            },
+            peoples_pulls: vec![],
+            tickets: vec![Number(10), Number(11)],
+            pulls: vec![],
+        })]
+    );
+}
+
+#[test]
+fn an_issue_cut_stopped_before_its_tickets_are_readied_is_discarded_with_them() {
+    let mut stopped = claimed(readied(9));
+    stopped.sub_issues = linewrights(&[(10, true), (11, true)]);
+    let world = snapshot(vec![
+        stopped,
+        unreadied_ticket(10),
+        blocked_by(unreadied_ticket(11), 10, true),
+    ]);
+
+    assert_eq!(
+        decide(&world),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::Issue(Number(9)),
+            peoples_pulls: vec![],
+            tickets: vec![Number(10), Number(11)],
+            pulls: vec![],
+        })]
+    );
+}
+
 /// As a design files it: ready for an agent, and designed.
 fn ticket(number: u64) -> Issue {
     let mut ticket = labeled(

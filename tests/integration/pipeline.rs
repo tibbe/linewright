@@ -5,6 +5,7 @@ use common::*;
 use linewright::domain::{Assignment, Issue, IssueEvent, PullState};
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
+use linewright::store::local::LocalStore;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -1485,6 +1486,76 @@ async fn a_rework_that_needed_no_change_answers_its_feedback_also_after_a_restar
     assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
 }
 
+/// A slot for what `read` sees in the store, and the hook that fills it.
+fn seen<T: Send + 'static>(
+    world: &World,
+    read: impl FnOnce(&LocalStore) -> T + Send + 'static,
+) -> (Arc<Mutex<Option<T>>>, impl FnOnce() + Send + 'static) {
+    let slot = Arc::new(Mutex::new(None));
+    let (store, fill) = (world.store.clone(), slot.clone());
+    (slot, move || *fill.lock().unwrap() = Some(read(&store)))
+}
+
+fn taken<T>(slot: &Mutex<Option<T>>) -> T {
+    slot.lock().unwrap().take().expect("the hook ran")
+}
+
+/// Checks that the tickets of the cut of [`tickets_script`] were linked but
+/// not ready when its design comment landed on their tracking issue, the
+/// first in `at_comment`, and ready when the item they were cut from was
+/// labeled designed. Returns the tracking issue as it was at the comment.
+fn readied_after_their_design<'a>(at_comment: &'a [Issue], at_designed: &[Issue]) -> &'a Issue {
+    let [tracking, store_ticket, list_ticket] = at_comment else {
+        panic!("expected a tracking issue and two tickets, got {at_comment:#?}");
+    };
+    assert!(
+        last_comment(tracking).starts_with("A gadget store, and a listing that reads it."),
+        "{tracking:#?}"
+    );
+    assert_eq!(list_ticket.blocked_by[0].number, store_ticket.number);
+    assert_eq!(labels(store_ticket), Vec::<&str>::new());
+    assert_eq!(labels(list_ticket), Vec::<&str>::new());
+    let [_, tickets @ ..] = at_designed else {
+        panic!("expected a tracking issue and its tickets, got {at_designed:#?}");
+    };
+    assert_eq!(tickets.len(), 2, "{tickets:#?}");
+    for ticket in tickets {
+        assert_eq!(labels(ticket), ["linewright:designed", "ready-for-agent"]);
+    }
+    tracking
+}
+
+#[tokio::test]
+async fn the_tickets_of_a_spec_change_are_readied_only_once_their_design_is_on_the_tracking_issue()
+{
+    let mut world = World::new().await;
+    tickets_script(&world);
+    let spec_pr = world
+        .store
+        .merge_change(
+            "maintainer",
+            "Gadgets",
+            "Adds gadgets.",
+            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
+        )
+        .await
+        .unwrap();
+    let (at_comment, on_comment) = seen(&world, move |store| {
+        (store.issues(), store.pull_labels(spec_pr))
+    });
+    world.store.after_linewrights_next_comment(on_comment);
+    let (at_designed, on_designed) = seen(&world, LocalStore::issues);
+    world
+        .store
+        .after_labeling(spec_pr, "linewright:designed", on_designed);
+
+    world.poll().await;
+
+    let (at_comment, spec_labels) = taken(&at_comment);
+    readied_after_their_design(&at_comment, &taken(&at_designed));
+    assert!(!spec_labels.contains(&"linewright:designed".to_string()));
+}
+
 #[tokio::test]
 async fn feedback_posted_while_a_rework_records_its_outcome_starts_another() {
     let mut world = World::new().await;
@@ -2063,6 +2134,26 @@ async fn an_issue_designed_into_tickets_files_them_under_it_and_lets_go_of_it_as
     assert_eq!(labels(&tracking), ["linewright:designed"]);
     assert_eq!(tracking.assignees, []);
     assert!(tracking.open);
+}
+
+#[tokio::test]
+async fn the_tickets_of_an_issue_are_readied_only_once_their_design_is_on_it() {
+    let mut world = World::new().await;
+    tickets_script(&world);
+    let issue = readied_issue(&world);
+    let (at_comment, on_comment) = seen(&world, LocalStore::issues);
+    world.store.after_linewrights_next_comment(on_comment);
+    let (at_designed, on_designed) = seen(&world, LocalStore::issues);
+    world
+        .store
+        .after_labeling(issue, "linewright:designed", on_designed);
+
+    world.poll().await;
+
+    let at_comment = taken(&at_comment);
+    let tracking = readied_after_their_design(&at_comment, &taken(&at_designed));
+    assert_eq!(tracking.number, issue);
+    assert!(!labels(tracking).contains(&"linewright:designed"));
 }
 
 #[tokio::test]
