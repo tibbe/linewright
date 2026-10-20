@@ -1,0 +1,22 @@
+{#- A status as an icon and its word, in the colour of the check state on
+    GitHub it maps to, so that it is never told by colour alone. -#}
+{%- macro status(tone, word) -%}
+<span class="status {{ tone.name() }}">{% call icon(tone) %}{% endcall %}{{ word }}</span>
+{%- endmacro -%}
+
+{%- macro icon(tone) -%}
+<svg class="icon {{ tone.name() }}" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+{%- match tone -%}
+{%- when Tone::Success -%}
+<circle cx="8" cy="8" r="6.75"/><path d="M5 8.25l2 2 4-4.25"/>
+{%- when Tone::Failure -%}
+<circle cx="8" cy="8" r="6.75"/><path d="M5.75 5.75l4.5 4.5M10.25 5.75l-4.5 4.5"/>
+{%- when Tone::InProgress -%}
+<circle cx="8" cy="8" r="6.75"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/>
+{%- when Tone::Pending -%}
+<circle cx="8" cy="8" r="6.75" stroke-dasharray="2.5 2"/>
+{%- when Tone::Cancelled -%}
+<circle cx="8" cy="8" r="6.75"/><path d="M3.25 12.75l9.5-9.5"/>
+{%- endmatch -%}
+</svg>
+{%- endmacro -%}

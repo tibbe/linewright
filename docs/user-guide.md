@@ -214,6 +214,24 @@ there as one commit titled "Unfinished work, kept when its run stopped". The
 next run continues from the branch and folds that commit into its own; delete
 the branch to have it start over. Closing the issue deletes it.
 
+## Following Linewright in a browser
+
+`serve` serves a web UI on the same Unix socket as the monitoring commands.
+Whoever runs Linewright can open it to you through an SSH tunnel from your
+machine to that socket, whose path `serve` logs as it starts:
+
+```sh
+ssh -N -L 8080:/run/user/1000/linewright/0123456789abcdef.sock linewright-host
+```
+
+Then open `http://localhost:8080/items/42` to see what `lw explain 42` shows:
+where #42 stands, what Linewright waits for on it, its run in flight and its
+latest runs. Every item it names links to its own page and to GitHub. The bar
+at the top shows what `lw status` shows about Linewright itself, with a banner
+while a usage limit is in force or a drain is under way. Times show in your
+time zone. The page keeps itself up to date; if it loses `serve`, it keeps
+what it showed, says since when, and reconnects on its own.
+
 ## Recurring work
 
 For engineering. An automation is a Markdown file in `.linewright/automations/`

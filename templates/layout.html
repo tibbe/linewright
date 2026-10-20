@@ -1,0 +1,36 @@
+{%- import "macros.html" as ui -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{ page.title }}</title>
+<link rel="stylesheet" href="{{ page.assets.css }}">
+<script src="{{ page.assets.htmx }}" defer></script>
+<script src="{{ page.assets.script }}" defer></script>
+</head>
+<body data-events="{{ page.events }}">
+{% block bar -%}
+<header id="bar">
+<nav>
+<a class="repo" href="https://github.com/{{ bar.repo }}">{{ bar.repo }}</a>
+<a href="/">Board</a>
+<a href="/runs">Runs</a>
+</nav>
+<ul class="facts">
+{%- for fact in bar.facts %}
+<li{% if fact.problem %} class="problem"{% endif %}>{% if fact.problem %}{% call ui::icon(Tone::Failure) %}{% endcall %}{% endif %}{{ fact.html|safe }}</li>
+{%- endfor %}
+</ul>
+{%- for banner in bar.banners %}
+<p class="banner" role="status">{{ banner|safe }}</p>
+{%- endfor %}
+</header>
+{%- endblock %}
+<p id="lost" class="banner" role="status" hidden>Lost <code>serve</code> <time></time>; reconnecting.</p>
+<main>
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>

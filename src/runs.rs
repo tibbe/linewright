@@ -9,7 +9,7 @@ use tracing::warn;
 
 use crate::automation::AutomationName;
 use crate::domain::{Number, Timestamp};
-use crate::phrase::Phrase;
+use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{DoneRun, OLD_DESIGN, WorkKind};
 use crate::records;
 use crate::status::Paint;
@@ -343,9 +343,12 @@ impl InFlight {
             id: self.id.clone(),
             started_at: self.started_at,
             duration_seconds: (now - self.started_at).num_seconds(),
-            quiet_seconds: self
-                .last_output
-                .map(|last| (now - last).num_seconds().max(0)),
+            // Both counted in whole seconds from the start, so that when the
+            // quiet time began, derived from them, holds still as time passes.
+            quiet_seconds: self.last_output.map(|last| {
+                let ran = (now - self.started_at).num_seconds();
+                (ran - (last - self.started_at).num_seconds()).max(0)
+            }),
         }
     }
 }
@@ -405,7 +408,7 @@ impl RunInFlight {
     }
 
     /// What the run is of, how long it has run and its quiet time.
-    fn describe(&self) -> Phrase {
+    pub(crate) fn describe(&self) -> Phrase {
         let now = self.started_at + chrono::TimeDelta::seconds(self.duration_seconds);
         let phrase = describe_of(&self.id.of)
             .text(", running for ")
@@ -753,28 +756,60 @@ pub fn render(listing: &Listing, colour: bool) -> String {
 }
 
 pub(crate) fn render_left_out(left_out: usize, how: &str) -> String {
+    format!("left out: {}", left_out_phrase(left_out, how))
+}
+
+/// How many earlier runs a list left out, and the command that shows them.
+pub(crate) fn left_out_phrase(left_out: usize, how: &str) -> Phrase {
     let runs = if left_out == 1 { "run" } else { "runs" };
-    format!("left out: {left_out} earlier {runs}; show them with {how}")
+    format!("{left_out} earlier {runs}; show them with {how}").into()
+}
+
+impl Outcome {
+    pub(crate) fn word(self) -> &'static str {
+        match self {
+            Outcome::Ended { ending, .. } => match ending {
+                Ending::Done => "done",
+                Ending::HandedBack => "handed back",
+                Ending::Cancelled => "cancelled",
+                Ending::UsageLimit => "ended for the usage limit",
+                Ending::Failed => "failed",
+            },
+            Outcome::InFlight { .. } => "in flight",
+            Outcome::Interrupted => "interrupted",
+        }
+    }
+
+    pub(crate) fn tone(self) -> Tone {
+        match self {
+            Outcome::Ended { ending, .. } => match ending {
+                Ending::Done => Tone::Success,
+                Ending::HandedBack | Ending::Failed => Tone::Failure,
+                Ending::Cancelled | Ending::UsageLimit => Tone::Cancelled,
+            },
+            Outcome::InFlight { .. } => Tone::InProgress,
+            Outcome::Interrupted => Tone::Cancelled,
+        }
+    }
 }
 
 pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
+    let word = run.outcome.word();
     let outcome = match run.outcome {
         Outcome::Ended { ending, .. } => match ending {
-            Ending::Done => "done".into(),
-            Ending::HandedBack => paint.red("handed back"),
-            Ending::Cancelled => "cancelled".into(),
-            Ending::UsageLimit => paint.yellow("ended for the usage limit"),
-            Ending::Failed => paint.red("failed"),
+            Ending::Done | Ending::Cancelled => word.into(),
+            Ending::HandedBack | Ending::Failed => paint.red(word),
+            Ending::UsageLimit => paint.yellow(word),
         },
-        Outcome::InFlight { .. } => paint.bold("in flight"),
-        Outcome::Interrupted => paint.yellow("interrupted"),
+        Outcome::InFlight { .. } => paint.bold(word),
+        Outcome::Interrupted => paint.yellow(word),
     };
     format!("{}: {outcome} — {}", paint.bold(&run.id), describe_run(run))
 }
 
 /// What a run is of, when it started and how long it ran, after its
 /// outcome.
-fn describe_run(run: &Run) -> Phrase {
+pub(crate) fn describe_run(run: &Run) -> Phrase {
     let phrase = describe_of(&run.id.of)
         .text(", started ")
         .time(run.started_at);

@@ -7,7 +7,7 @@ use crate::domain::{
     ClosingPull, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
     Tracks, label,
 };
-use crate::phrase::Phrase;
+use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{NotSpecChange, NotWorked, Wait, not_a_spec_change, worked_ticket};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
@@ -137,20 +137,17 @@ impl ItemRuns {
         }
     }
 
-    fn lines(&self, paint: Paint) -> Vec<String> {
-        let in_flight = self
-            .run_in_flight
-            .iter()
-            .map(|run| format!("run in flight: {}", run.render(paint)));
-        let past = self
-            .past_runs
-            .iter()
-            .map(|run| format!("past run: {}", runs::render_run(run, paint)));
+    fn lines(&self) -> impl Iterator<Item = Line<'_>> {
+        let in_flight = self.run_in_flight.iter().map(Line::InFlight);
+        let past = self.past_runs.iter().map(Line::Past);
         let left_out = (self.past_runs_left_out > 0).then(|| {
             let how = format!("lw runs {}", self.runs_of.0);
-            runs::render_left_out(self.past_runs_left_out, &how)
+            Line::fact(
+                "left out",
+                runs::left_out_phrase(self.past_runs_left_out, &how),
+            )
         });
-        in_flight.chain(past).chain(left_out).collect()
+        in_flight.chain(past).chain(left_out)
     }
 }
 
@@ -276,20 +273,24 @@ impl Family {
         family
     }
 
-    fn lines(&self) -> Vec<Phrase> {
+    fn lines(&self) -> impl Iterator<Item = Line<'_>> {
         let parents = self.parents.iter().map(|parent| {
-            Phrase::from("parent: ")
-                .item(parent.number)
-                .text(", ")
-                .text(parent.role.describe())
+            Line::fact(
+                "parent",
+                Phrase::from(parent.number)
+                    .text(", ")
+                    .text(parent.role.describe()),
+            )
         });
         let children = self.children.iter().map(|child| {
-            Phrase::from("child: ")
-                .item(child.number)
-                .text(", ")
-                .text(child.role.describe())
+            Line::fact(
+                "child",
+                Phrase::from(child.number)
+                    .text(", ")
+                    .text(child.role.describe()),
+            )
         });
-        parents.chain(children).collect()
+        parents.chain(children)
     }
 }
 
@@ -396,6 +397,33 @@ pub fn explain(
         ));
     }
     None
+}
+
+/// What `explain` answers of #`number` from `view` alone, without reading
+/// GitHub: `None` when the view does not hold it.
+pub(crate) fn explain_in_view(
+    view: &View,
+    recorded: &[Recorded],
+    number: Number,
+    now: Timestamp,
+) -> Option<Answer> {
+    if let Some(explanation) = explain(view, recorded, number, now) {
+        return Some(Answer::Managed(explanation));
+    }
+    let (held, item) = if let Some(issue) = view.snapshot.issue(number) {
+        (
+            AnyItem::HeldIssue(Box::new(issue.clone())),
+            Item::Issue(number),
+        )
+    } else {
+        let pull = view.snapshot.pull(number)?;
+        (AnyItem::Pull(Box::new(pull.clone())), Item::Pull(number))
+    };
+    // Read when the view was, not now.
+    let last_read = view.read_at.get(&item).copied().unwrap_or(view.polls.last);
+    let mut answer = explain_read(view, recorded, &held, now);
+    *answer.last_read_mut() = last_read;
+    Some(answer)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -575,12 +603,79 @@ fn pull_standing(
     ))
 }
 
-pub fn render_answer(answer: &Answer, colour: bool) -> String {
-    let left_alone = match answer {
-        Answer::Managed(explanation) => return render(explanation, colour),
-        Answer::LeftAlone(left_alone) => left_alone,
-    };
-    let paint = Paint(colour);
+/// What `explain` shows of an item, after the heading naming it.
+pub(crate) enum Line<'a> {
+    Fact {
+        label: &'static str,
+        phrase: Phrase,
+        tone: Option<Tone>,
+    },
+    Wait(&'a Wait),
+    InFlight(&'a RunInFlight),
+    Past(&'a Run),
+}
+
+impl Line<'_> {
+    fn fact(label: &'static str, phrase: Phrase) -> Line<'static> {
+        Line::Fact {
+            label,
+            phrase,
+            tone: None,
+        }
+    }
+
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Line::Fact { label, .. } => label,
+            Line::Wait(_) => "waiting for",
+            Line::InFlight(_) => "run in flight",
+            Line::Past(_) => "past run",
+        }
+    }
+
+    fn render(&self, paint: Paint) -> String {
+        let shown = match self {
+            Line::Fact { phrase, .. } => phrase.to_string(),
+            Line::Wait(wait) => describe_wait(wait).to_string(),
+            Line::InFlight(run) => run.render(paint),
+            Line::Past(run) => runs::render_run(run, paint),
+        };
+        format!("{}: {shown}", self.label())
+    }
+}
+
+impl Answer {
+    pub(crate) fn number(&self) -> Number {
+        match self {
+            Answer::Managed(explanation) => explanation.number,
+            Answer::LeftAlone(left_alone) => left_alone.number,
+        }
+    }
+
+    fn last_read_mut(&mut self) -> &mut Timestamp {
+        match self {
+            Answer::Managed(explanation) => &mut explanation.last_read,
+            Answer::LeftAlone(left_alone) => &mut left_alone.last_read,
+        }
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        match self {
+            Answer::Managed(explanation) => &explanation.title,
+            Answer::LeftAlone(left_alone) => &left_alone.title,
+        }
+    }
+
+    /// What `explain` shows of the item, after its number and title.
+    pub(crate) fn lines(&self) -> Vec<Line<'_>> {
+        match self {
+            Answer::Managed(explanation) => explanation_lines(explanation),
+            Answer::LeftAlone(left_alone) => left_alone_lines(left_alone),
+        }
+    }
+}
+
+fn left_alone_lines(left_alone: &LeftAlone) -> Vec<Line<'_>> {
     let closed = || Phrase::from("it is closed");
     let (state, why) = match &left_alone.item {
         LeftAloneItem::Issue(LeftAloneIssue::Closed) => ("closed issue", closed()),
@@ -596,29 +691,65 @@ pub fn render_answer(answer: &Answer, colour: bool) -> String {
             Phrase::from("it is no spec change: ").then(describe_not_spec_change(left_alone)),
         ),
     };
-    let lines = [format!(
-        "{}: {}",
-        paint.bold(left_alone.number),
-        left_alone.title
-    )]
-    .into_iter()
-    .chain(
-        left_alone
-            .family
-            .lines()
-            .into_iter()
-            .map(|line| line.to_string()),
-    )
-    .chain([
-        format!("state: {state}"),
-        Phrase::from("last read: ")
-            .time(left_alone.last_read)
-            .to_string(),
-        format!("left alone: {why}"),
-    ])
-    .chain(left_alone.runs.lines(paint));
+    let tone = match left_alone.item {
+        LeftAloneItem::Issue(LeftAloneIssue::Closed)
+        | LeftAloneItem::PullRequest(LeftAlonePull::Closed) => Some(Tone::Cancelled),
+        LeftAloneItem::PullRequest(LeftAlonePull::Merged { .. }) => Some(Tone::Success),
+        LeftAloneItem::Issue(LeftAloneIssue::Open { .. })
+        | LeftAloneItem::PullRequest(LeftAlonePull::Open { .. }) => None,
+    };
+    left_alone
+        .family
+        .lines()
+        .chain([
+            Line::Fact {
+                label: "state",
+                phrase: state.into(),
+                tone,
+            },
+            Line::fact("last read", Phrase::default().time(left_alone.last_read)),
+            Line::fact("left alone", why),
+        ])
+        .chain(left_alone.runs.lines())
+        .collect()
+}
+
+fn explanation_lines(explanation: &Explanation) -> Vec<Line<'_>> {
+    let (state, tone) = match &explanation.standing {
+        Standing::PullRequest { review, .. } | Standing::Item(ItemState::InReview(review)) => {
+            (review.describe(), review.ci.tone())
+        }
+        Standing::Item(state) => (describe(state), None),
+    };
+    let nothing = explanation.waiting_for.is_empty().then(|| {
+        Line::fact(
+            "waiting for",
+            "nothing: Linewright acts on it at its next poll".into(),
+        )
+    });
+    explanation
+        .family
+        .lines()
+        .chain([
+            Line::Fact {
+                label: "state",
+                phrase: state,
+                tone,
+            },
+            Line::fact("last read", Phrase::default().time(explanation.last_read)),
+        ])
+        .chain(nothing)
+        .chain(explanation.waiting_for.iter().map(Line::Wait))
+        .chain(explanation.runs.lines())
+        .collect()
+}
+
+pub fn render_answer(answer: &Answer, colour: bool) -> String {
+    let paint = Paint(colour);
+    let heading = format!("{}: {}", paint.bold(answer.number()), answer.title());
     let mut text = String::new();
-    for line in lines {
+    for line in std::iter::once(heading).chain(answer.lines().iter().map(|line| line.render(paint)))
+    {
         let _ = writeln!(text, "{line}");
     }
     text
@@ -704,33 +835,5 @@ fn describe_not_spec_change(because: &NotSpecChange) -> Phrase {
 }
 
 pub fn render(explanation: &Explanation, colour: bool) -> String {
-    let paint = Paint(colour);
-    let mut lines = vec![format!(
-        "{}: {}",
-        paint.bold(explanation.number),
-        explanation.title
-    )];
-    lines.extend(explanation.family.lines().iter().map(Phrase::to_string));
-    let state = match &explanation.standing {
-        Standing::PullRequest { review, .. } => review.describe(),
-        Standing::Item(state) => describe(state),
-    };
-    lines.push(format!("state: {state}"));
-    lines.push(
-        Phrase::from("last read: ")
-            .time(explanation.last_read)
-            .to_string(),
-    );
-    if explanation.waiting_for.is_empty() {
-        lines.push("waiting for: nothing: Linewright acts on it at its next poll".into());
-    }
-    for wait in &explanation.waiting_for {
-        lines.push(format!("waiting for: {}", describe_wait(wait)));
-    }
-    lines.extend(explanation.runs.lines(paint));
-    let mut text = String::new();
-    for line in lines {
-        let _ = writeln!(text, "{line}");
-    }
-    text
+    render_answer(&Answer::Managed(explanation.clone()), colour)
 }

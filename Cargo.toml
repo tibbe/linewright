@@ -46,6 +46,8 @@ wildcard_enum_match_arm = "warn"
 [dependencies]
 aho-corasick = "1"
 anyhow = "1"
+askama = "0.16"
+askama_web = { version = "0.16", features = ["axum-0.8"] }
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "query", "tokio"] }
 base64 = "0.22"
@@ -63,6 +65,7 @@ humantime = "2"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust-embed = { version = "8", features = ["include-exclude"] }
 rustix = { version = "1", features = ["process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -79,5 +82,9 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+# Reads the web UI's pages as a reader sees them.
+scraper = "0.27"
 # Paused time, for the session timeout under the usage limit.
 tokio = { version = "1", features = ["test-util"] }
+# Drives the router in-process.
+tower = { version = "0.5", features = ["util"] }

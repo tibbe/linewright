@@ -23,15 +23,16 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::clock::Clock;
-use crate::domain::Number;
+use crate::domain::{Number, Timestamp};
 use crate::drain::{Asked, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::explain;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
-use crate::runs::{self, ListError, RepoWorkDir, Runs, Watched};
+use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs, Watched};
 use crate::status::{self, Serving, Status, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
+use crate::web;
 use crate::webhook::Tally;
 
 pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> PathBuf {
@@ -169,7 +170,7 @@ pub struct Sources {
     pub ends: Ends,
 }
 
-/// The local API under `/api/`, answering only requests
+/// The local API under `/api/` and the web UI, answering only requests
 /// whose `Host` is local. `stopping` ends the event streams, so that
 /// stopping waits only for the answers being given.
 pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
@@ -183,6 +184,7 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/stop", get(answer_stop));
     Router::new()
         .nest("/api", api)
+        .merge(web::routes())
         .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
         .layer(middleware::from_fn(local_only))
         .layer(Extension(stopping))
@@ -217,7 +219,7 @@ impl Api {
                 }
             }
         });
-        info!(socket = %path.display(), "answering the monitoring commands and `drain`");
+        info!(socket = %path.display(), "answering the monitoring commands, `drain` and the web UI");
         Api {
             path,
             stop,
@@ -569,19 +571,40 @@ async fn answer_item(
     }
 }
 
+/// What `serve` explains an item from.
+pub(crate) struct Explaining {
+    pub(crate) view: View,
+    pub(crate) store: Arc<dyn Store>,
+    pub(crate) recorded: Vec<Recorded>,
+    pub(crate) now: Timestamp,
+}
+
+pub(crate) fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
+    let served = sources.served.borrow().clone();
+    let served = served.ok_or(Unexplained::NotPolledYet)?;
+    let recorded = Runs::new(&sources.work_dir.resolve())
+        .read()
+        .map_err(Unexplained::Failed)?;
+    Ok(Explaining {
+        view: served.view_now(),
+        store: served.store,
+        recorded,
+        now: sources.clock.now(),
+    })
+}
+
 /// What `explain` answers of #`number`: from `serve`'s view for a managed
 /// item, and otherwise as `serve` reads #`number` from GitHub now.
 pub(crate) async fn item_answer(
     sources: &Sources,
     number: Number,
 ) -> Result<explain::Answer, Unexplained> {
-    let served = sources.served.borrow().clone();
-    let served = served.ok_or(Unexplained::NotPolledYet)?;
-    let (view, store) = (served.view_now(), served.store);
-    let recorded = Runs::new(&sources.work_dir.resolve())
-        .read()
-        .map_err(Unexplained::Failed)?;
-    let now = sources.clock.now();
+    let Explaining {
+        view,
+        store,
+        recorded,
+        now,
+    } = explaining(sources)?;
     if let Some(answer) = explain::explain(&view, &recorded, number, now) {
         return Ok(explain::Answer::Managed(answer));
     }

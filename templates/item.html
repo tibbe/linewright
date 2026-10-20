@@ -1,0 +1,21 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+<section id="item">
+<h1>{{ item.heading|safe }}: {{ item.title }}</h1>
+<ul class="lines">
+{%- for line in item.lines %}
+<li>
+{%- match line -%}
+{%- when LineShown::Fact { label, tone, phrase } -%}
+{{ label }}: {% if let Some(tone) = tone %}{% call ui::icon(tone) %}{% endcall %}{% endif %}{{ phrase|safe }}
+{%- when LineShown::Status { label, tone, phrase } -%}
+{% call ui::status(tone, label) %}{% endcall %}: {{ phrase|safe }}
+{%- when LineShown::Past { label, run, outcome, word, about } -%}
+{{ label }}: {{ run|safe }}: {% call ui::status(outcome, word) %}{% endcall %} — {{ about|safe }}
+{%- endmatch -%}
+</li>
+{%- endfor %}
+</ul>
+</section>
+{%- endblock -%}

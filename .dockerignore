@@ -4,6 +4,8 @@
 !build.rs
 !src/
 !briefs/
+!templates/
+!assets/
 !rust-toolchain.toml
 !linewright.toml
 !deploy/sccache

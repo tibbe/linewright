@@ -8,6 +8,30 @@ use crate::domain::{Number, Timestamp};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Phrase(Vec<Segment>);
 
+/// The check state on GitHub an outcome or a state maps to
+/// (`docs/specs/design_system.md`, Status).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Success,
+    Failure,
+    InProgress,
+    Pending,
+    Cancelled,
+}
+
+impl Tone {
+    /// As the web UI's stylesheet names it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Tone::Success => "success",
+            Tone::Failure => "failure",
+            Tone::InProgress => "in-progress",
+            Tone::Pending => "pending",
+            Tone::Cancelled => "cancelled",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Segment {
     Text(String),

@@ -9,7 +9,7 @@ use crate::domain::{
     CheckState, Issue, Item, Login, Number, Pull, PullState, Requirement, Snapshot, StatusLabel,
     Timestamp, label,
 };
-use crate::phrase::Phrase;
+use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{
     Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
     next_run, open_pull_for, pending_spec_changes, worked_pulls,
@@ -198,6 +198,17 @@ pub enum Ci {
     Failing,
     Running,
     Green,
+}
+
+impl Ci {
+    pub(crate) fn tone(self) -> Option<Tone> {
+        match self {
+            Ci::NoChecks => None,
+            Ci::Failing => Some(Tone::Failure),
+            Ci::Running => Some(Tone::InProgress),
+            Ci::Green => Some(Tone::Success),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -477,8 +488,9 @@ impl Paint {
 }
 
 /// A line about Linewright itself or its automations, and how much it asks
-/// for the reader's attention.
-enum Fact {
+/// for the reader's attention: a warning is a usage limit in force or a
+/// drain under way.
+pub(crate) enum Fact {
     Plain(Phrase),
     Warning(Phrase),
     Problem(Phrase),
@@ -494,7 +506,7 @@ impl Fact {
     }
 }
 
-fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
+pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
     let polls = linewright.polls;
     let mut facts = vec![
         Fact::Plain(Phrase::from("serving since: ").time(linewright.serving_since)),
@@ -538,7 +550,7 @@ fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
     facts
 }
 
-fn automation_facts(status: &Status) -> Vec<Fact> {
+pub(crate) fn automation_facts(status: &Status) -> Vec<Fact> {
     let runs = status.automations.iter().flat_map(|automation| {
         let (last, next) = match automation.runs {
             Runs::NotRunYet => (

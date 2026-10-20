@@ -1,0 +1,166 @@
+/* The web UI's design system (docs/specs/design_system.md). The status
+   colours are those of GitHub's check states, in its light and dark
+   themes. */
+
+:root {
+  color-scheme: light dark;
+  --fg: #1f2328;
+  --fg-muted: #59636e;
+  --bg: #ffffff;
+  --bg-muted: #f6f8fa;
+  --border: #d1d9e0;
+  --link: #0969da;
+  --success: #1a7f37;
+  --failure: #d1242f;
+  --in-progress: #9a6700;
+  --pending: #9a6700;
+  --cancelled: #59636e;
+  --banner-bg: #fff8c5;
+  --banner-border: #d4a72c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f0f6fc;
+    --fg-muted: #9198a1;
+    --bg: #0d1117;
+    --bg-muted: #151b23;
+    --border: #3d444d;
+    --link: #4493f8;
+    --success: #3fb950;
+    --failure: #f85149;
+    --in-progress: #d29922;
+    --pending: #d29922;
+    --cancelled: #9198a1;
+    --banner-bg: #272115;
+    --banner-border: #9e6a03;
+  }
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  background: var(--bg-muted);
+}
+
+/* The link to an item on GitHub, beside the link to its page. */
+a.github::after {
+  content: "\2197" / "";
+  margin-left: 0.15em;
+  font-size: 0.8em;
+}
+
+#bar {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-muted);
+}
+
+#bar nav {
+  display: flex;
+  gap: 1rem;
+  align-items: baseline;
+}
+
+#bar .repo {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+#bar .facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--fg-muted);
+}
+
+#bar .facts .problem {
+  color: var(--failure);
+}
+
+.banner {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--banner-border);
+  border-radius: 6px;
+  background: var(--banner-bg);
+}
+
+#lost {
+  margin: 0.5rem 1rem;
+}
+
+main {
+  padding: 1rem;
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lines li {
+  padding: 0.2rem 0;
+}
+
+.icon {
+  width: 1em;
+  height: 1em;
+  margin-right: 0.3em;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+}
+
+.status {
+  white-space: nowrap;
+}
+
+.success {
+  color: var(--success);
+}
+
+.failure {
+  color: var(--failure);
+}
+
+.in-progress {
+  color: var(--in-progress);
+}
+
+.pending {
+  color: var(--pending);
+}
+
+.cancelled {
+  color: var(--cancelled);
+}

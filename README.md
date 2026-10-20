@@ -67,8 +67,14 @@ macOS on Apple silicon.
   running once it is made and again once it returns, and exits when the run
   ends. Like `runs`, it asks the running `serve` or reads the records
   without one, and exits 4 when #N has no runs or the run ID names none.
-  `serve` streams a followed transcript at `/logs/follow` as server-sent
-  events, which a reader resumes by `Last-Event-ID`.
+  `serve` answers the commands under `/api/`, and streams a followed
+  transcript at `/api/logs/follow` as server-sent events, which a reader
+  resumes by `Last-Event-ID`.
+- `serve` also serves a web UI on its socket, which a browser reaches through an
+  SSH tunnel to it (`ssh -N -L 8080:SOCKET HOST`, with the socket's path `serve`
+  logs as it starts): `/items/N` shows what `explain N` shows, and keeps itself
+  up to date. See the
+  [user guide](docs/user-guide.md#following-linewright-in-a-browser).
 - Agent sessions ignore your user-level Claude Code setup: its settings,
   skills, plugins, MCP servers, `CLAUDE.md` and claude.ai connectors, and the
   `CLAUDE.md` files in directories above their clones. They read the
