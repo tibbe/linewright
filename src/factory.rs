@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::api::Served;
-use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastRuns};
+use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::credentials::Credentials;
@@ -130,7 +130,7 @@ pub struct Factory {
     live: HashMap<Id, LiveEntry>,
     ends: Ends,
     schedule_automations: bool,
-    last_runs: LastRuns,
+    last_scheduled_runs: LastScheduledRuns,
     automation_files: AutomationFiles,
     memory: Memory,
     holds_record: HoldsRecord,
@@ -214,10 +214,10 @@ impl Factory {
             merge_method = %settings.merge_method,
             "started"
         );
-        let last_runs = if config.schedule_automations {
-            LastRuns::load(&config.work_dir)
+        let last_scheduled_runs = if config.schedule_automations {
+            LastScheduledRuns::load(&config.work_dir)
         } else {
-            LastRuns::default()
+            LastScheduledRuns::default()
         };
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
         let runs = Runs::new(&config.work_dir);
@@ -264,7 +264,7 @@ impl Factory {
             live: HashMap::new(),
             ends: config.ends,
             schedule_automations: config.schedule_automations,
-            last_runs,
+            last_scheduled_runs,
             automation_files: AutomationFiles::default(),
             memory: Memory {
                 done_runs: done_runs(&runs),
@@ -458,7 +458,7 @@ impl Factory {
             live,
             in_flight,
             automations: self.automation_files.clone(),
-            last_runs: self.last_runs.clone(),
+            last_scheduled_runs: self.last_scheduled_runs.clone(),
         })
     }
 
@@ -497,7 +497,7 @@ impl Factory {
         let live = self.live_runs();
         let automations = Automations {
             defined,
-            last_runs: self.last_runs.clone(),
+            last_scheduled_runs: self.last_scheduled_runs.clone(),
             in_flight: self.automations_in_flight(),
         };
         self.take_shown_holds(snapshot);
@@ -522,7 +522,7 @@ impl Factory {
                 // Begun since the plan was made: the rest of the plan is
                 // taken as the drain has it.
                 let rest = actions.split_off(next);
-                actions.extend(held_back_by_drain(rest, &self.last_runs));
+                actions.extend(held_back_by_drain(rest, &self.last_scheduled_runs));
                 planned_draining = true;
                 continue;
             }
@@ -894,9 +894,9 @@ impl Factory {
                         .retain(|b| b.name != *branch);
                 }
             }
-            Action::RecordLastRuns(last_runs) => {
-                self.last_runs = last_runs.clone();
-                last_runs.save(&self.shell.work_dir)?;
+            Action::RecordLastScheduledRuns(last_scheduled_runs) => {
+                self.last_scheduled_runs = last_scheduled_runs.clone();
+                last_scheduled_runs.save(&self.shell.work_dir)?;
             }
             Action::RunAutomation(automation) => {
                 let running = begin_automation(&self.shell, &automation.name)?;
@@ -1167,7 +1167,7 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         | Action::Cancel { .. }
         | Action::RememberRebase(_)
         | Action::DeleteBranch { .. }
-        | Action::RecordLastRuns(_)
+        | Action::RecordLastScheduledRuns(_)
         | Action::RunAutomation(_) => vec![],
     }
 }

@@ -4,7 +4,7 @@ use common::{
     at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
     ticket,
 };
-use linewright::automation::{AutomationFiles, LastRuns, Unparsed};
+use linewright::automation::{AutomationFiles, LastScheduledRuns, Unparsed};
 use linewright::domain::*;
 use linewright::reconcile::{LiveRun, Memory, Subject, WorkKind};
 use linewright::status::{Serving, Status, View, render, status};
@@ -32,7 +32,7 @@ fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationF
     }
 }
 
-fn last_runs(runs: &[(&str, &str)]) -> LastRuns {
+fn last_scheduled_runs(runs: &[(&str, &str)]) -> LastScheduledRuns {
     runs.iter()
         .map(|&(name, time)| (name.parse().unwrap(), at(time)))
         .collect()
@@ -518,7 +518,7 @@ fn each_managed_item_says_in_one_line_what_linewright_waits_for_on_it() {
 fn an_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
-        last_runs: last_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
         ..view(vec![])
     };
 
@@ -532,10 +532,10 @@ fn an_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
 }
 
 #[test]
-fn an_automation_whose_schedule_ticked_since_its_last_run_is_due_now() {
+fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_is_due_now() {
     let view = View {
         automations: files(&[("hourly", "0 * * * *")], &[]),
-        last_runs: last_runs(&[("hourly", "2026-10-01T11:30:00Z")]),
+        last_scheduled_runs: last_scheduled_runs(&[("hourly", "2026-10-01T11:30:00Z")]),
         ..view(vec![])
     };
 
@@ -552,7 +552,7 @@ fn an_automation_whose_schedule_ticked_since_its_last_run_is_due_now() {
 fn an_automation_whose_schedule_never_ticks_again_has_no_next_run() {
     let view = View {
         automations: files(&[("leap", "0 0 30 2 *")], &[]),
-        last_runs: last_runs(&[("leap", "2026-09-28T06:00:00Z")]),
+        last_scheduled_runs: last_scheduled_runs(&[("leap", "2026-09-28T06:00:00Z")]),
         ..view(vec![])
     };
 
@@ -585,7 +585,7 @@ fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_pars
             &[("weekly", "0 6 * * 1"), ("hourly", "0 * * * *")],
             &[(".linewright/automations/broken.md", "no front matter")],
         ),
-        last_runs: last_runs(&[
+        last_scheduled_runs: last_scheduled_runs(&[
             ("weekly", "2026-09-28T06:00:00Z"),
             ("hourly", "2026-10-01T12:00:00Z"),
         ]),
@@ -638,7 +638,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
     };
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[("x.md", "bad")]),
-        last_runs: last_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
         in_flight: vec![
             in_flight(
                 "42/rework-2",
@@ -666,7 +666,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
 fn the_json_names_each_fact() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
-        last_runs: last_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
         live: vec![LiveRun {
             subject: Subject::Issue(Number(42)),
             kind: WorkKind::Rework,

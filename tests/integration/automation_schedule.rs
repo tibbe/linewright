@@ -144,11 +144,11 @@ async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
 }
 
 #[tokio::test]
-async fn the_last_runs_the_previous_version_recorded_are_kept() {
+async fn the_last_scheduled_runs_the_previous_version_recorded_are_kept() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
-    // Where the previous version recorded the last runs.
+    // Where the previous version recorded the last scheduled runs.
     let work_dir = world.dir.path().join("work");
     std::fs::create_dir_all(&work_dir).unwrap();
     std::fs::write(

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::automation::{AutomationFiles, AutomationName, LastRuns};
+use crate::automation::{AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::domain::{
     CheckState, Issue, Item, Login, Number, Pull, PullState, Requirement, Snapshot, StatusLabel,
     Timestamp, label,
@@ -38,14 +38,14 @@ pub struct View {
     pub live: Vec<LiveRun>,
     pub in_flight: Vec<InFlight>,
     pub automations: AutomationFiles,
-    pub last_runs: LastRuns,
+    pub last_scheduled_runs: LastScheduledRuns,
 }
 
 impl View {
     pub fn decisions(&self, now: Timestamp) -> Decisions {
         let automations = Automations {
             defined: self.automations.parsed.clone(),
-            last_runs: self.last_runs.clone(),
+            last_scheduled_runs: self.last_scheduled_runs.clone(),
             in_flight: self.automations_in_flight().collect(),
         };
         decisions(
@@ -226,14 +226,17 @@ pub struct AutomationRuns {
 pub enum Runs {
     NotRunYet,
     Due {
-        last_run: Timestamp,
+        #[serde(rename = "last_run")]
+        last_scheduled_run: Timestamp,
     },
     Scheduled {
-        last_run: Timestamp,
+        #[serde(rename = "last_run")]
+        last_scheduled_run: Timestamp,
         next_run: Timestamp,
     },
     Ended {
-        last_run: Timestamp,
+        #[serde(rename = "last_run")]
+        last_scheduled_run: Timestamp,
     },
 }
 
@@ -292,12 +295,15 @@ pub fn status(
         .iter()
         .map(|automation| AutomationRuns {
             name: automation.name.to_string(),
-            runs: match view.last_runs.get(&automation.name) {
+            runs: match view.last_scheduled_runs.get(&automation.name) {
                 None => Runs::NotRunYet,
-                Some(last_run) => match next_run(automation, last_run, now) {
-                    NextRun::Due => Runs::Due { last_run },
-                    NextRun::At(next_run) => Runs::Scheduled { last_run, next_run },
-                    NextRun::Never => Runs::Ended { last_run },
+                Some(last_scheduled_run) => match next_run(automation, last_scheduled_run, now) {
+                    NextRun::Due => Runs::Due { last_scheduled_run },
+                    NextRun::At(next_run) => Runs::Scheduled {
+                        last_scheduled_run,
+                        next_run,
+                    },
+                    NextRun::Never => Runs::Ended { last_scheduled_run },
                 },
             },
         })
@@ -560,13 +566,19 @@ pub(crate) fn automation_facts(status: &Status) -> Vec<Fact> {
                 "none yet, its schedule starts when a poll first sees it".into(),
                 None,
             ),
-            Runs::Due { last_run } => (Phrase::default().time(last_run), Some("due now".into())),
-            Runs::Scheduled { last_run, next_run } => (
-                Phrase::default().time(last_run),
+            Runs::Due { last_scheduled_run } => (
+                Phrase::default().time(last_scheduled_run),
+                Some("due now".into()),
+            ),
+            Runs::Scheduled {
+                last_scheduled_run,
+                next_run,
+            } => (
+                Phrase::default().time(last_scheduled_run),
                 Some(Phrase::default().time(next_run)),
             ),
-            Runs::Ended { last_run } => (
-                Phrase::default().time(last_run),
+            Runs::Ended { last_scheduled_run } => (
+                Phrase::default().time(last_scheduled_run),
                 Some("none, its schedule ticks no more".into()),
             ),
         };

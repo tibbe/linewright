@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::TimeDelta;
-use linewright::automation::{AutomationFiles, LastRuns};
+use linewright::automation::{AutomationFiles, LastScheduledRuns};
 use linewright::domain::*;
 use linewright::harness::UsageLimit;
 use linewright::reconcile::{Drain, LiveRun, Memory, Policy, Subject, WorkKind};
@@ -140,6 +140,6 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
         live: vec![],
         in_flight: vec![],
         automations: AutomationFiles::default(),
-        last_runs: LastRuns::default(),
+        last_scheduled_runs: LastScheduledRuns::default(),
     }
 }

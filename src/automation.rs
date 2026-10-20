@@ -92,9 +92,9 @@ impl fmt::Display for AutomationName {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct LastRuns(BTreeMap<AutomationName, Timestamp>);
+pub struct LastScheduledRuns(BTreeMap<AutomationName, Timestamp>);
 
-impl LastRuns {
+impl LastScheduledRuns {
     pub fn get(&self, name: &AutomationName) -> Option<Timestamp> {
         self.0.get(name).copied()
     }
@@ -103,8 +103,8 @@ impl LastRuns {
         self.0.insert(name.clone(), at);
     }
 
-    /// As `recorded` has `name`'s last run, or none.
-    pub fn restore(&mut self, name: &AutomationName, recorded: &LastRuns) {
+    /// As `recorded` has `name`'s last scheduled run, or none.
+    pub fn restore(&mut self, name: &AutomationName, recorded: &LastScheduledRuns) {
         match recorded.get(name) {
             Some(at) => self.record(name, at),
             None => {
@@ -116,36 +116,38 @@ impl LastRuns {
     /// Empty when the record is missing or unreadable, which is logged: every
     /// automation then counts as seen for the first time. Until the record is
     /// first saved, the one an earlier version kept stands in for it.
-    pub fn load(work_dir: &Path) -> LastRuns {
-        let path = last_runs_path(work_dir);
+    pub fn load(work_dir: &Path) -> LastScheduledRuns {
+        let path = last_scheduled_runs_path(work_dir);
         let path = if path.exists() {
             path
         } else {
-            old_last_runs_path(work_dir)
+            old_last_scheduled_runs_path(work_dir)
         };
         records::load(&path, WHAT).unwrap_or_default()
     }
 
     pub fn save(&self, work_dir: &Path) -> Result<()> {
-        records::save(&last_runs_path(work_dir), self, WHAT)
+        records::save(&last_scheduled_runs_path(work_dir), self, WHAT)
     }
 }
 
-const WHAT: &str = "the automations' last runs";
+const WHAT: &str = "the automations' last scheduled runs";
 
-fn last_runs_path(work_dir: &Path) -> PathBuf {
+fn last_scheduled_runs_path(work_dir: &Path) -> PathBuf {
     work_dir.join("automation-runs.json")
 }
 
 /// Where versions before automations were renamed from workflows kept the
 /// record: read until the record is first saved, never written to.
-fn old_last_runs_path(work_dir: &Path) -> PathBuf {
+fn old_last_scheduled_runs_path(work_dir: &Path) -> PathBuf {
     work_dir.join("workflow-runs.json")
 }
 
-impl FromIterator<(AutomationName, Timestamp)> for LastRuns {
-    fn from_iter<I: IntoIterator<Item = (AutomationName, Timestamp)>>(runs: I) -> LastRuns {
-        LastRuns(runs.into_iter().collect())
+impl FromIterator<(AutomationName, Timestamp)> for LastScheduledRuns {
+    fn from_iter<I: IntoIterator<Item = (AutomationName, Timestamp)>>(
+        runs: I,
+    ) -> LastScheduledRuns {
+        LastScheduledRuns(runs.into_iter().collect())
     }
 }
 

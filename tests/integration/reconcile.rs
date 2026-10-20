@@ -2,7 +2,7 @@ use crate::common;
 use common::{LINEWRIGHT, REQUIRED, closed_by, policy, sub_issue};
 
 use chrono::{DateTime, TimeDelta, Utc};
-use linewright::automation::{Automation, LastRuns};
+use linewright::automation::{Automation, LastScheduledRuns};
 use linewright::domain::*;
 use linewright::harness::UsageLimit;
 use linewright::reconcile::*;
@@ -3117,7 +3117,7 @@ fn hourly(name: &str) -> Automation {
     .unwrap()
 }
 
-fn last_runs(runs: &[(&str, i64)]) -> LastRuns {
+fn last_scheduled_runs(runs: &[(&str, i64)]) -> LastScheduledRuns {
     runs.iter()
         .map(|&(name, minute)| (name.parse().unwrap(), t(minute)))
         .collect()
@@ -3126,7 +3126,7 @@ fn last_runs(runs: &[(&str, i64)]) -> LastRuns {
 fn automations(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Automations {
     Automations {
         defined: defined.iter().map(|name| hourly(name)).collect(),
-        last_runs: last_runs(last),
+        last_scheduled_runs: last_scheduled_runs(last),
         in_flight: in_flight.iter().map(|name| name.parse().unwrap()).collect(),
     }
 }
@@ -3144,45 +3144,48 @@ fn scheduled(automations: &Automations, minute: i64) -> Vec<Action> {
 }
 
 #[test]
-fn an_automation_whose_schedule_ticked_since_its_last_run_runs_and_the_run_is_recorded() {
+fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_runs_and_the_run_is_recorded() {
     let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(
         scheduled(&world, 70),
         vec![
             Action::RunAutomation(Box::new(hourly("hourly"))),
-            Action::RecordLastRuns(last_runs(&[("hourly", 70)])),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly", 70)])),
         ]
     );
 }
 
 #[test]
-fn an_automation_whose_schedule_has_not_ticked_since_its_last_run_waits() {
+fn an_automation_whose_schedule_has_not_ticked_since_its_last_scheduled_run_waits() {
     let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(scheduled(&world, 59), vec![]);
 }
 
 #[test]
-fn an_automation_seen_for_the_first_time_does_not_run_and_counts_as_run_then() {
+fn an_automation_seen_for_the_first_time_does_not_run_and_counts_as_having_had_a_scheduled_run_then()
+ {
     let world = automations(&["hourly"], &[], &[]);
 
     assert_eq!(
         scheduled(&world, 70),
-        vec![Action::RecordLastRuns(last_runs(&[("hourly", 70)]))]
+        vec![Action::RecordLastScheduledRuns(last_scheduled_runs(&[(
+            "hourly", 70
+        )]))]
     );
 }
 
 #[test]
-fn ticks_missed_since_the_last_run_collapse_into_one_run() {
-    // Five ticks, 13:00 to 17:00, since the last run at 12:30.
+fn ticks_missed_since_the_last_scheduled_run_collapse_into_one_run() {
+    // Five ticks, 13:00 to 17:00, since the last scheduled run at 12:30.
     let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(
         scheduled(&world, 310),
         vec![
             Action::RunAutomation(Box::new(hourly("hourly"))),
-            Action::RecordLastRuns(last_runs(&[("hourly", 310)])),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly", 310)])),
         ]
     );
 }
@@ -3198,7 +3201,7 @@ fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
         scheduled(&ended, 131),
         vec![
             Action::RunAutomation(Box::new(hourly("hourly"))),
-            Action::RecordLastRuns(last_runs(&[("hourly", 131)])),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly", 131)])),
         ]
     );
 }
@@ -3224,7 +3227,11 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
         reconcile(&quieter, &busy, &Memory::default(), &due, t(70), &policy()),
         vec![
             Action::RunAutomation(Box::new(hourly("b"))),
-            Action::RecordLastRuns(last_runs(&[("a", 30), ("b", 70), ("c", 30)])),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[
+                ("a", 30),
+                ("b", 70),
+                ("c", 30)
+            ])),
         ]
     );
 }
@@ -3244,7 +3251,9 @@ fn an_automation_seen_for_the_first_time_is_recorded_even_with_no_room() {
             t(70),
             &policy()
         ),
-        vec![Action::RecordLastRuns(last_runs(&[("hourly", 70)]))]
+        vec![Action::RecordLastScheduledRuns(last_scheduled_runs(&[(
+            "hourly", 70
+        )]))]
     );
 }
 
@@ -3659,7 +3668,7 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
             implement(3),
             implement(4),
             Action::RunAutomation(Box::new(hourly("hourly"))),
-            Action::RecordLastRuns(last_runs(&[("hourly", 70)])),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly", 70)])),
         ]
     );
 }
@@ -3733,29 +3742,38 @@ fn a_drain_begun_part_way_through_a_plan_holds_back_the_rest_of_its_claims_and_r
         implement(3),
         let_go(12),
         Action::RunAutomation(Box::new(hourly("weekly"))),
-        Action::RecordLastRuns(last_runs(&[("daily", 70), ("hourly", 70), ("weekly", 70)])),
+        Action::RecordLastScheduledRuns(last_scheduled_runs(&[
+            ("daily", 70),
+            ("hourly", 70),
+            ("weekly", 70),
+        ])),
     ];
     // `hourly` ran before the drain began; `daily` is first seen.
-    let recorded = last_runs(&[("hourly", 10), ("weekly", 10)]);
+    let recorded = last_scheduled_runs(&[("hourly", 10), ("weekly", 10)]);
 
     assert_eq!(
         held_back_by_drain(rest, &recorded),
         vec![
             let_go(12),
-            Action::RecordLastRuns(last_runs(&[("daily", 70), ("hourly", 70), ("weekly", 10)])),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[
+                ("daily", 70),
+                ("hourly", 70),
+                ("weekly", 10)
+            ])),
         ]
     );
 }
 
 #[test]
-fn a_drain_begun_part_way_through_a_plan_leaves_the_last_runs_as_they_were_when_it_held_back_all() {
+fn a_drain_begun_part_way_through_a_plan_leaves_the_last_scheduled_runs_as_they_were_when_it_held_back_all()
+ {
     let rest = vec![
         Action::RunAutomation(Box::new(hourly("weekly"))),
-        Action::RecordLastRuns(last_runs(&[("weekly", 70)])),
+        Action::RecordLastScheduledRuns(last_scheduled_runs(&[("weekly", 70)])),
     ];
 
     assert_eq!(
-        held_back_by_drain(rest, &last_runs(&[("weekly", 10)])),
+        held_back_by_drain(rest, &last_scheduled_runs(&[("weekly", 10)])),
         vec![]
     );
 }

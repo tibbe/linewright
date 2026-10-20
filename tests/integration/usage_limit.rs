@@ -230,13 +230,17 @@ async fn an_automation_due_under_the_limit_waits_and_runs_at_the_first_poll_afte
     world.factory.cycle().await.unwrap();
     world.clock.next_sleep().await;
     let path = world.dir.path().join("work/automation-runs.json");
-    let last_runs = || std::fs::read_to_string(&path);
-    let before = last_runs().unwrap();
+    let last_scheduled_runs = || std::fs::read_to_string(&path);
+    let before = last_scheduled_runs().unwrap();
 
     world.clock.advance(TimeDelta::hours(2));
     world.factory.cycle().await.unwrap();
     assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
-    assert_eq!(last_runs().unwrap(), before, "not recorded as run");
+    assert_eq!(
+        last_scheduled_runs().unwrap(),
+        before,
+        "not recorded as a scheduled run"
+    );
 
     advance_past_the_reset(&world, 1);
     world.factory.settle().await;

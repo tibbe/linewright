@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
-use crate::automation::{Automation, AutomationName, LastRuns};
+use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
     Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, Issue, Item,
     Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
@@ -372,7 +372,7 @@ pub struct DoneRun {
 #[derive(Clone, Debug, Default)]
 pub struct Automations {
     pub defined: Vec<Automation>,
-    pub last_runs: LastRuns,
+    pub last_scheduled_runs: LastScheduledRuns,
     pub in_flight: Vec<AutomationName>,
 }
 
@@ -441,7 +441,7 @@ pub enum Action {
     DeleteBranch {
         branch: TicketBranchName,
     },
-    RecordLastRuns(LastRuns),
+    RecordLastScheduledRuns(LastScheduledRuns),
     RunAutomation(Box<Automation>),
 }
 
@@ -835,9 +835,10 @@ pub fn decisions(
 }
 
 /// The rest of a plan made before a drain began, as the drain has it: with
-/// no claim and no run, and the automations' last runs as `recorded` holds
-/// them for the runs it holds back, so that they run after the restart.
-pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastRuns) -> Vec<Action> {
+/// no claim and no run, and the automations' last scheduled runs as
+/// `recorded` holds them for the runs it holds back, so that they run after
+/// the restart.
+pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Vec<Action> {
     let held_back: Vec<AutomationName> = rest
         .iter()
         .filter_map(|action| {
@@ -854,11 +855,12 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastRuns) -> Vec<Action>
             | Action::Claim { .. }
             | Action::RememberRebase(_)
             | Action::RunAutomation(_) => None,
-            Action::RecordLastRuns(mut last_runs) => {
+            Action::RecordLastScheduledRuns(mut last_scheduled_runs) => {
                 for name in &held_back {
-                    last_runs.restore(name, recorded);
+                    last_scheduled_runs.restore(name, recorded);
                 }
-                (last_runs != *recorded).then_some(Action::RecordLastRuns(last_runs))
+                (last_scheduled_runs != *recorded)
+                    .then_some(Action::RecordLastScheduledRuns(last_scheduled_runs))
             }
             Action::Cancel { .. }
             | Action::LetGo { .. }
@@ -884,8 +886,8 @@ pub enum NextRun {
     Never,
 }
 
-pub fn next_run(automation: &Automation, last: Timestamp, now: Timestamp) -> NextRun {
-    match automation.schedule.next_after(last) {
+pub fn next_run(automation: &Automation, last_scheduled_run: Timestamp, now: Timestamp) -> NextRun {
+    match automation.schedule.next_after(last_scheduled_run) {
         Some(tick) if tick <= now => NextRun::Due,
         Some(tick) => NextRun::At(tick),
         None => NextRun::Never,
@@ -893,15 +895,15 @@ pub fn next_run(automation: &Automation, last: Timestamp, now: Timestamp) -> Nex
 }
 
 fn schedule(automations: &Automations, now: Timestamp, room: usize) -> Vec<Action> {
-    let mut last_runs = automations.last_runs.clone();
+    let mut last_scheduled_runs = automations.last_scheduled_runs.clone();
     let mut due = vec![];
     for automation in &automations.defined {
-        let Some(last) = automations.last_runs.get(&automation.name) else {
-            last_runs.record(&automation.name, now);
+        let Some(last_scheduled_run) = automations.last_scheduled_runs.get(&automation.name) else {
+            last_scheduled_runs.record(&automation.name, now);
             continue;
         };
         let running = automations.in_flight.contains(&automation.name);
-        if next_run(automation, last, now) == NextRun::Due && !running {
+        if next_run(automation, last_scheduled_run, now) == NextRun::Due && !running {
             due.push(automation);
         }
     }
@@ -910,16 +912,16 @@ fn schedule(automations: &Automations, now: Timestamp, room: usize) -> Vec<Actio
         .into_iter()
         .take(room)
         .map(|automation| {
-            last_runs.record(&automation.name, now);
+            last_scheduled_runs.record(&automation.name, now);
             Action::RunAutomation(Box::new(automation.clone()))
         })
         .collect();
     // The record follows the runs: a stop between the two leaves the
     // automation due, to run again after the restart, rather than recorded as
-    // run with no run started.
+    // having had a scheduled run with no run started.
     let mut actions = runs;
-    if last_runs != automations.last_runs {
-        actions.push(Action::RecordLastRuns(last_runs));
+    if last_scheduled_runs != automations.last_scheduled_runs {
+        actions.push(Action::RecordLastScheduledRuns(last_scheduled_runs));
     }
     actions
 }
