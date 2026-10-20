@@ -11,6 +11,7 @@ use crate::credentials::Held;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Parent, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::Feedback;
+use crate::spec_gap::FiledGaps;
 use crate::store::FoundSecrets;
 
 pub struct Repo<'a> {
@@ -63,8 +64,11 @@ impl<'a> Ticket<'a> {
         self.issue.number
     }
 
-    pub fn filed_gaps(&self) -> &[&'a Issue] {
-        &self.filed_gaps
+    pub fn filed_gaps(&self) -> FiledGaps<'_> {
+        FiledGaps {
+            item: self.issue.number,
+            issues: &self.filed_gaps,
+        }
     }
 }
 
@@ -134,12 +138,13 @@ values!(Triage: Facts {
     category_choices,
     author
 });
-values!(Tickets: Facts {
+values!(Design: Facts {
     number,
     title,
     author,
     body,
-    spec_diff
+    spec_diff,
+    filed_gaps
 });
 values!(Implement: Facts {
     branch,
@@ -179,7 +184,7 @@ values!(Stopped {
     files
 });
 values!(FullLog { job, repo });
-values!(FiledGaps { gaps });
+values!(FiledGapsPart { gaps });
 values!(ParseError { error });
 values!(LooseEnds { problem });
 values!(HeldCredential {
@@ -355,7 +360,7 @@ fn braced(names: &[&str]) -> String {
 #[derive(Clone, Debug)]
 pub struct Prompts {
     triage: Template<Triage>,
-    tickets: Template<Tickets>,
+    design: Template<Design>,
     implement: Template<Implement>,
     rework: Template<Rework>,
     fix_ci: Template<FixCi>,
@@ -370,7 +375,7 @@ pub struct Prompts {
     update_rebase: Template<Stopped>,
     update_merge: Template<Stopped>,
     full_log: Template<FullLog>,
-    filed_gaps: Template<FiledGaps>,
+    filed_gaps: Template<FiledGapsPart>,
     fold_unfinished: Template<Commits>,
     held_credential: Template<HeldCredential>,
     pushed_secret: Template<PushedSecret>,
@@ -384,7 +389,7 @@ impl Prompts {
     pub fn read(source: Source) -> Result<Prompts> {
         Ok(Prompts {
             triage: template!(source, "triage.md")?,
-            tickets: template!(source, "tickets.md")?,
+            design: template!(source, "design.md")?,
             implement: template!(source, "implement.md")?,
             rework: template!(source, "rework.md")?,
             fix_ci: template!(source, "fix-ci.md")?,
@@ -431,14 +436,21 @@ pub fn triage(prompts: &Prompts, repo: &Repo, issue: &Issue, categories: &[Strin
     })
 }
 
-pub fn tickets(prompts: &Prompts, repo: &Repo, pr: &MergedPull, spec_diff: &str) -> String {
-    prompts.tickets.fill(&Tickets {
+pub fn design(
+    prompts: &Prompts,
+    repo: &Repo,
+    pr: &MergedPull,
+    spec_diff: &str,
+    filed_gaps: &[&Issue],
+) -> String {
+    prompts.design.fill(&Design {
         base: Facts::of(repo),
         number: pr.number.to_string(),
         title: pr.title.clone(),
         author: pr.author.to_string(),
         body: or_none(&pr.body).into(),
         spec_diff: spec_diff.trim_end().into(),
+        filed_gaps: render_filed_gaps(prompts, filed_gaps),
     })
 }
 
@@ -679,22 +691,28 @@ fn render_ticket(prompts: &Prompts, ticket: &Ticket) -> String {
             spec_diff.trim_end()
         );
     }
-    if !ticket.filed_gaps.is_empty() {
-        let mut gaps = String::new();
-        for gap in &ticket.filed_gaps {
-            let _ = writeln!(
-                gaps,
-                "#### {} {}\n\n{}\n",
-                gap.number,
-                gap.title,
-                gap.body.trim()
-            );
-        }
-        task.push_str(&prompts.filed_gaps.fill(&FiledGaps {
-            gaps: gaps.trim_end().into(),
-        }));
-    }
+    task.push_str(&render_filed_gaps(prompts, &ticket.filed_gaps));
     task.trim_end().to_string()
+}
+
+/// The spec gaps already filed for an item, or nothing when there are none.
+fn render_filed_gaps(prompts: &Prompts, filed_gaps: &[&Issue]) -> String {
+    if filed_gaps.is_empty() {
+        return String::new();
+    }
+    let mut gaps = String::new();
+    for gap in filed_gaps {
+        let _ = writeln!(
+            gaps,
+            "#### {} {}\n\n{}\n",
+            gap.number,
+            gap.title,
+            gap.body.trim()
+        );
+    }
+    prompts.filed_gaps.fill(&FiledGapsPart {
+        gaps: gaps.trim_end().into(),
+    })
 }
 
 fn render_failures(prompts: &Prompts, failures: &[CheckFailure]) -> String {

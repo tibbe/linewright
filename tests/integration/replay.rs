@@ -102,7 +102,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     harness.on(WorkKind::Design, |call| {
         assert!(call.spec.prompt.contains("+Gadgets exist."));
         Ok(json!({
-            "tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}],
+            "outcome": "designed", "design": "A gadget store.", "tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}],
             "comment": "One slice."
         }).to_string())
     });
@@ -132,7 +132,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
 
     let read = |path: &str| std::fs::read_to_string(out.join(path)).unwrap();
     assert!(read("issues/2.md").starts_with("# #2 Spec change: Gadgets"));
-    assert!(read("issues/3.md").contains("- Labels: ready-for-agent"));
+    assert!(read("issues/3.md").contains("- Labels: linewright:designed, ready-for-agent"));
     assert!(read("issues/3.md").contains("- Parent: #2\n"));
     let pull = read("pulls/4.md");
     assert!(pull.contains("- State: ready for review"), "{pull}");
@@ -161,7 +161,10 @@ fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathB
     spec_change_case(dir, &[]);
     let bin = dir.join("bin");
     std::fs::create_dir(&bin).unwrap();
-    fake_claude(&bin, r#"{"tickets": [], "comment": "Nothing to build."}"#);
+    fake_claude(
+        &bin,
+        r#"{"outcome": "nothing-to-build", "reason": "Nothing to build."}"#,
+    );
     replay_with(dir, &bin, env);
     bin
 }
@@ -224,7 +227,7 @@ fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted()
         .collect();
     let said =
         json!({"type": "assistant", "message": {"content": [{"type": "text", "text": env}]}});
-    let result = json!({"tickets": [], "comment": format!("Saw {env}")}).to_string();
+    let result = json!({"outcome": "nothing-to-build", "reason": format!("Saw {env}")}).to_string();
     let result =
         json!({"type": "result", "subtype": "success", "is_error": false, "result": result});
     fake_claude_saying(&bin, &[said.clone(), result], &said, &env);
@@ -276,7 +279,7 @@ fn a_replayed_session_leaves_redacted_every_variable_named_as_a_credential_and_n
     ];
     let saw = "NPM_TOKEN=npm-s3cr3t DATABASE_PASSWORD=db-s3cr3t SIGNING_KEY=signing-s3cr3t \
                NPM_REGISTRY=registry.example.com TOKEN_ISSUER=issuer.example.com EMPTY_SECRET=";
-    let result = json!({"tickets": [], "comment": format!("Saw {saw}")}).to_string();
+    let result = json!({"outcome": "nothing-to-build", "reason": format!("Saw {saw}")}).to_string();
     let result =
         json!({"type": "result", "subtype": "success", "is_error": false, "result": result});
     let said =
@@ -387,7 +390,7 @@ async fn a_replay_runs_no_automations() {
         move |_| {
             // Past the automation's next tick, while the replay goes on.
             clock.advance(TimeDelta::hours(2));
-            Ok(json!({"tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}], "comment": "One slice."}).to_string())
+            Ok(json!({"outcome": "designed", "design": "A gadget store.", "tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}], "comment": "One slice."}).to_string())
         }
     });
     harness.on(WorkKind::Implement, |call| {
@@ -426,7 +429,7 @@ async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_
     let harness = Arc::new(ScriptedHarness::default());
     harness.on(WorkKind::Design, |_| {
         Ok(json!({
-            "tickets": [
+            "outcome": "designed", "design": "A gadget store.", "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
                 {"id": "list", "title": "List gadgets", "body": "List them.", "blocked_by": ["store"]}
             ],

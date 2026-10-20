@@ -12,6 +12,12 @@ pub fn ticket_of(body: &str) -> Option<Number> {
     digits.parse().ok().map(Number)
 }
 
+/// An item and the spec gaps filed for it that are still open.
+pub struct FiledGaps<'a> {
+    pub item: Number,
+    pub issues: &'a [&'a Issue],
+}
+
 pub fn filed_for(snapshot: &Snapshot, ticket: Number) -> Vec<&Issue> {
     snapshot
         .issues

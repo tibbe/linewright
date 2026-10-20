@@ -576,7 +576,7 @@ pub fn decisions(
     }
 
     // The pull request is labeled designed last, so a tracking issue
-    // without the label is a decomposition that stopped part way: one
+    // without the label is a design that stopped part way: one
     // interrupted, cancelled or handed back.
     let mut discarded = vec![];
     for pr in snapshot

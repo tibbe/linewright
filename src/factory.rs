@@ -839,7 +839,7 @@ impl Factory {
                     tracking = tracking.0,
                     "discarding an interrupted decomposition"
                 );
-                let note = "Cutting the spec change into tickets stopped part way; this set is discarded and the spec change is cut again.";
+                let note = "Designing the spec change stopped part way; this set is discarded and the spec change is designed again.";
                 for issue in tickets.iter().chain([tracking]) {
                     store.comment(*issue, note).await?;
                     store.close_issue(*issue, CloseReason::NotPlanned).await?;

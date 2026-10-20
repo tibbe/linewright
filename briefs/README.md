@@ -9,10 +9,11 @@ What Linewright gives its agents, read at startup from the `briefs` setting
 
 ## `plugin/`
 
-A skill per stage. Each is a fork of a skill from
+A skill per stage. Each is a fork of a published skill, from the source and
+commit the table below gives. Those from
 [`mattpocock/skills`](https://github.com/mattpocock/skills) (commit
-`f3fc5632`), under its MIT license (`plugin/LICENSE`), made non-interactive for
-Linewright:
+`f3fc5632`) are under its MIT license (`plugin/LICENSE`), and are made
+non-interactive for Linewright:
 
 - each decision the original puts to a person is made by an agent or handed
   back as an outcome, and judging an agent's own work, as review does, falls
@@ -21,23 +22,29 @@ Linewright:
   (the JSON the session ends with), and what it needs from the tracker comes
   in the task Linewright gives it.
 
+`software-design` is a fork of `prior-art` from
+[`tibbe/skills`](https://github.com/tibbe/skills) (commit `e63caa77`), with
+what concerns products removed, so that it designs code alone.
+
 A skill is otherwise upstream's text, so that a diff against upstream shows
-what the fork changed.
+what the fork changed. The rules that are Linewright's own are the prompt's.
 
 The plugin is named `linewright`, and every session is given a copy of it. A
 prompt starts by invoking its stage's skill, such as `/linewright:implement`,
-which calls `linewright:tdd`, `linewright:code-review` and `linewright:pr`. The
-namespace keeps them apart from the harness's own skills and the repository's,
-which sessions can use too.
+which calls `linewright:tdd`, `linewright:code-review` and `linewright:pr`; the
+design prompt invokes `/linewright:software-design`, then has the session call
+`linewright:to-tickets`. The namespace keeps them apart from the harness's own
+skills and the repository's, which sessions can use too.
 
 | file | forked from | used by |
 |---|---|---|
-| `skills/triage/` | `triage` (with `AGENT-BRIEF.md`, `OUT-OF-SCOPE.md`) | triage |
-| `skills/to-tickets/` | `to-tickets` | tickets |
-| `skills/implement/` | `implement` | implementation, rework, CI fixes |
-| `skills/tdd/` | `tdd` | called by `implement` |
-| `skills/code-review/` | `code-review` | called by `implement` |
-| `skills/pr/` | `pr` | the result's pull request title and body |
+| `skills/triage/` | `mattpocock/skills`: `triage` (with `AGENT-BRIEF.md`, `OUT-OF-SCOPE.md`) | triage |
+| `skills/software-design/` | `tibbe/skills` (`e63caa77`): `prior-art` | design |
+| `skills/to-tickets/` | `mattpocock/skills`: `to-tickets` | design |
+| `skills/implement/` | `mattpocock/skills`: `implement` | implementation, rework, CI fixes |
+| `skills/tdd/` | `mattpocock/skills`: `tdd` | called by `implement` |
+| `skills/code-review/` | `mattpocock/skills`: `code-review` | called by `implement` |
+| `skills/pr/` | `mattpocock/skills`: `pr` | the result's pull request title and body |
 
 A skill says how to work, not what the result looks like: that is the prompt's.
 
@@ -51,7 +58,7 @@ to start with a prompt that lacks one or has one it doesn't know.
 | file | sent to |
 |---|---|
 | `triage.md` | triage |
-| `tickets.md` | design |
+| `design.md` | design |
 | `implement.md` | implementation |
 | `rework.md` | rework |
 | `fix-ci.md` | CI fixes |

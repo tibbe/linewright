@@ -42,18 +42,46 @@ pub struct TicketDraft {
     pub blocked_by: Vec<String>,
 }
 
-#[derive(Deserialize)]
-struct RawTickets {
-    tickets: Vec<TicketDraft>,
-    #[serde(deserialize_with = "trimmed")]
-    comment: String,
+/// What a design session answers (docs/specs/design.md, "Designing").
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum DesignResult {
+    Designed {
+        #[serde(deserialize_with = "trimmed")]
+        design: String,
+        tickets: Tickets,
+        /// Why the work is cut into these tickets.
+        #[serde(deserialize_with = "trimmed")]
+        comment: String,
+        #[serde(default)]
+        spec_gaps: Vec<SpecGap>,
+    },
+    NothingToBuild {
+        #[serde(deserialize_with = "trimmed")]
+        reason: String,
+    },
+    Blocked {
+        #[serde(deserialize_with = "trimmed")]
+        question: String,
+        #[serde(default)]
+        spec_gaps: Vec<SpecGap>,
+    },
+    GaveUp {
+        #[serde(deserialize_with = "trimmed")]
+        reason: String,
+    },
 }
 
-/// Tickets ordered so that every ticket comes after those blocking it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Tickets {
-    pub tickets: Vec<Ticket>,
-    pub comment: String,
+/// At least one ticket, ordered so that every ticket comes after those
+/// blocking it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Vec<TicketDraft>")]
+pub struct Tickets(Vec<Ticket>);
+
+impl Tickets {
+    pub fn in_order(&self) -> &[Ticket] {
+        &self.0
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -199,21 +227,35 @@ pub fn parse_triage(message: &str, categories: &[String]) -> Result<TriageResult
     Ok(result)
 }
 
-pub fn parse_tickets(message: &str) -> Result<Tickets, String> {
-    let raw: RawTickets = parse(message)?;
+impl TryFrom<Vec<TicketDraft>> for Tickets {
+    type Error = String;
+
+    fn try_from(drafts: Vec<TicketDraft>) -> Result<Tickets, String> {
+        ordered(&drafts).map(Tickets)
+    }
+}
+
+fn ordered(drafts: &[TicketDraft]) -> Result<Vec<Ticket>, String> {
+    if drafts.is_empty() {
+        return Err(
+            "`tickets` is empty: a spec change's work is always at least one ticket; \
+             when the code already does what it asks, answer `nothing-to-build`"
+                .into(),
+        );
+    }
     let mut by_id = BTreeMap::new();
-    for ticket in &raw.tickets {
+    for ticket in drafts {
         if ticket.title.trim().is_empty() {
-            return Err(format!("Ticket {:?} has an empty title.", ticket.id));
+            return Err(format!("ticket {:?} has an empty title", ticket.id));
         }
         if by_id.insert(ticket.id.clone(), ticket).is_some() {
-            return Err(format!("Two tickets have the id {:?}.", ticket.id));
+            return Err(format!("two tickets have the id {:?}", ticket.id));
         }
     }
-    for ticket in &raw.tickets {
+    for ticket in drafts {
         if let Some(unknown) = ticket.blocked_by.iter().find(|b| !by_id.contains_key(*b)) {
             return Err(format!(
-                "Ticket {:?} is blocked by {unknown:?}, which is not a ticket id.",
+                "ticket {:?} is blocked by {unknown:?}, which is not a ticket id",
                 ticket.id
             ));
         }
@@ -221,13 +263,13 @@ pub fn parse_tickets(message: &str) -> Result<Tickets, String> {
     // Kahn's algorithm, keeping the session's order among unblocked tickets.
     let mut placed: BTreeMap<&str, usize> = BTreeMap::new();
     let mut ordered = vec![];
-    while ordered.len() < raw.tickets.len() {
-        let next = raw.tickets.iter().find(|t| {
+    while ordered.len() < drafts.len() {
+        let next = drafts.iter().find(|t| {
             !placed.contains_key(t.id.as_str())
                 && t.blocked_by.iter().all(|b| placed.contains_key(b.as_str()))
         });
         let Some(next) = next else {
-            return Err("The tickets' blocked_by edges form a cycle.".into());
+            return Err("the tickets' blocked_by edges form a cycle".into());
         };
         placed.insert(&next.id, ordered.len());
         ordered.push(Ticket {
@@ -236,10 +278,7 @@ pub fn parse_tickets(message: &str) -> Result<Tickets, String> {
             blocked_by: next.blocked_by.iter().map(|b| placed[b.as_str()]).collect(),
         });
     }
-    Ok(Tickets {
-        tickets: ordered,
-        comment: raw.comment,
-    })
+    Ok(ordered)
 }
 
 pub fn parse<T: DeserializeOwned>(message: &str) -> Result<T, String> {

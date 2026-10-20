@@ -705,7 +705,7 @@ async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_
     let mut world = World::new().await;
     world.harness.on(linewright::reconcile::WorkKind::Design, |_| {
         Ok(serde_json::json!({
-            "tickets": [
+            "outcome": "designed", "design": "A gadget store.", "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
             ],
             "comment": "One slice.",

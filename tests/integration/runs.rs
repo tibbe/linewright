@@ -734,7 +734,7 @@ async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are
 async fn a_spec_changes_runs_recorded_as_tickets_by_the_previous_version_are_design_runs() {
     let (mut world, work_dir) = world().await;
     world.harness.on(WorkKind::Design, |_| {
-        Ok(json!({"tickets": [], "comment": "Nothing to build."}).to_string())
+        Ok(json!({"outcome": "nothing-to-build", "reason": "Nothing to build."}).to_string())
     });
     let pr = world
         .store

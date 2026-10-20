@@ -12,7 +12,7 @@ pub struct Briefs {
     pub prompts: Prompts,
 }
 
-const PLUGIN: [(&str, &str); 11] = [
+const PLUGIN: [(&str, &str); 12] = [
     (
         ".claude-plugin/plugin.json",
         include_str!("../briefs/plugin/.claude-plugin/plugin.json"),
@@ -25,6 +25,10 @@ const PLUGIN: [(&str, &str); 11] = [
     (
         "skills/to-tickets/SKILL.md",
         include_str!("../briefs/plugin/skills/to-tickets/SKILL.md"),
+    ),
+    (
+        "skills/software-design/SKILL.md",
+        include_str!("../briefs/plugin/skills/software-design/SKILL.md"),
     ),
     (
         "skills/implement/SKILL.md",

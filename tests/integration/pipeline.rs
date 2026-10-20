@@ -211,7 +211,7 @@ async fn each_stages_session_starts_by_invoking_its_linewright_skill() {
         [WorkKind::Triage, WorkKind::Design, WorkKind::Implement].map(first_lines),
         [
             ["/linewright:triage"],
-            ["/linewright:to-tickets"],
+            ["/linewright:software-design"],
             ["/linewright:implement"]
         ]
     );
@@ -565,6 +565,8 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
 fn tickets_script(world: &World) {
     world.harness.on(WorkKind::Design, |_| {
         Ok(json!({
+            "outcome": "designed",
+            "design": "A gadget store, and a listing that reads it.",
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "## What to build\n\nGadgets persist.", "blocked_by": []},
                 {"id": "list", "title": "List gadgets", "body": "## What to build\n\nList them.", "blocked_by": ["store"]}
@@ -622,8 +624,31 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
         [store_ticket.number, list_ticket.number]
     );
     assert_eq!(list_ticket.blocked_by[0].number, store_ticket.number);
-    assert_eq!(labels(store_ticket), ["ready-for-agent"]);
-    assert_eq!(last_comment(tracking), "Two slices: storing, then listing.");
+    assert_eq!(
+        labels(store_ticket),
+        ["linewright:designed", "ready-for-agent"]
+    );
+    assert_eq!(
+        labels(list_ticket),
+        ["linewright:designed", "ready-for-agent"]
+    );
+    assert_eq!(
+        last_comment(tracking),
+        format!(
+            "A gadget store, and a listing that reads it.\n\n## Tickets\n\n\
+             1. {} Store gadgets\n2. {} List gadgets\n\n\
+             Two slices: storing, then listing.",
+            store_ticket.number, list_ticket.number
+        )
+    );
+    assert_eq!(
+        last_pull_comment(&world, spec_pr).await,
+        format!(
+            "Two slices: storing, then listing.\n\nTracked in {}:\n\n\
+             1. {} Store gadgets\n2. {} List gadgets\n",
+            tracking.number, store_ticket.number, list_ticket.number
+        )
+    );
 
     world.poll().await;
 
@@ -737,7 +762,7 @@ async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_
         "{brief}"
     );
     assert!(!brief.contains("Tickets for the spec change"), "{brief}");
-    assert!(!brief.contains("List gadgets"), "{brief}");
+    assert!(!brief.contains("List them."), "{brief}");
 }
 
 #[tokio::test]
@@ -1660,27 +1685,37 @@ async fn spec_change_assignees(world: &World, pr: Number) -> Vec<Login> {
         .assignees
 }
 
-/// Has each cut answer `tickets`, noting who was assigned to the spec change
-/// while it ran.
-fn cut_noting_assignees(world: &World, tickets: serde_json::Value) -> Arc<Mutex<Vec<Login>>> {
+/// A design that cuts one ticket.
+fn one_ticket() -> serde_json::Value {
+    json!({
+        "outcome": "designed",
+        "design": "A gadget store.",
+        "tickets": [{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}],
+        "comment": "One slice."
+    })
+}
+
+/// Has each design answer `result`, noting who was assigned to the spec
+/// change while it ran.
+fn design_noting_assignees(world: &World, result: serde_json::Value) -> Arc<Mutex<Vec<Login>>> {
     let seen = Arc::new(Mutex::new(vec![]));
     let (store, noted) = (world.store.clone(), seen.clone());
     world.harness.on(WorkKind::Design, move |_| {
         let spec_change = *store.pulls().last().expect("a spec change");
         *noted.lock().unwrap() = store.pull_assignees(spec_change);
-        Ok(json!({"tickets": tickets.clone(), "comment": "Cut."}).to_string())
+        Ok(result.to_string())
     });
     seen
 }
 
 #[tokio::test]
-async fn linewright_is_assigned_to_a_spec_change_while_cutting_it_and_unassigned_after() {
-    for tickets in [
-        json!([{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}]),
-        json!([]),
+async fn linewright_is_assigned_to_a_spec_change_while_designing_it_and_unassigned_after() {
+    for result in [
+        one_ticket(),
+        json!({"outcome": "nothing-to-build", "reason": "Gadgets exist already."}),
     ] {
         let mut world = World::new().await;
-        let seen = cut_noting_assignees(&world, tickets);
+        let seen = design_noting_assignees(&world, result);
         let spec_pr = merge_spec_change(&world).await;
 
         world.poll().await;
@@ -1694,6 +1729,156 @@ async fn linewright_is_assigned_to_a_spec_change_while_cutting_it_and_unassigned
                 .contains(&"linewright:designed".to_string())
         );
     }
+}
+
+#[tokio::test]
+async fn a_spec_change_with_nothing_to_build_is_labeled_designed_with_why_and_files_no_issues() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Design, |_| {
+        Ok(json!({"outcome": "nothing-to-build", "reason": "Gadgets exist already."}).to_string())
+    });
+    let spec_pr = merge_spec_change(&world).await;
+
+    world.poll().await;
+
+    assert_eq!(world.store.pull_labels(spec_pr), ["linewright:designed"]);
+    assert_eq!(
+        last_pull_comment(&world, spec_pr).await,
+        "Gadgets exist already."
+    );
+    assert_eq!(world.store.issues(), []);
+}
+
+#[tokio::test]
+async fn a_design_with_no_tickets_is_sent_back_to_its_session() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Design, |call| {
+        let result = if call.followup.is_some_and(|f| f.contains("`tickets` is empty")) {
+            one_ticket()
+        } else {
+            json!({"outcome": "designed", "design": "Nothing new.", "tickets": [], "comment": "None."})
+        };
+        Ok(result.to_string())
+    });
+    let spec_pr = merge_spec_change(&world).await;
+
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
+    assert_eq!(world.store.pull_labels(spec_pr), ["linewright:designed"]);
+    let titles: Vec<String> = world.store.issues().into_iter().map(|i| i.title).collect();
+    assert_eq!(titles, ["Spec change: Gadgets", "Store gadgets"]);
+}
+
+#[tokio::test]
+async fn a_design_blocked_on_the_spec_hands_the_spec_change_back_with_its_question() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Design, |_| {
+        Ok(
+            json!({"outcome": "blocked", "question": "Should gadgets expire?", "spec_gaps": []})
+                .to_string(),
+        )
+    });
+    let spec_pr = merge_spec_change(&world).await;
+
+    world.poll().await;
+
+    assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
+    assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
+    let comment = last_pull_comment(&world, spec_pr).await;
+    assert!(
+        comment
+            .starts_with("Blocked on a question the spec cannot decide:\n\nShould gadgets expire?"),
+        "{comment}"
+    );
+    assert_eq!(world.store.issues(), []);
+}
+
+#[tokio::test]
+async fn a_design_that_gives_up_hands_the_spec_change_back_with_its_reason() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Design, |_| {
+        Ok(json!({"outcome": "gave-up", "reason": "The codebase does not build."}).to_string())
+    });
+    let spec_pr = merge_spec_change(&world).await;
+
+    world.poll().await;
+
+    assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
+    assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
+    let comment = last_pull_comment(&world, spec_pr).await;
+    assert!(
+        comment.contains("The codebase does not build."),
+        "{comment}"
+    );
+    assert_eq!(world.store.issues(), []);
+}
+
+#[tokio::test]
+async fn a_spec_gap_that_does_not_block_a_design_is_filed_once_for_the_spec_change() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Design, |_| {
+        Ok(json!({
+            "outcome": "blocked",
+            "question": "Should gadgets expire?",
+            "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
+        })
+        .to_string())
+    });
+    let spec_pr = merge_spec_change(&world).await;
+    world.poll().await;
+    world.poll().await;
+    world
+        .store
+        .assign_as("maintainer", spec_pr, LINEWRIGHT)
+        .unwrap();
+
+    world.poll().await;
+
+    let prompts = world.harness.prompts(WorkKind::Design);
+    assert_eq!(prompts.len(), 2);
+    assert!(!prompts[0].contains("Spec gaps already filed"));
+    assert!(prompts[1].contains("Spec gaps already filed"));
+    assert!(prompts[1].contains("Spec: gadget colors"));
+    let gaps: Vec<_> = world
+        .store
+        .issues()
+        .into_iter()
+        .filter(|i| i.title == "Spec: gadget colors")
+        .collect();
+    let [gap] = &gaps[..] else {
+        panic!("expected the gap filed once, got {gaps:#?}");
+    };
+    assert_eq!(labels(gap), ["ready-for-human"]);
+    assert!(
+        gap.body
+            .ends_with(&format!("Found while working on {spec_pr}."))
+    );
+}
+
+#[tokio::test]
+async fn a_design_files_its_spec_gaps_and_its_tickets() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Design, |_| {
+        let mut result = one_ticket();
+        result["spec_gaps"] =
+            json!([{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]);
+        Ok(result.to_string())
+    });
+    let spec_pr = merge_spec_change(&world).await;
+
+    world.poll().await;
+
+    assert_eq!(world.store.pull_labels(spec_pr), ["linewright:designed"]);
+    let titles: Vec<String> = world.store.issues().into_iter().map(|i| i.title).collect();
+    assert_eq!(
+        titles,
+        [
+            "Spec change: Gadgets",
+            "Store gadgets",
+            "Spec: gadget colors"
+        ]
+    );
 }
 
 #[tokio::test]
@@ -1718,14 +1903,14 @@ async fn a_spec_change_whose_session_times_out_is_handed_back_saying_to_cut_the_
     assert!(comment.contains("Still cutting tickets."), "{comment}");
     assert!(
         comment.ends_with(&format!(
-            "Assign @{LINEWRIGHT} to this pull request again to cut it into tickets again."
+            "Assign @{LINEWRIGHT} to this pull request again to design it again."
         )),
         "{comment}"
     );
 }
 
 #[tokio::test]
-async fn a_handed_back_spec_change_is_cut_again_once_linewright_is_assigned_again() {
+async fn a_handed_back_spec_change_is_designed_again_once_linewright_is_assigned_again() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |_| {
         Ok(json!({"outcome": "gave-up", "reason": "Not now."}).to_string())
@@ -1733,7 +1918,7 @@ async fn a_handed_back_spec_change_is_cut_again_once_linewright_is_assigned_agai
     let spec_pr = merge_spec_change(&world).await;
     world.poll().await;
     world.poll().await;
-    let seen = cut_noting_assignees(&world, json!([]));
+    let seen = design_noting_assignees(&world, one_ticket());
 
     world
         .store

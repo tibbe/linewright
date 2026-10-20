@@ -22,11 +22,11 @@ use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
 use crate::results::{
-    self, AutomationIssueLabel, AutomationResult, ImplementResult, PullWorkResult, SpecGap,
-    Tickets, TriageOutcome, TriageResult,
+    self, AutomationIssueLabel, AutomationResult, DesignResult, ImplementResult, PullWorkResult,
+    SpecGap, Tickets, TriageOutcome, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs};
-use crate::spec_gap;
+use crate::spec_gap::{self, FiledGaps};
 use crate::store::{
     AnyItem, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError, PushMode,
     RepoSettings, Store,
@@ -334,7 +334,7 @@ async fn attempt(
                 .merged_pull(*pr)
                 .with_context(|| format!("{pr} is not in the snapshot"))
                 .map_err(infra)?;
-            return design(shell, ctx, pr).await;
+            return design(shell, ctx, snapshot, pr).await;
         }
         Work::Implement { issue: n } => {
             let issue = issue(*n)?;
@@ -479,7 +479,7 @@ async fn hand_back_spec_change(
 ) -> Result<()> {
     shell.store.unassign(pr).await?;
     let body = format!(
-        "{}\n\nAssign @{} to this pull request again to cut it into tickets again.",
+        "{}\n\nAssign @{} to this pull request again to design it again.",
         with_log(reason, log_tail),
         shell.policy.linewright
     );
@@ -896,20 +896,75 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     Ok(())
 }
 
-async fn design(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failure> {
+async fn design(
+    shell: &Shell,
+    ctx: &Ctx,
+    snapshot: &Snapshot,
+    pr: &MergedPull,
+) -> Result<(), Failure> {
     let purpose = Purpose::Work {
         subject: Subject::SpecChange(pr.number),
         kind: WorkKind::Design,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let diff = spec_diff(shell, pr).await?;
-    let prompt = prompts::tickets(&shell.briefs.prompts, &shell.repo(), pr, &diff);
+    let filed_issues = spec_gap::filed_for(snapshot, pr.number);
+    let filed_gaps = FiledGaps {
+        item: pr.number,
+        issues: &filed_issues,
+    };
+    let prompt = prompts::design(
+        &shell.briefs.prompts,
+        &shell.repo(),
+        pr,
+        &diff,
+        &filed_issues,
+    );
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
-    let (tickets, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        results::parse_tickets(&message).map_err(parse_retry(shell))
+    let (result, turn) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
+        results::parse::<DesignResult>(&message).map_err(parse_retry(shell))
     })
     .await?;
-    record_tickets(shell, pr, tickets).await.map_err(apply)
+    match result {
+        DesignResult::Designed {
+            design,
+            tickets,
+            comment,
+            spec_gaps,
+        } => {
+            file_tickets(shell, pr, &design, &tickets, &comment)
+                .await
+                .map_err(apply)?;
+            file_spec_gaps(shell, &spec_gaps, &filed_gaps)
+                .await
+                .map_err(apply)?;
+            mark_designed(shell, pr).await.map_err(apply)
+        }
+        DesignResult::NothingToBuild { reason } => {
+            shell
+                .store
+                .comment(pr.number, &reason)
+                .await
+                .map_err(apply)?;
+            mark_designed(shell, pr).await.map_err(apply)
+        }
+        DesignResult::Blocked {
+            question,
+            spec_gaps,
+        } => {
+            file_spec_gaps(shell, &spec_gaps, &filed_gaps)
+                .await
+                .map_err(apply)?;
+            Err(Failure::HandBack {
+                reason: blocked_on(&question),
+                log_tail: None,
+            })
+        }
+        DesignResult::GaveUp { reason } => Err(Failure::HandBack {
+            reason: format!("The designer handed the spec change back:\n\n{reason}"),
+            log_tail: Some(turn.log_tail),
+        }),
+    }
 }
 
 async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
@@ -926,19 +981,25 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
         .map_err(infra)
 }
 
-async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Result<()> {
-    file_tickets(shell, pr, tickets).await?;
-    // Labeled first, so that a stop between the two leaves the spec change
-    // designed rather than handed back.
+/// The label goes on last, so that a design stopped before it is discarded
+/// and made again (docs/specs/design.md, "Designing", 4a).
+async fn mark_designed(shell: &Shell, pr: &MergedPull) -> Result<()> {
+    // Labeled before unassigning, so that a stop between the two leaves the
+    // spec change designed rather than handed back.
     shell.store.add_label(pr.number, label::DESIGNED).await?;
     shell.store.unassign(pr.number).await
 }
 
-async fn file_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Result<()> {
+/// Files the tickets under a tracking issue, and records the design on it
+/// and the tickets on the spec change.
+async fn file_tickets(
+    shell: &Shell,
+    pr: &MergedPull,
+    design: &str,
+    tickets: &Tickets,
+    comment: &str,
+) -> Result<()> {
     let store = &shell.store;
-    if tickets.tickets.is_empty() {
-        return store.comment(pr.number, &tickets.comment).await;
-    }
     let required: Vec<String> = shell.creation_label().await?.into_iter().collect();
     let tracking_issue = store
         .create_issue(NewIssue {
@@ -947,10 +1008,8 @@ async fn file_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Resul
             labels: required.clone(),
         })
         .await?;
-    // Tickets get `ready-for-agent` only once every edge exists, so no poll
-    // sees a ticket unblocked before its blockers are linked.
     let mut list: Vec<(Number, String)> = vec![];
-    for ticket in &tickets.tickets {
+    for ticket in tickets.in_order() {
         let number = store
             .create_issue(NewIssue {
                 title: ticket.title.clone(),
@@ -964,21 +1023,31 @@ async fn file_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Resul
         }
         list.push((number, ticket.title.clone()));
     }
+    // Tickets get `ready-for-agent` only once every edge exists, so no poll
+    // sees a ticket unblocked before its blockers are linked, and only once
+    // they are designed, so that none is taken for an issue to design.
     for (number, _) in &list {
+        store.add_label(*number, label::DESIGNED).await?;
         store.add_label(*number, label::READY_FOR_AGENT).await?;
     }
     store
         .edit_body(tracking_issue, &tracking::body(pr.number, &list))
         .await?;
-    store.comment(tracking_issue, &tickets.comment).await?;
-    let listed: String = list.iter().map(|(n, t)| format!("- {n} {t}\n")).collect();
+    let in_order: String = list
+        .iter()
+        .enumerate()
+        .map(|(i, (n, t))| format!("{}. {n} {t}\n", i + 1))
+        .collect();
+    store
+        .comment(
+            tracking_issue,
+            &format!("{design}\n\n## Tickets\n\n{in_order}\n{comment}"),
+        )
+        .await?;
     store
         .comment(
             pr.number,
-            &format!(
-                "{}\n\nTracked in {tracking_issue}:\n\n{listed}",
-                tickets.comment
-            ),
+            &format!("{comment}\n\nTracked in {tracking_issue}:\n\n{in_order}"),
         )
         .await
 }
@@ -1246,7 +1315,7 @@ async fn implement(
                 pr = pr.0,
                 "opened draft pull request"
             );
-            file_spec_gaps(shell, &spec_gaps, ticket)
+            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(apply)
         }
@@ -1255,14 +1324,11 @@ async fn implement(
             spec_gaps,
         } => {
             let kept = keep().await;
-            file_spec_gaps(shell, &spec_gaps, ticket)
+            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
             Err(Failure::HandBack {
-                reason: format!(
-                    "Blocked on a question the spec cannot decide:\n\n{}{kept}",
-                    question.trim()
-                ),
+                reason: format!("{}{kept}", blocked_on(&question)),
                 log_tail: None,
             })
         }
@@ -1277,6 +1343,14 @@ async fn implement(
             })
         }
     }
+}
+
+/// The reason of a hand-back blocked on `question`.
+fn blocked_on(question: &str) -> String {
+    format!(
+        "Blocked on a question the spec cannot decide:\n\n{}",
+        question.trim()
+    )
 }
 
 fn closing(body: &str, closes: &[Number]) -> String {
@@ -1295,17 +1369,14 @@ fn closing(body: &str, closes: &[Number]) -> String {
 
 /// A session told which gaps are filed may still return one, so titles are
 /// compared.
-async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], ticket: &Ticket<'_>) -> Result<()> {
+async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], filed: &FiledGaps<'_>) -> Result<()> {
+    let item = filed.item;
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     for gap in gaps {
-        if let Some(filed) = ticket
-            .filed_gaps()
-            .iter()
-            .find(|f| same(&f.title, &gap.title))
-        {
+        if let Some(filed) = filed.issues.iter().find(|f| same(&f.title, &gap.title)) {
             info!(
                 issue = filed.number.0,
-                ticket = ticket.number().0,
+                item = item.0,
                 "spec gap already filed"
             );
             continue;
@@ -1314,18 +1385,14 @@ async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], ticket: &Ticket<'_>) ->
             .store
             .create_issue(NewIssue {
                 title: gap.title.clone(),
-                body: spec_gap::body(&gap.body, ticket.number()),
+                body: spec_gap::body(&gap.body, item),
                 labels: [label::READY_FOR_HUMAN.into()]
                     .into_iter()
                     .chain(shell.creation_label().await?)
                     .collect(),
             })
             .await?;
-        info!(
-            issue = number.0,
-            ticket = ticket.number().0,
-            "filed a spec gap"
-        );
+        info!(issue = number.0, item = item.0, "filed a spec gap");
     }
     Ok(())
 }
@@ -1570,7 +1637,7 @@ async fn pull_work(
             if kind == WorkKind::Rework {
                 ctx.run.answered(read_at);
             }
-            file_spec_gaps(shell, &spec_gaps, ticket)
+            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(apply)
         }
@@ -1579,14 +1646,11 @@ async fn pull_work(
             spec_gaps,
         } => {
             let kept = keep().await;
-            file_spec_gaps(shell, &spec_gaps, ticket)
+            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
             Err(Failure::HandBack {
-                reason: format!(
-                    "Blocked on a question the spec cannot decide:\n\n{}{kept}",
-                    question.trim()
-                ),
+                reason: format!("{}{kept}", blocked_on(&question)),
                 log_tail: None,
             })
         }

@@ -203,7 +203,7 @@ async fn a_spec_change_merged_is_cut_into_tickets_on_the_delivery() {
     let world = World::new().await;
     world.harness.on(WorkKind::Design, |_| {
         Ok(json!({
-            "tickets": [{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}],
+            "outcome": "designed", "design": "A gadget store.", "tickets": [{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}],
             "comment": "One slice."
         }).to_string())
     });

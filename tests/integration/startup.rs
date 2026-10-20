@@ -534,6 +534,29 @@ fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
 }
 
 #[test]
+fn briefs_with_the_tickets_prompt_of_an_earlier_release_and_no_design_prompt_are_refused() {
+    let briefs = briefs_with("design.md", |text| text);
+    let prompts = briefs.path().join("prompts");
+    std::fs::rename(prompts.join("design.md"), prompts.join("tickets.md")).unwrap();
+
+    let (succeeded, error) = lw(
+        std::path::Path::new(""),
+        &[
+            "--repo",
+            "owner/name",
+            "--briefs",
+            briefs.path().to_str().unwrap(),
+            "once",
+        ],
+        &[],
+    );
+
+    assert!(!succeeded, "{error}");
+    assert!(error.contains("reading the brief"), "{error}");
+    assert!(error.contains("design.md"), "{error}");
+}
+
+#[test]
 fn sigquit_while_serve_is_starting_ends_it_with_status_0() {
     let bin = tempfile::tempdir().unwrap();
     link_from_path(bin.path(), "git");
