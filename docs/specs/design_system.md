@@ -6,10 +6,15 @@
   it.
 - A page that loses `serve` keeps what it last showed, says since when, and
   reconnects on its own.
+- What the reader opened or closed stays so through updates, until they
+  open the page again.
 
 ## Navigation
 
-- Every page has the same bar.
+- Every page has the same navigation.
+- A hold on Linewright's work, such as a usage limit, or a problem no item
+  shows, is shown on every page while it lasts, linking to the page that
+  tells more.
 - Every item or pull request named on a page links to its page and to
   GitHub.
 
@@ -22,16 +27,8 @@
 
 ## Status
 
-- An outcome or a state has an icon and a colour, those of GitHub's check
-  state it maps to, and is never told by colour alone.
-
-| Outcome or state                 | Check state |
-| -------------------------------- | ----------- |
-| done, merged, green              | success     |
-| failed, handed back, CI failing  | failure     |
-| in flight, running               | in progress |
-| waiting for something            | pending     |
-| cancelled, interrupted, usage limit, closed | cancelled |
+- An outcome or a state has an icon and a colour, shared by those that mean
+  the same, and is never told by colour alone.
 
 ## Colour scheme
 

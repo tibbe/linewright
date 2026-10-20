@@ -66,8 +66,8 @@ order:
 | the usage limit and when it resets             | while one is in force  |
 | the drain, since when, and its deadline if set | while one is under way |
 | the runs in flight out of `max-runs`           | always                 |
-| the time of the last delivery accepted         | with webhooks on       |
-| the deliveries refused since `serve` started   | with webhooks on       |
+| the time of the last webhook delivery accepted | with webhooks on       |
+| the webhook deliveries refused since `serve` started | with webhooks on |
 
 ## explain
 
@@ -160,21 +160,32 @@ a terminal.
 
 `serve` serves a web UI that shows the commands' answers in a browser.
 
-| Page  | Path        | Shows                                                      |
-| ----- | ----------- | ---------------------------------------------------------- |
-| board | `/`         | the managed items as cards ([The board](#the-board))       |
-| item  | `/items/N`  | what `explain N` shows                                     |
-| runs  | `/runs`     | what `runs` lists, with its narrowing as filters           |
-| run   | `/runs/ID`  | what `logs` shows of run ID ([The run page](#the-run-page)) |
+| Page        | Path           | Shows                                                       |
+| ----------- | -------------- | ----------------------------------------------------------- |
+| board       | `/`            | the managed items as cards ([The board](#the-board))        |
+| item        | `/items/N`     | what `explain N` shows                                      |
+| runs        | `/runs`        | what `runs` lists, with its narrowing as filters            |
+| run         | `/runs/ID`     | what `logs` shows of run ID ([The run page](#the-run-page))  |
+| automations | `/automations` | the automations ([The automations page](#the-automations-page)) |
+| server      | `/server`      | the facts about Linewright itself, as `status` shows them   |
 
-### The bar
+### Navigation
 
-| Part   | Holds                                                                  |
-| ------ | ---------------------------------------------------------------------- |
-| name   | the repository's name, linking to it on GitHub                         |
-| links  | the board and the runs page                                            |
-| facts  | the facts about Linewright itself and the automations, as `status` shows them |
-| banner | a usage limit in force, and a drain under way                          |
+| Part        | Holds                                                     |
+| ----------- | --------------------------------------------------------- |
+| name        | the repository's name, linking to it on GitHub            |
+| links       | the board, the runs, the automations and the server pages |
+| status line | the runs in flight out of `max-runs`, and the last poll   |
+
+### Holds and problems
+
+| Hold or problem                          | Links to         |
+| ---------------------------------------- | ---------------- |
+| a usage limit in force                   | the server page  |
+| a drain under way                        | the server page  |
+| a webhook delivery refused since the last one accepted | the server page |
+| an automation file that does not parse   | the automations page |
+| an automation whose last run failed      | that run         |
 
 ### The board
 
@@ -197,10 +208,18 @@ order:
 - **A spec change.** Until it is designed, its card is its pull request;
   designed, it is its tracking issue's lane where one was cut, and otherwise
   its pull request, in Done, saying there was nothing to build.
-- **Lanes.** A lane per tracking issue with cards on the board, in number
-  order, headed by the tracking issue's number and title and its tickets
-  closed of total, with its tickets as its cards; a last lane holds the items
-  with no tracking issue.
+- **Lanes.** A lane per tracking issue with cards on the board, headed by the
+  tracking issue's number and title and its tickets closed of total, with its
+  tickets as its cards; one more lane, headed "No tracking issue" and its
+  count of cards, holds the items with no tracking issue.
+- **Finished lanes.** A lane whose cards are all in Done is finished. It shows
+  as its head alone, with when its last card closed, and opens on click. The
+  finished lanes sit together under one fold that says how many there are
+  and opens on click.
+- **Order of lanes.** The lanes with a card in Needs a person come first,
+  then the other unfinished lanes, then the finished lanes; unfinished lanes
+  in number order with the lane of items with no tracking issue last, and
+  finished lanes latest finished first.
 - **Order in a column.** Ascending by number, within each lane.
 - **No cap.** A column is never cut.
 - **Needing a person.** The browser tab's title carries the count of cards in
@@ -231,9 +250,22 @@ The run page shows a run's transcript as `logs` shows it.
   until the reader scrolls up, and then offers to jump to the latest entry.
 - **Permalinks.** Each entry has a link of its own.
 
+### The automations page
+
+The automations page shows each automation file that does not parse, then a
+row per automation.
+
+| Part     | Holds                                                                   |
+| -------- | ----------------------------------------------------------------------- |
+| name     | the automation's name                                                   |
+| schedule | when it runs, in words                                                  |
+| last run | its last run, with its outcome, linking to the run; or, before its first, when Linewright first saw it |
+| next run | when it runs next                                                       |
+
 ## Out of scope
 
 - Acting from the UI on `serve` or on the work.
+- A layout of the board for narrow screens.
 - Monitoring from another host other than through a shell on, or a tunnel to,
   Linewright's; the direction is an authenticating proxy in front of the UI.
 - An MCP server.

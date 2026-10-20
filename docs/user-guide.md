@@ -224,13 +224,7 @@ machine to that socket, whose path `serve` logs as it starts:
 ssh -N -L 8080:/run/user/1000/linewright/0123456789abcdef.sock linewright-host
 ```
 
-Then open `http://localhost:8080/items/42` to see what `lw explain 42` shows:
-where #42 stands, what Linewright waits for on it, its run in flight and its
-latest runs. Every item it names links to its own page and to GitHub. The bar
-at the top shows what `lw status` shows about Linewright itself, with a banner
-while a usage limit is in force or a drain is under way. Times show in your
-time zone. The page keeps itself up to date; if it loses `serve`, it keeps
-what it showed, says since when, and reconnects on its own.
+Then open `http://localhost:8080`.
 
 ## Recurring work
 
