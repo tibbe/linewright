@@ -898,7 +898,9 @@ fn a_cut_stopped_part_way_is_discarded_also_when_linewright_was_unassigned_from_
                 pr: Number(5),
                 tracking: Number(9),
             },
+            peoples_pulls: vec![],
             tickets: vec![Number(10)],
+            pulls: vec![],
         })]
     );
 }
@@ -967,7 +969,9 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
                 pr: Number(5),
                 tracking: Number(9),
             },
+            peoples_pulls: vec![],
             tickets: vec![Number(10)],
+            pulls: vec![],
         })]
     );
     assert_eq!(
@@ -2964,7 +2968,9 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_desi
         decided.actions,
         [Action::DiscardCut(Discard {
             item: CutItem::Issue(Number(9)),
+            peoples_pulls: vec![],
             tickets: vec![Number(10)],
+            pulls: vec![],
         })]
     );
     assert_eq!(decided.waits.get(&Number(9)), None);
@@ -2980,9 +2986,81 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_discarded() {
         decide(&snapshot(vec![undesigned])),
         vec![Action::DiscardCut(Discard {
             item: CutItem::Issue(Number(9)),
+            peoples_pulls: vec![],
             tickets: vec![Number(10)],
+            pulls: vec![],
         })]
     );
+}
+
+#[test]
+fn a_discarded_spec_change_closes_linewrights_tickets_and_their_pull_requests_and_nothing_else_is_done_to_them()
+ {
+    let mut tracking = tracking(9, 5, &[(10, true), (11, false)]);
+    tracking.sub_issues.push(sub_issue(12, true, "maintainer"));
+    let mut world = snapshot(vec![tracking, claimed(ticket(10))]);
+    world.merged = vec![merged(5, &["docs/spec.md"])];
+    world.pulls = vec![ready(pull(20, 10)), ready(pull(21, 11))];
+
+    assert_eq!(
+        auto_merging(&world, 10),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::SpecChange {
+                pr: Number(5),
+                tracking: Number(9),
+            },
+            peoples_pulls: vec![],
+            tickets: vec![Number(10)],
+            pulls: vec![Number(20), Number(21)],
+        })]
+    );
+}
+
+#[test]
+fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_and_their_pull_requests_discarded_and_nothing_else_done_to_them()
+ {
+    let mut undesigned = cut_issue(9, &[(10, true), (11, true)]);
+    undesigned.labels.clear();
+    undesigned
+        .sub_issues
+        .push(sub_issue(12, true, "maintainer"));
+    let theirs = closed_by(claimed(ticket(11)), 22, "contributor");
+    let mut world = snapshot(vec![undesigned, claimed(ticket(10)), theirs]);
+    let mut green = pull(21, 11);
+    green.checks = vec![check("test", CheckState::Passed)];
+    world.pulls = vec![green];
+
+    assert_eq!(
+        at(&world, 10),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::Issue(Number(9)),
+            peoples_pulls: vec![Number(22)],
+            tickets: vec![Number(10), Number(11)],
+            pulls: vec![Number(21)],
+        })]
+    );
+}
+
+#[test]
+fn a_discard_stopped_after_closing_its_tickets_closes_their_pull_requests_before_the_issue_is_designed_again()
+ {
+    let mut stopped = claimed(readied(9));
+    stopped.sub_issues = linewrights(&[(10, false)]);
+    let mut world = snapshot(vec![stopped]);
+    world.pulls = vec![ready(pull(20, 10))];
+
+    assert_eq!(
+        auto_merging(&world, 10),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::Issue(Number(9)),
+            peoples_pulls: vec![],
+            tickets: vec![],
+            pulls: vec![Number(20)],
+        })]
+    );
+
+    world.pulls[0].state = PullState::Closed { at: t(10) };
+    assert_eq!(decide(&world), vec![design(9)]);
 }
 
 #[test]
@@ -4321,7 +4399,9 @@ fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_no
                 pr: Number(5),
                 tracking: Number(10),
             },
+            peoples_pulls: vec![],
             tickets: vec![Number(11)],
+            pulls: vec![],
         })]
     );
     assert_eq!(decided.waits.get(&Number(10)), None);

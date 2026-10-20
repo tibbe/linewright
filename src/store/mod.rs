@@ -368,6 +368,8 @@ pub trait Store: Send + Sync {
     /// Opens a draft pull request into the default branch.
     async fn open_pull(&self, pull: NewPull) -> Result<Number>;
     async fn mark_ready(&self, pr: Number) -> Result<()>;
+    /// Closes the pull request unmerged.
+    async fn close_pull(&self, pr: Number) -> Result<()>;
     async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()>;
     /// Merges the pull request into the default branch with `method`, as
     /// Linewright, if its head is still the commit `head`.

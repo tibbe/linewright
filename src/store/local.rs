@@ -1591,6 +1591,10 @@ impl Store for LocalStore {
         Ok(())
     }
 
+    async fn close_pull(&self, pr: Number) -> Result<()> {
+        self.close_pull_as(pr)
+    }
+
     async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()> {
         let mut state = self.state();
         let requested = &mut state.pull_mut(pr)?.requested_reviewers;

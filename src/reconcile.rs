@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
@@ -444,13 +444,29 @@ pub enum Action {
     RunAutomation(Box<Automation>),
 }
 
-/// Close `tickets`, of a cut of `item` without the designed label, as not
-/// planned, leaving the item to be designed again (docs/specs/design.md,
-/// "Discarding a cut").
+/// Close `peoples_pulls`, then `tickets`, of a cut of `item` without the
+/// designed label, as not planned, then `pulls`, leaving the item to be
+/// designed again (docs/specs/design.md, "Discarding a cut").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Discard {
     pub item: CutItem,
+    /// The open pull requests of people closing an open ticket of the cut.
+    /// The snapshot holds them only through the ticket, so they are closed
+    /// while it is open, to be found again should the discard stop.
+    pub peoples_pulls: Vec<Number>,
+    /// The open tickets Linewright cut.
     pub tickets: Vec<Number>,
+    /// Linewright's open pull requests closing a ticket of the cut, open or
+    /// closed, so that a discard stopped after closing its tickets closes
+    /// them on the next poll.
+    pub pulls: Vec<Number>,
+}
+
+impl Discard {
+    /// Every pull request it closes.
+    pub fn all_pulls(&self) -> impl Iterator<Item = Number> + '_ {
+        self.peoples_pulls.iter().chain(&self.pulls).copied()
+    }
 }
 
 /// An item cut into tickets.
@@ -460,6 +476,24 @@ pub enum CutItem {
     SpecChange { pr: Number, tracking: Number },
     /// Its tickets are under the issue itself.
     Issue(Number),
+}
+
+impl CutItem {
+    /// The item designed again: the spec change or the issue.
+    pub fn designed(self) -> Number {
+        match self {
+            CutItem::SpecChange { pr, .. } => pr,
+            CutItem::Issue(issue) => issue,
+        }
+    }
+
+    /// The issue its tickets are under.
+    pub fn parent(self) -> Number {
+        match self {
+            CutItem::SpecChange { tracking, .. } => tracking,
+            CutItem::Issue(issue) => issue,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -608,6 +642,8 @@ pub fn decisions(
             CutItem::Issue(_) => None,
         })
         .collect();
+    let discarded_tickets: Vec<Number> = discards.iter().flat_map(|d| d.tickets.clone()).collect();
+    let discarded_pulls: Vec<Number> = discards.iter().flat_map(Discard::all_pulls).collect();
     for discard in &discards {
         plan.act(Action::DiscardCut(discard.clone()));
     }
@@ -627,7 +663,9 @@ pub fn decisions(
         }
     }
 
-    for (pr, ticket) in worked_pulls(snapshot, &policy.linewright) {
+    for (pr, ticket) in worked_pulls(snapshot, &policy.linewright)
+        .filter(|(pr, _)| !discarded_pulls.contains(&pr.number))
+    {
         match pull_claim(pr, &policy.linewright) {
             PullClaim::Claimed => {}
             PullClaim::NeverAssigned => plan.claim(Item::Pull(pr.number)),
@@ -643,7 +681,11 @@ pub fn decisions(
         }
     }
 
-    for issue in snapshot.issues.iter().filter(|i| i.open) {
+    for issue in snapshot
+        .issues
+        .iter()
+        .filter(|i| i.open && !discarded_tickets.contains(&i.number))
+    {
         let subject = Subject::Issue(issue.number);
         let tracks = issue.tracks(&policy.linewright);
         let cut = match tracks {
@@ -1156,13 +1198,11 @@ fn discards(
                             spec_change: pr.number,
                         })
             })?;
-            Some(Discard {
-                item: CutItem::SpecChange {
-                    pr: pr.number,
-                    tracking: tracking.number,
-                },
-                tickets: open_numbers(tracking.sub_issues.iter().map(|s| &s.linked)),
-            })
+            let item = CutItem::SpecChange {
+                pr: pr.number,
+                tracking: tracking.number,
+            };
+            Some(cut_to_discard(snapshot, item, tracking, policy))
         });
     let issues = snapshot
         .issues
@@ -1173,14 +1213,37 @@ fn discards(
                 && !i.has_label(label::DESIGNED)
                 && running(Subject::Issue(i.number)).is_none()
         })
-        .filter_map(|i| {
-            let tickets = open_numbers(i.tickets_cut(&policy.linewright).map(|t| &t.linked));
-            (!tickets.is_empty()).then_some(Discard {
-                item: CutItem::Issue(i.number),
-                tickets,
-            })
-        });
+        .map(|i| cut_to_discard(snapshot, CutItem::Issue(i.number), i, policy))
+        .filter(|d| !d.tickets.is_empty() || d.all_pulls().next().is_some());
     spec_changes.chain(issues).collect()
+}
+
+/// The discard of `item`'s cut, whose tickets are under `parent`.
+fn cut_to_discard(snapshot: &Snapshot, item: CutItem, parent: &Issue, policy: &Policy) -> Discard {
+    let cut: Vec<&Linked> = parent
+        .tickets_cut(&policy.linewright)
+        .map(|t| &t.linked)
+        .collect();
+    let tickets = open_numbers(cut.iter().copied());
+    let pulls = snapshot
+        .pulls
+        .iter()
+        .filter(|p| p.is_open() && cut.iter().any(|t| p.closes.contains(&t.number)))
+        .map(|p| p.number)
+        .collect();
+    let peoples_pulls: BTreeSet<Number> = tickets
+        .iter()
+        .filter_map(|&t| snapshot.issue(t))
+        .flat_map(|t| &t.closed_by)
+        .filter(|p| p.is_open() && p.author != policy.linewright)
+        .map(|p| p.number)
+        .collect();
+    Discard {
+        item,
+        peoples_pulls: peoples_pulls.into_iter().collect(),
+        tickets,
+        pulls,
+    }
 }
 
 fn open_numbers<'a>(linked: impl IntoIterator<Item = &'a Linked>) -> Vec<Number> {

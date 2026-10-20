@@ -834,33 +834,52 @@ impl Factory {
                 store.comment(*issue, "All tickets are closed.").await?;
                 store.close_issue(*issue, CloseReason::Completed).await?;
             }
-            Action::DiscardCut(Discard { item, tickets }) => match item {
-                CutItem::SpecChange { tracking, .. } => {
-                    warn!(tracking = tracking.0, "discarding an interrupted cut");
-                    let note = "Designing the spec change stopped part way; this set is discarded and the spec change is designed again.";
-                    let issues: Vec<Number> = tickets.iter().chain([tracking]).copied().collect();
-                    discard(store.as_ref(), &issues, note).await?;
+            Action::DiscardCut(discarding) => {
+                let Discard {
+                    item,
+                    peoples_pulls,
+                    tickets,
+                    pulls,
+                } = discarding;
+                let designed = item.designed();
+                warn!(item = designed.0, "discarding a cut to design it again");
+                let on_pull =
+                    discard_note(designed, "pull request for a ticket of its earlier cut is");
+                // A pull request of a person is seen only through its open
+                // ticket, so it closes first; the discard leaves the ticket
+                // alone until it is closed, so nothing hands it back.
+                for pr in peoples_pulls {
+                    store.comment(*pr, &on_pull).await?;
+                    store.close_pull(*pr).await?;
                 }
-                CutItem::Issue(issue) => {
-                    warn!(issue = issue.0, "discarding an interrupted cut");
-                    let note = format!(
-                        "Designing {issue} stopped part way; this ticket is discarded and {issue} \
-                         is designed again."
-                    );
-                    discard(store.as_ref(), tickets, &note).await?;
-                    let list: Vec<String> = tickets.iter().map(Number::to_string).collect();
-                    store
-                        .comment(
-                            *issue,
-                            &format!(
-                                "Designing this issue stopped part way, so its tickets {} are \
-                                 discarded, and it is designed again.",
-                                list.join(", ")
-                            ),
-                        )
-                        .await?;
+                // Each ticket closes before Linewright's pull request, so
+                // that Linewright never sees its pull request closed unmerged
+                // while the ticket is open, which would hand the ticket back.
+                let on_ticket = discard_note(designed, "ticket from its earlier cut is");
+                for ticket in tickets {
+                    discard(store.as_ref(), *ticket, &on_ticket).await?;
                 }
-            },
+                for pr in pulls {
+                    store.comment(*pr, &on_pull).await?;
+                    store.close_pull(*pr).await?;
+                }
+                // The parent last, so that a discard that stops part way is
+                // found again on the next poll.
+                match item {
+                    CutItem::SpecChange { tracking, .. } => {
+                        let on_tracking =
+                            discard_note(designed, "tracking issue and its tickets are");
+                        discard(store.as_ref(), *tracking, &on_tracking).await?;
+                    }
+                    CutItem::Issue(issue) => {
+                        let mut closed: Vec<Number> = discarding.all_pulls().collect();
+                        closed.sort_unstable();
+                        store
+                            .comment(*issue, &discarded_note(tickets, &closed))
+                            .await?;
+                    }
+                }
+            }
             Action::DeleteBranch { branch } => {
                 info!(
                     branch = branch.as_str(),
@@ -953,13 +972,45 @@ async fn run_and_log(
     }
 }
 
-/// Closes `issues` as not planned, each saying why in `note`.
-async fn discard(store: &dyn Store, issues: &[Number], note: &str) -> Result<()> {
-    for issue in issues {
-        store.comment(*issue, note).await?;
-        store.close_issue(*issue, CloseReason::NotPlanned).await?;
-    }
-    Ok(())
+/// Closes `issue`, of a cut discarded, as not planned, saying why in `note`.
+async fn discard(store: &dyn Store, issue: Number, note: &str) -> Result<()> {
+    store.comment(issue, note).await?;
+    store.close_issue(issue, CloseReason::NotPlanned).await
+}
+
+/// What an item of a cut discarded to design `designed` again says, the
+/// item being `what` and its verb.
+fn discard_note(designed: Number, what: &str) -> String {
+    format!("{designed} is being designed again, so this {what} discarded.")
+}
+
+/// What an issue says of the `tickets` and `pulls` of its earlier cut that
+/// were discarded, at least one of them.
+fn discarded_note(tickets: &[Number], pulls: &[Number]) -> String {
+    let listed = |one: &str, many: &str, numbers: &[Number]| {
+        let numbers: Vec<String> = numbers.iter().map(Number::to_string).collect();
+        match numbers.as_slice() {
+            [] => None,
+            [only] => Some(format!("{one} {only}")),
+            [rest @ .., last] => Some(format!("{many} {} and {last}", rest.join(", "))),
+        }
+    };
+    let lists: Vec<String> = [
+        listed("ticket", "tickets", tickets),
+        listed("pull request", "pull requests", pulls),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let verb = if tickets.len() + pulls.len() == 1 {
+        "is"
+    } else {
+        "are"
+    };
+    format!(
+        "This issue is being designed again, so the {} of its earlier cut {verb} discarded.",
+        lists.join(" and ")
+    )
 }
 
 async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str) -> Result<()> {
@@ -1087,17 +1138,14 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         | Action::UnassignAsked { issue, .. }
         | Action::RemoveStatusLabel { issue, .. }
         | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
-        Action::DiscardCut(Discard { item, tickets }) => {
-            let (CutItem::SpecChange {
-                tracking: issue, ..
-            }
-            | CutItem::Issue(issue)) = item;
-            tickets
-                .iter()
-                .chain([issue])
-                .map(|issue| Item::Issue(*issue))
-                .collect()
-        }
+        Action::DiscardCut(discard) => discard
+            .tickets
+            .iter()
+            .copied()
+            .chain([discard.item.parent()])
+            .map(Item::Issue)
+            .chain(discard.all_pulls().map(Item::Pull))
+            .collect(),
         Action::Merge { pr, .. } => snapshot
             .pull(*pr)
             .into_iter()

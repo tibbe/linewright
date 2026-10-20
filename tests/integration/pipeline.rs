@@ -2,7 +2,7 @@ use crate::common;
 
 use chrono::TimeDelta;
 use common::*;
-use linewright::domain::{Assignment, Issue, IssueEvent};
+use linewright::domain::{Assignment, Issue, IssueEvent, PullState};
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
 use serde_json::{Value, json};
@@ -728,6 +728,58 @@ async fn ticket_cut_from_a_spec_change_of_spec_and_code() -> (World, Number) {
     world.poll().await;
     world.poll().await;
     (world, spec_pr)
+}
+
+#[tokio::test]
+async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_requests_closed_but_not_a_persons_sub_issue()
+ {
+    let (mut world, spec_pr) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
+    let tracking = world.store.issues()[0].clone();
+    let tickets: Vec<_> = tracking
+        .sub_issues
+        .iter()
+        .map(|s| s.linked.number)
+        .collect();
+    let pr = *world.store.pulls().last().expect("a ticket is in review");
+    let persons = world
+        .store
+        .open_issue("maintainer", "Paint gadgets", "", &[]);
+    world
+        .store
+        .add_sub_issue(tracking.number, persons)
+        .await
+        .unwrap();
+    world
+        .store
+        .remove_label(spec_pr, "linewright:designed")
+        .await
+        .unwrap();
+
+    world.poll().await;
+
+    for ticket in &tickets {
+        let discarded = world.issue(*ticket);
+        assert!(!discarded.open, "{discarded:#?}");
+        assert_eq!(
+            last_comment(&discarded),
+            format!(
+                "{spec_pr} is being designed again, so this ticket from its earlier cut is \
+                 discarded."
+            )
+        );
+    }
+    let pull = world.store.snapshot_pull(pr).await;
+    assert!(matches!(pull.state, PullState::Closed { .. }), "{pull:#?}");
+    let tracking = world.issue(tracking.number);
+    assert!(!tracking.open);
+    assert_eq!(
+        last_comment(&tracking),
+        format!(
+            "{spec_pr} is being designed again, so this tracking issue and its tickets are \
+             discarded."
+        )
+    );
+    assert!(world.issue(persons).open);
 }
 
 /// That `brief` holds the spec diff of the spec change from
@@ -2102,8 +2154,8 @@ async fn a_cut_of_an_issue_stopped_after_its_label_is_let_go_of_as_the_cut_would
 }
 
 #[tokio::test]
-async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_designs_the_issue_again()
-{
+async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_their_pull_requests_and_designs_the_issue_again()
+ {
     let mut world = World::new().await;
     design_answering(
         &world,
@@ -2123,14 +2175,46 @@ async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_desig
     for sub_issue in [left, persons] {
         world.store.add_sub_issue(issue, sub_issue).await.unwrap();
     }
+    let linewrights = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            &format!("{}-store-gadgets", left.0),
+            "Store gadgets",
+            &format!("Closes {left}"),
+            &[("src/gadgets.txt", "gadgets\n")],
+        )
+        .await
+        .unwrap();
+    let theirs = world.persons_pull_closing(left).await;
 
     world.poll().await;
 
     let discarded = world.issue(left);
     assert!(!discarded.open);
-    assert!(
-        last_comment(&discarded).contains("stopped part way"),
-        "{discarded:#?}"
+    assert_eq!(
+        last_comment(&discarded),
+        format!(
+            "{issue} is being designed again, so this ticket from its earlier cut is discarded."
+        )
+    );
+    for pr in [linewrights, theirs] {
+        let pull = world.store.snapshot_pull(pr).await;
+        assert!(matches!(pull.state, PullState::Closed { .. }), "{pull:#?}");
+        assert_eq!(
+            last_pull_comment(&world, pr).await,
+            format!(
+                "{issue} is being designed again, so this pull request for a ticket of its \
+                 earlier cut is discarded."
+            )
+        );
+    }
+    assert_eq!(
+        last_comment(&world.issue(issue)),
+        format!(
+            "This issue is being designed again, so the ticket {left} and pull requests \
+             {linewrights} and {theirs} of its earlier cut are discarded."
+        )
     );
     assert!(world.issue(persons).open);
     assert_eq!(world.harness.prompts(WorkKind::Design).len(), 0);
@@ -2141,7 +2225,7 @@ async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_desig
     let [design] = &designs[..] else {
         panic!("expected one design, got {designs:#?}");
     };
-    assert!(design.contains("stopped part way"), "{design}");
+    assert!(design.contains("is being designed again"), "{design}");
     assert!(world.issue(persons).open);
     assert_eq!(
         labels(&world.issue(issue)),

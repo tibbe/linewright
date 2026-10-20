@@ -2443,6 +2443,16 @@ impl Store for GitHub {
         Ok(())
     }
 
+    // https://docs.github.com/en/rest/pulls/pulls#update-a-pull-request
+    async fn close_pull(&self, pr: Number) -> Result<()> {
+        self.rest_ok(
+            Method::PATCH,
+            &self.repo_path(&format!("/pulls/{}", pr.0)),
+            Some(json!({"state": "closed"})),
+        )
+        .await
+    }
+
     async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()> {
         let response = self
             .send(
