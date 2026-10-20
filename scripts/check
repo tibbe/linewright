@@ -133,7 +133,22 @@ check_compose() {
       --quiet --no-env-resolution --no-interpolate
 }
 
-check_clippy() { cargo clippy --all-targets --locked --quiet; }
+# Outside CI, clippy's machine-applicable suggestions are applied and
+# formatted first, with warnings allowed, since under `deny` cargo would skip
+# the crates that depend on one with warnings left
+# (https://doc.rust-lang.org/cargo/reference/config.html#buildwarnings), and
+# their warnings would go unfixed. Then the check runs as in CI and reports,
+# and fails on, what is left. The fix pass's own output and status are
+# dropped, since the check repeats any error or warning in it.
+check_clippy() {
+  local args=(--all-targets --locked --quiet)
+  if $fix; then
+    CARGO_BUILD_WARNINGS=allow cargo clippy --fix --allow-dirty --allow-staged \
+      "${args[@]}" >/dev/null 2>&1 || true
+    check_fmt
+  fi
+  cargo clippy "${args[@]}"
+}
 check_test() { nextest run --locked --cargo-quiet --no-input-handler; }
 # nextest doesn't run doctests.
 check_doc() {
@@ -145,7 +160,8 @@ stages=("fmt markdown compose" "clippy" "test doc")
 usage() {
   echo "usage: scripts/check [NAME...]"
   echo "Runs every check CI runs, or only the named ones: ${stages[*]}."
-  echo "Outside CI it fixes what it can first."
+  echo "Outside CI it first fixes what it can: formatting, Markdown and clippy's"
+  echo "machine-applicable suggestions."
 }
 
 if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
