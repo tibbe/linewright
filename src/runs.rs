@@ -38,6 +38,105 @@ impl RunOf {
     }
 }
 
+/// How an automation's run started: on its schedule or by hand. Not part of
+/// which run it is, so kept off [`RunOf`] and [`RunId`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StartedBy {
+    Schedule,
+    Hand,
+}
+
+/// What a run about to begin is of, and for an automation's run how it
+/// started, which an item's run has no say in.
+#[derive(Clone, Debug)]
+pub(crate) enum Begin {
+    Work {
+        item: Number,
+        stage: WorkKind,
+    },
+    Automation {
+        automation: AutomationName,
+        started_by: StartedBy,
+    },
+}
+
+impl Begin {
+    fn into_parts(self) -> (RunOf, Option<StartedBy>) {
+        match self {
+            Begin::Work { item, stage } => (RunOf::Work { item, stage }, None),
+            Begin::Automation {
+                automation,
+                started_by,
+            } => (RunOf::Automation { automation }, Some(started_by)),
+        }
+    }
+}
+
+/// A run's ID with, of an automation's run, how it started; an item's run
+/// says nothing of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "StartedFields", try_from = "StartedFields")]
+pub struct Started {
+    id: RunId,
+    by: Option<StartedBy>,
+}
+
+impl Started {
+    /// An automation's run that says nothing of how it started, as those from
+    /// before runs did, reads as scheduled: runs by hand from then cannot be
+    /// told apart.
+    pub fn new(id: RunId, by: Option<StartedBy>) -> Result<Started, String> {
+        let by = match (&id.of, by) {
+            (RunOf::Work { .. }, None) => None,
+            (RunOf::Work { .. }, Some(_)) => {
+                return Err(format!(
+                    "the run {id} is an item's, which does not say how it started"
+                ));
+            }
+            (RunOf::Automation { .. }, by) => Some(by.unwrap_or(StartedBy::Schedule)),
+        };
+        Ok(Started { id, by })
+    }
+
+    pub fn id(&self) -> &RunId {
+        &self.id
+    }
+
+    /// `Some` for an automation's run, `None` for an item's.
+    pub fn by(&self) -> Option<StartedBy> {
+        self.by
+    }
+
+    pub fn by_hand(&self) -> bool {
+        self.by == Some(StartedBy::Hand)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct StartedFields {
+    run: RunId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    started_by: Option<StartedBy>,
+}
+
+impl From<Started> for StartedFields {
+    fn from(started: Started) -> StartedFields {
+        StartedFields {
+            run: started.id,
+            started_by: started.by,
+        }
+    }
+}
+
+impl TryFrom<StartedFields> for Started {
+    type Error = String;
+
+    fn try_from(fields: StartedFields) -> Result<Started, String> {
+        Started::new(fields.run, fields.started_by)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunId {
     pub of: RunOf,
@@ -104,6 +203,9 @@ struct Record {
     #[serde(flatten)]
     of: RunOf,
     n: u32,
+    /// Of an automation's run; absent from those recorded before it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    started_by: Option<StartedBy>,
     started_at: Timestamp,
     end: Option<End>,
     /// Relative to the work directory.
@@ -164,7 +266,8 @@ impl Runs {
         }
     }
 
-    pub(crate) fn begin(&self, of: RunOf, now: Timestamp) -> Result<Running> {
+    pub(crate) fn begin(&self, begin: Begin, now: Timestamp) -> Result<Running> {
+        let (of, started_by) = begin.into_parts();
         let dir = self.dir_of(&of);
         std::fs::create_dir_all(&dir).context("creating the runs' directory")?;
         let prefix = file_prefix(&of);
@@ -196,6 +299,7 @@ impl Runs {
             record: Mutex::new(Record {
                 of,
                 n,
+                started_by,
                 started_at: now,
                 end: None,
                 sessions: vec![],
@@ -220,16 +324,25 @@ impl Runs {
 
     /// A record that does not read is logged and taken as missing.
     pub fn read_run(&self, id: &RunId) -> Option<Recorded> {
-        let path = self.path_of(id);
-        let record = records::load::<Record>(&path, "a run's record")?;
-        Some(Recorded::of(record, &path, &self.work_dir))
+        self.load(&self.path_of(id))
     }
 
     /// `None` if the run has no record; a record that does not read fails.
     pub fn try_read_run(&self, id: &RunId) -> Result<Option<Recorded>> {
         let path = self.path_of(id);
         let record = records::read::<Record>(&path)?;
-        Ok(record.map(|record| Recorded::of(record, &path, &self.work_dir)))
+        record
+            .map(|record| Recorded::of(record, &path, &self.work_dir))
+            .transpose()
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// A record that does not read is logged and taken as missing.
+    fn load(&self, path: &Path) -> Option<Recorded> {
+        let record = records::load::<Record>(path, "a run's record")?;
+        Recorded::of(record, path, &self.work_dir)
+            .inspect_err(|e| warn!(path = %path.display(), error = e, "ignoring a run's record"))
+            .ok()
     }
 
     /// A record that does not read is logged and skipped.
@@ -239,9 +352,9 @@ impl Runs {
             for dir in entries(&self.dir().join(kind))? {
                 for path in entries(&dir)? {
                     if path.extension().is_some_and(|e| e == "json")
-                        && let Some(record) = records::load::<Record>(&path, "a run's record")
+                        && let Some(record) = self.load(&path)
                     {
-                        recorded.push(Recorded::of(record, &path, &self.work_dir));
+                        recorded.push(record);
                     }
                 }
             }
@@ -503,6 +616,8 @@ impl Running {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recorded {
     pub id: RunId,
+    /// Set with `id`, from a [`Started`], so that the two agree.
+    started_by: Option<StartedBy>,
     pub started_at: Timestamp,
     pub state: State,
     /// In the order it started them.
@@ -519,26 +634,51 @@ pub enum State {
 }
 
 impl Recorded {
-    fn of(record: Record, path: &Path, work_dir: &Path) -> Recorded {
+    pub fn new(
+        started: Started,
+        started_at: Timestamp,
+        state: State,
+        sessions: Vec<PathBuf>,
+        answered_until: Option<Timestamp>,
+    ) -> Recorded {
+        Recorded {
+            id: started.id,
+            started_by: started.by,
+            started_at,
+            state,
+            sessions,
+            answered_until,
+        }
+    }
+
+    pub fn started(&self) -> Started {
+        Started {
+            id: self.id.clone(),
+            by: self.started_by,
+        }
+    }
+
+    fn of(record: Record, path: &Path, work_dir: &Path) -> Result<Recorded, String> {
         let state = match record.end {
             Some(End { at, ending }) => State::Ended { at, ending },
             None if is_locked(&path.with_extension("lock")) => State::InFlight,
             None => State::Interrupted,
         };
-        Recorded {
-            id: RunId {
-                of: record.of,
-                n: record.n,
-            },
-            started_at: record.started_at,
+        let id = RunId {
+            of: record.of,
+            n: record.n,
+        };
+        Ok(Recorded::new(
+            Started::new(id, record.started_by)?,
+            record.started_at,
             state,
-            sessions: record
+            record
                 .sessions
                 .iter()
                 .map(|dir| work_dir.join(dir))
                 .collect(),
-            answered_until: record.answered_until,
-        }
+            record.answered_until,
+        ))
     }
 
     pub fn done_on_pull(&self) -> Option<DoneRun> {
@@ -585,8 +725,19 @@ pub struct Listing {
 #[serde(into = "RunAnswer", try_from = "RunAnswer")]
 pub struct Run {
     pub id: RunId,
+    /// Set with `id`, from a [`Started`], so that the two agree.
+    started_by: Option<StartedBy>,
     pub started_at: Timestamp,
     pub outcome: Outcome,
+}
+
+impl Run {
+    pub fn started(&self) -> Started {
+        Started {
+            id: self.id.clone(),
+            by: self.started_by,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -601,6 +752,8 @@ struct RunAnswer {
     id: String,
     #[serde(flatten)]
     of: RunOf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    started_by: Option<StartedBy>,
     started_at: Timestamp,
     duration_seconds: Option<i64>,
     outcome: OutcomeName,
@@ -632,6 +785,7 @@ impl From<Run> for RunAnswer {
         RunAnswer {
             id: run.id.to_string(),
             of: run.id.of,
+            started_by: run.started_by,
             started_at: run.started_at,
             duration_seconds,
             outcome,
@@ -647,6 +801,7 @@ impl TryFrom<RunAnswer> for Run {
         if id.of != answer.of {
             return Err(format!("the run {id} is not of what the answer says"));
         }
+        let Started { id, by: started_by } = Started::new(id, answer.started_by)?;
         let outcome = match (answer.outcome, answer.duration_seconds) {
             (OutcomeName::Ended(ending), Some(seconds)) => Outcome::Ended { ending, seconds },
             (OutcomeName::Unended(Unended::InFlight), Some(seconds)) => {
@@ -661,6 +816,7 @@ impl TryFrom<RunAnswer> for Run {
         };
         Ok(Run {
             id,
+            started_by,
             started_at: answer.started_at,
             outcome,
         })
@@ -732,6 +888,7 @@ impl Recorded {
         };
         Run {
             id: self.id,
+            started_by: self.started_by,
             started_at: self.started_at,
             outcome,
         }
@@ -812,10 +969,16 @@ pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
     format!("{}: {outcome} — {}", paint.bold(&run.id), describe_run(run))
 }
 
-/// What a run is of, when it started and how long it ran, after its
-/// outcome.
+/// What a run is of, whether by hand, when it started and how long it ran,
+/// after its outcome.
 pub(crate) fn describe_run(run: &Run) -> Phrase {
+    let by_hand = if run.started().by_hand() {
+        " by hand"
+    } else {
+        ""
+    };
     let phrase = describe_of(&run.id.of)
+        .text(by_hand)
         .text(", started ")
         .time(run.started_at);
     match run.outcome {

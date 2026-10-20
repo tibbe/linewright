@@ -6,7 +6,9 @@ use chrono::TimeDelta;
 use common::*;
 use linewright::domain::Number;
 use linewright::reconcile::WorkKind;
-use linewright::runs::{self, Ending, Listing, NoRuns, Query, Recorded, RunId, RunOf, Runs, State};
+use linewright::runs::{
+    self, Ending, Listing, NoRuns, Query, Recorded, RunId, RunOf, Runs, Started, StartedBy, State,
+};
 use serde_json::json;
 
 fn triage_ready(world: &World) {
@@ -154,14 +156,78 @@ async fn an_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}", output.stdout);
     assert!(
-        lines[0].starts_with("weekly/2: failed — automation weekly, started "),
+        lines[0].starts_with("weekly/2: failed — automation weekly by hand, started "),
         "{}",
         output.stdout
     );
     assert!(
-        lines[1].starts_with("weekly/1: done — automation weekly, started "),
+        lines[1].starts_with("weekly/1: done — automation weekly by hand, started "),
         "{}",
         output.stdout
+    );
+}
+
+async fn hourly_by_schedule_then_by_hand() -> (World, tempfile::TempDir) {
+    let (mut world, work_dir) = world_in_work_dir().await;
+    world.hourly_by_schedule_then_by_hand().await;
+    (world, work_dir)
+}
+
+#[tokio::test]
+async fn an_automations_run_by_hand_is_marked_as_one_and_a_scheduled_one_is_not() {
+    let (_world, work_dir) = hourly_by_schedule_then_by_hand().await;
+
+    let output = lw_in(work_dir.path(), &["runs"]).await;
+
+    let lines: Vec<&str> = output.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{}", output.stdout);
+    assert!(
+        lines[0]
+            .starts_with("hourly/2: done — automation hourly by hand, started 2026-10-01 13:05:"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        lines[1].starts_with("hourly/1: done — automation hourly, started 2026-10-01 13:00:"),
+        "{}",
+        output.stdout
+    );
+}
+
+#[tokio::test]
+async fn runs_json_says_how_each_automation_run_started_and_nothing_of_work_runs() {
+    let (mut world, work_dir) = hourly_by_schedule_then_by_hand().await;
+    triage_ready(&world);
+    let issue =
+        world
+            .store
+            .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    world.poll().await;
+
+    let output = lw_in(work_dir.path(), &["runs", "--json"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    let triage = format!("{}/triage-1", issue.0);
+    let started_by: Vec<(&str, Option<&str>)> = answer["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| {
+            let run = run.as_object().unwrap();
+            (
+                run["id"].as_str().unwrap(),
+                run.get("started_by").map(|by| by.as_str().unwrap()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        started_by,
+        [
+            (triage.as_str(), None),
+            ("hourly/2", Some("hand")),
+            ("hourly/1", Some("schedule")),
+        ]
     );
 }
 
@@ -408,35 +474,32 @@ async fn a_run_recorded_before_runs_kept_their_pull_request_is_listed() {
     );
 }
 
-fn work(item: u64, stage: WorkKind, n: u32, start: &str) -> Recorded {
-    Recorded {
-        id: RunId {
-            of: RunOf::Work {
-                item: Number(item),
-                stage,
-            },
-            n,
-        },
-        started_at: at(start),
-        state: State::Ended {
+fn ended(of: RunOf, n: u32, by: Option<StartedBy>, start: &str) -> Recorded {
+    Recorded::new(
+        Started::new(RunId { of, n }, by).unwrap(),
+        at(start),
+        State::Ended {
             at: at(start) + TimeDelta::minutes(1),
             ending: Ending::Done,
         },
-        sessions: vec![],
-        answered_until: None,
-    }
+        vec![],
+        None,
+    )
+}
+
+fn work(item: u64, stage: WorkKind, n: u32, start: &str) -> Recorded {
+    let of = RunOf::Work {
+        item: Number(item),
+        stage,
+    };
+    ended(of, n, None, start)
 }
 
 fn weekly(n: u32, start: &str) -> Recorded {
-    Recorded {
-        id: RunId {
-            of: RunOf::Automation {
-                automation: "weekly".parse().unwrap(),
-            },
-            n,
-        },
-        ..work(0, WorkKind::Triage, n, start)
-    }
+    let of = RunOf::Automation {
+        automation: "weekly".parse().unwrap(),
+    };
+    ended(of, n, Some(StartedBy::Schedule), start)
 }
 
 fn morning() -> Vec<Recorded> {
@@ -693,7 +756,7 @@ async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}", output.stdout);
     assert!(
-        lines[0].starts_with("weekly/2: done — automation weekly, started "),
+        lines[0].starts_with("weekly/2: done — automation weekly by hand, started "),
         "{}",
         output.stdout
     );
@@ -702,6 +765,9 @@ async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are
         "{}",
         output.stdout
     );
+    let json = lw_in(work_dir.path(), &["runs", "--json"]).await;
+    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(answer["runs"][1]["started_by"], "schedule");
 }
 
 #[tokio::test]

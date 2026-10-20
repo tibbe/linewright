@@ -485,8 +485,23 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
         .collect();
     assert_eq!(links, ["/runs/weekly/1"]);
     let shown = heading(&html);
-    assert_eq!(shown[0], "run: weekly/1");
+    assert_eq!(shown[0], "run: weekly/1, by hand");
     assert!(shown[1].starts_with("session 1"), "{shown:?}");
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_page_of_an_automations_run_by_hand_says_so_in_its_heading_and_of_a_scheduled_one_not()
+{
+    let mut world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world.hourly_by_schedule_then_by_hand().await;
+    let web = Web::start(world).await;
+
+    let by_hand = web.page("/runs/hourly/2").await;
+    let scheduled = web.page("/runs/hourly/1").await;
+
+    assert_eq!(heading(&by_hand)[0], "run: hourly/2, by hand");
+    assert_eq!(heading(&scheduled)[0], "run: hourly/1");
     web.stop().await;
 }
 

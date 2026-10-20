@@ -27,7 +27,7 @@ use crate::reconcile::{
     Subject, Work, WorkKind, held_back_by_drain, hold_note, reconcile,
 };
 use crate::run::{self, AutomationEnd, Shell};
-use crate::runs::{self, Recorded, RunOf, Runs, Watched};
+use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy, Watched};
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
@@ -552,7 +552,7 @@ impl Factory {
         run_and_log(
             shell,
             &automation,
-            begin_automation(shell, name)?,
+            begin_automation(shell, name, StartedBy::Hand)?,
             self.ends.stopping(),
         )
         .await
@@ -702,7 +702,7 @@ impl Factory {
             Action::Start(work) => {
                 let shell = &self.shell;
                 let running = shell.runs.begin(
-                    RunOf::Work {
+                    Begin::Work {
                         item: work.item(),
                         stage: work.kind(),
                     },
@@ -899,7 +899,7 @@ impl Factory {
                 last_scheduled_runs.save(&self.shell.work_dir)?;
             }
             Action::RunAutomation(automation) => {
-                let running = begin_automation(&self.shell, &automation.name)?;
+                let running = begin_automation(&self.shell, &automation.name, StartedBy::Schedule)?;
                 let watched = running.watched();
                 let cancel = CancellationToken::new();
                 let shell = self.shell.clone();
@@ -932,12 +932,17 @@ fn done_runs(runs: &Runs) -> Vec<DoneRun> {
     recorded.iter().filter_map(Recorded::done_on_pull).collect()
 }
 
-fn begin_automation(shell: &Shell, name: &AutomationName) -> Result<runs::Running> {
+fn begin_automation(
+    shell: &Shell,
+    name: &AutomationName,
+    started_by: StartedBy,
+) -> Result<runs::Running> {
     shell
         .runs
         .begin(
-            RunOf::Automation {
+            Begin::Automation {
                 automation: name.clone(),
+                started_by,
             },
             shell.clock.now(),
         )

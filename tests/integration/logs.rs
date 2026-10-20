@@ -7,22 +7,22 @@ use common::*;
 use linewright::domain::Number;
 use linewright::logs::{self, NoSuchRun, Which};
 use linewright::reconcile::WorkKind;
-use linewright::runs::{Ending, Recorded, RunId, State};
+use linewright::runs::{Ending, Recorded, RunId, Started, State};
 use serde_json::json;
 
 fn run(id: &str, start: &str, sessions: usize) -> Recorded {
-    Recorded {
-        id: id.parse().unwrap(),
-        started_at: at(start),
-        state: State::Ended {
+    Recorded::new(
+        Started::new(id.parse().unwrap(), None).unwrap(),
+        at(start),
+        State::Ended {
             at: at(start) + TimeDelta::minutes(1),
             ending: Ending::Done,
         },
-        sessions: (0..sessions)
+        (0..sessions)
             .map(|n| PathBuf::from(format!("sessions/{id}/{n}")))
             .collect(),
-        answered_until: None,
-    }
+        None,
+    )
 }
 
 fn picked(recorded: &[Recorded], which: &Which) -> Result<String, NoSuchRun> {
@@ -254,6 +254,35 @@ async fn logs_json_prints_one_object_per_line() {
     assert_eq!(
         first_sub_agent_line["parent_tool_use_id"],
         "toolu_01T5JmkDxVfWvgdZeKR3KCjP"
+    );
+}
+
+#[tokio::test]
+async fn an_automations_run_by_hand_says_so_in_its_header_and_a_scheduled_one_does_not() {
+    let (mut world, work_dir) = world_in_work_dir().await;
+    world.hourly_by_schedule_then_by_hand().await;
+
+    let by_hand = lw_in(work_dir.path(), &["logs", "--run", "hourly/2"]).await;
+    let scheduled = lw_in(work_dir.path(), &["logs", "--run", "hourly/1"]).await;
+    let by_hand_json = lw_in(work_dir.path(), &["logs", "--run", "hourly/2", "--json"]).await;
+    let scheduled_json = lw_in(work_dir.path(), &["logs", "--run", "hourly/1", "--json"]).await;
+
+    assert_eq!(by_hand.code, Some(0), "{}", by_hand.stderr);
+    assert_eq!(
+        by_hand.stdout.lines().next(),
+        Some("run: hourly/2, by hand")
+    );
+    assert_eq!(scheduled.stdout.lines().next(), Some("run: hourly/1"));
+    let header = |output: &Output| -> serde_json::Value {
+        serde_json::from_str(output.stdout.lines().next().unwrap()).unwrap()
+    };
+    assert_eq!(
+        header(&by_hand_json),
+        json!({"type": "run", "run": "hourly/2", "started_by": "hand", "sessions": 1})
+    );
+    assert_eq!(
+        header(&scheduled_json),
+        json!({"type": "run", "run": "hourly/1", "started_by": "schedule", "sessions": 1})
     );
 }
 

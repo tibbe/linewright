@@ -153,7 +153,7 @@ pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsE
         })
     });
     Ok(Transcript {
-        run: run.id,
+        run: run.started(),
         in_flight,
         sessions: records.iter().map(transcript::parse).collect(),
     })
@@ -216,11 +216,11 @@ impl Following {
         after: Option<After>,
     ) -> Result<Following, LogsError> {
         let runs = Runs::new(&work_dir.resolve());
-        let run = pick_from(&runs, which)?.id;
+        let run = pick_from(&runs, which)?.started();
         Ok(Following {
             runs,
-            follower: Follower::new(run.clone(), verbosity, after),
-            run,
+            run: run.id().clone(),
+            follower: Follower::new(run, verbosity, after),
             sessions: vec![],
             ended: false,
         })

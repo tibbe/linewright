@@ -65,6 +65,8 @@ struct RunView {
     verbose: bool,
     /// The number of sessions its header gave, once it has come.
     sessions_started: Option<usize>,
+    /// Whether its header said it ran by hand.
+    by_hand: bool,
     sessions: Vec<SessionView>,
 }
 
@@ -102,6 +104,7 @@ impl RunView {
             repo: repo.to_string(),
             verbose,
             sessions_started: None,
+            by_hand: false,
             sessions: vec![],
         }
     }
@@ -110,8 +113,9 @@ impl RunView {
     /// page.
     fn apply_line(&mut self, line: &Line) -> Vec<Patch> {
         match line {
-            Line::Header(Header::Run { sessions, .. }) => {
+            Line::Header(Header::Run { run, sessions }) => {
                 self.sessions_started = Some(*sessions);
+                self.by_hand = run.by_hand();
                 vec![Patch::Replace {
                     id: "run".into(),
                     html: self.heading(),
@@ -219,8 +223,9 @@ impl RunView {
         } else {
             ""
         };
+        let by_hand = if self.by_hand { ", by hand" } else { "" };
         format!(
-            r#"<h1 id="run">run: {}{none}</h1>"#,
+            r#"<h1 id="run">run: {}{by_hand}{none}</h1>"#,
             html::run_id(&self.run, &self.repo)
         )
     }

@@ -6,7 +6,7 @@ use common::{
 };
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
-use linewright::runs::{Ending, Recorded, State};
+use linewright::runs::{Ending, Recorded, Started, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
 
@@ -241,13 +241,8 @@ fn linewrights_pull_request_is_explained_as_the_issue_in_review_with_it() {
 }
 
 fn recorded(id: &str, started: &str, state: State) -> Recorded {
-    Recorded {
-        id: id.parse().unwrap(),
-        started_at: at(started),
-        state,
-        sessions: vec![],
-        answered_until: None,
-    }
+    let id = Started::new(id.parse().unwrap(), None).unwrap();
+    Recorded::new(id, at(started), state, vec![], None)
 }
 
 fn ended(at_: &str, ending: Ending) -> State {

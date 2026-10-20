@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
-use crate::runs::RunId;
+use crate::runs::Started;
 use crate::status::Paint;
 
 pub const OUTPUT: &str = "output.jsonl";
@@ -108,7 +108,8 @@ impl SessionRecord {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Transcript {
-    pub run: RunId,
+    #[serde(flatten)]
+    pub run: Started,
     /// While the run is in flight, how far its transcript has been read.
     #[serde(default)]
     pub in_flight: Option<InFlight>,
@@ -538,7 +539,8 @@ pub enum Line {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Header {
     Run {
-        run: RunId,
+        #[serde(flatten)]
+        run: Started,
         sessions: usize,
     },
     Session {
@@ -811,7 +813,7 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
 
 /// The lines shown only ever grow, the same whatever pieces the records are read in.
 pub struct Follower {
-    run: RunId,
+    run: Started,
     verbosity: Verbosity,
     sessions: Vec<Followed>,
     after: Option<After>,
@@ -877,7 +879,7 @@ struct Followed {
 }
 
 impl Follower {
-    pub fn new(run: RunId, verbosity: Verbosity, after: Option<After>) -> Follower {
+    pub fn new(run: Started, verbosity: Verbosity, after: Option<After>) -> Follower {
         Follower {
             run,
             verbosity,
@@ -1167,12 +1169,15 @@ pub fn render_line(line: &Line, colour: bool) -> String {
     let Stamped { stamp, what } = match line {
         Line::Header(header) => {
             let _ = match header {
-                Header::Run { run, sessions: 0 } => {
-                    let run = paint.bold(run);
-                    writeln!(shown, "run: {run} (it started no session)")
-                }
-                Header::Run { run, .. } => {
-                    writeln!(shown, "run: {}", paint.bold(run))
+                Header::Run { run, sessions } => {
+                    let by_hand = if run.by_hand() { ", by hand" } else { "" };
+                    let run = paint.bold(run.id());
+                    let none = if *sessions == 0 {
+                        " (it started no session)"
+                    } else {
+                        ""
+                    };
+                    writeln!(shown, "run: {run}{by_hand}{none}")
                 }
                 Header::Session {
                     session,

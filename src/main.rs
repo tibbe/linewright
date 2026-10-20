@@ -246,7 +246,7 @@ async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: b
     {
         let query = FollowQuery {
             which: Which::Run {
-                id: transcript.run.clone(),
+                id: transcript.run.id().clone(),
                 item: which.item(),
             },
             verbosity: printing.verbosity,
@@ -256,7 +256,7 @@ async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: b
             InFlight::ReadTo(read) => {
                 print!("{}", printing.transcript(transcript));
                 Some(Resume {
-                    run: transcript.run.clone(),
+                    run: transcript.run.id().clone(),
                     after: After::Read(read),
                 })
             }

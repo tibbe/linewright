@@ -1,3 +1,4 @@
+use linewright::runs::{RunId, Started};
 use linewright::transcript::{self, After, Follower, SessionRecord, Transcript, Verbosity};
 use serde_json::json;
 
@@ -13,9 +14,13 @@ fn recorded() -> SessionRecord {
     }
 }
 
+fn item_run(id: RunId) -> Started {
+    Started::new(id, None).unwrap()
+}
+
 fn of(sessions: &[SessionRecord]) -> Transcript {
     Transcript {
-        run: "105/implement-1".parse().unwrap(),
+        run: item_run("105/implement-1".parse().unwrap()),
         in_flight: None,
         sessions: sessions.iter().map(transcript::parse).collect(),
     }
@@ -266,7 +271,11 @@ fn json(lines: &[transcript::FollowedLine]) -> Vec<serde_json::Value> {
 fn following_shows_each_entry_once_it_is_written_and_each_tool_call_when_made_and_when_it_returns()
 {
     let record = recorded();
-    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
     let mut shown = vec![];
     let mut at_each_line = vec![];
 
@@ -321,7 +330,11 @@ session 1: started 2026-10-13 10:09:08 UTC
 fn following_shows_the_same_lines_whatever_pieces_the_output_is_written_in() {
     let record = recorded();
     let follow = |ends: Vec<usize>| {
-        let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Full, None);
+        let mut follower = Follower::new(
+            item_run("105/implement-1".parse().unwrap()),
+            Verbosity::Full,
+            None,
+        );
         let mut shown = vec![];
         for end in ends {
             shown.extend(follower.update(&[written(&record, end)]));
@@ -354,7 +367,7 @@ fn following_after_a_line_gives_the_lines_after_it() {
     let record = recorded();
     let follow = |after| {
         let mut follower = Follower::new(
-            "105/implement-1".parse().unwrap(),
+            item_run("105/implement-1".parse().unwrap()),
             Verbosity::Compact,
             after,
         );
@@ -378,7 +391,11 @@ fn following_a_run_that_ends_shows_each_of_its_sessions_as_logs_does() {
     let record = recorded();
     let wrote_nothing = SessionRecord::default();
     let sessions = [wrote_nothing.clone(), record, wrote_nothing];
-    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
 
     let mut shown = follower.update(&sessions[..1]);
     shown.extend(follower.update(&sessions[..2]));
@@ -428,11 +445,19 @@ fn following_shows_a_tool_call_as_running_as_soon_as_it_is_made() {
             "message": {"content": [{"type": "text", "text": "Starting over."}]},
         }),
     ]);
-    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
 
     let one = text(&follower.update(std::slice::from_ref(&first)));
     let two = text(&follower.update(&[first, second]));
-    let mut nothing = Follower::new("105/update-1".parse().unwrap(), Verbosity::Compact, None);
+    let mut nothing = Follower::new(
+        item_run("105/update-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
 
     assert_eq!(
         one,
@@ -479,7 +504,11 @@ fn following_shows_a_tool_call_again_once_it_ends_in_the_background() {
         .collect(),
         ..SessionRecord::default()
     };
-    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Compact, None);
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
 
     let lines = follower.end(&[record]);
     let shown = text(&lines);
@@ -578,7 +607,11 @@ fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
         )
     };
     let followed = |verbosity| {
-        let mut follower = Follower::new("105/implement-1".parse().unwrap(), verbosity, None);
+        let mut follower = Follower::new(
+            item_run("105/implement-1".parse().unwrap()),
+            verbosity,
+            None,
+        );
         let mut shown = vec![];
         for (end, _) in record.output.match_indices('\n') {
             shown.extend(follower.update(&[written(&record, end + 1)]));
@@ -642,7 +675,11 @@ fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
 #[test]
 fn an_entry_that_says_no_time_shows_the_time_of_the_one_the_agent_wrote_before_it() {
     let shown = transcript::render(&of(&[recorded()]), Verbosity::Full, false);
-    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Full, None);
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Full,
+        None,
+    );
     let followed = text(&follower.end(&[recorded()]));
 
     // The sub-agent's start, which says no time, written just after the

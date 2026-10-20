@@ -117,3 +117,25 @@ async fn the_runs_pages_stream_lists_the_runs_again_as_one_starts_and_ends() {
     );
     web.stop().await;
 }
+
+#[tokio::test]
+async fn the_runs_page_marks_an_automations_run_by_hand_and_not_a_scheduled_one() {
+    let mut world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world.hourly_by_schedule_then_by_hand().await;
+    let web = Web::start(world).await;
+
+    let html = web.page("/runs").await;
+
+    let shown = runs_shown(&html);
+    assert_eq!(shown.len(), 2, "{shown:?}");
+    assert!(
+        shown[0]
+            .starts_with("hourly/2: done — automation hourly by hand, started 2026-10-01 13:05:"),
+        "{shown:?}"
+    );
+    assert!(
+        shown[1].starts_with("hourly/1: done — automation hourly, started 2026-10-01 13:00:"),
+        "{shown:?}"
+    );
+    web.stop().await;
+}

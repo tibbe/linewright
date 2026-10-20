@@ -276,6 +276,30 @@ pub fn open_ticket(world: &World, title: &str) -> Number {
 pub const HOURLY: &str = "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n";
 
 impl World {
+    /// The hourly automation, run once on its schedule at 13:00 and once by
+    /// hand at 13:05: `hourly/1` and `hourly/2`.
+    pub async fn hourly_by_schedule_then_by_hand(&mut self) {
+        self.store
+            .commit(
+                "maintainer",
+                "main",
+                &[(".linewright/automations/hourly.md", HOURLY)],
+                "Add an automation",
+            )
+            .await
+            .unwrap();
+        self.harness
+            .on_automation(|_| Ok(super::harness::nothing_needs_doing()));
+        self.poll().await;
+        self.clock.advance(TimeDelta::hours(1));
+        self.poll().await;
+        self.clock.advance(TimeDelta::minutes(5));
+        self.factory
+            .run_automation(&"hourly".parse().unwrap())
+            .await
+            .unwrap();
+    }
+
     pub async fn ticket_in_review(&mut self) -> (Number, Number) {
         implement(self);
         let ticket = self.store.open_issue(
