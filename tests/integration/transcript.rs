@@ -638,3 +638,21 @@ fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
         ]
     );
 }
+
+#[test]
+fn an_entry_that_says_no_time_shows_the_time_of_the_one_the_agent_wrote_before_it() {
+    let shown = transcript::render(&of(&[recorded()]), Verbosity::Full, false);
+    let mut follower = Follower::new("105/implement-1".parse().unwrap(), Verbosity::Full, None);
+    let followed = text(&follower.end(&[recorded()]));
+
+    // The sub-agent's start, which says no time, written just after the
+    // call that started the sub-agent at 2:00, and before the sub-agent's
+    // work at 2:02.
+    let started = |text: &str| {
+        text.lines()
+            .find(|line| line.contains("event: {\"description\":\"Standards review\""))
+            .map(|line| line[..5].to_string())
+    };
+    assert_eq!(started(&shown).as_deref(), Some(" 2:00"));
+    assert_eq!(started(&followed).as_deref(), Some(" 2:00"));
+}

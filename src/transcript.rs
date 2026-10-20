@@ -284,6 +284,9 @@ struct Parser {
     calls: HashMap<String, EntryAt>,
     followups: usize,
     touched: Vec<Touch>,
+    /// When the latest event that said so happened, or else its turn
+    /// started.
+    last_at: Option<Timestamp>,
 }
 
 /// Where an entry is: its turn, and its path through the calls that hold
@@ -330,6 +333,7 @@ impl Parser {
     }
 
     fn begin_turn(&mut self, started_at: Option<Timestamp>, prompt: Prompt) {
+        self.last_at = started_at.or(self.last_at);
         self.session.turns.push(Turn {
             started_at,
             prompt,
@@ -340,7 +344,10 @@ impl Parser {
 
     fn event(&mut self, event: Value) {
         let turn = self.session.turns.len() - 1;
-        let at = timestamp(&event["timestamp"]);
+        // An event that does not say when it happened happened after the
+        // one before it, as the agent wrote them, wherever its entry is.
+        let at = timestamp(&event["timestamp"]).or(self.last_at);
+        self.last_at = at;
         let parent = event["parent_tool_use_id"]
             .as_str()
             .and_then(|id| self.calls.get(id))
