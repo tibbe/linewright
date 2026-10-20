@@ -156,14 +156,14 @@ Automations sit beside the pipeline, not under one trigger model.
 repository, its runs and their transcripts, and takes the operator's requests
 of it, such as a drain.
 
-- **Clients.** The monitoring commands and `drain` are its clients. The API must
-  also be able to serve a web UI, reached from a browser through `ssh -L` to the
-  socket, and an MCP server, a `lw mcp` subcommand on stdio that is a client of
-  the socket.
+- **Clients.** The monitoring commands, `drain` and the web UI are its
+  clients. The API must also be able to serve an MCP server, a `lw mcp`
+  subcommand on stdio that is a client of the socket.
 
 | aspect | decision |
 |---|---|
 | Transport | HTTP on a Unix socket |
+| Paths | the API under `/api/` |
 | Bodies | JSON; a monitoring command's `--json` prints the response as it is |
 | A transcript being followed | server-sent events, which a reader resumes by event id |
 | Access | file permissions: only `serve`'s user can open the socket |
@@ -173,6 +173,19 @@ of it, such as a drain.
 - **Why.** A Unix socket rather than a loopback TCP port, so that file
   permissions are the access control and two instances cannot collide on a
   port.
+
+## The web UI
+
+`serve` serves the web UI itself, on the same socket as the local API, as
+HTML rendered on the server.
+
+- **Rendered on the server**: askama templates, with htmx; a live update is a
+  server-sent event carrying an HTML fragment, one event stream per page.
+- **Why.** `cargo install` and the release stay one cargo build with no other
+  toolchain, and the UI's logic stays in Rust beside the commands'.
+- **Assets are in the binary** (`rust-embed`), the one JavaScript file
+  vendored in the repository.
+- **Tested in-process**, driving the router under `cargo test`.
 
 ## Deployment and configuration
 

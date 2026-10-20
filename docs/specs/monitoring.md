@@ -1,7 +1,7 @@
 # Monitoring
 
-Monitoring lets the operator or an agent see what a running Linewright is
-doing and why, as `serve` itself sees it.
+Monitoring lets the operator, the maintainer or an agent see what a running
+Linewright is doing and why, as `serve` itself sees it.
 
 For example, the operator wonders why #42 has not moved in an hour.
 `lw explain 42` shows a rework run on it whose agent has been quiet
@@ -24,6 +24,13 @@ test that hangs.
 5. As an agent, I want the same answers as compact text, and as stable JSON
    where I extract fields, so that I spend little context and can script
    against them.
+6. As an operator away from Linewright's host, I want the same answers in a
+   browser, so that I follow the pipeline from wherever I am.
+7. As a maintainer, I want to see where my spec change or issue stands and
+   what it waits for, as soon as it changes, so that I do not wait on GitHub
+   for news.
+8. As a maintainer, I want to read agents' transcripts, so that I can tune the
+   repository's skills and instructions.
 
 ## Commands
 
@@ -48,8 +55,8 @@ order:
 1. Linewright itself: the facts in the table below.
 2. Each run in flight: its run ID, item, stage, how long it has run and its
    quiet time, how long since its agent last produced output.
-3. Each other open item Linewright tracks: where it is in the pipeline and, in
-   one line, what Linewright is waiting for on it.
+3. Each other open managed item: where it stands and, in one line, what
+   Linewright is waiting for on it.
 4. The automations, as [Automations](automations.md) describes.
 
 | Fact about Linewright                          | Shown                  |
@@ -77,7 +84,7 @@ order:
     until `serve` restarts";
   - its run in flight, with its quiet time;
   - its latest three past runs, as `runs N` lists them.
-- **An item Linewright leaves.** For an item Linewright does not act on,
+- **An item Linewright leaves.** For an item that is not managed,
   `serve` reads #N from GitHub and `explain` says why Linewright leaves it,
   naming the fact or setting that keeps it out.
 
@@ -149,10 +156,86 @@ a terminal.
   | 3      | `serve` is not running for the repository    |
   | 4      | no such item or run                          |
 
+## The web UI
+
+`serve` serves a web UI that shows the commands' answers in a browser.
+
+| Page  | Path        | Shows                                                      |
+| ----- | ----------- | ---------------------------------------------------------- |
+| board | `/`         | the managed items as cards ([The board](#the-board))       |
+| item  | `/items/N`  | what `explain N` shows                                     |
+| runs  | `/runs`     | what `runs` lists, with its narrowing as filters           |
+| run   | `/runs/ID`  | what `logs` shows of run ID ([The run page](#the-run-page)) |
+
+### The bar
+
+| Part   | Holds                                                                  |
+| ------ | ---------------------------------------------------------------------- |
+| name   | the repository's name, linking to it on GitHub                         |
+| links  | the board and the runs page                                            |
+| facts  | the facts about Linewright itself and the automations, as `status` shows them |
+| banner | a usage limit in force, and a drain under way                          |
+
+### The board
+
+The board shows every managed item as a card in one of six columns, in this
+order:
+
+| Column         | Holds a managed item that                                                                            |
+| -------------- | ---------------------------------------------------------------------------------------------------- |
+| Triage         | holds `needs-triage`                                                                                 |
+| Needs a person | holds `needs-info` or `ready-for-human`                                                              |
+| Ready          | holds `ready-for-agent` and is not claimed, or is a spec change not yet designed                     |
+| Working        | is claimed for design or implementation, or has a run in flight that no other column shows           |
+| In review      | has an open pull request that closes it, or is a pull request of Linewright's that closes no issue on the board |
+| Done           | closed within the spec lookback window (`spec-lookback`)                                             |
+
+- **Two columns.** An item that fits two columns is in the one further
+  right.
+- **One card per piece of work.** The card is the issue; a pull request, and
+  a run on it, show on the card of each issue it closes.
+- **A spec change.** Until it is designed, its card is its pull request;
+  designed, it is its tracking issue's lane where one was cut, and otherwise
+  its pull request, in Done, saying there was nothing to build.
+- **Lanes.** A lane per tracking issue with cards on the board, in number
+  order, headed by the tracking issue's number and title and its tickets
+  closed of total, with its tickets as its cards; a last lane holds the items
+  with no tracking issue.
+- **Order in a column.** Ascending by number, within each lane.
+- **No cap.** A column is never cut.
+- **Needing a person.** The browser tab's title carries the count of cards in
+  Needs a person.
+
+### Cards
+
+A card says what the item is and, in one line, what the pipeline is doing or
+waiting for on it.
+
+| Part             | Holds                                                                        |
+| ---------------- | ---------------------------------------------------------------------------- |
+| number and title | `#N` and the title, linking to the item page                                 |
+| where it stands  | where it is in the pipeline, as `explain` words it                           |
+| the line         | its run in flight, as the stage, how long it has run and its quiet time; or else each thing it waits for, as `explain` words it; or, in Done, how it ended: merged by which pull request, closed without merging, or closed |
+| pull request     | its pull request, where it has one, with the pull request's CI state         |
+
+### The run page
+
+The run page shows a run's transcript as `logs` shows it.
+
+- **Folding.** A tool call's line opens on click to the tool's full input and
+  result; a call that failed starts open. A sub-agent's work starts folded to
+  the line of the call that started it, with the count of its entries.
+- **Verbose.** A switch, set once for the page, shows what `logs --verbose`
+  shows, with everything open.
+- **Following.** A run in flight is followed. The page stays at the bottom
+  until the reader scrolls up, and then offers to jump to the latest entry.
+- **Permalinks.** Each entry has a link of its own.
+
 ## Out of scope
 
-- A web UI.
-- Monitoring from another host, other than through a shell on Linewright's.
+- Acting from the UI on `serve` or on the work.
+- Monitoring from another host other than through a shell on, or a tunnel to,
+  Linewright's; the direction is an authenticating proxy in front of the UI.
 - An MCP server.
 - A liveness check for a container healthcheck or a supervisor.
 - A record of each decision Linewright makes on an item; the log holds them.

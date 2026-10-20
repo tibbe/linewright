@@ -100,6 +100,10 @@ _Avoid_: task, story
 The parent issue of the tickets cut from one item.
 _Avoid_: epic
 
+**Managed**:
+Of an item: it asks for a step of the pipeline, or Linewright has worked it.
+_Avoid_: tracked, watched, monitored, in the pool
+
 **Usage limit**:
 The cap a subscription puts on how much its agents may run in a window, such
 as five hours or a week, beyond which the harness refuses sessions until

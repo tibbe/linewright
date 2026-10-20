@@ -72,8 +72,8 @@ required label, and never renames or deletes one.
 - **Linewright's labels.** Labels only Linewright uses are prefixed
   `linewright:`. Each records what Linewright has done to an item, beside the
   status labels: Linewright sets and clears it, and a person may change it
-  to steer; for example, removing `linewright:designed` from an item has it
-  designed again.
+  to steer; for example, removing `linewright:designed` from an item whose
+  design is its own has it designed again.
 - **Status labels.** The first four are the status labels: what an issue
   needs next, one at a time. Whoever sets one removes the others; an issue
   carrying more than one holds the newest, and Linewright removes the rest.

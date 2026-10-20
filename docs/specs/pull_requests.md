@@ -57,7 +57,7 @@ The `work` states of the issue lifecycle, derived as under
 | State     | Event                      | Next      | Effect       |
 | --------- | -------------------------- | --------- | ------------ |
 | —         | Linewright assigned        | claimed   |              |
-| —         | Linewright assigned, already labeled designed | designed | |
+| —         | Linewright assigned, already designed | designed | |
 | claimed   | design posted              | designed  |              |
 | claimed   | nothing to build, or cannot design | — | handed back  |
 | designed  | cut into tickets           | —         | becomes their tracking issue |

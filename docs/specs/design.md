@@ -31,7 +31,8 @@ of both.
 ## Designing
 
 Every item is designed before it is built, by its first run; a ticket is
-created designed, with the design of the item it was cut from.
+created designed, with the design of the item it was cut from, and is never
+designed on its own.
 
 1. An agent reads what the item asks (a spec change's PR and spec diff, or an
    issue and its comments), the spec and the codebase, and produces a design,

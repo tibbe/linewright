@@ -106,7 +106,7 @@ flowchart LR
 | [Pull requests](pull_requests.md) | Taking the work from a pull request to a merge. |
 | [Runs](runs.md) | What holds for every piece of work Linewright does, whatever its stage. |
 | [Operation](operation.md) | Running Linewright. |
-| [Monitoring](monitoring.md) | Seeing what Linewright is doing and why. |
+| [Monitoring](monitoring.md) | Seeing what Linewright is doing and why, from a shell or a browser. |
 | [Replay](replay.md) | Running a captured case through the pipeline again to tune the briefs. |
 
 ## Out of scope
