@@ -2,6 +2,7 @@ use std::fmt::{self, Write as _};
 
 use crate::domain::{Number, Timestamp};
 use crate::phrase::{Phrase, Segment};
+use crate::runs::{RunId, RunOf};
 
 /// Markup with its text escaped, which a template may put in a page as it
 /// is. Only this module makes one.
@@ -34,7 +35,7 @@ pub(crate) fn phrase(phrase: &Phrase, repo: &str) -> Html {
         match segment {
             Segment::Text(text) => html.push_str(&escape(text).0),
             Segment::Item(number) => html.push_str(&item(*number, repo).0),
-            Segment::Time(at) => html.push_str(&time(*at)),
+            Segment::Time(at) => html.push_str(&time(*at).0),
             Segment::Duration { seconds, since } => {
                 let text = escape(&Phrase::default().duration(*seconds, None).to_string()).0;
                 let _ = match since {
@@ -79,9 +80,35 @@ fn github(number: Number, repo: &str) -> String {
     )
 }
 
-fn time(at: Timestamp) -> String {
-    let text = escape(&Phrase::default().time(at).to_string()).0;
-    format!(r#"<time datetime="{}">{text}</time>"#, iso(at))
+/// The run ID, its item linking to the item's page, and a link to the item
+/// on GitHub.
+pub(crate) fn run_id(id: &RunId, repo: &str) -> Html {
+    let shown = id.to_string();
+    match id.of {
+        RunOf::Work { item, .. } => {
+            let rest = shown.strip_prefix(&item.0.to_string()).unwrap_or_default();
+            Html(format!(
+                r#"<a href="/items/{n}">{n}</a>{rest}{github}"#,
+                n = item.0,
+                rest = escape(rest),
+                github = github(item, repo),
+            ))
+        }
+        RunOf::Automation { .. } => escape(&shown),
+    }
+}
+
+pub(crate) fn time(at: Timestamp) -> Html {
+    Html(format!(
+        r#"<time datetime="{}">{}</time>"#,
+        iso(at),
+        utc(at)
+    ))
+}
+
+/// `at` as the commands print a time.
+pub(crate) fn utc(at: Timestamp) -> Html {
+    escape(&Phrase::default().time(at).to_string())
 }
 
 fn iso(at: Timestamp) -> String {

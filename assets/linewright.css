@@ -225,3 +225,127 @@ h1 {
 .card .standing {
   color: var(--fg-muted);
 }
+
+/* The runs page's form. */
+.narrowing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+  margin: 0 0 1rem;
+}
+
+.narrowing input,
+.narrowing select,
+.narrowing button {
+  font: inherit;
+}
+
+.narrowing input[inputmode="numeric"] {
+  width: 5rem;
+}
+
+/* The run page: a transcript as `logs` shows it, a tool call folded to its
+   line and a sub-agent's work to the count of its entries. */
+.verbosity {
+  margin: 0 0 0.75rem;
+}
+
+.verbosity [role="switch"]::before {
+  content: "\2610\00a0";
+}
+
+.verbosity [role="switch"][aria-checked="true"]::before {
+  content: "\2611\00a0";
+}
+
+.transcript h2 {
+  margin: 1rem 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.transcript .entries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.transcript .entries .entries {
+  padding-left: 1.5rem;
+  border-left: 2px solid var(--border);
+}
+
+.transcript .entry {
+  padding: 0.1rem 0;
+}
+
+.transcript .entry:target > .line,
+.transcript .entry:target > details > summary {
+  background: var(--banner-bg);
+}
+
+.transcript .at {
+  display: inline-block;
+  min-width: 4em;
+  text-align: right;
+  color: var(--fg-muted);
+}
+
+.transcript .text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.transcript .thinking .text,
+.transcript .context .text,
+.transcript .event .text,
+.transcript .other .text,
+.transcript .brief .text {
+  color: var(--fg-muted);
+}
+
+.transcript summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.transcript .io {
+  margin: 0.25rem 0 0.25rem 4.5em;
+}
+
+.transcript .io pre {
+  margin: 0.1rem 0 0.4rem;
+  padding: 0.4rem 0.6rem;
+  max-height: 30rem;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--bg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The count of a sub-agent's entries, on the line of the call that
+   started it. */
+.transcript .count {
+  margin-left: 0.5em;
+  padding: 0 0.5em;
+  border: 1px solid var(--border);
+  border-radius: 1em;
+  color: var(--fg-muted);
+}
+
+#latest {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 2rem;
+  color: var(--fg);
+  background: var(--bg-muted);
+  cursor: pointer;
+}

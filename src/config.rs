@@ -141,7 +141,7 @@ impl Since {
     }
 }
 
-fn parse_since(value: &str) -> Result<Since, String> {
+pub(crate) fn parse_since(value: &str) -> Result<Since, String> {
     if let Ok(at) = chrono::DateTime::parse_from_rfc3339(value) {
         return Ok(Since::At(at.to_utc()));
     }

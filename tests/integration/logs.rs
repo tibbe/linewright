@@ -191,7 +191,7 @@ async fn lw(work_dir: &Path, args: &[&str]) -> Output {
 /// Implementing sessions stream the recorded transcript: its first turn
 /// ends in an answer that is not a result, and its second, after the
 /// follow-up, in one that is.
-fn implement_as_recorded(world: &World) {
+pub(crate) fn implement_as_recorded(world: &World) {
     world.harness.on(WorkKind::Implement, |call| {
         let turn = match call.followup {
             None => include_str!("fixtures/transcript/turn-1.jsonl"),

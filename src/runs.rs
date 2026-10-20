@@ -761,8 +761,13 @@ pub(crate) fn render_left_out(left_out: usize, how: &str) -> String {
 
 /// How many earlier runs a list left out, and the command that shows them.
 pub(crate) fn left_out_phrase(left_out: usize, how: &str) -> Phrase {
+    format!("{}; show them with {how}", earlier_runs(left_out)).into()
+}
+
+/// How many earlier runs a list left out.
+pub(crate) fn earlier_runs(left_out: usize) -> String {
     let runs = if left_out == 1 { "run" } else { "runs" };
-    format!("{left_out} earlier {runs}; show them with {how}").into()
+    format!("{left_out} earlier {runs}")
 }
 
 impl Outcome {

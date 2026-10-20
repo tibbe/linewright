@@ -1,6 +1,7 @@
 // Linewright's own script for the web UI (docs/specs/design_system.md): it
 // keeps the page up from its event stream, says since when it lost `serve`,
-// and shows times in the reader's time zone, keeping them up.
+// shows times in the reader's time zone, keeping them up, and keeps a run's
+// transcript at its latest entry while the reader is there.
 (() => {
   "use strict";
 
@@ -81,14 +82,71 @@
   const lost = document.getElementById("lost");
   let lostSince = null;
 
+  // The run page's transcript stays at the bottom until the reader scrolls
+  // up, and then offers to jump to the latest entry.
+  const latest = document.getElementById("latest");
+  const atBottom = () =>
+    window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40;
+  const followed = (document.body.dataset.events || "").includes("follow=");
+  let stuck = followed && !location.hash;
+
+  function toBottom() {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+  }
+
+  // `entries`: whether the message added to the transcript.
+  function swapped(entries) {
+    tick();
+    if (!latest || !entries) return;
+    if (stuck) toBottom();
+    else latest.hidden = false;
+  }
+
+  if (latest) {
+    window.addEventListener("scroll", () => {
+      stuck = atBottom();
+      if (stuck) latest.hidden = true;
+    });
+    latest.addEventListener("click", () => {
+      stuck = true;
+      latest.hidden = true;
+      toBottom();
+    });
+  }
+
+  // An entry linked to opens the folds that hold it.
+  function reveal() {
+    const target = location.hash && document.getElementById(location.hash.slice(1));
+    if (!target) return;
+    for (let fold = target.closest("details"); fold; fold = fold.parentElement.closest("details")) {
+      fold.open = true;
+    }
+    target.scrollIntoView();
+  }
+
+  // Each message applied once the one before it has been, as a message can
+  // add to what the one before added.
+  let swapping = Promise.resolve();
+  // The ID of the last transcript line taken, which a stream opened anew
+  // follows on from, as one that reconnects itself does.
+  let lastId = null;
+
   function connect() {
-    const source = new EventSource(document.body.dataset.events);
+    const events = new URL(document.body.dataset.events, location.href);
+    if (lastId !== null && events.searchParams.has("follow")) {
+      events.searchParams.set("follow", lastId);
+    }
+    const source = new EventSource(events);
     source.onopen = () => {
       lostSince = null;
       lost.hidden = true;
     };
     source.onmessage = (event) => {
-      htmx.swap({ text: event.data, sourceElement: document.body }).then(tick);
+      const entries = event.lastEventId !== "" && event.lastEventId !== lastId;
+      if (entries) lastId = event.lastEventId;
+      swapping = swapping
+        .then(() => htmx.swap({ text: event.data, sourceElement: document.body }))
+        .then(() => swapped(entries), console.error);
     };
     source.onerror = () => {
       if (lostSince === null) {
@@ -106,5 +164,8 @@
 
   tick();
   setInterval(tick, 1000);
+  reveal();
+  window.addEventListener("hashchange", reveal);
+  if (stuck) toBottom();
   if (document.body.dataset.events) connect();
 })();

@@ -550,25 +550,25 @@ pub enum Header {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Stamped {
     #[serde(flatten)]
-    stamp: Stamp,
+    pub(crate) stamp: Stamp,
     #[serde(flatten)]
-    what: EntryLine,
+    pub(crate) what: EntryLine,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Stamp {
+pub(crate) struct Stamp {
     /// The session's number in the run, from 1.
-    session: usize,
-    at: Option<Timestamp>,
+    pub(crate) session: usize,
+    pub(crate) at: Option<Timestamp>,
     /// Since the session started.
-    elapsed_seconds: Option<i64>,
+    pub(crate) elapsed_seconds: Option<i64>,
     #[serde(flatten)]
-    under: Under,
+    pub(crate) under: Under,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "UnderFields", into = "UnderFields")]
-enum Under {
+pub(crate) enum Under {
     Session,
     SubAgent { depth: NonZeroUsize, parent: String },
 }
@@ -623,7 +623,7 @@ impl TryFrom<UnderFields> for Under {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-enum EntryLine {
+pub(crate) enum EntryLine {
     Brief {
         text: String,
     },
@@ -647,21 +647,26 @@ enum EntryLine {
     Other {
         other: Value,
     },
-    Tool {
-        tool_use_id: String,
-        tool: String,
-        argument: String,
-        account: String,
-        error: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        input: Option<Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        result: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        content: Option<Vec<Value>>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        details: Option<Value>,
-    },
+    Tool(ToolLine),
+}
+
+/// A tool call's line.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ToolLine {
+    pub(crate) tool_use_id: String,
+    pub(crate) tool: String,
+    pub(crate) argument: String,
+    pub(crate) account: String,
+    pub(crate) error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) input: Option<Value>,
+    /// `None` while it runs, or unless at full verbosity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) content: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) details: Option<Value>,
 }
 
 fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
@@ -785,7 +790,7 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
         What::Thinking(_) | What::Context(_) | What::Event(_) | What::Other(_) => return None,
         What::Tool(call) => {
             let shown = call.result.as_ref().filter(|_| full);
-            EntryLine::Tool {
+            EntryLine::Tool(ToolLine {
                 tool_use_id: call.id.clone(),
                 tool: call.tool.name().to_string(),
                 argument: argument(call, session.dir.as_deref()),
@@ -799,7 +804,7 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
                 details: shown
                     .map(|result| result.details.clone())
                     .filter(|details| !details.is_null()),
-            }
+            })
         }
     })
 }
@@ -1195,7 +1200,7 @@ pub fn render_line(line: &Line, colour: bool) -> String {
             text: Some(text), ..
         } => block("follow-up: ", text),
         EntryLine::FollowUp { summary, .. } => (format!("follow-up: {summary}"), vec![]),
-        EntryLine::Tool {
+        EntryLine::Tool(ToolLine {
             tool_use_id: _,
             tool,
             argument,
@@ -1205,7 +1210,7 @@ pub fn render_line(line: &Line, colour: bool) -> String {
             result,
             content,
             details,
-        } => {
+        }) => {
             let account = if *error {
                 paint.red(account)
             } else {
@@ -1258,7 +1263,8 @@ fn block(label: &str, text: &str) -> (String, Vec<String>) {
     (first, lines.map(str::to_string).collect())
 }
 
-fn elapsed(seconds: i64) -> String {
+/// The time since a session started, as an entry's line starts with it.
+pub(crate) fn elapsed(seconds: i64) -> String {
     let seconds = seconds.max(0);
     let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
     if h > 0 {

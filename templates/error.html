@@ -1,8 +1,8 @@
 {%- extends "layout.html" -%}
 {%- block main -%}
-{#- The item's region, which the page's stream fills once `serve` can
-    explain the item. -#}
-<section id="item">
+{#- The page's region, which the page's stream fills once `serve` can
+    answer for it, such as the item once `serve` can explain it. -#}
+<section id="{{ region }}">
 <p>{{ error }}</p>
 </section>
 {%- endblock -%}

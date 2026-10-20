@@ -1,0 +1,37 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+<h1>Runs</h1>
+<form class="narrowing" method="get" action="/runs">
+<label>Item <input name="item" inputmode="numeric" value="{{ form.item }}"></label>
+<label>Stage <select name="stage">
+<option value="">any</option>
+{%- for (stage, chosen) in form.stages %}
+<option value="{{ stage }}"{% if chosen %} selected{% endif %}>{{ stage }}</option>
+{%- endfor %}
+</select></label>
+<label>Since <input name="since" value="{{ form.since }}" placeholder="2h, 2026-10-14 or 2026-10-14T12:00:00Z"></label>
+<label>Limit <input name="limit" inputmode="numeric" value="{{ form.limit }}"></label>
+<button>Show</button>
+</form>
+{% block runs -%}
+<section id="runs">
+{%- match runs %}
+{%- when RunsShown::Listed { runs, left_out } %}
+{%- if runs.is_empty() %}
+<p>no runs</p>
+{%- endif %}
+<ul class="lines">
+{%- for run in runs %}
+<li><a href="{{ run.href }}">{{ run.id|safe }}</a>: {% call ui::status(run.tone, run.word) %}{% endcall %} — {{ run.about|safe }}</li>
+{%- endfor %}
+{%- if let Some(left_out) = left_out %}
+<li class="left-out">left out: {{ left_out.earlier }}; <a href="{{ left_out.href }}">show them all</a></li>
+{%- endif %}
+</ul>
+{%- when RunsShown::Unlisted(error) %}
+<p>{{ error }}</p>
+{%- endmatch %}
+</section>
+{%- endblock %}
+{%- endblock -%}

@@ -1,0 +1,8 @@
+{%- extends "layout.html" -%}
+{%- block main -%}
+<p class="verbosity"><a href="{{ switched }}" role="switch" aria-checked="{{ verbose }}">verbose</a></p>
+<section id="transcript" class="transcript" role="log">
+{{ transcript|safe }}
+</section>
+<button id="latest" type="button" hidden>Jump to the latest entry</button>
+{%- endblock -%}

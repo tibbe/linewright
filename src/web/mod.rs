@@ -2,6 +2,8 @@
 //! the server, each kept up by one event stream of the regions that changed.
 
 mod html;
+mod run_page;
+mod runs_page;
 
 use html::Html;
 
@@ -24,7 +26,7 @@ use rust_embed::Embed;
 use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 
-use crate::api::{self, Sources, Unexplained};
+use crate::api::{self, Sources, Unanswered, Unexplained};
 use crate::board::{Board, Card, CardLine, Column, Ended};
 use crate::domain::Number;
 use crate::explain::{self, Line};
@@ -38,6 +40,10 @@ pub(crate) fn routes() -> Router<Sources> {
         .route("/events/", get(board_events))
         .route("/items/{number}", get(item_page))
         .route("/events/items/{number}", get(item_events))
+        .route("/runs", get(runs_page::runs_page))
+        .route("/events/runs", get(runs_page::runs_events))
+        .route("/runs/{*id}", get(run_page::run_page))
+        .route("/events/runs/{*id}", get(run_page::run_events))
         .route("/assets/{name}", get(asset))
         .layer(middleware::from_fn(confined))
 }
@@ -463,6 +469,8 @@ struct ItemRegion<'a> {
 struct ErrorPage {
     page: Page,
     bar: Bar,
+    /// The id of the page's region the error stands in for.
+    region: &'static str,
     error: String,
 }
 
@@ -487,6 +495,7 @@ fn error_page(page: Page, bar: Bar, e: &Unexplained) -> Response {
     let page = ErrorPage {
         page,
         bar,
+        region: "item",
         error: e.to_string(),
     };
     (e.status(), page).into_response()
@@ -495,6 +504,30 @@ fn error_page(page: Page, bar: Bar, e: &Unexplained) -> Response {
 /// How often a stream looks for what changed, as a run's activity changes
 /// with nothing sent on `serve`'s view.
 const SAMPLED_EVERY: Duration = Duration::from_secs(1);
+
+fn samples() -> tokio::time::Interval {
+    let mut samples = tokio::time::interval(SAMPLED_EVERY);
+    samples.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    samples
+}
+
+/// `path` with `query`, if there is one.
+fn with_query(path: &str, query: &str) -> String {
+    if query.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{query}")
+    }
+}
+
+/// What a page says in place of what `serve` did not answer, and the
+/// status it answers with.
+fn unanswered(e: impl Into<Unanswered>) -> (StatusCode, String) {
+    match e.into() {
+        Unanswered::NoSuch { error, .. } => (StatusCode::NOT_FOUND, error),
+        Unanswered::Failed(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+    }
+}
 
 /// The item page's regions: the bar, and the item as `serve`'s view
 /// explains it, without reading GitHub, when it holds the item.
@@ -522,36 +555,45 @@ fn render(template: &impl Template) -> String {
     template.render().expect("the templates render")
 }
 
+/// What a stream last sent of each region.
+#[derive(Default)]
+struct Sent(HashMap<&'static str, String>);
+
+impl Sent {
+    /// The regions of `regions` that changed since they were last sent, as
+    /// partials that morph into the page, if any did.
+    fn changed(&mut self, regions: Vec<(&'static str, String)>) -> Option<String> {
+        let mut message = String::new();
+        for (id, region) in regions {
+            let settled = html::settled(&region);
+            if self.0.get(id) == Some(&settled) {
+                continue;
+            }
+            self.0.insert(id, settled);
+            let _ = write!(
+                message,
+                r#"<hx-partial id="{id}" hx-swap="outerMorph">{region}</hx-partial>"#
+            );
+        }
+        Some(message).filter(|message| !message.is_empty())
+    }
+}
+
 /// Sends every region `regions` gives at once, then each time one of them
 /// changed, each as a partial that morphs into the page.
 fn events(
     regions: impl Fn() -> Vec<(&'static str, String)> + Send + 'static,
     stopping: CancellationToken,
 ) -> Response {
-    let mut samples = tokio::time::interval(SAMPLED_EVERY);
-    samples.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let sent: HashMap<&'static str, String> = HashMap::new();
     let events = futures_util::stream::unfold(
-        (sent, samples, regions, stopping),
+        (Sent::default(), samples(), regions, stopping),
         |(mut sent, mut samples, regions, stopping)| async move {
             loop {
                 tokio::select! {
                     _ = samples.tick() => {}
                     () = stopping.cancelled() => return None,
                 }
-                let mut message = String::new();
-                for (id, region) in regions() {
-                    let settled = html::settled(&region);
-                    if sent.get(id) == Some(&settled) {
-                        continue;
-                    }
-                    sent.insert(id, settled);
-                    let _ = write!(
-                        message,
-                        r#"<hx-partial id="{id}" hx-swap="outerMorph">{region}</hx-partial>"#
-                    );
-                }
-                if !message.is_empty() {
+                if let Some(message) = sent.changed(regions()) {
                     let event = Ok::<_, Infallible>(Event::default().data(message));
                     return Some((event, (sent, samples, regions, stopping)));
                 }

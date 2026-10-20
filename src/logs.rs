@@ -246,7 +246,14 @@ impl Following {
         }
     }
 
-    fn read(&mut self) -> anyhow::Result<Vec<FollowedLine>> {
+    /// Whether the run had ended when its records were last read.
+    pub fn ended(&self) -> bool {
+        self.ended
+    }
+
+    /// The next lines to show of what the run's records hold now, without
+    /// waiting for more.
+    pub fn read(&mut self) -> anyhow::Result<Vec<FollowedLine>> {
         // Its state before its sessions' output, so that the output of a
         // run that has ended is read whole.
         let recorded = self
