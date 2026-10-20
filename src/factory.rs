@@ -330,9 +330,9 @@ impl Factory {
         self.reap();
         let shell = &self.shell;
         let now = shell.clock.now();
-        let merged_since = now - shell.policy.spec_lookback;
+        let window_opened = now - shell.policy.spec_lookback;
         let snapshot = Arc::make_mut(&mut kept.snapshot);
-        let mut read = read_all(snapshot, shell, self.written.clone(), merged_since).await?;
+        let mut read = read_all(snapshot, shell, self.written.clone(), window_opened).await?;
         let named: BTreeSet<Item> = subjects
             .into_iter()
             .flat_map(|subject| subject.into().items(snapshot))
@@ -341,9 +341,9 @@ impl Factory {
         if read.is_empty() && named.is_empty() {
             return Ok(vec![]);
         }
-        read.extend(read_all(snapshot, shell, named, merged_since).await?);
+        read.extend(read_all(snapshot, shell, named, window_opened).await?);
         let others = closed_by_pulls_read(snapshot, &read);
-        read.extend(read_all(snapshot, shell, others, merged_since).await?);
+        read.extend(read_all(snapshot, shell, others, window_opened).await?);
         kept.read_at
             .extend(read.into_iter().map(|item| (item, now)));
         self.written.clear();
@@ -1044,11 +1044,11 @@ async fn read_all(
     snapshot: &mut Snapshot,
     shell: &Shell,
     items: impl IntoIterator<Item = Item>,
-    merged_since: Timestamp,
+    window_opened: Timestamp,
 ) -> Result<BTreeSet<Item>> {
     let mut read = BTreeSet::new();
     for item in items {
-        let read_with = read_into(snapshot, shell, item, merged_since).await;
+        let read_with = read_into(snapshot, shell, item, window_opened).await;
         read.extend(read_with.with_context(|| format!("reading {item} again"))?);
     }
     Ok(read)
@@ -1061,11 +1061,11 @@ async fn read_into(
     snapshot: &mut Snapshot,
     shell: &Shell,
     item: Item,
-    merged_since: Timestamp,
+    window_opened: Timestamp,
 ) -> Result<Vec<Item>> {
     let store = &shell.store;
     match item {
-        Item::Issue(number) => read_issue_into(snapshot, shell, number).await,
+        Item::Issue(number) => read_issue_into(snapshot, shell, number, window_opened).await,
         Item::Pull(number) => {
             let mut closing = BTreeSet::new();
             match store.linewright_pull(number).await? {
@@ -1076,13 +1076,13 @@ async fn read_into(
                     closing.extend(snapshot.issues_closing(number, &closes));
                 }
             }
-            match store.merged_pull(number, merged_since).await? {
+            match store.merged_pull(number, window_opened).await? {
                 Some(merged) => snapshot.put_merged(merged),
                 None => snapshot.remove_merged(number),
             }
             let mut read = vec![item];
             for issue in closing {
-                read.extend(read_issue_into(snapshot, shell, issue).await?);
+                read.extend(read_issue_into(snapshot, shell, issue, window_opened).await?);
             }
             Ok(read)
         }
@@ -1093,10 +1093,12 @@ async fn read_issue_into(
     snapshot: &mut Snapshot,
     shell: &Shell,
     number: Number,
+    window_opened: Timestamp,
 ) -> Result<Vec<Item>> {
     let store = &shell.store;
     let mut read = vec![Item::Issue(number)];
-    let left = match store.issue(number).await? {
+    snapshot.remove_closed(number);
+    let left = match store.issue(number, window_opened).await? {
         IssueRead::Held { issue, pulls } => {
             snapshot.relink(number, issue.open);
             snapshot.put_issue(*issue);
@@ -1108,6 +1110,11 @@ async fn read_issue_into(
         }
         IssueRead::LeftOut { open } => {
             snapshot.relink(number, open);
+            true
+        }
+        IssueRead::Closed(closed) => {
+            snapshot.relink(number, false);
+            snapshot.put_closed(*closed);
             true
         }
         IssueRead::Gone => {

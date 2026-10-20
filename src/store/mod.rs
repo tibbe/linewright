@@ -9,8 +9,8 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, Issue, Item, Login, MergeMethod, MergeMethods, MergedPull, Number, Pull,
-    Snapshot, Timestamp, UpdateMethod, UpdateRule,
+    CheckFailure, ClosedItem, Issue, Item, Login, MergeMethod, MergeMethods, MergedPull, Number,
+    Pull, Snapshot, Timestamp, UpdateMethod, UpdateRule,
 };
 use crate::redaction::Redaction;
 
@@ -246,6 +246,9 @@ pub enum IssueRead {
     LeftOut {
         open: bool,
     },
+    /// Left out of the open issues, and closed since the window opened: one
+    /// the snapshot holds among its closed items.
+    Closed(Box<ClosedItem>),
     Gone,
 }
 
@@ -305,11 +308,13 @@ pub trait Store: Send + Sync {
     /// can create it, so a label Linewright must not create is checked first.
     async fn label_exists(&self, name: &str) -> Result<bool>;
 
-    /// The facts one poll reconciles, with pull requests merged since
-    /// `merged_since` and every branch Linewright pushed for a ticket.
-    async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot>;
-    /// The issue as a snapshot taken now sees it.
-    async fn issue(&self, number: Number) -> Result<IssueRead>;
+    /// The facts one poll reconciles, with pull requests merged and items
+    /// closed since `window_opened` and every branch Linewright pushed for a
+    /// ticket.
+    async fn snapshot(&self, window_opened: Timestamp) -> Result<Snapshot>;
+    /// The issue as a snapshot taken now, with items closed since
+    /// `window_opened`, sees it.
+    async fn issue(&self, number: Number, window_opened: Timestamp) -> Result<IssueRead>;
     async fn pull(&self, number: Number) -> Result<Pull>;
     /// The issue or pull request #`number`, open or not, whoever opened it:
     /// `None` when the store has neither.

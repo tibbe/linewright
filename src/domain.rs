@@ -954,6 +954,57 @@ pub struct Snapshot {
     pub merged: Vec<MergedPull>,
     #[serde(default)]
     pub ticket_branches: Vec<TicketBranch>,
+    /// The issues closed since the spec lookback window opened that the
+    /// snapshot would hold were they open, and Linewright's pull requests
+    /// closed without merging since then, for the board's Done column
+    /// (docs/specs/monitoring.md, "The board"). The reconcile ignores them.
+    #[serde(default)]
+    pub closed: Vec<ClosedItem>,
+}
+
+/// An issue or pull request closed within the spec lookback window.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClosedItem {
+    pub number: Number,
+    pub title: String,
+    pub closed_at: Timestamp,
+    #[serde(flatten)]
+    pub kind: ClosedKind,
+}
+
+impl ClosedItem {
+    pub fn closed_since(&self, window_opened: Timestamp) -> bool {
+        self.closed_at >= window_opened
+    }
+}
+
+/// Those of `closed` closed since `window_opened`, in number order, as a
+/// snapshot holds them.
+pub fn closed_within(
+    closed: impl IntoIterator<Item = ClosedItem>,
+    window_opened: Timestamp,
+) -> Vec<ClosedItem> {
+    let mut within: Vec<ClosedItem> = closed
+        .into_iter()
+        .filter(|item| item.closed_since(window_opened))
+        .collect();
+    within.sort_by_key(|item| item.number);
+    within
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ClosedKind {
+    Issue {
+        parent: Option<Parent>,
+        filed: Option<Filed>,
+        sub_issues: Vec<SubIssue>,
+        labels: Vec<String>,
+        /// The pull request whose merge closed it.
+        merged_by: Option<Number>,
+    },
+    /// Linewright's, closed without merging.
+    Pull { closes: Vec<Number> },
 }
 
 impl Snapshot {
@@ -1058,6 +1109,14 @@ impl Snapshot {
 
     pub fn remove_merged(&mut self, number: Number) {
         self.merged.retain(|p| p.number != number);
+    }
+
+    pub fn put_closed(&mut self, item: ClosedItem) {
+        put(&mut self.closed, item, |i| i.number);
+    }
+
+    pub fn remove_closed(&mut self, number: Number) {
+        self.closed.retain(|i| i.number != number);
     }
 }
 

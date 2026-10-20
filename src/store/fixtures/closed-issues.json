@@ -1,0 +1,150 @@
+{
+  "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0yMFQxMzozODozN1rPAAAAAWI2QJc="
+  },
+  "nodes": [
+    {
+      "number": 387,
+      "title": "Spec change: Say what removing `linewright:designed` does to an issue's tickets",
+      "body": "Tickets for the spec change in #386.\n\n- #388 Plan and run every discarded cut as one action, decided before the rest of the plan\n- #389 Close a discarded cut's pull requests, and keep sub-issues a person added\n",
+      "closedAt": "2026-10-20T14:10:39Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": [
+          {
+            "number": 388,
+            "state": "CLOSED",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          },
+          {
+            "number": 389,
+            "state": "CLOSED",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "parent": null,
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      }
+    },
+    {
+      "number": 388,
+      "title": "Plan and run every discarded cut as one action, decided before the rest of the plan",
+      "body": "## What to build\n\nRestructuring only: no behavior changes. Today a cut is discarded in two ways. `Action::DiscardTickets` is planned for a spec change in the merged-PR loop, and `Action::DiscardCut` is planned for an issue inside the issue loop. Each has its own arm in the factory. Replace both with one discard step. It is computed before the rest of the plan, under the rule *Discarding a cut* in docs/specs/design.md.\n\n- A single reconcile function finds every item to discard and what to close for it. It covers a spec change whose merged PR lacks `linewright:designed`, has no design running and still has an open tracking issue. It also covers an open issue, other than a spec change's tracking issue, that lacks the label, has no design running and has open tickets Linewright cut. The function runs before the pulls loop and the issue loop.\n- One action, `DiscardCut { item, tickets }`, where `item` is either a spec change with its tracking issue or an issue. It replaces `DiscardTickets` and the old `DiscardCut`. It is used in the drain's held-back list and in `written`.\n- One factory arm runs it, keeping today's order and comments: close the tickets, then close the tracking issue of a spec change, or comment on the issue.\n- For now, the spec-change case keeps the tickets it closes today (every open sub-issue of the tracking issue). Restricting them is the next ticket's job.\n- A discarded item still waits until the next poll before it is designed again, as today.\n\nSee the design posted on the tracking issue.\n\n## Acceptance criteria\n\n- [ ] One action type and one factory arm discard both spec-change cuts and issue cuts. `DiscardTickets` is gone.\n- [ ] Discards are computed once, before the pulls loop and the issue loop, and those loops read the result instead of planning discards themselves.\n- [ ] The existing discard tests pass, rewritten only for the new action's shape. They include an interrupted decomposition, a cut stopped part way, a removed label, an unassigned spec change, a cut still running that is not discarded, and the issue designed once its tickets close.\n- [ ] `scripts/check` passes.",
+      "closedAt": "2026-10-20T13:49:33Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": {
+        "number": 387,
+        "title": "Spec change: Say what removing `linewright:designed` does to an issue's tickets",
+        "body": "Tickets for the spec change in #386.\n\n- #388 Plan and run every discarded cut as one action, decided before the rest of the plan\n- #389 Close a discarded cut's pull requests, and keep sub-issues a person added\n",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": {
+              "__typename": "PullRequest",
+              "number": 390
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 389,
+      "title": "Close a discarded cut's pull requests, and keep sub-issues a person added",
+      "body": "## What to build\n\nThis ticket makes Linewright follow docs/specs/design.md, *Discarding a cut*: \"First its open tickets and their pull requests are closed as not planned with a comment, and so is a spec change's tracking issue.\" It builds on the single discard step from the blocking ticket.\n\n- **Only Linewright's tickets.** A discard closes only the open tickets Linewright cut, for both spec changes and issues. A sub-issue a person added under a tracking issue or a cut issue stays open.\n- **Their pull requests.** The discard also lists the open pull requests that close any ticket of the cut, whoever opened them. A ticket counts whether it is open or closed, so a discard interrupted after closing its tickets still closes their PRs on the next poll. An issue whose only leftover is such a PR is still discarded.\n- **Order.** Close the tickets first, then the PRs, then the parent: the tracking issue of a spec change, or the comment on the issue. Each is closed with a comment that says the item is being designed again. Closing a ticket before its PR means Linewright never sees one of its own PRs closed unmerged while the ticket is still open, which would hand the ticket back.\n- **Store.** Add a way to close a pull request: unmerged on GitHub, and through the existing local close in the local store.\n- **The rest of the plan leaves the discard's items alone.** In the same plan, a PR being discarded gets no merge, mark-ready or run, and a ticket being discarded gets no start, claim or hand-back.\n- **Comments.** Reword them to cover both an interrupted cut and a label a person removed. The comment on the issue lists the tickets and PRs it discarded, leaving out any list that is empty.\n\nSee the design posted on the tracking issue.\n\n## Acceptance criteria\n\n- [ ] A spec change whose PR lacks the designed label has its tracking issue, its Linewright-cut open tickets and their open PRs closed. A sub-issue a person added under the tracking issue stays open.\n- [ ] An issue whose label a person removed has its Linewright-cut open tickets and their open PRs closed, with a comment on each and one on the issue.\n- [ ] A discard interrupted after closing its tickets closes their still-open PRs on the next poll, and the item is designed again only after that.\n- [ ] A plan that discards a cut contains no merge, mark-ready or start for the PRs and tickets it discards.\n- [ ] Pull requests are closed through a new store method, which works against both GitHub and the local store, and integration tests cover it.\n- [ ] `scripts/check` passes.",
+      "closedAt": "2026-10-20T14:10:32Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": {
+        "number": 387,
+        "title": "Spec change: Say what removing `linewright:designed` does to an issue's tickets",
+        "body": "Tickets for the spec change in #386.\n\n- #388 Plan and run every discarded cut as one action, decided before the rest of the plan\n- #389 Close a discarded cut's pull requests, and keep sub-issues a person added\n",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": {
+              "__typename": "PullRequest",
+              "number": 391
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

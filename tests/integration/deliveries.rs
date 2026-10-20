@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use common::*;
-use linewright::domain::{CheckState, Issue, Login, Mergeability, Number, PullState, ReviewState};
+use linewright::domain::{
+    CheckState, Issue, Login, Mergeability, Number, PullState, ReviewState, Snapshot,
+};
 use linewright::factory::Factory;
 use linewright::harness::{Harness, SessionError, SessionSpec, Turn};
 use linewright::reconcile::WorkKind;
@@ -26,7 +28,7 @@ struct Served {
 }
 
 /// Serves `world`, polling every `poll_interval`, once its first poll took
-/// its snapshot.
+/// its snapshot and `serve` published it.
 async fn serve(world: World, poll_interval: Duration) -> Served {
     let World {
         store,
@@ -46,6 +48,8 @@ async fn serve(world: World, poll_interval: Duration) -> Served {
     let polled = store.snapshots_taken();
     let serving = Serving::start(factory, poll_interval, pending);
     eventually(|| store.snapshots_taken() > polled).await;
+    // The store counts the snapshot before `serve` publishes it.
+    eventually(|| serving.served.borrow().is_some()).await;
     Served {
         store,
         harness,
@@ -68,6 +72,12 @@ impl Served {
 
     fn issue(&self, number: Number) -> Issue {
         self.store.issue(number).unwrap()
+    }
+
+    /// The snapshot `serve` holds now.
+    fn snapshot(&self) -> Arc<Snapshot> {
+        let served = self.serving.served.borrow();
+        served.as_ref().expect("served").view_now().snapshot
     }
 
     async fn stop(self) {
@@ -158,6 +168,27 @@ async fn an_issue_labeled_needs_triage_is_triaged_on_the_delivery() {
 
     eventually(|| labels(&served.issue(issue)).contains(&"ready-for-human")).await;
     assert!(last_comment(&served.issue(issue)).contains("Which widget?"));
+    assert_eq!(served.store.snapshots_taken(), 1);
+    served.stop().await;
+}
+
+#[tokio::test]
+async fn an_issue_closed_is_held_among_the_closed_items_on_the_delivery_about_it() {
+    let world = World::new().await;
+    let issue = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-info"]);
+    let served = serve(world, NEVER).await;
+
+    served.store.close_issue_as(issue).unwrap();
+    served.deliver("issues", about_issue(issue)).await;
+
+    let closed = || {
+        let snapshot = served.snapshot();
+        snapshot.closed.iter().any(|item| item.number == issue)
+    };
+    eventually(closed).await;
+    assert!(served.snapshot().issue(issue).is_none());
     assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }

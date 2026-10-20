@@ -65,6 +65,7 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
         pulls: vec![],
         merged: vec![],
         ticket_branches: vec![],
+        closed: vec![],
     }
 }
 

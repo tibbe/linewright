@@ -1,6 +1,7 @@
 mod automation_file;
 mod automation_run;
 mod automation_schedule;
+mod closed_items;
 mod committed_credentials;
 mod common;
 mod config;

@@ -133,6 +133,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
             pulls,
             merged: vec![],
             ticket_branches: vec![],
+            closed: vec![],
         }),
         read_at: HashMap::default(),
         policy: policy(),

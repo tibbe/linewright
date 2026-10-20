@@ -1,0 +1,21 @@
+{
+  "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0xOFQwNzozMDowNVrPAAAAASR-hxg="
+  },
+  "nodes": [
+    {
+      "number": 321,
+      "title": "Restore the to-tickets skill to upstream, then make it non-interactive",
+      "closedAt": "2026-10-18T07:30:05Z",
+      "updatedAt": "2026-10-18T07:30:05Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      }
+    }
+  ]
+}

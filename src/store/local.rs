@@ -13,10 +13,11 @@ use super::{
 };
 use crate::clock::Clock;
 use crate::domain::{
-    Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment,
-    Filed, Issue, IssueEvent, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull,
-    Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState,
-    Snapshot, SubIssue, Thread, TicketBranch, TicketBranchName, Timestamp, closing_references,
+    Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
+    ClosingPull, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod, MergeMethods,
+    Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement,
+    Review, ReviewState, Snapshot, SubIssue, Thread, TicketBranch, TicketBranchName, Timestamp,
+    closed_within, closing_references,
 };
 use crate::git;
 
@@ -58,11 +59,21 @@ struct State {
 
 #[derive(Clone, Serialize)]
 struct IssueRecord {
+    /// Its `open` is [`IssueRecord::is_open`]'s.
     #[serde(flatten)]
     issue: Issue,
     issue_type: Option<String>,
     blocked_by: Vec<Number>,
     sub_issues: Vec<Number>,
+    /// Set while the issue is closed.
+    closing: Option<Closing>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+struct Closing {
+    at: Timestamp,
+    /// The pull request whose merge closed the issue.
+    merged_by: Option<Number>,
 }
 
 #[derive(Clone, Serialize)]
@@ -254,6 +265,7 @@ impl LocalStore {
                 issue_type: None,
                 blocked_by: vec![],
                 sub_issues: vec![],
+                closing: None,
             },
         );
         number
@@ -299,16 +311,17 @@ impl LocalStore {
     }
 
     pub fn close_issue_as(&self, issue: Number) -> Result<()> {
-        self.state().issue_mut(issue)?.issue.open = false;
+        let now = self.now();
+        self.state().issue_mut(issue)?.close(now, None);
         Ok(())
     }
 
     pub fn reopen_issue_as(&self, issue: Number) -> Result<()> {
         let now = self.now();
         let mut state = self.state();
-        let issue = &mut state.issue_mut(issue)?.issue;
-        issue.open = true;
-        issue.events.push(IssueEvent::Reopened { at: now });
+        let record = state.issue_mut(issue)?;
+        record.closing = None;
+        record.issue.events.push(IssueEvent::Reopened { at: now });
         Ok(())
     }
 
@@ -470,7 +483,7 @@ impl LocalStore {
         let closes = closing_references(&record.body);
         for issue in closes {
             if let Ok(issue) = state.issue_mut(issue) {
-                issue.issue.open = false;
+                issue.close(now, Some(pr));
             }
         }
         Ok(())
@@ -779,9 +792,8 @@ impl LocalStore {
             .filter_map(|line| {
                 let (name, committer) = line.split_once('\t')?;
                 let branch = TicketBranchName::parse(name)?;
-                if committer != state.linewright.as_str()
-                    || !state.issues.contains_key(&branch.issue())
-                {
+                let record = state.issues.get(&branch.issue())?;
+                if committer != state.linewright.as_str() {
                     return None;
                 }
                 let open_pull_from_branch = state
@@ -790,7 +802,11 @@ impl LocalStore {
                     .any(|p| p.is_open() && p.head_ref == name);
                 Some(TicketBranch {
                     name: branch,
-                    issue: BranchIssue::Held,
+                    issue: if record.is_open() {
+                        BranchIssue::Held
+                    } else {
+                        BranchIssue::Read(Box::new(state.issue_view(record)))
+                    },
                     open_pull_from_branch,
                 })
             })
@@ -954,7 +970,7 @@ impl State {
             .iter()
             .map(|&number| Linked {
                 number,
-                open: self.issues.get(&number).is_some_and(|i| i.issue.open),
+                open: self.issues.get(&number).is_some_and(IssueRecord::is_open),
             })
             .collect()
     }
@@ -962,6 +978,7 @@ impl State {
     fn issue_view(&self, record: &IssueRecord) -> Issue {
         let issue = &record.issue;
         Issue {
+            open: record.is_open(),
             blocked_by: self.linked(&record.blocked_by),
             sub_issues: self
                 .linked(&record.sub_issues)
@@ -989,6 +1006,25 @@ impl State {
                 .collect(),
             ..issue.clone()
         }
+    }
+
+    /// The issue as the snapshot holds it among its closed items: `None`
+    /// when it is open.
+    fn closed_issue(&self, record: &IssueRecord) -> Option<ClosedItem> {
+        let closing = record.closing?;
+        let issue = self.issue_view(record);
+        Some(ClosedItem {
+            number: issue.number,
+            title: issue.title,
+            closed_at: closing.at,
+            kind: ClosedKind::Issue {
+                parent: issue.parent,
+                filed: issue.filed,
+                sub_issues: issue.sub_issues,
+                labels: issue.labels,
+                merged_by: closing.merged_by,
+            },
+        })
     }
 
     fn tracking_issues_of(&self, spec_change: Number) -> Vec<Number> {
@@ -1102,7 +1138,33 @@ fn changed(assignees: &mut Vec<Login>, change: &Assignment) -> bool {
     true
 }
 
+impl IssueRecord {
+    fn is_open(&self) -> bool {
+        self.closing.is_none()
+    }
+
+    fn close(&mut self, at: Timestamp, merged_by: Option<Number>) {
+        self.closing = Some(Closing { at, merged_by });
+    }
+}
+
 impl PullRecord {
+    /// The pull request as the snapshot holds it among its closed items:
+    /// `None` unless it is `linewright`'s, closed without merging.
+    fn closed_unmerged(&self, linewright: &Login) -> Option<ClosedItem> {
+        let PullState::Closed { at } = self.state else {
+            return None;
+        };
+        (&self.author == linewright).then(|| ClosedItem {
+            number: self.number,
+            title: self.title.clone(),
+            closed_at: at,
+            kind: ClosedKind::Pull {
+                closes: closing_references(&self.body),
+            },
+        })
+    }
+
     fn is_open(&self) -> bool {
         matches!(self.state, PullState::Open { .. })
     }
@@ -1228,12 +1290,23 @@ impl Store for LocalStore {
         Ok(self.has_label(name))
     }
 
-    async fn snapshot(&self, merged_since: Timestamp) -> Result<Snapshot> {
+    async fn snapshot(&self, window_opened: Timestamp) -> Result<Snapshot> {
         self.readable()?;
-        let (default_branch, issues, linewright, pulls) = {
+        let (default_branch, issues, closed, linewright, pulls) = {
             let mut state = self.state();
             state.snapshots_taken += 1;
-            let issues: Vec<Issue> = state.issues.values().map(|r| state.issue_view(r)).collect();
+            let issues: Vec<Issue> = state
+                .issues
+                .values()
+                .filter(|r| r.is_open())
+                .map(|r| state.issue_view(r))
+                .collect();
+            let closed_issues = state.issues.values().filter_map(|r| state.closed_issue(r));
+            let closed_pulls = state
+                .pulls
+                .values()
+                .filter_map(|p| p.closed_unmerged(&state.linewright));
+            let closed = closed_within(closed_issues.chain(closed_pulls), window_opened);
             let pulls: Vec<(Number, Login)> = state
                 .pulls
                 .values()
@@ -1242,6 +1315,7 @@ impl Store for LocalStore {
             (
                 state.default_branch.clone(),
                 issues,
+                closed,
                 state.linewright.clone(),
                 pulls,
             )
@@ -1251,10 +1325,11 @@ impl Store for LocalStore {
             issues,
             pulls: vec![],
             merged: vec![],
+            closed,
             ticket_branches: self.ticket_branches().await?,
         };
         for (number, author) in pulls {
-            if let Some(merged) = self.merged_pull(number, merged_since).await? {
+            if let Some(merged) = self.merged_pull(number, window_opened).await? {
                 snapshot.merged.push(merged);
             }
             if author == linewright {
@@ -1264,13 +1339,22 @@ impl Store for LocalStore {
         Ok(snapshot)
     }
 
-    async fn issue(&self, number: Number) -> Result<IssueRead> {
+    async fn issue(&self, number: Number, window_opened: Timestamp) -> Result<IssueRead> {
         self.read_item()?;
         let (issue, pulls) = {
             let state = self.state();
             let Some(record) = state.issues.get(&number) else {
                 return Ok(IssueRead::Gone);
             };
+            if !record.is_open() {
+                let closed = state.closed_issue(record);
+                return Ok(
+                    match closed.filter(|item| item.closed_since(window_opened)) {
+                        Some(closed) => IssueRead::Closed(Box::new(closed)),
+                        None => IssueRead::LeftOut { open: false },
+                    },
+                );
+            }
             let issue = state.issue_view(record);
             let linewright = &state.linewright;
             let pulls: Vec<Number> = state
@@ -1299,9 +1383,14 @@ impl Store for LocalStore {
         self.read_item()?;
         {
             let state = self.state();
-            // A snapshot of the local store holds every issue.
+            // A snapshot of the local store holds every open issue.
             if let Some(record) = state.issues.get(&number) {
-                return Ok(Some(AnyItem::HeldIssue(Box::new(state.issue_view(record)))));
+                let issue = Box::new(state.issue_view(record));
+                return Ok(Some(if issue.open {
+                    AnyItem::HeldIssue(issue)
+                } else {
+                    AnyItem::LeftOutIssue(issue)
+                }));
             }
             let Some(record) = state.pulls.get(&number) else {
                 return Ok(None);
