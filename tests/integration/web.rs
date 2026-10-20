@@ -111,6 +111,11 @@ fn select<'a>(html: &'a Html, selector: &str) -> Vec<ElementRef<'a>> {
     html.select(&Selector::parse(selector).unwrap()).collect()
 }
 
+/// The path of the event stream the page connects to.
+fn events_path(html: &Html) -> Option<&str> {
+    select(html, "body")[0].attr("hx-sse:connect")
+}
+
 /// The text a reader sees, with its spacing, and its code in backticks, as
 /// the commands print them.
 fn text(element: ElementRef) -> String {
@@ -590,7 +595,7 @@ async fn a_request_whose_host_is_not_local_is_refused_for_pages_assets_and_strea
                 .to_string()
         })
         .collect();
-    assert_eq!(assets.len(), 3);
+    assert_eq!(assets.len(), 4);
     let paths = ["/items/1", "/events/items/1"]
         .into_iter()
         .map(str::to_string)
@@ -611,11 +616,10 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
 
     let page = web.get_from("localhost", "/items/1").await;
     let html = web.page("/items/1").await;
-    let script = select(&html, "script[src]")[0]
-        .attr("src")
-        .unwrap()
-        .to_string();
-    let asset = web.get_from("localhost", &script).await;
+    let scripts: Vec<String> = select(&html, "script[src]")
+        .into_iter()
+        .map(|script| script.attr("src").unwrap().to_string())
+        .collect();
     let stale = web
         .get_from("localhost", "/assets/htmx-0000000000000000.min.js")
         .await;
@@ -625,12 +629,33 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
         "default-src 'self'"
     );
     assert_eq!(select(&html, "script:not([src])").len(), 0);
-    assert!(
-        asset.headers()["cache-control"]
-            .to_str()
-            .unwrap()
-            .contains("immutable")
+    let named: Vec<(&str, &str)> = scripts
+        .iter()
+        .map(|script| {
+            let name = script.strip_prefix("/assets/").unwrap();
+            let (hashed, extension) = name.split_once('.').unwrap();
+            let (stem, _hash) = hashed.rsplit_once('-').unwrap();
+            (stem, extension)
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [("htmx", "min.js"), ("hx-sse", "js"), ("linewright", "js")]
     );
+    for script in &scripts {
+        let asset = web.get_from("localhost", script).await;
+        assert_eq!(asset.status(), 200, "{script}");
+        assert_eq!(
+            asset.headers()["content-type"],
+            "text/javascript; charset=utf-8"
+        );
+        assert!(
+            asset.headers()["cache-control"]
+                .to_str()
+                .unwrap()
+                .contains("immutable")
+        );
+    }
     assert_eq!(stale.status(), 404);
     web.stop().await;
 }
@@ -879,10 +904,7 @@ async fn the_runs_pages_stream_lists_the_runs_again_as_one_starts_and_ends() {
     let html = web
         .eventually_page("/runs?stage=triage", |html| !runs_shown(html).is_empty())
         .await;
-    let events_path = select(&html, "body")[0]
-        .attr("data-events")
-        .unwrap()
-        .to_string();
+    let events_path = events_path(&html).unwrap().to_string();
     assert_eq!(events_path, "/events/runs?stage=triage");
     let mut events = stream(&web, &events_path).await;
     let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
@@ -1237,10 +1259,7 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
                 .any(|(_, line)| line.contains("Bash(ls;"))
         })
         .await;
-    let events_path = select(&read, "body")[0]
-        .attr("data-events")
-        .unwrap()
-        .to_string();
+    let events_path = events_path(&read).unwrap().to_string();
     assert!(
         events_path.starts_with("/events/runs/1/triage-1?follow=1%2Ftriage-1%3A1."),
         "{events_path}"
@@ -1434,10 +1453,7 @@ async fn the_page_of_a_run_that_started_no_session_says_so() {
         [format!("run: {}/update-1 (it started no session)", pr.0)]
     );
     assert_eq!(select(&html, "#transcript .entry").len(), 0);
-    assert_eq!(
-        select(&html, "body")[0].attr("data-events"),
-        Some("/events/runs/2/update-1")
-    );
+    assert_eq!(events_path(&html), Some("/events/runs/2/update-1"));
     web.stop().await;
 }
 

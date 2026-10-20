@@ -75,10 +75,11 @@ struct Hashed {
 
 const CSS: &str = "text/css; charset=utf-8";
 const JAVASCRIPT: &str = "text/javascript; charset=utf-8";
-const ASSETS: [(&str, &str); 3] = [
+const ASSETS: [(&str, &str); 4] = [
     ("linewright.css", CSS),
     ("linewright.js", JAVASCRIPT),
     ("htmx.min.js", JAVASCRIPT),
+    ("hx-sse.js", JAVASCRIPT),
 ];
 
 static HASHED: LazyLock<Hashed> = LazyLock::new(|| {
@@ -130,6 +131,8 @@ struct PageAssets {
     css: &'static str,
     script: &'static str,
     htmx: &'static str,
+    /// htmx's extension that keeps the page up from its event stream.
+    sse: &'static str,
 }
 
 impl Page {
@@ -142,6 +145,7 @@ impl Page {
                 css: path("linewright.css"),
                 script: path("linewright.js"),
                 htmx: path("htmx.min.js"),
+                sse: path("hx-sse.js"),
             },
         }
     }

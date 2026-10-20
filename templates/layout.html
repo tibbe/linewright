@@ -7,10 +7,11 @@
 <meta name="color-scheme" content="light dark">
 <title id="title">{{ page.title }}</title>
 <link rel="stylesheet" href="{{ page.assets.css }}">
-<script src="{{ page.assets.htmx }}" defer></script>
+<script src="{{ page.assets.htmx }}"></script>
+<script src="{{ page.assets.sse }}"></script>
 <script src="{{ page.assets.script }}" defer></script>
 </head>
-<body data-events="{{ page.events }}">
+<body hx-sse:connect="{{ page.events }}" hx-swap="none">
 {% block bar -%}
 <header id="bar">
 <nav>

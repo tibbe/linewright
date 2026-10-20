@@ -1,7 +1,8 @@
 // Linewright's own script for the web UI (docs/specs/design_system.md): it
-// keeps the page up from its event stream, says since when it lost `serve`,
-// shows times in the reader's time zone, keeping them up, and keeps a run's
-// transcript at its latest entry while the reader is there.
+// says since when the page lost `serve`, shows times in the reader's time
+// zone, keeping them up, and keeps a run's transcript at its latest entry
+// while the reader is there. htmx's `hx-sse` extension keeps the page up from
+// its event stream: https://four.htmx.org/extensions/hx-sse (htmx 4.0.0).
 (() => {
   "use strict";
 
@@ -87,7 +88,7 @@
   const latest = document.getElementById("latest");
   const atBottom = () =>
     window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40;
-  const followed = (document.body.dataset.events || "").includes("follow=");
+  const followed = (document.body.getAttribute("hx-sse:connect") || "").includes("follow=");
   let stuck = followed && !location.hash;
 
   function toBottom() {
@@ -124,48 +125,46 @@
     target.scrollIntoView();
   }
 
-  // Each message applied once the one before it has been, as a message can
-  // add to what the one before added.
-  let swapping = Promise.resolve();
-  // The ID of the last transcript line taken, which a stream opened anew
-  // follows on from, as one that reconnects itself does.
-  let lastId = null;
+  // A message whose event ID differs from the last one's added entries to
+  // the transcript.
+  let lastEntryId = "";
+  // Whether the extension has taken over the page's event stream.
+  let streaming = false;
 
-  function connect() {
-    const events = new URL(document.body.dataset.events, location.href);
-    if (lastId !== null && events.searchParams.has("follow")) {
-      events.searchParams.set("follow", lastId);
-    }
-    const source = new EventSource(events);
-    source.onopen = () => {
-      lostSince = null;
-      lost.hidden = true;
-    };
-    source.onmessage = (event) => {
-      const entries = event.lastEventId !== "" && event.lastEventId !== lastId;
-      if (entries) lastId = event.lastEventId;
-      swapping = swapping
-        .then(() => htmx.swap({ text: event.data, sourceElement: document.body }))
-        .then(() => swapped(entries), console.error);
-    };
-    source.onerror = () => {
-      if (lostSince === null) {
-        lostSince = new Date();
-        lost.querySelector("time").dateTime = lostSince.toISOString();
-        lost.hidden = false;
-        tick();
-      }
-      // It reconnects itself unless `serve` answered with an error.
-      if (source.readyState === EventSource.CLOSED) {
-        setTimeout(connect, 5000);
-      }
-    };
+  function lose() {
+    if (lostSince !== null) return;
+    lostSince = new Date();
+    lost.querySelector("time").dateTime = lostSince.toISOString();
+    lost.hidden = false;
+    tick();
   }
+
+  document.body.addEventListener("htmx:sse:error", lose);
+  document.body.addEventListener("htmx:sse:after:connection", () => {
+    streaming = true;
+    lostSince = null;
+    lost.hidden = true;
+  });
+  document.body.addEventListener("htmx:sse:after:message", (event) => {
+    const id = event.detail.message.id;
+    const entries = id !== "" && id !== lastEntryId;
+    lastEntryId = id;
+    swapped(entries);
+  });
+  // The extension reconnects only a stream it has taken over, so a page
+  // whose first connection failed, such as one loaded from the cache while
+  // `serve` was down, asks again itself.
+  document.body.addEventListener("htmx:finally:request", (event) => {
+    if (event.target !== document.body || streaming) return;
+    lose();
+    setTimeout(() => {
+      htmx.ajax("GET", document.body.getAttribute("hx-sse:connect"), { source: document.body });
+    }, 5000);
+  });
 
   tick();
   setInterval(tick, 1000);
   reveal();
   window.addEventListener("hashchange", reveal);
   if (stuck) toBottom();
-  if (document.body.dataset.events) connect();
 })();
