@@ -139,12 +139,18 @@ values!(Triage: Facts {
     author
 });
 values!(Design: Facts {
+    kind,
+    item,
+    filed_gaps,
+    cutting
+});
+values!(SpecChange {
+    default_branch,
     number,
     title,
     author,
     body,
-    spec_diff,
-    filed_gaps
+    spec_diff
 });
 values!(Implement: Facts {
     branch,
@@ -361,6 +367,9 @@ fn braced(names: &[&str]) -> String {
 pub struct Prompts {
     triage: Template<Triage>,
     design: Template<Design>,
+    spec_change: Template<SpecChange>,
+    cut_spec_change: Template<NoValues>,
+    cut_issue: Template<NoValues>,
     implement: Template<Implement>,
     rework: Template<Rework>,
     fix_ci: Template<FixCi>,
@@ -390,6 +399,9 @@ impl Prompts {
         Ok(Prompts {
             triage: template!(source, "triage.md")?,
             design: template!(source, "design.md")?,
+            spec_change: template!(source, "parts/spec-change.md")?,
+            cut_spec_change: template!(source, "parts/cut-spec-change.md")?,
+            cut_issue: template!(source, "parts/cut-issue.md")?,
             implement: template!(source, "implement.md")?,
             rework: template!(source, "rework.md")?,
             fix_ci: template!(source, "fix-ci.md")?,
@@ -436,7 +448,23 @@ pub fn triage(prompts: &Prompts, repo: &Repo, issue: &Issue, categories: &[Strin
     })
 }
 
-pub fn design(
+/// What a design is of, as its prompt and its hand-backs name it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesignOf {
+    SpecChange,
+    Issue,
+}
+
+impl DesignOf {
+    pub fn noun(self) -> &'static str {
+        match self {
+            DesignOf::SpecChange => "spec change",
+            DesignOf::Issue => "issue",
+        }
+    }
+}
+
+pub fn design_spec_change(
     prompts: &Prompts,
     repo: &Repo,
     pr: &MergedPull,
@@ -445,12 +473,36 @@ pub fn design(
 ) -> String {
     prompts.design.fill(&Design {
         base: Facts::of(repo),
-        number: pr.number.to_string(),
-        title: pr.title.clone(),
-        author: pr.author.to_string(),
-        body: or_none(&pr.body).into(),
-        spec_diff: spec_diff.trim_end().into(),
+        kind: DesignOf::SpecChange.noun().into(),
+        item: prompts.spec_change.fill(&SpecChange {
+            default_branch: repo.default_branch.into(),
+            number: pr.number.to_string(),
+            title: pr.title.clone(),
+            author: pr.author.to_string(),
+            body: or_none(&pr.body).into(),
+            spec_diff: spec_diff.trim_end().into(),
+        }),
         filed_gaps: render_filed_gaps(prompts, filed_gaps),
+        cutting: prompts.cut_spec_change.fill(&NoValues {}),
+    })
+}
+
+/// The same prompt as a spec change's, with the issue and its comments as
+/// what the item asks (docs/specs/design.md, "Designing").
+pub fn design_issue(
+    prompts: &Prompts,
+    repo: &Repo,
+    issue: &Issue,
+    filed_gaps: &[&Issue],
+) -> String {
+    let mut item = String::new();
+    write_issue(&mut item, "The issue", issue);
+    prompts.design.fill(&Design {
+        base: Facts::of(repo),
+        kind: DesignOf::Issue.noun().into(),
+        item: item.trim_end().into(),
+        filed_gaps: render_filed_gaps(prompts, filed_gaps),
+        cutting: prompts.cut_issue.fill(&NoValues {}),
     })
 }
 

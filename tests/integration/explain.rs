@@ -204,7 +204,7 @@ fn an_item_carrying_two_status_labels_is_explained_by_the_newer() {
     assert_eq!(
         text(&view(vec![triaged], vec![]), 42)[1..],
         [
-            "state: ready to claim",
+            "state: ready to claim, waiting for its design",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: nothing: Linewright acts on it at its next poll",
         ]

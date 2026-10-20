@@ -42,17 +42,16 @@ pub struct TicketDraft {
     pub blocked_by: Vec<String>,
 }
 
-/// What a design session answers (docs/specs/design.md, "Designing").
+/// What a design session answers (docs/specs/design.md, "Designing"), with
+/// `C` what a designed item is cut into.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "outcome", rename_all = "kebab-case")]
-pub enum DesignResult {
+pub enum DesignResult<C> {
     Designed {
         #[serde(deserialize_with = "trimmed")]
         design: String,
-        tickets: Tickets,
-        /// Why the work is cut into these tickets.
-        #[serde(deserialize_with = "trimmed")]
-        comment: String,
+        #[serde(flatten)]
+        cut: C,
         #[serde(default)]
         spec_gaps: Vec<SpecGap>,
     },
@@ -70,6 +69,44 @@ pub enum DesignResult {
         #[serde(deserialize_with = "trimmed")]
         reason: String,
     },
+}
+
+/// The tickets a spec change's work is cut into, which it always is
+/// (docs/specs/design.md, "Cutting").
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Cut {
+    pub tickets: Tickets,
+    /// Why the work is cut into these tickets.
+    #[serde(deserialize_with = "trimmed")]
+    pub comment: String,
+}
+
+/// An issue built as it is, in one session. Linewright does not cut an issue
+/// into tickets yet, so a design that does is sent back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "RawUncut")]
+pub struct Uncut;
+
+#[derive(Deserialize)]
+struct RawUncut {
+    #[serde(default)]
+    tickets: Vec<serde::de::IgnoredAny>,
+}
+
+impl TryFrom<RawUncut> for Uncut {
+    type Error = String;
+
+    fn try_from(raw: RawUncut) -> Result<Uncut, String> {
+        if raw.tickets.is_empty() {
+            Ok(Uncut)
+        } else {
+            Err(
+                "`tickets` is not empty: Linewright builds an issue as it is, in one session, \
+                 so answer `designed` with no tickets"
+                    .into(),
+            )
+        }
+    }
 }
 
 /// At least one ticket, ordered so that every ticket comes after those

@@ -38,9 +38,12 @@ fn triage(world: &World) {
 }
 
 fn open_ticket(world: &World, title: &str) -> Number {
-    world
-        .store
-        .open_issue("maintainer", title, "Please.", &["ready-for-agent"])
+    world.store.open_issue(
+        "maintainer",
+        title,
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    )
 }
 
 fn started(actions: &[Action]) -> Vec<Subject> {
@@ -591,7 +594,7 @@ async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     let served = Served::start(world).await;
     eventually(|| served.usage_limit() == Some(the_usage_limit())).await;

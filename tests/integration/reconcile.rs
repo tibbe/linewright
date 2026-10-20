@@ -249,7 +249,7 @@ fn ready_for_agent_applied_by_hand_after_a_question_unassigns_the_people_asked()
             },
             unassign_asked(1, &["reporter"]),
             claim(1),
-            implement(1),
+            design(1),
         ]
     );
 }
@@ -269,7 +269,7 @@ fn ready_for_human_after_a_question_keeps_the_people_asked_until_ready_for_agent
 
     assert_eq!(
         decide(&snapshot(vec![asked])),
-        vec![unassign_asked(1, &["reporter"]), claim(1), implement(1)]
+        vec![unassign_asked(1, &["reporter"]), claim(1), design(1)]
     );
 }
 
@@ -377,7 +377,7 @@ fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_co
 
     assert_eq!(
         decide(&answered_with(StatusLabel::ReadyForAgent)),
-        vec![unlabel_ready_for_human.clone(), claim(1), implement(1)]
+        vec![unlabel_ready_for_human.clone(), claim(1), design(1)]
     );
     assert_eq!(
         decide(&answered_with(StatusLabel::NeedsTriage)),
@@ -400,7 +400,7 @@ fn of_two_status_labels_the_newer_is_kept_and_followed() {
             let follow = match newer {
                 StatusLabel::NeedsTriage => vec![claim(1), triage(1)],
                 StatusLabel::ReadyForAgent => {
-                    vec![claim(1), implement(1)]
+                    vec![claim(1), design(1)]
                 }
                 StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => vec![],
             };
@@ -656,7 +656,7 @@ fn an_issue_assigned_to_linewright_by_hand_beside_someone_else_is_worked_as_its_
 
     assert_eq!(
         deciding(&world, &Memory::default(), &requiring_label()),
-        vec![triage(2), implement(1)]
+        vec![triage(2), design(1)]
     );
 }
 
@@ -750,7 +750,7 @@ fn cut(pr: u64) -> Vec<Action> {
         Action::Claim {
             item: Item::Pull(Number(pr)),
         },
-        Action::Start(Work::Design { pr: Number(pr) }),
+        Action::Start(Work::DesignSpecChange { pr: Number(pr) }),
     ]
 }
 
@@ -808,7 +808,7 @@ fn a_spec_change_linewright_is_assigned_to_is_cut_without_claiming_it_again() {
 
     assert_eq!(
         decide(&world),
-        vec![Action::Start(Work::Design { pr: Number(5) })]
+        vec![Action::Start(Work::DesignSpecChange { pr: Number(5) })]
     );
 }
 
@@ -833,7 +833,7 @@ fn a_spec_change_linewright_is_assigned_to_again_is_cut_again() {
 
     assert_eq!(
         decide(&world),
-        vec![Action::Start(Work::Design { pr: Number(5) })]
+        vec![Action::Start(Work::DesignSpecChange { pr: Number(5) })]
     );
 }
 
@@ -976,10 +976,19 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
     );
 }
 
+/// As a design files it: ready for an agent, and designed.
 fn ticket(number: u64) -> Issue {
-    let mut ticket = labeled(issue(number), label::READY_FOR_AGENT);
+    let mut ticket = labeled(
+        labeled(issue(number), label::READY_FOR_AGENT),
+        label::DESIGNED,
+    );
     ticket.author = Login::new(LINEWRIGHT);
     ticket
+}
+
+/// Ready for an agent, and not designed yet.
+fn readied(number: u64) -> Issue {
+    labeled(issue(number), label::READY_FOR_AGENT)
 }
 
 fn claimed(mut issue: Issue) -> Issue {
@@ -1046,6 +1055,117 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
             &policy()
         ),
         vec![]
+    );
+}
+
+fn design(issue: u64) -> Action {
+    Action::Start(Work::DesignIssue {
+        issue: Number(issue),
+    })
+}
+
+#[test]
+fn a_ready_for_agent_issue_not_designed_is_claimed_and_designed() {
+    let world = snapshot(vec![readied(2)]);
+
+    assert_eq!(decide(&world), vec![claim(2), design(2)]);
+}
+
+#[test]
+fn a_claimed_issue_not_designed_is_designed_and_a_designed_one_implemented() {
+    let world = snapshot(vec![claimed(readied(2)), claimed(ticket(3))]);
+
+    assert_eq!(decide(&world), vec![design(2), implement(3)]);
+}
+
+#[test]
+fn an_issue_whose_design_label_was_removed_is_designed_again() {
+    let mut undesigned = claimed(ticket(2));
+    undesigned.labels.retain(|l| l != label::DESIGNED);
+    let world = snapshot(vec![undesigned]);
+
+    assert_eq!(decide(&world), vec![design(2)]);
+}
+
+#[test]
+fn an_issue_waits_for_its_blockers_before_its_design() {
+    let world = snapshot(vec![blocked_by(readied(3), 1, true)]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(waits_on(&world, 3), [Wait::Blocker { issue: Number(1) }]);
+}
+
+#[test]
+fn an_issue_being_designed_is_left_to_its_design() {
+    let world = snapshot(vec![claimed(readied(2))]);
+    let live = [live(2, WorkKind::Design)];
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &live,
+            &Memory::default(),
+            &Automations::default(),
+            t(10),
+            &policy()
+        ),
+        vec![]
+    );
+}
+
+#[test]
+fn an_issues_design_starts_before_an_implementation() {
+    let policy = Policy {
+        max_runs: 1,
+        ..policy()
+    };
+    let world = snapshot(vec![claimed(ticket(1)), claimed(readied(2))]);
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &[],
+            &Memory::default(),
+            &Automations::default(),
+            t(10),
+            &policy
+        ),
+        vec![design(2)]
+    );
+}
+
+#[test]
+fn an_issues_design_is_cancelled_as_its_implementation_would_be() {
+    let mut unlabeled = claimed(readied(1));
+    unlabeled.labels.clear();
+    let unassigned = readied(2);
+    let mut closed = claimed(readied(3));
+    closed.open = false;
+    let still_wanted = claimed(readied(4));
+    let world = snapshot(vec![unlabeled, unassigned, closed, still_wanted]);
+    let runs = [1, 2, 3, 4].map(|n| live(n, WorkKind::Design));
+
+    let cancelled: Vec<Subject> = reconcile(
+        &world,
+        &runs,
+        &Memory::default(),
+        &Automations::default(),
+        t(10),
+        &policy(),
+    )
+    .into_iter()
+    .filter_map(|a| {
+        if let Action::Cancel { subject, .. } = a {
+            Some(subject)
+        } else {
+            None
+        }
+    })
+    .collect();
+
+    assert_eq!(
+        cancelled,
+        [1, 2, 3].map(|n| Subject::Issue(Number(n))).to_vec()
     );
 }
 
@@ -1163,7 +1283,7 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
             Action::Claim {
                 item: Item::Pull(Number(5))
             },
-            Action::Start(Work::Design { pr: Number(5) }),
+            Action::Start(Work::DesignSpecChange { pr: Number(5) }),
             implement(1),
         ]
     );
@@ -2903,7 +3023,7 @@ fn with_a_required_label_only_a_labeled_issue_relabeled_after_a_question_has_the
 
     assert_eq!(
         deciding_with_label(&snapshot(vec![unlabeled, retriaged, with_label])),
-        vec![unassign_asked(3, &["reporter"]), claim(3), implement(3)]
+        vec![unassign_asked(3, &["reporter"]), claim(3), design(3)]
     );
 }
 
@@ -3074,7 +3194,7 @@ fn with_a_required_label_a_spec_change_assigned_to_linewright_by_hand_is_cut_unl
 
     assert_eq!(
         deciding_with_label(&world),
-        vec![Action::Start(Work::Design { pr: Number(1) })]
+        vec![Action::Start(Work::DesignSpecChange { pr: Number(1) })]
     );
 }
 
@@ -3250,7 +3370,7 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
             Action::Claim {
                 item: Item::Pull(Number(5))
             },
-            Action::Start(Work::Design { pr: Number(5) }),
+            Action::Start(Work::DesignSpecChange { pr: Number(5) }),
             claim(3),
             implement(3),
             implement(4),

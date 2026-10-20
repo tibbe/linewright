@@ -151,7 +151,7 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
 
     world.poll().await;
@@ -821,9 +821,12 @@ fn assert_briefed_with_the_parents_comment(brief: &str) {
 async fn a_ticket_a_person_parented_is_briefed_with_its_parent_its_comments_and_no_spec_change() {
     let mut world = World::new().await;
     implement(&world);
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
     let parent = person_parented(&world, ticket).await;
 
     world.poll().await;
@@ -1101,7 +1104,7 @@ async fn ticket_a_persons_pull_request_closes(world: &World, claimed: bool) -> (
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     if claimed {
         world
@@ -1166,7 +1169,7 @@ async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Numbe
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.poll().await;
     let pr = *world
@@ -1175,6 +1178,7 @@ async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Numbe
         .last()
         .expect("a pull request was opened");
     world.store.label_as(other, "ready-for-agent").unwrap();
+    world.store.label_as(other, "linewright:designed").unwrap();
     world
         .store
         .set_checks(pr, vec![check("test", CheckState::Failed, "boom")])
@@ -1201,7 +1205,7 @@ async fn a_pull_request_whose_ticket_is_unlabeled_and_unassigned_is_still_worked
     assert_eq!(world.harness.prompts(WorkKind::FixCi).len(), 1);
     assert_eq!(world.issue(other).assignees, []);
     assert_eq!(world.issue(ticket).assignees, []);
-    assert_eq!(labels(&world.issue(ticket)), Vec::<&str>::new());
+    assert_eq!(labels(&world.issue(ticket)), ["linewright:designed"]);
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
 }
 
@@ -1228,7 +1232,10 @@ async fn a_pull_request_closed_unmerged_hands_back_its_claimed_ticket_and_an_unc
     world.poll().await;
 
     assert!(labels(&world.issue(ticket)).contains(&"ready-for-human"));
-    assert_eq!(labels(&world.issue(other)), ["ready-for-agent"]);
+    assert_eq!(
+        labels(&world.issue(other)),
+        ["linewright:designed", "ready-for-agent"]
+    );
     assert_eq!(world.issue(other).assignees, [Login::new(LINEWRIGHT)]);
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
 }
@@ -1266,6 +1273,7 @@ async fn a_pull_request_closed_unmerged_hands_back_each_claimed_ticket_it_closes
     }
 
     implement(&world);
+    design_issues(&world);
     world.clock.advance(TimeDelta::minutes(1));
     for issue in [ticket, other] {
         world.store.label_as(issue, "ready-for-agent").unwrap();
@@ -1273,6 +1281,7 @@ async fn a_pull_request_closed_unmerged_hands_back_each_claimed_ticket_it_closes
     world.poll().await;
     world.poll().await;
 
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
     for issue in [ticket, other] {
         assert_eq!(refusals(&world, issue, pr), 1);
         assert_eq!(world.issue(issue).assignees, [Login::new(LINEWRIGHT)]);
@@ -1537,7 +1546,7 @@ async fn assert_handed_back(world: &World, ticket: Number, pr: Number, comment: 
     assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
     assert_eq!(last_pull_comment(world, pr).await, comment);
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-agent"]);
+    assert_eq!(labels(&issue), ["linewright:designed", "ready-for-agent"]);
     assert!(issue.is_assigned(&Login::new(LINEWRIGHT)));
     assert!(
         !issue
@@ -1629,9 +1638,12 @@ async fn a_ticket_whose_session_times_out_is_handed_back_once_saying_to_cut_the_
             log_tail: "Still reading the spec.".into(),
         })
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
     world.poll().await;
@@ -1815,6 +1827,27 @@ async fn a_design_that_gives_up_hands_the_spec_change_back_with_its_reason() {
 }
 
 #[tokio::test]
+async fn a_handed_back_spec_change_loses_its_design_label() {
+    let mut world = World::new().await;
+    let store = world.store.clone();
+    world.harness.on(WorkKind::Design, move |_| {
+        let spec_change = *store.pulls().last().expect("a spec change");
+        store.label_as(spec_change, "linewright:designed").unwrap();
+        Ok(json!({"outcome": "gave-up", "reason": "Not now."}).to_string())
+    });
+    let spec_pr = merge_spec_change(&world).await;
+
+    world.poll().await;
+
+    assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
+    assert!(
+        last_pull_comment(&world, spec_pr)
+            .await
+            .contains("Not now.")
+    );
+}
+
+#[tokio::test]
 async fn a_spec_gap_that_does_not_block_a_design_is_filed_once_for_the_spec_change() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |_| {
@@ -1878,6 +1911,215 @@ async fn a_design_files_its_spec_gaps_and_its_tickets() {
             "Store gadgets",
             "Spec: gadget colors"
         ]
+    );
+}
+
+/// A `ready-for-agent` issue not designed yet.
+fn readied_issue(world: &World) -> Number {
+    world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "Add gadgets.",
+        &["ready-for-agent"],
+    )
+}
+
+fn design_answering(world: &World, result: Value) {
+    world
+        .harness
+        .on(WorkKind::Design, move |_| Ok(result.to_string()));
+}
+
+#[tokio::test]
+async fn a_readied_issue_is_designed_on_the_issue_and_the_next_poll_implements_it() {
+    let mut world = World::new().await;
+    design_answering(
+        &world,
+        json!({"outcome": "designed", "design": "A gadget store."}),
+    );
+    implement(&world);
+    let issue = readied_issue(&world);
+
+    world.poll().await;
+
+    let designed = world.issue(issue);
+    assert_eq!(last_comment(&designed), "A gadget store.");
+    assert_eq!(
+        labels(&designed),
+        ["linewright:designed", "ready-for-agent"]
+    );
+    assert_eq!(designed.assignees, [Login::new(LINEWRIGHT)]);
+    let designs = world.harness.prompts(WorkKind::Design);
+    let [design] = &designs[..] else {
+        panic!("expected one design, got {designs:#?}");
+    };
+    assert!(design.contains("Add gadgets."), "{design}");
+
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
+    let implementations = world.harness.prompts(WorkKind::Implement);
+    let [implementation] = &implementations[..] else {
+        panic!("expected one implementation, got {implementations:#?}");
+    };
+    assert!(
+        implementation.contains("A gadget store."),
+        "{implementation}"
+    );
+}
+
+#[tokio::test]
+async fn an_issues_design_that_cuts_tickets_is_sent_back_to_its_session() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Design, |call| {
+        let result = if call
+            .followup
+            .is_some_and(|f| f.contains("`tickets` is not empty"))
+        {
+            json!({"outcome": "designed", "design": "A gadget store."})
+        } else {
+            one_ticket()
+        };
+        Ok(result.to_string())
+    });
+    let issue = readied_issue(&world);
+
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
+    assert_eq!(world.store.issues().len(), 1);
+    assert_eq!(
+        labels(&world.issue(issue)),
+        ["linewright:designed", "ready-for-agent"]
+    );
+}
+
+#[tokio::test]
+async fn an_issue_whose_design_ends_without_one_is_handed_back_with_why() {
+    for (result, why) in [
+        (
+            json!({"outcome": "nothing-to-build", "reason": "Gadgets exist already."}),
+            "Gadgets exist already.",
+        ),
+        (
+            json!({"outcome": "blocked", "question": "Should gadgets expire?"}),
+            "Should gadgets expire?",
+        ),
+        (
+            json!({"outcome": "gave-up", "reason": "The codebase does not build."}),
+            "The codebase does not build.",
+        ),
+    ] {
+        let mut world = World::new().await;
+        design_answering(&world, result);
+        let issue = readied_issue(&world);
+
+        world.poll().await;
+
+        let handed = world.issue(issue);
+        assert_eq!(labels(&handed), ["ready-for-human"]);
+        assert_eq!(handed.assignees, []);
+        assert!(last_comment(&handed).contains(why), "{handed:#?}");
+        assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 0);
+    }
+}
+
+#[tokio::test]
+async fn a_blocked_issue_design_files_its_other_spec_gaps_for_the_issue() {
+    let mut world = World::new().await;
+    design_answering(
+        &world,
+        json!({
+            "outcome": "blocked",
+            "question": "Should gadgets expire?",
+            "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
+        }),
+    );
+    let issue = readied_issue(&world);
+
+    world.poll().await;
+
+    let gaps: Vec<_> = world
+        .store
+        .issues()
+        .into_iter()
+        .filter(|i| i.title == "Spec: gadget colors")
+        .collect();
+    let [gap] = &gaps[..] else {
+        panic!("expected the gap filed once, got {gaps:#?}");
+    };
+    assert!(
+        gap.body
+            .ends_with(&format!("Found while working on {issue}."))
+    );
+    assert_eq!(labels(&world.issue(issue)), ["ready-for-human"]);
+}
+
+#[tokio::test]
+async fn an_issue_handed_back_after_its_design_loses_it_and_is_designed_again() {
+    let mut world = World::new().await;
+    design_issues(&world);
+    world.harness.on(WorkKind::Implement, |_| {
+        Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string())
+    });
+    let issue = readied_issue(&world);
+    world.poll().await;
+    world.poll().await;
+    assert_eq!(labels(&world.issue(issue)), ["ready-for-human"]);
+
+    world.store.unlabel_as(issue, "ready-for-human").unwrap();
+    world.store.label_as(issue, "ready-for-agent").unwrap();
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
+}
+
+#[tokio::test]
+async fn a_spec_change_ticket_handed_back_keeps_the_design_of_its_spec_change() {
+    let mut world = World::new().await;
+    design_answering(&world, one_ticket());
+    world.harness.on(WorkKind::Implement, |_| {
+        Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string())
+    });
+    merge_spec_change(&world).await;
+    world.poll().await;
+    let ticket = world
+        .store
+        .issues()
+        .into_iter()
+        .find(|i| i.title == "Store gadgets")
+        .expect("the ticket was filed")
+        .number;
+
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
+    assert_eq!(
+        labels(&world.issue(ticket)),
+        ["linewright:designed", "ready-for-human"]
+    );
+}
+
+#[tokio::test]
+async fn removing_the_design_label_from_an_issue_with_no_pull_request_designs_it_again() {
+    let mut world = World::new().await;
+    design_issues(&world);
+    implement(&world);
+    let issue = readied_issue(&world);
+    world.poll().await;
+
+    world
+        .store
+        .unlabel_as(issue, "linewright:designed")
+        .unwrap();
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 0);
+    assert_eq!(
+        labels(&world.issue(issue)),
+        ["linewright:designed", "ready-for-agent"]
     );
 }
 
@@ -2012,9 +2254,12 @@ async fn a_branch_that_changes_the_spec_is_pushed_and_its_pull_request_opened() 
                 .to_string(),
         )
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Do it", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Do it",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -2085,7 +2330,7 @@ async fn the_pull_request_is_titled_as_the_session_wrote_and_a_blank_title_is_se
         "maintainer",
         "Gadgets are missing",
         "",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
 
     world.poll().await;
@@ -2110,9 +2355,12 @@ async fn a_blocking_spec_gap_hands_the_ticket_back_keeping_the_branch_and_a_non_
         })
         .to_string())
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -2152,12 +2400,14 @@ async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions_and_no
         })
         .to_string())
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
     world.poll().await;
-    world.store.unlabel_as(ticket, "ready-for-human").unwrap();
-    world.store.label_as(ticket, "ready-for-agent").unwrap();
+    relabel_ready_for_agent(&mut world, ticket).await;
 
     world.poll().await;
 
@@ -2222,7 +2472,7 @@ async fn relabeling_a_claimed_ticket_ready_for_human_lets_go_of_it_but_not_of_it
     world.poll().await;
 
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:designed", "ready-for-human"]);
     assert_eq!(issue.assignees, []);
     assert_eq!(issue.comments, []);
     assert!(linewright_assigned(&world, pr).await);
@@ -2236,7 +2486,7 @@ async fn a_ticket_without_the_required_label_assigned_to_linewright_by_hand_is_i
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.poll().await;
     assert_eq!(
@@ -2302,7 +2552,7 @@ async fn a_blocked_ticket_assigned_to_linewright_by_hand_is_held_assigned_until_
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.store.add_blocked_by(ticket, blocker).await.unwrap();
     world
@@ -2335,7 +2585,7 @@ async fn removing_the_label_of_a_ticket_assigned_to_linewright_by_hand_lets_go_o
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.store.add_blocked_by(ticket, blocker).await.unwrap();
     world
@@ -2363,7 +2613,7 @@ async fn relabeling_a_ticket_assigned_to_linewright_by_hand_lets_go_of_it_silent
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.store.add_blocked_by(ticket, blocker).await.unwrap();
     world
@@ -2436,7 +2686,7 @@ async fn reassigning_linewright_after_unassigning_it_implements_the_ticket_again
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world
         .store
@@ -2470,9 +2720,12 @@ async fn ticket_handed_back_with_its_branch(world: &mut World) -> (Number, Strin
         commit_in(&call.spec.dir, &[(EARLIER_WORK, "half\n")], "Start");
         Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string())
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
     world.poll().await;
     let branch = format!("{}-gadgets", ticket.0);
     assert!(has_branch(world, &branch), "the work so far is kept");
@@ -2487,7 +2740,7 @@ async fn worked_again(
     work: impl Fn(&std::path::Path) + Send + Sync + 'static,
 ) -> NextRun {
     let next = script_next_run(world, work);
-    relabel_ready_for_agent(world, ticket);
+    relabel_ready_for_agent(world, ticket).await;
     world.poll().await;
     next
 }
@@ -2515,9 +2768,14 @@ fn script_next_run(
     next
 }
 
-fn relabel_ready_for_agent(world: &World, ticket: Number) {
+/// Relabels the handed-back ticket `ready-for-agent`, and has a poll design
+/// it again: the hand-back took its design with it.
+async fn relabel_ready_for_agent(world: &mut World, ticket: Number) {
     world.store.unlabel_as(ticket, "ready-for-human").unwrap();
     world.store.label_as(ticket, "ready-for-agent").unwrap();
+    design_issues(world);
+    world.poll().await;
+    assert!(labels(&world.issue(ticket)).contains(&"linewright:designed"));
 }
 
 fn finish_gadgets(dir: &std::path::Path) {
@@ -2554,7 +2812,7 @@ async fn a_handed_back_ticket_relabeled_before_the_next_poll_starts_from_its_bra
     let (ticket, _) = ticket_handed_back_with_its_branch(&mut world).await;
 
     let next = script_next_run(&world, finish_gadgets);
-    relabel_ready_for_agent(&world, ticket);
+    relabel_ready_for_agent(&mut world, ticket).await;
     world
         .factory
         .refresh([linewright::domain::Item::Issue(ticket)])
@@ -2663,9 +2921,12 @@ async fn a_timed_out_session_leaves_its_uncommitted_edits_on_the_tickets_branch_
             log_tail: String::new(),
         })
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -2716,9 +2977,12 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
             }
             ending()
         });
-        let ticket = world
-            .store
-            .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+        let ticket = world.store.open_issue(
+            "maintainer",
+            "Gadgets",
+            "",
+            &["ready-for-agent", "linewright:designed"],
+        );
 
         world.poll().await;
 
@@ -2740,9 +3004,12 @@ async fn a_run_that_ends_for_the_usage_limit_leaves_its_uncommitted_edits_as_an_
         start_and_leave_edits(&call.spec.dir);
         refused_for_the_usage_limit()
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -2762,9 +3029,12 @@ async fn cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, Number)
         released.lock().unwrap().recv().unwrap();
         Ok(json!({"outcome": "gave-up", "reason": "Released."}).to_string())
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
     world.factory.cycle().await.unwrap();
     begun.recv().await.unwrap();
 
@@ -2814,9 +3084,12 @@ async fn a_run_that_ends_with_nothing_committed_or_uncommitted_pushes_nothing_an
             log_tail: String::new(),
         })
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -2846,9 +3119,12 @@ async fn a_run_that_stops_mid_rebase_leaves_its_work_and_resolution_as_an_unfini
             log_tail: String::new(),
         })
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -2872,9 +3148,12 @@ async fn ticket_timed_out_with_edits(world: &mut World) -> (Number, String) {
             log_tail: String::new(),
         })
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
     world.poll().await;
     (ticket, format!("{}-gadgets", ticket.0))
 }
@@ -2901,7 +3180,7 @@ async fn the_next_run_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_s
         )
     });
 
-    relabel_ready_for_agent(&world, ticket);
+    relabel_ready_for_agent(&mut world, ticket).await;
     world.poll().await;
 
     let prompts = world.harness.prompts(WorkKind::Implement);
@@ -2942,7 +3221,7 @@ async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_r
         )
     });
 
-    relabel_ready_for_agent(&world, ticket);
+    relabel_ready_for_agent(&mut world, ticket).await;
     world.poll().await;
 
     assert_eq!(world.store.pulls(), []);
@@ -2964,7 +3243,7 @@ async fn a_run_that_stops_again_without_committing_keeps_one_unfinished_commit()
         })
     });
 
-    relabel_ready_for_agent(&world, ticket);
+    relabel_ready_for_agent(&mut world, ticket).await;
     world.poll().await;
 
     assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
@@ -2992,9 +3271,12 @@ async fn a_run_that_fails_on_its_infrastructure_is_retried_from_its_unfinished_c
             "the harness's API failed".into(),
         ))
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -4007,13 +4289,13 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
         "maintainer",
         "Store gadgets",
         "Gadgets persist.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     let second = world.store.open_issue(
         "maintainer",
         "List gadgets",
         "List them.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     Store::add_blocked_by(world.store.as_ref(), second, first)
         .await
@@ -4364,7 +4646,7 @@ fn assert_run_ended_keeping_its_claim(
     use linewright::domain::Login;
 
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-agent"]);
+    assert_eq!(labels(&issue), ["linewright:designed", "ready-for-agent"]);
     assert!(issue.is_assigned(&Login::new(LINEWRIGHT)));
     assert!(issue.comments.is_empty(), "{:#?}", issue.comments);
     assert_eq!(
@@ -4394,7 +4676,7 @@ async fn a_run_refused_for_the_usage_limit_ends_keeping_its_claim_and_its_work()
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
 
     world.poll().await;
@@ -4435,7 +4717,7 @@ async fn a_run_refused_for_the_usage_limit_whose_work_cannot_be_pushed_still_kee
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
 
     world.poll().await;
@@ -4457,7 +4739,7 @@ async fn a_session_that_fails_on_its_infrastructure_is_retried_once_then_handed_
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
 
     world.poll().await;
@@ -4511,7 +4793,7 @@ async fn implemented_with_pushes_refused(output: &str) -> (World, linewright::do
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.poll().await;
     (world, ticket)
@@ -4601,7 +4883,7 @@ async fn a_hand_back_says_nothing_of_a_credential_the_sessions_work_printed() {
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
 
     world.poll().await;
@@ -4623,9 +4905,12 @@ async fn a_blocked_run_whose_work_is_refused_for_a_missing_permission_asks_its_q
         Ok(json!({"outcome": "blocked", "question": "Should gadgets expire?"}).to_string())
     });
     world.store.refuse_pushes(&rejected(WORKFLOW_REFUSAL));
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -4735,7 +5020,7 @@ async fn a_stopped_runs_work_that_cannot_be_kept_logs_nothing_of_a_credential_it
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
 
     world.poll().await;

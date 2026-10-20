@@ -397,6 +397,29 @@ fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_
 }
 
 #[test]
+fn an_issue_not_designed_yet_shows_as_waiting_for_or_in_its_design() {
+    let undesigned = Issue {
+        labels: vec!["ready-for-agent".into()],
+        ..ready_issue()
+    };
+    let designing = Issue {
+        number: Number(9),
+        title: "Do another thing".into(),
+        assignees: vec![Login::new("factory")],
+        ..undesigned.clone()
+    };
+    let view = view(vec![undesigned, designing]);
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:00:30Z"),
+        [
+            "#7: ready to claim, waiting for its design — Do the thing",
+            "#9: claimed: being designed — Do another thing",
+        ]
+    );
+}
+
+#[test]
 fn an_issue_carrying_two_status_labels_shows_by_the_newer() {
     let handed_back = Issue {
         number: Number(8),

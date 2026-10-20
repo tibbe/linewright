@@ -122,9 +122,12 @@ async fn an_implement_run_whose_commits_hold_a_credential_is_sent_back_before_it
             )
         }
     });
-    world
-        .store
-        .open_issue("maintainer", "Publish", "", &["ready-for-agent"]);
+    world.store.open_issue(
+        "maintainer",
+        "Publish",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -163,9 +166,12 @@ async fn an_implement_run_whose_commits_still_hold_a_credential_after_its_follow
             )
         }
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Publish", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Publish",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -306,9 +312,12 @@ async fn a_credential_whose_value_spans_lines_is_found_whole() {
         );
         Ok(json!({"outcome": "done", "pr_title": "Deploy", "pr_body": "Deploys."}).to_string())
     });
-    world
-        .store
-        .open_issue("maintainer", "Deploy", "", &["ready-for-agent"]);
+    world.store.open_issue(
+        "maintainer",
+        "Deploy",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -356,9 +365,12 @@ async fn an_implement_run_that_stops_with_a_credential_in_its_commits_keeps_noth
             })
         }
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Publish", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Publish",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -380,9 +392,12 @@ async fn an_implement_run_that_blocks_with_a_credential_left_uncommitted_keeps_n
         write_credential(dir);
         Ok(json!({"outcome": "blocked", "question": "Which registry?"}).to_string())
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Publish", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Publish",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -431,9 +446,12 @@ async fn a_run_that_stops_with_work_that_holds_no_credential_still_keeps_it() {
             log_tail: String::new(),
         })
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Publish", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Publish",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 

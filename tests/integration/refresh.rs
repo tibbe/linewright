@@ -11,9 +11,9 @@ use linewright::store::Store;
 use linewright::webhook;
 
 #[tokio::test]
-async fn an_issue_labeled_ready_for_agent_and_refreshed_after_a_poll_is_claimed_and_implemented() {
+async fn an_issue_labeled_ready_for_agent_and_refreshed_after_a_poll_is_claimed_and_designed() {
     let mut world = World::new().await;
-    implement(&world);
+    design_issues(&world);
     let issue = world
         .store
         .open_issue("maintainer", "Do the thing", "Please.", &[]);
@@ -29,7 +29,7 @@ async fn an_issue_labeled_ready_for_agent_and_refreshed_after_a_poll_is_claimed_
             Action::Claim {
                 item: Item::Issue(issue)
             },
-            Action::Start(Work::Implement { issue })
+            Action::Start(Work::DesignIssue { issue })
         ]
     );
     assert_eq!(world.store.snapshots_taken(), polled);
@@ -43,7 +43,7 @@ async fn refreshing_an_issue_closed_since_the_poll_cancels_its_run() {
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.factory.cycle().await.unwrap();
 
@@ -70,7 +70,7 @@ async fn a_ticket_waiting_for_a_persons_pull_request_is_implemented_once_a_refre
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     let theirs = world.persons_pull_closing(issue).await;
     world.poll().await;
@@ -102,7 +102,7 @@ async fn a_ticket_a_persons_pull_request_opened_since_the_poll_closes_waits_for_
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     // The triage run takes the only free run, so the ticket waits for one.
     world.factory.cycle().await.unwrap();
@@ -126,13 +126,13 @@ async fn a_ticket_linewrights_pull_request_for_another_opened_since_the_poll_clo
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     let other = world.store.open_issue(
         "maintainer",
         "Old invoices",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     let (release, released) = mpsc::channel::<()>();
     let released = Mutex::new(released);
@@ -199,7 +199,7 @@ async fn a_spec_change_merged_since_the_poll_and_refreshed_is_cut_into_tickets()
             Action::Claim {
                 item: Item::Pull(pr)
             },
-            Action::Start(Work::Design { pr })
+            Action::Start(Work::DesignSpecChange { pr })
         ]
     );
 }
@@ -260,13 +260,13 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
         [
             Action::Start(Work::Rework { issue: ticket, pr }),
             Action::Claim {
-                item: Item::Pull(spec)
-            },
-            Action::Start(Work::Design { pr: spec }),
-            Action::Claim {
                 item: Item::Issue(issue)
             },
-            Action::Start(Work::Implement { issue }),
+            Action::Start(Work::DesignIssue { issue }),
+            Action::Claim {
+                item: Item::Pull(spec)
+            },
+            Action::Start(Work::DesignSpecChange { pr: spec }),
         ]
     );
     assert_eq!(refreshed, polled);
@@ -314,7 +314,7 @@ async fn a_refresh_after_a_poll_that_handed_an_issue_back_does_not_hand_it_back_
 #[tokio::test]
 async fn a_poll_reads_what_changed_since_whether_refreshed_or_not() {
     let mut world = World::new().await;
-    implement(&world);
+    design_issues(&world);
     let issue = world
         .store
         .open_issue("maintainer", "Do the thing", "Please.", &[]);
@@ -335,7 +335,7 @@ async fn a_poll_reads_what_changed_since_whether_refreshed_or_not() {
             Action::Claim {
                 item: Item::Issue(issue)
             },
-            Action::Start(Work::Implement { issue })
+            Action::Start(Work::DesignIssue { issue })
         ]
     );
 }
@@ -348,11 +348,14 @@ async fn a_refresh_before_the_first_poll_polls() {
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
-    let other = world
-        .store
-        .open_issue("maintainer", "Another", "Please.", &["ready-for-agent"]);
+    let other = world.store.open_issue(
+        "maintainer",
+        "Another",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     let actions = refresh(&mut world, Item::Issue(issue)).await;
 
@@ -450,7 +453,7 @@ async fn a_refresh_after_a_rework_run_ends_does_not_start_it_again() {
 #[tokio::test]
 async fn a_refresh_naming_items_the_store_does_not_have_reads_the_others() {
     let mut world = World::new().await;
-    implement(&world);
+    design_issues(&world);
     let issue = world
         .store
         .open_issue("maintainer", "Do the thing", "Please.", &[]);
@@ -474,7 +477,7 @@ async fn a_refresh_naming_items_the_store_does_not_have_reads_the_others() {
             Action::Claim {
                 item: Item::Issue(issue)
             },
-            Action::Start(Work::Implement { issue })
+            Action::Start(Work::DesignIssue { issue })
         ]
     );
 }

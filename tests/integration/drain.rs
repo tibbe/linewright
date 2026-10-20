@@ -82,9 +82,12 @@ fn ended_runs(world: &World) -> Vec<Ending> {
 }
 
 fn open_ticket(world: &World, title: &str) -> Number {
-    world
-        .store
-        .open_issue("maintainer", title, "Please.", &["ready-for-agent"])
+    world.store.open_issue(
+        "maintainer",
+        title,
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    )
 }
 
 fn info_with(log: &Log, phrase: &str) -> Vec<String> {

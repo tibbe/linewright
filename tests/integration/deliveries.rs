@@ -336,7 +336,7 @@ async fn closing_an_issue_stops_its_run_on_the_delivery() {
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     let served = serve(world, NEVER).await;
     eventually(|| harness.started.load(Ordering::SeqCst) == 1).await;
@@ -357,7 +357,7 @@ async fn reopening_an_issue_ready_for_agent_claims_it_on_the_delivery() {
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.store.close_issue_as(issue).unwrap();
     let served = serve(world, NEVER).await;
@@ -419,7 +419,7 @@ async fn merging_linewrights_pull_request_works_the_ticket_it_unblocked_on_the_d
         "maintainer",
         "Then the next thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.store.add_blocked_by(blocked, ticket).await.unwrap();
     let served = serve(world, NEVER).await;

@@ -112,7 +112,7 @@ async fn an_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines
         "maintainer",
         "Do the thing",
         "Please.",
-        &["ready-for-agent"],
+        &["ready-for-agent", "linewright:designed"],
     );
     world.harness.on(WorkKind::Implement, |call| {
         commit_in(

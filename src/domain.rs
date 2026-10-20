@@ -431,6 +431,14 @@ impl Issue {
         self.parent.and_then(|parent| parent.spec_change)
     }
 
+    /// Whether its design, once it has one, is its own rather than that of
+    /// the item it was cut from, its parent, as a spec change's is for the
+    /// tickets under its tracking issue (docs/specs/repository.md, "Handing
+    /// back").
+    pub fn has_own_design(&self) -> bool {
+        self.cut_from().is_none()
+    }
+
     pub fn branch(&self) -> String {
         let mut slug = String::new();
         for c in self.title.chars() {

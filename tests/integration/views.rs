@@ -41,7 +41,7 @@ pub fn ticket(number: u64, title: &str) -> Issue {
         author: Login::new("maintainer"),
         open: true,
         created_at: at("2026-09-30T09:00:00Z"),
-        labels: vec!["ready-for-agent".into()],
+        labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
         assignees: vec![],
         comments: vec![],
         blocked_by: vec![],

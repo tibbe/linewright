@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -17,13 +18,13 @@ use crate::domain::{
 };
 use crate::git::{self, Updated, WorkState};
 use crate::harness::{Harness, OutputWatch, Purpose, SessionError, SessionSpec, Turn, UsageLimit};
-use crate::prompts::{self, PullTask, Repo, Ticket};
+use crate::prompts::{self, DesignOf, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
 use crate::results::{
-    self, AutomationIssueLabel, AutomationResult, DesignResult, ImplementResult, PullWorkResult,
-    SpecGap, Tickets, TriageOutcome, TriageResult,
+    self, AutomationIssueLabel, AutomationResult, Cut, DesignResult, ImplementResult,
+    PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult, Uncut,
 };
 use crate::runs::{Ending, Running, Runs};
 use crate::spec_gap::{self, FiledGaps};
@@ -296,8 +297,10 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
     info!(subject = ?subject, reason, "handing back");
     let log_tail = log_tail.as_deref();
     let handed = match subject {
-        Subject::Issue(issue) => hand_back(shell, Item::Issue(issue), &reason, log_tail).await,
-        Subject::Pull(pr) => hand_back(shell, Item::Pull(pr), &reason, log_tail).await,
+        Subject::Issue(issue) => {
+            hand_back(shell, snapshot, Item::Issue(issue), &reason, log_tail).await
+        }
+        Subject::Pull(pr) => hand_back(shell, snapshot, Item::Pull(pr), &reason, log_tail).await,
         Subject::SpecChange(pr) => hand_back_spec_change(shell, pr, &reason, log_tail).await,
     };
     match handed {
@@ -329,12 +332,15 @@ async fn attempt(
     };
     let (n, pr, task) = match work {
         Work::Triage { issue: n } => return triage(shell, ctx, issue(*n)?).await,
-        Work::Design { pr } => {
+        Work::DesignSpecChange { pr } => {
             let pr = snapshot
                 .merged_pull(*pr)
                 .with_context(|| format!("{pr} is not in the snapshot"))
                 .map_err(infra)?;
-            return design(shell, ctx, snapshot, pr).await;
+            return design_spec_change(shell, ctx, snapshot, pr).await;
+        }
+        Work::DesignIssue { issue: n } => {
+            return design_issue(shell, ctx, snapshot, issue(*n)?).await;
         }
         Work::Implement { issue: n } => {
             let issue = issue(*n)?;
@@ -425,35 +431,47 @@ fn stopped(pr: &Pull, linewright: &Login) -> Option<PullStop> {
     Some(stop)
 }
 
+/// `snapshot` holds the issue handed back, if it is one, as it was read.
 pub(crate) async fn hand_back(
     shell: &Shell,
+    snapshot: &Snapshot,
     item: Item,
     reason: &str,
     log_tail: Option<&str>,
 ) -> Result<()> {
     match item {
-        Item::Issue(issue) => hand_back_issue(shell, issue, reason, log_tail).await,
+        Item::Issue(n) => {
+            let issue = snapshot
+                .issue(n)
+                .with_context(|| format!("{n} is not in the snapshot"))?;
+            hand_back_issue(shell, issue, reason, log_tail).await
+        }
         Item::Pull(pr) => hand_back_pull(shell, pr, reason, log_tail).await,
     }
 }
 
+/// Its own design goes with it, so that the next attempt designs it again.
 async fn hand_back_issue(
     shell: &Shell,
-    issue: Number,
+    issue: &Issue,
     reason: &str,
     log_tail: Option<&str>,
 ) -> Result<()> {
     let store = &shell.store;
+    let n = issue.number;
+    if issue.has_own_design() {
+        store.remove_label(n, label::DESIGNED).await?;
+    }
     for state in StatusLabel::ALL
         .map(StatusLabel::label)
         .into_iter()
         .filter(|l| *l != label::READY_FOR_HUMAN)
     {
-        store.remove_label(issue, state).await?;
+        store.remove_label(n, state).await?;
     }
-    store.add_label(issue, label::READY_FOR_HUMAN).await?;
-    store.unassign(issue).await?;
-    store.comment(issue, &with_log(reason, log_tail)).await
+    store.add_label(n, label::READY_FOR_HUMAN).await?;
+    store.unassign(n).await?;
+    store.comment(n, &with_log(reason, log_tail)).await
 }
 
 async fn hand_back_pull(
@@ -477,6 +495,7 @@ async fn hand_back_spec_change(
     reason: &str,
     log_tail: Option<&str>,
 ) -> Result<()> {
+    shell.store.remove_label(pr, label::DESIGNED).await?;
     shell.store.unassign(pr).await?;
     let body = format!(
         "{}\n\nAssign @{} to this pull request again to design it again.",
@@ -896,40 +915,74 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     Ok(())
 }
 
-async fn design(
+/// Runs a design session on `subject`, sent `prompt`.
+async fn design_session<C: DeserializeOwned>(
+    shell: &Shell,
+    ctx: &Ctx,
+    subject: Subject,
+    prompt: String,
+) -> Result<(DesignResult<C>, Turn), Failure> {
+    let purpose = Purpose::Work {
+        subject,
+        kind: WorkKind::Design,
+    };
+    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
+    converse(shell, ctx, &mut spec, Step::Start, |message| async move {
+        results::parse::<DesignResult<C>>(&message).map_err(parse_retry(shell))
+    })
+    .await
+}
+
+/// A design blocked on `question` files its spec gaps and hands its item
+/// back.
+async fn design_blocked(
+    shell: &Shell,
+    question: &str,
+    spec_gaps: &[SpecGap],
+    filed_gaps: &FiledGaps<'_>,
+) -> Result<(), Failure> {
+    file_spec_gaps(shell, spec_gaps, filed_gaps)
+        .await
+        .map_err(apply)?;
+    Err(Failure::HandBack {
+        reason: blocked_on(question),
+        log_tail: None,
+    })
+}
+
+fn design_gave_up(of: DesignOf, reason: &str, turn: Turn) -> Failure {
+    Failure::HandBack {
+        reason: format!("The designer handed the {} back:\n\n{reason}", of.noun()),
+        log_tail: Some(turn.log_tail),
+    }
+}
+
+async fn design_spec_change(
     shell: &Shell,
     ctx: &Ctx,
     snapshot: &Snapshot,
     pr: &MergedPull,
 ) -> Result<(), Failure> {
-    let purpose = Purpose::Work {
-        subject: Subject::SpecChange(pr.number),
-        kind: WorkKind::Design,
-    };
-    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let diff = spec_diff(shell, pr).await?;
     let filed_issues = spec_gap::filed_for(snapshot, pr.number);
     let filed_gaps = FiledGaps {
         item: pr.number,
         issues: &filed_issues,
     };
-    let prompt = prompts::design(
+    let prompt = prompts::design_spec_change(
         &shell.briefs.prompts,
         &shell.repo(),
         pr,
         &diff,
         &filed_issues,
     );
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
-    let (result, turn) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        results::parse::<DesignResult>(&message).map_err(parse_retry(shell))
-    })
-    .await?;
+    let subject = Subject::SpecChange(pr.number);
+    let (result, turn) = design_session::<Cut>(shell, ctx, subject, prompt).await?;
     match result {
         DesignResult::Designed {
             design,
-            tickets,
-            comment,
+            cut: Cut { tickets, comment },
             spec_gaps,
         } => {
             file_tickets(shell, pr, &design, &tickets, &comment)
@@ -951,19 +1004,55 @@ async fn design(
         DesignResult::Blocked {
             question,
             spec_gaps,
+        } => design_blocked(shell, &question, &spec_gaps, &filed_gaps).await,
+        DesignResult::GaveUp { reason } => Err(design_gave_up(DesignOf::SpecChange, &reason, turn)),
+    }
+}
+
+/// An issue that fits one session: its design is posted on it, where its
+/// implementer reads it (docs/specs/design.md, "Designing").
+async fn design_issue(
+    shell: &Shell,
+    ctx: &Ctx,
+    snapshot: &Snapshot,
+    issue: &Issue,
+) -> Result<(), Failure> {
+    let filed_issues = spec_gap::filed_for(snapshot, issue.number);
+    let filed_gaps = FiledGaps {
+        item: issue.number,
+        issues: &filed_issues,
+    };
+    let prompt = prompts::design_issue(&shell.briefs.prompts, &shell.repo(), issue, &filed_issues);
+    let subject = Subject::Issue(issue.number);
+    let (result, turn) = design_session::<Uncut>(shell, ctx, subject, prompt).await?;
+    match result {
+        DesignResult::Designed {
+            design,
+            cut: Uncut,
+            spec_gaps,
         } => {
+            let store = &shell.store;
+            store.comment(issue.number, &design).await.map_err(apply)?;
             file_spec_gaps(shell, &spec_gaps, &filed_gaps)
                 .await
                 .map_err(apply)?;
-            Err(Failure::HandBack {
-                reason: blocked_on(&question),
-                log_tail: None,
-            })
+            // Last, so that a design stopped before it is made again.
+            store
+                .add_label(issue.number, label::DESIGNED)
+                .await
+                .map_err(apply)
         }
-        DesignResult::GaveUp { reason } => Err(Failure::HandBack {
-            reason: format!("The designer handed the spec change back:\n\n{reason}"),
-            log_tail: Some(turn.log_tail),
+        DesignResult::NothingToBuild { reason } => Err(Failure::HandBack {
+            reason: format!(
+                "There is nothing to build: the code already does what this issue asks.\n\n{reason}"
+            ),
+            log_tail: None,
         }),
+        DesignResult::Blocked {
+            question,
+            spec_gaps,
+        } => design_blocked(shell, &question, &spec_gaps, &filed_gaps).await,
+        DesignResult::GaveUp { reason } => Err(design_gave_up(DesignOf::Issue, &reason, turn)),
     }
 }
 

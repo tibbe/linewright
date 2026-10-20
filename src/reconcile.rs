@@ -59,8 +59,11 @@ pub enum Work {
     Triage {
         issue: Number,
     },
-    Design {
+    DesignSpecChange {
         pr: Number,
+    },
+    DesignIssue {
+        issue: Number,
     },
     Implement {
         issue: Number,
@@ -91,8 +94,10 @@ impl Subject {
 impl Work {
     pub fn subject(&self) -> Subject {
         match self {
-            Work::Triage { issue } | Work::Implement { issue } => Subject::Issue(*issue),
-            Work::Design { pr } => Subject::SpecChange(*pr),
+            Work::Triage { issue } | Work::DesignIssue { issue } | Work::Implement { issue } => {
+                Subject::Issue(*issue)
+            }
+            Work::DesignSpecChange { pr } => Subject::SpecChange(*pr),
             Work::Rework { pr, .. } | Work::FixCi { pr, .. } | Work::Update { pr, .. } => {
                 Subject::Pull(*pr)
             }
@@ -101,8 +106,10 @@ impl Work {
 
     pub fn item(&self) -> Number {
         match self {
-            Work::Triage { issue } | Work::Implement { issue } => *issue,
-            Work::Design { pr }
+            Work::Triage { issue } | Work::DesignIssue { issue } | Work::Implement { issue } => {
+                *issue
+            }
+            Work::DesignSpecChange { pr }
             | Work::Rework { pr, .. }
             | Work::FixCi { pr, .. }
             | Work::Update { pr, .. } => *pr,
@@ -111,8 +118,10 @@ impl Work {
 
     pub fn starts_from(&self) -> Item {
         match self {
-            Work::Triage { issue } | Work::Implement { issue } => Item::Issue(*issue),
-            Work::Design { pr }
+            Work::Triage { issue } | Work::DesignIssue { issue } | Work::Implement { issue } => {
+                Item::Issue(*issue)
+            }
+            Work::DesignSpecChange { pr }
             | Work::Rework { pr, .. }
             | Work::FixCi { pr, .. }
             | Work::Update { pr, .. } => Item::Pull(*pr),
@@ -122,7 +131,7 @@ impl Work {
     pub fn kind(&self) -> WorkKind {
         match self {
             Work::Triage { .. } => WorkKind::Triage,
-            Work::Design { .. } => WorkKind::Design,
+            Work::DesignSpecChange { .. } | Work::DesignIssue { .. } => WorkKind::Design,
             Work::Implement { .. } => WorkKind::Implement,
             Work::Rework { .. } => WorkKind::Rework,
             Work::FixCi { .. } => WorkKind::FixCi,
@@ -606,7 +615,7 @@ pub fn decisions(
     let spec_changes = pending_spec_changes(snapshot, now, policy);
     let pending: Vec<Number> = spec_changes.iter().map(|pr| pr.number).collect();
     for pr in spec_changes {
-        let work = Work::Design { pr: pr.number };
+        let work = Work::DesignSpecChange { pr: pr.number };
         if let Some(stage) = running(Subject::SpecChange(pr.number)) {
             plan.wait(pr.number, Wait::Run { stage });
         } else if discarded.contains(&pr.number) {
@@ -953,10 +962,6 @@ impl Plan {
         });
     }
 
-    fn claim_and_implement(&mut self, issue: Number) {
-        self.claim_and_start(Item::Issue(issue), Work::Implement { issue });
-    }
-
     fn claim_and_start(&mut self, item: Item, work: Work) {
         self.starts.push(Start {
             claim: Some(item),
@@ -1220,12 +1225,21 @@ fn implementation(
     if wait_for_blockers(issue, plan) {
         return;
     }
-    if claimed {
-        plan.start(Work::Implement {
+    // An issue in review keeps its label, so one whose pull request stops
+    // closing it is implemented again with no new design.
+    let work = if issue.has_label(label::DESIGNED) {
+        Work::Implement {
             issue: issue.number,
-        });
+        }
     } else {
-        plan.claim_and_implement(issue.number);
+        Work::DesignIssue {
+            issue: issue.number,
+        }
+    };
+    if claimed {
+        plan.start(work);
+    } else {
+        plan.claim_and_start(Item::Issue(issue.number), work);
     }
 }
 

@@ -60,9 +60,12 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_is_sent_back_a
                 .to_string(),
         )
     });
-    world
-        .store
-        .open_issue("maintainer", "Configure", "", &["ready-for-agent"]);
+    world.store.open_issue(
+        "maintainer",
+        "Configure",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -101,9 +104,12 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
                 .to_string(),
         )
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Configure", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Configure",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -204,9 +210,12 @@ async fn a_blocked_run_whose_work_github_refuses_over_a_secret_says_the_work_was
         Ok(json!({"outcome": "blocked", "question": "Which token?"}).to_string())
     });
     world.store.refuse_pushes(REFUSAL);
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Configure", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Configure",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -239,9 +248,12 @@ async fn what_github_reports_of_a_secret_is_redacted() {
                 .to_string(),
         )
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Configure", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Configure",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 
@@ -276,9 +288,12 @@ async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_
                 .to_string(),
         )
     });
-    let ticket = world
-        .store
-        .open_issue("maintainer", "Configure", "", &["ready-for-agent"]);
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Configure",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
     world.poll().await;
 

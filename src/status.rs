@@ -139,6 +139,10 @@ pub enum ItemState {
         pull_request: Number,
         author: Login,
     },
+    /// Claimed, and not designed yet.
+    BeingDesigned,
+    /// Not claimed, and not designed yet.
+    ReadyToDesign,
     Claimed,
     ReadyToClaim,
 }
@@ -389,10 +393,17 @@ fn issue_state(
             Some(StatusLabel::NeedsTriage) => ItemState::WaitingForTriage,
             Some(StatusLabel::NeedsInfo) => ItemState::WaitingOnTheReporter,
             Some(StatusLabel::ReadyForHuman) => ItemState::WithTheMaintainer,
-            Some(StatusLabel::ReadyForAgent) if issue.is_assigned(&policy.linewright) => {
-                ItemState::Claimed
+            Some(StatusLabel::ReadyForAgent) => {
+                match (
+                    issue.is_assigned(&policy.linewright),
+                    issue.has_label(label::DESIGNED),
+                ) {
+                    (true, true) => ItemState::Claimed,
+                    (true, false) => ItemState::BeingDesigned,
+                    (false, true) => ItemState::ReadyToClaim,
+                    (false, false) => ItemState::ReadyToDesign,
+                }
             }
-            Some(StatusLabel::ReadyForAgent) => ItemState::ReadyToClaim,
             None => return Err(IssueExclusion::NoPipelineLabel),
         }
     };
@@ -541,6 +552,8 @@ pub(crate) fn describe(state: &ItemState) -> String {
             pull_request,
             author,
         } => format!("in review: {pull_request}, opened by {author}"),
+        ItemState::BeingDesigned => "claimed: being designed".into(),
+        ItemState::ReadyToDesign => "ready to claim, waiting for its design".into(),
         ItemState::Claimed => "claimed: being implemented".into(),
         ItemState::ReadyToClaim => "ready to claim".into(),
     }

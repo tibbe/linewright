@@ -211,9 +211,12 @@ fn implement_as_recorded(world: &World) {
 async fn implemented_as_recorded() -> (World, tempfile::TempDir) {
     let (mut world, work_dir) = world().await;
     implement_as_recorded(&world);
-    world
-        .store
-        .open_issue("maintainer", "Ship gh", "Please.", &["ready-for-agent"]);
+    world.store.open_issue(
+        "maintainer",
+        "Ship gh",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
     world.poll().await;
     (world, work_dir)
 }

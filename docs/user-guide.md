@@ -38,8 +38,8 @@ the one applied last and removes the rest.
   choosing, so you can adopt it a little at a time. Where it is, apply that
   label to let Linewright start on an item. Removing it keeps Linewright from
   starting more on the item; work in flight goes on.
-- `linewright:designed`: Linewright's mark on a merged spec change it has
-  designed, and cut into tickets where it needed cutting. Leave it alone. A spec
+- `linewright:designed`: Linewright's mark on a merged spec change or an
+  issue it has designed, and cut into tickets where it needed cutting. A spec
   change labeled `linewright:spec-processed` by an earlier release counts as
   designed.
 
@@ -91,7 +91,8 @@ already works, goes to the maintainer.
 ## Deciding an issue
 
 For the maintainer, on a `ready-for-human` issue. Linewright's comment says
-what it needs: a decision from triage, or why it could not finish a ticket.
+what it needs: a decision from triage, or why it could not design or finish
+the issue.
 
 1. Answer in the thread, if there is something to say.
 2. Apply a label: `ready-for-agent` to have it built as you decided, or
@@ -105,6 +106,13 @@ To give Linewright an issue directly, without triage, label it
 `ready-for-agent`. Linewright assigns itself and builds it. It leaves alone an
 issue someone else is assigned to, one an open issue blocks and one an open
 pull request closes. To have it build one of those, assign it.
+
+Linewright designs an issue before it builds it, and posts the design as a
+comment on the issue. To have it designed again, say what you want in the
+thread and remove `linewright:designed` from the issue. An issue Linewright
+hands back is designed again when you label it `ready-for-agent`, but a
+ticket keeps the design of the issue or spec change it was cut from: remove
+`linewright:designed` too to have it designed again.
 
 ## Assigning Linewright
 

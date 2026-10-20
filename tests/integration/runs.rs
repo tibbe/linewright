@@ -204,9 +204,12 @@ async fn a_run_handed_back_says_so() {
     world.harness.on(WorkKind::Implement, |_| {
         Ok(json!({"outcome": "gave-up", "reason": "It cannot be done."}).to_string())
     });
-    world
-        .store
-        .open_issue("maintainer", "Do it", "Please.", &["ready-for-agent"]);
+    world.store.open_issue(
+        "maintainer",
+        "Do it",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
     world.poll().await;
 
     let output = lw(work_dir.path(), &["runs", "1"]).await;
@@ -228,9 +231,12 @@ async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
         "refusing to allow a Personal Access Token to create or update workflow \
          `.github/workflows/ci.yml` without `workflow` scope",
     ));
-    world
-        .store
-        .open_issue("maintainer", "Do it", "Please.", &["ready-for-agent"]);
+    world.store.open_issue(
+        "maintainer",
+        "Do it",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
     world.poll().await;
 
     let output = lw(work_dir.path(), &["runs", "1"]).await;
@@ -364,6 +370,8 @@ async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
     world.poll().await;
     world.store.unlabel_as(issue, "ready-for-human").unwrap();
     world.store.label_as(issue, "ready-for-agent").unwrap();
+    design_issues(&world);
+    world.poll().await;
     world.poll().await;
     let next = *world.store.pulls().last().unwrap();
     assert_ne!(next, closed);
@@ -371,7 +379,10 @@ async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
 
     let of_closed = lw(dir, &["runs", &closed.0.to_string()]).await;
 
-    assert_eq!(listed(dir, issue).await, ["1/implement-2", "1/implement-1"]);
+    assert_eq!(
+        listed(dir, issue).await,
+        ["1/implement-2", "1/design-1", "1/implement-1"]
+    );
     assert_eq!(of_closed.code, Some(4), "{}", of_closed.stdout);
     assert!(
         of_closed

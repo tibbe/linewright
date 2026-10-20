@@ -249,7 +249,7 @@ async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_
 }
 
 #[tokio::test]
-async fn a_ready_for_agent_automation_issue_is_implemented_on_the_next_poll_without_triage() {
+async fn a_ready_for_agent_automation_issue_is_designed_then_implemented_without_triage() {
     let mut world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|_| {
         Ok(json!({
@@ -268,7 +268,9 @@ async fn a_ready_for_agent_automation_issue_is_implemented_on_the_next_poll_with
         .await
         .unwrap();
     let issue = world.store.issues()[0].number;
+    design_issues(&world);
 
+    world.poll().await;
     world.poll().await;
 
     let pr = *world

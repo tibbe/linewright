@@ -776,7 +776,7 @@ impl Factory {
             }
             Action::HandBack { item, reason } => {
                 info!(%item, reason, "handing back");
-                run::hand_back(&self.shell, *item, reason, None).await?;
+                run::hand_back(&self.shell, snapshot, *item, reason, None).await?;
             }
             Action::MarkReady { pr } => {
                 info!(pr = pr.0, "marking ready for review");

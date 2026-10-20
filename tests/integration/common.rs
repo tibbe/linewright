@@ -592,6 +592,13 @@ pub fn implement(world: &World) {
     });
 }
 
+/// Each design of an issue answers that it is designed, built as it is.
+pub fn design_issues(world: &World) {
+    world.harness.on(WorkKind::Design, |_| {
+        Ok(serde_json::json!({"outcome": "designed", "design": "Built as asked."}).to_string())
+    });
+}
+
 impl World {
     pub async fn ticket_in_review(&mut self) -> (Number, Number) {
         implement(self);
@@ -599,7 +606,7 @@ impl World {
             "maintainer",
             "Do the thing",
             "Please.",
-            &["ready-for-agent"],
+            &["ready-for-agent", "linewright:designed"],
         );
         self.poll().await;
         let pr = *self

@@ -683,9 +683,12 @@ async fn explain_json_prints_the_api_answer_as_it_is() {
 #[tokio::test]
 async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_now() {
     let world = with_ticket_and_automation().await;
-    let closed = world
-        .store
-        .open_issue("maintainer", "Old idea", "Maybe.", &["ready-for-agent"]);
+    let closed = world.store.open_issue(
+        "maintainer",
+        "Old idea",
+        "Maybe.",
+        &["ready-for-agent", "linewright:designed"],
+    );
     world.store.close_issue_as(closed).unwrap();
     let answering = Answering::start(world, false).await;
 
