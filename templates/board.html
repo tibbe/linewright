@@ -1,0 +1,36 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+<section id="board">
+<div class="board">
+{%- for column in board.columns %}
+<h2 class="column">{{ column }}</h2>
+{%- endfor %}
+{%- for lane in board.lanes %}
+<section class="lane">
+{%- if let Some(head) = lane.head %}
+<h2 class="lane-head">{{ head|safe }}</h2>
+{%- endif %}
+{%- for cell in lane.cells %}
+<ul class="cell" aria-label="{{ cell.column }}">
+{%- for card in cell.cards %}
+<li class="card">
+<h3>{{ card.heading|safe }}</h3>
+<p class="standing">{{ card.standing|safe }}</p>
+<ul class="line">
+{%- for line in card.line %}
+<li>{% call ui::status(line.tone, line.word) %}{% endcall %}{{ line.rest|safe }}</li>
+{%- endfor %}
+</ul>
+{%- if let Some(pull) = card.pull %}
+<p class="pull">pull request: {{ pull.item|safe }}, {% if let Some(tone) = pull.tone %}{% call ui::status(tone, pull.ci) %}{% endcall %}{% else %}{{ pull.ci }}{% endif %}</p>
+{%- endif %}
+</li>
+{%- endfor %}
+</ul>
+{%- endfor %}
+</section>
+{%- endfor %}
+</div>
+</section>
+{%- endblock -%}

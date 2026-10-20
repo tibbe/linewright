@@ -12,6 +12,7 @@ pub const VERSION_AND_COMMIT: &str = concat!(
 
 pub mod api;
 pub mod automation;
+pub mod board;
 pub mod briefs;
 pub mod case;
 pub mod clock;

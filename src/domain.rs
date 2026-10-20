@@ -366,6 +366,52 @@ pub enum Tracks {
     Cut,
 }
 
+/// What an issue filed as `filed`, labeled `labels`, with `sub_issues`,
+/// tracks, as [`Issue::tracks`] tells.
+fn tracks(
+    filed: Option<Filed>,
+    labels: &[String],
+    sub_issues: &[SubIssue],
+    linewright: &Login,
+) -> Option<Tracks> {
+    match filed {
+        Some(Filed::Tracking { spec_change }) => Some(Tracks::SpecChange(spec_change)),
+        _ if labels.iter().any(|l| l == label::DESIGNED)
+            && tickets_cut(sub_issues, linewright).next().is_some() =>
+        {
+            Some(Tracks::Cut)
+        }
+        _ => None,
+    }
+}
+
+impl Tracks {
+    /// Those of `sub_issues` that are its tickets: for a cut issue, those
+    /// `linewright` opened.
+    pub fn tickets<'a>(
+        self,
+        sub_issues: &'a [SubIssue],
+        linewright: &'a Login,
+    ) -> impl Iterator<Item = &'a SubIssue> {
+        sub_issues.iter().filter(move |s| match self {
+            Tracks::SpecChange(_) => true,
+            Tracks::Cut => is_cut(s, linewright),
+        })
+    }
+}
+
+/// Those of `sub_issues` `linewright` opened: the tickets it cut.
+fn tickets_cut<'a>(
+    sub_issues: &'a [SubIssue],
+    linewright: &'a Login,
+) -> impl Iterator<Item = &'a SubIssue> {
+    sub_issues.iter().filter(move |s| is_cut(s, linewright))
+}
+
+fn is_cut(sub_issue: &SubIssue, linewright: &Login) -> bool {
+    sub_issue.author == *linewright
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Parent {
     pub number: Number,
@@ -464,9 +510,7 @@ impl Issue {
 
     /// Its sub-issues `linewright` opened: the tickets it cut from the issue.
     pub fn tickets_cut<'a>(&'a self, linewright: &'a Login) -> impl Iterator<Item = &'a SubIssue> {
-        self.sub_issues
-            .iter()
-            .filter(move |sub_issue| sub_issue.author == *linewright)
+        tickets_cut(&self.sub_issues, linewright)
     }
 
     /// What it tracks, if it is a tracking issue (docs/specs/design.md,
@@ -474,15 +518,7 @@ impl Issue {
     /// with tickets but no label is a cut that stopped part way, and tracks
     /// nothing yet.
     pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
-        match self.filed {
-            Some(Filed::Tracking { spec_change }) => Some(Tracks::SpecChange(spec_change)),
-            _ if self.has_label(label::DESIGNED)
-                && self.tickets_cut(linewright).next().is_some() =>
-            {
-                Some(Tracks::Cut)
-            }
-            _ => None,
-        }
+        tracks(self.filed, &self.labels, &self.sub_issues, linewright)
     }
 
     pub fn branch(&self) -> String {
@@ -975,6 +1011,19 @@ pub struct ClosedItem {
 impl ClosedItem {
     pub fn closed_since(&self, window_opened: Timestamp) -> bool {
         self.closed_at >= window_opened
+    }
+
+    /// What it tracks, if it is a tracking issue, as [`Issue::tracks`] tells.
+    pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
+        match &self.kind {
+            ClosedKind::Issue {
+                filed,
+                labels,
+                sub_issues,
+                ..
+            } => tracks(*filed, labels, sub_issues, linewright),
+            ClosedKind::Pull { .. } => None,
+        }
     }
 }
 

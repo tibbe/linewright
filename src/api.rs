@@ -22,6 +22,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
+use crate::board::{self, Board};
 use crate::clock::Clock;
 use crate::domain::{Number, Timestamp};
 use crate::drain::{Asked, Stop, Taken, Was};
@@ -591,6 +592,13 @@ pub(crate) fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
         recorded,
         now: sources.clock.now(),
     })
+}
+
+/// The board of `serve`'s view now: an empty one before the first poll.
+pub(crate) fn board_answer(sources: &Sources) -> Board {
+    let view = sources.served.borrow().as_ref().map(Served::view_now);
+    view.map(|view| board::board(&view, sources.clock.now()))
+        .unwrap_or_default()
 }
 
 /// What `explain` answers of #`number`: from `serve`'s view for a managed

@@ -55,10 +55,28 @@ pub(crate) fn phrase(phrase: &Phrase, repo: &str) -> Html {
 /// #`number`, linking to its page, and a link to it on GitHub.
 pub(crate) fn item(number: Number, repo: &str) -> Html {
     Html(format!(
-        r#"<a href="/items/{n}">{number}</a><a class="github" href="{github}" aria-label="{number} on GitHub" title="{number} on GitHub"></a>"#,
+        r#"<a href="/items/{n}">{number}</a>{github}"#,
         n = number.0,
-        github = escape(&format!("https://github.com/{repo}/issues/{}", number.0)),
+        github = github(number, repo),
     ))
+}
+
+/// #`number` and its title, linking to its page, and a link to it on
+/// GitHub.
+pub(crate) fn titled(number: Number, title: &str, repo: &str) -> Html {
+    Html(format!(
+        r#"<a href="/items/{n}">{number}: {title}</a>{github}"#,
+        n = number.0,
+        title = escape(title),
+        github = github(number, repo),
+    ))
+}
+
+fn github(number: Number, repo: &str) -> String {
+    format!(
+        r#"<a class="github" href="{href}" aria-label="{number} on GitHub" title="{number} on GitHub"></a>"#,
+        href = escape(&format!("https://github.com/{repo}/issues/{}", number.0)),
+    )
 }
 
 fn time(at: Timestamp) -> String {

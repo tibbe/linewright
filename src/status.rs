@@ -179,15 +179,9 @@ impl InReview {
         } else {
             "ready for review"
         };
-        let ci = match self.ci {
-            Ci::NoChecks => "no checks",
-            Ci::Failing => "CI failing",
-            Ci::Running => "CI running",
-            Ci::Green => "CI green",
-        };
         Phrase::from("in review: ")
             .item(self.pull_request)
-            .text(format!(" ({stage}, {ci})"))
+            .text(format!(" ({stage}, {})", self.ci.describe()))
     }
 }
 
@@ -201,6 +195,15 @@ pub enum Ci {
 }
 
 impl Ci {
+    pub(crate) fn describe(self) -> &'static str {
+        match self {
+            Ci::NoChecks => "no checks",
+            Ci::Failing => "CI failing",
+            Ci::Running => "CI running",
+            Ci::Green => "CI green",
+        }
+    }
+
     pub(crate) fn tone(self) -> Option<Tone> {
         match self {
             Ci::NoChecks => None,

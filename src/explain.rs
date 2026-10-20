@@ -714,6 +714,9 @@ fn left_alone_lines(left_alone: &LeftAlone) -> Vec<Line<'_>> {
         .collect()
 }
 
+/// What Linewright waits for on an item it acts on at its next poll.
+pub(crate) const NOTHING_WAITED_FOR: &str = "nothing: Linewright acts on it at its next poll";
+
 fn explanation_lines(explanation: &Explanation) -> Vec<Line<'_>> {
     let (state, tone) = match &explanation.standing {
         Standing::PullRequest { review, .. } | Standing::Item(ItemState::InReview(review)) => {
@@ -721,12 +724,10 @@ fn explanation_lines(explanation: &Explanation) -> Vec<Line<'_>> {
         }
         Standing::Item(state) => (describe(state), None),
     };
-    let nothing = explanation.waiting_for.is_empty().then(|| {
-        Line::fact(
-            "waiting for",
-            "nothing: Linewright acts on it at its next poll".into(),
-        )
-    });
+    let nothing = explanation
+        .waiting_for
+        .is_empty()
+        .then(|| Line::fact("waiting for", NOTHING_WAITED_FOR.into()));
     explanation
         .family
         .lines()

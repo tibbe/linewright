@@ -164,3 +164,64 @@ h1 {
 .cancelled {
   color: var(--cancelled);
 }
+
+/* The board: six columns, never cut, with a lane per tracking issue as
+   rows under them. */
+.board {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(14rem, 1fr));
+  gap: 0.5rem;
+  overflow-x: auto;
+}
+
+.board .column {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.board .lane {
+  display: contents;
+}
+
+.board .lane-head {
+  grid-column: 1 / -1;
+  margin: 0.75rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.board .cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-muted);
+}
+
+.card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.card p,
+.card .line {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card .standing {
+  color: var(--fg-muted);
+}
