@@ -114,6 +114,15 @@ hands back is designed again when you label it `ready-for-agent`, but a
 ticket keeps the design of the issue or spec change it was cut from: remove
 `linewright:designed` too to have it designed again.
 
+Linewright cuts an issue too big for one agent to build well into tickets,
+as it does a spec change. The tickets are the issue's sub-issues, and the
+design comment lists them in the order they are worked. The issue becomes
+their tracking issue: it loses `ready-for-agent`, is not built itself, and
+closes once every sub-issue is closed. To have it designed again, say what you
+want in the thread, remove `linewright:designed` from it, then label it
+`ready-for-agent`. Linewright closes its tickets that are still open as not
+planned and designs the issue again. Sub-issues you added stay as they are.
+
 ## Assigning Linewright
 
 Assigning Linewright to an issue asks it to work the issue now: whoever else

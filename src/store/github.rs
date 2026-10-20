@@ -19,7 +19,7 @@ use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment,
     Filed, Issue, IssueEvent, JobLog, Linked, Login, MergeMethod, Mergeability, MergedPull, Number,
     Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState, Snapshot,
-    Thread, TicketBranch, TicketBranchName, Timestamp, label,
+    SubIssue, Thread, TicketBranch, TicketBranchName, Timestamp, label,
 };
 use crate::git;
 
@@ -902,9 +902,31 @@ fn linked(nodes: Option<Nodes<LinkedNode>>) -> Vec<Linked> {
         .map(|n| n.nodes)
         .unwrap_or_default()
         .into_iter()
-        .map(|n| Linked {
-            number: Number(n.number),
-            open: n.state == "OPEN",
+        .map(|node| linked_of(&node))
+        .collect()
+}
+
+fn linked_of(node: &LinkedNode) -> Linked {
+    Linked {
+        number: Number(node.number),
+        open: node.state == "OPEN",
+    }
+}
+
+#[derive(Deserialize)]
+struct SubIssueNode {
+    #[serde(flatten)]
+    linked: LinkedNode,
+    author: Option<Actor>,
+}
+
+fn sub_issues(nodes: Option<Nodes<SubIssueNode>>) -> Vec<SubIssue> {
+    let nodes = nodes.map(|n| n.nodes).unwrap_or_default();
+    nodes
+        .into_iter()
+        .map(|n| SubIssue {
+            linked: linked_of(&n.linked),
+            author: login(n.author),
         })
         .collect()
 }
@@ -1045,7 +1067,7 @@ const ISSUE_FIELDS: &str = concat!(
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
-  subIssues(first: 100) { nodes { number state } }
+  subIssues(first: 100) { nodes { number state author { __typename login } } }
   parent { number title body author { __typename login } }
   blockedBy(first: 50) { nodes { number state } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt author { __typename login } } }
@@ -1068,7 +1090,7 @@ struct GqlIssue {
     labels: Nodes<Name>,
     assignees: Nodes<LoginNode>,
     comments: Nodes<GqlComment>,
-    sub_issues: Option<Nodes<LinkedNode>>,
+    sub_issues: Option<Nodes<SubIssueNode>>,
     parent: Option<LinkedIssueNode>,
     blocked_by: Option<Nodes<LinkedNode>>,
     closed_by_pull_requests_references: Option<Nodes<GqlClosingPull>>,
@@ -1177,7 +1199,7 @@ impl GqlIssue {
             assignees: logins(i.assignees),
             comments: i.comments.nodes.into_iter().map(Comment::from).collect(),
             blocked_by: linked(i.blocked_by),
-            sub_issues: linked(i.sub_issues),
+            sub_issues: sub_issues(i.sub_issues),
             parent: i.parent.map(|p| p.into_parent(linewright)),
             events,
             filed,
@@ -2851,6 +2873,45 @@ mod tests {
         }))
         .unwrap();
         issue.into_issue(&Login::new("linewright"))
+    }
+
+    /// `fixtures/sub-issues.json` is the `subIssues` connection GitHub
+    /// returned for <https://github.com/tibbe/linewright/issues/373>, the
+    /// tracking issue of tickets its account opened.
+    #[test]
+    fn an_issues_sub_issues_are_read_with_who_opened_them() {
+        let nodes: Nodes<SubIssueNode> =
+            serde_json::from_str(include_str!("fixtures/sub-issues.json")).unwrap();
+
+        assert_eq!(
+            sub_issues(Some(nodes)),
+            [
+                (374, false),
+                (375, false),
+                (376, false),
+                (377, false),
+                (378, true),
+            ]
+            .map(|(number, open)| SubIssue {
+                linked: Linked {
+                    number: Number(number),
+                    open,
+                },
+                author: Login::new("tibbe-bot"),
+            })
+        );
+    }
+
+    /// The person's issue of `fixtures/issue-reopened.json`, unassigned, as
+    /// Linewright leaves an issue it cut: labeled designed alone.
+    #[test]
+    fn an_issue_a_person_opened_labeled_designed_alone_is_in_view_as_a_tracking_issue_may_be() {
+        let mut issue: Value =
+            serde_json::from_str(include_str!("fixtures/issue-reopened.json")).unwrap();
+        issue["labels"] = json!({"nodes": [{"name": "linewright:designed"}]});
+        let issue: GqlIssue = serde_json::from_value(issue).unwrap();
+
+        assert!(issue.in_view("linewright"));
     }
 
     #[test]

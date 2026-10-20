@@ -131,7 +131,10 @@ pub mod label {
     /// designed again; never set.
     pub const SPEC_PROCESSED: &str = "linewright:spec-processed";
 
-    pub const IN_VIEW: [&str; 3] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT];
+    /// The labels that bring an issue into the snapshot: those asking for
+    /// Linewright's work, and the label a tracking issue cut from an issue
+    /// keeps when its status label goes.
+    pub const IN_VIEW: [&str; 4] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT, DESIGNED];
 
     pub const ANSWERS: [(&str, &str); 2] = [
         (READY_FOR_AGENT, "to implement it as decided"),
@@ -221,6 +224,14 @@ pub struct Linked {
     pub open: bool,
 }
 
+/// A sub-issue, with who opened it: Linewright opens the tickets it cuts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubIssue {
+    #[serde(flatten)]
+    pub linked: Linked,
+    pub author: Login,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum IssueEvent {
@@ -290,7 +301,7 @@ pub struct Issue {
     pub assignees: Vec<Login>,
     pub comments: Vec<Comment>,
     pub blocked_by: Vec<Linked>,
-    pub sub_issues: Vec<Linked>,
+    pub sub_issues: Vec<SubIssue>,
     #[serde(default)]
     pub parent: Option<Parent>,
     pub events: Vec<IssueEvent>,
@@ -341,6 +352,16 @@ impl Filed {
         }
         crate::spec_gap::ticket_of(body).map(|ticket| Filed::SpecGap { ticket })
     }
+}
+
+/// What a tracking issue tracks: the tickets cut from one item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tracks {
+    /// Those cut from this spec change, under an issue Linewright opened for
+    /// them.
+    SpecChange(Number),
+    /// Those cut from the issue itself.
+    Cut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -431,12 +452,35 @@ impl Issue {
         self.parent.and_then(|parent| parent.spec_change)
     }
 
-    /// Whether its design, once it has one, is its own rather than that of
-    /// the item it was cut from, its parent, as a spec change's is for the
-    /// tickets under its tracking issue (docs/specs/repository.md, "Handing
-    /// back").
-    pub fn has_own_design(&self) -> bool {
-        self.cut_from().is_none()
+    /// Whether it is a ticket cut from its parent's item: a sub-issue of a
+    /// spec change's tracking issue, or one `linewright` opened under the
+    /// issue it cut. Its design is then that item's, not its own
+    /// (docs/specs/repository.md, "Handing back").
+    pub fn was_cut(&self, linewright: &Login) -> bool {
+        self.cut_from().is_some() || (self.parent.is_some() && self.author == *linewright)
+    }
+
+    /// Its sub-issues `linewright` opened: the tickets it cut from the issue.
+    pub fn tickets_cut<'a>(&'a self, linewright: &'a Login) -> impl Iterator<Item = &'a SubIssue> {
+        self.sub_issues
+            .iter()
+            .filter(move |sub_issue| sub_issue.author == *linewright)
+    }
+
+    /// What it tracks, if it is a tracking issue (docs/specs/design.md,
+    /// "Cutting"). An issue cut into tickets is labeled designed last, so one
+    /// with tickets but no label is a cut that stopped part way, and tracks
+    /// nothing yet.
+    pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
+        match self.filed {
+            Some(Filed::Tracking { spec_change }) => Some(Tracks::SpecChange(spec_change)),
+            _ if self.has_label(label::DESIGNED)
+                && self.tickets_cut(linewright).next().is_some() =>
+            {
+                Some(Tracks::Cut)
+            }
+            _ => None,
+        }
     }
 
     pub fn branch(&self) -> String {
@@ -953,7 +997,8 @@ impl Snapshot {
 
     pub fn relink(&mut self, number: Number, open: bool) {
         for issue in &mut self.issues {
-            for linked in issue.blocked_by.iter_mut().chain(&mut issue.sub_issues) {
+            let sub_issues = issue.sub_issues.iter_mut().map(|s| &mut s.linked);
+            for linked in issue.blocked_by.iter_mut().chain(sub_issues) {
                 if linked.number == number {
                     linked.open = open;
                 }
@@ -964,7 +1009,7 @@ impl Snapshot {
     pub fn unlink(&mut self, number: Number) {
         for issue in &mut self.issues {
             issue.blocked_by.retain(|linked| linked.number != number);
-            issue.sub_issues.retain(|linked| linked.number != number);
+            issue.sub_issues.retain(|s| s.linked.number != number);
         }
     }
 

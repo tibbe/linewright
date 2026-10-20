@@ -6,10 +6,16 @@ pub fn title(pr_title: &str) -> String {
     format!("{TITLE_PREFIX}{pr_title}")
 }
 
-pub fn body(pr: Number, tickets: &[(Number, String)]) -> String {
+/// A ticket Linewright filed.
+pub struct FiledTicket {
+    pub number: Number,
+    pub title: String,
+}
+
+pub fn body(pr: Number, tickets: &[FiledTicket]) -> String {
     let list: String = tickets
         .iter()
-        .map(|(number, title)| format!("- {number} {title}\n"))
+        .map(|t| format!("- {} {}\n", t.number, t.title))
         .collect();
     format!("Tickets for the spec change in {pr}.\n\n{list}")
 }

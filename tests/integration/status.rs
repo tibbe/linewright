@@ -6,7 +6,8 @@ use linewright::reconcile::{LiveRun, Memory, Subject, WorkKind};
 use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
 use views::{
-    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, ticket,
+    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
+    ticket,
 };
 
 fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationFiles {
@@ -392,6 +393,28 @@ fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_
             "#9: claimed: being implemented — Do another thing",
             "#10: waiting for triage — It broke",
             "#11: claimed: being triaged — It broke again",
+        ]
+    );
+}
+
+/// An issue Linewright cut into tickets #8, closed, and #9, open.
+fn cut_issue() -> Issue {
+    Issue {
+        labels: vec![label::DESIGNED.into()],
+        sub_issues: vec![
+            sub_issue(8, false, "factory"),
+            sub_issue(9, true, "factory"),
+        ],
+        ..ready_issue()
+    }
+}
+
+#[test]
+fn an_issue_cut_into_tickets_shows_as_their_tracking_issue_with_its_closed_tickets() {
+    assert_eq!(
+        after_linewright(&view(vec![cut_issue()]), "2026-10-01T12:00:30Z"),
+        [
+            "#7: tracking issue, 1/2 tickets closed — waiting for its tickets: #9 open — Do the thing"
         ]
     );
 }

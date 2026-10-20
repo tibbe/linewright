@@ -23,8 +23,8 @@ use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
 use crate::results::{
-    self, AutomationIssueLabel, AutomationResult, Cut, DesignResult, ImplementResult,
-    PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult, Uncut,
+    self, AutomationIssueLabel, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork,
+    PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs};
 use crate::spec_gap::{self, FiledGaps};
@@ -32,7 +32,7 @@ use crate::store::{
     AnyItem, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError, PushMode,
     RepoSettings, Store,
 };
-use crate::tracking;
+use crate::tracking::{self, FiledTicket};
 use crate::transcript;
 
 pub(crate) struct Shell {
@@ -459,7 +459,7 @@ async fn hand_back_issue(
 ) -> Result<()> {
     let store = &shell.store;
     let n = issue.number;
-    if issue.has_own_design() {
+    if !issue.was_cut(&shell.policy.linewright) {
         store.remove_label(n, label::DESIGNED).await?;
     }
     for state in StatusLabel::ALL
@@ -1009,8 +1009,9 @@ async fn design_spec_change(
     }
 }
 
-/// An issue that fits one session: its design is posted on it, where its
-/// implementer reads it (docs/specs/design.md, "Designing").
+/// An issue that fits one session has its design posted on it, where its
+/// implementer reads it; one cut into tickets becomes their tracking issue,
+/// and its design goes there with them (docs/specs/design.md, "Designing").
 async fn design_issue(
     shell: &Shell,
     ctx: &Ctx,
@@ -1024,23 +1025,44 @@ async fn design_issue(
     };
     let prompt = prompts::design_issue(&shell.briefs.prompts, &shell.repo(), issue, &filed_issues);
     let subject = Subject::Issue(issue.number);
-    let (result, turn) = design_session::<Uncut>(shell, ctx, subject, prompt).await?;
+    let (result, turn) = design_session::<IssueWork>(shell, ctx, subject, prompt).await?;
     match result {
         DesignResult::Designed {
             design,
-            cut: Uncut,
+            cut,
             spec_gaps,
         } => {
             let store = &shell.store;
-            store.comment(issue.number, &design).await.map_err(apply)?;
+            let n = issue.number;
+            let comment = match &cut {
+                IssueWork::AsItIs => design,
+                IssueWork::Cut(Cut { tickets, comment }) => {
+                    let filed = async {
+                        let required: Vec<String> =
+                            shell.creation_label().await?.into_iter().collect();
+                        file_tickets_under(shell, n, tickets, &required).await
+                    }
+                    .await
+                    .map_err(apply)?;
+                    with_tickets(&design, &filed, comment)
+                }
+            };
+            store.comment(n, &comment).await.map_err(apply)?;
             file_spec_gaps(shell, &spec_gaps, &filed_gaps)
                 .await
                 .map_err(apply)?;
-            // Last, so that a design stopped before it is made again.
-            store
-                .add_label(issue.number, label::DESIGNED)
-                .await
-                .map_err(apply)
+            // Before letting go, so that a design stopped before it is made
+            // again.
+            store.add_label(n, label::DESIGNED).await.map_err(apply)?;
+            if let IssueWork::Cut(_) = cut {
+                // A tracking issue carries no status label, and is worked
+                // through its tickets.
+                for status in StatusLabel::ALL {
+                    store.remove_label(n, status.label()).await.map_err(apply)?;
+                }
+                store.unassign(n).await.map_err(apply)?;
+            }
+            Ok(())
         }
         DesignResult::NothingToBuild { reason } => Err(Failure::HandBack {
             reason: format!(
@@ -1097,48 +1119,75 @@ async fn file_tickets(
             labels: required.clone(),
         })
         .await?;
-    let mut list: Vec<(Number, String)> = vec![];
+    let list = file_tickets_under(shell, tracking_issue, tickets, &required).await?;
+    store
+        .edit_body(tracking_issue, &tracking::body(pr.number, &list))
+        .await?;
+    store
+        .comment(tracking_issue, &with_tickets(design, &list, comment))
+        .await?;
+    store
+        .comment(
+            pr.number,
+            &format!(
+                "{comment}\n\nTracked in {tracking_issue}:\n\n{}",
+                in_order(&list)
+            ),
+        )
+        .await
+}
+
+/// Files `tickets` as sub-issues of `tracking_issue`, labeled `required`
+/// and each linked to the tickets blocking it, and returns them in order.
+async fn file_tickets_under(
+    shell: &Shell,
+    tracking_issue: Number,
+    tickets: &Tickets,
+    required: &[String],
+) -> Result<Vec<FiledTicket>> {
+    let store = &shell.store;
+    let mut list: Vec<FiledTicket> = vec![];
     for ticket in tickets.in_order() {
         let number = store
             .create_issue(NewIssue {
                 title: ticket.title.clone(),
                 body: ticket.body.clone(),
-                labels: required.clone(),
+                labels: required.to_vec(),
             })
             .await?;
         store.add_sub_issue(tracking_issue, number).await?;
         for &blocker in &ticket.blocked_by {
-            store.add_blocked_by(number, list[blocker].0).await?;
+            store.add_blocked_by(number, list[blocker].number).await?;
         }
-        list.push((number, ticket.title.clone()));
+        list.push(FiledTicket {
+            number,
+            title: ticket.title.clone(),
+        });
     }
     // Tickets get `ready-for-agent` only once every edge exists, so no poll
     // sees a ticket unblocked before its blockers are linked, and only once
     // they are designed, so that none is taken for an issue to design.
-    for (number, _) in &list {
-        store.add_label(*number, label::DESIGNED).await?;
-        store.add_label(*number, label::READY_FOR_AGENT).await?;
+    for ticket in &list {
+        store.add_label(ticket.number, label::DESIGNED).await?;
+        store
+            .add_label(ticket.number, label::READY_FOR_AGENT)
+            .await?;
     }
-    store
-        .edit_body(tracking_issue, &tracking::body(pr.number, &list))
-        .await?;
-    let in_order: String = list
+    Ok(list)
+}
+
+/// The design of work cut into `tickets`, with them in order and why
+/// `comment` gives for the cut.
+fn with_tickets(design: &str, tickets: &[FiledTicket], comment: &str) -> String {
+    format!("{design}\n\n## Tickets\n\n{}\n{comment}", in_order(tickets))
+}
+
+fn in_order(tickets: &[FiledTicket]) -> String {
+    tickets
         .iter()
         .enumerate()
-        .map(|(i, (n, t))| format!("{}. {n} {t}\n", i + 1))
-        .collect();
-    store
-        .comment(
-            tracking_issue,
-            &format!("{design}\n\n## Tickets\n\n{in_order}\n{comment}"),
-        )
-        .await?;
-    store
-        .comment(
-            pr.number,
-            &format!("{comment}\n\nTracked in {tracking_issue}:\n\n{in_order}"),
-        )
-        .await
+        .map(|(i, t)| format!("{}. {} {}\n", i + 1, t.number, t.title))
+        .collect()
 }
 
 /// What became of the work of a run that stopped before it finished.

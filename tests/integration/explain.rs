@@ -6,7 +6,8 @@ use linewright::runs::{Ending, Recorded, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
 use views::{
-    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, ticket, view,
+    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
+    ticket, view,
 };
 
 fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
@@ -991,8 +992,8 @@ fn an_open_issue_a_snapshot_does_not_read_names_the_labels_and_linewright() {
         [
             "state: open issue",
             "last read: 2026-10-01 12:00:30 UTC",
-            "left alone: it is labeled none of `needs-triage`, `needs-info` or `ready-for-agent`, \
-             and Linewright neither opened it nor is assigned to it",
+            "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
+             `linewright:designed`, and Linewright neither opened it nor is assigned to it",
         ]
     );
 }
@@ -1659,14 +1660,8 @@ fn tracking_40() -> Issue {
         author: Login::new("factory"),
         labels: vec![],
         sub_issues: vec![
-            Linked {
-                number: Number(41),
-                open: false,
-            },
-            Linked {
-                number: Number(42),
-                open: true,
-            },
+            sub_issue(41, false, "factory"),
+            sub_issue(42, true, "factory"),
         ],
         filed: Some(Filed::Tracking {
             spec_change: Number(5),
@@ -1739,6 +1734,59 @@ fn an_issue_whose_parent_is_no_tracking_issue_names_no_parent() {
     let view = view(vec![sub_issue], vec![]);
 
     assert_eq!(family_lines(&text(&view, 42)), Vec::<&str>::new());
+}
+
+/// An issue Linewright cut into the tickets #41, closed, and #42, open, a
+/// person's sub-issue #43 beside them.
+fn cut_40() -> Issue {
+    Issue {
+        labels: vec![label::DESIGNED.into()],
+        sub_issues: vec![
+            sub_issue(41, false, "factory"),
+            sub_issue(42, true, "factory"),
+            sub_issue(43, true, "maintainer"),
+        ],
+        ..ticket(40, "Add invoices")
+    }
+}
+
+fn ticket_cut_from_40() -> Issue {
+    Issue {
+        author: Login::new("factory"),
+        parent: Some(Parent {
+            number: Number(40),
+            spec_change: None,
+        }),
+        ..ticket(42, "Store invoices")
+    }
+}
+
+#[test]
+fn an_issue_cut_into_tickets_is_their_tracking_issue_and_names_each_sub_issue() {
+    let view = view(vec![cut_40(), ticket_cut_from_40()], vec![]);
+
+    assert_eq!(
+        text(&view, 40),
+        [
+            "#40: Add invoices",
+            "child: #41, one of its tickets",
+            "child: #42, one of its tickets",
+            "child: #43, one of its tickets",
+            "state: tracking issue, 1/3 tickets closed",
+            "last read: 2026-10-01 12:00:00 UTC",
+            "waiting for: its tickets: #42, #43 open",
+        ]
+    );
+}
+
+#[test]
+fn a_ticket_cut_from_an_issue_names_it_as_its_tracking_issue() {
+    let view = view(vec![cut_40(), ticket_cut_from_40()], vec![]);
+
+    assert_eq!(
+        family_lines(&text(&view, 42)),
+        ["parent: #40, its tracking issue"]
+    );
 }
 
 #[test]

@@ -33,6 +33,16 @@ pub fn policy() -> Policy {
     }
 }
 
+pub fn sub_issue(number: u64, open: bool, author: &str) -> SubIssue {
+    SubIssue {
+        linked: Linked {
+            number: Number(number),
+            open,
+        },
+        author: Login::new(author),
+    }
+}
+
 pub fn ticket(number: u64, title: &str) -> Issue {
     Issue {
         number: Number(number),

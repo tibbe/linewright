@@ -9,8 +9,8 @@ use crate::domain::{
     Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, Issue, Item,
     Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
     Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
-    TicketBranchName, Timestamp, UpdateMethod, UpdateRule, label, last_assigned, last_assignment,
-    last_labeling, last_unassignment,
+    TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, label, last_assigned,
+    last_assignment, last_labeling, last_unassignment,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
@@ -402,7 +402,8 @@ pub enum Action {
         issue: Number,
         assignees: Vec<Login>,
     },
-    /// Remove a status label besides the one the issue holds.
+    /// Remove a status label besides the one the issue holds, or one a
+    /// tracking issue carries.
     RemoveStatusLabel {
         issue: Number,
         label: StatusLabel,
@@ -437,6 +438,12 @@ pub enum Action {
     },
     DiscardTickets {
         tracking: Number,
+        tickets: Vec<Number>,
+    },
+    /// Close `tickets`, of a cut of `issue` that stopped part way, as not
+    /// planned, leaving the issue to be designed again.
+    DiscardCut {
+        issue: Number,
         tickets: Vec<Number>,
     },
     DeleteBranch {
@@ -606,7 +613,7 @@ pub fn decisions(
         if let Some(partial) = partial {
             plan.act(Action::DiscardTickets {
                 tracking: partial.number,
-                tickets: open_numbers(&partial.sub_issues),
+                tickets: open_numbers(partial.sub_issues.iter().map(|s| &s.linked)),
             });
             discarded.push(pr.number);
         }
@@ -645,18 +652,20 @@ pub fn decisions(
 
     for issue in snapshot.issues.iter().filter(|i| i.open) {
         let subject = Subject::Issue(issue.number);
-        let tracks = match issue.filed {
-            Some(Filed::Tracking { spec_change }) => Some(spec_change),
-            _ => None,
+        let tracks = issue.tracks(&policy.linewright);
+        let cut = match tracks {
+            Some(Tracks::SpecChange(spec_change)) => running(Subject::SpecChange(spec_change)),
+            Some(Tracks::Cut) => running(subject),
+            None => None,
         };
-        let cut = tracks.and_then(|spec_change| running(Subject::SpecChange(spec_change)));
         if let Some(stage) = cut {
             plan.wait(issue.number, Wait::Run { stage });
         }
         let cutting = cut.is_some()
-            || tracks.is_some_and(|sc| pending.contains(&sc) || discarded.contains(&sc));
+            || matches!(tracks, Some(Tracks::SpecChange(sc))
+                if pending.contains(&sc) || discarded.contains(&sc));
         if tracks.is_some() && !cutting && !issue.sub_issues.is_empty() {
-            let open = open_numbers(&issue.sub_issues);
+            let open = open_numbers(issue.sub_issues.iter().map(|s| &s.linked));
             if open.is_empty() {
                 plan.act(Action::CloseTracking {
                     issue: issue.number,
@@ -664,6 +673,43 @@ pub fn decisions(
             } else {
                 plan.wait(issue.number, Wait::Tickets { open });
             }
+        }
+        if tracks == Some(Tracks::Cut) && cut.is_none() {
+            // What the cut lets go of after the label, should it have stopped
+            // before: a tracking issue carries no status label, and is
+            // worked through its tickets.
+            for label in StatusLabel::ALL
+                .into_iter()
+                .filter(|s| issue.has_label(s.label()))
+            {
+                plan.act(Action::RemoveStatusLabel {
+                    issue: issue.number,
+                    label,
+                });
+            }
+            if issue.is_assigned(&policy.linewright) {
+                plan.act(Action::LetGo {
+                    issue: issue.number,
+                    comment: None,
+                });
+            }
+            continue;
+        }
+        // The issue is labeled designed last, so tickets it has without the
+        // label are of a cut that stopped part way: interrupted, cancelled,
+        // handed back, or its label removed to have it designed again.
+        let left_part_way: Vec<Number> =
+            if !issue.has_label(label::DESIGNED) && running(subject).is_none() {
+                open_numbers(issue.tickets_cut(&policy.linewright).map(|t| &t.linked))
+            } else {
+                vec![]
+            };
+        let discarding = !left_part_way.is_empty() && tracks.is_none();
+        if discarding {
+            plan.act(Action::DiscardCut {
+                issue: issue.number,
+                tickets: left_part_way,
+            });
         }
         for label in issue.stale_status_labels() {
             plan.act(Action::RemoveStatusLabel {
@@ -717,6 +763,10 @@ pub fn decisions(
             if !linewrights && issue.holds(StatusLabel::ReadyForAgent) {
                 wait_for_blockers(issue, &mut plan);
             }
+        } else if tracks.is_some() || discarding {
+            // A tracking issue is worked through its tickets, and an issue
+            // whose cut is discarded is designed again once its tickets are
+            // closed.
         } else {
             match asked {
                 Ok(Asked::Triage) => triage(issue, replied, running(subject), policy, &mut plan),
@@ -799,6 +849,7 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastRuns) -> Vec<Action>
             | Action::HoldForReview { .. }
             | Action::CloseTracking { .. }
             | Action::DiscardTickets { .. }
+            | Action::DiscardCut { .. }
             | Action::DeleteBranch { .. } => Some(action),
         })
         .collect()
@@ -1103,8 +1154,12 @@ fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
     handed_to.into_iter().chain(unlabeled).collect()
 }
 
-fn open_numbers(linked: &[Linked]) -> Vec<Number> {
-    linked.iter().filter(|l| l.open).map(|l| l.number).collect()
+fn open_numbers<'a>(linked: impl IntoIterator<Item = &'a Linked>) -> Vec<Number> {
+    linked
+        .into_iter()
+        .filter(|l| l.open)
+        .map(|l| l.number)
+        .collect()
 }
 
 fn required_label(policy: &Policy) -> Option<Wait> {

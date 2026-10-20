@@ -619,7 +619,7 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
         tracking
             .sub_issues
             .iter()
-            .map(|l| l.number)
+            .map(|s| s.linked.number)
             .collect::<Vec<_>>(),
         [store_ticket.number, list_ticket.number]
     );
@@ -1968,26 +1968,185 @@ async fn a_readied_issue_is_designed_on_the_issue_and_the_next_poll_implements_i
     );
 }
 
-#[tokio::test]
-async fn an_issues_design_that_cuts_tickets_is_sent_back_to_its_session() {
+/// A world whose readied issue was designed into the two tickets of
+/// [`tickets_script`]: the issue, and its tickets in order.
+async fn issue_cut_into_tickets() -> (World, Number, [Number; 2]) {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Design, |call| {
-        let result = if call
-            .followup
-            .is_some_and(|f| f.contains("`tickets` is not empty"))
-        {
-            json!({"outcome": "designed", "design": "A gadget store."})
-        } else {
-            one_ticket()
-        };
-        Ok(result.to_string())
-    });
+    tickets_script(&world);
+    implement_script(&world);
     let issue = readied_issue(&world);
+    world.poll().await;
+    let tickets: Vec<Number> = world
+        .issue(issue)
+        .sub_issues
+        .iter()
+        .map(|s| s.linked.number)
+        .collect();
+    let [store_ticket, list_ticket] = tickets[..] else {
+        panic!("expected two tickets, got {tickets:?}");
+    };
+    (world, issue, [store_ticket, list_ticket])
+}
+
+#[tokio::test]
+async fn an_issue_designed_into_tickets_files_them_under_it_and_lets_go_of_it_as_their_tracking_issue()
+ {
+    let (world, issue, [store_ticket, list_ticket]) = issue_cut_into_tickets().await;
+
+    let issues = world.store.issues();
+    let titles: Vec<&str> = issues.iter().map(|i| i.title.as_str()).collect();
+    assert_eq!(titles, ["Gadgets", "Store gadgets", "List gadgets"]);
+    assert_eq!(world.issue(list_ticket).blocked_by[0].number, store_ticket);
+    for ticket in [store_ticket, list_ticket] {
+        assert_eq!(
+            labels(&world.issue(ticket)),
+            ["linewright:designed", "ready-for-agent"]
+        );
+    }
+    let tracking = world.issue(issue);
+    assert_eq!(
+        last_comment(&tracking),
+        format!(
+            "A gadget store, and a listing that reads it.\n\n## Tickets\n\n\
+             1. {store_ticket} Store gadgets\n2. {list_ticket} List gadgets\n\n\
+             Two slices: storing, then listing."
+        )
+    );
+    assert_eq!(labels(&tracking), ["linewright:designed"]);
+    assert_eq!(tracking.assignees, []);
+    assert!(tracking.open);
+}
+
+#[tokio::test]
+async fn the_tickets_of_an_issue_are_implemented_in_order_briefed_with_its_design_and_it_is_not() {
+    let (mut world, issue, [store_ticket, _]) = issue_cut_into_tickets().await;
 
     world.poll().await;
 
-    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
-    assert_eq!(world.store.issues().len(), 1);
+    let implementations = world.harness.prompts(WorkKind::Implement);
+    let [implementation] = &implementations[..] else {
+        panic!("expected one implementation, got {implementations:#?}");
+    };
+    assert!(
+        implementation.contains(&format!("### The ticket: {store_ticket} Store gadgets")),
+        "{implementation}"
+    );
+    assert!(
+        implementation.contains(&format!("### Parent issue\n\n{issue}.\n")),
+        "{implementation}"
+    );
+    assert!(
+        implementation.contains("A gadget store, and a listing that reads it."),
+        "{implementation}"
+    );
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
+}
+
+#[tokio::test]
+async fn a_ticket_cut_from_an_issue_handed_back_keeps_the_design_of_the_issue() {
+    let (mut world, _, [store_ticket, _]) = issue_cut_into_tickets().await;
+    world.harness.on(WorkKind::Implement, |_| {
+        Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string())
+    });
+
+    world.poll().await;
+
+    assert_eq!(
+        labels(&world.issue(store_ticket)),
+        ["linewright:designed", "ready-for-human"]
+    );
+}
+
+#[tokio::test]
+async fn an_issue_cut_into_tickets_is_closed_once_all_of_them_are() {
+    let (mut world, issue, [store_ticket, list_ticket]) = issue_cut_into_tickets().await;
+
+    world.store.close_issue_as(store_ticket).unwrap();
+    world.poll().await;
+
+    assert!(world.issue(issue).open);
+
+    world.store.close_issue_as(list_ticket).unwrap();
+    world.poll().await;
+
+    let closed = world.issue(issue);
+    assert!(!closed.open);
+    assert_eq!(last_comment(&closed), "All tickets are closed.");
+}
+
+#[tokio::test]
+async fn a_cut_of_an_issue_stopped_after_its_label_is_let_go_of_as_the_cut_would_have() {
+    let mut world = World::new().await;
+    tickets_script(&world);
+    implement_script(&world);
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "Add gadgets.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world
+        .store
+        .assign_as(LINEWRIGHT, issue, LINEWRIGHT)
+        .unwrap();
+    let ticket = world
+        .store
+        .open_issue(LINEWRIGHT, "Store gadgets", "Gadgets persist.", &[]);
+    world.store.add_sub_issue(issue, ticket).await.unwrap();
+
+    world.poll().await;
+
+    let tracking = world.issue(issue);
+    assert_eq!(labels(&tracking), ["linewright:designed"]);
+    assert_eq!(tracking.assignees, []);
+    assert_eq!(tracking.comments, []);
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 0);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 0);
+    assert!(world.issue(ticket).open);
+}
+
+#[tokio::test]
+async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_designs_the_issue_again()
+{
+    let mut world = World::new().await;
+    design_answering(
+        &world,
+        json!({"outcome": "designed", "design": "A gadget store."}),
+    );
+    let issue = readied_issue(&world);
+    world
+        .store
+        .assign_as(LINEWRIGHT, issue, LINEWRIGHT)
+        .unwrap();
+    let left = world
+        .store
+        .open_issue(LINEWRIGHT, "Store gadgets", "Gadgets persist.", &[]);
+    let persons = world
+        .store
+        .open_issue("maintainer", "Paint gadgets", "", &[]);
+    for sub_issue in [left, persons] {
+        world.store.add_sub_issue(issue, sub_issue).await.unwrap();
+    }
+
+    world.poll().await;
+
+    let discarded = world.issue(left);
+    assert!(!discarded.open);
+    assert!(
+        last_comment(&discarded).contains("stopped part way"),
+        "{discarded:#?}"
+    );
+    assert!(world.issue(persons).open);
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 0);
+
+    world.poll().await;
+
+    let designs = world.harness.prompts(WorkKind::Design);
+    let [design] = &designs[..] else {
+        panic!("expected one design, got {designs:#?}");
+    };
+    assert!(design.contains("stopped part way"), "{design}");
+    assert!(world.issue(persons).open);
     assert_eq!(
         labels(&world.issue(issue)),
         ["linewright:designed", "ready-for-agent"]

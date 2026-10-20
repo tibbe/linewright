@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{AutomationFiles, AutomationName, LastRuns};
 use crate::domain::{
-    CheckState, Filed, Issue, Item, Login, Number, Pull, PullState, Snapshot, StatusLabel,
-    Timestamp, label,
+    CheckState, Issue, Item, Login, Number, Pull, PullState, Snapshot, StatusLabel, Timestamp,
+    label,
 };
 use crate::reconcile::{
     Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
@@ -373,9 +373,9 @@ fn issue_state(
     let open_pull = open_pull_for(snapshot, issue.number, &policy.linewright);
     let closing = snapshot.pulls_closing(issue);
     let open_closing = closing.iter().find(|p| p.is_open());
-    let state = if matches!(issue.filed, Some(Filed::Tracking { .. })) {
+    let state = if issue.tracks(&policy.linewright).is_some() {
         ItemState::Tracking {
-            tickets_closed: issue.sub_issues.iter().filter(|t| !t.open).count(),
+            tickets_closed: issue.sub_issues.iter().filter(|t| !t.linked.open).count(),
             tickets: issue.sub_issues.len(),
         }
     } else if let Some(pr) = open_pull {

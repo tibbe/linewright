@@ -4,8 +4,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    self, ClosingPull, Filed, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
-    Timestamp, label,
+    ClosingPull, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
+    Tracks, label,
 };
 use crate::reconcile::{NotSpecChange, NotWorked, Wait, not_a_spec_change, worked_ticket};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
@@ -226,39 +226,39 @@ impl Family {
         family
     }
 
-    fn of_issue(issue: &Issue, snapshot: &Snapshot) -> Family {
-        let mut family = match issue.filed {
-            Some(Filed::Tracking { spec_change }) => Family {
+    fn of_issue(issue: &Issue, snapshot: &Snapshot, linewright: &Login) -> Family {
+        let tickets = || {
+            issue
+                .sub_issues
+                .iter()
+                .map(|ticket| Child {
+                    number: ticket.linked.number,
+                    role: ChildRole::Ticket,
+                })
+                .collect()
+        };
+        let mut family = match issue.tracks(linewright) {
+            Some(Tracks::SpecChange(spec_change)) => Family {
                 parents: vec![Parent {
                     number: spec_change,
                     role: ParentRole::SpecChange,
                 }],
-                children: issue
-                    .sub_issues
-                    .iter()
-                    .map(|ticket| Child {
-                        number: ticket.number,
-                        role: ChildRole::Ticket,
-                    })
-                    .collect(),
+                children: tickets(),
             },
-            _ => Family {
+            Some(Tracks::Cut) => Family {
+                parents: vec![],
+                children: tickets(),
+            },
+            // Only a ticket's parent is its tracking issue.
+            None => Family {
                 parents: issue
                     .parent
-                    .into_iter()
-                    .filter_map(|parent| match parent {
-                        // Only a tracking issue knows its spec change.
-                        domain::Parent {
-                            number,
-                            spec_change: Some(_),
-                        } => Some(Parent {
-                            number,
-                            role: ParentRole::TrackingIssue,
-                        }),
-                        domain::Parent {
-                            spec_change: None, ..
-                        } => None,
+                    .filter(|_| issue.was_cut(linewright))
+                    .map(|parent| Parent {
+                        number: parent.number,
+                        role: ParentRole::TrackingIssue,
                     })
+                    .into_iter()
                     .collect(),
                 children: vec![],
             },
@@ -369,7 +369,10 @@ pub fn explain(
         // A tracked spec change is a merged pull request, not yet cut into
         // tickets; the rest are issues.
         let (read, family) = match view.snapshot.issue(number) {
-            Some(issue) => (Item::Issue(number), Family::of_issue(issue, &view.snapshot)),
+            Some(issue) => (
+                Item::Issue(number),
+                Family::of_issue(issue, &view.snapshot, &view.policy.linewright),
+            ),
             None => (
                 Item::Pull(number),
                 view.snapshot
@@ -464,7 +467,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             tracking_issues,
         } => Family::of_merged(pull, tracking_issues),
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
-            Family::of_issue(issue, &fresh.snapshot)
+            Family::of_issue(issue, &fresh.snapshot, &fresh.policy.linewright)
         }
     };
     let tracked_as = |title: &str, state: ItemState, waiting_for| {

@@ -1,4 +1,5 @@
 use crate::views;
+use views::sub_issue;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::automation::{Automation, LastRuns};
@@ -2800,14 +2801,182 @@ fn tracking(number: u64, pr: u64, tickets: &[(u64, bool)]) -> Issue {
     tracking.filed = Some(Filed::Tracking {
         spec_change: Number(pr),
     });
-    tracking.sub_issues = tickets
-        .iter()
-        .map(|&(n, open)| Linked {
-            number: Number(n),
-            open,
-        })
-        .collect();
+    tracking.sub_issues = linewrights(tickets);
     tracking
+}
+
+/// Sub-issues Linewright opened, each with whether it is open.
+fn linewrights(tickets: &[(u64, bool)]) -> Vec<SubIssue> {
+    tickets
+        .iter()
+        .map(|&(n, open)| sub_issue(n, open, LINEWRIGHT))
+        .collect()
+}
+
+/// An issue Linewright cut into `tickets` of its own, and so their tracking
+/// issue: designed, with no status label, and let go of.
+fn cut_issue(number: u64, tickets: &[(u64, bool)]) -> Issue {
+    let mut cut = labeled(issue(number), label::DESIGNED);
+    cut.sub_issues = linewrights(tickets);
+    cut
+}
+
+#[test]
+fn an_issue_cut_into_tickets_is_closed_once_they_all_are_and_waits_for_them_until_then() {
+    let world = snapshot(vec![
+        cut_issue(9, &[(10, false), (11, false)]),
+        cut_issue(12, &[(13, false), (14, true)]),
+    ]);
+
+    assert_eq!(
+        decide(&world),
+        vec![Action::CloseTracking { issue: Number(9) }]
+    );
+    assert_eq!(
+        waits_on(&world, 12),
+        [Wait::Tickets {
+            open: vec![Number(14)]
+        }]
+    );
+}
+
+#[test]
+fn an_issue_cut_into_tickets_waits_also_for_the_sub_issues_a_person_added() {
+    let mut cut = cut_issue(9, &[(10, false)]);
+    cut.sub_issues.push(sub_issue(11, true, "maintainer"));
+    let world = snapshot(vec![cut]);
+
+    assert_eq!(decide(&world), vec![]);
+    assert_eq!(
+        waits_on(&world, 9),
+        [Wait::Tickets {
+            open: vec![Number(11)]
+        }]
+    );
+}
+
+#[test]
+fn an_issue_cut_into_tickets_left_with_a_status_label_or_linewright_loses_both_and_is_not_worked() {
+    let world = snapshot(vec![
+        claimed(labeled(cut_issue(9, &[(10, true)]), label::READY_FOR_AGENT)),
+        labeled(
+            labeled(cut_issue(12, &[(13, true)]), label::NEEDS_TRIAGE),
+            label::READY_FOR_AGENT,
+        ),
+    ]);
+
+    assert_eq!(
+        decide(&world),
+        vec![
+            Action::RemoveStatusLabel {
+                issue: Number(9),
+                label: StatusLabel::ReadyForAgent,
+            },
+            Action::LetGo {
+                issue: Number(9),
+                comment: None,
+            },
+            Action::RemoveStatusLabel {
+                issue: Number(12),
+                label: StatusLabel::NeedsTriage,
+            },
+            Action::RemoveStatusLabel {
+                issue: Number(12),
+                label: StatusLabel::ReadyForAgent,
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_designed_issue_with_only_sub_issues_a_person_added_is_implemented() {
+    let mut designed = claimed(labeled(issue(9), label::READY_FOR_AGENT));
+    designed.labels.push(label::DESIGNED.into());
+    designed.sub_issues.push(sub_issue(10, false, "maintainer"));
+    let world = snapshot(vec![designed]);
+
+    assert_eq!(decide(&world), vec![implement(9)]);
+}
+
+#[test]
+fn an_issue_being_cut_waits_for_its_design_and_neither_closes_nor_discards() {
+    // Labeled designed, and yet to let go of its status label and of
+    // Linewright.
+    let cutting = claimed(labeled(
+        cut_issue(9, &[(10, false)]),
+        label::READY_FOR_AGENT,
+    ));
+    let mut stopped_short = claimed(readied(12));
+    stopped_short
+        .sub_issues
+        .push(sub_issue(13, true, LINEWRIGHT));
+    let world = snapshot(vec![cutting, stopped_short]);
+    let live = [live(9, WorkKind::Design), live(12, WorkKind::Design)];
+
+    let decided = decisions(
+        &world,
+        &live,
+        &Memory::default(),
+        &Automations::default(),
+        t(10),
+        &policy(),
+    );
+
+    assert_eq!(decided.actions, []);
+    for issue in [9, 12] {
+        assert_eq!(
+            decided.waits.get(&Number(issue)),
+            Some(&vec![Wait::Run {
+                stage: WorkKind::Design
+            }])
+        );
+    }
+}
+
+#[test]
+fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_designs_it_once_they_close()
+ {
+    let mut stopped = claimed(readied(9));
+    stopped.sub_issues = vec![
+        sub_issue(10, true, LINEWRIGHT),
+        sub_issue(11, false, LINEWRIGHT),
+        sub_issue(12, true, "maintainer"),
+    ];
+    let mut discarded = stopped.clone();
+    discarded.sub_issues[0].linked.open = false;
+
+    let decided = decisions(
+        &snapshot(vec![stopped]),
+        &[],
+        &Memory::default(),
+        &Automations::default(),
+        t(10),
+        &policy(),
+    );
+
+    assert_eq!(
+        decided.actions,
+        [Action::DiscardCut {
+            issue: Number(9),
+            tickets: vec![Number(10)],
+        }]
+    );
+    assert_eq!(decided.waits.get(&Number(9)), None);
+    assert_eq!(decide(&snapshot(vec![discarded])), vec![design(9)]);
+}
+
+#[test]
+fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_discarded() {
+    let mut undesigned = cut_issue(9, &[(10, true)]);
+    undesigned.labels.clear();
+
+    assert_eq!(
+        decide(&snapshot(vec![undesigned])),
+        vec![Action::DiscardCut {
+            issue: Number(9),
+            tickets: vec![Number(10)],
+        }]
+    );
 }
 
 #[test]

@@ -771,7 +771,7 @@ impl Factory {
                 store.unassign_people(*issue, assignees).await?;
             }
             Action::RemoveStatusLabel { issue, label } => {
-                info!(issue = issue.0, %label, "removing a status label it does not hold");
+                info!(issue = issue.0, %label, "removing a status label");
                 store.remove_label(*issue, label.label()).await?;
             }
             Action::HandBack { item, reason } => {
@@ -840,10 +840,27 @@ impl Factory {
                     "discarding an interrupted decomposition"
                 );
                 let note = "Designing the spec change stopped part way; this set is discarded and the spec change is designed again.";
-                for issue in tickets.iter().chain([tracking]) {
-                    store.comment(*issue, note).await?;
-                    store.close_issue(*issue, CloseReason::NotPlanned).await?;
-                }
+                let issues: Vec<Number> = tickets.iter().chain([tracking]).copied().collect();
+                discard(store.as_ref(), &issues, note).await?;
+            }
+            Action::DiscardCut { issue, tickets } => {
+                warn!(issue = issue.0, "discarding an interrupted cut");
+                let note = format!(
+                    "Designing {issue} stopped part way; this ticket is discarded and {issue} \
+                     is designed again."
+                );
+                discard(store.as_ref(), tickets, &note).await?;
+                let list: Vec<String> = tickets.iter().map(Number::to_string).collect();
+                store
+                    .comment(
+                        *issue,
+                        &format!(
+                            "Designing this issue stopped part way, so its tickets {} are \
+                             discarded, and it is designed again.",
+                            list.join(", ")
+                        ),
+                    )
+                    .await?;
             }
             Action::DeleteBranch { branch } => {
                 info!(
@@ -935,6 +952,15 @@ async fn run_and_log(
             Err(e)
         }
     }
+}
+
+/// Closes `issues` as not planned, each saying why in `note`.
+async fn discard(store: &dyn Store, issues: &[Number], note: &str) -> Result<()> {
+    for issue in issues {
+        store.comment(*issue, note).await?;
+        store.close_issue(*issue, CloseReason::NotPlanned).await?;
+    }
+    Ok(())
 }
 
 async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str) -> Result<()> {
@@ -1062,9 +1088,13 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         | Action::UnassignAsked { issue, .. }
         | Action::RemoveStatusLabel { issue, .. }
         | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
-        Action::DiscardTickets { tracking, tickets } => tickets
+        Action::DiscardTickets {
+            tracking: issue,
+            tickets,
+        }
+        | Action::DiscardCut { issue, tickets } => tickets
             .iter()
-            .chain([tracking])
+            .chain([issue])
             .map(|issue| Item::Issue(*issue))
             .collect(),
         Action::Merge { pr, .. } => snapshot

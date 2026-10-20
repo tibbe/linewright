@@ -16,7 +16,7 @@ use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosingPull, Comment,
     Filed, Issue, IssueEvent, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull,
     Number, Parent, Pull, PullState, Push, Rebaseability, Requirement, Review, ReviewState,
-    Snapshot, Thread, TicketBranch, TicketBranchName, Timestamp, closing_references,
+    Snapshot, SubIssue, Thread, TicketBranch, TicketBranchName, Timestamp, closing_references,
 };
 use crate::git;
 
@@ -963,7 +963,14 @@ impl State {
         let issue = &record.issue;
         Issue {
             blocked_by: self.linked(&record.blocked_by),
-            sub_issues: self.linked(&record.sub_issues),
+            sub_issues: self
+                .linked(&record.sub_issues)
+                .into_iter()
+                .map(|linked| SubIssue {
+                    linked,
+                    author: self.issues[&linked.number].issue.author.clone(),
+                })
+                .collect(),
             parent: self
                 .issues
                 .values()
@@ -1672,9 +1679,9 @@ fn render_comments(out: &mut String, comments: &[Comment]) {
 
 fn render_issue(issue: &Issue, issue_type: Option<&str>) -> String {
     let mut out = String::new();
-    let numbers = |linked: &[Linked]| {
+    let numbers = |linked: Vec<&Linked>| {
         linked
-            .iter()
+            .into_iter()
             .map(|l| format!("{}{}", l.number, if l.open { "" } else { " (closed)" }))
             .collect::<Vec<_>>()
             .join(", ")
@@ -1694,8 +1701,8 @@ fn render_issue(issue: &Issue, issue_type: Option<&str>) -> String {
             .map(|a| a.0.as_str())
             .collect::<Vec<_>>()
             .join(", "),
-        numbers(&issue.blocked_by),
-        numbers(&issue.sub_issues),
+        numbers(issue.blocked_by.iter().collect()),
+        numbers(issue.sub_issues.iter().map(|s| &s.linked).collect()),
         issue
             .parent
             .map_or("none".to_string(), |p| p.number.to_string()),

@@ -71,7 +71,7 @@ pub enum DesignResult<C> {
     },
 }
 
-/// The tickets a spec change's work is cut into, which it always is
+/// The tickets an item's work is cut into, as a spec change's always is
 /// (docs/specs/design.md, "Cutting").
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Cut {
@@ -81,31 +81,39 @@ pub struct Cut {
     pub comment: String,
 }
 
-/// An issue built as it is, in one session. Linewright does not cut an issue
-/// into tickets yet, so a design that does is sent back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "RawUncut")]
-pub struct Uncut;
-
-#[derive(Deserialize)]
-struct RawUncut {
-    #[serde(default)]
-    tickets: Vec<serde::de::IgnoredAny>,
+/// What an issue's work is: built as it is, in one session, or cut into
+/// tickets (docs/specs/design.md, "Cutting").
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "RawIssueWork")]
+pub enum IssueWork {
+    AsItIs,
+    Cut(Cut),
 }
 
-impl TryFrom<RawUncut> for Uncut {
+#[derive(Deserialize)]
+struct RawIssueWork {
+    #[serde(default)]
+    tickets: Vec<TicketDraft>,
+    #[serde(default)]
+    comment: Option<String>,
+}
+
+impl TryFrom<RawIssueWork> for IssueWork {
     type Error = String;
 
-    fn try_from(raw: RawUncut) -> Result<Uncut, String> {
+    fn try_from(raw: RawIssueWork) -> Result<IssueWork, String> {
         if raw.tickets.is_empty() {
-            Ok(Uncut)
-        } else {
-            Err(
-                "`tickets` is not empty: Linewright builds an issue as it is, in one session, \
-                 so answer `designed` with no tickets"
-                    .into(),
-            )
+            return Ok(IssueWork::AsItIs);
         }
+        let comment = raw
+            .comment
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .ok_or("`comment` is missing: say why the work is cut into these tickets")?;
+        Ok(IssueWork::Cut(Cut {
+            tickets: raw.tickets.try_into()?,
+            comment,
+        }))
     }
 }
 

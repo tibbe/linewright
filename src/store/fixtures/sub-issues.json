@@ -1,0 +1,44 @@
+{
+  "nodes": [
+    {
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "number": 374,
+      "state": "CLOSED"
+    },
+    {
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "number": 375,
+      "state": "CLOSED"
+    },
+    {
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "number": 376,
+      "state": "CLOSED"
+    },
+    {
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "number": 377,
+      "state": "CLOSED"
+    },
+    {
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "number": 378,
+      "state": "OPEN"
+    }
+  ]
+}
