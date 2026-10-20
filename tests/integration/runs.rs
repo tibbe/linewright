@@ -729,3 +729,53 @@ async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are
         output.stdout
     );
 }
+
+#[tokio::test]
+async fn a_spec_changes_runs_recorded_as_tickets_by_the_previous_version_are_design_runs() {
+    let (mut world, work_dir) = world().await;
+    world.harness.on(WorkKind::Design, |_| {
+        Ok(json!({"tickets": [], "comment": "Nothing to build."}).to_string())
+    });
+    let pr = world
+        .store
+        .merge_change(
+            "maintainer",
+            "Gadgets",
+            "Adds gadgets.",
+            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
+        )
+        .await
+        .unwrap();
+    // Where, and as what, the previous version recorded a spec change's run.
+    let old = work_dir
+        .path()
+        .join(REPO)
+        .join(format!("runs/items/{}", pr.0));
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(
+        old.join("tickets-1.json"),
+        json!({
+            "item": pr.0,
+            "stage": "tickets",
+            "n": 1,
+            "started_at": "2026-09-28T06:00:00Z",
+            "end": {"at": "2026-09-28T06:05:00Z", "ending": "handed-back"},
+            "sessions": [],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    world.poll().await;
+
+    let output = lw(
+        work_dir.path(),
+        &["runs", &pr.0.to_string(), "--stage", "design"],
+    )
+    .await;
+    let tickets = lw(work_dir.path(), &["runs", "--stage", "tickets"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let ids = [2, 1].map(|n| format!("{}/design-{n}", pr.0));
+    assert_eq!(run_ids(&output.stdout), ids, "{}", output.stdout);
+    assert_eq!(tickets.code, Some(2), "{}", tickets.stderr);
+}

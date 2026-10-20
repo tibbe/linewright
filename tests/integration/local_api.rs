@@ -703,7 +703,7 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
 #[tokio::test]
 async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_its_tickets() {
     let mut world = World::new().await;
-    world.harness.on(linewright::reconcile::WorkKind::Tickets, |_| {
+    world.harness.on(linewright::reconcile::WorkKind::Design, |_| {
         Ok(serde_json::json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},

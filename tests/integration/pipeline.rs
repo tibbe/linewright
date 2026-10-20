@@ -208,7 +208,7 @@ async fn each_stages_session_starts_by_invoking_its_linewright_skill() {
         lines
     };
     assert_eq!(
-        [WorkKind::Triage, WorkKind::Tickets, WorkKind::Implement].map(first_lines),
+        [WorkKind::Triage, WorkKind::Design, WorkKind::Implement].map(first_lines),
         [
             ["/linewright:triage"],
             ["/linewright:to-tickets"],
@@ -563,7 +563,7 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
 }
 
 fn tickets_script(world: &World) {
-    world.harness.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Design, |_| {
         Ok(json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "## What to build\n\nGadgets persist.", "blocked_by": []},
@@ -605,7 +605,7 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
         world
             .store
             .pull_labels(spec_pr)
-            .contains(&"linewright:spec-processed".to_string())
+            .contains(&"linewright:designed".to_string())
     );
     let issues = world.store.issues();
     let [tracking, store_ticket, list_ticket] = &issues[..] else {
@@ -1622,7 +1622,7 @@ async fn spec_change_assignees(world: &World, pr: Number) -> Vec<Login> {
 fn cut_noting_assignees(world: &World, tickets: serde_json::Value) -> Arc<Mutex<Vec<Login>>> {
     let seen = Arc::new(Mutex::new(vec![]));
     let (store, noted) = (world.store.clone(), seen.clone());
-    world.harness.on(WorkKind::Tickets, move |_| {
+    world.harness.on(WorkKind::Design, move |_| {
         let spec_change = *store.pulls().last().expect("a spec change");
         *noted.lock().unwrap() = store.pull_assignees(spec_change);
         Ok(json!({"tickets": tickets.clone(), "comment": "Cut."}).to_string())
@@ -1648,7 +1648,7 @@ async fn linewright_is_assigned_to_a_spec_change_while_cutting_it_and_unassigned
             world
                 .store
                 .pull_labels(spec_pr)
-                .contains(&"linewright:spec-processed".to_string())
+                .contains(&"linewright:designed".to_string())
         );
     }
 }
@@ -1657,7 +1657,7 @@ async fn linewright_is_assigned_to_a_spec_change_while_cutting_it_and_unassigned
 async fn a_spec_change_whose_session_times_out_is_handed_back_saying_to_cut_the_work_or_lengthen_the_timeout()
  {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Design, |_| {
         Err(linewright::harness::SessionError::TimedOut {
             log_tail: "Still cutting tickets.".into(),
         })
@@ -1667,7 +1667,7 @@ async fn a_spec_change_whose_session_times_out_is_handed_back_saying_to_cut_the_
     world.poll().await;
     world.poll().await;
 
-    assert_eq!(world.harness.prompts(WorkKind::Tickets).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
     assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
     assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
     let comment = last_pull_comment(&world, spec_pr).await;
@@ -1684,7 +1684,7 @@ async fn a_spec_change_whose_session_times_out_is_handed_back_saying_to_cut_the_
 #[tokio::test]
 async fn a_handed_back_spec_change_is_cut_again_once_linewright_is_assigned_again() {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Design, |_| {
         Ok(json!({"outcome": "gave-up", "reason": "Not now."}).to_string())
     });
     let spec_pr = merge_spec_change(&world).await;
@@ -1703,7 +1703,7 @@ async fn a_handed_back_spec_change_is_cut_again_once_linewright_is_assigned_agai
         world
             .store
             .pull_labels(spec_pr)
-            .contains(&"linewright:spec-processed".to_string())
+            .contains(&"linewright:designed".to_string())
     );
 }
 
@@ -1713,7 +1713,7 @@ async fn unassigning_linewright_from_a_spec_change_while_it_is_cut_cancels_the_c
     let (release, released) = std::sync::mpsc::channel::<()>();
     let released = Mutex::new(released);
     let (begin, mut begun) = tokio::sync::mpsc::unbounded_channel();
-    world.harness.on(WorkKind::Tickets, move |_| {
+    world.harness.on(WorkKind::Design, move |_| {
         begin.send(()).unwrap();
         released.lock().unwrap().recv().unwrap();
         Err(linewright::harness::SessionError::TimedOut {
@@ -1735,7 +1735,7 @@ async fn unassigning_linewright_from_a_spec_change_while_it_is_cut_cancels_the_c
     assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
     assert_eq!(world.store.snapshot_pull(spec_pr).await.comments, []);
     world.poll().await;
-    assert_eq!(world.harness.prompts(WorkKind::Tickets).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
 }
 
 #[tokio::test]

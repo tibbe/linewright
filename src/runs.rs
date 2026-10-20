@@ -9,7 +9,7 @@ use tracing::warn;
 
 use crate::automation::AutomationName;
 use crate::domain::{Number, Timestamp};
-use crate::reconcile::{DoneRun, WorkKind};
+use crate::reconcile::{DoneRun, OLD_DESIGN, WorkKind};
 use crate::records;
 use crate::status::{Paint, utc};
 
@@ -143,14 +143,23 @@ impl Runs {
     }
 
     /// Where an earlier version kept the runs of `of`, if anywhere else.
-    fn old_dir_of(&self, of: &RunOf) -> Option<PathBuf> {
+    fn old_place_of(&self, of: &RunOf) -> Option<OldPlace> {
         match of {
+            RunOf::Work {
+                stage: WorkKind::Design,
+                ..
+            } => Some(OldPlace {
+                dir: self.dir_of(of),
+                prefix: format!("{OLD_DESIGN}-"),
+            }),
             RunOf::Work { .. } => None,
-            RunOf::Automation { automation } => Some(
-                self.dir()
+            RunOf::Automation { automation } => Some(OldPlace {
+                dir: self
+                    .dir()
                     .join(OLD_AUTOMATIONS)
                     .join(automation.to_string()),
-            ),
+                prefix: file_prefix(of),
+            }),
         }
     }
 
@@ -158,9 +167,9 @@ impl Runs {
         let dir = self.dir_of(&of);
         std::fs::create_dir_all(&dir).context("creating the runs' directory")?;
         let prefix = file_prefix(&of);
-        let old_dir = self.old_dir_of(&of);
+        let old = self.old_place_of(&of);
         let mut n = numbers(&dir, &prefix)
-            .chain(old_dir.iter().flat_map(|old| numbers(old, &prefix)))
+            .chain(old.iter().flat_map(|old| numbers(&old.dir, &old.prefix)))
             .max()
             .unwrap_or(0)
             + 1;
@@ -199,10 +208,11 @@ impl Runs {
     }
 
     fn path_of(&self, id: &RunId) -> PathBuf {
-        let file = format!("{}{}.json", file_prefix(&id.of), id.n);
-        let path = self.dir_of(&id.of).join(&file);
-        match self.old_dir_of(&id.of) {
-            Some(old) if !path.exists() && old.join(&file).exists() => old.join(file),
+        let path = self
+            .dir_of(&id.of)
+            .join(format!("{}{}.json", file_prefix(&id.of), id.n));
+        match self.old_place_of(&id.of) {
+            Some(old) if !path.exists() && old.path(id.n).exists() => old.path(id.n),
             _ => path,
         }
     }
@@ -244,6 +254,19 @@ const AUTOMATIONS: &str = "automations";
 /// Where versions before automations were renamed from workflows kept
 /// automations' runs: read beside [`AUTOMATIONS`], never written to.
 const OLD_AUTOMATIONS: &str = "workflows";
+
+/// Where an earlier version kept a run's records: their directory and the
+/// prefix of their files.
+struct OldPlace {
+    dir: PathBuf,
+    prefix: String,
+}
+
+impl OldPlace {
+    fn path(&self, n: u32) -> PathBuf {
+        self.dir.join(format!("{}{n}.json", self.prefix))
+    }
+}
 
 fn file_prefix(of: &RunOf) -> String {
     match of {

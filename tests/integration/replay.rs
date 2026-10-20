@@ -99,7 +99,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(dir.path(), &[]);
     let harness = Arc::new(ScriptedHarness::default());
-    harness.on(WorkKind::Tickets, |call| {
+    harness.on(WorkKind::Design, |call| {
         assert!(call.spec.prompt.contains("+Gadgets exist."));
         Ok(json!({
             "tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}],
@@ -382,7 +382,7 @@ async fn a_replay_runs_no_automations() {
     );
     let clock = Arc::new(FakeClock::new());
     let harness = Arc::new(ScriptedHarness::default());
-    harness.on(WorkKind::Tickets, {
+    harness.on(WorkKind::Design, {
         let clock = clock.clone();
         move |_| {
             // Past the automation's next tick, while the replay goes on.
@@ -424,7 +424,7 @@ async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(dir.path(), &[]);
     let harness = Arc::new(ScriptedHarness::default());
-    harness.on(WorkKind::Tickets, |_| {
+    harness.on(WorkKind::Design, |_| {
         Ok(json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},

@@ -329,12 +329,12 @@ async fn attempt(
     };
     let (n, pr, task) = match work {
         Work::Triage { issue: n } => return triage(shell, ctx, issue(*n)?).await,
-        Work::Tickets { pr } => {
+        Work::Design { pr } => {
             let pr = snapshot
                 .merged_pull(*pr)
                 .with_context(|| format!("{pr} is not in the snapshot"))
                 .map_err(infra)?;
-            return tickets(shell, ctx, pr).await;
+            return design(shell, ctx, pr).await;
         }
         Work::Implement { issue: n } => {
             let issue = issue(*n)?;
@@ -891,10 +891,10 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     Ok(())
 }
 
-async fn tickets(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failure> {
+async fn design(shell: &Shell, ctx: &Ctx, pr: &MergedPull) -> Result<(), Failure> {
     let purpose = Purpose::Work {
         subject: Subject::SpecChange(pr.number),
-        kind: WorkKind::Tickets,
+        kind: WorkKind::Design,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let diff = spec_diff(shell, pr).await?;
@@ -924,11 +924,8 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
 async fn record_tickets(shell: &Shell, pr: &MergedPull, tickets: Tickets) -> Result<()> {
     file_tickets(shell, pr, tickets).await?;
     // Labeled first, so that a stop between the two leaves the spec change
-    // processed rather than handed back.
-    shell
-        .store
-        .add_label(pr.number, label::SPEC_PROCESSED)
-        .await?;
+    // designed rather than handed back.
+    shell.store.add_label(pr.number, label::DESIGNED).await?;
     shell.store.unassign(pr.number).await
 }
 

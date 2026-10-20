@@ -386,6 +386,16 @@ fn serve_first_logs_the_version_and_the_commit_as_text_too() {
 }
 
 #[tokio::test]
+async fn startup_creates_the_designed_label_with_what_it_says_an_item_has_had() {
+    let world = World::new().await;
+
+    assert_eq!(
+        world.store.label_description("linewright:designed"),
+        Some("Designed, and cut into tickets where it needed cutting".to_string())
+    );
+}
+
+#[tokio::test]
 async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() {
     let world = World::new().await;
 

@@ -38,8 +38,10 @@ the one applied last and removes the rest.
   choosing, so you can adopt it a little at a time. Where it is, apply that
   label to let Linewright start on an item. Removing it keeps Linewright from
   starting more on the item; work in flight goes on.
-- `linewright:spec-processed`: Linewright's mark on a merged spec change it has
-  cut into tickets. Leave it alone.
+- `linewright:designed`: Linewright's mark on a merged spec change it has
+  designed, and cut into tickets where it needed cutting. Leave it alone. A spec
+  change labeled `linewright:spec-processed` by an earlier release counts as
+  designed.
 
 Don't label an issue `ready-for-agent` before it is clear what to build: an
 issue labeled that way is built as it stands, without triage. A new report
@@ -130,7 +132,7 @@ changing it is how you build.
 2. Linewright assigns itself to your merged pull request while it cuts the
    change into tickets, issues small enough for one agent to build well, and
    opens a tracking issue that lists them. Then it labels the pull request
-   `linewright:spec-processed` and unassigns itself. The tickets are worked in
+   `linewright:designed` and unassigns itself. The tickets are worked in
    order of what blocks what.
 3. Each ticket becomes a pull request. The tracking issue closes when every
    ticket is closed.

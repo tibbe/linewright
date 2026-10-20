@@ -215,7 +215,7 @@ impl Family {
     /// leaves an older one.
     fn of_merged(pull: &MergedPull, tracking_issues: &[Number]) -> Family {
         let mut family = Family::of_pull(&pull.closes);
-        if pull.has_label(label::SPEC_PROCESSED) {
+        if pull.designed_label().is_some() {
             family
                 .children
                 .extend(tracking_issues.iter().max().map(|&number| Child {
@@ -504,7 +504,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             let default_branch = &fresh.snapshot.default_branch;
             match not_a_spec_change(merged, default_branch, now, &fresh.policy) {
                 None => {
-                    let state = ItemState::WaitingForTickets;
+                    let state = ItemState::WaitingForDesign;
                     return tracked_as(&merged.title, state, take_waits());
                 }
                 Some(left_alone) => (
@@ -666,10 +666,9 @@ fn describe_not_spec_change(because: &NotSpecChange) -> String {
         NotSpecChange::NoSpecFile { spec_glob } => {
             format!("it touches no file matching `{spec_glob}`, the spec-glob")
         }
-        NotSpecChange::Processed => format!(
-            "it is labeled `{}`: cut into tickets already",
-            label::SPEC_PROCESSED
-        ),
+        NotSpecChange::Designed { label } => {
+            format!("it is labeled `{}`: designed already", label.name())
+        }
         NotSpecChange::Unassigned {
             at,
             required_label: None,

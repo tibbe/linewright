@@ -199,7 +199,7 @@ async fn a_spec_change_merged_since_the_poll_and_refreshed_is_cut_into_tickets()
             Action::Claim {
                 item: Item::Pull(pr)
             },
-            Action::Start(Work::Tickets { pr })
+            Action::Start(Work::Design { pr })
         ]
     );
 }
@@ -262,7 +262,7 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
             Action::Claim {
                 item: Item::Pull(spec)
             },
-            Action::Start(Work::Tickets { pr: spec }),
+            Action::Start(Work::Design { pr: spec }),
             Action::Claim {
                 item: Item::Issue(issue)
             },
@@ -376,7 +376,7 @@ async fn a_refresh_before_the_first_poll_polls() {
 #[tokio::test]
 async fn a_spec_change_cut_since_the_poll_is_not_cut_again_by_a_refresh() {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Design, |_| {
         Ok(serde_json::json!({
             "tickets": [{"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []}],
             "comment": "One slice."

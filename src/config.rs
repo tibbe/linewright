@@ -65,7 +65,7 @@ pub enum Command {
         /// Only the runs on issue or pull request #N.
         #[arg(value_name = "N")]
         item: Option<u64>,
-        /// Only the runs of this stage: triage, tickets, implement, rework,
+        /// Only the runs of this stage: triage, design, implement, rework,
         /// fix-ci or update.
         #[arg(long)]
         stage: Option<WorkKind>,

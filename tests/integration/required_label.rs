@@ -16,7 +16,7 @@ async fn world(required: Option<&str>, label_exists: bool) -> World {
 }
 
 async fn merged_spec_change(world: &World) {
-    world.harness.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Design, |_| {
         Ok(json!({
             "tickets": [
                 {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
@@ -96,7 +96,7 @@ async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
         .await
         .unwrap();
     let _ = pr;
-    world.harness.on(WorkKind::Tickets, |_| {
+    world.harness.on(WorkKind::Design, |_| {
         Ok(json!({
             "tickets": [{"id": "a", "title": "A", "body": "a", "blocked_by": []}],
             "comment": "One."

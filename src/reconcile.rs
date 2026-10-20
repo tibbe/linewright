@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastRuns};
 use crate::domain::{
-    Assignment, BranchIssue, CheckState, ClosingPull, Comment, Filed, Issue, Item, Linked, Login,
-    MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState, Rebaseability,
-    Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread, TicketBranchName, Timestamp,
-    UpdateMethod, UpdateRule, label, last_assigned, last_assignment, last_labeling,
-    last_unassignment,
+    Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, Issue, Item,
+    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
+    Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
+    TicketBranchName, Timestamp, UpdateMethod, UpdateRule, label, last_assigned, last_assignment,
+    last_labeling, last_unassignment,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
@@ -59,7 +59,7 @@ pub enum Work {
     Triage {
         issue: Number,
     },
-    Tickets {
+    Design {
         pr: Number,
     },
     Implement {
@@ -92,7 +92,7 @@ impl Work {
     pub fn subject(&self) -> Subject {
         match self {
             Work::Triage { issue } | Work::Implement { issue } => Subject::Issue(*issue),
-            Work::Tickets { pr } => Subject::SpecChange(*pr),
+            Work::Design { pr } => Subject::SpecChange(*pr),
             Work::Rework { pr, .. } | Work::FixCi { pr, .. } | Work::Update { pr, .. } => {
                 Subject::Pull(*pr)
             }
@@ -102,7 +102,7 @@ impl Work {
     pub fn item(&self) -> Number {
         match self {
             Work::Triage { issue } | Work::Implement { issue } => *issue,
-            Work::Tickets { pr }
+            Work::Design { pr }
             | Work::Rework { pr, .. }
             | Work::FixCi { pr, .. }
             | Work::Update { pr, .. } => *pr,
@@ -112,7 +112,7 @@ impl Work {
     pub fn starts_from(&self) -> Item {
         match self {
             Work::Triage { issue } | Work::Implement { issue } => Item::Issue(*issue),
-            Work::Tickets { pr }
+            Work::Design { pr }
             | Work::Rework { pr, .. }
             | Work::FixCi { pr, .. }
             | Work::Update { pr, .. } => Item::Pull(*pr),
@@ -122,7 +122,7 @@ impl Work {
     pub fn kind(&self) -> WorkKind {
         match self {
             Work::Triage { .. } => WorkKind::Triage,
-            Work::Tickets { .. } => WorkKind::Tickets,
+            Work::Design { .. } => WorkKind::Design,
             Work::Implement { .. } => WorkKind::Implement,
             Work::Rework { .. } => WorkKind::Rework,
             Work::FixCi { .. } => WorkKind::FixCi,
@@ -135,7 +135,7 @@ impl Work {
 #[serde(into = "&'static str", try_from = "String")]
 pub enum WorkKind {
     Triage,
-    Tickets,
+    Design,
     Implement,
     Rework,
     FixCi,
@@ -145,7 +145,7 @@ pub enum WorkKind {
 impl WorkKind {
     pub const ALL: [WorkKind; 6] = [
         WorkKind::Triage,
-        WorkKind::Tickets,
+        WorkKind::Design,
         WorkKind::Implement,
         WorkKind::Rework,
         WorkKind::FixCi,
@@ -155,14 +155,14 @@ impl WorkKind {
     pub fn is_on_pull(self) -> bool {
         match self {
             WorkKind::Rework | WorkKind::FixCi | WorkKind::Update => true,
-            WorkKind::Triage | WorkKind::Tickets | WorkKind::Implement => false,
+            WorkKind::Triage | WorkKind::Design | WorkKind::Implement => false,
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
             WorkKind::Triage => "triage",
-            WorkKind::Tickets => "tickets",
+            WorkKind::Design => "design",
             WorkKind::Implement => "implement",
             WorkKind::Rework => "rework",
             WorkKind::FixCi => "fix-ci",
@@ -177,11 +177,18 @@ impl From<WorkKind> for &'static str {
     }
 }
 
+/// What the design stage was called before the Design area, in the run
+/// records an earlier release wrote: read as the design stage, never written.
+pub const OLD_DESIGN: &str = "tickets";
+
 impl TryFrom<String> for WorkKind {
     type Error = String;
 
     fn try_from(name: String) -> Result<WorkKind, String> {
-        name.parse()
+        match name.as_str() {
+            OLD_DESIGN => Ok(WorkKind::Design),
+            _ => name.parse(),
+        }
     }
 }
 
@@ -556,7 +563,7 @@ pub fn decisions(
         live.iter()
             .find(|run| run.subject == subject)
             .map(|run| run.kind)
-            .or(ended_cut.then_some(WorkKind::Tickets))
+            .or(ended_cut.then_some(WorkKind::Design))
     };
 
     for run in live {
@@ -568,14 +575,14 @@ pub fn decisions(
         }
     }
 
-    // The pull request is labeled processed last, so a tracking issue
+    // The pull request is labeled designed last, so a tracking issue
     // without the label is a decomposition that stopped part way: one
     // interrupted, cancelled or handed back.
     let mut discarded = vec![];
     for pr in snapshot
         .merged
         .iter()
-        .filter(|pr| !pr.has_label(label::SPEC_PROCESSED))
+        .filter(|pr| pr.designed_label().is_none())
     {
         if running(Subject::SpecChange(pr.number)).is_some() {
             continue;
@@ -599,7 +606,7 @@ pub fn decisions(
     let spec_changes = pending_spec_changes(snapshot, now, policy);
     let pending: Vec<Number> = spec_changes.iter().map(|pr| pr.number).collect();
     for pr in spec_changes {
-        let work = Work::Tickets { pr: pr.number };
+        let work = Work::Design { pr: pr.number };
         if let Some(stage) = running(Subject::SpecChange(pr.number)) {
             plan.wait(pr.number, Wait::Run { stage });
         } else if discarded.contains(&pr.number) {
@@ -851,12 +858,8 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
         }
         Subject::SpecChange(pr) => {
             let pr = snapshot.merged_pull(pr)?;
-            if pr.has_label(label::SPEC_PROCESSED) {
-                Some(format!(
-                    "{} was labeled `{}`",
-                    pr.number,
-                    label::SPEC_PROCESSED
-                ))
+            if let Some(label) = pr.designed_label() {
+                Some(format!("{} was labeled `{}`", pr.number, label.name()))
             } else if !pr.is_assigned(&policy.linewright) {
                 Some(format!(
                     "{} was unassigned from {}",
@@ -872,7 +875,7 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
             };
             let wanted = match run.kind {
                 WorkKind::Triage => StatusLabel::NeedsTriage,
-                WorkKind::Tickets
+                WorkKind::Design
                 | WorkKind::Implement
                 | WorkKind::Rework
                 | WorkKind::FixCi
@@ -1012,7 +1015,7 @@ fn rank(kind: WorkKind) -> u8 {
     match kind {
         WorkKind::Rework | WorkKind::FixCi | WorkKind::Update => 0,
         WorkKind::Triage => 1,
-        WorkKind::Tickets => 2,
+        WorkKind::Design => 2,
         WorkKind::Implement => 3,
     }
 }
@@ -1710,7 +1713,9 @@ pub enum NotSpecChange {
     NoSpecFile {
         spec_glob: String,
     },
-    Processed,
+    Designed {
+        label: DesignedLabel,
+    },
     BeforeLookback {
         merged_at: Timestamp,
         window_opened: Timestamp,
@@ -1744,8 +1749,8 @@ pub fn not_a_spec_change(
         NotSpecChange::NoSpecFile {
             spec_glob: policy.spec_glob.pattern().to_string(),
         }
-    } else if pr.has_label(label::SPEC_PROCESSED) {
-        NotSpecChange::Processed
+    } else if let Some(label) = pr.designed_label() {
+        NotSpecChange::Designed { label }
     } else if pr.merged_at < window_opened {
         NotSpecChange::BeforeLookback {
             merged_at: pr.merged_at,

@@ -125,6 +125,10 @@ pub mod label {
     pub const READY_FOR_HUMAN: &str = "ready-for-human";
     pub const BUG: &str = "bug";
     pub const ENHANCEMENT: &str = "enhancement";
+    pub const DESIGNED: &str = "linewright:designed";
+    /// What [`DESIGNED`] was called before this release: read as it, for
+    /// this release, so that no spec change processed before the upgrade is
+    /// designed again; never set.
     pub const SPEC_PROCESSED: &str = "linewright:spec-processed";
 
     pub const IN_VIEW: [&str; 3] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT];
@@ -145,10 +149,29 @@ pub mod label {
         (BUG, "Something is broken"),
         (ENHANCEMENT, "New feature or improvement"),
         (
-            SPEC_PROCESSED,
-            "This merged PR's spec changes have been ticketed",
+            DESIGNED,
+            "Designed, and cut into tickets where it needed cutting",
         ),
     ];
+}
+
+/// A label that says a merged pull request was designed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DesignedLabel {
+    #[serde(rename = "linewright:designed")]
+    Designed,
+    /// See [`label::SPEC_PROCESSED`].
+    #[serde(rename = "linewright:spec-processed")]
+    SpecProcessed,
+}
+
+impl DesignedLabel {
+    pub fn name(self) -> &'static str {
+        match self {
+            DesignedLabel::Designed => label::DESIGNED,
+            DesignedLabel::SpecProcessed => label::SPEC_PROCESSED,
+        }
+    }
 }
 
 /// What an issue needs next, as its status label says.
@@ -671,6 +694,13 @@ pub struct MergedPull {
 impl MergedPull {
     pub fn has_label(&self, label: &str) -> bool {
         self.labels.iter().any(|l| l == label)
+    }
+
+    /// The label that says it was designed, if it carries one.
+    pub fn designed_label(&self) -> Option<DesignedLabel> {
+        [DesignedLabel::Designed, DesignedLabel::SpecProcessed]
+            .into_iter()
+            .find(|designed| self.has_label(designed.name()))
     }
 
     pub fn is_assigned(&self, login: &Login) -> bool {

@@ -51,7 +51,7 @@ to start with a prompt that lacks one or has one it doesn't know.
 | file | sent to |
 |---|---|
 | `triage.md` | triage |
-| `tickets.md` | tickets |
+| `tickets.md` | design |
 | `implement.md` | implementation |
 | `rework.md` | rework |
 | `fix-ci.md` | CI fixes |

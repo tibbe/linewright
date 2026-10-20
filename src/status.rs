@@ -125,7 +125,7 @@ pub struct Tracked {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum ItemState {
-    WaitingForTickets,
+    WaitingForDesign,
     Tracking {
         tickets_closed: usize,
         tickets: usize,
@@ -314,7 +314,7 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
         items.push(Tracked {
             number: pr.number,
             title: pr.title.clone(),
-            state: ItemState::WaitingForTickets,
+            state: ItemState::WaitingForDesign,
             waiting_for: waits.remove(&pr.number).unwrap_or_default(),
         });
     }
@@ -527,7 +527,7 @@ fn automation_lines(status: &Status, paint: Paint) -> Vec<String> {
 
 pub(crate) fn describe(state: &ItemState) -> String {
     match state {
-        ItemState::WaitingForTickets => "spec change waiting for tickets".into(),
+        ItemState::WaitingForDesign => "spec change waiting for its design".into(),
         ItemState::Tracking {
             tickets_closed,
             tickets,
