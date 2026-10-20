@@ -78,11 +78,13 @@ The pipeline, end to end:
 
 ```mermaid
 flowchart LR
-    spec[Spec PR merged] --> impl[Implement, review, commit]
+    spec[Spec PR merged] --> design[Design]
     issue[Issue labeled needs-triage] --> triage[Triage]
     automation[Automation] -.-> ready
     triage --> ready[Issue labeled ready-for-agent]
-    ready --> impl
+    ready --> design
+    design -- an issue that fits one session --> impl[Implement, review, commit]
+    design -- a spec change, or an issue that needs cutting --> tickets[Tickets] --> impl
     impl --> draft[Draft PR, CI green]
     draft --> review[Ready for review]
     review -- person comments --> impl
@@ -99,7 +101,8 @@ flowchart LR
 | [Webhooks](webhooks.md) | GitHub telling Linewright about changes as they happen. |
 | [Triage](triage.md) | Deciding what happens to a new issue. |
 | [Automations](automations.md) | Running agents on a trigger with the maintainer's instructions. |
-| [Implementation](implementation.md) | Turning spec changes and tickets into reviewed, committed branches. |
+| [Design](design.md) | Choosing the structure of the code before it is built, and cutting the work into tickets. |
+| [Implementation](implementation.md) | Turning tickets into reviewed, committed branches. |
 | [Pull requests](pull_requests.md) | Taking the work from a pull request to a merge. |
 | [Runs](runs.md) | What holds for every piece of work Linewright does, whatever its stage. |
 | [Operation](operation.md) | Running Linewright. |

@@ -86,12 +86,18 @@ An item Linewright may start work on of its own accord: every item, or, where
 the operator requires a label, those carrying it.
 _Avoid_: enabled, trusted
 
+**Design**:
+The structure of the code for one item: its parts, what each is responsible
+for, and the interfaces between them.
+_Avoid_: technical design, detailed design, high-level design, low-level
+design, approach, blueprint, design doc, tech spec, RFC
+
 **Ticket**:
 An issue an agent implements.
 _Avoid_: task, story
 
 **Tracking issue**:
-The parent issue of the tickets cut from one spec change.
+The parent issue of the tickets cut from one item.
 _Avoid_: epic
 
 **Usage limit**:

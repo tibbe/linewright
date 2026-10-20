@@ -30,7 +30,7 @@ has no item.
 | stage       | what its run does                                                               |
 | ----------- | ------------------------------------------------------------------------------- |
 | `triage`    | triages an issue ([Triage](triage.md))                                          |
-| `tickets`   | cuts a spec change into tickets ([Implementation](implementation.md))           |
+| `design`    | designs an item, and cuts it into tickets where it needs cutting ([Design](design.md)) |
 | `implement` | builds a ticket into a pull request ([Implementation](implementation.md))       |
 | `fix-ci`    | fixes the CI of Linewright's pull request ([Pull requests](pull_requests.md))   |
 | `rework`    | addresses feedback on Linewright's pull request ([Pull requests](pull_requests.md)) |
@@ -69,6 +69,11 @@ A run ends in one of these outcomes, each with its name in JSON.
 
 - **Handing back.** Handing an item back is as under
   [Repository](repository.md).
+- **Spec gaps.** A spec gap that blocks the run (the spec cannot decide it)
+  hands its item back with the question. A gap that does not block it becomes
+  a separate `ready-for-human` issue describing the needed spec change, and
+  the run continues. A gap already filed for the item and still open is not
+  filed again.
 - **A result the manager can't accept.** A session's result the manager
   cannot parse, or whose work holds a credential
   ([Architecture](architecture.md)), whether Linewright finds it or GitHub

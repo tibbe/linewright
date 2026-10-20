@@ -66,10 +66,14 @@ required label, and never renames or deletes one.
 | `ready-for-agent`                            | decided: an agent could build it                  | maintainer, Linewright                           |
 | `ready-for-human`                            | needs a person's decision or action               | Linewright, maintainer                           |
 | `bug`, `enhancement`                         | category, in repositories without issue types     | Linewright (triage), maintainer                  |
-| `linewright:spec-processed`                  | this merged PR's spec changes have been ticketed  | Linewright                                       |
+| `linewright:designed`                        | designed, and cut into tickets where it needed cutting | Linewright                                  |
 | the required label, named by `require-label` | Linewright may start work on this item            | maintainer, Linewright                           |
 
-- **Prefix.** Labels only Linewright uses are prefixed `linewright:`.
+- **Linewright's labels.** Labels only Linewright uses are prefixed
+  `linewright:`. Each records what Linewright has done to an item, beside the
+  status labels: Linewright sets and clears it, and a person may change it
+  to steer; for example, removing `linewright:designed` from an item has it
+  designed again.
 - **Status labels.** The first four are the status labels: what an issue
   needs next, one at a time. Whoever sets one removes the others; an issue
   carrying more than one holds the newest, and Linewright removes the rest.
@@ -102,7 +106,8 @@ assigning itself and lets go of it by unassigning itself.
   closed, or an issue's label stops asking.
 - **Handing back.** Handing an item back is how Linewright lets go of an item
   it cannot finish: it labels an issue `ready-for-human`, unassigns itself
-  from the item and says why in a comment.
+  from the item, removes `linewright:designed` where the design is the item's
+  own, and says why in a comment.
 - **Marked for Linewright.** With `require-label` set, an item is marked for
   Linewright when it carries the required label, checked each time Linewright
   claims an item on its own. Work already started carries on without it.
@@ -112,14 +117,15 @@ assigning itself and lets go of it by unassigning itself.
 
 ## State
 
-Machine state is derived from GitHub, never labeled.
+State GitHub already shows is derived from it, never labeled.
 
 - **In review.** An issue is in review while an open pull request closes it.
 - **Linewright's pull requests.** They are the ones its account opened.
 
 The lifecycle of an issue. `triage` and `work` each group several states,
 given under [Triage](triage.md) and [Pull requests](pull_requests.md);
-`ready-for-agent` and `ready-for-human` are the labels between them.
+`ready-for-agent` and `ready-for-human` are the labels between them, and
+`tracking` is an issue cut into tickets, under [Design](design.md).
 
 | State           | Event                          | Next            | Effect                                  |
 | --------------- | ------------------------------ | --------------- | --------------------------------------- |
@@ -134,16 +140,17 @@ given under [Triage](triage.md) and [Pull requests](pull_requests.md);
 | work            | Linewright unassigned          | ready-for-agent | not claimed on its own until labeled again |
 | work            | handed back                    | ready-for-human |                                         |
 | work            | PR closed unmerged             | ready-for-human |                                         |
+| work            | cut into tickets               | tracking        | tickets filed as sub-issues             |
+| tracking        | every ticket closed            | —               | issue closed                            |
 | work            | PR merged                      | —               | issue closed                            |
 
 ## Comments
 
 Linewright records every outcome in a comment on the item it concerns.
 
-- **Which outcomes.** A triage result, tickets created (on the tracking issue
-  and the spec PR), an item handed back and why, a PR made ready, a rework
-  done. Claims, PRs and merges need no comment: the assignee, the PR and the
-  merge are the record.
+- **Which outcomes.** Every outcome of a run, except those GitHub shows
+  itself: a claim, a pull request and a merge need no comment, since the
+  assignee, the PR and the merge are the record.
 - **For people.** A comment is for people. Linewright decides nothing from
   what its own comments say: that it wrote one is the comment's author, and
   what it waits for is in the labels, assignees, pushes and pull requests.

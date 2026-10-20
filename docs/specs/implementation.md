@@ -11,48 +11,16 @@ requests that have already been through review.
 
 ## User Stories
 
-1. As an operator, I want a spec change cut into tickets an agent session
-   finishes within its smart zone, so that the work is done by agents at their
-   sharpest; that each PR is small enough to review is a welcome side effect.
-2. As an operator, I want tickets ordered by dependency and worked in that
-   order, so that each builds on merged work.
-3. As an operator, I want one place that shows a spec change's progress, so that
-   I know when it is done.
-4. As an operator, I want each ticket implemented on its own branch from a fresh
+1. As an operator, I want each ticket implemented on its own branch from a fresh
    checkout, so that runs never interfere with each other or with my working
    copy.
-5. As an operator, I want the work reviewed by agents and passing the
+2. As an operator, I want the work reviewed by agents and passing the
    repository's checks before a PR exists, so that the first version I see has
    been through review.
-6. As an operator, I want the spec left as it is by agents, so that it stays
+3. As an operator, I want the spec left as it is by agents, so that it stays
    mine.
-7. As an operator, I want the implementer to read only the spec its ticket
+4. As an operator, I want the implementer to read only the spec its ticket
    touches, so that it stays in its smart zone and its run costs less.
-
-## Tickets
-
-The decomposition is Linewright's responsibility: it runs from a merged spec
-change to the ready PRs with no human step, and a wrong set of tickets from a
-good spec is a defect in Linewright.
-
-1. An agent reads the PR's spec diff, the spec and the codebase and proposes
-   tickets: vertical slices sized to a session's smart zone, with code that
-   already matches the spec producing none.
-2. Linewright creates one tracking issue for the spec change: "Spec change:
-   <PR title>", linking the PR and listing the tickets, with no status label.
-   Each ticket is a sub-issue of it, states what to build and its acceptance
-   criteria, carries `ready-for-agent`, and is linked to the tickets it is
-   blocked by with GitHub's issue dependencies.
-3. Once its tickets exist, the PR is labeled `linewright:spec-processed`,
-   also when there are none, in which case no tracking issue is created.
-4. Linewright closes the tracking issue when all its sub-issues are closed.
-
-- **1a. The decomposition cannot finish.** It hands the spec change back
-  (see [Repository](repository.md)).
-- **2a. The decomposition is interrupted part way** (the tracking issue
-  exists, the PR is not labeled). It is discarded, its tracking issue and
-  tickets closed as not planned with a comment, and the spec change is cut
-  again.
 
 ## Working a ticket
 
@@ -65,30 +33,24 @@ every finding it cannot show is wrong on the facts, and commits.
   ticket. The run may discard the branch's work and start again from the
   default branch. Once its pull request is open, the work is the pull
   request's (see [Pull requests](pull_requests.md)).
-- **What the implementer reads.** The ticket and its comments (the triage
-  brief, earlier hand-backs). Its brief names the ticket's parent issue, and
-  for a ticket cut from a spec change, the spec change: pointers, not their
-  content. The implementer and its reviewers read them when they need to know
-  what the other tickets cover, since those own what this ticket leaves out.
+- **What the implementer reads.** The ticket and its comments (the triage brief,
+  the design, earlier hand-backs) and, for a ticket, the comments of the item
+  it was cut from, which hold its design ([Design](design.md)). Its brief
+  names the ticket's parent issue, and for a ticket cut from a spec change,
+  the spec change: pointers, not their content. The implementer and its
+  reviewers read them when they need to know what the other tickets cover,
+  since those own what this ticket leaves out.
 - **What it reads of the spec.** The glossary and the parts its work touches,
   not the whole spec. For a ticket cut from a spec change, its brief also
   holds the spec change's spec diff, and the files the diff changes are among
   the parts the work touches.
 - **The spec stays as it is.** The implementer leaves spec files as they are,
-  by its brief; a spec it cannot build from is a spec gap, below. Linewright
+  by its brief; a spec it cannot build from is a spec gap ([Runs](runs.md)).
+  Linewright
   does not check the branch for spec changes: they show in the PR's diff, and
   a maintainer who wants a guarantee requires review of spec files in GitHub.
-- **Spec gaps.** A spec gap that blocks the run (the spec cannot decide it)
-  hands its item back with the question. A gap that does not block it becomes
-  a separate `ready-for-human` issue describing the needed spec change, and
-  the run continues. A gap already filed for the item and still open is not
-  filed again.
 - **Handing back.** A hand-back of a ticket with no pull request names the
   ticket's branch, so the maintainer can see what was tried, and deleting the
   branch starts the ticket's next run from the default branch. When a ticket
   is closed with no pull request open for it, Linewright deletes its branch.
 
-## Out of scope
-
-- One session for a whole spec change. Tickets exist to keep each session in
-  its smart zone; as that zone grows, a spec change may need no cutting.

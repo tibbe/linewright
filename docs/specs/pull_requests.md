@@ -57,9 +57,13 @@ The `work` states of the issue lifecycle, derived as under
 | State     | Event                      | Next      | Effect       |
 | --------- | -------------------------- | --------- | ------------ |
 | —         | Linewright assigned        | claimed   |              |
-| claimed   | PR opened that closes it   | in review |              |
-| claimed   | cannot finish              | —         | handed back  |
-| in review | PR edited not to close it  | claimed   |              |
+| —         | Linewright assigned, already labeled designed | designed | |
+| claimed   | design posted              | designed  |              |
+| claimed   | nothing to build, or cannot design | — | handed back  |
+| designed  | cut into tickets           | —         | becomes their tracking issue |
+| designed  | PR opened that closes it   | in review |              |
+| designed  | cannot finish              | —         | handed back  |
+| in review | PR edited not to close it  | designed  |              |
 | in review | PR merged                  | —         | issue closed |
 | in review | PR closed unmerged         | —         | handed back  |
 

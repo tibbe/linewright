@@ -26,9 +26,11 @@ lives in the store and nowhere else.
 - **Reconciling.** Each poll takes a snapshot of the store and reconciles it
   with the runs in flight. Between polls the snapshot is kept, and a webhook
   delivery reads the items it names into it again and reconciles.
-- **Machine state is derived** from the store's facts, what each item is now
-  and how it got there, never written as labels. Linewright may keep
-  bookkeeping no person sets under the work directory.
+- **Machine state is in the store**: derived from its facts, what each item
+  is now and how it got there, where they show it, and written as a
+  `linewright:` label where they don't, such as that an item has been
+  designed. Linewright may keep bookkeeping no person sets under the work
+  directory.
 - **Webhook deliveries are hints, not state.** A delivery says which item to
   read again; the payload never stands in for the store.
 - **Why.** GitHub neither orders deliveries nor redelivers a failed one, so
@@ -36,8 +38,8 @@ lives in the store and nowhere else.
   item again keeps every reconcile on the store's facts, as Kubernetes
   controllers, Argo CD and `rust-lang/bors` do. The cost is one read per changed
   item, against a full snapshot per poll.
-- **Spec changes are found by lookback**: pull requests merged within the
-  window, minus those labeled processed.
+- **Spec changes are found by lookback** over the pull requests merged
+  within the window ([Sources of work](sources_of_work.md)).
 
 ## Agent sessions
 
@@ -51,15 +53,9 @@ during the session.
   session never depends on what an earlier session left behind or on the host's
   user-level setup. Isolation is of what sessions can observe of each other, not
   of where they run.
-- **Briefs are files read at startup**: the skills, forked from
-  `mattpocock/skills` (`triage`, `to-tickets`, `implement`, `code-review`, `pr`,
-  `tdd`) with their MIT notice, and the prompts Linewright sends a session, each
-  a template holding its task and result contract.
-- **Invoking skills.** A session whose work a skill covers invokes it, as a
-  person would invoke the original, with the task and the result contract; an
-  update's prompt is its whole brief. The skills a skill calls (`tdd`,
-  `code-review`, `pr`) are given to the session as skills under a `linewright:`
-  namespace and invoked as the originals invoke them.
+- **Briefs are files read at startup**: the skills ([Skills](#skills)) and
+  the prompts Linewright sends a session, each a template holding its task
+  and result contract.
 - **A session's skills and tools.** A session or sub-agent has Linewright's
   skills and the repository's own, and only the tools its work needs.
 - **Why.** The harness's other skills and tools take up the session's context
@@ -70,6 +66,26 @@ during the session.
 - **Every session's transcript is kept**: the harness's own record of the
   session, copied beside the session's brief and result under the work
   directory.
+
+## Skills
+
+A stage's skill is a fork of a published skill, kept as upstream's text but
+for what Linewright's use of it requires; the rules that are Linewright's own
+are the prompt's.
+
+| skill | forked from |
+|---|---|
+| `triage`, `to-tickets`, `implement`, `code-review`, `pr`, `tdd` | `mattpocock/skills`, MIT, with its notice |
+| `software-design` | `prior-art` in `tibbe/skills`, with what concerns products removed, so that it designs code alone |
+
+- **Invoking.** A session whose work a skill covers invokes it, as a person
+  would invoke the original, with the task and the result contract; an
+  update's prompt is its whole brief. The skills a skill calls (`tdd`,
+  `code-review`, `pr`) are given to the session as skills under a
+  `linewright:` namespace and invoked as the originals invoke them; the
+  design prompt invokes `software-design`, then `to-tickets`.
+- **Why.** A fork that stays upstream's text is brought up to date from
+  upstream, and a diff against upstream shows what the fork changed.
 
 ## The manager–agent protocol
 

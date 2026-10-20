@@ -28,11 +28,9 @@ pipeline to work, like any others.
 The spec is the tracked files matching the spec glob, and the spec as merged
 is what gets built.
 
-- **A spec change.** A pull request that was merged into the default branch,
-  touched at least one spec file, was merged within the lookback window
-  (default 7 days), has no `linewright:spec-processed` label and is marked
-  for Linewright (see [Repository](repository.md)). PRs Linewright authored
-  are skipped.
+- **A spec change.** A pull request not Linewright's own, merged into the
+  default branch within the lookback window (default 7 days), that touched a
+  spec file.
 - **A push to the default branch.** A push straight to the default branch is
   the maintainer's own change, outside the factory.
 
