@@ -8,8 +8,8 @@ use crate::domain::{Number, Timestamp};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Phrase(Vec<Segment>);
 
-/// The check state on GitHub an outcome or a state maps to
-/// (`docs/specs/design_system.md`, Status).
+/// What an outcome or a state shows as, each with its own icon
+/// (`docs/specs/web/design_system.md`, Status).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
     Success,
@@ -20,14 +20,17 @@ pub enum Tone {
 }
 
 impl Tone {
-    /// As the web UI's stylesheet names it.
-    pub fn name(self) -> &'static str {
+    /// The daisyUI colour it shows in, as the class of a badge in it: a badge
+    /// gives each colour its own colour of text, which reads on it in either
+    /// theme. Written whole, since Tailwind finds the classes the stylesheet
+    /// needs by scanning the sources' text
+    /// (<https://tailwindcss.com/docs/detecting-classes-in-source-files>).
+    pub fn colour(self) -> &'static str {
         match self {
-            Tone::Success => "success",
-            Tone::Failure => "failure",
-            Tone::InProgress => "in-progress",
-            Tone::Pending => "pending",
-            Tone::Cancelled => "cancelled",
+            Tone::Success => "badge-success",
+            Tone::Failure => "badge-error",
+            Tone::InProgress | Tone::Pending => "badge-warning",
+            Tone::Cancelled => "badge-neutral",
         }
     }
 }
@@ -150,5 +153,34 @@ impl fmt::Display for Phrase {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `docs/specs/web/design_system.md`, Status.
+    #[test]
+    fn each_tone_has_the_daisyui_colour_of_the_states_it_shows() {
+        let colours = [
+            Tone::Success,
+            Tone::Failure,
+            Tone::InProgress,
+            Tone::Pending,
+            Tone::Cancelled,
+        ]
+        .map(Tone::colour);
+
+        assert_eq!(
+            colours,
+            [
+                "badge-success",
+                "badge-error",
+                "badge-warning",
+                "badge-warning",
+                "badge-neutral",
+            ]
+        );
     }
 }

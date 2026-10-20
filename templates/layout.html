@@ -11,26 +11,26 @@
 <script src="{{ page.assets.sse }}"></script>
 <script src="{{ page.assets.script }}" defer></script>
 </head>
-<body hx-sse:connect="{{ page.events }}" hx-swap="none">
+<body class="bg-base-100 text-base-content" hx-sse:connect="{{ page.events }}" hx-swap="none">
 {% block frame -%}
-<header id="bar">
-<nav>
-<a class="repo" href="https://github.com/{{ frame.repo }}">{{ frame.repo }}</a>
-<a href="/">Board</a>
-<a href="/runs">Runs</a>
+<header id="bar" class="border-b border-base-300 bg-base-200 px-4 py-2">
+<nav class="flex items-baseline gap-4">
+<a class="repo link link-hover font-semibold" href="https://github.com/{{ frame.repo }}">{{ frame.repo }}</a>
+<a class="link link-hover" href="/">Board</a>
+<a class="link link-hover" href="/runs">Runs</a>
 </nav>
-<ul class="facts">
+<ul class="facts mt-1 flex flex-wrap gap-x-5 gap-y-1 text-sm text-base-content/70">
 {%- for fact in frame.facts %}
-<li{% if fact.problem %} class="problem"{% endif %}>{% if fact.problem %}{% call ui::icon(Tone::Failure) %}{% endcall %}{% endif %}{{ fact.html|safe }}</li>
+<li>{% if fact.problem %}{% call ui::status(Tone::Failure, fact.html) %}{% endcall %}{% else %}{{ fact.html|safe }}{% endif %}</li>
 {%- endfor %}
 </ul>
 {%- for banner in frame.banners %}
-<p class="banner" role="status">{{ banner|safe }}</p>
+<p class="banner alert alert-warning mt-2" role="status">{{ banner|safe }}</p>
 {%- endfor %}
 </header>
 {%- endblock %}
-<p id="lost" class="banner" role="status" hidden>Lost <code>serve</code> <time></time>; reconnecting.</p>
-<main>
+<p id="lost" class="alert alert-warning mx-4 mt-2" role="status" hidden>Lost <code>serve</code> <time></time>; reconnecting.</p>
+<main class="p-4">
 {% block main %}{% endblock %}
 </main>
 </body>

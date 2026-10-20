@@ -238,7 +238,7 @@ impl RunView {
             .map(|&i| entry_html(session, i, self.verbose))
             .collect();
         format!(
-            r#"<section class="session" id="s{n}"><h2>{heading}</h2><ol class="entries" id="s{n}-entries">{entries}</ol></section>"#
+            r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2><ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
         )
     }
 
@@ -323,7 +323,7 @@ fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
         EntryLine::Event { event } => ("event", line_html(&stamp, "event: ", &event.to_string())),
         EntryLine::Other { other } => ("other", line_html(&stamp, "other: ", &other.to_string())),
     };
-    format!(r#"<li class="entry {kind}" id="{id}">{body}</li>"#)
+    format!(r#"<li class="entry {kind} py-0.5" id="{id}">{body}</li>"#)
 }
 
 /// The time since the session started, linking to the entry, with when it
@@ -335,12 +335,14 @@ fn stamp_html(id: &str, stamp: StampView) -> String {
     let title = stamp
         .at
         .map_or(String::new(), |at| format!(r#" title="{}""#, html::utc(at)));
-    format!(r##"<a class="at" href="#{id}"{title}>{elapsed}</a>"##)
+    format!(
+        r##"<a class="at inline-block min-w-[4em] text-right text-base-content/60" href="#{id}"{title}>{elapsed}</a>"##
+    )
 }
 
 fn line_html(stamp: &str, label: &str, text: &str) -> String {
     format!(
-        r#"<div class="line">{stamp} {}<span class="text">{}</span></div>"#,
+        r#"<div class="line">{stamp} {}<span class="text whitespace-pre-wrap wrap-anywhere">{}</span></div>"#,
         html::escape(label),
         html::escape(text.trim_end()),
     )
@@ -362,7 +364,7 @@ fn call_html(session: &SessionView, i: usize, call: &ToolLine, verbose: bool) ->
     };
     let open = if call.error || verbose { " open" } else { "" };
     format!(
-        r#"<details class="call" id="{id}-call"{open}><summary id="{id}-summary">{line}{count}</summary>{io}{entries}</details>"#,
+        r#"<details class="call" id="{id}-call"{open}><summary class="cursor-pointer wrap-anywhere" id="{id}-summary">{line}{count}</summary>{io}{entries}</details>"#,
         line = call_line_html(session, i, call),
         io = io_html(&id, call),
     )
@@ -393,7 +395,7 @@ fn io_html(id: &str, call: &ToolLine) -> String {
     let mut part = |label: &str, text: &str| {
         let _ = writeln!(
             io,
-            r#"<div class="{label}">{label}: <pre>{}</pre></div>"#,
+            r#"<div>{label}: <pre class="mt-0.5 mb-1.5 max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre></div>"#,
             html::escape(text.trim_end())
         );
     };
@@ -410,7 +412,7 @@ fn io_html(id: &str, call: &ToolLine) -> String {
     if let Some(details) = &call.details {
         part("details", &pretty(details));
     }
-    format!(r#"<div class="io" id="{id}-io">{io}</div>"#)
+    format!(r#"<div class="io my-1 ml-[4.5em]" id="{id}-io">{io}</div>"#)
 }
 
 /// The work of the sub-agent a call started.
@@ -419,7 +421,7 @@ fn sub_agent_html(session: &SessionView, call: usize, verbose: bool) -> String {
         .map(|i| entry_html(session, i, verbose))
         .collect();
     format!(
-        r#"<ol class="entries" id="{}-entries">{entries}</ol>"#,
+        r#"<ol class="entries border-l-2 border-base-300 pl-6" id="{}-entries">{entries}</ol>"#,
         entry_id(session, call)
     )
 }
@@ -428,7 +430,7 @@ fn count_html(session: &SessionView, call: usize, verbose: bool) -> String {
     let n = shown_children(session, call, verbose).count();
     let entries = if n == 1 { "entry" } else { "entries" };
     format!(
-        r#" <span class="count" id="{}-count">{n} {entries}</span>"#,
+        r#" <span class="count badge badge-sm badge-ghost ml-2" id="{}-count">{n} {entries}</span>"#,
         entry_id(session, call)
     )
 }

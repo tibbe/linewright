@@ -32,6 +32,13 @@ jobs:
       - uses: actions/checkout@v7
       - run: scripts/check compose
 
+  css:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/check css
+
   clippy:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
@@ -132,7 +139,7 @@ jobs:
 
   ci:
     if: always()
-    needs: [fmt, markdown, compose, clippy, test, doc, changes, base-image, deploy-images, binaries]
+    needs: [fmt, markdown, compose, css, clippy, test, doc, changes, base-image, deploy-images, binaries]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -1,11 +1,12 @@
-{#- A status as an icon and its word, in the colour of the check state on
-    GitHub it maps to, so that it is never told by colour alone. -#}
+{#- A status as a daisyUI badge in its tone's colour, holding the tone's
+    icon and its words, so that it is never told by colour alone. The words
+    are one element, so that the badge's flex layout keeps them together. -#}
 {%- macro status(tone, word) -%}
-<span class="status {{ tone.name() }}">{% call icon(tone) %}{% endcall %}{{ word }}</span>
+<span class="tone badge badge-sm h-auto min-h-5 {{ tone.colour() }}">{% call icon(tone) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
 {%- macro icon(tone) -%}
-<svg class="icon {{ tone.name() }}" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+<svg class="icon size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
 {%- match tone -%}
 {%- when Tone::Success -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M5 8.25l2 2 4-4.25"/>

@@ -1,8 +1,8 @@
 {%- extends "layout.html" -%}
 {%- block main -%}
-<p class="verbosity"><a href="{{ switched }}" role="switch" aria-checked="{{ verbose }}">verbose</a></p>
+<p class="verbosity mb-3"><a class="inline-flex items-center gap-2" href="{{ switched }}" role="switch" aria-checked="{{ verbose }}"><span class="toggle toggle-sm" aria-checked="{{ verbose }}" aria-hidden="true"></span>verbose</a></p>
 <section id="transcript" class="transcript" role="log">
 {{ transcript|safe }}
 </section>
-<button id="latest" type="button" hidden>Jump to the latest entry</button>
+<button id="latest" class="btn btn-sm fixed right-6 bottom-6 shadow-md" type="button" hidden>Jump to the latest entry</button>
 {%- endblock -%}

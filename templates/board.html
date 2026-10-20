@@ -2,22 +2,25 @@
 {%- import "macros.html" as ui -%}
 {%- block main -%}
 <section id="board">
-<div class="board">
+{#- Six columns, never cut, with a lane per tracking issue as rows under
+    them. -#}
+<div class="board grid grid-cols-[repeat(6,minmax(14rem,1fr))] gap-2 overflow-x-auto">
 {%- for column in board.columns %}
-<h2 class="column">{{ column }}</h2>
+<h2 class="column font-semibold">{{ column }}</h2>
 {%- endfor %}
 {%- for lane in board.lanes %}
-<section class="lane">
+<section class="lane contents">
 {%- if let Some(head) = lane.head %}
-<h2 class="lane-head">{{ head|safe }}</h2>
+<h2 class="lane-head col-span-full mt-3 border-t border-base-300 pt-2 font-semibold">{{ head|safe }}</h2>
 {%- endif %}
 {%- for cell in lane.cells %}
-<ul class="cell" aria-label="{{ cell.column }}">
+<ul class="cell flex flex-col gap-2" aria-label="{{ cell.column }}">
 {%- for card in cell.cards %}
-<li class="card">
-<h3>{{ card.heading|safe }}</h3>
-<p class="standing">{{ card.standing|safe }}</p>
-<ul class="line">
+<li class="card card-border card-sm bg-base-200">
+<div class="card-body gap-1">
+<h3 class="card-title text-sm">{{ card.heading|safe }}</h3>
+<p class="standing text-base-content/70">{{ card.standing|safe }}</p>
+<ul class="line space-y-1">
 {%- for line in card.line %}
 <li>{% call ui::status(line.tone, line.word) %}{% endcall %}{{ line.rest|safe }}</li>
 {%- endfor %}
@@ -25,6 +28,7 @@
 {%- if let Some(pull) = card.pull %}
 <p class="pull">pull request: {{ pull.item|safe }}, {% if let Some(tone) = pull.tone %}{% call ui::status(tone, pull.ci) %}{% endcall %}{% else %}{{ pull.ci }}{% endif %}</p>
 {%- endif %}
+</div>
 </li>
 {%- endfor %}
 </ul>

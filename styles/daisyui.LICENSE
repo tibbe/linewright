@@ -1,0 +1,27 @@
+daisyui.mjs and daisyui-theme.mjs are daisyUI 5.7.50, the files of the same names
+attached to its release (https://github.com/saadeghi/daisyui/releases/tag/v5.7.50),
+sha256 d69de07c7463bb1f41548e2688f88ee105cdadf9779fce5b3c47b3bfaa6be472 and
+e48a35d8326d650181ca600560e8520cf6b44cf9242bbd9d45825607e641f251, both under this
+licence:
+
+MIT License
+
+Copyright (c) 2020 Pouya Saadeghi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

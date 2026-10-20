@@ -1,0 +1,49 @@
+/* The web UI's stylesheet (docs/specs/web/design_system.md), which
+   `scripts/check css` builds into assets/linewright.css with Tailwind's
+   standalone CLI. Tailwind writes the classes it finds in the sources below
+   (https://tailwindcss.com/docs/detecting-classes-in-source-files), and
+   daisyUI, vendored beside this file as its standalone install says
+   (https://daisyui.com/docs/install/standalone/), its components and
+   themes. */
+
+@import "tailwindcss" source(none);
+
+@source "../templates";
+@source "../src/web";
+@source "../src/phrase.rs";
+@source not "./daisyui.mjs";
+@source not "./daisyui-theme.mjs";
+
+@plugin "./daisyui.mjs" {
+  themes: light --default, dark --prefersdark;
+}
+
+@layer base {
+  h1 {
+    @apply mb-3 text-2xl font-semibold;
+  }
+
+  code {
+    @apply rounded-sm bg-base-200 px-1 font-mono text-[0.9em];
+  }
+}
+
+/* What daisyUI has no component for: the link to an item on GitHub beside
+   the link to its page, and the run page's transcript, which the server
+   writes as `logs` shows it. */
+@layer components {
+  a.github::after {
+    content: "\2197" / "";
+    margin-left: 0.15em;
+    font-size: 0.8em;
+  }
+
+  .transcript .entry:target > .line,
+  .transcript .entry:target > details > summary {
+    @apply bg-warning/20;
+  }
+
+  .transcript :is(.thinking, .context, .event, .other, .brief) .text {
+    @apply text-base-content/60;
+  }
+}

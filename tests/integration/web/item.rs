@@ -123,7 +123,7 @@ async fn the_item_page_shows_the_run_in_flight_ticking_and_then_the_run_past() {
         "{}",
         running_html.html()
     );
-    let status: Vec<String> = select(&running_html, "#item .status")
+    let status: Vec<String> = select(&running_html, "#item .tone")
         .into_iter()
         .map(text)
         .collect();
@@ -135,7 +135,7 @@ async fn the_item_page_shows_the_run_in_flight_ticking_and_then_the_run_past() {
         lines.iter().any(|line| line.starts_with(past))
     })
     .await;
-    let done: Vec<ElementRef> = select(&html, "#item .status.success");
+    let done: Vec<ElementRef> = select(&html, "#item .tone.badge-success");
     assert_eq!(done.into_iter().map(text).collect::<Vec<_>>(), ["done"]);
     assert_no_status_by_colour_alone(&html);
     web.stop().await;

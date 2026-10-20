@@ -15,10 +15,13 @@ esac
 # (https://github.com/rvben/rumdl), Docker Compose
 # (https://github.com/docker/compose), which validates a compose file without
 # a Docker daemon, and cargo-nextest (https://nexte.st), which names and kills
-# a hung test.
+# a hung test, and Tailwind's standalone CLI
+# (https://tailwindcss.com/docs/installation/tailwind-cli), which builds the
+# web UI's stylesheet.
 rumdl_version=0.2.79
 compose_version=5.6.0
 nextest_version=0.9.148
+tailwind_version=4.3.3
 
 has_sha256() {
   local actual
@@ -109,6 +112,23 @@ nextest() {
   "$dir/cargo-nextest" nextest "$@"
 }
 
+tailwind() {
+  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/linewright/tailwind-$tailwind_version" target sha
+  if [ ! -x "$dir/tailwindcss" ]; then
+    case "$(uname -sm)" in
+    "Darwin arm64") target=macos-arm64 sha=cdf646702987a743464dff4d9c60fd4480d1c1e73dd819a9a67f1078815dce9d ;;
+    "Darwin x86_64") target=macos-x64 sha=7922e0953f2110c05976e3bf58f14e643d90427575e766b7d433f5f80cbee7e1 ;;
+    "Linux aarch64" | "Linux arm64") target=linux-arm64 sha=55fd0b241214eff3de1e8ee4f22796662f2d2e7a49bcfca7477cfd0bac398195 ;;
+    "Linux x86_64") target=linux-x64 sha=dc61b3ac6b8c9ca874c0cc4c57b2409791a64c5540404ca5f5367360babc313a ;;
+    *) no_release "Tailwind CSS $tailwind_version" || return 1 ;;
+    esac
+    install_tool "$dir" tailwindcss \
+      "https://github.com/tailwindlabs/tailwindcss/releases/download/v$tailwind_version/tailwindcss-$target" \
+      "$sha" || return 1
+  fi
+  "$dir/tailwindcss" "$@"
+}
+
 check_fmt() {
   if $fix; then cargo fmt; else cargo fmt --check -- --color=never; fi
 }
@@ -120,6 +140,30 @@ check_markdown() {
     # rumdl itself is not on the PATH.
     rumdl check . 2>&1 | sed "s/^Run \`rumdl fmt\`/Run \`scripts\/check markdown\`/"
   fi
+}
+
+# The web UI's stylesheet, built from styles/linewright.css with daisyUI, is
+# committed, so that a cargo build needs no other toolchain. Outside CI it is
+# rebuilt; in CI it fails when the committed one is not what the sources
+# build.
+check_css() {
+  local built output status=0
+  if $fix; then
+    tailwind --input styles/linewright.css --output assets/linewright.css --minify
+    return
+  fi
+  built="$(mktemp)"
+  # Tailwind reports on success too, so its output is shown only when it
+  # fails.
+  if ! output="$(tailwind --input styles/linewright.css --output "$built" --minify 2>&1)"; then
+    echo "$output"
+    status=1
+  elif ! cmp -s "$built" assets/linewright.css; then
+    echo "assets/linewright.css is not what styles/linewright.css builds: run \`scripts/check css\` and commit it"
+    status=1
+  fi
+  rm -f "$built"
+  return "$status"
 }
 
 # The deployment's compose files against the compose specification: their
@@ -155,13 +199,13 @@ check_doc() {
   cargo doc --no-deps --locked --quiet && cargo test --doc --locked --quiet
 }
 
-stages=("fmt markdown compose" "clippy" "test doc")
+stages=("fmt markdown compose css" "clippy" "test doc")
 
 usage() {
   echo "usage: scripts/check [NAME...]"
   echo "Runs every check CI runs, or only the named ones: ${stages[*]}."
   echo "Outside CI it first fixes what it can: formatting, Markdown and clippy's"
-  echo "machine-applicable suggestions."
+  echo "machine-applicable suggestions, and it rebuilds the web UI's stylesheet."
 }
 
 if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then

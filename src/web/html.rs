@@ -57,9 +57,9 @@ pub(crate) fn phrase(phrase: &Phrase, repo: &str) -> Html {
 /// #`number`, linking to its page, and a link to it on GitHub.
 pub(crate) fn item(number: Number, repo: &str) -> Html {
     Html(format!(
-        r#"<a href="/items/{n}">{number}</a>{github}"#,
-        n = number.0,
-        github = github(number, repo),
+        "{}{}",
+        page_link(number, &number.to_string()),
+        github(number, repo),
     ))
 }
 
@@ -67,11 +67,19 @@ pub(crate) fn item(number: Number, repo: &str) -> Html {
 /// GitHub.
 pub(crate) fn titled(number: Number, title: &str, repo: &str) -> Html {
     Html(format!(
-        r#"<a href="/items/{n}">{number}: {title}</a>{github}"#,
-        n = number.0,
-        title = escape(title),
-        github = github(number, repo),
+        "{}{}",
+        page_link(number, &format!("{number}: {title}")),
+        github(number, repo),
     ))
+}
+
+/// `text` linking to the page of item `number`.
+fn page_link(number: Number, text: &str) -> String {
+    format!(
+        r#"<a class="link link-hover" href="/items/{}">{}</a>"#,
+        number.0,
+        escape(text),
+    )
 }
 
 fn github(number: Number, repo: &str) -> String {
@@ -89,10 +97,10 @@ pub(crate) fn run_id(id: &RunId, repo: &str) -> Html {
         RunOf::Work { item, .. } => {
             let rest = shown.strip_prefix(&item.0.to_string()).unwrap_or_default();
             Html(format!(
-                r#"<a href="/items/{n}">{n}</a>{rest}{github}"#,
-                n = item.0,
-                rest = escape(rest),
-                github = github(item, repo),
+                "{}{}{}",
+                page_link(item, &item.0.to_string()),
+                escape(rest),
+                github(item, repo),
             ))
         }
         RunOf::Automation { .. } => escape(&shown),
