@@ -166,7 +166,7 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
 }
 
 #[tokio::test]
-async fn each_stages_session_starts_by_invoking_its_linewright_skill() {
+async fn each_stages_session_is_told_to_call_its_linewright_skill() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Triage, |_| {
         Ok(json!({
@@ -197,24 +197,20 @@ async fn each_stages_session_starts_by_invoking_its_linewright_skill() {
     world.poll().await;
     world.ticket_in_review().await;
 
-    let first_lines = |kind| {
-        let mut lines: Vec<String> = world
-            .harness
-            .prompts(kind)
-            .iter()
-            .map(|prompt| prompt.lines().next().unwrap_or_default().to_string())
-            .collect();
-        lines.dedup();
-        lines
-    };
-    assert_eq!(
-        [WorkKind::Triage, WorkKind::Design, WorkKind::Implement].map(first_lines),
-        [
-            ["/linewright:triage"],
-            ["/linewright:software-design"],
-            ["/linewright:implement"]
-        ]
-    );
+    for (kind, skill) in [
+        (WorkKind::Triage, "linewright:triage"),
+        (WorkKind::Design, "linewright:software-design"),
+        (WorkKind::Implement, "linewright:implement"),
+    ] {
+        let prompts = world.harness.prompts(kind);
+        assert_ne!(prompts.len(), 0, "no {kind:?} prompt");
+        for prompt in &prompts {
+            assert!(
+                prompt.contains(&format!("the Skill tool with `{skill}`")),
+                "{prompt}"
+            );
+        }
+    }
 }
 
 fn triage_for_the_maintainer(world: &World) {
@@ -3998,7 +3994,7 @@ async fn an_update_run_is_given_the_update_alone_without_a_skill_to_work_by() {
 
     let prompts = world.harness.prompts(WorkKind::Update);
     assert_eq!(prompts.len(), 1);
-    assert!(!prompts[0].contains("/linewright:"), "{}", prompts[0]);
+    assert!(!prompts[0].contains("Skill tool"), "{}", prompts[0]);
 }
 
 #[tokio::test]

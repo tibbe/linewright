@@ -255,7 +255,7 @@ async fn logs_verbose_adds_the_brief_and_the_thinking() {
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines[2], " 0:00  brief: /linewright:implement");
+    assert_eq!(lines[2], " 0:00  brief: # Your task");
     assert!(
         output
             .stdout

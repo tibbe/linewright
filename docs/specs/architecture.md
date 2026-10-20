@@ -78,12 +78,13 @@ are the prompt's.
 | `triage`, `to-tickets`, `implement`, `code-review`, `pr`, `tdd` | `mattpocock/skills`, MIT, with its notice |
 | `software-design` | `prior-art` in `tibbe/skills`, with what concerns products removed, so that it designs code alone |
 
-- **Invoking.** A session whose work a skill covers invokes it, as a person
-  would invoke the original, with the task and the result contract; an
-  update's prompt is its whole brief. The skills a skill calls (`tdd`,
-  `code-review`, `pr`) are given to the session as skills under a
-  `linewright:` namespace and invoked as the originals invoke them; the
-  design prompt invokes `software-design`, then `to-tickets`.
+- **Invoking.** A session's prompt holds its task and the result contract
+  as the steps the session takes, and the step a skill covers has the session
+  call the skill; the prompts of rework, CI fixes and updates are their whole
+  briefs. The skills a skill
+  calls (`tdd`, `code-review`, `pr`) are given to the session as skills under
+  a `linewright:` namespace and invoked as the originals invoke them; the
+  design prompt has the session call `software-design`, then `to-tickets`.
 - **Why.** A fork that stays upstream's text is brought up to date from
   upstream, and a diff against upstream shows what the fork changed.
 

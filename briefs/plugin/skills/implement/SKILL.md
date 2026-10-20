@@ -1,14 +1,13 @@
 ---
 name: implement
 description: "Implement a piece of work based on a spec or set of tickets."
-disable-model-invocation: true
 ---
 
 # Implement
 
 Implement the work your task describes, on the branch that is checked out.
-The ticket, its comments (a triage brief, earlier handbacks) and, for work on
-an open pull request, the feedback to address are in your task. You may
+The ticket and its comments (a triage brief, the design, earlier handbacks)
+are in your task. You may
 read GitHub but must not write to it or push: Linewright pushes your commits,
 opens or updates the pull request and posts what your result says.
 
@@ -22,8 +21,8 @@ opens or updates the pull request and posts what your result says.
 3. Run typechecking regularly, single test files regularly, and the
    repository's full checks (tests, linters, formatters, whatever its CI or
    docs say it runs) when the code is written, and fix what fails.
-4. Review on every run, rework included: once done, call the Skill tool with
-   `linewright:code-review` to review the work. Apply its findings (see
+4. Once done, call the Skill tool with `linewright:code-review` to review the
+   work. Apply its findings (see
    _Review findings_), then run the repository's full checks again and fix
    what fails. Don't review a second time.
 5. Commit your work to the current branch, with messages that say why. Leave

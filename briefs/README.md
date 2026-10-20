@@ -30,9 +30,10 @@ A skill is otherwise upstream's text, so that a diff against upstream shows
 what the fork changed. The rules that are Linewright's own are the prompt's.
 
 The plugin is named `linewright`, and every session is given a copy of it. A
-prompt starts by invoking its stage's skill, such as `/linewright:implement`,
+prompt's task is the steps the session takes, in order, and the step a skill
+covers has the session call it with the Skill tool: `linewright:implement`,
 which calls `linewright:tdd`, `linewright:code-review` and `linewright:pr`; the
-design prompt invokes `/linewright:software-design`, then has the session call
+design prompt has the session call `linewright:software-design`, then
 `linewright:to-tickets`. The namespace keeps them apart from the harness's own
 skills and the repository's, which sessions can use too.
 
@@ -41,7 +42,7 @@ skills and the repository's, which sessions can use too.
 | `skills/triage/` | `mattpocock/skills`: `triage` (with `AGENT-BRIEF.md`, `OUT-OF-SCOPE.md`) | triage |
 | `skills/software-design/` | `tibbe/skills` (`e63caa77`): `prior-art` | design |
 | `skills/to-tickets/` | `mattpocock/skills`: `to-tickets` | design |
-| `skills/implement/` | `mattpocock/skills`: `implement` | implementation, rework, CI fixes |
+| `skills/implement/` | `mattpocock/skills`: `implement` | implementation |
 | `skills/tdd/` | `mattpocock/skills`: `tdd` | called by `implement` |
 | `skills/code-review/` | `mattpocock/skills`: `code-review` | called by `implement` |
 | `skills/pr/` | `mattpocock/skills`: `pr` | the result's pull request title and body |
@@ -60,9 +61,9 @@ to start with a prompt that lacks one or has one it doesn't know.
 | `triage.md` | triage |
 | `design.md` | design |
 | `implement.md` | implementation |
-| `rework.md` | rework |
-| `fix-ci.md` | CI fixes |
-| `update.md` | an update's conflict, with no skill: the prompt is the brief |
+| `rework.md` | rework, with no skill: the prompt is the brief |
+| `fix-ci.md` | CI fixes, likewise |
+| `update.md` | an update's conflict, likewise |
 | `automation.md` | automation runs |
 | `parts/` | filled into the prompts above, such as a conflict's instructions |
 | `follow-ups/` | a session sent back to work, such as for a result that doesn't parse |
