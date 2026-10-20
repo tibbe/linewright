@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt::{self, Write as _};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
@@ -346,6 +347,15 @@ impl Runs {
     }
 
     /// A record that does not read is logged and skipped.
+    /// As [`Runs::read`], with a failure to read logged and taken as no
+    /// runs, for an answer that does without them.
+    pub fn read_or_none(&self) -> Vec<Recorded> {
+        self.read().unwrap_or_else(|e| {
+            warn!(error = format!("{e:#}"), "reading the runs' records failed");
+            vec![]
+        })
+    }
+
     pub fn read(&self) -> Result<Vec<Recorded>> {
         let mut recorded = vec![];
         for kind in ["items", AUTOMATIONS, OLD_AUTOMATIONS] {
@@ -835,6 +845,21 @@ pub fn of_item(recorded: &[Recorded], number: Number) -> Vec<Recorded> {
         .collect()
 }
 
+/// An automation's last run: its newest, by its schedule or by hand, and how
+/// it started. The one place that says which run that is.
+pub fn last_of_automation<'a>(
+    recorded: &'a [Recorded],
+    name: &AutomationName,
+) -> Option<(&'a Recorded, StartedBy)> {
+    recorded
+        .iter()
+        .filter_map(|run| match (&run.id.of, run.started_by) {
+            (RunOf::Automation { automation }, Some(by)) if automation == name => Some((run, by)),
+            _ => None,
+        })
+        .min_by(|(a, _), (b, _)| newest_first(a, b))
+}
+
 /// Asking for an item's runs when it has none is an error, however the rest
 /// of the query narrows them.
 pub fn list(recorded: Vec<Recorded>, query: &Query, now: Timestamp) -> Result<Listing, NoRuns> {
@@ -866,11 +891,13 @@ pub fn list(recorded: Vec<Recorded>, query: &Query, now: Timestamp) -> Result<Li
 }
 
 pub(crate) fn sort_newest_first(runs: &mut [Recorded]) {
-    runs.sort_by(|a, b| {
-        (b.started_at, b.id.n)
-            .cmp(&(a.started_at, a.id.n))
-            .then_with(|| b.id.to_string().cmp(&a.id.to_string()))
-    });
+    runs.sort_by(newest_first);
+}
+
+fn newest_first(a: &Recorded, b: &Recorded) -> Ordering {
+    (b.started_at, b.id.n)
+        .cmp(&(a.started_at, a.id.n))
+        .then_with(|| b.id.to_string().cmp(&a.id.to_string()))
 }
 
 impl Recorded {
@@ -972,15 +999,8 @@ pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
 /// What a run is of, whether by hand, when it started and how long it ran,
 /// after its outcome.
 pub(crate) fn describe_run(run: &Run) -> Phrase {
-    let by_hand = if run.started().by_hand() {
-        " by hand"
-    } else {
-        ""
-    };
-    let phrase = describe_of(&run.id.of)
-        .text(by_hand)
-        .text(", started ")
-        .time(run.started_at);
+    let phrase =
+        describe_of(&run.id.of).then(describe_start(run.started().by_hand(), run.started_at));
     match run.outcome {
         Outcome::Ended { seconds, .. } => {
             phrase.text(", ran ").duration(non_negative(seconds), None)
@@ -990,6 +1010,13 @@ pub(crate) fn describe_run(run: &Run) -> Phrase {
             .duration(non_negative(seconds), Some(run.started_at)),
         Outcome::Interrupted => phrase,
     }
+}
+
+/// Whether a run was by hand and when it started, after what it is of or its
+/// ID.
+pub(crate) fn describe_start(by_hand: bool, started_at: Timestamp) -> Phrase {
+    let by_hand = if by_hand { " by hand" } else { "" };
+    Phrase::from(by_hand).text(", started ").time(started_at)
 }
 
 #[derive(Debug, thiserror::Error)]

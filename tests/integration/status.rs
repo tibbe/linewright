@@ -1,5 +1,7 @@
 use crate::common;
 
+use chrono::TimeDelta;
+
 use common::{
     at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
     ticket,
@@ -7,6 +9,7 @@ use common::{
 use linewright::automation::{AutomationFiles, LastScheduledRuns, Unparsed};
 use linewright::domain::*;
 use linewright::reconcile::{LiveRun, Memory, Subject, WorkKind};
+use linewright::runs::{Ending, Recorded, Started, StartedBy, State};
 use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
 
@@ -38,6 +41,19 @@ fn last_scheduled_runs(runs: &[(&str, &str)]) -> LastScheduledRuns {
         .collect()
 }
 
+fn automation_run(id: &str, by: StartedBy, started: &str) -> Recorded {
+    Recorded::new(
+        Started::new(id.parse().unwrap(), Some(by)).unwrap(),
+        at(started),
+        State::Ended {
+            at: at(started) + TimeDelta::minutes(1),
+            ending: Ending::Done,
+        },
+        vec![],
+        None,
+    )
+}
+
 fn serving() -> Serving {
     Serving {
         since: at("2026-10-01T11:00:00Z"),
@@ -58,12 +74,25 @@ fn text(view: Option<&View>, now: &str) -> Vec<String> {
 }
 
 fn text_with(webhooks: Option<Received>, view: Option<&View>, now: &str) -> Vec<String> {
-    let answer = status(&serving(), webhooks, view, None, at(now));
+    text_of(webhooks, view, &[], now)
+}
+
+fn text_of(
+    webhooks: Option<Received>,
+    view: Option<&View>,
+    recorded: &[Recorded],
+    now: &str,
+) -> Vec<String> {
+    let answer = status(&serving(), webhooks, view, recorded, None, at(now));
     render(&answer, false).lines().map(str::to_string).collect()
 }
 
 fn after_linewright(view: &View, now: &str) -> Vec<String> {
-    let lines = text(Some(view), now);
+    after_linewright_with(view, &[], now)
+}
+
+fn after_linewright_with(view: &View, recorded: &[Recorded], now: &str) -> Vec<String> {
+    let lines = text_of(None, Some(view), recorded, now);
     let blank = lines
         .iter()
         .position(String::is_empty)
@@ -151,9 +180,17 @@ fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
     };
     let now = at("2026-10-01T12:00:30Z");
 
-    let shown = serde_json::to_value(status(&serving(), None, Some(&draining), None, now)).unwrap();
-    let none =
-        serde_json::to_value(status(&serving(), None, Some(&view(vec![])), None, now)).unwrap();
+    let shown =
+        serde_json::to_value(status(&serving(), None, Some(&draining), &[], None, now)).unwrap();
+    let none = serde_json::to_value(status(
+        &serving(),
+        None,
+        Some(&view(vec![])),
+        &[],
+        None,
+        now,
+    ))
+    .unwrap();
 
     assert_eq!(
         shown["linewright"]["drain"],
@@ -171,7 +208,7 @@ fn a_drain_with_a_deadline_shows_it_in_text_and_json() {
     let now = at("2026-10-01T12:00:30Z");
     let deadline = Some(at("2026-10-01T14:00:20Z"));
 
-    let answer = status(&serving(), None, Some(&draining), deadline, now);
+    let answer = status(&serving(), None, Some(&draining), &[], deadline, now);
     let shown = serde_json::to_value(&answer).unwrap();
     let text = render(&answer, false);
 
@@ -210,6 +247,7 @@ fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
         &serving(),
         None,
         Some(&view),
+        &[],
         None,
         at("2026-10-01T12:00:30Z"),
     );
@@ -521,11 +559,83 @@ fn an_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
         last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
         ..view(vec![])
     };
+    let recorded = [automation_run(
+        "weekly/3",
+        StartedBy::Schedule,
+        "2026-09-28T06:00:02Z",
+    )];
+
+    assert_eq!(
+        after_linewright_with(&view, &recorded, "2026-10-01T12:00:30Z"),
+        [
+            "automation weekly last run: weekly/3, started 2026-09-28 06:00:02 UTC",
+            "automation weekly next run: 2026-10-05 06:00:00 UTC",
+        ]
+    );
+}
+
+#[test]
+fn a_newer_run_by_hand_is_the_last_run_and_leaves_the_next_run_as_it_was() {
+    let view = View {
+        automations: files(&[("weekly", "0 6 * * 1")], &[]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
+        ..view(vec![])
+    };
+    let scheduled = automation_run("weekly/3", StartedBy::Schedule, "2026-09-28T06:00:02Z");
+    let by_hand = automation_run("weekly/4", StartedBy::Hand, "2026-09-30T09:15:00Z");
+
+    assert_eq!(
+        after_linewright_with(&view, &[scheduled, by_hand], "2026-10-01T12:00:30Z"),
+        [
+            "automation weekly last run: weekly/4 by hand, started 2026-09-30 09:15:00 UTC",
+            "automation weekly next run: 2026-10-05 06:00:00 UTC",
+        ]
+    );
+}
+
+#[test]
+fn a_newer_scheduled_run_is_the_last_run_with_no_mark() {
+    let view = View {
+        automations: files(&[("weekly", "0 6 * * 1")], &[]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
+        ..view(vec![])
+    };
+    let by_hand = automation_run("weekly/3", StartedBy::Hand, "2026-09-25T09:15:00Z");
+    let scheduled = automation_run("weekly/4", StartedBy::Schedule, "2026-09-28T06:00:02Z");
+
+    assert_eq!(
+        after_linewright_with(&view, &[scheduled, by_hand], "2026-10-01T12:00:30Z")[0],
+        "automation weekly last run: weekly/4, started 2026-09-28 06:00:02 UTC"
+    );
+}
+
+#[test]
+fn only_the_automations_own_runs_count_toward_its_last_run() {
+    let view = View {
+        automations: files(&[("weekly", "0 6 * * 1")], &[]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
+        ..view(vec![])
+    };
+    let other = automation_run("daily/9", StartedBy::Schedule, "2026-10-01T06:00:00Z");
+
+    assert_eq!(
+        after_linewright_with(&view, &[other], "2026-10-01T12:00:30Z")[0],
+        "automation weekly last run: none yet"
+    );
+}
+
+#[test]
+fn an_automation_seen_but_never_run_has_no_last_run_yet_and_its_next_run_as_before() {
+    let view = View {
+        automations: files(&[("weekly", "0 6 * * 1")], &[]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:02Z")]),
+        ..view(vec![])
+    };
 
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
-            "automation weekly last run: 2026-09-28 06:00:02 UTC",
+            "automation weekly last run: none yet",
             "automation weekly next run: 2026-10-05 06:00:00 UTC",
         ]
     );
@@ -542,7 +652,7 @@ fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_is_due_now()
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
         [
-            "automation hourly last run: 2026-10-01 11:30:00 UTC",
+            "automation hourly last run: none yet",
             "automation hourly next run: due now",
         ]
     );
@@ -559,14 +669,14 @@ fn an_automation_whose_schedule_never_ticks_again_has_no_next_run() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
         [
-            "automation leap last run: 2026-09-28 06:00:00 UTC",
+            "automation leap last run: none yet",
             "automation leap next run: none, its schedule ticks no more",
         ]
     );
 }
 
 #[test]
-fn an_automation_with_no_recorded_run_is_shown_as_not_run_yet() {
+fn an_automation_no_poll_has_seen_yet_has_no_next_run_until_one_does() {
     let view = View {
         automations: files(&[("hourly", "0 * * * *")], &[]),
         ..view(vec![])
@@ -574,7 +684,10 @@ fn an_automation_with_no_recorded_run_is_shown_as_not_run_yet() {
 
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
-        ["automation hourly last run: none yet, its schedule starts when a poll first sees it"]
+        [
+            "automation hourly last run: none yet",
+            "automation hourly next run: not yet counted, its schedule starts when a poll first sees it",
+        ]
     );
 }
 
@@ -597,9 +710,9 @@ fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_pars
         [
             "#7: ready to claim — Do the thing",
             "",
-            "automation hourly last run: 2026-10-01 12:00:00 UTC",
+            "automation hourly last run: none yet",
             "automation hourly next run: 2026-10-01 13:00:00 UTC",
-            "automation weekly last run: 2026-09-28 06:00:00 UTC",
+            "automation weekly last run: none yet",
             "automation weekly next run: 2026-10-05 06:00:00 UTC",
             ".linewright/automations/broken.md: does not parse: no front matter",
         ]
@@ -619,6 +732,7 @@ fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
         &serving(),
         None,
         Some(&view),
+        &[],
         None,
         at("2026-10-01T12:10:00Z"),
     );
@@ -653,6 +767,11 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
         &serving(),
         Some(webhooks),
         Some(&view),
+        &[automation_run(
+            "weekly/2",
+            StartedBy::Schedule,
+            "2026-09-28T06:00:00Z",
+        )],
         None,
         at("2026-10-01T12:10:00Z"),
     );
@@ -681,10 +800,15 @@ fn the_json_names_each_fact() {
         ],
         ..view(vec![ready_issue()])
     };
+    let recorded = [
+        automation_run("weekly/2", StartedBy::Schedule, "2026-09-28T06:00:00Z"),
+        automation_run("weekly/3", StartedBy::Hand, "2026-09-30T09:15:00Z"),
+    ];
     let answer = status(
         &serving(),
         None,
         Some(&view),
+        &recorded,
         None,
         at("2026-10-01T12:10:00Z"),
     );
@@ -733,13 +857,45 @@ fn the_json_names_each_fact() {
                 {
                     "name": "weekly",
                     "schedule": "scheduled",
-                    "last_run": "2026-09-28T06:00:00Z",
                     "next_run": "2026-10-05T06:00:00Z",
+                    "last_run": "2026-09-30T09:15:00Z",
+                    "last_run_id": "weekly/3",
+                    "last_run_started_by": "hand",
                 },
             ],
             "unparsed_automations": [],
         })
     );
+}
+
+#[test]
+fn before_an_automations_first_run_its_json_has_no_last_run() {
+    let view = View {
+        automations: files(&[("weekly", "0 6 * * 1")], &[]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
+        ..view(vec![])
+    };
+    let answer = status(
+        &serving(),
+        None,
+        Some(&view),
+        &[],
+        None,
+        at("2026-10-01T12:10:00Z"),
+    );
+
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap()["automations"],
+        serde_json::json!([
+            {
+                "name": "weekly",
+                "schedule": "scheduled",
+                "next_run": "2026-10-05T06:00:00Z",
+            },
+        ])
+    );
+    let json = serde_json::to_string(&answer).unwrap();
+    assert_eq!(serde_json::from_str::<Status>(&json).unwrap(), answer);
 }
 
 #[test]

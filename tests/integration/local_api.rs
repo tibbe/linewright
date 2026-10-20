@@ -207,8 +207,9 @@ async fn request(
     (status, String::from_utf8(body.to_vec()).unwrap())
 }
 
+/// A world whose work dir is `REPO`'s, as `serve`'s API reads it.
 async fn with_ticket_and_automation() -> World {
-    let world = World::new().await;
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     world.store.open_issue(
         "maintainer",
         "Do the thing",
@@ -290,6 +291,57 @@ async fn status_json_prints_the_api_answer_as_it_is() {
     let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
     assert_eq!(json["items"][0]["number"], 1);
     assert_eq!(json["items"][0]["state"], "with-the-maintainer");
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
+    let world = with_ticket_and_automation().await;
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+    world
+        .factory
+        .run_automation(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+    let answering = Answering::start(world, false).await;
+
+    let output = answering.lw(&["status"]).await;
+    let (_, answer) = get(answering.runtime_dir.path(), "localhost", "/api/status").await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert!(
+        output
+            .stdout
+            .lines()
+            .any(|line| line.starts_with("automation weekly last run: weekly/1 by hand, started ")),
+        "{}",
+        output.stdout
+    );
+    let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
+    assert_eq!(json["automations"][0]["last_run_id"], "weekly/1");
+    assert_eq!(json["automations"][0]["last_run_started_by"], "hand");
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn status_answers_as_if_there_were_no_runs_when_their_records_cannot_be_read() {
+    let world = with_ticket_and_automation().await;
+    let runs = world.dir.path().join("work").join(REPO).join("runs");
+    std::fs::create_dir_all(&runs).unwrap();
+    std::fs::write(runs.join("items"), "not a directory").unwrap();
+    let answering = Answering::start(world, false).await;
+
+    let output = answering.lw(&["status"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert!(
+        output
+            .stdout
+            .lines()
+            .any(|line| line == "automation weekly last run: none yet"),
+        "{}",
+        output.stdout
+    );
     answering.stop().await;
 }
 

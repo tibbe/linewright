@@ -925,11 +925,10 @@ impl Factory {
 }
 
 fn done_runs(runs: &Runs) -> Vec<DoneRun> {
-    let recorded = runs.read().unwrap_or_else(|e| {
-        warn!(error = format!("{e:#}"), "reading the runs' records failed");
-        vec![]
-    });
-    recorded.iter().filter_map(Recorded::done_on_pull).collect()
+    runs.read_or_none()
+        .iter()
+        .filter_map(Recorded::done_on_pull)
+        .collect()
 }
 
 fn begin_automation(

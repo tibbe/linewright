@@ -249,10 +249,12 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
 pub(crate) fn status_answer(sources: &Sources) -> Status {
     let webhooks = sources.deliveries.as_ref().map(Tally::get);
     let view = sources.served.borrow().as_ref().map(Served::view_now);
+    let recorded = Runs::new(&sources.work_dir.resolve()).read_or_none();
     status::status(
         &sources.serving,
         webhooks,
         view.as_ref(),
+        &recorded,
         sources.ends.deadline(),
         sources.clock.now(),
     )

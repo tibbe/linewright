@@ -14,7 +14,9 @@ use crate::reconcile::{
     Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
     next_run, open_pull_for, pending_spec_changes, worked_pulls,
 };
-use crate::runs::{InFlight, RunId, RunInFlight, RunOf};
+use crate::runs::{
+    InFlight, Recorded, RunId, RunInFlight, RunOf, StartedBy, describe_start, last_of_automation,
+};
 use crate::webhook::Received;
 
 #[derive(Clone, Debug)]
@@ -218,26 +220,45 @@ impl Ci {
 pub struct AutomationRuns {
     pub name: String,
     #[serde(flatten)]
-    pub runs: Runs,
+    pub schedule: Schedule,
+    /// `None` before its first run.
+    #[serde(flatten)]
+    pub last_run: Option<LastRun>,
 }
 
+/// Where an automation's schedule stands, counted from its last scheduled
+/// run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "schedule", rename_all = "kebab-case")]
-pub enum Runs {
+pub enum Schedule {
+    /// No poll has seen the automation yet.
     NotRunYet,
-    Due {
-        #[serde(rename = "last_run")]
-        last_scheduled_run: Timestamp,
-    },
+    Due,
     Scheduled {
-        #[serde(rename = "last_run")]
-        last_scheduled_run: Timestamp,
         next_run: Timestamp,
     },
-    Ended {
-        #[serde(rename = "last_run")]
-        last_scheduled_run: Timestamp,
-    },
+    Ended,
+}
+
+/// An automation's last run: its newest, by its schedule or by hand.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastRun {
+    #[serde(rename = "last_run")]
+    pub started_at: Timestamp,
+    #[serde(rename = "last_run_id")]
+    pub id: RunId,
+    #[serde(rename = "last_run_started_by")]
+    pub started_by: StartedBy,
+}
+
+impl LastRun {
+    fn of((run, started_by): (&Recorded, StartedBy)) -> LastRun {
+        LastRun {
+            started_at: run.started_at,
+            id: run.id.clone(),
+            started_by,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,12 +275,13 @@ pub struct DrainShown {
     pub deadline: Option<Timestamp>,
 }
 
-/// `view` is `None` before the first poll; `drain_deadline` is the deadline
-/// of the drain under way, if any.
+/// `view` is `None` before the first poll; `recorded` is every run's record;
+/// `drain_deadline` is the deadline of the drain under way, if any.
 pub fn status(
     serving: &Serving,
     webhooks: Option<Received>,
     view: Option<&View>,
+    recorded: &[Recorded],
     drain_deadline: Option<Timestamp>,
     now: Timestamp,
 ) -> Status {
@@ -295,17 +317,15 @@ pub fn status(
         .iter()
         .map(|automation| AutomationRuns {
             name: automation.name.to_string(),
-            runs: match view.last_scheduled_runs.get(&automation.name) {
-                None => Runs::NotRunYet,
+            schedule: match view.last_scheduled_runs.get(&automation.name) {
+                None => Schedule::NotRunYet,
                 Some(last_scheduled_run) => match next_run(automation, last_scheduled_run, now) {
-                    NextRun::Due => Runs::Due { last_scheduled_run },
-                    NextRun::At(next_run) => Runs::Scheduled {
-                        last_scheduled_run,
-                        next_run,
-                    },
-                    NextRun::Never => Runs::Ended { last_scheduled_run },
+                    NextRun::Due => Schedule::Due,
+                    NextRun::At(next_run) => Schedule::Scheduled { next_run },
+                    NextRun::Never => Schedule::Ended,
                 },
             },
+            last_run: last_of_automation(recorded, &automation.name).map(LastRun::of),
         })
         .collect();
     automations.sort_by(|a, b| a.name.cmp(&b.name));
@@ -561,32 +581,25 @@ pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
 
 pub(crate) fn automation_facts(status: &Status) -> Vec<Fact> {
     let runs = status.automations.iter().flat_map(|automation| {
-        let (last, next) = match automation.runs {
-            Runs::NotRunYet => (
-                "none yet, its schedule starts when a poll first sees it".into(),
-                None,
-            ),
-            Runs::Due { last_scheduled_run } => (
-                Phrase::default().time(last_scheduled_run),
-                Some("due now".into()),
-            ),
-            Runs::Scheduled {
-                last_scheduled_run,
-                next_run,
-            } => (
-                Phrase::default().time(last_scheduled_run),
-                Some(Phrase::default().time(next_run)),
-            ),
-            Runs::Ended { last_scheduled_run } => (
-                Phrase::default().time(last_scheduled_run),
-                Some("none, its schedule ticks no more".into()),
-            ),
+        let last = match &automation.last_run {
+            None => "none yet".into(),
+            Some(run) => Phrase::from(run.id.to_string()).then(describe_start(
+                run.started_by == StartedBy::Hand,
+                run.started_at,
+            )),
+        };
+        let next = match automation.schedule {
+            Schedule::NotRunYet => {
+                "not yet counted, its schedule starts when a poll first sees it".into()
+            }
+            Schedule::Due => "due now".into(),
+            Schedule::Scheduled { next_run } => Phrase::default().time(next_run),
+            Schedule::Ended => "none, its schedule ticks no more".into(),
         };
         let name = &automation.name;
         let last = Phrase::from(format!("automation {name} last run: ")).then(last);
-        let next =
-            next.map(|next| Phrase::from(format!("automation {name} next run: ")).then(next));
-        std::iter::once(last).chain(next).map(Fact::Plain)
+        let next = Phrase::from(format!("automation {name} next run: ")).then(next);
+        [last, next].map(Fact::Plain)
     });
     let unparsed = status.unparsed_automations.iter().map(|file| {
         Fact::Problem(format!("{}: does not parse: {}", file.path, file.reason).into())
