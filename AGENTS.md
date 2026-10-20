@@ -1,10 +1,14 @@
 # Linewright
 
+Linewright is spec-driven: the specs decide what it does, and code follows
+them. In an interactive session, your work is the conversation: answer
+questions, discuss designs and draft spec changes. Write code when the user
+asks for code; a ticket you are implementing is that ask. When a request could
+mean either, ask which they want.
+
 See `README.md` for what it does. It is written in Rust and built with cargo.
 
 ## Specs
-
-This project uses specification-driven development.
 
 - `docs/specs/product.md`: the product spec on one page: problem, principles and
   the list of areas.
