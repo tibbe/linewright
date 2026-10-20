@@ -43,7 +43,7 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
 const NOW: &str = "2026-10-01T12:00:30Z";
 
 fn text(view: &View, number: u64) -> Vec<String> {
-    let answer = explain(view, &[], Number(number), at(NOW)).expect("a tracked item");
+    let answer = explain(view, &[], Number(number), at(NOW)).expect("a managed item");
     lines_of(&render(&answer, false))
 }
 
@@ -438,7 +438,7 @@ fn an_item_left_alone_points_to_runs_for_the_past_runs_left_out() {
 
 #[test]
 fn the_json_names_the_latest_three_past_runs_and_how_many_it_left_out() {
-    let answer = Answer::Tracked(
+    let answer = Answer::Managed(
         explain(
             &implementing_42_again(vec![]),
             &five_past_runs_of_42(),
@@ -465,7 +465,7 @@ fn the_json_names_the_latest_three_past_runs_and_how_many_it_left_out() {
 
 #[test]
 fn json_that_leaves_past_runs_out_before_showing_three_does_not_read_as_an_answer() {
-    let answer = Answer::Tracked(
+    let answer = Answer::Managed(
         explain(
             &implementing_42_again(vec![]),
             &five_past_runs_of_42(),
@@ -624,7 +624,7 @@ fn linewrights_pull_request_whose_issue_was_handed_back_shows_its_own_runs() {
 fn linewrights_pull_request_in_review_shows_its_own_runs_as_runs_lists_them() {
     let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
     let answer =
-        Answer::Tracked(explain(&view, &runs_of_42_and_43(), Number(43), at(NOW)).unwrap());
+        Answer::Managed(explain(&view, &runs_of_42_and_43(), Number(43), at(NOW)).unwrap());
 
     assert_shows_the_runs_of_43(&answer);
 }
@@ -633,7 +633,7 @@ fn linewrights_pull_request_in_review_shows_its_own_runs_as_runs_lists_them() {
 fn linewrights_pull_request_shows_none_of_the_runs_of_the_issue_it_closes() {
     let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
     let runs = runs_of_42();
-    let answer = Answer::Tracked(explain(&view, &runs, Number(43), at(NOW)).unwrap());
+    let answer = Answer::Managed(explain(&view, &runs, Number(43), at(NOW)).unwrap());
 
     assert_shows_no_runs(&answer);
 }
@@ -705,7 +705,7 @@ fn an_item_left_alone_shows_its_past_runs_too() {
 
 #[test]
 fn the_json_names_the_run_in_flight_and_the_past_runs() {
-    let answer = Answer::Tracked(
+    let answer = Answer::Managed(
         explain(&implementing_42(vec![]), &runs_of_42(), Number(42), at(NOW)).unwrap(),
     );
 
@@ -747,14 +747,14 @@ fn the_json_names_the_run_in_flight_and_the_past_runs() {
 }
 
 #[test]
-fn an_item_linewright_does_not_track_has_no_explanation() {
-    let untracked = Issue {
+fn an_item_linewright_does_not_manage_has_no_explanation() {
+    let unmanaged = Issue {
         labels: vec![],
         ..ticket(42, "Add invoices")
     };
 
     assert_eq!(
-        explain(&view(vec![untracked], vec![]), &[], Number(42), at(NOW)),
+        explain(&view(vec![unmanaged], vec![]), &[], Number(42), at(NOW)),
         None
     );
     assert_eq!(
@@ -895,7 +895,7 @@ fn a_ticket_linewright_let_go_of_waits_for_its_label_or_the_required_label_again
 }
 
 #[test]
-fn an_issue_linewright_filed_labeled_needs_triage_is_tracked_for_triage() {
+fn an_issue_linewright_filed_labeled_needs_triage_is_managed_for_triage() {
     let filed = Issue {
         author: Login::new("factory"),
         labels: vec!["needs-triage".into()],
@@ -932,7 +932,7 @@ fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_the_label_again
 }
 
 #[test]
-fn a_tracking_issue_with_no_tickets_and_no_cut_in_flight_is_not_tracked() {
+fn a_tracking_issue_with_no_tickets_and_no_cut_in_flight_is_not_managed() {
     let tracking = Issue {
         author: Login::new("factory"),
         labels: vec![],
@@ -1308,7 +1308,7 @@ fn a_spec_change_the_read_finds_is_explained_as_waiting_for_its_design() {
     );
 
     assert!(
-        matches!(&answer, Answer::Tracked(e) if e.waiting_for.is_empty()),
+        matches!(&answer, Answer::Managed(e) if e.waiting_for.is_empty()),
         "{answer:?}"
     );
     assert_eq!(
@@ -1360,8 +1360,8 @@ fn the_json_of_an_item_left_alone_names_why() {
 }
 
 #[test]
-fn a_tracked_answer_reads_back_as_one() {
-    let answer = Answer::Tracked(
+fn a_managed_answer_reads_back_as_one() {
+    let answer = Answer::Managed(
         explain(
             &view(vec![ticket(42, "Add invoices")], vec![]),
             &[],

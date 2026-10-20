@@ -1,14 +1,15 @@
 use std::collections::HashMap;
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::automation::{AutomationFiles, AutomationName, LastRuns};
 use crate::domain::{
-    CheckState, Issue, Item, Login, Number, Pull, PullState, Snapshot, StatusLabel, Timestamp,
-    label,
+    CheckState, Issue, Item, Login, Number, Pull, PullState, Requirement, Snapshot, StatusLabel,
+    Timestamp, label,
 };
+use crate::phrase::Phrase;
 use crate::reconcile::{
     Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
     next_run, open_pull_for, pending_spec_changes, worked_pulls,
@@ -80,8 +81,8 @@ pub struct Status {
     pub linewright: Linewright,
     /// The runs in flight, oldest first.
     pub runs: Vec<RunInFlight>,
-    /// The other items Linewright tracks: those with no run in flight.
-    pub items: Vec<Tracked>,
+    /// The other managed items: those with no run in flight.
+    pub items: Vec<Managed>,
     pub automations: Vec<AutomationRuns>,
     pub unparsed_automations: Vec<UnparsedAutomation>,
 }
@@ -114,7 +115,7 @@ pub struct Polls {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Tracked {
+pub struct Managed {
     pub number: Number,
     pub title: String,
     #[serde(flatten)]
@@ -172,7 +173,7 @@ impl InReview {
         }
     }
 
-    pub(crate) fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> Phrase {
         let stage = if self.draft {
             "draft"
         } else {
@@ -184,7 +185,9 @@ impl InReview {
             Ci::Running => "CI running",
             Ci::Green => "CI green",
         };
-        format!("in review: {} ({stage}, {ci})", self.pull_request)
+        Phrase::from("in review: ")
+            .item(self.pull_request)
+            .text(format!(" ({stage}, {ci})"))
     }
 }
 
@@ -301,7 +304,7 @@ pub fn status(
     Status {
         linewright,
         runs,
-        items: tracked(view, now)
+        items: managed(view, now)
             .into_iter()
             .filter(|item| !view.has_run_in_flight(item.number))
             .collect(),
@@ -310,12 +313,12 @@ pub fn status(
     }
 }
 
-pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
+pub(crate) fn managed(view: &View, now: Timestamp) -> Vec<Managed> {
     let snapshot = &view.snapshot;
     let mut waits = view.decisions(now).waits;
     let mut items = vec![];
     for pr in pending_spec_changes(snapshot, now, &view.policy) {
-        items.push(Tracked {
+        items.push(Managed {
             number: pr.number,
             title: pr.title.clone(),
             state: ItemState::WaitingForDesign,
@@ -327,7 +330,7 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
         let Ok(state) = standing(issue, &view.snapshot, &view.policy, &waiting_for) else {
             continue;
         };
-        items.push(Tracked {
+        items.push(Managed {
             number: issue.number,
             title: issue.title.clone(),
             state,
@@ -335,7 +338,7 @@ pub(crate) fn tracked(view: &View, now: Timestamp) -> Vec<Tracked> {
         });
     }
     for (pr, _) in worked_pulls(&view.snapshot, &view.policy.linewright) {
-        items.push(Tracked {
+        items.push(Managed {
             number: pr.number,
             title: pr.title.clone(),
             state: ItemState::InReview(InReview::of(pr)),
@@ -412,28 +415,29 @@ fn issue_state(
 
 pub fn render(status: &Status, colour: bool) -> String {
     let paint = Paint(colour);
-    let sections = [
-        linewright_lines(&status.linewright, paint),
+    let sections: [Vec<String>; 4] = [
+        linewright_facts(&status.linewright)
+            .iter()
+            .map(|fact| fact.render(paint))
+            .collect(),
         status.runs.iter().map(|run| run.render(paint)).collect(),
         status
             .items
             .iter()
             .map(|item| {
-                let waits = if item.waiting_for.is_empty() {
-                    String::new()
-                } else {
-                    let waits: Vec<String> = item.waiting_for.iter().map(describe_wait).collect();
-                    format!(" — waiting for {}", waits.join("; "))
-                };
-                format!(
-                    "{}: {}{waits} — {}",
-                    paint.bold(&item.number.to_string()),
-                    describe(&item.state),
-                    item.title
-                )
+                let mut line = describe(&item.state);
+                if !item.waiting_for.is_empty() {
+                    let waits = item.waiting_for.iter().map(describe_wait);
+                    line = line.text(" — waiting for ").then(Phrase::join(waits, "; "));
+                }
+                let line = line.text(" — ").text(&item.title);
+                format!("{}: {line}", paint.bold(item.number))
             })
             .collect(),
-        automation_lines(status, paint),
+        automation_facts(status)
+            .iter()
+            .map(|fact| fact.render(paint))
+            .collect(),
     ];
     let mut text = String::new();
     for section in sections.iter().filter(|section| !section.is_empty()) {
@@ -451,7 +455,7 @@ pub fn render(status: &Status, colour: bool) -> String {
 pub(crate) struct Paint(pub bool);
 
 impl Paint {
-    fn with(self, code: &str, text: &str) -> String {
+    fn with(self, code: &str, text: impl fmt::Display) -> String {
         if self.0 {
             format!("\x1b[{code}m{text}\x1b[0m")
         } else {
@@ -459,90 +463,117 @@ impl Paint {
         }
     }
 
-    pub(crate) fn bold(self, text: &str) -> String {
+    pub(crate) fn bold(self, text: impl fmt::Display) -> String {
         self.with("1", text)
     }
 
-    pub(crate) fn yellow(self, text: &str) -> String {
+    pub(crate) fn yellow(self, text: impl fmt::Display) -> String {
         self.with("33", text)
     }
 
-    pub(crate) fn red(self, text: &str) -> String {
+    pub(crate) fn red(self, text: impl fmt::Display) -> String {
         self.with("31", text)
     }
 }
 
-fn linewright_lines(linewright: &Linewright, paint: Paint) -> Vec<String> {
-    let polls = linewright.polls;
-    let mut lines = vec![
-        format!("serving since: {}", utc(linewright.serving_since)),
-        format!(
-            "last poll: {}",
-            polls.map_or("none yet".into(), |p| utc(p.last))
-        ),
-        format!(
-            "next poll: {}",
-            polls.map_or("due now".into(), |p| utc(p.next))
-        ),
-    ];
-    if let Some(resets_at) = linewright.usage_limit_resets_at {
-        lines.push(paint.yellow(&format!("usage limit: in force until {}", utc(resets_at))));
-    }
-    if let Some(drain) = linewright.drain {
-        let deadline = drain
-            .deadline
-            .map_or(String::new(), |at| format!("; deadline {}", utc(at)));
-        lines.push(paint.yellow(&format!(
-            "drain: under way since {}{deadline}",
-            utc(drain.since)
-        )));
-    }
-    lines.push(format!(
-        "runs in flight: {} of {}",
-        linewright.runs_in_flight, linewright.max_runs
-    ));
-    if let Some(received) = linewright.webhooks {
-        lines.push(format!(
-            "last delivery accepted: {}",
-            received.last_accepted.map_or("none yet".into(), utc)
-        ));
-        lines.push(format!("deliveries refused: {}", received.refused));
-    }
-    lines
+/// A line about Linewright itself or its automations, and how much it asks
+/// for the reader's attention.
+enum Fact {
+    Plain(Phrase),
+    Warning(Phrase),
+    Problem(Phrase),
 }
 
-fn automation_lines(status: &Status, paint: Paint) -> Vec<String> {
+impl Fact {
+    fn render(&self, paint: Paint) -> String {
+        match self {
+            Fact::Plain(phrase) => phrase.to_string(),
+            Fact::Warning(phrase) => paint.yellow(phrase),
+            Fact::Problem(phrase) => paint.red(phrase),
+        }
+    }
+}
+
+fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
+    let polls = linewright.polls;
+    let mut facts = vec![
+        Fact::Plain(Phrase::from("serving since: ").time(linewright.serving_since)),
+        Fact::Plain(match polls {
+            Some(polls) => Phrase::from("last poll: ").time(polls.last),
+            None => "last poll: none yet".into(),
+        }),
+        Fact::Plain(match polls {
+            Some(polls) => Phrase::from("next poll: ").time(polls.next),
+            None => "next poll: due now".into(),
+        }),
+    ];
+    if let Some(resets_at) = linewright.usage_limit_resets_at {
+        facts.push(Fact::Warning(
+            Phrase::from("usage limit: in force until ").time(resets_at),
+        ));
+    }
+    if let Some(drain) = linewright.drain {
+        let mut phrase = Phrase::from("drain: under way since ").time(drain.since);
+        if let Some(deadline) = drain.deadline {
+            phrase = phrase.text("; deadline ").time(deadline);
+        }
+        facts.push(Fact::Warning(phrase));
+    }
+    facts.push(Fact::Plain(
+        format!(
+            "runs in flight: {} of {}",
+            linewright.runs_in_flight, linewright.max_runs
+        )
+        .into(),
+    ));
+    if let Some(received) = linewright.webhooks {
+        facts.push(Fact::Plain(match received.last_accepted {
+            Some(at) => Phrase::from("last delivery accepted: ").time(at),
+            None => "last delivery accepted: none yet".into(),
+        }));
+        facts.push(Fact::Plain(
+            format!("deliveries refused: {}", received.refused).into(),
+        ));
+    }
+    facts
+}
+
+fn automation_facts(status: &Status) -> Vec<Fact> {
     let runs = status.automations.iter().flat_map(|automation| {
         let (last, next) = match automation.runs {
             Runs::NotRunYet => (
                 "none yet, its schedule starts when a poll first sees it".into(),
                 None,
             ),
-            Runs::Due { last_run } => (utc(last_run), Some("due now".into())),
-            Runs::Scheduled { last_run, next_run } => (utc(last_run), Some(utc(next_run))),
+            Runs::Due { last_run } => (Phrase::default().time(last_run), Some("due now".into())),
+            Runs::Scheduled { last_run, next_run } => (
+                Phrase::default().time(last_run),
+                Some(Phrase::default().time(next_run)),
+            ),
             Runs::Ended { last_run } => (
-                utc(last_run),
+                Phrase::default().time(last_run),
                 Some("none, its schedule ticks no more".into()),
             ),
         };
         let name = &automation.name;
-        std::iter::once(format!("automation {name} last run: {last}"))
-            .chain(next.map(|next| format!("automation {name} next run: {next}")))
+        let last = Phrase::from(format!("automation {name} last run: ")).then(last);
+        let next =
+            next.map(|next| Phrase::from(format!("automation {name} next run: ")).then(next));
+        std::iter::once(last).chain(next).map(Fact::Plain)
     });
-    let unparsed = status
-        .unparsed_automations
-        .iter()
-        .map(|file| paint.red(&format!("{}: does not parse: {}", file.path, file.reason)));
+    let unparsed = status.unparsed_automations.iter().map(|file| {
+        Fact::Problem(format!("{}: does not parse: {}", file.path, file.reason).into())
+    });
     runs.chain(unparsed).collect()
 }
 
-pub(crate) fn describe(state: &ItemState) -> String {
+pub(crate) fn describe(state: &ItemState) -> Phrase {
     match state {
         ItemState::WaitingForDesign => "spec change waiting for its design".into(),
         ItemState::Tracking {
             tickets_closed,
             tickets,
-        } => format!("tracking issue, {tickets_closed}/{tickets} tickets closed"),
+        } => format!("tracking issue, {tickets_closed}/{tickets} tickets closed").into(),
         ItemState::WaitingForTriage => "waiting for triage".into(),
         ItemState::BeingTriaged => "claimed: being triaged".into(),
         ItemState::WaitingOnTheReporter => "waiting on the reporter".into(),
@@ -551,7 +582,9 @@ pub(crate) fn describe(state: &ItemState) -> String {
         ItemState::InReviewElsewhere {
             pull_request,
             author,
-        } => format!("in review: {pull_request}, opened by {author}"),
+        } => Phrase::from("in review: ")
+            .item(*pull_request)
+            .text(format!(", opened by {author}")),
         ItemState::BeingDesigned => "claimed: being designed".into(),
         ItemState::ReadyToDesign => "ready to claim, waiting for its design".into(),
         ItemState::Claimed => "claimed: being implemented".into(),
@@ -560,73 +593,76 @@ pub(crate) fn describe(state: &ItemState) -> String {
 }
 
 /// What Linewright waits for, as a phrase after "waiting for".
-pub(crate) fn describe_wait(wait: &Wait) -> String {
+pub(crate) fn describe_wait(wait: &Wait) -> Phrase {
     match wait {
-        Wait::Run { stage } => format!("its {} run, in flight", stage.name()),
+        Wait::Run { stage } => format!("its {} run, in flight", stage.name()).into(),
         Wait::FreeRun {
             in_flight,
             max_runs,
-        } => format!("a free run: {in_flight} of {max_runs} in flight"),
-        Wait::UsageLimit { resets_at } => format!("the usage limit, until {}", utc(*resets_at)),
-        Wait::Drain => "the drain, until `serve` restarts".into(),
-        Wait::Blocker { issue } => format!("{issue}, which blocks it"),
-        Wait::Assignee { assignee } => format!("{assignee}, who is assigned to it"),
-        Wait::ClosingPullRequest { pull_request } => format!("{pull_request}, which closes it"),
+        } => format!("a free run: {in_flight} of {max_runs} in flight").into(),
+        Wait::UsageLimit { resets_at } => Phrase::from("the usage limit, until ").time(*resets_at),
+        Wait::Drain => Phrase::from("the drain, until ")
+            .code("serve")
+            .text(" restarts"),
+        Wait::Blocker { issue } => Phrase::from(*issue).text(", which blocks it"),
+        Wait::Assignee { assignee } => format!("{assignee}, who is assigned to it").into(),
+        Wait::ClosingPullRequest { pull_request } => {
+            Phrase::from(*pull_request).text(", which closes it")
+        }
         Wait::PullRequest { pull_request } => {
-            format!("{pull_request}, its pull request, until it is merged or closed")
+            Phrase::from(*pull_request).text(", its pull request, until it is merged or closed")
         }
-        Wait::Ci { pull_request } => format!("CI on {pull_request}"),
-        Wait::MergeState { pull_request } => {
-            format!("GitHub to work out whether {pull_request} can merge")
-        }
-        Wait::Tickets { open } => {
-            let open: Vec<String> = open.iter().map(Number::to_string).collect();
-            format!("its tickets: {} open", open.join(", "))
-        }
-        Wait::Reporter => format!("the reporter: labeled `{}`", label::NEEDS_INFO),
-        Wait::Maintainer => format!(
-            "the maintainer: to label it {}",
-            label::ANSWERS
-                .map(|(answer, _)| format!("`{answer}`"))
-                .join(" or ")
-        ),
+        Wait::Ci { pull_request } => Phrase::from("CI on ").item(*pull_request),
+        Wait::MergeState { pull_request } => Phrase::from("GitHub to work out whether ")
+            .item(*pull_request)
+            .text(" can merge"),
+        Wait::Tickets { open } => Phrase::from("its tickets: ")
+            .then(Phrase::join(open.iter().copied().map(Phrase::from), ", "))
+            .text(" open"),
+        Wait::Reporter => Phrase::from("the reporter: labeled ").code(label::NEEDS_INFO),
+        Wait::Maintainer => Phrase::from("the maintainer: to label it ").then(Phrase::join(
+            label::ANSWERS.map(|(answer, _)| Phrase::default().code(answer)),
+            " or ",
+        )),
         Wait::Unassigned => {
             "the maintainer: Linewright is unassigned, until they assign it again".into()
         }
-        Wait::RequiredLabel { label } => {
-            format!("the maintainer: to label it `{label}`, the required label")
-        }
+        Wait::RequiredLabel { label } => Phrase::from("the maintainer: to label it ")
+            .code(label.clone())
+            .text(", the required label"),
         Wait::Relabel { label, since } => {
-            let (or_required, since) = match since {
-                Relabel::Unassigned { required_label } => (
-                    required_label
-                        .as_ref()
-                        .map(|l| format!(" or `{l}`, the required label,"))
-                        .unwrap_or_default(),
-                    "Linewright was unassigned".to_string(),
-                ),
-                Relabel::Merged { pull_request } => {
-                    (String::new(), format!("{pull_request} merged"))
-                }
-            };
-            format!("the maintainer: to label it `{label}`{or_required} again, since {since}")
+            let mut phrase = Phrase::from("the maintainer: to label it ").code(label.to_string());
+            if let Relabel::Unassigned {
+                required_label: Some(required),
+            } = since
+            {
+                phrase = phrase
+                    .text(" or ")
+                    .code(required.clone())
+                    .text(", the required label,");
+            }
+            let phrase = phrase.text(" again, since ");
+            match since {
+                Relabel::Unassigned { .. } => phrase.text("Linewright was unassigned"),
+                Relabel::Merged { pull_request } => phrase.item(*pull_request).text(" merged"),
+            }
         }
-        Wait::Review { pull_request } => format!("the maintainer: to review {pull_request}"),
+        Wait::Review { pull_request } => {
+            Phrase::from("the maintainer: to review ").item(*pull_request)
+        }
         Wait::Requirements {
             pull_request,
             requires,
         } => {
-            let names: Vec<String> = requires.iter().map(ToString::to_string).collect();
-            let required = match names.as_slice() {
-                [] => "what the default branch's rules require".to_string(),
-                [one] => one.clone(),
-                [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+            let required = if requires.is_empty() {
+                "what the default branch's rules require".into()
+            } else {
+                Phrase::list(requires.iter().map(Requirement::describe), "and")
             };
-            format!("{required}, before {pull_request} merges")
+            required
+                .text(", before ")
+                .item(*pull_request)
+                .text(" merges")
         }
     }
-}
-
-pub(crate) fn utc(time: Timestamp) -> String {
-    time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
 }

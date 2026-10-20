@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::domain::Timestamp;
+use crate::phrase::Phrase;
 use crate::runs::RunId;
-use crate::status::{Paint, utc};
+use crate::status::Paint;
 
 pub const OUTPUT: &str = "output.jsonl";
 
@@ -1117,11 +1118,10 @@ fn account(call: &Call) -> String {
             Some("completed") => {
                 let uses = details["totalToolUseCount"].as_u64().unwrap_or(0);
                 let seconds = details["totalDurationMs"].as_u64().unwrap_or(0) / 1000;
-                format!(
-                    "done, {uses} tool {}, {}",
-                    if uses == 1 { "use" } else { "uses" },
-                    humantime::format_duration(std::time::Duration::from_secs(seconds))
-                )
+                let uses_word = if uses == 1 { "use" } else { "uses" };
+                Phrase::from(format!("done, {uses} tool {uses_word}, "))
+                    .duration(seconds, None)
+                    .to_string()
             }
             Some("async_launched") => in_background("started in the background"),
             _ => one_line(&result.text, ARGUMENT_CHARS),
@@ -1156,16 +1156,19 @@ pub fn render_line(line: &Line, colour: bool) -> String {
         Line::Header(header) => {
             let _ = match header {
                 Header::Run { run, sessions: 0 } => {
-                    let run = paint.bold(&run.to_string());
+                    let run = paint.bold(run);
                     writeln!(shown, "run: {run} (it started no session)")
                 }
                 Header::Run { run, .. } => {
-                    writeln!(shown, "run: {}", paint.bold(&run.to_string()))
+                    writeln!(shown, "run: {}", paint.bold(run))
                 }
                 Header::Session {
                     session,
                     started_at: Some(at),
-                } => writeln!(shown, "session {session}: started {}", utc(*at)),
+                } => {
+                    let started = Phrase::from(format!("session {session}: started ")).time(*at);
+                    writeln!(shown, "{started}")
+                }
                 Header::Session { session, .. } => writeln!(shown, "session {session}"),
             };
             return shown;

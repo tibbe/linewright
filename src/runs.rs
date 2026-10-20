@@ -9,9 +9,10 @@ use tracing::warn;
 
 use crate::automation::AutomationName;
 use crate::domain::{Number, Timestamp};
+use crate::phrase::Phrase;
 use crate::reconcile::{DoneRun, OLD_DESIGN, WorkKind};
 use crate::records;
-use crate::status::{Paint, utc};
+use crate::status::Paint;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -400,30 +401,37 @@ impl TryFrom<RunInFlightAnswer> for RunInFlight {
 
 impl RunInFlight {
     pub(crate) fn render(&self, paint: Paint) -> String {
-        let quiet = self
-            .quiet_seconds
-            .map_or("no session yet".into(), |seconds| {
-                format!("quiet for {}", duration(seconds))
-            });
-        format!(
-            "{}: {}, running for {}, {quiet}",
-            paint.bold(&self.id.to_string()),
-            describe_of(&self.id.of),
-            duration(self.duration_seconds)
-        )
+        format!("{}: {}", paint.bold(&self.id), self.describe())
+    }
+
+    /// What the run is of, how long it has run and its quiet time.
+    fn describe(&self) -> Phrase {
+        let now = self.started_at + chrono::TimeDelta::seconds(self.duration_seconds);
+        let phrase = describe_of(&self.id.of)
+            .text(", running for ")
+            .duration(non_negative(self.duration_seconds), Some(self.started_at))
+            .text(", ");
+        match self.quiet_seconds {
+            None => phrase.text("no session yet"),
+            Some(seconds) => phrase.text("quiet for ").duration(
+                non_negative(seconds),
+                Some(now - chrono::TimeDelta::seconds(seconds)),
+            ),
+        }
     }
 }
 
-fn describe_of(of: &RunOf) -> String {
+/// A duration measured on clocks that may disagree, as 0 when they make it
+/// negative.
+fn non_negative(seconds: i64) -> u64 {
+    u64::try_from(seconds).unwrap_or(0)
+}
+
+fn describe_of(of: &RunOf) -> Phrase {
     match of {
-        RunOf::Work { item, stage } => format!("{item} {}", stage.name()),
-        RunOf::Automation { automation } => format!("automation {automation}"),
+        RunOf::Work { item, stage } => Phrase::from(*item).text(format!(" {}", stage.name())),
+        RunOf::Automation { automation } => format!("automation {automation}").into(),
     }
-}
-
-fn duration(seconds: i64) -> String {
-    let duration = std::time::Duration::from_secs(seconds.max(0).unsigned_abs());
-    humantime::format_duration(duration).to_string()
 }
 
 /// A run dropped without ending, as when its process dies, reads as
@@ -750,29 +758,35 @@ pub(crate) fn render_left_out(left_out: usize, how: &str) -> String {
 }
 
 pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
-    let (outcome, seconds) = match run.outcome {
-        Outcome::Ended { ending, seconds } => {
-            let ending = match ending {
-                Ending::Done => "done".into(),
-                Ending::HandedBack => paint.red("handed back"),
-                Ending::Cancelled => "cancelled".into(),
-                Ending::UsageLimit => paint.yellow("ended for the usage limit"),
-                Ending::Failed => paint.red("failed"),
-            };
-            (ending, Some(seconds))
-        }
-        Outcome::InFlight { seconds } => (paint.bold("in flight"), Some(seconds)),
-        Outcome::Interrupted => (paint.yellow("interrupted"), None),
+    let outcome = match run.outcome {
+        Outcome::Ended { ending, .. } => match ending {
+            Ending::Done => "done".into(),
+            Ending::HandedBack => paint.red("handed back"),
+            Ending::Cancelled => "cancelled".into(),
+            Ending::UsageLimit => paint.yellow("ended for the usage limit"),
+            Ending::Failed => paint.red("failed"),
+        },
+        Outcome::InFlight { .. } => paint.bold("in flight"),
+        Outcome::Interrupted => paint.yellow("interrupted"),
     };
-    let ran = seconds.map_or(String::new(), |seconds| {
-        format!(", ran {}", duration(seconds))
-    });
-    format!(
-        "{}: {outcome} — {}, started {}{ran}",
-        paint.bold(&run.id.to_string()),
-        describe_of(&run.id.of),
-        utc(run.started_at)
-    )
+    format!("{}: {outcome} — {}", paint.bold(&run.id), describe_run(run))
+}
+
+/// What a run is of, when it started and how long it ran, after its
+/// outcome.
+fn describe_run(run: &Run) -> Phrase {
+    let phrase = describe_of(&run.id.of)
+        .text(", started ")
+        .time(run.started_at);
+    match run.outcome {
+        Outcome::Ended { seconds, .. } => {
+            phrase.text(", ran ").duration(non_negative(seconds), None)
+        }
+        Outcome::InFlight { seconds } => phrase
+            .text(", ran ")
+            .duration(non_negative(seconds), Some(run.started_at)),
+        Outcome::Interrupted => phrase,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

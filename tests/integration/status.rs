@@ -354,7 +354,7 @@ fn a_blocked_ticket_linewright_is_assigned_to_by_hand_shows_as_held_by_its_block
 }
 
 #[test]
-fn the_tracked_items_follow_the_linewright_section_each_as_its_number_and_where_it_is() {
+fn the_managed_items_follow_the_linewright_section_each_as_its_number_and_where_it_is() {
     let blocked = Issue {
         number: Number(8),
         title: "Do the next thing".into(),
@@ -464,7 +464,7 @@ fn an_issue_carrying_two_status_labels_shows_by_the_newer() {
 }
 
 #[test]
-fn each_tracked_item_says_in_one_line_what_linewright_waits_for_on_it() {
+fn each_managed_item_says_in_one_line_what_linewright_waits_for_on_it() {
     let blocked_and_held = Issue {
         number: Number(8),
         title: "Do the next thing".into(),
@@ -743,7 +743,7 @@ fn the_json_names_each_fact() {
 }
 
 #[test]
-fn linewrights_pull_request_is_tracked_with_its_own_waits_and_its_ticket_waits_for_it() {
+fn linewrights_pull_request_is_managed_with_its_own_waits_and_its_ticket_waits_for_it() {
     let pr = Pull {
         number: Number(43),
         title: "Do #7".into(),

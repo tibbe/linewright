@@ -527,7 +527,7 @@ async fn answer_item(
     };
     let now = sources.clock.now();
     if let Some(answer) = explain::explain(&view, &recorded, number, now) {
-        return json_response(StatusCode::OK, &explain::Answer::Tracked(answer));
+        return json_response(StatusCode::OK, &explain::Answer::Managed(answer));
     }
     match store.any_item(number).await {
         Ok(Some(read)) => json_response(

@@ -26,6 +26,7 @@ pub mod git;
 pub mod harness;
 pub mod holds;
 pub mod logs;
+pub mod phrase;
 pub mod prompts;
 pub mod reconcile;
 mod records;

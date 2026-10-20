@@ -14,6 +14,7 @@ use crate::domain::{
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
+use crate::phrase::Phrase;
 use crate::spec_glob::SpecGlob;
 
 #[derive(Clone, Debug)]
@@ -1673,16 +1674,13 @@ fn merge_failed_twice<'a>(
 }
 
 pub fn hold_note(requires: &[Requirement]) -> String {
-    let names: Vec<String> = requires.iter().map(ToString::to_string).collect();
-    let required = match names.as_slice() {
-        [] => "GitHub blocks the merge for a reason Linewright cannot read: the default \
-               branch's rules say what it needs"
-            .to_string(),
-        [one] => format!("GitHub requires {one} before merging"),
-        [rest @ .., last] => format!(
-            "GitHub requires {} and {last} before merging",
-            rest.join(", ")
-        ),
+    let required = if requires.is_empty() {
+        "GitHub blocks the merge for a reason Linewright cannot read: the default branch's \
+         rules say what it needs"
+            .to_string()
+    } else {
+        let names = Phrase::list(requires.iter().map(Requirement::describe), "and");
+        format!("GitHub requires {names} before merging")
     };
     format!("Ready for review: {required}. Linewright merges it once GitHub allows it.")
 }

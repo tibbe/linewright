@@ -3,6 +3,8 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::phrase::Phrase;
+
 pub type Timestamp = DateTime<Utc>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -596,19 +598,27 @@ pub enum Requirement {
     },
 }
 
-impl fmt::Display for Requirement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Requirement {
+    pub(crate) fn describe(&self) -> Phrase {
         match self {
-            Requirement::Approval => f.write_str("an approving review"),
+            Requirement::Approval => "an approving review".into(),
             Requirement::CodeOwnerReview { owners } if owners.is_empty() => {
-                f.write_str("a code owner's review")
+                "a code owner's review".into()
             }
             Requirement::CodeOwnerReview { owners } => {
                 let owners: Vec<String> = owners.iter().map(|o| format!("@{o}")).collect();
-                write!(f, "a code owner's review ({})", owners.join(" or "))
+                format!("a code owner's review ({})", owners.join(" or ")).into()
             }
-            Requirement::Check { name } => write!(f, "the required check `{name}` passing"),
+            Requirement::Check { name } => Phrase::from("the required check ")
+                .code(name)
+                .text(" passing"),
         }
+    }
+}
+
+impl fmt::Display for Requirement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.describe().fmt(f)
     }
 }
 

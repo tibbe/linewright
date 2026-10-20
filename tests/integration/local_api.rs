@@ -240,7 +240,7 @@ async fn with_ticket_and_automation() -> World {
 }
 
 #[tokio::test]
-async fn status_shows_linewright_then_the_tracked_items_then_the_automations() {
+async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
 
     let output = answering.lw(&["status"]).await;

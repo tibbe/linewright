@@ -7,11 +7,11 @@ use crate::domain::{
     ClosingPull, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
     Tracks, label,
 };
+use crate::phrase::Phrase;
 use crate::reconcile::{NotSpecChange, NotWorked, Wait, not_a_spec_change, worked_ticket};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
-    InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, standing, tracked,
-    utc,
+    InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, managed, standing,
 };
 use crate::store::AnyItem;
 
@@ -20,7 +20,7 @@ use crate::store::AnyItem;
 pub enum Answer {
     // First, so that only an answer naming why reads as one.
     LeftAlone(LeftAlone),
-    Tracked(Explanation),
+    Managed(Explanation),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,15 +276,19 @@ impl Family {
         family
     }
 
-    fn lines(&self) -> Vec<String> {
-        let parents = self
-            .parents
-            .iter()
-            .map(|parent| format!("parent: {}, {}", parent.number, parent.role.describe()));
-        let children = self
-            .children
-            .iter()
-            .map(|child| format!("child: {}, {}", child.number, child.role.describe()));
+    fn lines(&self) -> Vec<Phrase> {
+        let parents = self.parents.iter().map(|parent| {
+            Phrase::from("parent: ")
+                .item(parent.number)
+                .text(", ")
+                .text(parent.role.describe())
+        });
+        let children = self.children.iter().map(|child| {
+            Phrase::from("child: ")
+                .item(child.number)
+                .text(", ")
+                .text(child.role.describe())
+        });
         parents.chain(children).collect()
     }
 }
@@ -348,7 +352,7 @@ pub enum Standing {
     Item(ItemState),
 }
 
-/// `None` unless #`number` is an item Linewright tracks or Linewright's
+/// `None` unless #`number` is a managed item or Linewright's
 /// open pull request it works on.
 pub fn explain(
     view: &View,
@@ -364,9 +368,9 @@ pub fn explain(
             ..explanation
         });
     }
-    let items = tracked(view, now);
-    if let Some(tracked) = items.iter().find(|t| t.number == number) {
-        // A tracked spec change is a merged pull request, not yet cut into
+    let items = managed(view, now);
+    if let Some(managed) = items.iter().find(|m| m.number == number) {
+        // A managed spec change is a merged pull request, not yet cut into
         // tickets; the rest are issues.
         let (read, family) = match view.snapshot.issue(number) {
             Some(issue) => (
@@ -383,11 +387,11 @@ pub fn explain(
         };
         return Some(Explanation::new(
             number,
-            tracked.title.clone(),
+            managed.title.clone(),
             family,
-            Standing::Item(tracked.state.clone()),
+            Standing::Item(managed.state.clone()),
             last_read(read),
-            tracked.waiting_for.clone(),
+            managed.waiting_for.clone(),
             ItemRuns::of(view, recorded, number, now),
         ));
     }
@@ -470,8 +474,8 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             Family::of_issue(issue, &fresh.snapshot, &fresh.policy.linewright)
         }
     };
-    let tracked_as = |title: &str, state: ItemState, waiting_for| {
-        Answer::Tracked(Explanation::new(
+    let managed_as = |title: &str, state: ItemState, waiting_for| {
+        Answer::Managed(Explanation::new(
             number,
             title.to_string(),
             family.clone(),
@@ -494,7 +498,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
         AnyItem::HeldIssue(issue) => {
             let waiting_for = take_waits();
             match standing(issue, &fresh.snapshot, &fresh.policy, &waiting_for) {
-                Ok(state) => return tracked_as(&issue.title, state, waiting_for),
+                Ok(state) => return managed_as(&issue.title, state, waiting_for),
                 Err(exclusion) => (
                     &issue.title,
                     LeftAloneItem::Issue(LeftAloneIssue::Open {
@@ -508,7 +512,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             match not_a_spec_change(merged, default_branch, now, &fresh.policy) {
                 None => {
                     let state = ItemState::WaitingForDesign;
-                    return tracked_as(&merged.title, state, take_waits());
+                    return managed_as(&merged.title, state, take_waits());
                 }
                 Some(left_alone) => (
                     &merged.title,
@@ -521,7 +525,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             LeftAloneItem::PullRequest(LeftAlonePull::Closed),
         ),
         AnyItem::Pull(pull) => match pull_standing(&fresh, recorded, pull, now) {
-            Ok(explanation) => return Answer::Tracked(explanation),
+            Ok(explanation) => return Answer::Managed(explanation),
             Err(left_alone) => (
                 &pull.title,
                 LeftAloneItem::PullRequest(LeftAlonePull::Open { left_alone }),
@@ -573,11 +577,11 @@ fn pull_standing(
 
 pub fn render_answer(answer: &Answer, colour: bool) -> String {
     let left_alone = match answer {
-        Answer::Tracked(explanation) => return render(explanation, colour),
+        Answer::Managed(explanation) => return render(explanation, colour),
         Answer::LeftAlone(left_alone) => left_alone,
     };
     let paint = Paint(colour);
-    let closed = || "it is closed".to_string();
+    let closed = || Phrase::from("it is closed");
     let (state, why) = match &left_alone.item {
         LeftAloneItem::Issue(LeftAloneIssue::Closed) => ("closed issue", closed()),
         LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }) => {
@@ -589,22 +593,27 @@ pub fn render_answer(answer: &Answer, colour: bool) -> String {
         }
         LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }) => (
             "merged pull request",
-            format!(
-                "it is no spec change: {}",
-                describe_not_spec_change(left_alone)
-            ),
+            Phrase::from("it is no spec change: ").then(describe_not_spec_change(left_alone)),
         ),
     };
     let lines = [format!(
         "{}: {}",
-        paint.bold(&left_alone.number.to_string()),
+        paint.bold(left_alone.number),
         left_alone.title
     )]
     .into_iter()
-    .chain(left_alone.family.lines())
+    .chain(
+        left_alone
+            .family
+            .lines()
+            .into_iter()
+            .map(|line| line.to_string()),
+    )
     .chain([
         format!("state: {state}"),
-        format!("last read: {}", utc(left_alone.last_read)),
+        Phrase::from("last read: ")
+            .time(left_alone.last_read)
+            .to_string(),
         format!("left alone: {why}"),
     ])
     .chain(left_alone.runs.lines(paint));
@@ -615,89 +624,82 @@ pub fn render_answer(answer: &Answer, colour: bool) -> String {
     text
 }
 
-fn one_of(names: &[&str]) -> String {
-    let names: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
-    match names.as_slice() {
-        [rest @ .., last] if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
-        _ => names.concat(),
-    }
+fn one_of(names: &[&str]) -> Phrase {
+    Phrase::list(names.iter().map(|&name| Phrase::default().code(name)), "or")
 }
 
-fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> String {
+fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> Phrase {
     let exclusion = match exclusion {
         OpenIssueExclusion::NotInView => {
-            return format!(
-                "it is labeled none of {}, and Linewright neither opened it nor is assigned to it",
-                one_of(&label::IN_VIEW)
-            );
+            return Phrase::from("it is labeled none of ")
+                .then(one_of(&label::IN_VIEW))
+                .text(", and Linewright neither opened it nor is assigned to it");
         }
         OpenIssueExclusion::Held(exclusion) => exclusion,
     };
     match exclusion {
-        IssueExclusion::NoPipelineLabel => {
-            format!(
-                "it is labeled none of {}",
-                one_of(&StatusLabel::ALL.map(StatusLabel::label))
-            )
-        }
+        IssueExclusion::NoPipelineLabel => Phrase::from("it is labeled none of ")
+            .then(one_of(&StatusLabel::ALL.map(StatusLabel::label))),
         IssueExclusion::NoTickets => {
             "it is a tracking issue with no tickets, and none are being cut".into()
         }
     }
 }
 
-fn describe_pull_exclusion(exclusion: &PullExclusion) -> String {
+fn describe_pull_exclusion(exclusion: &PullExclusion) -> Phrase {
     match exclusion {
         PullExclusion::NotLinewrights { author } => {
-            format!("{author} opened it, and Linewright works only on its own pull requests")
+            format!("{author} opened it, and Linewright works only on its own pull requests").into()
         }
         PullExclusion::ClosesNoIssue => {
             "it is Linewright's, and closes no issue Linewright could work on".into()
         }
-        PullExclusion::Superseded { issue, by } => {
-            format!("it is Linewright's for {issue}, which it works on through {by}")
-        }
+        PullExclusion::Superseded { issue, by } => Phrase::from("it is Linewright's for ")
+            .item(*issue)
+            .text(", which it works on through ")
+            .item(*by),
     }
 }
 
-fn describe_not_spec_change(because: &NotSpecChange) -> String {
+fn describe_not_spec_change(because: &NotSpecChange) -> Phrase {
     match because {
         NotSpecChange::Linewrights => "Linewright opened it".into(),
-        NotSpecChange::OtherBranch { base } => {
-            format!("it was merged into `{base}`, not the default branch")
-        }
-        NotSpecChange::NoSpecFile { spec_glob } => {
-            format!("it touches no file matching `{spec_glob}`, the spec-glob")
-        }
-        NotSpecChange::Designed { label } => {
-            format!("it is labeled `{}`: designed already", label.name())
-        }
+        NotSpecChange::OtherBranch { base } => Phrase::from("it was merged into ")
+            .code(base.clone())
+            .text(", not the default branch"),
+        NotSpecChange::NoSpecFile { spec_glob } => Phrase::from("it touches no file matching ")
+            .code(spec_glob.clone())
+            .text(", the spec-glob"),
+        NotSpecChange::Designed { label } => Phrase::from("it is labeled ")
+            .code(label.name())
+            .text(": designed already"),
         NotSpecChange::Unassigned {
             at,
             required_label: None,
-        } => format!(
-            "Linewright was unassigned from it {}: assign Linewright to cut it again",
-            utc(*at)
-        ),
+        } => Phrase::from("Linewright was unassigned from it ")
+            .time(*at)
+            .text(": assign Linewright to cut it again"),
         NotSpecChange::Unassigned {
             at,
             required_label: Some(label),
-        } => format!(
-            "Linewright was unassigned from it {}, and `{label}`, the required label, was not \
-             applied since: assign Linewright or apply the label to cut it again",
-            utc(*at)
-        ),
+        } => Phrase::from("Linewright was unassigned from it ")
+            .time(*at)
+            .text(", and ")
+            .code(label.clone())
+            .text(
+                ", the required label, was not applied since: assign Linewright or apply the \
+                 label to cut it again",
+            ),
         NotSpecChange::BeforeLookback {
             merged_at,
             window_opened,
-        } => format!(
-            "it was merged {}, before the spec-lookback window opened {}",
-            utc(*merged_at),
-            utc(*window_opened)
-        ),
-        NotSpecChange::RequiredLabel { label } => {
-            format!("it is not labeled `{label}`, the required label")
-        }
+        } => Phrase::from("it was merged ")
+            .time(*merged_at)
+            .text(", before the spec-lookback window opened ")
+            .time(*window_opened),
+        NotSpecChange::RequiredLabel { label } => Phrase::from("it is not labeled ")
+            .code(label.clone())
+            .text(", the required label"),
     }
 }
 
@@ -705,16 +707,20 @@ pub fn render(explanation: &Explanation, colour: bool) -> String {
     let paint = Paint(colour);
     let mut lines = vec![format!(
         "{}: {}",
-        paint.bold(&explanation.number.to_string()),
+        paint.bold(explanation.number),
         explanation.title
     )];
-    lines.extend(explanation.family.lines());
+    lines.extend(explanation.family.lines().iter().map(Phrase::to_string));
     let state = match &explanation.standing {
         Standing::PullRequest { review, .. } => review.describe(),
         Standing::Item(state) => describe(state),
     };
     lines.push(format!("state: {state}"));
-    lines.push(format!("last read: {}", utc(explanation.last_read)));
+    lines.push(
+        Phrase::from("last read: ")
+            .time(explanation.last_read)
+            .to_string(),
+    );
     if explanation.waiting_for.is_empty() {
         lines.push("waiting for: nothing: Linewright acts on it at its next poll".into());
     }
