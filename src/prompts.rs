@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt::{self, Write};
 use std::marker::PhantomData;
@@ -7,7 +8,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::automation::Automation;
 use crate::credentials::Held;
-use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Pull, UpdateMethod};
+use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Parent, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::Feedback;
 use crate::store::FoundSecrets;
@@ -19,6 +20,9 @@ pub struct Repo<'a> {
 
 pub struct Ticket<'a> {
     issue: &'a Issue,
+    /// The issue it was cut from, whose comments hold its design
+    /// (docs/specs/implementation.md, "What the implementer reads").
+    parent: Option<Cow<'a, Issue>>,
     filed_gaps: Vec<&'a Issue>,
     /// Only for a ticket cut from a spec change.
     spec_diff: Option<String>,
@@ -27,23 +31,32 @@ pub struct Ticket<'a> {
 impl<'a> Ticket<'a> {
     /// # Panics
     ///
-    /// When it has a spec diff but was cut from no spec change, or the other
-    /// way round.
+    /// When it has a spec diff but its parent is no spec change's tracking
+    /// issue, or the other way round.
     pub fn new(
         issue: &'a Issue,
+        parent: Option<Cow<'a, Issue>>,
         filed_gaps: Vec<&'a Issue>,
         spec_diff: Option<String>,
     ) -> Ticket<'a> {
-        assert_eq!(
-            spec_diff.is_some(),
-            issue.cut_from().is_some(),
-            "a ticket has a spec diff exactly when it was cut from a spec change"
-        );
-        Ticket {
+        let ticket = Ticket {
             issue,
+            parent,
             filed_gaps,
             spec_diff,
-        }
+        };
+        assert_eq!(
+            ticket.spec_diff.is_some(),
+            ticket.cut_from().is_some(),
+            "a ticket has a spec diff exactly when it was cut from a spec change"
+        );
+        ticket
+    }
+
+    /// The spec change whose tracking issue is its parent, if it is one.
+    fn cut_from(&self) -> Option<Number> {
+        let parent = self.parent.as_deref()?;
+        Parent::new(parent.number, parent.filed).spec_change
     }
 
     pub fn number(&self) -> Number {
@@ -630,11 +643,17 @@ fn write_issue(task: &mut String, heading: &str, issue: &Issue) {
         },
         or_none(&issue.body)
     );
-    if !issue.comments.is_empty() {
-        let _ = writeln!(task, "#### Comments\n");
-        for comment in &issue.comments {
-            write_comment(task, comment);
-        }
+    write_comments(task, "Comments", &issue.comments);
+}
+
+/// The `comments` under `heading`, or nothing when there are none.
+fn write_comments(task: &mut String, heading: &str, comments: &[Comment]) {
+    if comments.is_empty() {
+        return;
+    }
+    let _ = writeln!(task, "#### {heading}\n");
+    for comment in comments {
+        write_comment(task, comment);
     }
 }
 
@@ -642,8 +661,8 @@ fn write_issue(task: &mut String, heading: &str, issue: &Issue) {
 fn render_ticket(prompts: &Prompts, ticket: &Ticket) -> String {
     let mut task = String::new();
     write_issue(&mut task, "The ticket", ticket.issue);
-    if let Some(parent) = ticket.issue.parent {
-        let _ = match parent.spec_change {
+    if let Some(parent) = ticket.parent.as_deref() {
+        let _ = match ticket.cut_from() {
             Some(spec_change) => writeln!(
                 task,
                 "### Parent issue\n\n{}, the tracking issue of the spec change {spec_change}.\n",
@@ -651,6 +670,7 @@ fn render_ticket(prompts: &Prompts, ticket: &Ticket) -> String {
             ),
             None => writeln!(task, "### Parent issue\n\n{}.\n", parent.number),
         };
+        write_comments(&mut task, "The parent issue's comments", &parent.comments);
     }
     if let Some(spec_diff) = &ticket.spec_diff {
         let _ = writeln!(

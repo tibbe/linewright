@@ -741,6 +741,23 @@ async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_
 }
 
 #[tokio::test]
+async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issues_comments() {
+    let (world, _) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
+
+    let prompts = world.harness.prompts(WorkKind::Implement);
+    let brief = &prompts[0];
+    let parent = brief.find("### Parent issue").expect(brief);
+    let design = brief
+        .find("Two slices: storing, then listing.")
+        .expect(brief);
+    assert!(parent < design, "{brief}");
+    assert!(
+        brief[parent..design].contains(&format!("**@{LINEWRIGHT}**")),
+        "{brief}"
+    );
+}
+
+#[tokio::test]
 async fn a_ticket_cut_from_a_spec_change_is_briefed_with_the_spec_changes_spec_diff() {
     let (world, _) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
 
@@ -748,18 +765,41 @@ async fn a_ticket_cut_from_a_spec_change_is_briefed_with_the_spec_changes_spec_d
     assert_briefed_with_the_spec_diff(&prompts[0]);
 }
 
-#[tokio::test]
-async fn a_ticket_a_person_parented_is_briefed_with_its_parent_and_no_spec_change() {
+/// A parent issue a person opened, whose comment holds a design, made the
+/// parent of `ticket`.
+async fn person_parented(world: &World, ticket: Number) -> Number {
     use linewright::store::Store;
-    let mut world = World::new().await;
-    implement(&world);
     let parent = world
         .store
         .open_issue("maintainer", "Gadgets, all of them", "", &[]);
+    world
+        .store
+        .comment_as("designer", parent, "Store them in one table.")
+        .unwrap();
+    world.store.add_sub_issue(parent, ticket).await.unwrap();
+    parent
+}
+
+/// That `brief` holds the comment of the parent from [`person_parented`],
+/// with its author, after the pointer to it.
+fn assert_briefed_with_the_parents_comment(brief: &str) {
+    let heading = brief.find("### Parent issue").expect(brief);
+    let comment = brief.find("**@designer**").expect(brief);
+    assert!(heading < comment, "{brief}");
+    assert!(
+        brief[comment..].contains("Store them in one table."),
+        "{brief}"
+    );
+}
+
+#[tokio::test]
+async fn a_ticket_a_person_parented_is_briefed_with_its_parent_its_comments_and_no_spec_change() {
+    let mut world = World::new().await;
+    implement(&world);
     let ticket = world
         .store
         .open_issue("maintainer", "Gadgets", "", &["ready-for-agent"]);
-    world.store.add_sub_issue(parent, ticket).await.unwrap();
+    let parent = person_parented(&world, ticket).await;
 
     world.poll().await;
 
@@ -769,6 +809,7 @@ async fn a_ticket_a_person_parented_is_briefed_with_its_parent_and_no_spec_chang
         "{}",
         prompts[0]
     );
+    assert_briefed_with_the_parents_comment(&prompts[0]);
     assert!(!prompts[0].contains("spec change #"), "{}", prompts[0]);
     assert!(!prompts[0].contains("```diff"), "{}", prompts[0]);
 }
@@ -781,18 +822,19 @@ async fn a_ticket_with_no_parent_is_briefed_with_no_parent_issue() {
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 1);
     assert!(!prompts[0].contains("Parent issue"), "{}", prompts[0]);
+    assert!(
+        !prompts[0].contains("parent issue's comments"),
+        "{}",
+        prompts[0]
+    );
     assert!(!prompts[0].contains("```diff"), "{}", prompts[0]);
 }
 
 #[tokio::test]
-async fn sessions_on_a_tickets_pull_request_are_briefed_with_its_parent_issue() {
-    use linewright::store::Store;
+async fn sessions_on_a_tickets_pull_request_are_briefed_with_its_parent_issue_and_its_comments() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
-    let parent = world
-        .store
-        .open_issue("maintainer", "Gadgets, all of them", "", &[]);
-    world.store.add_sub_issue(parent, ticket).await.unwrap();
+    let parent = person_parented(&world, ticket).await;
     world
         .store
         .comment_as("maintainer", pr, "Rename it.")
@@ -815,6 +857,7 @@ async fn sessions_on_a_tickets_pull_request_are_briefed_with_its_parent_issue() 
         "{}",
         prompts[0]
     );
+    assert_briefed_with_the_parents_comment(&prompts[0]);
     assert!(!prompts[0].contains("```diff"), "{}", prompts[0]);
 }
 

@@ -350,13 +350,14 @@ async fn attempt(
         } => (n, pr, Task::FixCi(failing)),
         Work::Update { issue: n, pr } => (n, pr, Task::Update),
     };
-    let held = pull_ticket(shell, snapshot, *n).await?;
+    let held = snapshot_or_store_issue(shell, snapshot, *n).await?;
     let ticket = ticket_of(shell, snapshot, &held).await?;
     pull_work(shell, ctx, &ticket, pull(*pr)?, task).await
 }
 
-/// The snapshot may leave out the ticket of a pull request it works.
-async fn pull_ticket<'a>(
+/// The snapshot may leave out an issue a run reads, such as the ticket of a
+/// pull request it works or a ticket's parent.
+async fn snapshot_or_store_issue<'a>(
     shell: &Shell,
     snapshot: &'a Snapshot,
     number: Number,
@@ -390,8 +391,12 @@ async fn ticket_of<'a>(
             Some(spec_diff(shell, &pr).await?)
         }
     };
+    let parent = match issue.parent {
+        None => None,
+        Some(parent) => Some(snapshot_or_store_issue(shell, snapshot, parent.number).await?),
+    };
     let filed_gaps = spec_gap::filed_for(snapshot, issue.number);
-    Ok(Ticket::new(issue, filed_gaps, spec_diff))
+    Ok(Ticket::new(issue, parent, filed_gaps, spec_diff))
 }
 
 /// Whether the pull request is open and Linewright still works it.
