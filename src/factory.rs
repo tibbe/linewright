@@ -23,8 +23,8 @@ use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
 use crate::holds::Holds;
 use crate::reconcile::{
-    Action, Automations, DoneRun, Drain, FailedMerge, LiveRun, Memory, Policy, Subject, Work,
-    WorkKind, held_back_by_drain, hold_note, reconcile,
+    Action, Automations, CutItem, Discard, DoneRun, Drain, FailedMerge, LiveRun, Memory, Policy,
+    Subject, Work, WorkKind, held_back_by_drain, hold_note, reconcile,
 };
 use crate::run::{self, AutomationEnd, Shell};
 use crate::runs::{self, Recorded, RunOf, Runs, Watched};
@@ -834,34 +834,33 @@ impl Factory {
                 store.comment(*issue, "All tickets are closed.").await?;
                 store.close_issue(*issue, CloseReason::Completed).await?;
             }
-            Action::DiscardTickets { tracking, tickets } => {
-                warn!(
-                    tracking = tracking.0,
-                    "discarding an interrupted decomposition"
-                );
-                let note = "Designing the spec change stopped part way; this set is discarded and the spec change is designed again.";
-                let issues: Vec<Number> = tickets.iter().chain([tracking]).copied().collect();
-                discard(store.as_ref(), &issues, note).await?;
-            }
-            Action::DiscardCut { issue, tickets } => {
-                warn!(issue = issue.0, "discarding an interrupted cut");
-                let note = format!(
-                    "Designing {issue} stopped part way; this ticket is discarded and {issue} \
-                     is designed again."
-                );
-                discard(store.as_ref(), tickets, &note).await?;
-                let list: Vec<String> = tickets.iter().map(Number::to_string).collect();
-                store
-                    .comment(
-                        *issue,
-                        &format!(
-                            "Designing this issue stopped part way, so its tickets {} are \
-                             discarded, and it is designed again.",
-                            list.join(", ")
-                        ),
-                    )
-                    .await?;
-            }
+            Action::DiscardCut(Discard { item, tickets }) => match item {
+                CutItem::SpecChange { tracking, .. } => {
+                    warn!(tracking = tracking.0, "discarding an interrupted cut");
+                    let note = "Designing the spec change stopped part way; this set is discarded and the spec change is designed again.";
+                    let issues: Vec<Number> = tickets.iter().chain([tracking]).copied().collect();
+                    discard(store.as_ref(), &issues, note).await?;
+                }
+                CutItem::Issue(issue) => {
+                    warn!(issue = issue.0, "discarding an interrupted cut");
+                    let note = format!(
+                        "Designing {issue} stopped part way; this ticket is discarded and {issue} \
+                         is designed again."
+                    );
+                    discard(store.as_ref(), tickets, &note).await?;
+                    let list: Vec<String> = tickets.iter().map(Number::to_string).collect();
+                    store
+                        .comment(
+                            *issue,
+                            &format!(
+                                "Designing this issue stopped part way, so its tickets {} are \
+                                 discarded, and it is designed again.",
+                                list.join(", ")
+                            ),
+                        )
+                        .await?;
+                }
+            },
             Action::DeleteBranch { branch } => {
                 info!(
                     branch = branch.as_str(),
@@ -1088,15 +1087,17 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         | Action::UnassignAsked { issue, .. }
         | Action::RemoveStatusLabel { issue, .. }
         | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
-        Action::DiscardTickets {
-            tracking: issue,
-            tickets,
+        Action::DiscardCut(Discard { item, tickets }) => {
+            let (CutItem::SpecChange {
+                tracking: issue, ..
+            }
+            | CutItem::Issue(issue)) = item;
+            tickets
+                .iter()
+                .chain([issue])
+                .map(|issue| Item::Issue(*issue))
+                .collect()
         }
-        | Action::DiscardCut { issue, tickets } => tickets
-            .iter()
-            .chain([issue])
-            .map(|issue| Item::Issue(*issue))
-            .collect(),
         Action::Merge { pr, .. } => snapshot
             .pull(*pr)
             .into_iter()

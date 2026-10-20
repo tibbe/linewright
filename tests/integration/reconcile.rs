@@ -893,10 +893,13 @@ fn a_cut_stopped_part_way_is_discarded_also_when_linewright_was_unassigned_from_
 
     assert_eq!(
         decide(&world),
-        vec![Action::DiscardTickets {
-            tracking: Number(9),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::SpecChange {
+                pr: Number(5),
+                tracking: Number(9),
+            },
             tickets: vec![Number(10)],
-        }]
+        })]
     );
 }
 
@@ -959,10 +962,13 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
 
     assert_eq!(
         decide(&world),
-        vec![Action::DiscardTickets {
-            tracking: Number(9),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::SpecChange {
+                pr: Number(5),
+                tracking: Number(9),
+            },
             tickets: vec![Number(10)],
-        }]
+        })]
     );
     assert_eq!(
         reconcile(
@@ -2956,10 +2962,10 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_desi
 
     assert_eq!(
         decided.actions,
-        [Action::DiscardCut {
-            issue: Number(9),
+        [Action::DiscardCut(Discard {
+            item: CutItem::Issue(Number(9)),
             tickets: vec![Number(10)],
-        }]
+        })]
     );
     assert_eq!(decided.waits.get(&Number(9)), None);
     assert_eq!(decide(&snapshot(vec![discarded])), vec![design(9)]);
@@ -2972,10 +2978,10 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_discarded() {
 
     assert_eq!(
         decide(&snapshot(vec![undesigned])),
-        vec![Action::DiscardCut {
-            issue: Number(9),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::Issue(Number(9)),
             tickets: vec![Number(10)],
-        }]
+        })]
     );
 }
 
@@ -4310,10 +4316,13 @@ fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_no
 
     assert_eq!(
         decided.actions,
-        [Action::DiscardTickets {
-            tracking: Number(10),
+        [Action::DiscardCut(Discard {
+            item: CutItem::SpecChange {
+                pr: Number(5),
+                tracking: Number(10),
+            },
             tickets: vec![Number(11)],
-        }]
+        })]
     );
     assert_eq!(decided.waits.get(&Number(10)), None);
 }

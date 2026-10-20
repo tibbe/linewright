@@ -436,21 +436,30 @@ pub enum Action {
     CloseTracking {
         issue: Number,
     },
-    DiscardTickets {
-        tracking: Number,
-        tickets: Vec<Number>,
-    },
-    /// Close `tickets`, of a cut of `issue` that stopped part way, as not
-    /// planned, leaving the issue to be designed again.
-    DiscardCut {
-        issue: Number,
-        tickets: Vec<Number>,
-    },
+    DiscardCut(Discard),
     DeleteBranch {
         branch: TicketBranchName,
     },
     RecordLastRuns(LastRuns),
     RunAutomation(Box<Automation>),
+}
+
+/// Close `tickets`, of a cut of `item` without the designed label, as not
+/// planned, leaving the item to be designed again (docs/specs/design.md,
+/// "Discarding a cut").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Discard {
+    pub item: CutItem,
+    pub tickets: Vec<Number>,
+}
+
+/// An item cut into tickets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CutItem {
+    /// Its tickets are under `tracking`, an issue Linewright opened for them.
+    SpecChange { pr: Number, tracking: Number },
+    /// Its tickets are under the issue itself.
+    Issue(Number),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -591,32 +600,16 @@ pub fn decisions(
         }
     }
 
-    // The pull request is labeled designed last, so a tracking issue
-    // without the label is a design that stopped part way: one
-    // interrupted, cancelled or handed back.
-    let mut discarded = vec![];
-    for pr in snapshot
-        .merged
+    let discards = discards(snapshot, &running, policy);
+    let discarded: Vec<Number> = discards
         .iter()
-        .filter(|pr| pr.designed_label().is_none())
-    {
-        if running(Subject::SpecChange(pr.number)).is_some() {
-            continue;
-        }
-        let partial = snapshot.issues.iter().find(|i| {
-            i.open
-                && i.filed
-                    == Some(Filed::Tracking {
-                        spec_change: pr.number,
-                    })
-        });
-        if let Some(partial) = partial {
-            plan.act(Action::DiscardTickets {
-                tracking: partial.number,
-                tickets: open_numbers(partial.sub_issues.iter().map(|s| &s.linked)),
-            });
-            discarded.push(pr.number);
-        }
+        .filter_map(|d| match d.item {
+            CutItem::SpecChange { pr, .. } => Some(pr),
+            CutItem::Issue(_) => None,
+        })
+        .collect();
+    for discard in &discards {
+        plan.act(Action::DiscardCut(discard.clone()));
     }
 
     let spec_changes = pending_spec_changes(snapshot, now, policy);
@@ -695,22 +688,9 @@ pub fn decisions(
             }
             continue;
         }
-        // The issue is labeled designed last, so tickets it has without the
-        // label are of a cut that stopped part way: interrupted, cancelled,
-        // handed back, or its label removed to have it designed again.
-        let left_part_way: Vec<Number> =
-            if !issue.has_label(label::DESIGNED) && running(subject).is_none() {
-                open_numbers(issue.tickets_cut(&policy.linewright).map(|t| &t.linked))
-            } else {
-                vec![]
-            };
-        let discarding = !left_part_way.is_empty() && tracks.is_none();
-        if discarding {
-            plan.act(Action::DiscardCut {
-                issue: issue.number,
-                tickets: left_part_way,
-            });
-        }
+        let discarding = discards
+            .iter()
+            .any(|d| d.item == CutItem::Issue(issue.number));
         for label in issue.stale_status_labels() {
             plan.act(Action::RemoveStatusLabel {
                 issue: issue.number,
@@ -848,8 +828,7 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastRuns) -> Vec<Action>
             | Action::MarkReadyForMergeState { .. }
             | Action::HoldForReview { .. }
             | Action::CloseTracking { .. }
-            | Action::DiscardTickets { .. }
-            | Action::DiscardCut { .. }
+            | Action::DiscardCut(_)
             | Action::DeleteBranch { .. } => Some(action),
         })
         .collect()
@@ -1152,6 +1131,56 @@ fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
     };
     let unlabeled = required_label(policy).filter(|_| !policy.may_start_on(issue));
     handed_to.into_iter().chain(unlabeled).collect()
+}
+
+/// Every cut of the snapshot to discard (docs/specs/design.md, "Discarding a
+/// cut"), decided before the rest of the plan. An item is labeled designed
+/// last, so one cut into tickets without the label is a cut that stopped part
+/// way (interrupted, cancelled or handed back) or one whose label was removed
+/// to have it designed again.
+fn discards(
+    snapshot: &Snapshot,
+    running: &impl Fn(Subject) -> Option<WorkKind>,
+    policy: &Policy,
+) -> Vec<Discard> {
+    let spec_changes = snapshot
+        .merged
+        .iter()
+        .filter(|pr| pr.designed_label().is_none())
+        .filter(|pr| running(Subject::SpecChange(pr.number)).is_none())
+        .filter_map(|pr| {
+            let tracking = snapshot.issues.iter().find(|i| {
+                i.open
+                    && i.filed
+                        == Some(Filed::Tracking {
+                            spec_change: pr.number,
+                        })
+            })?;
+            Some(Discard {
+                item: CutItem::SpecChange {
+                    pr: pr.number,
+                    tracking: tracking.number,
+                },
+                tickets: open_numbers(tracking.sub_issues.iter().map(|s| &s.linked)),
+            })
+        });
+    let issues = snapshot
+        .issues
+        .iter()
+        .filter(|i| {
+            i.open
+                && i.tracks(&policy.linewright).is_none()
+                && !i.has_label(label::DESIGNED)
+                && running(Subject::Issue(i.number)).is_none()
+        })
+        .filter_map(|i| {
+            let tickets = open_numbers(i.tickets_cut(&policy.linewright).map(|t| &t.linked));
+            (!tickets.is_empty()).then_some(Discard {
+                item: CutItem::Issue(i.number),
+                tickets,
+            })
+        });
+    spec_changes.chain(issues).collect()
 }
 
 fn open_numbers<'a>(linked: impl IntoIterator<Item = &'a Linked>) -> Vec<Number> {
