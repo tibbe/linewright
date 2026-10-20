@@ -1,9 +1,9 @@
-use crate::views;
+use crate::common;
 
+use common::{at, ticket, view};
 use linewright::board::{Board, Card, CardLine, Column, Ended, board};
 use linewright::domain::*;
 use linewright::status::{Ci, View};
-use views::{at, ticket, view};
 
 const NOW: &str = "2026-10-01T12:00:30Z";
 
@@ -100,7 +100,7 @@ fn pull(number: u64, closes: &[u64], checks: &[CheckState]) -> Pull {
 fn with_runs(mut view: View, ids: &[&str]) -> View {
     view.in_flight = ids
         .iter()
-        .map(|id| views::in_flight(id, "2026-10-01T11:50:00Z", Some("2026-10-01T11:59:00Z")))
+        .map(|id| common::in_flight(id, "2026-10-01T11:50:00Z", Some("2026-10-01T11:59:00Z")))
         .collect();
     view
 }
@@ -317,7 +317,7 @@ fn tracking_issue(number: u64, spec_change: u64, tickets: &[(u64, bool)]) -> Iss
         }),
         sub_issues: tickets
             .iter()
-            .map(|&(n, open)| views::sub_issue(n, open, "factory"))
+            .map(|&(n, open)| common::sub_issue(n, open, "factory"))
             .collect(),
         ..ticket(number, &format!("Tracking {number}"))
     }
@@ -451,9 +451,9 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
     let cut = Issue {
         labels: vec![label::DESIGNED.into()],
         sub_issues: vec![
-            views::sub_issue(31, true, "factory"),
-            views::sub_issue(32, false, "factory"),
-            views::sub_issue(33, false, "maintainer"),
+            common::sub_issue(31, true, "factory"),
+            common::sub_issue(32, false, "factory"),
+            common::sub_issue(33, false, "maintainer"),
         ],
         ..ticket(30, "Cut")
     };

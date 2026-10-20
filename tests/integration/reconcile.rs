@@ -1,5 +1,5 @@
-use crate::views;
-use views::sub_issue;
+use crate::common;
+use common::sub_issue;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::automation::{Automation, LastRuns};
@@ -388,7 +388,7 @@ fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_co
 }
 
 fn labeled_both(older: StatusLabel, newer: StatusLabel) -> Issue {
-    views::relabeled(issue(1), older.label(), newer.label())
+    common::relabeled(issue(1), older.label(), newer.label())
 }
 
 #[test]

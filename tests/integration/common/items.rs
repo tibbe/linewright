@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::TimeDelta;
 use linewright::automation::{AutomationFiles, LastRuns};
 use linewright::domain::*;
 use linewright::harness::UsageLimit;
@@ -10,12 +10,7 @@ use linewright::runs::InFlight;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{Polls, View};
 
-/// 2026-10-01 is a Thursday.
-pub fn at(time: &str) -> Timestamp {
-    DateTime::parse_from_rfc3339(time)
-        .unwrap()
-        .with_timezone(&Utc)
-}
+use super::clock::at;
 
 pub fn policy() -> Policy {
     Policy {

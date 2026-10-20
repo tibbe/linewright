@@ -1,14 +1,14 @@
-use crate::views;
+use crate::common;
 
+use common::{
+    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
+    ticket, view,
+};
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
 use linewright::runs::{Ending, Recorded, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
-use views::{
-    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
-    ticket, view,
-};
 
 fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
     Pull {

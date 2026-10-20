@@ -1,14 +1,14 @@
-use crate::views;
+use crate::common;
 
+use common::{
+    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
+    ticket,
+};
 use linewright::automation::{AutomationFiles, LastRuns, Unparsed};
 use linewright::domain::*;
 use linewright::reconcile::{LiveRun, Memory, Subject, WorkKind};
 use linewright::status::{Serving, Status, View, render, status};
 use linewright::webhook::Received;
-use views::{
-    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
-    ticket,
-};
 
 fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationFiles {
     AutomationFiles {
@@ -46,7 +46,7 @@ fn serving() -> Serving {
 }
 
 fn view(issues: Vec<Issue>) -> View {
-    views::view(issues, vec![])
+    common::view(issues, vec![])
 }
 
 fn ready_issue() -> Issue {
@@ -779,7 +779,7 @@ fn linewrights_pull_request_is_managed_with_its_own_waits_and_its_ticket_waits_f
 
     assert_eq!(
         after_linewright(
-            &views::view(vec![unlabeled], vec![pr]),
+            &common::view(vec![unlabeled], vec![pr]),
             "2026-10-01T12:00:30Z"
         ),
         [
