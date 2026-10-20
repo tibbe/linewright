@@ -288,7 +288,7 @@ async fn status_to_a_pipe_is_not_coloured() {
 #[tokio::test]
 async fn status_json_prints_the_api_answer_as_it_is() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
-    let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/status").await;
+    let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/api/status").await;
 
     let output = answering.lw(&["status", "--json"]).await;
 
@@ -337,14 +337,14 @@ async fn a_request_whose_host_is_not_local_is_refused() {
     let dir = answering.runtime_dir.path();
 
     let refused = [
-        get(dir, "evil.example", "/status").await,
-        get(dir, "evil.example:80", "/status").await,
-        get(dir, "localhost.evil.example", "/status").await,
+        get(dir, "evil.example", "/api/status").await,
+        get(dir, "evil.example:80", "/api/status").await,
+        get(dir, "localhost.evil.example", "/api/status").await,
     ];
     let answered = [
-        get(dir, "localhost", "/status").await,
-        get(dir, "127.0.0.1:8080", "/status").await,
-        get(dir, "[::1]:8080", "/status").await,
+        get(dir, "localhost", "/api/status").await,
+        get(dir, "127.0.0.1:8080", "/api/status").await,
+        get(dir, "[::1]:8080", "/api/status").await,
     ];
 
     for (status, body) in refused {
@@ -396,7 +396,7 @@ async fn a_second_serve_for_the_repository_exits_saying_one_already_runs() {
     );
     assert_eq!(output.code, Some(1));
     assert!(output.stderr.contains("already runs"), "{}", output.stderr);
-    let (status, _) = get(answering.runtime_dir.path(), "localhost", "/status").await;
+    let (status, _) = get(answering.runtime_dir.path(), "localhost", "/api/status").await;
     assert_eq!(status, 200, "the first still answers");
     answering.stop().await;
 }
@@ -637,6 +637,27 @@ async fn a_resource_serve_does_not_have_is_an_error_not_a_missing_item() {
 }
 
 #[tokio::test]
+async fn the_api_answers_under_api_and_no_longer_at_the_root() {
+    let answering = Answering::start(with_ticket_and_automation().await, false).await;
+    let dir = answering.runtime_dir.path();
+
+    let at_the_root = [
+        get(dir, "localhost", "/status").await,
+        get(dir, "localhost", "/logs?item=1").await,
+        get(dir, "localhost", "/logs/follow?item=1").await,
+        get(dir, "localhost", "/stop").await,
+        request(dir, hyper::Method::POST, "localhost", "/drain").await,
+    ];
+    let under_api = get(dir, "localhost", "/api/status").await;
+
+    for (status, body) in at_the_root {
+        assert_eq!(status, 404, "{body}");
+    }
+    assert_eq!(under_api.0, 200, "{}", under_api.1);
+    answering.stop().await;
+}
+
+#[tokio::test]
 async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewright_waits_for() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
 
@@ -664,7 +685,7 @@ async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewr
 #[tokio::test]
 async fn explain_json_prints_the_api_answer_as_it_is() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
-    let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/items/1").await;
+    let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/api/items/1").await;
 
     let output = answering.lw(&["explain", "1", "--json"]).await;
 
@@ -1240,17 +1261,17 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
     })
     .await;
 
-    let first = events(runtime_dir, "/logs/follow?item=1", None, Some(2)).await;
+    let first = events(runtime_dir, "/api/logs/follow?item=1", None, Some(2)).await;
     agent.writes(&turn[4..].concat());
     drop(agent);
     let resumed = events(
         runtime_dir,
-        "/logs/follow?item=1",
+        "/api/logs/follow?item=1",
         first[1].id.as_deref(),
         None,
     )
     .await;
-    let whole = events(runtime_dir, "/logs/follow?item=1", None, None).await;
+    let whole = events(runtime_dir, "/api/logs/follow?item=1", None, None).await;
 
     assert_eq!(
         first,
@@ -1861,7 +1882,7 @@ async fn a_drain_whose_host_is_not_local_is_refused_and_changes_nothing() {
     let answering = Answering::start(World::new().await, false).await;
     let dir = answering.runtime_dir.path();
 
-    let (status, body) = request(dir, hyper::Method::POST, "evil.example", "/drain").await;
+    let (status, body) = request(dir, hyper::Method::POST, "evil.example", "/api/drain").await;
     let shown = answering.lw(&["status"]).await;
 
     assert_eq!(status, 403, "{body}");

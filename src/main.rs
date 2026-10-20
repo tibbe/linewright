@@ -128,7 +128,7 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
         Err(e) => return print_answer(Err(failed(&e))),
     };
     let dir = socket_dir();
-    let resource = format!("/drain?{}", api::query_string(&Asked { timeout }));
+    let resource = format!("/api/drain?{}", api::query_string(&Asked { timeout }));
     let taken = match api::post_answer(&dir, repo, &resource).await {
         Ok(body) => match read_as::<Taken>(&body, "a drain taken") {
             Ok(taken) => taken,
@@ -146,7 +146,7 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
     let mut stop = (taken.was != Was::Stopping).then(|| {
         let (dir, repo) = (dir.clone(), repo.to_string());
         tokio::spawn(async move {
-            let body = api::get_answer_once(&dir, &repo, "/stop").await.ok()?;
+            let body = api::get_answer_once(&dir, &repo, "/api/stop").await.ok()?;
             read_as::<Stop>(&body, "a stop").ok()?.by
         })
     });
@@ -165,7 +165,7 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
         } else {
             tokio::time::sleep(DRAIN_ASKS_EVERY).await;
         }
-        let status = match api::get_answer(&dir, repo, "/status").await {
+        let status = match api::get_answer(&dir, repo, "/api/status").await {
             Ok(body) => match read_as::<status::Status>(&body, "a status") {
                 Ok(status) => Some(status),
                 Err(e) => return print_answer(Err(e)),
@@ -196,7 +196,7 @@ fn read_as<T: serde::de::DeserializeOwned>(body: &[u8], what: &str) -> Result<T,
 }
 
 async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
-    let resource = format!("/runs?{}", api::query_string(query));
+    let resource = format!("/api/runs?{}", api::query_string(query));
     let answer = ask_or_read(config, &resource, "runs", |work_dir| {
         runs::answer(work_dir, query, SystemClock.now())
     })
@@ -234,7 +234,7 @@ impl Printing {
 }
 
 async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: bool) -> ExitCode {
-    let resource = format!("/logs?{}", api::query_string(which));
+    let resource = format!("/api/logs?{}", api::query_string(which));
     let answer = ask_or_read(config, &resource, "a transcript", |work_dir| {
         logs::answer(work_dir, which)
     })
@@ -276,7 +276,7 @@ async fn follow_logs(
         Ok(work_dir) => work_dir,
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    let resource = format!("/logs/follow?{}", api::query_string(&query));
+    let resource = format!("/api/logs/follow?{}", api::query_string(&query));
     let mut hang_ups = api::HangUps::default();
     loop {
         let mut ended = false;
@@ -455,7 +455,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
     let done = match command {
         // Its errors go to standard error as they are, not to the log.
         Command::Status { json } => {
-            let resource = "/status";
+            let resource = "/api/status";
             return Ok(ask(&config, resource, "a status", json, status::render).await);
         }
         Command::Drain {
@@ -466,7 +466,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             return Ok(drain(&config, no_wait, timeout, json).await);
         }
         Command::Explain { number, json } => {
-            let resource = format!("/items/{number}");
+            let resource = format!("/api/items/{number}");
             let what = "an explanation";
             return Ok(ask(&config, &resource, what, json, explain::render_answer).await);
         }

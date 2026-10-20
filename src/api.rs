@@ -29,7 +29,7 @@ use crate::ending::{self, Ends};
 use crate::explain;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
 use crate::runs::{self, ListError, RepoWorkDir, Runs, Watched};
-use crate::status::{self, Serving, View};
+use crate::status::{self, Serving, Status, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::webhook::Tally;
@@ -169,6 +169,26 @@ pub struct Sources {
     pub ends: Ends,
 }
 
+/// The local API under `/api/`, answering only requests
+/// whose `Host` is local. `stopping` ends the event streams, so that
+/// stopping waits only for the answers being given.
+pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
+    let api = Router::new()
+        .route("/status", get(answer_status))
+        .route("/runs", get(answer_runs))
+        .route("/items/{number}", get(answer_item))
+        .route("/logs", get(answer_logs))
+        .route("/logs/follow", get(follow_logs))
+        .route("/drain", post(take_drain))
+        .route("/stop", get(answer_stop));
+    Router::new()
+        .nest("/api", api)
+        .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
+        .layer(middleware::from_fn(local_only))
+        .layer(Extension(stopping))
+        .with_state(sources)
+}
+
 pub struct Api {
     path: PathBuf,
     stop: CancellationToken,
@@ -185,20 +205,7 @@ impl Api {
             lock,
         } = claimed;
         let stop = CancellationToken::new();
-        let router = Router::new()
-            .route("/status", get(answer_status))
-            .route("/runs", get(answer_runs))
-            .route("/items/{number}", get(answer_item))
-            .route("/logs", get(answer_logs))
-            .route("/logs/follow", get(follow_logs))
-            .route("/drain", post(take_drain))
-            .route("/stop", get(answer_stop))
-            .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
-            .layer(middleware::from_fn(local_only))
-            // Ends the transcripts being followed, so that stopping waits
-            // only for the answers being given.
-            .layer(Extension(stop.clone()))
-            .with_state(sources);
+        let router = router(sources, stop.clone());
         let task = tokio::spawn({
             let stop = stop.clone();
             async move {
@@ -233,16 +240,19 @@ impl Api {
 }
 
 async fn answer_status(State(sources): State<Sources>) -> Response {
+    json_response(StatusCode::OK, &status_answer(&sources))
+}
+
+pub(crate) fn status_answer(sources: &Sources) -> Status {
     let webhooks = sources.deliveries.as_ref().map(Tally::get);
     let view = sources.served.borrow().as_ref().map(Served::view_now);
-    let answer = status::status(
+    status::status(
         &sources.serving,
         webhooks,
         view.as_ref(),
         sources.ends.deadline(),
         sources.clock.now(),
-    );
-    json_response(StatusCode::OK, &answer)
+    )
 }
 
 async fn take_drain(State(sources): State<Sources>, Query(asked): Query<Asked>) -> Response {
@@ -464,6 +474,41 @@ pub enum Unanswered {
     Failed(anyhow::Error),
 }
 
+/// Why `serve` gave no explanation of an item.
+#[derive(Debug)]
+pub(crate) enum Unexplained {
+    NotPolledYet,
+    NoSuchItem(Number),
+    /// GitHub did not answer the read of an item that is not managed.
+    Unread(anyhow::Error),
+    Failed(anyhow::Error),
+}
+
+impl Unexplained {
+    pub(crate) fn status(&self) -> StatusCode {
+        match self {
+            Unexplained::NotPolledYet => StatusCode::SERVICE_UNAVAILABLE,
+            Unexplained::NoSuchItem(_) => StatusCode::NOT_FOUND,
+            Unexplained::Unread(_) => StatusCode::BAD_GATEWAY,
+            Unexplained::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+impl std::fmt::Display for Unexplained {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unexplained::NotPolledYet => {
+                f.write_str("`serve` has not polled yet: ask again after its first poll")
+            }
+            Unexplained::NoSuchItem(number) => {
+                write!(f, "there is no issue or pull request {number}")
+            }
+            Unexplained::Unread(e) | Unexplained::Failed(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
 impl From<ListError> for Unanswered {
     fn from(e: ListError) -> Unanswered {
         match e {
@@ -511,37 +556,39 @@ async fn answer_item(
     State(sources): State<Sources>,
     Resource(number): Resource<Number>,
 ) -> Response {
-    let served = sources.served.borrow().clone();
-    let Some(served) = served else {
-        return error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "`serve` has not polled yet: ask again after its first poll",
-        );
-    };
-    let (view, store) = (served.view_now(), served.store);
-    let recorded = match Runs::new(&sources.work_dir.resolve()).read() {
-        Ok(recorded) => recorded,
-        Err(e) => {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"));
-        }
-    };
-    let now = sources.clock.now();
-    if let Some(answer) = explain::explain(&view, &recorded, number, now) {
-        return json_response(StatusCode::OK, &explain::Answer::Managed(answer));
-    }
-    match store.any_item(number).await {
-        Ok(Some(read)) => json_response(
-            StatusCode::OK,
-            &explain::explain_read(&view, &recorded, &read, now),
-        ),
-        Ok(None) => json_response(
-            StatusCode::NOT_FOUND,
+    match item_answer(&sources, number).await {
+        Ok(answer) => json_response(StatusCode::OK, &answer),
+        Err(e @ Unexplained::NoSuchItem(_)) => json_response(
+            e.status(),
             &ErrorAnswer {
-                error: format!("there is no issue or pull request {number}"),
+                error: e.to_string(),
                 missing: Some(Missing::Item),
             },
         ),
-        Err(e) => error_response(StatusCode::BAD_GATEWAY, &format!("reading {number}: {e:#}")),
+        Err(e) => error_response(e.status(), &e.to_string()),
+    }
+}
+
+/// What `explain` answers of #`number`: from `serve`'s view for a managed
+/// item, and otherwise as `serve` reads #`number` from GitHub now.
+pub(crate) async fn item_answer(
+    sources: &Sources,
+    number: Number,
+) -> Result<explain::Answer, Unexplained> {
+    let served = sources.served.borrow().clone();
+    let served = served.ok_or(Unexplained::NotPolledYet)?;
+    let (view, store) = (served.view_now(), served.store);
+    let recorded = Runs::new(&sources.work_dir.resolve())
+        .read()
+        .map_err(Unexplained::Failed)?;
+    let now = sources.clock.now();
+    if let Some(answer) = explain::explain(&view, &recorded, number, now) {
+        return Ok(explain::Answer::Managed(answer));
+    }
+    match store.any_item(number).await {
+        Ok(Some(read)) => Ok(explain::explain_read(&view, &recorded, &read, now)),
+        Ok(None) => Err(Unexplained::NoSuchItem(number)),
+        Err(e) => Err(Unexplained::Unread(e.context(format!("reading {number}")))),
     }
 }
 
