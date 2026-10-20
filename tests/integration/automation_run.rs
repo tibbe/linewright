@@ -34,10 +34,6 @@ async fn with_automation(name: &str, text: &str) -> World {
     world
 }
 
-fn finished() -> String {
-    json!({"summary": "Nothing needs doing.", "issues": []}).to_string()
-}
-
 #[tokio::test]
 async fn an_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the_default_branch()
 {
@@ -49,7 +45,7 @@ async fn an_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_
                 .join(".linewright/automations/weekly.md")
                 .exists()
         );
-        Ok(finished())
+        Ok(nothing_needs_doing())
     });
 
     world
@@ -96,7 +92,7 @@ async fn an_operators_automation_prompt_is_the_one_the_session_gets() {
         )
         .await
         .unwrap();
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
 
     world
         .factory
@@ -288,7 +284,7 @@ async fn a_ready_for_agent_automation_issue_is_designed_then_implemented_without
 #[tokio::test]
 async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_open_ones() {
     let world = with_automation("weekly", WEEKLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
 
     world
         .factory
@@ -308,7 +304,7 @@ async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_
 #[tokio::test]
 async fn an_automation_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
     let world = with_automation("weekly", WEEKLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
 
     world
         .factory
@@ -332,7 +328,7 @@ async fn time_given(text: &str) -> Duration {
         let left = left.clone();
         move |call| {
             *left.lock().unwrap() = Some(call.spec.deadline - tokio::time::Instant::now());
-            Ok(finished())
+            Ok(nothing_needs_doing())
         }
     });
     world

@@ -6,9 +6,6 @@ use linewright::factory::Factory;
 use linewright::reconcile::WorkKind;
 use serde_json::json;
 
-/// Ticks on the hour; the fake clock starts at 12:00.
-const HOURLY: &str = "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n";
-
 async fn add_automation(world: &World, name: &str, text: &str) {
     world
         .store
@@ -20,10 +17,6 @@ async fn add_automation(world: &World, name: &str, text: &str) {
         )
         .await
         .unwrap();
-}
-
-fn finished() -> String {
-    json!({"summary": "Nothing needs doing.", "issues": []}).to_string()
 }
 
 async fn restart(world: &mut World) {
@@ -41,7 +34,7 @@ async fn restart(world: &mut World) {
 async fn an_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world.poll().await;
 
     world.clock.advance(TimeDelta::hours(1));
@@ -56,7 +49,7 @@ async fn an_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
 async fn an_automation_seen_for_the_first_time_does_not_run() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
 
     world.poll().await;
 
@@ -67,7 +60,7 @@ async fn an_automation_seen_for_the_first_time_does_not_run() {
 async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_starts() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world.poll().await;
 
     let record = world.dir.path().join("work/automation-runs.json");
@@ -90,7 +83,7 @@ async fn an_automation_file_that_does_not_parse_is_skipped_and_the_others_still_
     )
     .await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world.poll().await;
 
     world.clock.advance(TimeDelta::hours(1));
@@ -105,7 +98,7 @@ async fn an_automation_file_that_does_not_parse_is_skipped_and_the_others_still_
 async fn an_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines_runs() {
     let mut world = World::with(|config| config.max_runs = 1).await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
     world.store.open_issue(
@@ -136,7 +129,7 @@ async fn an_automation_run_waits_for_room_under_the_ceiling_beside_the_pipelines
 async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
 
@@ -154,7 +147,7 @@ async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
 async fn the_last_runs_the_previous_version_recorded_are_kept() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
-    world.harness.on_automation(|_| Ok(finished()));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     // Where the previous version recorded the last runs.
     let work_dir = world.dir.path().join("work");
     std::fs::create_dir_all(&work_dir).unwrap();

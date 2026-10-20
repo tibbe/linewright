@@ -5,6 +5,9 @@ use chrono::{DateTime, TimeDelta, Utc};
 use linewright::clock::Clock;
 use linewright::domain::Timestamp;
 
+/// The time the functional core is asked at.
+pub const NOW: &str = "2026-10-01T12:00:30Z";
+
 /// 2026-10-01 is a Thursday.
 pub fn at(time: &str) -> Timestamp {
     DateTime::parse_from_rfc3339(time)

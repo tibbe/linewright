@@ -15,8 +15,6 @@ use scraper::{ElementRef, Html, Selector};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt as _;
 
-const REPO: &str = "owner/widgets";
-
 /// `serve` polling hourly, so its view holds still but for deliveries, and
 /// its router driven in-process.
 struct Web {
@@ -269,22 +267,6 @@ async fn the_item_page_of_no_item_says_there_is_none() {
     );
     assert_eq!(select(&html, "#bar").len(), 1);
     web.stop().await;
-}
-
-async fn with_issue_for_triage() -> World {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    world.harness.on(WorkKind::Triage, |_| {
-        Ok(serde_json::json!({
-            "outcome": "ready-for-agent",
-            "category": "bug",
-            "comment": "## Agent Brief\n\n**Summary:** It crashes."
-        })
-        .to_string())
-    });
-    world
-        .store
-        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
-    world
 }
 
 async fn eventually_shown(web: &Web, path: &str, shown: impl Fn(&[String]) -> bool) -> Html {

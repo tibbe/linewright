@@ -1,36 +1,17 @@
 use crate::common;
-use common::sub_issue;
+use common::{LINEWRIGHT, REQUIRED, closed_by, policy, sub_issue};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::automation::{Automation, LastRuns};
 use linewright::domain::*;
 use linewright::harness::UsageLimit;
 use linewright::reconcile::*;
-use linewright::spec_glob::SpecGlob;
-
-const LINEWRIGHT: &str = "factory";
 
 fn t(minute: i64) -> Timestamp {
     DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
         .unwrap()
         .with_timezone(&Utc)
         + TimeDelta::minutes(minute)
-}
-
-fn policy() -> Policy {
-    Policy {
-        linewright: Login::new(LINEWRIGHT),
-        spec_glob: SpecGlob::default(),
-        spec_lookback: TimeDelta::days(7),
-        max_runs: 4,
-        ci_grace: TimeDelta::minutes(5),
-        ci_timeout: TimeDelta::hours(6),
-        ci_attempts: 2,
-        auto_merge: None,
-        update_rule: UpdateRule::RebaseOnConflict,
-        allowed_merge_methods: MergeMethods::all(),
-        require_label: None,
-    }
 }
 
 fn issue(number: u64) -> Issue {
@@ -3216,8 +3197,6 @@ fn an_automation_seen_for_the_first_time_is_recorded_even_with_no_room() {
     );
 }
 
-const REQUIRED: &str = "linewright";
-
 fn requiring_label() -> Policy {
     Policy {
         require_label: Some(REQUIRED.into()),
@@ -3821,15 +3800,6 @@ fn a_blocked_ticket_waits_for_each_open_blocker() {
             Wait::Blocker { issue: Number(3) },
         ]
     );
-}
-
-fn closed_by(mut issue: Issue, pr: u64, author: &str) -> Issue {
-    issue.closed_by.push(ClosingPull {
-        number: Number(pr),
-        author: Login::new(author),
-        state: PullState::Open { draft: false },
-    });
-    issue
 }
 
 #[test]

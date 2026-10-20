@@ -1,8 +1,8 @@
 use crate::common;
 
 use common::{
-    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
-    ticket, view,
+    NOW, at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled,
+    sub_issue, ticket, view,
 };
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
@@ -39,8 +39,6 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         assignments: vec![],
     }
 }
-
-const NOW: &str = "2026-10-01T12:00:30Z";
 
 fn text(view: &View, number: u64) -> Vec<String> {
     let answer = explain(view, &[], Number(number), at(NOW)).expect("a managed item");

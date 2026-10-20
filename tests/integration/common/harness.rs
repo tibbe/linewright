@@ -311,3 +311,8 @@ pub fn rejected(reason: &str) -> String {
          error: failed to push some refs to 'https://github.com/acme/widgets.git'"
     )
 }
+
+/// An automation's answer that it found nothing to do.
+pub fn nothing_needs_doing() -> String {
+    serde_json::json!({"summary": "Nothing needs doing.", "issues": []}).to_string()
+}

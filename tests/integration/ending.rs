@@ -1,9 +1,7 @@
-use chrono::{DateTime, Utc};
-use linewright::ending::{Ending, Event, Signal, Step, StopBy};
+use crate::common;
 
-fn at(time: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(time).unwrap().into()
-}
+use common::at;
+use linewright::ending::{Ending, Event, Signal, Step, StopBy};
 
 /// `docs/specs/operation.md`, "Stopping".
 #[test]

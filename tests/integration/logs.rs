@@ -1,18 +1,14 @@
 use crate::common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::TimeDelta;
 use common::*;
-use linewright::domain::{Number, Timestamp};
+use linewright::domain::Number;
 use linewright::logs::{self, NoSuchRun, Which};
 use linewright::reconcile::WorkKind;
 use linewright::runs::{Ending, Recorded, RunId, State};
 use serde_json::json;
-
-fn at(time: &str) -> Timestamp {
-    format!("2026-10-14T{time}Z").parse().unwrap()
-}
 
 fn run(id: &str, start: &str, sessions: usize) -> Recorded {
     Recorded {
@@ -39,12 +35,12 @@ fn item(n: u64) -> Which {
 
 #[test]
 fn an_items_run_in_flight_is_the_one_shown() {
-    let mut in_flight = run("1/rework-1", "11:00:00", 0);
+    let mut in_flight = run("1/rework-1", "2026-10-14T11:00:00Z", 0);
     in_flight.state = State::InFlight;
     let recorded = vec![
-        run("1/implement-1", "10:00:00", 1),
+        run("1/implement-1", "2026-10-14T10:00:00Z", 1),
         in_flight,
-        run("2/triage-1", "12:00:00", 1),
+        run("2/triage-1", "2026-10-14T12:00:00Z", 1),
     ];
 
     assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/rework-1");
@@ -53,10 +49,10 @@ fn an_items_run_in_flight_is_the_one_shown() {
 #[test]
 fn with_none_in_flight_the_latest_run_that_started_a_session_is_shown() {
     let recorded = vec![
-        run("1/implement-1", "10:00:00", 1),
-        run("1/rework-1", "11:00:00", 2),
-        run("1/update-1", "12:00:00", 0),
-        run("2/triage-1", "13:00:00", 1),
+        run("1/implement-1", "2026-10-14T10:00:00Z", 1),
+        run("1/rework-1", "2026-10-14T11:00:00Z", 2),
+        run("1/update-1", "2026-10-14T12:00:00Z", 0),
+        run("2/triage-1", "2026-10-14T13:00:00Z", 1),
     ];
 
     assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/rework-1");
@@ -65,8 +61,8 @@ fn with_none_in_flight_the_latest_run_that_started_a_session_is_shown() {
 #[test]
 fn with_no_run_that_started_a_session_the_latest_run_is_shown() {
     let recorded = vec![
-        run("1/update-1", "10:00:00", 0),
-        run("1/update-2", "11:00:00", 0),
+        run("1/update-1", "2026-10-14T10:00:00Z", 0),
+        run("1/update-2", "2026-10-14T11:00:00Z", 0),
     ];
 
     assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/update-2");
@@ -75,9 +71,9 @@ fn with_no_run_that_started_a_session_the_latest_run_is_shown() {
 #[test]
 fn a_named_run_is_the_one_shown() {
     let recorded = vec![
-        run("1/implement-1", "10:00:00", 1),
-        run("1/rework-1", "11:00:00", 1),
-        run("weekly/1", "12:00:00", 1),
+        run("1/implement-1", "2026-10-14T10:00:00Z", 1),
+        run("1/rework-1", "2026-10-14T11:00:00Z", 1),
+        run("weekly/1", "2026-10-14T12:00:00Z", 1),
     ];
     let named = |id: &str, of: Option<u64>| Which::Run {
         id: id.parse::<RunId>().unwrap(),
@@ -106,12 +102,12 @@ fn a_named_run_is_the_one_shown() {
 }
 
 fn ticket_and_pull() -> Vec<Recorded> {
-    let mut in_flight = run("3/rework-2", "11:30:00", 1);
+    let mut in_flight = run("3/rework-2", "2026-10-14T11:30:00Z", 1);
     in_flight.state = State::InFlight;
     vec![
-        run("1/triage-1", "09:00:00", 1),
-        run("1/implement-1", "10:00:00", 1),
-        run("3/rework-1", "11:00:00", 1),
+        run("1/triage-1", "2026-10-14T09:00:00Z", 1),
+        run("1/implement-1", "2026-10-14T10:00:00Z", 1),
+        run("3/rework-1", "2026-10-14T11:00:00Z", 1),
         in_flight,
     ]
 }
@@ -147,45 +143,12 @@ fn a_tickets_runs_are_none_of_its_pull_requests() {
 
 #[test]
 fn an_item_with_no_runs_has_none_to_show() {
-    let recorded = vec![run("1/implement-1", "10:00:00", 1)];
+    let recorded = vec![run("1/implement-1", "2026-10-14T10:00:00Z", 1)];
 
     assert_eq!(
         picked(&recorded, &item(2)),
         Err(NoSuchRun::NoRuns(Number(2)))
     );
-}
-
-const REPO: &str = "owner/widgets";
-
-async fn world() -> (World, tempfile::TempDir) {
-    let work_dir = tempfile::tempdir().unwrap();
-    let world = World::with(|config| config.work_dir = work_dir.path().join(REPO)).await;
-    (world, work_dir)
-}
-
-struct Output {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
-}
-
-async fn lw(work_dir: &Path, args: &[&str]) -> Output {
-    let runtime_dir = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
-        .args(["--repo", REPO, "--work-dir"])
-        .arg(work_dir)
-        .args(args)
-        .current_dir(cwd.path())
-        .env("XDG_RUNTIME_DIR", runtime_dir.path())
-        .output()
-        .await
-        .unwrap();
-    Output {
-        code: output.status.code(),
-        stdout: String::from_utf8(output.stdout).unwrap(),
-        stderr: String::from_utf8(output.stderr).unwrap(),
-    }
 }
 
 /// Implementing sessions stream the recorded transcript: its first turn
@@ -209,7 +172,7 @@ fn implement_as_recorded(world: &World) {
 }
 
 async fn implemented_as_recorded() -> (World, tempfile::TempDir) {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     implement_as_recorded(&world);
     world.store.open_issue(
         "maintainer",
@@ -225,7 +188,7 @@ async fn implemented_as_recorded() -> (World, tempfile::TempDir) {
 async fn logs_shows_the_items_latest_run_compact() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
-    let output = lw(work_dir.path(), &["logs", "1"]).await;
+    let output = lw_in(work_dir.path(), &["logs", "1"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -251,7 +214,7 @@ async fn logs_shows_the_items_latest_run_compact() {
 async fn logs_verbose_adds_the_brief_and_the_thinking() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
-    let output = lw(work_dir.path(), &["logs", "1", "--verbose"]).await;
+    let output = lw_in(work_dir.path(), &["logs", "1", "--verbose"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -269,7 +232,7 @@ async fn logs_verbose_adds_the_brief_and_the_thinking() {
 async fn logs_json_prints_one_object_per_line() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
-    let output = lw(work_dir.path(), &["logs", "1", "--json"]).await;
+    let output = lw_in(work_dir.path(), &["logs", "1", "--json"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<serde_json::Value> = output
@@ -296,7 +259,7 @@ async fn logs_json_prints_one_object_per_line() {
 
 #[tokio::test]
 async fn a_run_that_started_no_session_says_so() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     let (_, pr) = world.ticket_in_review().await;
     assert_eq!(pr, Number(2));
     world
@@ -312,8 +275,8 @@ async fn a_run_that_started_no_session_says_so() {
     // Brought up to date without a session: nothing conflicts.
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["logs", "2", "--run", "2/update-1"]).await;
-    let json = lw(work_dir.path(), &["logs", "--run", "2/update-1", "--json"]).await;
+    let output = lw_in(work_dir.path(), &["logs", "2", "--run", "2/update-1"]).await;
+    let json = lw_in(work_dir.path(), &["logs", "--run", "2/update-1", "--json"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(output.stdout, "run: 2/update-1 (it started no session)\n");
@@ -327,10 +290,10 @@ async fn a_run_that_started_no_session_says_so() {
 async fn an_unknown_item_or_run_exits_4_saying_so() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
-    let no_item = lw(work_dir.path(), &["logs", "7"]).await;
-    let no_run = lw(work_dir.path(), &["logs", "1", "--run", "1/rework-1"]).await;
-    let other_item = lw(work_dir.path(), &["logs", "7", "--run", "1/implement-1"]).await;
-    let neither = lw(work_dir.path(), &["logs"]).await;
+    let no_item = lw_in(work_dir.path(), &["logs", "7"]).await;
+    let no_run = lw_in(work_dir.path(), &["logs", "1", "--run", "1/rework-1"]).await;
+    let other_item = lw_in(work_dir.path(), &["logs", "7", "--run", "1/implement-1"]).await;
+    let neither = lw_in(work_dir.path(), &["logs"]).await;
 
     for (output, error) in [
         (&no_item, "#7 has no runs"),
@@ -352,7 +315,7 @@ async fn a_named_run_whose_record_does_not_read_exits_1_saying_why() {
     };
     std::fs::write(record, "not a record").unwrap();
 
-    let output = lw(work_dir.path(), &["logs", "--run", "1/implement-1"]).await;
+    let output = lw_in(work_dir.path(), &["logs", "--run", "1/implement-1"]).await;
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
     assert!(
@@ -374,8 +337,8 @@ async fn following_a_run_that_has_ended_shows_its_transcript_and_exits() {
         &["--json"],
         &["--verbose", "--json"],
     ] {
-        let shown = lw(work_dir.path(), &[&["logs", "1"], way].concat()).await;
-        let followed = lw(work_dir.path(), &[&["logs", "1", "--follow"], way].concat()).await;
+        let shown = lw_in(work_dir.path(), &[&["logs", "1"], way].concat()).await;
+        let followed = lw_in(work_dir.path(), &[&["logs", "1", "--follow"], way].concat()).await;
 
         assert_eq!(followed.code, Some(0), "{}", followed.stderr);
         assert_eq!(followed.stdout, shown.stdout, "{way:?}");

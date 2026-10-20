@@ -1,11 +1,9 @@
 use crate::common;
 
-use common::{at, ticket, view};
+use common::{NOW, at, ticket, view};
 use linewright::board::{Board, Card, CardLine, Column, Ended, board};
 use linewright::domain::*;
 use linewright::status::{Ci, View};
-
-const NOW: &str = "2026-10-01T12:00:30Z";
 
 /// Where each card is: its lane's tracking issue, if any, its column and
 /// its number, lane by lane and column by column.

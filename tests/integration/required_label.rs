@@ -4,8 +4,6 @@ use common::*;
 use linewright::reconcile::WorkKind;
 use serde_json::json;
 
-const REQUIRED: &str = "linewright";
-
 async fn world(required: Option<&str>, label_exists: bool) -> World {
     let required = required.map(str::to_string);
     let world = World::with(|c| c.require_label = required).await;

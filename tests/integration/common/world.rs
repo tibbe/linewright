@@ -15,11 +15,15 @@ use linewright::webhook::Pending;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::cli::REPO;
 use super::clock::FakeClock;
 use super::files::commit_in;
 use super::harness::{ScriptedHarness, subject_file};
 
 pub const LINEWRIGHT: &str = "factory";
+
+/// The label a factory requires when set to require one.
+pub const REQUIRED: &str = "linewright";
 
 /// The credentials of an environment holding `variables`.
 pub fn credentials_of(variables: &[(&str, &str)]) -> Credentials {
@@ -239,6 +243,37 @@ pub fn design_issues(world: &World) {
         Ok(serde_json::json!({"outcome": "designed", "design": "Built as asked."}).to_string())
     });
 }
+
+/// A world whose work dir is `REPO`'s, holding an issue that needs triage,
+/// which each triage answers is ready for an agent.
+pub async fn with_issue_for_triage() -> World {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world.harness.on(WorkKind::Triage, |_| {
+        Ok(serde_json::json!({
+            "outcome": "ready-for-agent",
+            "category": "bug",
+            "comment": "## Agent Brief\n\n**Summary:** It crashes."
+        })
+        .to_string())
+    });
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    world
+}
+
+/// Opens a ticket titled `title`, ready for an agent and designed.
+pub fn open_ticket(world: &World, title: &str) -> Number {
+    world.store.open_issue(
+        "maintainer",
+        title,
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    )
+}
+
+/// An automation file that runs on the hour; the fake clock starts at 12:00.
+pub const HOURLY: &str = "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n";
 
 impl World {
     pub async fn ticket_in_review(&mut self) -> (Number, Number) {

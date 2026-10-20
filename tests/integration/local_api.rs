@@ -12,8 +12,6 @@ use linewright::factory::ServeEnd;
 use linewright::webhook::{Listener, Pending};
 use tokio_util::sync::CancellationToken;
 
-const REPO: &str = "owner/widgets";
-
 struct Answering {
     serving: Serving,
     api: Api,
@@ -133,12 +131,6 @@ impl Answering {
 
 fn socket_dir(runtime_dir: &Path) -> std::path::PathBuf {
     api::socket_dir(Some(runtime_dir.to_path_buf()), Path::new("/unused"), 0)
-}
-
-struct Output {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
 }
 
 /// How long a test gives one `lw` to answer: more than the 5s `lw` asks a
@@ -479,24 +471,6 @@ async fn a_wrong_setting_outside_the_command_line_exits_1() {
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
     assert!(output.stderr.contains("poll-interval"), "{}", output.stderr);
-}
-
-async fn with_issue_for_triage() -> World {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    world
-        .harness
-        .on(linewright::reconcile::WorkKind::Triage, |_| {
-            Ok(serde_json::json!({
-                "outcome": "ready-for-agent",
-                "category": "bug",
-                "comment": "## Agent Brief\n\n**Summary:** It crashes."
-            })
-            .to_string())
-        });
-    world
-        .store
-        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
-    world
 }
 
 #[tokio::test]

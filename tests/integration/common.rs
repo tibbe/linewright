@@ -5,6 +5,7 @@
 //! # `world`: worlds and servers
 //!
 //! - `LINEWRIGHT`: the login Linewright works as.
+//! - `REQUIRED`: the label a factory requires when set to require one.
 //! - `credentials_of`: the credentials of an environment holding some variables.
 //! - `redaction_of`: the redaction of an environment holding some variables.
 //! - `World`: a factory over a local store, a scripted harness and a fake clock.
@@ -25,6 +26,11 @@
 //! - `check`: a check record with its name, state and log, for the store.
 //! - `implement`: scripts each implement run to add to its ticket's branch.
 //! - `design_issues`: scripts each design to answer that the issue is designed.
+//! - `with_issue_for_triage`: a world, its work dir `REPO`'s, holding an issue
+//!   needing triage that each triage answers is ready for an agent.
+//! - `open_ticket`: opens a ticket, ready for an agent and designed.
+//! - `HOURLY`: an automation file that runs on the hour; the fake clock starts
+//!   at 12:00.
 //! - `Serving`: a factory serving in the background.
 //!   - `start`: starts serving.
 //!   - `drain`, `stop`, `kill`: drains, stops or aborts it.
@@ -52,9 +58,11 @@
 //! - `fake_claude_streaming`: a stand-in `claude` program that streams events.
 //! - `fake_claude_saying`: a stand-in `claude` that streams, keeps and writes errors.
 //! - `write_program`: writes an executable script safely while other tests run.
+//! - `nothing_needs_doing`: an automation's answer that it found nothing to do.
 //!
 //! # `clock`: clocks and times
 //!
+//! - `NOW`: the time the functional core is asked at.
 //! - `at`: the `Timestamp` an RFC 3339 string names.
 //! - `FakeClock`: a clock that moves only when advanced, recording its sleeps;
 //!   `new`, `advance`, `next_sleep`.
@@ -90,6 +98,14 @@
 //! - `git_in`: runs git in a directory, failing the test if git fails.
 //! - `files_named`: the files with a name under a directory.
 //!
+//! # `cli`: running `lw`
+//!
+//! - `REPO`: the repository `lw` is run on.
+//! - `world_in_work_dir`: a world whose work dir is `REPO`'s in a temporary
+//!   directory.
+//! - `Output`: the exit code, stdout and stderr of an `lw`.
+//! - `lw_in`: runs `lw` on `REPO` with a work dir.
+//!
 //! # `assert`: assertions and waiting
 //!
 //! - `Log`: what a thread logs, from `capture`, as `text`, `lines` by level or
@@ -99,6 +115,7 @@
 //! - `run_ids`: the run ids in `lw runs` output.
 
 mod assert;
+mod cli;
 mod clock;
 mod files;
 mod harness;
@@ -107,6 +124,7 @@ mod webhooks;
 mod world;
 
 pub use assert::*;
+pub use cli::*;
 pub use clock::*;
 pub use files::*;
 pub use harness::*;

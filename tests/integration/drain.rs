@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use chrono::TimeDelta;
 use common::*;
-use linewright::domain::{Login, Number};
+use linewright::domain::Login;
 use linewright::factory::{Factory, ServeEnd};
 use linewright::harness::SessionError;
 use linewright::runs::{Ending, Runs, State};
@@ -79,15 +79,6 @@ fn ended_runs(world: &World) -> Vec<Ending> {
             }
         })
         .collect()
-}
-
-fn open_ticket(world: &World, title: &str) -> Number {
-    world.store.open_issue(
-        "maintainer",
-        title,
-        "Please.",
-        &["ready-for-agent", "linewright:designed"],
-    )
 }
 
 fn info_with(log: &Log, phrase: &str) -> Vec<String> {

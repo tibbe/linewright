@@ -4,43 +4,10 @@ use std::path::Path;
 
 use chrono::TimeDelta;
 use common::*;
-use linewright::domain::{Number, Timestamp};
+use linewright::domain::Number;
 use linewright::reconcile::WorkKind;
 use linewright::runs::{self, Ending, Listing, NoRuns, Query, Recorded, RunId, RunOf, Runs, State};
 use serde_json::json;
-
-const REPO: &str = "owner/widgets";
-
-async fn world() -> (World, tempfile::TempDir) {
-    let work_dir = tempfile::tempdir().unwrap();
-    let world = World::with(|config| config.work_dir = work_dir.path().join(REPO)).await;
-    (world, work_dir)
-}
-
-struct Output {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
-}
-
-async fn lw(work_dir: &Path, args: &[&str]) -> Output {
-    let runtime_dir = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
-        .args(["--repo", REPO, "--work-dir"])
-        .arg(work_dir)
-        .args(args)
-        .current_dir(cwd.path())
-        .env("XDG_RUNTIME_DIR", runtime_dir.path())
-        .output()
-        .await
-        .unwrap();
-    Output {
-        code: output.status.code(),
-        stdout: String::from_utf8(output.stdout).unwrap(),
-        stderr: String::from_utf8(output.stderr).unwrap(),
-    }
-}
 
 fn triage_ready(world: &World) {
     world.harness.on(WorkKind::Triage, |_| {
@@ -55,14 +22,14 @@ fn triage_ready(world: &World) {
 
 #[tokio::test]
 async fn a_triage_run_is_listed_under_its_run_id_with_its_outcome() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
     world
         .store
         .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["runs"]).await;
+    let output = lw_in(work_dir.path(), &["runs"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -81,7 +48,7 @@ fn triage_again(world: &World, issue: linewright::domain::Number) {
 
 #[tokio::test]
 async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
     let issue =
         world
@@ -103,7 +70,7 @@ async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
     triage_again(&world, issue);
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["runs"]).await;
+    let output = lw_in(work_dir.path(), &["runs"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
@@ -116,7 +83,7 @@ async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
 
 #[tokio::test]
 async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     world.ticket_in_review().await;
     world
         .store
@@ -131,7 +98,7 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     // Brought up to date without a session: nothing conflicts.
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["runs"]).await;
+    let output = lw_in(work_dir.path(), &["runs"]).await;
     let recorded = Runs::new(&work_dir.path().join(REPO)).read().unwrap();
 
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -158,7 +125,7 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
 
 #[tokio::test]
 async fn an_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
-    let (world, work_dir) = world().await;
+    let (world, work_dir) = world_in_work_dir().await;
     world
         .store
         .commit(
@@ -182,7 +149,7 @@ async fn an_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
         .on_automation(|_| Ok(json!({"not": "a result"}).to_string()));
     assert!(world.factory.run_automation(&weekly).await.is_err());
 
-    let output = lw(work_dir.path(), &["runs"]).await;
+    let output = lw_in(work_dir.path(), &["runs"]).await;
 
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}", output.stdout);
@@ -200,7 +167,7 @@ async fn an_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
 
 #[tokio::test]
 async fn a_run_handed_back_says_so() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     world.harness.on(WorkKind::Implement, |_| {
         Ok(json!({"outcome": "gave-up", "reason": "It cannot be done."}).to_string())
     });
@@ -212,7 +179,7 @@ async fn a_run_handed_back_says_so() {
     );
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["runs", "1"]).await;
+    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
 
     assert!(
         output
@@ -225,7 +192,7 @@ async fn a_run_handed_back_says_so() {
 
 #[tokio::test]
 async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     implement(&world);
     world.store.refuse_pushes(&rejected(
         "refusing to allow a Personal Access Token to create or update workflow \
@@ -239,7 +206,7 @@ async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
     );
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["runs", "1"]).await;
+    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
 
     assert!(
         output
@@ -252,15 +219,15 @@ async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
 
 #[tokio::test]
 async fn runs_of_an_item_with_none_exits_4_saying_so() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
     world
         .store
         .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["runs", "7"]).await;
-    let narrowed = lw(work_dir.path(), &["runs", "1", "--stage", "rework"]).await;
+    let output = lw_in(work_dir.path(), &["runs", "7"]).await;
+    let narrowed = lw_in(work_dir.path(), &["runs", "1", "--stage", "rework"]).await;
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert_eq!(output.stdout, "");
@@ -275,14 +242,14 @@ async fn runs_of_an_item_with_none_exits_4_saying_so() {
 
 #[tokio::test]
 async fn runs_json_prints_the_answer_as_json() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
     world
         .store
         .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
     world.poll().await;
 
-    let output = lw(work_dir.path(), &["runs", "--json"]).await;
+    let output = lw_in(work_dir.path(), &["runs", "--json"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
@@ -302,8 +269,8 @@ async fn runs_json_prints_the_answer_as_json() {
 }
 
 async fn listed(dir: &Path, item: Number) -> Vec<String> {
-    let text = lw(dir, &["runs", &item.0.to_string()]).await;
-    let json = lw(dir, &["runs", &item.0.to_string(), "--json"]).await;
+    let text = lw_in(dir, &["runs", &item.0.to_string()]).await;
+    let json = lw_in(dir, &["runs", &item.0.to_string(), "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     let ids: Vec<String> = run_ids(&text.stdout)
@@ -323,7 +290,7 @@ async fn listed(dir: &Path, item: Number) -> Vec<String> {
 
 #[tokio::test]
 async fn a_pull_requests_runs_are_its_own_and_its_tickets_are_the_tickets() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     let (issue, pr) = world.ticket_in_review().await;
     world.rework_asked(pr);
     world.poll().await;
@@ -338,7 +305,7 @@ async fn a_pull_requests_runs_are_its_own_and_its_tickets_are_the_tickets() {
 
 #[tokio::test]
 async fn a_pull_requests_runs_are_counted_per_stage_on_it() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     let (_, pr) = world.ticket_in_review().await;
     world.rework_asked(pr);
     world.poll().await;
@@ -364,7 +331,7 @@ async fn a_pull_requests_runs_are_counted_per_stage_on_it() {
 
 #[tokio::test]
 async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     let (issue, closed) = world.ticket_in_review().await;
     world.store.close_pull_as(closed).unwrap();
     world.poll().await;
@@ -377,7 +344,7 @@ async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
     assert_ne!(next, closed);
     let dir = work_dir.path();
 
-    let of_closed = lw(dir, &["runs", &closed.0.to_string()]).await;
+    let of_closed = lw_in(dir, &["runs", &closed.0.to_string()]).await;
 
     assert_eq!(
         listed(dir, issue).await,
@@ -395,15 +362,15 @@ async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
 
 #[tokio::test]
 async fn a_pull_requests_runs_narrow_from_the_command_line() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     let (_, pr) = world.ticket_in_review().await;
     world.rework_asked(pr);
     world.poll().await;
     let pr = pr.0.to_string();
 
-    let rework = lw(work_dir.path(), &["runs", &pr, "--stage", "rework"]).await;
-    let implement = lw(work_dir.path(), &["runs", &pr, "--stage", "implement"]).await;
-    let later = lw(work_dir.path(), &["runs", &pr, "--since", "2026-10-02"]).await;
+    let rework = lw_in(work_dir.path(), &["runs", &pr, "--stage", "rework"]).await;
+    let implement = lw_in(work_dir.path(), &["runs", &pr, "--stage", "implement"]).await;
+    let later = lw_in(work_dir.path(), &["runs", &pr, "--since", "2026-10-02"]).await;
 
     assert_eq!(
         run_ids(&rework.stdout),
@@ -433,16 +400,12 @@ async fn a_run_recorded_before_runs_kept_their_pull_request_is_listed() {
     )
     .unwrap();
 
-    let output = lw(work_dir.path(), &["runs", "5"]).await;
+    let output = lw_in(work_dir.path(), &["runs", "5"]).await;
 
     assert_eq!(
         output.stdout,
         "5/rework-1: done — #5 rework, started 2026-10-14 12:00:00 UTC, ran 1m\n"
     );
-}
-
-fn at(time: &str) -> Timestamp {
-    format!("2026-10-14T{time}Z").parse().unwrap()
 }
 
 fn work(item: u64, stage: WorkKind, n: u32, start: &str) -> Recorded {
@@ -478,12 +441,12 @@ fn weekly(n: u32, start: &str) -> Recorded {
 
 fn morning() -> Vec<Recorded> {
     vec![
-        work(1, WorkKind::Triage, 1, "08:00:00"),
-        weekly(1, "09:00:00"),
-        work(1, WorkKind::Implement, 1, "10:00:00"),
-        work(2, WorkKind::Triage, 1, "10:30:00"),
-        work(1, WorkKind::Rework, 1, "11:00:00"),
-        work(1, WorkKind::Rework, 2, "12:00:00"),
+        work(1, WorkKind::Triage, 1, "2026-10-14T08:00:00Z"),
+        weekly(1, "2026-10-14T09:00:00Z"),
+        work(1, WorkKind::Implement, 1, "2026-10-14T10:00:00Z"),
+        work(2, WorkKind::Triage, 1, "2026-10-14T10:30:00Z"),
+        work(1, WorkKind::Rework, 1, "2026-10-14T11:00:00Z"),
+        work(1, WorkKind::Rework, 2, "2026-10-14T12:00:00Z"),
     ]
 }
 
@@ -493,7 +456,7 @@ fn ids(listing: &Listing) -> Vec<String> {
 
 #[test]
 fn every_run_is_listed_newest_first() {
-    let listing = runs::list(morning(), &Query::default(), at("13:00:00")).unwrap();
+    let listing = runs::list(morning(), &Query::default(), at("2026-10-14T13:00:00Z")).unwrap();
 
     assert_eq!(
         ids(&listing),
@@ -516,7 +479,7 @@ fn an_items_runs_are_only_its_own() {
         ..Query::default()
     };
 
-    let listing = runs::list(morning(), &query, at("13:00:00")).unwrap();
+    let listing = runs::list(morning(), &query, at("2026-10-14T13:00:00Z")).unwrap();
 
     assert_eq!(
         ids(&listing),
@@ -526,12 +489,12 @@ fn an_items_runs_are_only_its_own() {
 
 fn ticket_and_pull() -> Vec<Recorded> {
     vec![
-        work(1, WorkKind::Triage, 1, "08:00:00"),
-        work(1, WorkKind::Implement, 1, "09:00:00"),
-        work(3, WorkKind::Rework, 1, "09:30:00"),
-        work(2, WorkKind::Triage, 1, "10:30:00"),
-        work(3, WorkKind::FixCi, 1, "11:00:00"),
-        work(3, WorkKind::Rework, 2, "12:00:00"),
+        work(1, WorkKind::Triage, 1, "2026-10-14T08:00:00Z"),
+        work(1, WorkKind::Implement, 1, "2026-10-14T09:00:00Z"),
+        work(3, WorkKind::Rework, 1, "2026-10-14T09:30:00Z"),
+        work(2, WorkKind::Triage, 1, "2026-10-14T10:30:00Z"),
+        work(3, WorkKind::FixCi, 1, "2026-10-14T11:00:00Z"),
+        work(3, WorkKind::Rework, 2, "2026-10-14T12:00:00Z"),
     ]
 }
 
@@ -542,7 +505,7 @@ fn a_pull_requests_runs_are_its_own() {
         ..Query::default()
     };
 
-    let listing = runs::list(ticket_and_pull(), &query, at("13:00:00")).unwrap();
+    let listing = runs::list(ticket_and_pull(), &query, at("2026-10-14T13:00:00Z")).unwrap();
 
     assert_eq!(ids(&listing), ["3/rework-2", "3/fix-ci-1", "3/rework-1"]);
 }
@@ -554,7 +517,7 @@ fn a_tickets_runs_are_its_own_and_none_of_its_pull_requests() {
         ..Query::default()
     };
 
-    let listing = runs::list(ticket_and_pull(), &query, at("13:00:00")).unwrap();
+    let listing = runs::list(ticket_and_pull(), &query, at("2026-10-14T13:00:00Z")).unwrap();
 
     assert_eq!(ids(&listing), ["1/implement-1", "1/triage-1"]);
 }
@@ -566,7 +529,7 @@ fn an_item_with_no_runs_has_none_to_list() {
         ..Query::default()
     };
 
-    let listed = runs::list(morning(), &query, at("13:00:00"));
+    let listed = runs::list(morning(), &query, at("2026-10-14T13:00:00Z"));
 
     assert_eq!(listed, Err(NoRuns(Number(3))));
 }
@@ -578,7 +541,7 @@ fn stage_lists_only_that_stages_runs() {
         ..Query::default()
     };
 
-    let listing = runs::list(morning(), &query, at("13:00:00")).unwrap();
+    let listing = runs::list(morning(), &query, at("2026-10-14T13:00:00Z")).unwrap();
 
     assert_eq!(ids(&listing), ["2/triage-1", "1/triage-1"]);
 }
@@ -586,11 +549,11 @@ fn stage_lists_only_that_stages_runs() {
 #[test]
 fn since_lists_only_the_runs_started_then_or_after() {
     let query = Query {
-        since: Some(at("10:30:00")),
+        since: Some(at("2026-10-14T10:30:00Z")),
         ..Query::default()
     };
 
-    let listing = runs::list(morning(), &query, at("13:00:00")).unwrap();
+    let listing = runs::list(morning(), &query, at("2026-10-14T13:00:00Z")).unwrap();
 
     assert_eq!(ids(&listing), ["1/rework-2", "1/rework-1", "2/triage-1"]);
 }
@@ -603,7 +566,7 @@ fn a_list_cut_to_its_limit_ends_saying_how_many_it_left_out_and_how_to_show_them
         ..Query::default()
     };
 
-    let listing = runs::list(morning(), &query, at("13:00:00")).unwrap();
+    let listing = runs::list(morning(), &query, at("2026-10-14T13:00:00Z")).unwrap();
 
     assert_eq!(ids(&listing), ["1/rework-2"]);
     assert_eq!(listing.left_out, 3);
@@ -616,15 +579,15 @@ fn a_list_cut_to_its_limit_ends_saying_how_many_it_left_out_and_how_to_show_them
 
 #[test]
 fn a_run_in_flight_has_run_until_now_and_one_interrupted_for_no_known_time() {
-    let mut in_flight = work(1, WorkKind::Rework, 2, "12:00:00");
+    let mut in_flight = work(1, WorkKind::Rework, 2, "2026-10-14T12:00:00Z");
     in_flight.state = State::InFlight;
-    let mut interrupted = work(1, WorkKind::Rework, 1, "11:00:00");
+    let mut interrupted = work(1, WorkKind::Rework, 1, "2026-10-14T11:00:00Z");
     interrupted.state = State::Interrupted;
 
     let listing = runs::list(
         vec![in_flight, interrupted],
         &Query::default(),
-        at("12:30:00"),
+        at("2026-10-14T12:30:00Z"),
     )
     .unwrap();
 
@@ -637,7 +600,7 @@ fn a_run_in_flight_has_run_until_now_and_one_interrupted_for_no_known_time() {
 
 #[tokio::test]
 async fn the_filters_narrow_the_list_from_the_command_line() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
     let issue =
         world
@@ -648,7 +611,7 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
     world.poll().await;
     let dir = work_dir.path();
 
-    let limited = lw(
+    let limited = lw_in(
         dir,
         &[
             "runs",
@@ -662,9 +625,9 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
         ],
     )
     .await;
-    let later = lw(dir, &["runs", "--since", "2026-10-02T00:00:00Z"]).await;
-    let other_stage = lw(dir, &["runs", "--stage", "fix-ci"]).await;
-    let no_stage = lw(dir, &["runs", "--stage", "review"]).await;
+    let later = lw_in(dir, &["runs", "--since", "2026-10-02T00:00:00Z"]).await;
+    let other_stage = lw_in(dir, &["runs", "--stage", "fix-ci"]).await;
+    let no_stage = lw_in(dir, &["runs", "--stage", "review"]).await;
 
     let lines: Vec<&str> = limited.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}{}", limited.stdout, limited.stderr);
@@ -687,7 +650,7 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
 
 #[tokio::test]
 async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are_counted_on_from() {
-    let (world, work_dir) = world().await;
+    let (world, work_dir) = world_in_work_dir().await;
     // Where, and as what, the previous version recorded an automation's run.
     let old = work_dir.path().join(REPO).join("runs/workflows/weekly");
     std::fs::create_dir_all(&old).unwrap();
@@ -725,7 +688,7 @@ async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are
         .await
         .unwrap();
 
-    let output = lw(work_dir.path(), &["runs"]).await;
+    let output = lw_in(work_dir.path(), &["runs"]).await;
 
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}", output.stdout);
@@ -743,7 +706,7 @@ async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are
 
 #[tokio::test]
 async fn a_spec_changes_runs_recorded_as_tickets_by_the_previous_version_are_design_runs() {
-    let (mut world, work_dir) = world().await;
+    let (mut world, work_dir) = world_in_work_dir().await;
     world.harness.on(WorkKind::Design, |_| {
         Ok(json!({"outcome": "nothing-to-build", "reason": "Nothing to build."}).to_string())
     });
@@ -778,12 +741,12 @@ async fn a_spec_changes_runs_recorded_as_tickets_by_the_previous_version_are_des
     .unwrap();
     world.poll().await;
 
-    let output = lw(
+    let output = lw_in(
         work_dir.path(),
         &["runs", &pr.0.to_string(), "--stage", "design"],
     )
     .await;
-    let tickets = lw(work_dir.path(), &["runs", "--stage", "tickets"]).await;
+    let tickets = lw_in(work_dir.path(), &["runs", "--stage", "tickets"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let ids = [2, 1].map(|n| format!("{}/design-{n}", pr.0));

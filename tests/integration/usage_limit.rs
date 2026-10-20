@@ -37,15 +37,6 @@ fn triage(world: &World) {
     });
 }
 
-fn open_ticket(world: &World, title: &str) -> Number {
-    world.store.open_issue(
-        "maintainer",
-        title,
-        "Please.",
-        &["ready-for-agent", "linewright:designed"],
-    )
-}
-
 fn started(actions: &[Action]) -> Vec<Subject> {
     actions
         .iter()
@@ -212,9 +203,6 @@ async fn when_several_runs_are_refused_the_latest_reset_holds() {
     assert_eq!(started(&held), []);
     assert_eq!(started(&lifted), [Subject::Issue(third)]);
 }
-
-/// Ticks on the hour; the fake clock starts at 12:00.
-const HOURLY: &str = "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n";
 
 async fn with_hourly_automation(world: &World) {
     world
