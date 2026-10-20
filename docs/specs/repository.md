@@ -141,7 +141,7 @@ given under [Triage](triage.md) and [Pull requests](pull_requests.md);
 | work            | handed back                    | ready-for-human |                                         |
 | work            | PR closed unmerged             | ready-for-human |                                         |
 | work            | cut into tickets               | tracking        | tickets filed as sub-issues             |
-| tracking        | every ticket closed            | —               | issue closed                            |
+| tracking        | every sub-issue closed         | —               | issue closed                            |
 | work            | PR merged                      | —               | issue closed                            |
 
 ## Comments

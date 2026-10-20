@@ -50,9 +50,11 @@ created designed, with the design of the item it was cut from.
   implemented.
 - **1b. The design cannot be made.** The item is handed back. A spec gap that
   does not block the design is filed as under [Runs](runs.md).
-- **4a. Interrupted before the label is set.** The outcome is discarded, its
-  tracking issue and tickets closed as not planned with a comment, and the
-  item is designed again, reading what the attempt left.
+- **Discarding a cut.** An item cut into tickets that is without
+  `linewright:designed`, because its cut was interrupted before the label was
+  set or a person removed it, is designed again, reading what the cut left.
+  First its open tickets and their pull requests are closed as not planned
+  with a comment, and so is a spec change's tracking issue.
 - **Responsibility.** The design is Linewright's: it runs from a spec change
   or a claimed issue to the ready PRs with no human step, and a wrong design
   or set of tickets from a good spec is a defect in Linewright.

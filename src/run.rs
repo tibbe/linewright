@@ -1093,7 +1093,7 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
 }
 
 /// The label goes on last, so that a design stopped before it is discarded
-/// and made again (docs/specs/design.md, "Designing", 4a).
+/// and made again (docs/specs/design.md, "Discarding a cut").
 async fn mark_designed(shell: &Shell, pr: &MergedPull) -> Result<()> {
     // Labeled before unassigning, so that a stop between the two leaves the
     // spec change designed rather than handed back.
