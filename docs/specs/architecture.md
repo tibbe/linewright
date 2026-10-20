@@ -33,11 +33,6 @@ lives in the store and nowhere else.
   directory.
 - **Webhook deliveries are hints, not state.** A delivery says which item to
   read again; the payload never stands in for the store.
-- **Why.** GitHub neither orders deliveries nor redelivers a failed one, so
-  state built from payloads would drift until a poll repaired it; reading the
-  item again keeps every reconcile on the store's facts, as Kubernetes
-  controllers, Argo CD and `rust-lang/bors` do. The cost is one read per changed
-  item, against a full snapshot per poll.
 - **Spec changes are found by lookback** over the pull requests merged
   within the window ([Sources of work](sources_of_work.md)).
 
@@ -58,8 +53,6 @@ during the session.
   and result contract.
 - **A session's skills and tools.** A session or sub-agent has Linewright's
   skills and the repository's own, and only the tools its work needs.
-- **Why.** The harness's other skills and tools take up the session's context
-  and compete with Linewright's skills.
 - **No person takes part in a session.** A decision an original skill puts to a
   person is made by an agent or handed back as an outcome, and judging an
   agent's own work, as review does, falls to agents in fresh contexts.
@@ -76,7 +69,7 @@ are the prompt's.
 | skill | forked from |
 |---|---|
 | `triage`, `to-tickets`, `implement`, `code-review`, `pr`, `tdd` | `mattpocock/skills`, MIT, with its notice |
-| `software-design` | `prior-art` in `tibbe/skills`, with what concerns products removed, so that it designs code alone |
+| `software-design` | `prior-art` in `tibbe/skills`, with what concerns products removed |
 
 - **Invoking.** A session's prompt holds its task and the result contract
   as the steps the session takes, and the step a skill covers has the session
@@ -85,8 +78,6 @@ are the prompt's.
   calls (`tdd`, `code-review`, `pr`) are given to the session as skills under
   a `linewright:` namespace and invoked as the originals invoke them; the
   design prompt has the session call `software-design`, then `to-tickets`.
-- **Why.** A fork that stays upstream's text is brought up to date from
-  upstream, and a diff against upstream shows what the fork changed.
 
 ## The manager–agent protocol
 
@@ -105,50 +96,37 @@ only the manager writes to the store.
 - **4a. The manager can't accept the result.** It is sent back to the session
   with the reason, a bounded number of times.
 
-The protocol is how the pipeline talks to an agent, not a limit on what the
-agent reaches: an agent may read GitHub, the web or anything else its session
-can.
+An agent may read GitHub, the web or anything else its session can.
 
 ## Capabilities and credentials
 
 Agents get the capabilities their work needs, and are limited where that costs
 their work nothing.
 
-- **What an agent has.** An agent that debugs, researches and reviews needs a
-  shell, the web and GitHub, so it has them, and is trusted to use them as its
-  brief says.
+- **What an agent has.** A shell, the web and GitHub, which it is trusted to
+  use as its brief says.
 - **What an agent lacks.** What its work does not need, such as Linewright's
   other credentials or a token that writes to GitHub.
 - **What code enforces.** A rule is enforced in code only where it limits what a
   session is given, or where Linewright would malfunction without it. Anything
   else, such as an agent writing to GitHub outside its result, is the brief's to
-  prevent, and a maintainer who wants stricter guards sets them in GitHub, such
-  as required reviews on spec files.
+  prevent.
 - **Credentials are redacted.** What Linewright keeps, logs or posts has
-  credentials replaced by `[redacted]`, except the commits it pushes: those are
-  the agent's work, so a commit holding a credential is refused rather than
-  rewritten ([Runs](runs.md)). Redaction is best effort.
+  credentials replaced by `[redacted]`, except the commits it pushes: a commit
+  holding a credential is refused ([Runs](runs.md)). Redaction is best effort.
 - **A credential** is the value of a variable in Linewright's environment whose
   name ends in `_TOKEN`, `_KEY`, `_SECRET` or `_PASSWORD`.
-- **Why.** Names rather than a declared list, so that the secrets an operator
-  passes sessions are covered without a setting.
 - **Identity is a user account**: a token for a GitHub user dedicated to
   Linewright, whose assignments are its claims.
 
 ## Automations
 
-Automations sit beside the pipeline, not under one trigger model.
+Automations sit beside the pipeline.
 
 - **The pipeline's entry conditions are fixed** by the product spec.
 - **An automation run is one-shot**, and reaches the pipeline only through the
   issues it files, which the pipeline works without knowing where they came
   from.
-- **Why.** The pipeline is Linewright's responsibility, so making its entry
-  conditions configurable triggers would turn Linewright's own behavior into
-  configuration while buying nothing the spec asks for. Prow keeps its core
-  behavior in code beside configured jobs for the same reason; Zuul's single
-  trigger model pays off for a CI system that routes many projects' events into
-  pipelines, which Linewright does not do.
 
 ## The local API
 
@@ -170,10 +148,6 @@ of it, such as a drain.
 | The socket's path | derived from the repository, in a short per-user directory such as `$XDG_RUNTIME_DIR` |
 | Requests answered | only those whose `Host` is local |
 
-- **Why.** A Unix socket rather than a loopback TCP port, so that file
-  permissions are the access control and two instances cannot collide on a
-  port.
-
 ## The web UI
 
 `serve` serves the web UI itself, on the same socket as the local API, as
@@ -181,8 +155,6 @@ HTML rendered on the server.
 
 - **Rendered on the server**: askama templates, with htmx; a live update is a
   server-sent event carrying an HTML fragment, one event stream per page.
-- **Why.** `cargo install` and the release stay one cargo build with no other
-  toolchain, and the UI's logic stays in Rust beside the commands'.
 - **Styled with daisyUI**, on Tailwind.
 - **The stylesheet is committed**, generated by Tailwind's standalone CLI;
   the checks regenerate it, and CI fails when it differs.
@@ -201,8 +173,3 @@ configured in layers.
   TOML file, defaults, parsed once into one typed value.
 - **Credentials come from the environment only.**
 - **SIGQUIT drains and SIGTERM stops.**
-- **Why.** Supervisors send SIGTERM and, seconds later, SIGKILL. Killed
-  mid-drain, `serve` leaves its runs interrupted and their unfinished work
-  unpushed; a stop pushes it in time. The cost: an operator who wants the
-  supervisor's stop to drain sets its stop signal to SIGQUIT and its timeout
-  to match, as nginx and GitLab Runner document.
