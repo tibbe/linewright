@@ -18,7 +18,7 @@
 - A past time is shown relative, such as "5 min ago", keeping up as time
   passes, with the absolute time in the reader's time zone shown on hover.
 - A future time is shown absolute, in the reader's time zone.
-- A duration is written as the commands write one.
+- A duration reads the same on every page.
 
 ## Status
 
@@ -31,7 +31,7 @@
 | failed, handed back, CI failing  | failure     |
 | in flight, running               | in progress |
 | waiting for something            | pending     |
-| cancelled, interrupted, closed   | cancelled   |
+| cancelled, interrupted, usage limit, closed | cancelled |
 
 ## Colour scheme
 

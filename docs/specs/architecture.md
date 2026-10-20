@@ -183,8 +183,7 @@ HTML rendered on the server.
   server-sent event carrying an HTML fragment, one event stream per page.
 - **Why.** `cargo install` and the release stay one cargo build with no other
   toolchain, and the UI's logic stays in Rust beside the commands'.
-- **Assets are in the binary** (`rust-embed`), the one JavaScript file
-  vendored in the repository.
+- **Assets are in the binary** (`rust-embed`).
 - **Tested in-process**, driving the router under `cargo test`.
 
 ## Deployment and configuration
