@@ -13,3 +13,12 @@ lw --briefs briefs/ replay case/ --out run-1/
 `run-1/` holds the issues and pull requests the run produced (`issues/`,
 `pulls/`, as JSON, Markdown and diffs) and every session's brief, result and
 transcript (`sessions/`).
+
+The prompts are compiled into the binary, and tests quote their wording. After
+changing a prompt, find the tests that quote the text you changed by searching
+`tests/` for it, run their files first, and only then the full `scripts/check`:
+
+```sh
+grep -rlF 'the text you changed' tests/
+cargo test --locked --test integration -- NAME:: NAME::  # each file found, without .rs
+```
