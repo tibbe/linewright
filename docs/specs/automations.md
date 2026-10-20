@@ -51,16 +51,20 @@ Look at the bugs fixed in the past week ...
 
 ## Scheduling
 
-An automation is due when a tick of its schedule has passed since its last run.
+An automation is due when a tick of its schedule has passed since its last
+scheduled run.
 
 - **Missed ticks.** Ticks missed while Linewright was down, or while a run of
   the automation was in flight, collapse into one run.
-- **A new automation.** An automation seen for the first time counts as run
-  then, so adding one does not start it at once.
-- **The last run.** Linewright records each automation's last run under the
-  work directory.
+- **A new automation.** An automation seen for the first time counts as having
+  had a scheduled run then, so adding one does not start it at once.
+- **The last scheduled run.** Linewright records each automation's last
+  scheduled run under the work directory.
 - **By hand.** `lw automation run NAME` runs one automation now and exits, and
-  leaves its schedule as it was.
+  leaves its schedule as it was. A run by hand is marked as one wherever the
+  run is shown.
+- **The last run.** An automation's last run is its newest, whether by its
+  schedule or by hand.
 
 ## Runs
 
