@@ -12,19 +12,19 @@
 <script src="{{ page.assets.script }}" defer></script>
 </head>
 <body hx-sse:connect="{{ page.events }}" hx-swap="none">
-{% block bar -%}
+{% block frame -%}
 <header id="bar">
 <nav>
-<a class="repo" href="https://github.com/{{ bar.repo }}">{{ bar.repo }}</a>
+<a class="repo" href="https://github.com/{{ frame.repo }}">{{ frame.repo }}</a>
 <a href="/">Board</a>
 <a href="/runs">Runs</a>
 </nav>
 <ul class="facts">
-{%- for fact in bar.facts %}
+{%- for fact in frame.facts %}
 <li{% if fact.problem %} class="problem"{% endif %}>{% if fact.problem %}{% call ui::icon(Tone::Failure) %}{% endcall %}{% endif %}{{ fact.html|safe }}</li>
 {%- endfor %}
 </ul>
-{%- for banner in bar.banners %}
+{%- for banner in frame.banners %}
 <p class="banner" role="status">{{ banner|safe }}</p>
 {%- endfor %}
 </header>

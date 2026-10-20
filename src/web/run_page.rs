@@ -20,7 +20,7 @@ use tracing::error;
 
 use super::html;
 use super::runs_page::run_path;
-use super::{Bar, BarRegion, ErrorPage, Page, Sent, render, samples, unanswered, with_query};
+use super::{ErrorPage, Frame, Page, Sent, frame_regions, render, samples, unanswered, with_query};
 use crate::api::{EventId, Sources};
 use crate::domain::Timestamp;
 use crate::logs::{Following, LogsError, Which};
@@ -497,7 +497,7 @@ impl RunQuery {
 #[template(path = "run.html")]
 struct RunPage {
     page: Page,
-    bar: Bar,
+    frame: Frame,
     verbose: bool,
     /// The page with the switch the other way.
     switched: String,
@@ -574,7 +574,7 @@ pub(super) async fn run_page(
 ) -> Response {
     let verbose = query.verbose();
     let title = format!("{id} · {}", sources.work_dir.repo);
-    let bar = Bar::of(&sources);
+    let frame = Frame::of(&sources);
     let shown = run_id(&id).and_then(|run| {
         let (transcript, follow) = read(&sources, run.clone(), verbose)?;
         Ok((run, transcript, follow))
@@ -582,7 +582,7 @@ pub(super) async fn run_page(
     match shown {
         Ok((run, transcript, follow)) => RunPage {
             page: Page::new(title, page_path(&run, "/events", verbose, follow.as_ref())),
-            bar,
+            frame,
             verbose,
             switched: page_path(&run, "", !verbose, None),
             transcript,
@@ -591,7 +591,7 @@ pub(super) async fn run_page(
         Err(RunError { status, error }) => {
             let page = ErrorPage {
                 page: Page::new(title, format!("/events/runs/{id}")),
-                bar,
+                frame,
                 region: "transcript",
                 error,
             };
@@ -631,7 +631,7 @@ impl FollowedTranscript {
 
 const LAST_EVENT_ID: &str = "last-event-id";
 
-/// The run page's regions: the bar and, while the run is in flight, the
+/// The run page's regions: the frame's and, while the run is in flight, the
 /// transcript's lines after those the page showed, or after the
 /// `Last-Event-ID` a reconnecting reader gives.
 pub(super) async fn run_events(
@@ -734,10 +734,7 @@ impl RunStream {
                     vec![]
                 }
                 Wake::Sample => {
-                    let bar = Bar::of(&self.sources);
-                    let changed = self
-                        .sent
-                        .changed(vec![("bar", render(&BarRegion { bar: &bar }))]);
+                    let changed = self.sent.changed(frame_regions(&Frame::of(&self.sources)));
                     changed
                         .map(|message| Event::default().data(message))
                         .into_iter()

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use super::html::{self, Html};
-use super::{Bar, BarRegion, Page, events, render, unanswered, with_query};
+use super::{Frame, Page, events, frame_regions, render, unanswered, with_query};
 use crate::api::Sources;
 use crate::config::{self, Since};
 use crate::domain::{Number, Timestamp};
@@ -221,7 +221,7 @@ impl RunsShown {
 #[template(path = "runs.html")]
 struct RunsPage {
     page: Page,
-    bar: Bar,
+    frame: Frame,
     form: Form,
     runs: RunsShown,
 }
@@ -243,14 +243,14 @@ pub(super) async fn runs_page(
             format!("Runs · {}", sources.work_dir.repo),
             narrowing.path("/events/runs", true),
         ),
-        bar: Bar::of(&sources),
+        frame: Frame::of(&sources),
         form: Form::of(&narrowing.fields),
         runs,
     };
     (status, page).into_response()
 }
 
-/// The runs page's regions: the bar and the list, listed again as runs
+/// The runs page's regions: the frame's and the list, listed again as runs
 /// start and end.
 pub(super) async fn runs_events(
     State(sources): State<Sources>,
@@ -259,12 +259,10 @@ pub(super) async fn runs_events(
 ) -> Response {
     let narrowing = Narrowing::of(&fields);
     let regions = move || {
-        let bar = Bar::of(&sources);
+        let mut regions = frame_regions(&Frame::of(&sources));
         let (_, runs) = RunsShown::of(&sources, &narrowing);
-        vec![
-            ("bar", render(&BarRegion { bar: &bar })),
-            ("runs", render(&RunsRegion { runs: &runs })),
-        ]
+        regions.push(("runs", render(&RunsRegion { runs: &runs })));
+        regions
     };
     events(regions, stopping)
 }
