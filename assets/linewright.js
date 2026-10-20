@@ -1,8 +1,9 @@
 // Linewright's own script for the web UI (docs/specs/design_system.md): it
 // says since when the page lost `serve`, shows times in the reader's time
-// zone, keeping them up, and keeps a run's transcript at its latest entry
-// while the reader is there. htmx's `hx-sse` extension keeps the page up from
-// its event stream: https://four.htmx.org/extensions/hx-sse (htmx 4.0.0).
+// zone and durations in the reader's locale, keeping them up, and keeps a
+// run's transcript at its latest entry while the reader is there. htmx's
+// `hx-sse` extension keeps the page up from its event stream:
+// https://four.htmx.org/extensions/hx-sse (htmx 4.0.0).
 (() => {
   "use strict";
 
@@ -34,34 +35,32 @@
     }
   }
 
-  // As the commands write a duration: humantime's format, to the second.
+  // A duration in the reader's locale (`1h 5m 3s`), balanced into days,
+  // hours, minutes and seconds, zero units left out. Where the browser lacks
+  // Intl.DurationFormat, a duration keeps the server's text.
+  const durations = Intl.DurationFormat && new Intl.DurationFormat(undefined, { style: "narrow" });
+  // `durations` writes nothing for a duration of zero, which reads `0s`.
+  const zeroDuration = Intl.DurationFormat &&
+    new Intl.DurationFormat(undefined, { style: "narrow", secondsDisplay: "always" });
+  // A settled duration, as the server writes one: `datetime="PT{seconds}S"`.
+  const settledDuration = '[datetime^="PT"]';
+
   function duration(seconds) {
-    if (seconds <= 0) return "0s";
-    const years = Math.floor(seconds / 31557600);
-    const ydays = seconds % 31557600;
-    const months = Math.floor(ydays / 2630016);
-    const mdays = ydays % 2630016;
-    const parts = [];
-    const plural = (value, name) => {
-      if (value > 0) parts.push(value + name + (value > 1 ? "s" : ""));
-    };
-    const single = (value, name) => {
-      if (value > 0) parts.push(value + name);
-    };
-    plural(years, "year");
-    plural(months, "month");
-    plural(Math.floor(mdays / 86400), "day");
-    single(Math.floor((mdays % 86400) / 3600), "h");
-    single(Math.floor((mdays % 3600) / 60), "m");
-    single(mdays % 60, "s");
-    return parts.join(" ");
+    if (seconds === 0) return zeroDuration.format({ seconds: 0 });
+    return durations.format({
+      days: Math.floor(seconds / 86400),
+      hours: Math.floor((seconds % 86400) / 3600),
+      minutes: Math.floor((seconds % 3600) / 60),
+      seconds: seconds % 60,
+    });
   }
 
   // A past time relative, with the absolute time on hover; a future one
-  // absolute; a running duration as long as it has run.
+  // absolute; a settled duration from its seconds, and a running one as long
+  // as it has run.
   function tick() {
     const now = Date.now();
-    for (const time of document.querySelectorAll("time[datetime]")) {
+    for (const time of document.querySelectorAll(`time[datetime]:not(${settledDuration})`)) {
       const at = Date.parse(time.dateTime);
       if (Number.isNaN(at)) continue;
       const shown = absolute.format(at);
@@ -72,6 +71,11 @@
         time.textContent = shown;
         time.removeAttribute("title");
       }
+    }
+    if (!durations) return;
+    for (const time of document.querySelectorAll(`time${settledDuration}`)) {
+      const settled = /^PT(\d+)S$/.exec(time.dateTime);
+      if (settled) time.textContent = duration(Number(settled[1]));
     }
     for (const time of document.querySelectorAll("time[data-since]")) {
       const since = Date.parse(time.dataset.since);

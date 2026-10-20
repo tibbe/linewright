@@ -28,7 +28,8 @@ impl askama::filters::HtmlSafe for Html {}
 /// `phrase` as HTML (`docs/specs/design_system.md`): an item links to its
 /// page and to GitHub, a time and a duration are `<time>` elements holding
 /// the text the commands print, which the page's script shows in the
-/// reader's time zone and keeps up, and a label or a command is code.
+/// reader's time zone or locale and keeps up, and a label or a command is
+/// code.
 pub(crate) fn phrase(phrase: &Phrase, repo: &str) -> Html {
     let mut html = String::new();
     for segment in phrase.segments() {
