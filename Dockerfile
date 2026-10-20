@@ -29,7 +29,7 @@ ADD --checksum=sha256:bd70a5e4a268002704024ceba7f8446024114e94f3f0bdd11c23a9e592
     https://downloads.claude.ai/keys/claude-code.asc /etc/apt/keyrings/claude-code.asc
 ADD --checksum=sha256:6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b \
     https://cli.github.com/packages/githubcli-archive-keyring.gpg /etc/apt/keyrings/githubcli.gpg
-ARG CLAUDE_CODE_VERSION=2.1.287 GH_VERSION=2.102.0
+ARG CLAUDE_CODE_VERSION=2.1.287 GH_VERSION=2.102.1
 RUN <<EOF
 set -eu
 chmod 644 /etc/apt/keyrings/claude-code.asc /etc/apt/keyrings/githubcli.gpg
