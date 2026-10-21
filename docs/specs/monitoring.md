@@ -206,18 +206,17 @@ order:
 - **A spec change.** Until it is designed, its card is its pull request;
   designed, it is its tracking issue's lane where one was cut, and otherwise
   its pull request, in Done, saying there was nothing to build.
-- **Lanes.** A lane per tracking issue with cards on the board, headed by the
-  tracking issue's number and title and its tickets closed of total, with its
-  tickets as its cards; one more lane, headed "No tracking issue" and its
-  count of cards, holds the items with no tracking issue.
+- **Lanes.** A lane per piece of work: where the work was cut, headed by its
+  tracking issue's number and title and its tickets closed of total, with
+  its tickets as its cards; otherwise headed by the item's number and title,
+  with the item as its one card.
 - **Finished lanes.** A lane whose cards are all in Done is finished. It shows
   as its head alone, with when its last card closed, and opens on click. The
   finished lanes sit together under one fold that says how many there are
   and opens on click.
 - **Order of lanes.** The lanes with a card in Needs a person come first,
   then the other unfinished lanes, then the finished lanes; unfinished lanes
-  in number order with the lane of items with no tracking issue last, and
-  finished lanes latest finished first.
+  in number order, and finished lanes latest finished first.
 - **Order in a column.** Ascending by number, within each lane.
 - **No cap.** A column is never cut.
 - **Needing a person.** The browser tab's title carries the count of cards in

@@ -100,6 +100,10 @@ _Avoid_: task, story
 The parent issue of the tickets cut from one item.
 _Avoid_: epic
 
+**Lane**:
+The board's row for one piece of work: a tracking issue with its tickets, or
+an item worked as one.
+
 **Managed**:
 Of an item: it asks for a step of the pipeline, or Linewright has worked it.
 _Avoid_: tracked, watched, monitored, in the pool

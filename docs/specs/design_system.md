@@ -30,6 +30,12 @@
 - An outcome or a state has an icon and a colour, shared by those that mean
   the same, and is never told by colour alone.
 
+## Board
+
+- As the reader scrolls, the column heads stay at the top, with the head of
+  the lane they are in under them.
+- A card's title is on at most two lines, and whole on hover.
+
 ## Colour scheme
 
 - Light or dark follows the reader's preference.

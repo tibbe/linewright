@@ -18,6 +18,13 @@ unchanged.
 
 ## Navigation
 
-- **Navigation** is a sidebar at the left, which folds into a menu on a
-  narrow screen.
+- **Navigation** is a sidebar at the left. Where the page does not fit
+  beside it, it is a rail of the links' icons and labels; narrower still, a
+  menu behind a button.
 - **A hold or a problem** is a daisyUI alert across the top of the page.
+
+## Board
+
+- The columns share the board's width, each at least 200px, and all six fit
+  beside the navigation rail from 1440px wide. Where they do not fit, the
+  board scrolls sideways on its own, not the page with it.
