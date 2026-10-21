@@ -1,6 +1,13 @@
 # syntax=docker/dockerfile:1
 
 ARG DEBIAN_RELEASE=trixie
+# To bump a pin, change its version here and its two sha256s in the tools
+# stages, gh's from
+# https://github.com/cli/cli/releases/download/v<version>/gh_<version>_checksums.txt
+# and Claude Code's from
+# https://downloads.claude.ai/claude-code-releases/<version>/manifest.json
+# (platforms.linux-x64 and linux-arm64, .checksum).
+ARG CLAUDE_CODE_VERSION=2.1.287 GH_VERSION=2.102.1
 
 FROM rust:1-slim-${DEBIAN_RELEASE} AS build
 WORKDIR /src
@@ -21,27 +28,36 @@ RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     cargo build --release --locked \
     && cp target/release/lw /usr/local/bin/lw
 
+# gh's apt repository keeps only its newest release and Claude Code's only
+# its newest few, so a pin there breaks once newer ones come out. Their
+# releases stay downloadable, each architecture's checked by its sha256.
+FROM scratch AS tools-amd64
+ARG GH_VERSION CLAUDE_CODE_VERSION
+ADD --checksum=sha256:5b91c75d971509e96f673fa9f46e5d8ea294b6bbfedbc8ff458aedd88775d94c \
+    https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb /gh.deb
+ADD --chmod=755 --checksum=sha256:3920489a5109cff5786a1a392c25277408ff22bc796d5edb9c16a60e5a1718f0 \
+    https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude /claude
+
+FROM scratch AS tools-arm64
+ARG GH_VERSION CLAUDE_CODE_VERSION
+ADD --checksum=sha256:69a7b86119e9e21f8f4fd6a605386d53fd41625100f3676d93ea9b5a5b176cee \
+    https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_arm64.deb /gh.deb
+ADD --chmod=755 --checksum=sha256:e4daf793d1e74fb0d9874dd09e98690bbfd7be515f78a87fd05b9e2b4bb33b03 \
+    https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-arm64/claude /claude
+
+FROM tools-${TARGETARCH} AS tools
+
 FROM debian:${DEBIAN_RELEASE}-slim AS runtime
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash ca-certificates git python3 tini \
+RUN --mount=type=bind,from=tools,source=/gh.deb,target=/tmp/gh.deb \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash ca-certificates git python3 tini /tmp/gh.deb \
     && rm -rf /var/lib/apt/lists/*
-ADD --checksum=sha256:bd70a5e4a268002704024ceba7f8446024114e94f3f0bdd11c23a9e592be81c6 \
-    https://downloads.claude.ai/keys/claude-code.asc /etc/apt/keyrings/claude-code.asc
-ADD --checksum=sha256:6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b \
-    https://cli.github.com/packages/githubcli-archive-keyring.gpg /etc/apt/keyrings/githubcli.gpg
-ARG CLAUDE_CODE_VERSION=2.1.287 GH_VERSION=2.102.1
-RUN <<EOF
-set -eu
-chmod 644 /etc/apt/keyrings/claude-code.asc /etc/apt/keyrings/githubcli.gpg
-echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
-  > /etc/apt/sources.list.d/claude-code.list
-echo "deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
-  > /etc/apt/sources.list.d/github-cli.list
-apt-get update
-apt-get install -y --no-install-recommends \
-  "claude-code=${CLAUDE_CODE_VERSION}-1" "gh=${GH_VERSION}"
-rm -rf /var/lib/apt/lists/*
-EOF
+COPY --link --from=tools /claude /usr/local/bin/claude
+# Fails the build when a pin did not take effect.
+ARG GH_VERSION CLAUDE_CODE_VERSION
+RUN gh --version | grep -qF "gh version ${GH_VERSION} " \
+    && claude --version | grep -qF "${CLAUDE_CODE_VERSION} "
 ARG LINEWRIGHT_UID=1000 LINEWRIGHT_GID=1000
 RUN (getent group "$LINEWRIGHT_GID" >/dev/null || groupadd --gid "$LINEWRIGHT_GID" linewright) \
     && useradd --uid "$LINEWRIGHT_UID" --gid "$LINEWRIGHT_GID" \
