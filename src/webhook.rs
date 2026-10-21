@@ -394,7 +394,7 @@ pub struct Received {
 
 impl Received {
     /// When a delivery was refused with none accepted since, if one was
-    /// (`docs/specs/monitoring.md`, Holds and problems).
+    /// (`docs/specs/design_system.md`, Holds and problems).
     pub fn refused_since_accepted(&self) -> Option<Timestamp> {
         self.last_refused.filter(|refused| {
             self.last_accepted

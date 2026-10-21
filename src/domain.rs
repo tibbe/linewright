@@ -993,7 +993,7 @@ pub struct Snapshot {
     /// The issues closed since the spec lookback window opened that the
     /// snapshot would hold were they open, and Linewright's pull requests
     /// closed without merging since then, for the board's Done column
-    /// (docs/specs/monitoring.md, "The board"). The reconcile ignores them.
+    /// (`docs/specs/design_system.md`, "The board"). The reconcile ignores them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
 }

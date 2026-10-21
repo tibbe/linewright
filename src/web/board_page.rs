@@ -1,4 +1,4 @@
-//! The board (`docs/specs/monitoring.md`, The board): the managed items
+//! The board (`docs/specs/design_system.md`, The board): the managed items
 //! as cards, in a lane per piece of work and a column per stage.
 
 use askama::Template;
@@ -16,7 +16,7 @@ use crate::explain;
 use crate::phrase::{Phrase, Tone};
 use crate::status;
 
-/// The board (`docs/specs/monitoring.md`, The board), ready for the page.
+/// The board (`docs/specs/design_system.md`, The board), ready for the page.
 struct BoardShown {
     columns: [&'static str; Column::ALL.len()],
     /// The lanes not finished, in the board's order.
@@ -39,7 +39,7 @@ struct CellShown {
     cards: Vec<CardShown>,
 }
 
-/// A card (`docs/specs/monitoring.md`, Cards).
+/// A card (`docs/specs/design_system.md`, Cards).
 struct CardShown {
     heading: Html,
     standing: Html,

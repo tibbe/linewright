@@ -1,4 +1,4 @@
-//! The server page (`docs/specs/monitoring.md`, The web UI): the facts
+//! The server page (`docs/specs/design_system.md`, The web UI): the facts
 //! about Linewright itself, as `status` shows them.
 
 use askama::Template;

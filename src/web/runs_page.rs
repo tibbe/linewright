@@ -1,4 +1,4 @@
-//! The runs page (`docs/specs/monitoring.md`, The web UI): what `runs`
+//! The runs page (`docs/specs/design_system.md`, The web UI): what `runs`
 //! lists, with its narrowing as the fields of a form.
 
 use askama::Template;

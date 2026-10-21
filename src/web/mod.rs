@@ -1,4 +1,4 @@
-//! The web UI (`docs/specs/monitoring.md`, The web UI): pages rendered on
+//! The web UI (`docs/specs/design_system.md`, The web UI): pages rendered on
 //! the server, each kept up by one event stream of the regions that changed.
 
 mod automations_page;
@@ -184,7 +184,7 @@ enum NavIcon {
 }
 
 /// The frame every page has around its own regions
-/// (`docs/specs/monitoring.md`, Navigation, and Holds and problems).
+/// (`docs/specs/design_system.md`, Navigation, and Holds and problems).
 struct Frame {
     repo: String,
     status_line: StatusLine,
@@ -198,7 +198,7 @@ struct StatusLine {
 }
 
 /// A hold on Linewright's work, shown on every page while it lasts
-/// (`docs/specs/monitoring.md`, Holds and problems).
+/// (`docs/specs/design_system.md`, Holds and problems).
 enum Hold {
     UsageLimit {
         resets_at: Timestamp,

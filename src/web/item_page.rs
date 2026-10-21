@@ -1,4 +1,4 @@
-//! The item page (`docs/specs/monitoring.md`, The web UI): what `explain`
+//! The item page (`docs/specs/design_system.md`, The web UI): what `explain`
 //! shows of an item.
 
 use askama::Template;

@@ -1,4 +1,4 @@
-//! The run page (`docs/specs/monitoring.md`, The run page): a run's
+//! The run page (`docs/specs/design_system.md`, The run page): a run's
 //! transcript as `logs` shows it, each tool call folded to its line, and
 //! followed while the run is in flight.
 

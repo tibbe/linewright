@@ -1,4 +1,4 @@
-//! The board (`docs/specs/monitoring.md`, The board, Cards): every managed
+//! The board (`docs/specs/design_system.md`, The board, Cards): every managed
 //! item as a card in a column, in a lane per piece of work, from `serve`'s
 //! view and the time alone.
 
@@ -92,7 +92,7 @@ impl Lane {
         }
     }
 
-    /// Its place on the board (`docs/specs/monitoring.md`, The board, Order
+    /// Its place on the board (`docs/specs/design_system.md`, The board, Order
     /// of lanes): by its group, the finished latest first, then by number.
     fn order(&self) -> (Group, Reverse<Option<Timestamp>>, Number) {
         let finished = self.finished();
