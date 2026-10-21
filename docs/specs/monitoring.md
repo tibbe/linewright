@@ -20,9 +20,9 @@ and `lw logs 42 --follow` shows the agent waiting on a test that hangs.
 4. As an operator, I want to see what Linewright did on an item before, with
    each run's outcome and transcript, so that I understand how it got where it
    is.
-5. As an agent, I want the same answers as compact text, and as stable JSON
-   where I extract fields, so that I spend little context and can script
-   against them.
+5. As an agent, I want the same answers as compact text, and as JSON where
+   I extract fields, so that I spend little context and can script against
+   them.
 6. As an operator away from Linewright's host, I want the same answers in a
    browser, so that I follow the pipeline from wherever I am.
 7. As a maintainer, I want to see where my spec change or issue stands and
@@ -142,8 +142,7 @@ a terminal.
 - **`--json`.** It prints the same answer as JSON; `logs --json` prints one
   JSON object per transcript entry and line. Each of a tool call's objects
   carries the ID the agent gives the call, and a sub-agent's objects carry
-  the ID of the call that started it. A field, once printed, keeps its name
-  and meaning; new fields may be added.
+  the ID of the call that started it.
 - **Errors.** They go to standard error. The exit status is:
 
   | status | meaning                                      |
