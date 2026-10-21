@@ -133,6 +133,7 @@ impl CardShown {
 /// `line` in the UI's own words.
 fn worded(line: &CardLine) -> Phrase {
     match line {
+        CardLine::Stalled => "stalled".into(),
         CardLine::ReporterAsked => "reporter asked".into(),
         CardLine::HandedBack => "handed back".into(),
         CardLine::DecisionNeeded => "decision needed".into(),
@@ -176,6 +177,7 @@ fn running_worded(running: Running) -> Phrase {
 
 fn stop_worded(stop: &Stop) -> Phrase {
     match stop {
+        Stop::Stalled => "stalled".into(),
         Stop::Running(running) => running_worded(*running),
         Stop::ChecksFailed => "checks failed".into(),
         Stop::ChecksRunning => "checks running".into(),

@@ -5,7 +5,7 @@
 use std::cmp::Reverse;
 
 use crate::domain::{
-    CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, Login, Mergeability, Number,
+    CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, Login, Mergeability, Number, Pull,
     PullState, ReviewDecision, SubIssue, Timestamp, Tracks,
 };
 use crate::reconcile::{NotSpecChange, Wait, WorkKind, not_a_spec_change};
@@ -180,6 +180,8 @@ impl Card {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CardLine {
     // Needs a person.
+    /// Handed back in a stall (`GLOSSARY.md`, **Stall**).
+    Stalled,
     ReporterAsked,
     HandedBack,
     DecisionNeeded,
@@ -224,6 +226,8 @@ pub struct Running {
 /// What stops a pull request merging.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stop {
+    /// Handed back in a stall (`GLOSSARY.md`, **Stall**).
+    Stalled,
     Running(Running),
     ChecksFailed,
     ChecksRunning,
@@ -307,9 +311,13 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         let issue = snapshot.issue(managed.number);
         let line = match column {
             Column::Triage | Column::Done => None,
-            Column::NeedsAPerson => {
-                needs_a_person_line(&managed.state, issue, recorded, linewright)
-            }
+            Column::NeedsAPerson => needs_a_person_line(
+                &managed.state,
+                snapshot.is_stalled(managed.number),
+                issue,
+                recorded,
+                linewright,
+            ),
             Column::Ready => ready_line(&waits),
             Column::Working => working_line(run, &waits),
             Column::InReview => review_line(&managed.state, issue, run, view),
@@ -459,15 +467,17 @@ fn first<T>(rules: impl IntoIterator<Item = Option<T>>) -> Option<T> {
     rules.into_iter().flatten().next()
 }
 
-/// The line in Needs a person.
+/// The line in Needs a person, of an item `stalled` or not.
 fn needs_a_person_line(
     state: &ItemState,
+    stalled: bool,
     issue: Option<&Issue>,
     recorded: &[Recorded],
     linewright: &Login,
 ) -> Option<CardLine> {
     let let_go = issue.is_some_and(|issue| let_go_of(issue, recorded, linewright));
     first([
+        stalled.then_some(CardLine::Stalled),
         matches!(state, ItemState::WaitingOnTheReporter).then_some(CardLine::ReporterAsked),
         (matches!(state, ItemState::WithTheMaintainer) && let_go).then_some(CardLine::HandedBack),
         matches!(state, ItemState::WithTheMaintainer).then_some(CardLine::DecisionNeeded),
@@ -578,6 +588,7 @@ fn review_line(
     };
     let mergeability = pull.map(|pull| &pull.mergeability);
     let stops = [
+        pull.is_some_and(Pull::is_stalled).then_some(Stop::Stalled),
         run.map(Stop::Running),
         checks(CheckState::Failed).then_some(Stop::ChecksFailed),
         checks(CheckState::Pending).then_some(Stop::ChecksRunning),

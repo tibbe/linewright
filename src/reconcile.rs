@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, Issue, Item,
-    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull, PullState,
-    Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
+    Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, HandBackKind,
+    Issue, Item, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull,
+    PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
     TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, label, last_assigned,
     last_assignment, last_labeling, last_unassignment,
 };
@@ -411,7 +411,12 @@ pub enum Action {
     },
     HandBack {
         item: Item,
+        kind: HandBackKind,
         reason: String,
+    },
+    /// Remove [`label::STALLED`] from an item Linewright works again.
+    ClearStall {
+        item: Item,
     },
     MarkReady {
         pr: Number,
@@ -830,12 +835,14 @@ pub fn decisions(
     }
 
     let (mut decisions, room) = plan.into_decisions(room);
+    decisions.actions = clearing_stalls(snapshot, decisions.actions, &policy.linewright);
     decisions.actions.extend(schedule(automations, now, room));
     decisions
 }
 
 /// The rest of a plan made before a drain began, as the drain has it: with
-/// no claim and no run, and the automations' last scheduled runs as
+/// no claim, no clear of a stall that follows one, and no run, and the
+/// automations' last scheduled runs as
 /// `recorded` holds them for the runs it holds back, so that they run after
 /// the restart.
 pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Vec<Action> {
@@ -849,8 +856,21 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             }
         })
         .collect();
+    let claimed: Vec<Item> = rest
+        .iter()
+        .filter_map(|action| {
+            if let Action::Claim { item } = action {
+                Some(*item)
+            } else {
+                None
+            }
+        })
+        .collect();
     rest.into_iter()
         .filter_map(|action| match action {
+            Action::ClearStall { item } => {
+                (!claimed.contains(&item)).then_some(Action::ClearStall { item })
+            }
             Action::Start(_)
             | Action::Claim { .. }
             | Action::RememberRebase(_)
@@ -877,6 +897,45 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             | Action::DeleteBranch { .. } => Some(action),
         })
         .collect()
+}
+
+/// `actions`, with the stall of each open item Linewright works again
+/// cleared: one it is assigned to, or claims in `actions`
+/// (`docs/specs/repository.md`, "Stalls"). Each clear follows its claim, so
+/// that a stop before the claim leaves the label.
+fn clearing_stalls(snapshot: &Snapshot, actions: Vec<Action>, linewright: &Login) -> Vec<Action> {
+    let issues = snapshot
+        .issues
+        .iter()
+        .filter(|i| i.open && i.is_stalled() && i.is_assigned(linewright))
+        .map(|i| Item::Issue(i.number));
+    let pulls = snapshot
+        .pulls
+        .iter()
+        .filter(|p| p.is_open() && p.is_stalled() && p.is_assigned(linewright))
+        .map(|p| Item::Pull(p.number));
+    let spec_changes = snapshot
+        .merged
+        .iter()
+        .filter(|p| p.is_stalled() && p.is_assigned(linewright))
+        .map(|p| Item::Pull(p.number));
+    let mut cleared: Vec<Action> = issues
+        .chain(pulls)
+        .chain(spec_changes)
+        .map(|item| Action::ClearStall { item })
+        .collect();
+    for action in actions {
+        let clear = if let Action::Claim { item } = action
+            && snapshot.is_stalled(item.number())
+        {
+            Some(Action::ClearStall { item })
+        } else {
+            None
+        };
+        cleared.push(action);
+        cleared.extend(clear);
+    }
+    cleared
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1368,6 +1427,7 @@ fn implementation(
         if let Some(refused) = refused {
             return plan.act(Action::HandBack {
                 item: Item::Issue(issue.number),
+                kind: HandBackKind::Decision,
                 reason: format!("{} was closed without merging.", refused.number),
             });
         }
@@ -1464,6 +1524,7 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         if now > waiting_since + policy.ci_timeout {
             plan.act(Action::HandBack {
                 item: Item::Pull(pr_number),
+                kind: HandBackKind::Stall,
                 reason: format!(
                     "CI did not complete within {}: {} still running.",
                     humanize(policy.ci_timeout),
@@ -1497,6 +1558,7 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         } else {
             plan.act(Action::HandBack {
                 item: Item::Pull(pr_number),
+                kind: HandBackKind::Stall,
                 reason: format!(
                     "{} still failing after {attempts} fix attempts.",
                     code_list(&failed)
@@ -1532,6 +1594,7 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
             Rebaseability::Rebaseable => merge(pr, draft, method, memory, restarted, plan),
             Rebaseability::NotRebaseable => plan.act(Action::HandBack {
                 item: Item::Pull(pr_number),
+                kind: HandBackKind::Stall,
                 reason: format!(
                     "GitHub reports {pr_number} not rebaseable though Linewright rebased it \
                      onto the default branch, so it cannot be merged by rebase."
@@ -1648,6 +1711,7 @@ fn merge(
         Some(failed) => {
             plan.act(Action::HandBack {
                 item: Item::Pull(pr.number),
+                kind: HandBackKind::Stall,
                 reason: format!(
                     "Merging {} failed twice. GitHub's reason: {}",
                     pr.number, failed.reason

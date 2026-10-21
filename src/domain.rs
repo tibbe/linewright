@@ -128,6 +128,8 @@ pub mod label {
     pub const BUG: &str = "bug";
     pub const ENHANCEMENT: &str = "enhancement";
     pub const DESIGNED: &str = "linewright:designed";
+    /// See [`super::HandBackKind::Stall`].
+    pub const STALLED: &str = "linewright:stalled";
     /// What [`DESIGNED`] was called before this release: read as it, for
     /// this release, so that no spec change processed before the upgrade is
     /// designed again; never set.
@@ -143,7 +145,7 @@ pub mod label {
         (NEEDS_TRIAGE, "to triage it again"),
     ];
 
-    pub const ALL: [(&str, &str); 7] = [
+    pub const ALL: [(&str, &str); 8] = [
         (NEEDS_TRIAGE, "Not yet assessed"),
         (
             NEEDS_INFO,
@@ -157,6 +159,7 @@ pub mod label {
             DESIGNED,
             "Designed, and cut into tickets where it needed cutting",
         ),
+        (STALLED, "Handed back in a stall"),
     ];
 }
 
@@ -433,6 +436,12 @@ impl Parent {
 impl Issue {
     pub fn has_label(&self, label: &str) -> bool {
         self.labels.iter().any(|l| l == label)
+    }
+
+    /// Whether it was handed back in a stall, and Linewright has not worked
+    /// it since (`docs/specs/repository.md`, "Stalls").
+    pub fn is_stalled(&self) -> bool {
+        self.has_label(label::STALLED)
     }
 
     /// The status label the issue holds: of those it carries, the one applied
@@ -756,6 +765,12 @@ impl Pull {
         self.labels.iter().any(|l| l == label)
     }
 
+    /// Whether it was handed back in a stall, and Linewright has not worked
+    /// it since (`docs/specs/repository.md`, "Stalls").
+    pub fn is_stalled(&self) -> bool {
+        self.has_label(label::STALLED)
+    }
+
     pub fn is_assigned(&self, login: &Login) -> bool {
         self.assignees.contains(login)
     }
@@ -765,6 +780,16 @@ impl Pull {
 pub enum Item {
     Issue(Number),
     Pull(Number),
+}
+
+/// Whether a hand-back is a stall (`GLOSSARY.md`, **Stall**): the work
+/// failed and no decision is wanted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandBackKind {
+    /// Labels the item [`label::STALLED`] (`docs/specs/repository.md`,
+    /// "Stalls").
+    Stall,
+    Decision,
 }
 
 impl Item {
@@ -805,6 +830,12 @@ pub struct MergedPull {
 impl MergedPull {
     pub fn has_label(&self, label: &str) -> bool {
         self.labels.iter().any(|l| l == label)
+    }
+
+    /// Whether it was handed back in a stall, and Linewright has not worked
+    /// it since (`docs/specs/repository.md`, "Stalls").
+    pub fn is_stalled(&self) -> bool {
+        self.has_label(label::STALLED)
     }
 
     /// The label that says it was designed, if it carries one.
@@ -1094,6 +1125,14 @@ impl Snapshot {
 
     pub fn merged_pull(&self, number: Number) -> Option<&MergedPull> {
         self.merged.iter().find(|p| p.number == number)
+    }
+
+    /// As [`Issue::is_stalled`], of #`number`, an issue, a pull request or a
+    /// merged one the snapshot holds.
+    pub fn is_stalled(&self, number: Number) -> bool {
+        self.issue(number).is_some_and(Issue::is_stalled)
+            || self.pull(number).is_some_and(Pull::is_stalled)
+            || self.merged_pull(number).is_some_and(MergedPull::is_stalled)
     }
 
     pub fn pulls_closing(&self, issue: &Issue) -> Vec<ClosingPull> {

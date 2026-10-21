@@ -770,9 +770,18 @@ impl Factory {
                 info!(issue = issue.0, %label, "removing a status label");
                 store.remove_label(*issue, label.label()).await?;
             }
-            Action::HandBack { item, reason } => {
+            Action::HandBack { item, kind, reason } => {
                 info!(%item, reason, "handing back");
-                run::hand_back(&self.shell, snapshot, *item, reason, None).await?;
+                let hand_back = run::HandBack {
+                    kind: *kind,
+                    reason: reason.clone(),
+                    log_tail: None,
+                };
+                run::hand_back(&self.shell, snapshot, *item, &hand_back).await?;
+            }
+            Action::ClearStall { item } => {
+                info!(%item, "clearing the stall");
+                store.remove_label(item.number(), label::STALLED).await?;
             }
             Action::MarkReady { pr } => {
                 info!(pr = pr.0, "marking ready for review");
@@ -1164,7 +1173,7 @@ fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
         Action::MarkReady { pr }
         | Action::MarkReadyForMergeState { pr }
         | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
-        Action::HandBack { item, .. } => vec![*item],
+        Action::HandBack { item, .. } | Action::ClearStall { item } => vec![*item],
         Action::Start(_)
         | Action::Cancel { .. }
         | Action::RememberRebase(_)

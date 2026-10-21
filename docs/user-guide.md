@@ -42,6 +42,12 @@ the one applied last and removes the rest.
   issue it has designed, and cut into tickets where it needed cutting. A spec
   change labeled `linewright:spec-processed` by an earlier release counts as
   designed.
+- `linewright:stalled`: Linewright handed the issue, pull request or spec
+  change back because the work failed, such as a session that timed out or
+  checks still failing after the fix attempts, rather than over a question.
+  Fix what failed, or have Linewright try again: label the issue
+  `ready-for-agent`, or assign Linewright to the pull request or spec change.
+  Linewright removes the label when it takes the item on again.
 
 Don't label an issue `ready-for-agent` before it is clear what to build: an
 issue labeled that way is built as it stands, without triage. A new report

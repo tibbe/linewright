@@ -273,6 +273,15 @@ impl AnyItem {
             AnyItem::Pull(_) | AnyItem::Merged { .. } => Item::Pull(self.number()),
         }
     }
+
+    /// As [`Issue::is_stalled`].
+    pub fn is_stalled(&self) -> bool {
+        match self {
+            AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => issue.is_stalled(),
+            AnyItem::Pull(pull) => pull.is_stalled(),
+            AnyItem::Merged { pull, .. } => pull.is_stalled(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

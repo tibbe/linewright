@@ -396,6 +396,16 @@ async fn startup_creates_the_designed_label_with_what_it_says_an_item_has_had() 
 }
 
 #[tokio::test]
+async fn startup_creates_the_stalled_label_saying_the_item_was_handed_back_in_a_stall() {
+    let world = World::new().await;
+
+    assert_eq!(
+        world.store.label_description("linewright:stalled"),
+        Some("Handed back in a stall".to_string())
+    );
+}
+
+#[tokio::test]
 async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() {
     let world = World::new().await;
 

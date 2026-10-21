@@ -348,6 +348,38 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
 }
 
 #[tokio::test]
+async fn a_stalled_card_says_stalled_in_needs_a_person_and_after_its_pull_request_in_review() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.store.unassign_as(LINEWRIGHT, pr, LINEWRIGHT).unwrap();
+    world.store.label_as(pr, "linewright:stalled").unwrap();
+    let stalled = world.store.open_issue(
+        "maintainer",
+        "Do another thing",
+        "Please.",
+        &["ready-for-human", "linewright:stalled"],
+    );
+    let web = Web::start(world).await;
+
+    let shown = cards_shown(&web.page("/").await);
+
+    assert_eq!(
+        shown,
+        [
+            (
+                format!("Needs a person: {stalled}: Do another thing | stalled"),
+                false
+            ),
+            (
+                format!("In review: {ticket}: Do the thing | {pr} · stalled"),
+                false
+            ),
+        ]
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
 async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request_card_in_done() {
     let world = World::new().await;
     let pr = world

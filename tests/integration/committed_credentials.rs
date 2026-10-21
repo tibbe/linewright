@@ -177,7 +177,7 @@ async fn an_implement_run_whose_commits_still_hold_a_credential_after_its_follow
 
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     let comment = last_comment(&issue);
     let commit = committed.lock().unwrap().clone();
     assert!(
@@ -375,7 +375,7 @@ async fn an_implement_run_that_stops_with_a_credential_in_its_commits_keeps_noth
     world.poll().await;
 
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     let commit = committed.lock().unwrap().clone();
     assert_says_not_kept(last_comment(&issue), Some(&commit));
     assert_eq!(branches(&world.store.repository()), ["main"]);

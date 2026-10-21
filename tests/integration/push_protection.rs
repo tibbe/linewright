@@ -115,7 +115,7 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
 
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     let comment = last_comment(&issue);
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")

@@ -1843,7 +1843,7 @@ fn a_failing_check_starts_a_fix_and_after_the_last_attempt_the_pull_request_is_h
     assert!(matches!(
         after_runs(&world, &fixed, 10).as_slice(),
         [Action::HandBack {
-            item: Item::Pull(Number(20)), reason }] if reason.contains("`test`")
+            item: Item::Pull(Number(20)), kind: HandBackKind::Stall, reason }] if reason.contains("`test`")
     ));
 }
 
@@ -1902,6 +1902,87 @@ fn reassigning_linewright_gives_the_pull_request_fresh_ci_fix_attempts() {
     );
 }
 
+fn clear_stall(item: Item) -> Action {
+    Action::ClearStall { item }
+}
+
+#[test]
+fn a_stalled_ticket_relabeled_ready_for_agent_has_its_stall_cleared_as_it_is_claimed() {
+    let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
+
+    assert_eq!(
+        decide(&world),
+        vec![claim(2), clear_stall(Item::Issue(Number(2))), implement(2)]
+    );
+}
+
+#[test]
+fn a_stalled_issue_linewright_neither_holds_nor_claims_keeps_its_stall() {
+    let world = snapshot(vec![labeled(
+        labeled(issue(2), label::READY_FOR_HUMAN),
+        label::STALLED,
+    )]);
+
+    assert_eq!(decide(&world), vec![]);
+}
+
+#[test]
+fn a_stalled_ticket_claimed_but_held_back_by_the_drain_keeps_its_stall() {
+    let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
+    let memory = Memory {
+        drain: Some(Drain { since: t(5) }),
+        ..Memory::default()
+    };
+
+    let actions = reconcile(
+        &world,
+        &[],
+        &memory,
+        &Automations::default(),
+        t(10),
+        &policy(),
+    );
+
+    assert_eq!(actions, vec![]);
+}
+
+#[test]
+fn a_stalled_pull_request_linewright_is_assigned_to_again_has_its_stall_cleared() {
+    let mut pr = ready(pull(20, 2));
+    pr.checks = vec![check("test", CheckState::Pending)];
+    let pr = labeled_pull(unassigned_at(pr, LINEWRIGHT, 5, Some(7)), label::STALLED);
+
+    assert_eq!(
+        at(&in_review(pr), 8),
+        vec![clear_stall(Item::Pull(Number(20)))]
+    );
+}
+
+#[test]
+fn a_stalled_pull_request_linewright_was_unassigned_from_keeps_its_stall() {
+    let pr = labeled_pull(
+        unassigned_at(ready(pull(20, 2)), LINEWRIGHT, 5, None),
+        label::STALLED,
+    );
+
+    assert_eq!(at(&in_review(pr), 8), vec![]);
+}
+
+#[test]
+fn a_stalled_spec_change_linewright_is_assigned_to_again_has_its_stall_cleared_and_is_cut() {
+    let handed_back = unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2);
+    let mut world = snapshot(vec![]);
+    world.merged = vec![labeled_merged(assigned(handed_back, 3), label::STALLED, 2)];
+
+    assert_eq!(
+        decide(&world),
+        vec![
+            clear_stall(Item::Pull(Number(5))),
+            Action::Start(Work::DesignSpecChange { pr: Number(5) })
+        ]
+    );
+}
+
 #[test]
 fn reassigning_linewright_to_a_pull_request_a_rework_handed_back_addresses_its_feedback_again() {
     let mut pr = ready(pull(20, 2));
@@ -1940,7 +2021,7 @@ fn checks_that_never_complete_hand_the_pull_request_back_at_the_ci_timeout() {
     assert!(matches!(
         at(&world, 6 * 60 + 2).as_slice(),
         [Action::HandBack {
-            item: Item::Pull(Number(20)), reason }] if reason.contains("`e2e`")
+            item: Item::Pull(Number(20)), kind: HandBackKind::Stall, reason }] if reason.contains("`e2e`")
     ));
 }
 
@@ -2235,6 +2316,7 @@ fn with_auto_merge_by_rebase_a_pull_request_still_not_rebaseable_after_a_rebase_
         ),
         vec![Action::HandBack {
             item: Item::Pull(Number(20)),
+            kind: HandBackKind::Stall,
             reason: "GitHub reports #20 not rebaseable though Linewright rebased it onto the \
                      default branch, so it cannot be merged by rebase."
                 .into(),
@@ -2715,6 +2797,7 @@ fn with_auto_merge_a_green_pull_request_whose_merge_failed_twice_is_handed_back_
         auto_merging_after(&world, &failed, 11),
         vec![Action::HandBack {
             item: Item::Pull(Number(20)),
+            kind: HandBackKind::Stall,
             reason: "Merging #20 failed twice. GitHub's reason: Pull Request is not mergeable"
                 .into(),
         }]
@@ -2789,6 +2872,7 @@ fn a_pull_request_closed_without_merging_hands_the_ticket_back_once() {
         at(&closed, 10).as_slice(),
         [Action::HandBack {
             item: Item::Issue(Number(2)),
+            kind: HandBackKind::Decision,
             ..
         }]
     ));
@@ -3762,6 +3846,22 @@ fn a_drain_begun_part_way_through_a_plan_holds_back_the_rest_of_its_claims_and_r
                 ("weekly", 10)
             ])),
         ]
+    );
+}
+
+#[test]
+fn a_drain_begun_part_way_through_a_plan_clears_the_stalls_of_items_linewright_holds_but_not_of_its_claims()
+ {
+    let rest = vec![
+        clear_stall(Item::Pull(Number(20))),
+        claim(3),
+        clear_stall(Item::Issue(Number(3))),
+        implement(3),
+    ];
+
+    assert_eq!(
+        held_back_by_drain(rest, &LastScheduledRuns::default()),
+        vec![clear_stall(Item::Pull(Number(20)))]
     );
 }
 

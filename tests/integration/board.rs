@@ -923,6 +923,58 @@ fn a_card_needing_a_person_says_the_reporter_was_asked_it_was_handed_back_or_a_d
     );
 }
 
+#[test]
+fn a_stalled_card_needing_a_person_says_so_first() {
+    let view = view(
+        vec![
+            labeled(1, &["needs-info", label::STALLED]),
+            labeled(2, &["ready-for-human", label::STALLED]),
+            labeled(3, &["ready-for-human", label::STALLED]),
+        ],
+        vec![],
+    );
+    let recorded = [recorded(
+        "2/implement-1",
+        "2026-10-01T10:00:00Z",
+        Ending::HandedBack,
+    )];
+
+    let board = board(&view, &recorded, at(NOW));
+
+    assert_eq!(
+        [1, 2, 3].map(|n| line(&board, n)),
+        [
+            Some(CardLine::Stalled),
+            Some(CardLine::Stalled),
+            Some(CardLine::Stalled),
+        ]
+    );
+}
+
+#[test]
+fn a_stalled_pull_request_in_review_says_so_ahead_of_a_run_in_flight_and_failed_checks() {
+    use CheckState::Failed;
+    let stalled = Pull {
+        labels: vec![label::STALLED.into()],
+        ..reviewed(11, 1, &[Failed], Mergeability::Conflicting, true)
+    };
+    let view = with_runs(
+        view(vec![assigned(ticket(1, "Reviewed"))], vec![stalled]),
+        &["11/rework-1"],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        line(&board, 1),
+        Some(CardLine::Review {
+            pull_request: Number(11),
+            author: None,
+            stops: Some(Stop::Stalled),
+        })
+    );
+}
+
 fn blocked_by(issue: Issue, blockers: &[u64]) -> Issue {
     Issue {
         blocked_by: blockers

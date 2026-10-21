@@ -1633,7 +1633,7 @@ async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back
     }
     world.poll().await;
 
-    assert_handed_back(
+    assert_stalled(
         &world,
         ticket,
         pr,
@@ -1660,9 +1660,24 @@ async fn linewright_assigned(world: &World, pr: Number) -> bool {
         .is_assigned(&Login::new(LINEWRIGHT))
 }
 
+/// A hand-back of `pr` that is not a stall.
 async fn assert_handed_back(world: &World, ticket: Number, pr: Number, comment: &str) {
+    assert_handed_back_labeled(world, ticket, pr, &[], comment).await;
+}
+
+async fn assert_stalled(world: &World, ticket: Number, pr: Number, comment: &str) {
+    assert_handed_back_labeled(world, ticket, pr, &["linewright:stalled"], comment).await;
+}
+
+async fn assert_handed_back_labeled(
+    world: &World,
+    ticket: Number,
+    pr: Number,
+    pull_labels: &[&str],
+    comment: &str,
+) {
     assert!(!linewright_assigned(world, pr).await);
-    assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
+    assert_eq!(world.store.pull_labels(pr), pull_labels);
     assert_eq!(last_pull_comment(world, pr).await, comment);
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["linewright:designed", "ready-for-agent"]);
@@ -1692,7 +1707,7 @@ async fn ci_that_does_not_complete_in_time_hands_the_pull_request_back_and_reass
         .advance(chrono::TimeDelta::hours(6) + chrono::TimeDelta::minutes(1));
     world.poll().await;
 
-    assert_handed_back(
+    assert_stalled(
         &world,
         ticket,
         pr,
@@ -1728,7 +1743,7 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
 
     world.poll().await;
 
-    assert_handed_back(
+    assert_stalled(
         &world,
         ticket,
         pr,
@@ -1769,10 +1784,39 @@ async fn a_ticket_whose_session_times_out_is_handed_back_once_saying_to_cut_the_
 
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     let comment = last_comment(&issue);
     assert!(comment.starts_with(TIMED_OUT), "{comment}");
     assert!(comment.contains("Still reading the spec."), "{comment}");
+}
+
+#[tokio::test]
+async fn a_ticket_whose_session_times_out_is_marked_stalled_until_relabeling_it_has_it_claimed() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Implement, |_| {
+        Err(linewright::harness::SessionError::TimedOut {
+            log_tail: String::new(),
+        })
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
+
+    world.poll().await;
+
+    assert_eq!(
+        labels(&world.issue(ticket)),
+        ["linewright:stalled", "ready-for-human"]
+    );
+
+    relabel_ready_for_agent(&mut world, ticket).await;
+
+    let issue = world.issue(ticket);
+    assert!(issue.is_assigned(&Login::new(LINEWRIGHT)));
+    assert!(!issue.has_label("linewright:stalled"), "{:?}", issue.labels);
 }
 
 #[tokio::test]
@@ -1789,7 +1833,7 @@ async fn a_pull_request_whose_session_times_out_is_handed_back_saying_to_cut_the
 
     world.poll().await;
 
-    assert_handed_back(&world, ticket, pr, &format!("{TIMED_OUT}{TRY_AGAIN}")).await;
+    assert_stalled(&world, ticket, pr, &format!("{TIMED_OUT}{TRY_AGAIN}")).await;
     assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
 }
 
@@ -2468,7 +2512,7 @@ async fn a_spec_change_whose_session_times_out_is_handed_back_saying_to_cut_the_
     world.poll().await;
 
     assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
-    assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
+    assert_eq!(world.store.pull_labels(spec_pr), ["linewright:stalled"]);
     assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
     let comment = last_pull_comment(&world, spec_pr).await;
     assert!(comment.starts_with(TIMED_OUT), "{comment}");
@@ -2638,7 +2682,7 @@ async fn an_unparseable_result_is_sent_back_once_then_the_issue_is_handed_back()
     assert_eq!(prompts.len(), 2);
     assert!(prompts[1].contains("holds no JSON object"));
     let issue = world.issue(issue);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     assert!(last_comment(&issue).contains("still could not be used after 1 follow-up(s)"));
 }
 
@@ -3263,7 +3307,7 @@ async fn a_timed_out_session_leaves_its_uncommitted_edits_on_the_tickets_branch_
     let branch = format!("{}-gadgets", ticket.0);
     assert_edits_kept_as_unfinished(&world, &branch).await;
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     assert_eq!(
         last_comment(&issue),
         format!("{TIMED_OUT}{}", kept_on(&branch))
@@ -3276,7 +3320,7 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
     use linewright::harness::SessionError;
 
     type Ending = fn() -> Result<String, SessionError>;
-    let endings: [(Ending, &str); 4] = [
+    let endings: [(Ending, &str, &[&str]); 4] = [
         (
             || {
                 Err(SessionError::Failed {
@@ -3285,21 +3329,25 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
                 })
             },
             "The session ended unexpectedly: it crashed",
+            &["linewright:stalled", "ready-for-human"],
         ),
         (
             || Ok("Out of ideas.".into()),
             "The session's result still could not be used",
+            &["linewright:stalled", "ready-for-human"],
         ),
         (
             || Ok(json!({"outcome": "blocked", "question": "Should gadgets expire?"}).to_string()),
             "Should gadgets expire?",
+            &["ready-for-human"],
         ),
         (
             || Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string()),
             "Too hard.",
+            &["ready-for-human"],
         ),
     ];
-    for (ending, says) in endings {
+    for (ending, says, handed_back_labels) in endings {
         let mut world = World::new().await;
         world.harness.on(WorkKind::Implement, move |call| {
             if call.followup.is_none() {
@@ -3319,7 +3367,7 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
         let branch = format!("{}-gadgets", ticket.0);
         assert_edits_kept_as_unfinished(&world, &branch).await;
         let issue = world.issue(ticket);
-        assert_eq!(labels(&issue), ["ready-for-human"]);
+        assert_eq!(labels(&issue), handed_back_labels);
         let comment = last_comment(&issue);
         assert!(comment.contains(says), "{comment}");
         assert!(comment.contains(&kept_on(&branch)), "{comment}");
@@ -3556,7 +3604,7 @@ async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_r
 
     assert_eq!(world.store.pulls(), []);
     let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     let comment = last_comment(&issue);
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
     assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
@@ -3664,7 +3712,7 @@ async fn a_timed_out_rework_leaves_its_uncommitted_edits_on_the_pull_requests_br
 
     let branch = world.store.snapshot_pull(pr).await.head_ref;
     assert_pull_edits_kept_as_unfinished(&world, &branch).await;
-    assert_handed_back(
+    assert_stalled(
         &world,
         ticket,
         pr,
@@ -3692,7 +3740,7 @@ async fn a_timed_out_ci_fix_leaves_its_uncommitted_edits_on_the_pull_requests_br
 
     let branch = world.store.snapshot_pull(pr).await.head_ref;
     assert_pull_edits_kept_as_unfinished(&world, &branch).await;
-    assert_handed_back(
+    assert_stalled(
         &world,
         ticket,
         pr,
@@ -3980,7 +4028,7 @@ async fn a_stopped_rework_with_nothing_new_but_its_update_pushes_nothing() {
         before
     );
     assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
-    assert_handed_back(&world, ticket, pr, &format!("{TIMED_OUT}{TRY_AGAIN}")).await;
+    assert_stalled(&world, ticket, pr, &format!("{TIMED_OUT}{TRY_AGAIN}")).await;
 }
 
 async fn update_stopped_mid_conflict(method: linewright::domain::UpdateMethod) {
@@ -4908,7 +4956,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
     world.poll().await;
     world.poll().await;
 
-    assert_handed_back(
+    assert_stalled(
         &world,
         ticket,
         pr,
@@ -4933,6 +4981,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
         linewright_assigned(&world, pr).await,
         "a failure after Linewright is reassigned is retried, not handed back"
     );
+    assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
 
     world.store.accept_merges(pr);
     world.poll().await;
@@ -5076,7 +5125,7 @@ async fn a_session_that_fails_on_its_infrastructure_is_retried_once_then_handed_
 
     let issue = world.issue(ticket);
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     assert!(
         last_comment(&issue).contains("The run failed twice on its infrastructure"),
         "{}",
@@ -5099,7 +5148,7 @@ async fn a_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once_w
         1,
         "not retried"
     );
-    assert_eq!(labels(&issue), ["ready-for-human"]);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
     assert_eq!(issue.comments.len(), 1, "{:#?}", issue.comments);
     assert_eq!(
@@ -5157,7 +5206,7 @@ async fn other_pushes_refused_for_a_missing_permission_are_handed_back_at_once_w
             1,
             "not retried"
         );
-        assert_eq!(labels(&issue), ["ready-for-human"]);
+        assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
         assert!(
             last_comment(&issue).contains(&format!(
                 "GitHub's reason: {reason}\n\nThe work was not kept."
@@ -5187,7 +5236,7 @@ async fn a_push_refused_for_a_reason_not_recognized_is_retried_once_then_handed_
             2,
             "{output}"
         );
-        assert_eq!(labels(&issue), ["ready-for-human"]);
+        assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
         let comment = last_comment(&issue);
         assert!(
             comment.contains("The run failed twice on its infrastructure")
@@ -5296,7 +5345,7 @@ async fn a_rework_push_refused_for_a_missing_permission_hands_the_pull_request_b
         1,
         "not retried"
     );
-    assert_handed_back(
+    assert_stalled(
         &world,
         ticket,
         pr,

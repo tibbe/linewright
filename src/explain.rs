@@ -31,32 +31,13 @@ pub struct Explanation {
     pub family: Family,
     #[serde(flatten)]
     pub standing: Standing,
+    /// Whether it was handed back in a stall (`GLOSSARY.md`, **Stall**).
+    #[serde(default)]
+    pub stalled: bool,
     pub last_read: Timestamp,
     pub waiting_for: Vec<Wait>,
     #[serde(flatten)]
     pub runs: ItemRuns,
-}
-
-impl Explanation {
-    fn new(
-        number: Number,
-        title: String,
-        family: Family,
-        standing: Standing,
-        last_read: Timestamp,
-        waiting_for: Vec<Wait>,
-        runs: ItemRuns,
-    ) -> Explanation {
-        Explanation {
-            number,
-            title,
-            family,
-            standing,
-            last_read,
-            waiting_for,
-            runs,
-        }
-    }
 }
 
 /// Its fields are private so that only `ItemRuns::of`, which cuts the past
@@ -386,15 +367,16 @@ pub fn explain(
                     .unwrap_or_default(),
             ),
         };
-        return Some(Explanation::new(
+        return Some(Explanation {
             number,
-            managed.title.clone(),
+            title: managed.title.clone(),
             family,
-            Standing::Item(managed.state.clone()),
-            last_read(read),
-            managed.waiting_for.clone(),
-            ItemRuns::of(view, recorded, number, now),
-        ));
+            standing: Standing::Item(managed.state.clone()),
+            stalled: view.snapshot.is_stalled(number),
+            last_read: last_read(read),
+            waiting_for: managed.waiting_for.clone(),
+            runs: ItemRuns::of(view, recorded, number, now),
+        });
     }
     None
 }
@@ -434,6 +416,9 @@ pub struct LeftAlone {
     pub family: Family,
     #[serde(flatten)]
     pub item: LeftAloneItem,
+    /// As [`Explanation::stalled`].
+    #[serde(default)]
+    pub stalled: bool,
     pub last_read: Timestamp,
     #[serde(flatten)]
     pub runs: ItemRuns,
@@ -502,16 +487,18 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             Family::of_issue(issue, &fresh.snapshot, &fresh.policy.linewright)
         }
     };
+    let stalled = read.is_stalled();
     let managed_as = |title: &str, state: ItemState, waiting_for| {
-        Answer::Managed(Explanation::new(
+        Answer::Managed(Explanation {
             number,
-            title.to_string(),
-            family.clone(),
-            Standing::Item(state),
-            now,
+            title: title.to_string(),
+            family: family.clone(),
+            standing: Standing::Item(state),
+            stalled,
+            last_read: now,
             waiting_for,
-            ItemRuns::of(view, recorded, number, now),
-        ))
+            runs: ItemRuns::of(view, recorded, number, now),
+        })
     };
     let (title, item) = match read {
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) if !issue.open => {
@@ -565,6 +552,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
         title: title.clone(),
         family,
         item,
+        stalled,
         last_read: now,
         runs: ItemRuns::of(view, recorded, number, now),
     })
@@ -589,18 +577,19 @@ fn pull_standing(
             }
         })?;
     let waiting_for = view.decisions(now).waits.remove(&pull.number);
-    Ok(Explanation::new(
-        pull.number,
-        pull.title.clone(),
-        Family::of_pull(&pull.closes),
-        Standing::PullRequest {
+    Ok(Explanation {
+        number: pull.number,
+        title: pull.title.clone(),
+        family: Family::of_pull(&pull.closes),
+        standing: Standing::PullRequest {
             pull_request_for: ticket,
             review: InReview::of(pull),
         },
-        now,
-        waiting_for.unwrap_or_default(),
-        ItemRuns::of(view, recorded, pull.number, now),
-    ))
+        stalled: pull.is_stalled(),
+        last_read: now,
+        waiting_for: waiting_for.unwrap_or_default(),
+        runs: ItemRuns::of(view, recorded, pull.number, now),
+    })
 }
 
 /// What `explain` shows of an item, after the heading naming it.
@@ -704,7 +693,7 @@ fn left_alone_lines(left_alone: &LeftAlone) -> Vec<Line<'_>> {
         .chain([
             Line::Fact {
                 label: "state",
-                phrase: state.into(),
+                phrase: with_stall(state.into(), left_alone.stalled),
                 tone,
             },
             Line::fact("last read", Phrase::default().time(left_alone.last_read)),
@@ -712,6 +701,15 @@ fn left_alone_lines(left_alone: &LeftAlone) -> Vec<Line<'_>> {
         ])
         .chain(left_alone.runs.lines())
         .collect()
+}
+
+/// An item's `state`, saying whether it is `stalled`.
+fn with_stall(state: Phrase, stalled: bool) -> Phrase {
+    if stalled {
+        state.text(" · stalled")
+    } else {
+        state
+    }
 }
 
 /// What Linewright waits for on an item it acts on at its next poll.
@@ -734,7 +732,7 @@ fn explanation_lines(explanation: &Explanation) -> Vec<Line<'_>> {
         .chain([
             Line::Fact {
                 label: "state",
-                phrase: state,
+                phrase: with_stall(state, explanation.stalled),
                 tone,
             },
             Line::fact("last read", Phrase::default().time(explanation.last_read)),

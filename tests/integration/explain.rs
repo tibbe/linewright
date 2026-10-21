@@ -771,6 +771,7 @@ fn the_json_names_each_fact() {
             "children": [],
             "state": "claimed",
             "last_read": "2026-10-01T12:00:00Z",
+            "stalled": false,
             "waiting_for": [{"wait": "blocker", "issue": 40}],
             "run_in_flight": null,
             "past_runs": [],
@@ -807,6 +808,7 @@ fn the_json_of_linewrights_pull_request_in_review_names_the_issue_it_closes_and_
             "draft": true,
             "ci": "running",
             "last_read": "2026-10-01T12:00:00Z",
+            "stalled": false,
             "waiting_for": [{"wait": "ci", "pull_request": 43}],
             "run_in_flight": null,
             "past_runs": [],
@@ -1329,6 +1331,7 @@ fn the_json_of_an_item_left_alone_names_why() {
             "item": "pull-request",
             "state": "merged",
             "last_read": "2026-10-01T12:00:30Z",
+            "stalled": false,
             "left_alone": {
                 "reason": "no-spec-file",
                 "spec_glob": "docs/**/*.md",
@@ -1477,6 +1480,7 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
                 "item": "issue",
                 "state": "open",
                 "last_read": "2026-10-01T12:00:30Z",
+                "stalled": false,
                 "left_alone": {"reason": reason},
                 "run_in_flight": null,
                 "past_runs": [],
@@ -1608,6 +1612,7 @@ fn the_json_of_a_closed_pull_request_names_the_issue_it_closes() {
             "children": [],
             "item": "pull-request",
             "state": "closed",
+            "stalled": false,
             "last_read": "2026-10-01T12:00:30Z",
             "runs_of": 43,
             "run_in_flight": null,
@@ -2167,5 +2172,65 @@ fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
             "child: #45, a pull request that closes it",
             "child: #43, a pull request that closes it",
         ]
+    );
+}
+
+#[test]
+fn a_stalled_item_says_so_on_its_state_line_and_in_its_json() {
+    let stalled = Issue {
+        labels: vec!["ready-for-human".into(), label::STALLED.into()],
+        ..ticket(42, "Add invoices")
+    };
+    let view = view(vec![stalled], vec![]);
+
+    assert_eq!(text(&view, 42)[1], "state: with the maintainer · stalled");
+    let answer = explain(&view, &[], Number(42), at(NOW)).unwrap();
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap()["stalled"],
+        serde_json::json!(true)
+    );
+}
+
+#[test]
+fn linewrights_stalled_pull_request_says_so_on_its_state_line() {
+    let open = Pull {
+        assignees: vec![],
+        labels: vec![label::STALLED.into()],
+        ..draft(43, 42, &[CheckState::Failed])
+    };
+    let view = view(
+        vec![closed_by(ticket(42, "Add invoices"), 43, "factory")],
+        vec![open],
+    );
+
+    assert_eq!(
+        text(&view, 43)[2],
+        "state: in review: #43 (draft, CI failing) · stalled"
+    );
+}
+
+#[test]
+fn a_stalled_spec_change_left_alone_says_so_on_its_state_line_and_in_its_json() {
+    let stalled = MergedPull {
+        labels: vec!["linewright".into(), label::STALLED.into()],
+        ..unassigned_at("30")
+    };
+    let answer = explain_read(
+        &view(vec![], vec![]),
+        &[],
+        &AnyItem::Merged {
+            pull: Box::new(stalled),
+            tracking_issues: vec![],
+        },
+        at(NOW),
+    );
+
+    assert_eq!(
+        render_answer(&answer, false).lines().nth(1),
+        Some("state: merged pull request · stalled")
+    );
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap()["stalled"],
+        serde_json::json!(true)
     );
 }
