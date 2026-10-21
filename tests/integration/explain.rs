@@ -276,11 +276,7 @@ fn implementing_42(pulls: Vec<Pull>) -> View {
     };
     View {
         live: vec![implementing(42)],
-        in_flight: vec![in_flight(
-            "42/implement-2",
-            "2026-10-01T11:30:00Z",
-            Some("2026-10-01T11:50:00Z"),
-        )],
+        in_flight: vec![in_flight("42/implement-2", "2026-10-01T11:30:00Z")],
         ..view(vec![claimed], pulls)
     }
 }
@@ -330,11 +326,7 @@ fn five_past_runs_of_42() -> Vec<Recorded> {
 
 fn implementing_42_again(pulls: Vec<Pull>) -> View {
     View {
-        in_flight: vec![in_flight(
-            "42/implement-6",
-            "2026-10-01T11:30:00Z",
-            Some("2026-10-01T11:50:00Z"),
-        )],
+        in_flight: vec![in_flight("42/implement-6", "2026-10-01T11:30:00Z")],
         ..implementing_42(pulls)
     }
 }
@@ -713,7 +705,6 @@ fn the_json_names_the_run_in_flight_and_the_past_runs() {
             "stage": "implement",
             "started_at": "2026-10-01T11:30:00Z",
             "duration_seconds": 1830,
-            "quiet_seconds": 630,
         })
     );
     assert_eq!(

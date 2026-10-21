@@ -29,7 +29,7 @@ use crate::drain::{Asked, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::explain;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
-use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs, Watched};
+use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
 use crate::status::{self, Serving, Status, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
@@ -134,27 +134,25 @@ fn private_dir(dir: &Path) -> Result<()> {
 
 #[derive(Clone)]
 pub struct Served {
-    /// Read only through [`Served::view_now`].
     view: View,
     store: Arc<dyn Store>,
-    /// The runs in flight, whose activity goes on after the view was taken.
-    runs: Vec<Watched>,
 }
 
 impl Served {
-    pub fn new(view: View, store: Arc<dyn Store>, runs: Vec<Watched>) -> Served {
-        Served { view, store, runs }
+    pub fn new(view: View, store: Arc<dyn Store>) -> Served {
+        Served { view, store }
     }
 
     pub fn run_ids(&self) -> Vec<runs::RunId> {
-        self.runs.iter().map(|run| run.id.clone()).collect()
+        self.view
+            .in_flight
+            .iter()
+            .map(|run| run.id.clone())
+            .collect()
     }
 
-    pub fn view_now(&self) -> View {
-        View {
-            in_flight: self.runs.iter().map(Watched::read).collect(),
-            ..self.view.clone()
-        }
+    pub fn view(&self) -> View {
+        self.view.clone()
     }
 }
 
@@ -247,13 +245,13 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
 }
 
 pub(crate) fn status_answer(sources: &Sources) -> Status {
-    let view = view_now(sources);
+    let view = view(sources);
     status_of(sources, view.as_ref(), &recorded_or_none(sources))
 }
 
-/// `serve`'s view as it is now, `None` before the first poll.
-pub(crate) fn view_now(sources: &Sources) -> Option<View> {
-    sources.served.borrow().as_ref().map(Served::view_now)
+/// `serve`'s view, `None` before the first poll.
+pub(crate) fn view(sources: &Sources) -> Option<View> {
+    sources.served.borrow().as_ref().map(Served::view)
 }
 
 /// Every run's record, or none when they do not read, which is logged.
@@ -603,7 +601,7 @@ pub(crate) fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
         .read()
         .map_err(Unexplained::Failed)?;
     Ok(Explaining {
-        view: served.view_now(),
+        view: served.view(),
         store: served.store,
         recorded,
         now: sources.clock.now(),
@@ -612,7 +610,7 @@ pub(crate) fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
 
 /// The board of `serve`'s view now: an empty one before the first poll.
 pub(crate) fn board_answer(sources: &Sources) -> Board {
-    let view = sources.served.borrow().as_ref().map(Served::view_now);
+    let view = view(sources);
     view.map(|view| board::board(&view, sources.clock.now()))
         .unwrap_or_default()
 }

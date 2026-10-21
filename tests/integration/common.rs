@@ -75,8 +75,7 @@
 //! - `relabeled`: an issue labeled twice, only the label events telling which last.
 //! - `closed_by`: an issue an open pull request closes.
 //! - `implementing`: the live run implementing an issue.
-//! - `in_flight`: a run in flight, started at a given time and last heard from
-//!   at one, if ever.
+//! - `in_flight`: a run in flight, started at a given time.
 //! - `limited_until`: memory of a usage limit that resets at a given time.
 //! - `draining_since`: memory of a drain since a given time.
 //! - `view`: the status view of some issues and pull requests.

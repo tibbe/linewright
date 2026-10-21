@@ -11,7 +11,7 @@ use linewright::webhook::Pending;
 async fn closed_items_served(world: World) -> Vec<ClosedItem> {
     let mut serving = Serving::start(world.factory, Duration::from_hours(1), Pending::default());
     let served = serving.served.wait_for(Option::is_some).await.unwrap();
-    let closed = served.as_ref().unwrap().view_now().snapshot.closed.clone();
+    let closed = served.as_ref().unwrap().view().snapshot.closed.clone();
     drop(served);
     serving.stop().await;
     closed

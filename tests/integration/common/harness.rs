@@ -38,20 +38,16 @@ pub struct ScriptedHarness {
     prompts: Mutex<Vec<(ScriptKey, String)>>,
     started: std::sync::atomic::AtomicUsize,
     turn_time: Mutex<std::time::Duration>,
-    held: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Option<String>>>>,
+    held: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>,
 }
 
-/// The agent of a turn held open: it says something each time it is told
+/// The agent of a turn held open: it writes output each time it is told
 /// to, and ends its turn when dropped.
-pub struct HeldTurn(tokio::sync::mpsc::UnboundedSender<Option<String>>);
+pub struct HeldTurn(tokio::sync::mpsc::UnboundedSender<String>);
 
 impl HeldTurn {
-    pub fn says(&self) {
-        self.0.send(None).unwrap();
-    }
-
     pub fn writes(&self, output: &str) {
-        self.0.send(Some(output.to_string())).unwrap();
+        self.0.send(output.to_string()).unwrap();
     }
 }
 
@@ -122,16 +118,13 @@ impl ScriptedHarness {
         let held = self.held.lock().unwrap().take();
         if let Some(mut said) = held {
             while let Some(output) = said.recv().await {
-                spec.output.heard();
-                if let Some(output) = output {
-                    let path = spec.record.join(linewright::transcript::OUTPUT);
-                    let mut file = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(path)
-                        .unwrap();
-                    std::io::Write::write_all(&mut file, output.as_bytes()).unwrap();
-                }
+                let path = spec.record.join(linewright::transcript::OUTPUT);
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap();
+                std::io::Write::write_all(&mut file, output.as_bytes()).unwrap();
             }
         }
         let key = ScriptKey::of(spec);
@@ -144,7 +137,6 @@ impl ScriptedHarness {
             "{\"type\":\"scripted\"}\n",
         )
         .unwrap();
-        spec.output.heard();
         let script = self.scripts.lock().unwrap().get(&key).cloned();
         let script = script.ok_or_else(|| SessionError::Failed {
             reason: format!("no script for {key:?}"),

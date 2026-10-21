@@ -44,7 +44,7 @@ impl Served {
             .served
             .borrow()
             .as_ref()
-            .map_or(0, |served| served.view_now().in_flight.len())
+            .map_or(0, |served| served.view().in_flight.len())
     }
 
     fn draining(&self) -> bool {
@@ -52,7 +52,7 @@ impl Served {
             .served
             .borrow()
             .as_ref()
-            .is_some_and(|served| served.view_now().memory.drain.is_some())
+            .is_some_and(|served| served.view().memory.drain.is_some())
     }
 
     /// Lets serving poll a few times more.

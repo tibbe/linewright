@@ -94,13 +94,11 @@ pub fn implementing(issue: u64) -> LiveRun {
     }
 }
 
-/// The run `id`, started at `started`, whose agent last produced output at
-/// `heard`, or that has started no session.
-pub fn in_flight(id: &str, started: &str, heard: Option<&str>) -> InFlight {
+/// The run `id`, started at `started`.
+pub fn in_flight(id: &str, started: &str) -> InFlight {
     InFlight {
         id: id.parse().unwrap(),
         started_at: at(started),
-        last_output: heard.map(at),
     }
 }
 

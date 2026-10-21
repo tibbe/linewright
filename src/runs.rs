@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::fmt::{self, Write as _};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -306,7 +306,6 @@ impl Runs {
                 sessions: vec![],
                 answered_until: None,
             }),
-            activity: Activity::default(),
             _lock: lock,
         };
         running.save()?;
@@ -420,44 +419,10 @@ fn entries(dir: &Path) -> Result<Vec<PathBuf>> {
     }
 }
 
-/// When a run's agent last produced output: `None` until the run starts a
-/// session, whose start counts as its first.
-#[derive(Clone, Debug, Default)]
-pub struct Activity(Arc<Mutex<Option<Timestamp>>>);
-
-impl Activity {
-    pub fn note(&self, at: Timestamp) {
-        let mut last = self.0.lock().unwrap();
-        *last = Some(last.map_or(at, |last| last.max(at)));
-    }
-
-    pub fn last(&self) -> Option<Timestamp> {
-        *self.0.lock().unwrap()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Watched {
-    pub id: RunId,
-    pub started_at: Timestamp,
-    pub activity: Activity,
-}
-
-impl Watched {
-    pub fn read(&self) -> InFlight {
-        InFlight {
-            id: self.id.clone(),
-            started_at: self.started_at,
-            last_output: self.activity.last(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InFlight {
     pub id: RunId,
     pub started_at: Timestamp,
-    pub last_output: Option<Timestamp>,
 }
 
 impl InFlight {
@@ -466,12 +431,6 @@ impl InFlight {
             id: self.id.clone(),
             started_at: self.started_at,
             duration_seconds: (now - self.started_at).num_seconds(),
-            // Both counted in whole seconds from the start, so that when the
-            // quiet time began, derived from them, holds still as time passes.
-            quiet_seconds: self.last_output.map(|last| {
-                let ran = (now - self.started_at).num_seconds();
-                (ran - (last - self.started_at).num_seconds()).max(0)
-            }),
         }
     }
 }
@@ -482,8 +441,6 @@ pub struct RunInFlight {
     pub id: RunId,
     pub started_at: Timestamp,
     pub duration_seconds: i64,
-    /// `None` until it starts a session.
-    pub quiet_seconds: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -493,7 +450,6 @@ struct RunInFlightAnswer {
     of: RunOf,
     started_at: Timestamp,
     duration_seconds: i64,
-    quiet_seconds: Option<i64>,
 }
 
 impl From<RunInFlight> for RunInFlightAnswer {
@@ -503,7 +459,6 @@ impl From<RunInFlight> for RunInFlightAnswer {
             of: run.id.of,
             started_at: run.started_at,
             duration_seconds: run.duration_seconds,
-            quiet_seconds: run.quiet_seconds,
         }
     }
 }
@@ -520,7 +475,6 @@ impl TryFrom<RunInFlightAnswer> for RunInFlight {
             id,
             started_at: answer.started_at,
             duration_seconds: answer.duration_seconds,
-            quiet_seconds: answer.quiet_seconds,
         })
     }
 }
@@ -559,7 +513,6 @@ pub(crate) struct Running {
     lock_path: PathBuf,
     work_dir: PathBuf,
     record: Mutex<Record>,
-    activity: Activity,
     /// Locked while the run is in flight. The kernel releases the lock when
     /// the process ends however it ends.
     _lock: File,
@@ -570,20 +523,14 @@ impl Running {
         &self.id
     }
 
-    pub fn watched(&self) -> Watched {
-        Watched {
+    pub fn in_flight(&self) -> InFlight {
+        InFlight {
             id: self.id.clone(),
             started_at: self.record.lock().unwrap().started_at,
-            activity: self.activity.clone(),
         }
     }
 
-    pub fn activity(&self) -> &Activity {
-        &self.activity
-    }
-
-    pub fn session(&self, dir: &Path, now: Timestamp) {
-        self.activity.note(now);
+    pub fn session(&self, dir: &Path) {
         let dir = dir.strip_prefix(&self.work_dir).unwrap_or(dir);
         self.record.lock().unwrap().sessions.push(dir.to_path_buf());
         self.save_or_log();

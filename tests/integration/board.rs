@@ -98,7 +98,7 @@ fn pull(number: u64, closes: &[u64], checks: &[CheckState]) -> Pull {
 fn with_runs(mut view: View, ids: &[&str]) -> View {
     view.in_flight = ids
         .iter()
-        .map(|id| common::in_flight(id, "2026-10-01T11:50:00Z", Some("2026-10-01T11:59:00Z")))
+        .map(|id| common::in_flight(id, "2026-10-01T11:50:00Z"))
         .collect();
     view
 }

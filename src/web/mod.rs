@@ -282,7 +282,7 @@ struct Read {
 
 impl Read {
     fn of(sources: &Sources) -> Read {
-        let view = api::view_now(sources);
+        let view = api::view(sources);
         let recorded = api::recorded_or_none(sources);
         let now = sources.clock.now();
         let status = api::status_of(sources, view.as_ref(), &recorded);

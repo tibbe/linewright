@@ -1,15 +1,13 @@
 use crate::common;
 
 use std::path::Path;
-use std::sync::Arc;
 
 use common::*;
 use linewright::domain::Number;
 use linewright::harness::claude::ClaudeCode;
-use linewright::harness::{Harness, OutputWatch, Purpose, SessionError, SessionSpec};
+use linewright::harness::{Harness, Purpose, SessionError, SessionSpec};
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
-use linewright::runs::Activity;
 use linewright::session_env::{Given, SessionEnv};
 use linewright::transcript::{Prompt, What};
 use serde_json::{Value, json};
@@ -70,10 +68,6 @@ fn instruction_excludes(args: &[String]) -> globset::GlobSet {
 }
 
 fn triage_session(dir: &Path) -> SessionSpec {
-    triage_session_heard(dir, &Activity::default())
-}
-
-fn triage_session_heard(dir: &Path, activity: &Activity) -> SessionSpec {
     for sub in ["repo", "tmp"] {
         std::fs::create_dir(dir.join(sub)).unwrap();
     }
@@ -88,36 +82,7 @@ fn triage_session_heard(dir: &Path, activity: &Activity) -> SessionSpec {
         plugin: dir.join("plugin"),
         prompt: "Triage #1.".into(),
         deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(30),
-        output: OutputWatch::new(activity.clone(), Arc::new(FakeClock::new())),
     }
-}
-
-#[tokio::test]
-async fn each_line_the_agent_streams_is_heard_as_it_comes() {
-    let dir = tempfile::tempdir().unwrap();
-    let harness = harness_streaming(
-        dir.path(),
-        &[
-            json!({"type": "system", "subtype": "init"}),
-            json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "Looking."}]}}),
-            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
-        ],
-    );
-    let activity = Activity::default();
-
-    harness
-        .start(&triage_session_heard(dir.path(), &activity))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        activity.last(),
-        Some(
-            chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:03Z")
-                .unwrap()
-                .into()
-        )
-    );
 }
 
 #[tokio::test]

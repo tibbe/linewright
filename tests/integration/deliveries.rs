@@ -77,7 +77,7 @@ impl Served {
     /// The snapshot `serve` holds now.
     fn snapshot(&self) -> Arc<Snapshot> {
         let served = self.serving.served.borrow();
-        served.as_ref().expect("served").view_now().snapshot
+        served.as_ref().expect("served").view().snapshot
     }
 
     async fn stop(self) {

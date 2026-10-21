@@ -1,17 +1,14 @@
 pub mod claude;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::automation::AutomationName;
-use crate::clock::Clock;
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
-use crate::runs::Activity;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -32,31 +29,6 @@ pub struct SessionSpec {
     /// When the session times out, across all its turns. A run that waits
     /// out the usage limit moves it on by the wait.
     pub deadline: tokio::time::Instant,
-    pub output: OutputWatch,
-}
-
-#[derive(Clone)]
-pub struct OutputWatch {
-    activity: Activity,
-    clock: Arc<dyn Clock>,
-}
-
-impl OutputWatch {
-    pub fn new(activity: Activity, clock: Arc<dyn Clock>) -> OutputWatch {
-        OutputWatch { activity, clock }
-    }
-
-    pub fn heard(&self) {
-        self.activity.note(self.clock.now());
-    }
-}
-
-impl std::fmt::Debug for OutputWatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OutputWatch")
-            .field("activity", &self.activity)
-            .finish_non_exhaustive()
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -913,58 +913,45 @@ fn line_starting<'a>(text: &'a str, start: &str) -> Option<&'a str> {
     text.lines().find(|line| line.starts_with(start))
 }
 
-fn quiet_seconds(answer: &str) -> Option<i64> {
-    let answer: serde_json::Value = serde_json::from_str(answer).ok()?;
-    answer["runs"][0]["quiet_seconds"].as_i64()
+fn runs_in_flight(answer: &str) -> usize {
+    let answer: serde_json::Value = serde_json::from_str(answer).unwrap_or_default();
+    answer["runs"].as_array().map_or(0, Vec::len)
 }
 
 #[tokio::test]
-async fn status_and_explain_show_the_run_in_flight_and_keep_its_quiet_time_reset_by_each_output_in_json()
- {
+async fn status_and_explain_show_the_run_in_flight_without_its_quiet_time_in_json() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
     let clock = world.clock.clone();
     let answering = Answering::start(world, false).await;
     eventually_async(|| async {
-        quiet_seconds(&answering.lw(&["status", "--json"]).await.stdout).is_some()
+        runs_in_flight(&answering.lw(&["status", "--json"]).await.stdout) == 1
     })
     .await;
 
     clock.advance(chrono::TimeDelta::minutes(25));
-    let quiet = answering.lw(&["status"]).await;
-    let quiet_json = answering.lw(&["status", "--json"]).await;
-    agent.says();
-    eventually_async(|| async {
-        quiet_seconds(&answering.lw(&["status", "--json"]).await.stdout)
-            .is_some_and(|seconds| seconds < 60)
-    })
-    .await;
+    let status = answering.lw(&["status"]).await;
     let explained = answering.lw(&["explain", "1"]).await;
     let status_json = answering.lw(&["status", "--json"]).await;
     let explain_json = answering.lw(&["explain", "1", "--json"]).await;
 
-    let lines: Vec<&str> = quiet.stdout.lines().collect();
+    let lines: Vec<&str> = status.stdout.lines().collect();
     assert_eq!(
         lines[3..5],
         ["runs in flight: 1 of 4", ""],
         "{}",
-        quiet.stdout
+        status.stdout
     );
     assert!(
         lines[5].starts_with("1/triage-1: #1 triage, running for 25m"),
         "{}",
-        quiet.stdout
+        status.stdout
     );
     assert_eq!(
-        line_starting(&quiet.stdout, "#1:"),
+        line_starting(&status.stdout, "#1:"),
         None,
         "{}",
-        quiet.stdout
-    );
-    assert!(
-        quiet_seconds(&quiet_json.stdout).is_some_and(|seconds| seconds >= 25 * 60),
-        "{}",
-        quiet_json.stdout
+        status.stdout
     );
     assert!(
         line_starting(&explained.stdout, "run in flight: ").is_some_and(
@@ -973,7 +960,7 @@ async fn status_and_explain_show_the_run_in_flight_and_keep_its_quiet_time_reset
         "{}",
         explained.stdout
     );
-    for text in [&quiet.stdout, &explained.stdout] {
+    for text in [&status.stdout, &explained.stdout] {
         assert!(!text.contains("quiet"), "{text}");
     }
     let status_json: serde_json::Value = serde_json::from_str(&status_json.stdout).unwrap();
@@ -984,7 +971,7 @@ async fn status_and_explain_show_the_run_in_flight_and_keep_its_quiet_time_reset
             answer["duration_seconds"].as_i64().unwrap() >= 25 * 60,
             "{answer}"
         );
-        assert!(answer["quiet_seconds"].as_i64().unwrap() < 60, "{answer}");
+        assert_eq!(answer.get("quiet_seconds"), None, "{answer}");
     }
 
     drop(agent);

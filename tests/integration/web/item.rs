@@ -198,7 +198,7 @@ async fn the_item_pages_stream_sends_nothing_when_its_runs_agent_produces_output
         .unwrap()
         .unwrap();
 
-    agent.says();
+    agent.writes("Reading the issue.\n");
 
     let heard = tokio::time::timeout(Duration::from_millis(2500), events.recv()).await;
     assert!(heard.is_err(), "sent on output alone: {heard:?}");

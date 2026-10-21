@@ -27,7 +27,7 @@ use crate::reconcile::{
     Subject, Work, WorkKind, held_back_by_drain, hold_note, reconcile,
 };
 use crate::run::{self, AutomationEnd, Shell};
-use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy, Watched};
+use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
@@ -110,7 +110,7 @@ enum Running {
 
 struct LiveEntry {
     running: Running,
-    watched: Watched,
+    in_flight: runs::InFlight,
     cancel: CancellationToken,
 }
 
@@ -421,7 +421,7 @@ impl Factory {
         let runs: Vec<String> = self
             .live
             .values()
-            .map(|entry| entry.watched.id.to_string())
+            .map(|entry| entry.in_flight.id.to_string())
             .collect();
         info!(
             runs = runs.join(" "),
@@ -430,12 +430,7 @@ impl Factory {
     }
 
     fn served(&self, next_poll: Timestamp) -> Option<Served> {
-        let runs = self.live.values().map(|entry| entry.watched.clone());
-        Some(Served::new(
-            self.view(next_poll)?,
-            self.shell.store.clone(),
-            runs.collect(),
-        ))
+        Some(Served::new(self.view(next_poll)?, self.shell.store.clone()))
     }
 
     fn view(&self, next_poll: Timestamp) -> Option<View> {
@@ -444,7 +439,7 @@ impl Factory {
         let in_flight = self
             .live
             .values()
-            .map(|entry| entry.watched.read())
+            .map(|entry| entry.in_flight.clone())
             .collect();
         Some(View {
             snapshot: kept.snapshot.clone(),
@@ -475,7 +470,7 @@ impl Factory {
     fn automations_in_flight(&self) -> Vec<AutomationName> {
         self.live
             .values()
-            .filter_map(|entry| match &entry.watched.id.of {
+            .filter_map(|entry| match &entry.in_flight.id.of {
                 RunOf::Automation { automation } => Some(automation.clone()),
                 RunOf::Work { .. } => None,
             })
@@ -661,14 +656,14 @@ impl Factory {
             }
         };
         let Some(LiveEntry {
-            running, watched, ..
+            running, in_flight, ..
         }) = self.live.remove(&id)
         else {
             return;
         };
         if self.memory.drain.is_some() {
             info!(
-                run = %watched.id,
+                run = %in_flight.id,
                 still_in_flight = self.live.len(),
                 "a run the drain waits for ended"
             );
@@ -676,7 +671,7 @@ impl Factory {
         let Running::Work(run) = running else {
             return;
         };
-        let done = self.shell.runs.read_run(&watched.id);
+        let done = self.shell.runs.read_run(&in_flight.id);
         self.memory
             .done_runs
             .extend(done.as_ref().and_then(Recorded::done_on_pull));
@@ -709,7 +704,7 @@ impl Factory {
                     shell.clock.now(),
                 )?;
                 let id = running.id().to_string();
-                let watched = running.watched();
+                let in_flight = running.in_flight();
                 let cancel = CancellationToken::new();
                 let reworked = match work.subject() {
                     Subject::Pull(pr) => self.memory.last_done(pr, WorkKind::Rework),
@@ -732,7 +727,7 @@ impl Factory {
                             subject: work.subject(),
                             kind: work.kind(),
                         }),
-                        watched,
+                        in_flight,
                         cancel,
                     },
                 );
@@ -900,7 +895,7 @@ impl Factory {
             }
             Action::RunAutomation(automation) => {
                 let running = begin_automation(&self.shell, &automation.name, StartedBy::Schedule)?;
-                let watched = running.watched();
+                let in_flight = running.in_flight();
                 let cancel = CancellationToken::new();
                 let shell = self.shell.clone();
                 let handle = self.runs.spawn({
@@ -914,7 +909,7 @@ impl Factory {
                     handle.id(),
                     LiveEntry {
                         running: Running::Automation,
-                        watched,
+                        in_flight,
                         cancel,
                     },
                 );

@@ -17,7 +17,7 @@ use crate::domain::{
     closing_references, label,
 };
 use crate::git::{self, Updated, WorkState};
-use crate::harness::{Harness, OutputWatch, Purpose, SessionError, SessionSpec, Turn, UsageLimit};
+use crate::harness::{Harness, Purpose, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::prompts::{self, DesignOf, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
@@ -823,7 +823,7 @@ fn session_spec(
 ) -> Result<SessionSpec, Failure> {
     let now = shell.clock.now();
     let record = record_dir(shell, &purpose, now)?;
-    ctx.run.session(&record, now);
+    ctx.run.session(&record);
     Ok(SessionSpec {
         record,
         purpose,
@@ -832,7 +832,6 @@ fn session_spec(
         plugin: ws.plugin.clone(),
         prompt,
         deadline: tokio::time::Instant::now() + timeout,
-        output: OutputWatch::new(ctx.run.activity().clone(), shell.clock.clone()),
     })
 }
 
