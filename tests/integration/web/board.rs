@@ -58,9 +58,19 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_worded_as_explain_
 
     let html = web.page("/").await;
 
+    let shown: Vec<Vec<String>> = board_shown(&html)
+        .iter()
+        .map(|lane| lane.iter().map(|line| unclocked(line)).collect())
+        .collect();
     assert_eq!(
-        board_shown(&html),
+        shown,
         [
+            vec![
+                "#1: Do the thing".to_string(),
+                "Needs a person: #1: Do the thing | with the maintainer \
+                 | waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
+                    .to_string(),
+            ],
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
                 "Needs a person: #3: Part one | waiting on the reporter \
@@ -68,14 +78,16 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_worded_as_explain_
                     .to_string(),
             ],
             vec![
-                "No tracking issue — 2 cards".to_string(),
-                "Needs a person: #1: Do the thing | with the maintainer \
-                 | waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
-                    .to_string(),
+                "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
                 "Done: #4: Old idea | closed issue | closed".to_string(),
             ],
         ]
     );
+    let lanes: Vec<Option<&str>> = select(&html, "#board .lane")
+        .into_iter()
+        .map(|lane| lane.attr("id"))
+        .collect();
+    assert_eq!(lanes, [Some("lane-1"), Some("lane-2"), Some("lane-4")]);
     let columns: Vec<String> = select(&html, "#board .column")
         .into_iter()
         .map(text)
@@ -95,7 +107,7 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_worded_as_explain_
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();
-    assert_eq!(links, ["/items/3", "/items/1", "/items/4"]);
+    assert_eq!(links, ["/items/1", "/items/3", "/items/4"]);
     let title = select(&html, "title");
     assert_eq!(text(title[0]), "(2) Board · owner/widgets");
     assert_no_status_by_colour_alone(&html);
@@ -129,10 +141,14 @@ async fn the_boards_stream_sends_the_board_and_the_tab_title_after_a_poll_moves_
     };
 
     let board = &moved.iter().find(|(id, _)| id == "board").unwrap().1;
-    let rest = board_shown(board).pop().unwrap();
-    assert!(
-        rest.contains(&"Done: #1: Do the thing | closed issue | closed".to_string()),
-        "{rest:?}"
+    let shown = board_shown(board);
+    let lane = shown
+        .iter()
+        .find(|lane| lane[0].starts_with("#1: Do the thing — finished "))
+        .unwrap_or_else(|| panic!("{shown:?}"));
+    assert_eq!(
+        lane[1..],
+        ["Done: #1: Do the thing | closed issue | closed"]
     );
     let title = &moved.iter().find(|(id, _)| id == "title").unwrap().1;
     assert_eq!(text(select(title, "title")[0]), "(1) Board · owner/widgets");
@@ -185,22 +201,25 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         shown,
         [
             vec![
+                "#1: Do the thing".to_string(),
+                "Needs a person: #1: Do the thing | with the maintainer \
+                 | waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
+                    .to_string(),
+            ],
+            vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
                 "Needs a person: #3: Part one | waiting on the reporter \
                  | waiting for: the reporter: labeled `needs-info`"
                     .to_string(),
             ],
             vec![
-                "No tracking issue — 2 cards".to_string(),
-                "Needs a person: #1: Do the thing | with the maintainer \
-                 | waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
-                    .to_string(),
-                "Done: #4: Old idea | closed issue | closed".to_string(),
-            ],
-            vec![
                 "#5: Small thing — 1/1 tickets closed — finished 2026-10-01 12:00:SS UTC"
                     .to_string(),
                 "Done: #6: Only part | closed issue | closed".to_string(),
+            ],
+            vec![
+                "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
+                "Done: #4: Old idea | closed issue | closed".to_string(),
             ],
         ]
     );
@@ -208,12 +227,19 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         .into_iter()
         .map(|fold| (fold.attr("id"), fold.attr("open").is_some()))
         .collect();
-    assert_eq!(folds, [(Some("finished"), false), (Some("lane-5"), false)]);
+    assert_eq!(
+        folds,
+        [
+            (Some("finished"), false),
+            (Some("lane-5"), false),
+            (Some("lane-4"), false)
+        ]
+    );
     let summaries: Vec<String> = select(&html, "#finished > summary")
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(summaries, ["1 finished lane"]);
+    assert_eq!(summaries, ["2 finished lanes"]);
     let finished: Vec<&str> = select(&html, "#lane-5 > summary time")
         .into_iter()
         .filter_map(|time| time.attr("datetime"))
@@ -259,7 +285,7 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
             "h2: Working",
             "h2: In review",
             "h2: Done",
-            "details: 1 finished lane No tracking issue — 1 card — finished \
+            "details: 1 finished lane #1: Do the thing — finished \
              2026-10-01 12:00:SS UTC #1: Do the thing closed issue closed",
         ]
     );
@@ -267,6 +293,6 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
         .into_iter()
         .map(|fold| fold.attr("id"))
         .collect();
-    assert_eq!(lanes, [Some("lane-none")]);
+    assert_eq!(lanes, [Some("lane-1")]);
     web.stop().await;
 }

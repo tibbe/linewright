@@ -1,5 +1,5 @@
 //! The board (`docs/specs/monitoring.md`, The board): the managed items
-//! as cards, in a lane per tracking issue and a column per stage.
+//! as cards, in a lane per piece of work and a column per stage.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use super::html::{self, Html};
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
-use crate::board::{Board, Card, CardLine, Column, Ended, Lane};
+use crate::board::{Board, Card, CardLine, Column, Ended, Lane, LaneHead};
 use crate::explain;
 use crate::phrase::{Phrase, Tone};
 use crate::status;
@@ -28,8 +28,8 @@ struct BoardShown {
 struct LaneShown {
     /// The id of its fold, stable through updates.
     id: String,
-    /// The tracking issue and its tickets closed of total, or "No tracking
-    /// issue" and its count of cards; and when it finished, if it did.
+    /// The tracking issue and its tickets closed of total, or the item; and
+    /// when it finished, if it did.
     head: Html,
     cells: Vec<CellShown>,
 }
@@ -88,21 +88,16 @@ impl BoardShown {
 
 impl LaneShown {
     fn of(lane: &Lane, repo: &str) -> LaneShown {
-        let (id, head) = match &lane.head {
-            Some(head) => (
-                format!("lane-{}", head.number.0),
-                html::titled(head.number, &head.title, repo).then(&html::escape(&format!(
-                    " — {}/{} tickets closed",
-                    head.tickets_closed, head.tickets
-                ))),
-            ),
-            None => (
-                "lane-none".into(),
-                html::escape(&format!(
-                    "No tracking issue — {}",
-                    counted(lane.count(), "card")
-                )),
-            ),
+        let head = match &lane.head {
+            LaneHead::Tracking {
+                number,
+                title,
+                tickets_closed,
+                tickets,
+            } => html::titled(*number, title, repo).then(&html::escape(&format!(
+                " — {tickets_closed}/{tickets} tickets closed"
+            ))),
+            LaneHead::Item { number, title } => html::titled(*number, title, repo),
         };
         let head = match lane.finished() {
             Some(at) => head
@@ -111,7 +106,7 @@ impl LaneShown {
             None => head,
         };
         LaneShown {
-            id,
+            id: format!("lane-{}", lane.head.number().0),
             head,
             cells: Column::ALL
                 .into_iter()

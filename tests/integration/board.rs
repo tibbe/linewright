@@ -1,18 +1,18 @@
 use crate::common;
 
 use common::{NOW, at, ticket, view};
-use linewright::board::{Board, Card, CardLine, Column, Ended, board};
+use linewright::board::{Board, Card, CardLine, Column, Ended, LaneHead, board};
 use linewright::domain::*;
 use linewright::status::{Ci, View};
 
-/// Where each card is: its lane's tracking issue, if any, its column and
-/// its number, lane by lane and column by column.
-fn placed(board: &Board) -> Vec<(Option<u64>, Column, u64)> {
+/// Where each card is: its lane's number, its column and its number, lane
+/// by lane and column by column.
+fn placed(board: &Board) -> Vec<(u64, Column, u64)> {
     board
         .lanes
         .iter()
         .flat_map(|lane| {
-            let head = lane.head.as_ref().map(|head| head.number.0);
+            let head = lane.head.number().0;
             Column::ALL.into_iter().flat_map(move |column| {
                 lane.cards(column)
                     .iter()
@@ -20,6 +20,11 @@ fn placed(board: &Board) -> Vec<(Option<u64>, Column, u64)> {
             })
         })
         .collect()
+}
+
+/// Each lane's head, lane by lane.
+fn heads(board: &Board) -> Vec<LaneHead> {
+    board.lanes.iter().map(|lane| lane.head.clone()).collect()
 }
 
 fn labeled(number: u64, labels: &[&str]) -> Issue {
@@ -47,11 +52,11 @@ fn each_status_label_puts_its_issue_in_its_column() {
     assert_eq!(
         placed(&board),
         [
-            (None, Column::Triage, 1),
-            (None, Column::NeedsAPerson, 2),
-            (None, Column::NeedsAPerson, 3),
-            (None, Column::Ready, 4),
-            (None, Column::Ready, 5),
+            (2, Column::NeedsAPerson, 2),
+            (3, Column::NeedsAPerson, 3),
+            (1, Column::Triage, 1),
+            (4, Column::Ready, 4),
+            (5, Column::Ready, 5),
         ]
     );
     assert_eq!(board.needing_a_person, 2);
@@ -140,9 +145,9 @@ fn a_claimed_ticket_and_one_with_a_triage_or_design_run_in_flight_are_in_working
     assert_eq!(
         placed(&board(&view, at(NOW))),
         [
-            (None, Column::Working, 1),
-            (None, Column::Working, 2),
-            (None, Column::Working, 3),
+            (1, Column::Working, 1),
+            (2, Column::Working, 2),
+            (3, Column::Working, 3),
         ]
     );
 }
@@ -154,10 +159,7 @@ fn a_ticket_with_an_open_pull_request_is_in_review() {
         vec![pull(10, &[1], &[CheckState::Passed])],
     );
 
-    assert_eq!(
-        placed(&board(&view, at(NOW))),
-        [(None, Column::InReview, 1)]
-    );
+    assert_eq!(placed(&board(&view, at(NOW))), [(1, Column::InReview, 1)]);
 }
 
 #[test]
@@ -170,7 +172,7 @@ fn a_ticket_closed_within_the_spec_lookback_window_is_in_done_and_one_closed_bef
         ],
     );
 
-    assert_eq!(placed(&board(&view, at(NOW))), [(None, Column::Done, 2)]);
+    assert_eq!(placed(&board(&view, at(NOW))), [(2, Column::Done, 2)]);
 }
 
 #[test]
@@ -187,7 +189,7 @@ fn an_item_fitting_two_columns_is_in_the_one_further_right() {
 
     assert_eq!(
         placed(&board),
-        [(None, Column::Working, 2), (None, Column::InReview, 1)]
+        [(1, Column::InReview, 1), (2, Column::Working, 2)]
     );
     assert_eq!(board.needing_a_person, 0);
 }
@@ -226,7 +228,7 @@ fn a_tickets_card_carries_its_pull_requests_ci_state_and_a_rework_run_on_it() {
         panic!("no run: {:?}", card.line);
     };
     assert_eq!(run.id.to_string(), "10/rework-1");
-    assert_eq!(placed(&board), [(None, Column::InReview, 1)]);
+    assert_eq!(placed(&board), [(1, Column::InReview, 1)]);
 }
 
 #[test]
@@ -235,7 +237,7 @@ fn linewrights_pull_request_closing_no_issue_on_the_board_is_a_card_of_its_own()
 
     let board = board(&view, at(NOW));
 
-    assert_eq!(placed(&board), [(None, Column::InReview, 10)]);
+    assert_eq!(placed(&board), [(10, Column::InReview, 10)]);
     assert_eq!(
         card(&board, 10).standing.to_string(),
         "in review: #10 (ready for review, CI green)"
@@ -350,13 +352,10 @@ fn a_spec_change_is_its_pull_request_in_ready_then_in_working_while_being_design
     let waiting = with_merged(view(vec![], vec![]), vec![spec_change(5, &[])]);
     let designing = with_runs(waiting.clone(), &["5/design-1"]);
 
-    assert_eq!(
-        placed(&board(&waiting, at(NOW))),
-        [(None, Column::Ready, 5)]
-    );
+    assert_eq!(placed(&board(&waiting, at(NOW))), [(5, Column::Ready, 5)]);
     assert_eq!(
         placed(&board(&designing, at(NOW))),
-        [(None, Column::Working, 5)]
+        [(5, Column::Working, 5)]
     );
 }
 
@@ -376,7 +375,7 @@ fn a_spec_change_cut_into_tickets_is_its_tracking_issues_lane() {
 
     assert_eq!(
         placed(&board(&view, at(NOW))),
-        [(Some(6), Column::Ready, 7), (Some(6), Column::Working, 8)]
+        [(6, Column::Ready, 7), (6, Column::Working, 8)]
     );
 }
 
@@ -389,7 +388,7 @@ fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
 
     let board = board(&view, at(NOW));
 
-    assert_eq!(placed(&board), [(None, Column::Done, 5)]);
+    assert_eq!(placed(&board), [(5, Column::Done, 5)]);
     assert_eq!(
         card(&board, 5).line,
         CardLine::Ended {
@@ -400,7 +399,7 @@ fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
 }
 
 #[test]
-fn lanes_are_in_number_order_with_their_tickets_closed_of_total_and_the_rest_last() {
+fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
     let mut closed_ticket = closed_issue(23, "2026-09-28T12:00:00Z", Some(40));
     closed_ticket.kind = ClosedKind::Issue {
         parent: Some(Parent {
@@ -429,36 +428,35 @@ fn lanes_are_in_number_order_with_their_tickets_closed_of_total_and_the_rest_las
 
     let board = board(&view, at(NOW));
 
-    let heads: Vec<Option<(u64, String, usize, usize)>> = board
-        .lanes
-        .iter()
-        .map(|lane| {
-            lane.head.as_ref().map(|head| {
-                (
-                    head.number.0,
-                    head.title.clone(),
-                    head.tickets_closed,
-                    head.tickets,
-                )
-            })
-        })
-        .collect();
     assert_eq!(
-        heads,
+        heads(&board),
         [
-            Some((10, "Tracking 10".into(), 1, 2)),
-            Some((20, "Tracking 20".into(), 1, 3)),
-            None,
+            LaneHead::Item {
+                number: Number(2),
+                title: "Ticket 2".into()
+            },
+            LaneHead::Tracking {
+                number: Number(10),
+                title: "Tracking 10".into(),
+                tickets_closed: 1,
+                tickets: 2
+            },
+            LaneHead::Tracking {
+                number: Number(20),
+                title: "Tracking 20".into(),
+                tickets_closed: 1,
+                tickets: 3
+            },
         ]
     );
     assert_eq!(
         placed(&board),
         [
-            (Some(10), Column::Ready, 11),
-            (Some(20), Column::Ready, 21),
-            (Some(20), Column::Ready, 22),
-            (Some(20), Column::Done, 23),
-            (None, Column::Triage, 2),
+            (2, Column::Triage, 2),
+            (10, Column::Ready, 11),
+            (20, Column::Ready, 21),
+            (20, Column::Ready, 22),
+            (20, Column::Done, 23),
         ]
     );
 }
@@ -493,17 +491,18 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
 
     let board = board(&view, at(NOW));
 
-    let head = board.lanes[1].head.as_ref().unwrap();
     assert_eq!(
-        (head.number, head.tickets_closed, head.tickets),
-        (Number(30), 1, 2)
+        board.lanes[1].head,
+        LaneHead::Tracking {
+            number: Number(30),
+            title: "Cut".into(),
+            tickets_closed: 1,
+            tickets: 2
+        }
     );
     assert_eq!(
         placed(&board),
-        [
-            (None, Column::NeedsAPerson, 34),
-            (Some(30), Column::Ready, 31)
-        ]
+        [(34, Column::NeedsAPerson, 34), (30, Column::Ready, 31)]
     );
 }
 
@@ -515,7 +514,7 @@ fn an_issue_in_review_on_someone_elses_pull_request_carries_its_ci_state() {
 
     let board = board(&view, at(NOW));
 
-    assert_eq!(placed(&board), [(None, Column::InReview, 1)]);
+    assert_eq!(placed(&board), [(1, Column::InReview, 1)]);
     assert_eq!(
         card(&board, 1)
             .pull
@@ -540,17 +539,12 @@ fn closed_ticket(number: u64, tracking: u64, closed_at: &str) -> ClosedItem {
     closed
 }
 
-/// Each lane's tracking issue, if any, and when it finished, if it did.
-fn lanes(board: &Board) -> Vec<(Option<u64>, Option<Timestamp>)> {
+/// Each lane's number, and when it finished, if it did.
+fn lanes(board: &Board) -> Vec<(u64, Option<Timestamp>)> {
     board
         .lanes
         .iter()
-        .map(|lane| {
-            (
-                lane.head.as_ref().map(|head| head.number.0),
-                lane.finished(),
-            )
-        })
+        .map(|lane| (lane.head.number().0, lane.finished()))
         .collect()
 }
 
@@ -582,35 +576,32 @@ fn lanes_needing_a_person_come_first_then_the_other_unfinished_then_the_finished
     assert_eq!(
         lanes(&board(&view, at(NOW))),
         [
-            (Some(20), None),
-            (Some(10), None),
-            (None, None),
-            (Some(40), Some(at("2026-09-30T12:00:00Z"))),
-            (Some(30), Some(at("2026-09-29T12:00:00Z"))),
-            (Some(50), Some(at("2026-09-29T12:00:00Z"))),
+            (20, None),
+            (2, None),
+            (10, None),
+            (40, Some(at("2026-09-30T12:00:00Z"))),
+            (30, Some(at("2026-09-29T12:00:00Z"))),
+            (50, Some(at("2026-09-29T12:00:00Z"))),
         ]
     );
 }
 
 #[test]
-fn the_lane_with_no_tracking_issue_comes_first_when_it_has_a_card_needing_a_person() {
+fn an_items_lane_comes_first_when_it_needs_a_person() {
     let view = view(
         vec![
-            labeled(2, &["needs-info"]),
+            labeled(12, &["needs-info"]),
             tracking_issue(10, 9, &[(11, true)]),
             cut_from(ticket(11, "Ready"), 10, 9),
         ],
         vec![],
     );
 
-    assert_eq!(
-        lanes(&board(&view, at(NOW))),
-        [(None, None), (Some(10), None)]
-    );
+    assert_eq!(lanes(&board(&view, at(NOW))), [(12, None), (10, None)]);
 }
 
 #[test]
-fn the_lane_with_no_tracking_issue_is_finished_when_all_its_cards_are_in_done() {
+fn an_item_closed_in_the_window_is_a_finished_lane_ordered_latest_finished_first() {
     let view = with_merged(
         with_closed(
             view(vec![tracking_issue(30, 29, &[(31, false)])], vec![]),
@@ -625,14 +616,15 @@ fn the_lane_with_no_tracking_issue_is_finished_when_all_its_cards_are_in_done() 
     assert_eq!(
         lanes(&board(&view, at(NOW))),
         [
-            (None, Some(at("2026-10-01T09:00:00Z"))),
-            (Some(30), Some(at("2026-09-30T12:00:00Z"))),
+            (5, Some(at("2026-10-01T09:00:00Z"))),
+            (30, Some(at("2026-09-30T12:00:00Z"))),
+            (1, Some(at("2026-09-28T12:00:00Z"))),
         ]
     );
 }
 
 #[test]
-fn lanes_needing_a_person_are_in_number_order_with_the_one_with_no_tracking_issue_last() {
+fn lanes_are_in_number_order_within_their_group() {
     let view = view(
         vec![
             labeled(2, &["needs-info"]),
@@ -648,11 +640,61 @@ fn lanes_needing_a_person_are_in_number_order_with_the_one_with_no_tracking_issu
 
     assert_eq!(
         lanes(&board(&view, at(NOW))),
+        [(2, None), (10, None), (20, None), (5, None)]
+    );
+}
+
+#[test]
+fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_card() {
+    let mut issue = labeled(2, &["needs-triage"]);
+    issue.title = "Standalone".into();
+    let mut pull = pull(30, &[99], &[CheckState::Passed]);
+    pull.title = "Tidy up".into();
+    let mut spec = spec_change(5, &[]);
+    spec.title = "Add invoices".into();
+    let view = with_merged(view(vec![issue], vec![pull]), vec![spec]);
+
+    let board = board(&view, at(NOW));
+
+    assert_eq!(
+        heads(&board),
         [
-            (Some(10), None),
-            (Some(20), None),
-            (None, None),
-            (Some(5), None)
+            LaneHead::Item {
+                number: Number(2),
+                title: "Standalone".into()
+            },
+            LaneHead::Item {
+                number: Number(5),
+                title: "Add invoices".into()
+            },
+            LaneHead::Item {
+                number: Number(30),
+                title: "Tidy up".into()
+            },
         ]
     );
+    assert_eq!(
+        placed(&board),
+        [
+            (2, Column::Triage, 2),
+            (5, Column::Ready, 5),
+            (30, Column::InReview, 30),
+        ]
+    );
+}
+
+#[test]
+fn a_tracking_issue_with_a_run_in_flight_on_it_is_its_lane_and_not_a_card() {
+    let view = with_runs(
+        view(
+            vec![
+                tracking_issue(10, 9, &[(11, true)]),
+                cut_from(ticket(11, "Ready"), 10, 9),
+            ],
+            vec![],
+        ),
+        &["10/triage-1"],
+    );
+
+    assert_eq!(placed(&board(&view, at(NOW))), [(10, Column::Ready, 11)]);
 }

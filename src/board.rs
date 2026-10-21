@@ -1,5 +1,5 @@
 //! The board (`docs/specs/monitoring.md`, The board, Cards): every managed
-//! item as a card in a column, in a lane per tracking issue, from `serve`'s
+//! item as a card in a column, in a lane per piece of work, from `serve`'s
 //! view and the time alone.
 
 use std::cmp::Reverse;
@@ -52,8 +52,7 @@ pub struct Board {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lane {
-    /// `None` for the lane of the items with no tracking issue.
-    pub head: Option<LaneHead>,
+    pub head: LaneHead,
     /// By column, each ascending by number.
     columns: [Vec<Card>; Column::ALL.len()],
 }
@@ -63,9 +62,9 @@ impl Lane {
         &self.columns[column as usize]
     }
 
-    /// The count of its cards.
-    pub fn count(&self) -> usize {
-        self.columns.iter().map(Vec::len).sum()
+    /// Whether it has no cards.
+    fn is_empty(&self) -> bool {
+        self.columns.iter().all(Vec::is_empty)
     }
 
     /// When its last card closed, if every card is in Done.
@@ -86,7 +85,7 @@ impl Lane {
             .max()
     }
 
-    fn of(head: Option<LaneHead>) -> Lane {
+    fn of(head: LaneHead) -> Lane {
         Lane {
             head,
             columns: Default::default(),
@@ -94,9 +93,8 @@ impl Lane {
     }
 
     /// Its place on the board (`docs/specs/monitoring.md`, The board, Order
-    /// of lanes): by its group, the finished latest first, then by number,
-    /// with no tracking issue last.
-    fn order(&self) -> (Group, Reverse<Option<Timestamp>>, bool, Option<Number>) {
+    /// of lanes): by its group, the finished latest first, then by number.
+    fn order(&self) -> (Group, Reverse<Option<Timestamp>>, Number) {
         let finished = self.finished();
         let group = if finished.is_some() {
             Group::Finished
@@ -105,8 +103,7 @@ impl Lane {
         } else {
             Group::NeedingAPerson
         };
-        let number = self.head.as_ref().map(|head| head.number);
-        (group, Reverse(finished), number.is_none(), number)
+        (group, Reverse(finished), self.head.number())
     }
 }
 
@@ -119,12 +116,29 @@ enum Group {
     Finished,
 }
 
+/// What a lane is the work of (`GLOSSARY.md`, **Lane**).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LaneHead {
-    pub number: Number,
-    pub title: String,
-    pub tickets_closed: usize,
-    pub tickets: usize,
+pub enum LaneHead {
+    /// Work cut into tickets: the tracking issue, with its tickets as the
+    /// lane's cards.
+    Tracking {
+        number: Number,
+        title: String,
+        tickets_closed: usize,
+        tickets: usize,
+    },
+    /// An item worked as one, the lane's one card: an issue, a spec change's
+    /// pull request, or a pull request of Linewright's that closes no issue
+    /// on the board.
+    Item { number: Number, title: String },
+}
+
+impl LaneHead {
+    pub fn number(&self) -> Number {
+        match self {
+            LaneHead::Tracking { number, .. } | LaneHead::Item { number, .. } => *number,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -324,7 +338,7 @@ pub fn board(view: &View, now: Timestamp) -> Board {
             ))
         }))
         .collect();
-    trackers.sort_by_key(|tracker| tracker.head.number);
+    trackers.sort_by_key(|tracker| tracker.number);
 
     for pr in &snapshot.merged {
         let designed = matches!(
@@ -348,18 +362,26 @@ pub fn board(view: &View, now: Timestamp) -> Board {
     cards.sort_by_key(|(_, card)| card.number);
     let mut lanes: Vec<Lane> = trackers
         .iter()
-        .map(|tracker| Lane::of(Some(tracker.head.clone())))
+        .map(|tracker| Lane::of(tracker.head()))
         .collect();
-    let mut rest = Lane::of(None);
     for (column, card) in cards {
-        let lane = trackers
+        let tracker = trackers
             .iter()
-            .position(|tracker| tracker.tickets.contains(&card.number))
-            .map_or(&mut rest, |i| &mut lanes[i]);
-        lane.columns[column as usize].push(card);
+            .position(|tracker| tracker.tickets.contains(&card.number));
+        match tracker {
+            Some(i) => lanes[i].columns[column as usize].push(card),
+            None => {
+                let mut lane = Lane::of(LaneHead::Item {
+                    number: card.number,
+                    title: card.title.clone(),
+                });
+                lane.columns[column as usize].push(card);
+                lanes.push(lane);
+            }
+        }
     }
-    lanes.push(rest);
-    lanes.retain(|lane| lane.count() > 0);
+    // A tracking issue with none of its tickets on the board has no lane.
+    lanes.retain(|lane| !lane.is_empty());
     lanes.sort_by_key(Lane::order);
     let needing_a_person = lanes
         .iter()
@@ -373,10 +395,12 @@ pub fn board(view: &View, now: Timestamp) -> Board {
 
 /// A tracking issue, open or closed in the window, heading its lane.
 struct Tracker {
-    head: LaneHead,
+    number: Number,
+    title: String,
     tracks: Tracks,
     /// Its tickets, the cards of its lane.
     tickets: Vec<Number>,
+    tickets_closed: usize,
 }
 
 impl Tracker {
@@ -389,14 +413,20 @@ impl Tracker {
     ) -> Tracker {
         let tickets: Vec<&SubIssue> = tracks.tickets(sub_issues, linewright).collect();
         Tracker {
-            head: LaneHead {
-                number,
-                title: title.to_string(),
-                tickets_closed: tickets.iter().filter(|s| !s.linked.open).count(),
-                tickets: tickets.len(),
-            },
+            number,
+            title: title.to_string(),
             tracks,
             tickets: tickets.iter().map(|s| s.linked.number).collect(),
+            tickets_closed: tickets.iter().filter(|s| !s.linked.open).count(),
+        }
+    }
+
+    fn head(&self) -> LaneHead {
+        LaneHead::Tracking {
+            number: self.number,
+            title: self.title.clone(),
+            tickets_closed: self.tickets_closed,
+            tickets: self.tickets.len(),
         }
     }
 }
@@ -414,6 +444,9 @@ fn run_on(view: &View, items: &[Number], now: Timestamp) -> Option<RunInFlight> 
 /// item is in Done, the rightmost of all.
 fn column(state: &ItemState, run_in_flight: bool) -> Option<Column> {
     use ItemState as S;
+    if matches!(state, S::Tracking { .. }) {
+        return None;
+    }
     let fits = [
         (
             matches!(state, S::InReview(_) | S::InReviewElsewhere { .. }),
