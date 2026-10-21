@@ -3,6 +3,7 @@
   "title": "Documentation for `documentation` field is misleading",
   "body": "The [docs for the `documentation` field](https://doc.rust-lang.org/cargo/reference/manifest.html#the-documentation-field) say\r\n\r\n> If no URL is specified in the manifest file, [crates.io](https://crates.io/) will automatically link your crate to the corresponding [docs.rs](https://docs.rs/) page.\r\n\r\nThis sounds as if setting no URL is equivalent to setting the docs.rs URL. That is however not the case: in the crates.io [search result list](https://crates.io/search?q=mycrate), the \"Documentation\" link will only show up if `documentation` is explicitly set in the toml file.\r\n\r\nI am not sure if this is a bug in the cargo docs or the crates.io frontend, but it is certainly surprising.",
   "createdAt": "2023-02-27T14:56:43Z",
+  "updatedAt": "2024-09-19T12:01:27Z",
   "state": "OPEN",
   "author": {
     "__typename": "User",
@@ -64,6 +65,7 @@
         "isDraft": false,
         "mergedAt": "2024-09-18T12:19:44Z",
         "closedAt": "2024-09-18T12:19:44Z",
+        "updatedAt": "2024-10-30T07:11:13Z",
         "author": {
           "__typename": "User",
           "login": "RalfJung"

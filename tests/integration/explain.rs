@@ -17,6 +17,7 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         body: format!("Closes #{closes}"),
         author: Login::new("factory"),
         created_at: at("2026-10-01T11:58:00Z"),
+        updated_at: at("2026-10-01T11:58:00Z"),
         head_ref: format!("{closes}-do"),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: true },
@@ -1131,6 +1132,7 @@ fn merged(labels: &[&str]) -> MergedPull {
         body: String::new(),
         author: Login::new("maintainer"),
         merged_at: at("2026-10-01T09:00:00Z"),
+        updated_at: at("2026-10-01T09:00:00Z"),
         base_ref: "main".into(),
         labels: labels.iter().map(ToString::to_string).collect(),
         closes: vec![],
@@ -2147,6 +2149,7 @@ fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
         state: PullState::Closed {
             at: at("2026-10-01T11:00:00Z"),
         },
+        updated_at: at("2026-10-01T11:00:00Z"),
     };
     let closed = Issue {
         open: false,

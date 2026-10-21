@@ -302,6 +302,10 @@ pub struct Issue {
     pub author: Login,
     pub open: bool,
     pub created_at: Timestamp,
+    /// When GitHub last updated it; the epoch in a snapshot written before
+    /// Linewright read it.
+    #[serde(default)]
+    pub updated_at: Timestamp,
     pub labels: Vec<String>,
     pub assignees: Vec<Login>,
     pub comments: Vec<Comment>,
@@ -322,6 +326,9 @@ pub struct ClosingPull {
     pub author: Login,
     #[serde(flatten)]
     pub state: PullState,
+    /// As [`Pull::updated_at`].
+    #[serde(default)]
+    pub updated_at: Timestamp,
 }
 
 impl ClosingPull {
@@ -336,6 +343,7 @@ impl From<&Pull> for ClosingPull {
             number: pull.number,
             author: pull.author.clone(),
             state: pull.state,
+            updated_at: pull.updated_at,
         }
     }
 }
@@ -725,6 +733,10 @@ pub struct Pull {
     pub body: String,
     pub author: Login,
     pub created_at: Timestamp,
+    /// When GitHub last updated it; the epoch in a snapshot written before
+    /// Linewright read it.
+    #[serde(default)]
+    pub updated_at: Timestamp,
     pub head_ref: String,
     pub head_sha: String,
     pub state: PullState,
@@ -816,6 +828,10 @@ pub struct MergedPull {
     pub body: String,
     pub author: Login,
     pub merged_at: Timestamp,
+    /// When GitHub last updated it; the epoch in a snapshot written before
+    /// Linewright read it.
+    #[serde(default)]
+    pub updated_at: Timestamp,
     pub base_ref: String,
     pub labels: Vec<String>,
     pub closes: Vec<Number>,
@@ -1048,6 +1064,10 @@ pub struct ClosedItem {
     pub number: Number,
     pub title: String,
     pub closed_at: Timestamp,
+    /// When GitHub last updated it; the epoch in a snapshot written before
+    /// Linewright read it.
+    #[serde(default)]
+    pub updated_at: Timestamp,
     #[serde(flatten)]
     pub kind: ClosedKind,
 }
@@ -1405,5 +1425,49 @@ mod tests {
             snapshot.closed[0].kind,
             ClosedKind::Issue { reason: None, .. }
         ));
+    }
+
+    /// A snapshot as Linewright wrote it before it held when each item was
+    /// last updated: the time is unknown, and counts as the oldest.
+    #[test]
+    fn a_snapshot_written_before_update_times_loads_with_each_item_updated_at_the_epoch() {
+        let snapshot: Snapshot = serde_json::from_str(
+            r#"{
+              "default_branch": "main",
+              "issues": [{
+                "number": 1, "title": "Ticket 1", "body": "", "author": "maintainer",
+                "open": true, "created_at": "2026-10-01T11:00:00Z", "labels": [],
+                "assignees": [], "comments": [], "blocked_by": [], "sub_issues": [],
+                "events": [],
+                "closed_by": [{"number": 20, "author": "alice", "state": "open", "draft": false}]
+              }],
+              "pulls": [{
+                "number": 10, "title": "Pull 10", "body": "", "author": "factory",
+                "created_at": "2026-10-01T11:58:00Z", "head_ref": "10-pull",
+                "head_sha": "abc123", "state": {"state": "open", "draft": false},
+                "closes": [1], "pushes": [], "mergeability": "unknown",
+                "rebaseability": "unknown", "checks": [], "comments": [], "reviews": [],
+                "threads": [], "labels": [], "assignees": ["factory"], "assignments": []
+              }],
+              "merged": [{
+                "number": 5, "title": "Spec", "body": "", "author": "maintainer",
+                "merged_at": "2026-10-01T09:00:00Z", "base_ref": "main", "labels": [],
+                "closes": [], "files": []
+              }],
+              "closed": [{
+                "number": 2, "title": "Ticket 2", "closed_at": "2026-09-28T13:00:00Z",
+                "kind": "issue", "parent": null, "filed": null, "sub_issues": [],
+                "labels": ["ready-for-agent"], "merged_by": null
+              }]
+            }"#,
+        )
+        .unwrap();
+
+        let epoch = Timestamp::UNIX_EPOCH;
+        assert_eq!(snapshot.issues[0].updated_at, epoch);
+        assert_eq!(snapshot.issues[0].closed_by[0].updated_at, epoch);
+        assert_eq!(snapshot.pulls[0].updated_at, epoch);
+        assert_eq!(snapshot.merged[0].updated_at, epoch);
+        assert_eq!(snapshot.closed[0].updated_at, epoch);
     }
 }

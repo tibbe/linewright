@@ -922,6 +922,7 @@ fn linewrights_pull_request_is_managed_with_its_own_waits_and_its_ticket_waits_f
         body: "Closes #7".into(),
         author: Login::new("factory"),
         created_at: at("2026-10-01T11:58:00Z"),
+        updated_at: at("2026-10-01T11:58:00Z"),
         head_ref: "7-do".into(),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: true },

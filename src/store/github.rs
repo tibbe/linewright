@@ -1147,7 +1147,7 @@ const ISSUE_FIELDS: Fragment = Fragment {
     name: "IssueFields",
     text: concat!(
         "fragment IssueFields on Issue {
-  number title body createdAt state
+  number title body createdAt updatedAt state
   author { __typename login }
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
@@ -1155,7 +1155,7 @@ const ISSUE_FIELDS: Fragment = Fragment {
   subIssues(first: 100) { nodes { number state author { __typename login } } }
   parent { number title body author { __typename login } }
   blockedBy(first: 50) { nodes { number state } }
-  closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt author { __typename login } } }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
   ",
     // Only an issue's status labels need their removals.
     assignment_timeline!(unlabelings),
@@ -1171,6 +1171,7 @@ struct GqlIssue {
     title: String,
     body: String,
     created_at: Timestamp,
+    updated_at: Timestamp,
     state: IssueState,
     author: Option<Actor>,
     labels: Nodes<Name>,
@@ -1192,6 +1193,7 @@ struct GqlClosingPull {
     is_draft: bool,
     merged_at: Option<Timestamp>,
     closed_at: Option<Timestamp>,
+    updated_at: Timestamp,
     author: Option<Actor>,
 }
 
@@ -1204,7 +1206,7 @@ struct GqlClosingPull {
 const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
     name: "ClosedIssueFields",
     text: "fragment ClosedIssueFields on Issue {
-  number title body closedAt stateReason
+  number title body closedAt updatedAt stateReason
   author { __typename login }
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
@@ -1221,6 +1223,7 @@ struct GqlClosedIssue {
     title: String,
     body: String,
     closed_at: Option<Timestamp>,
+    updated_at: Timestamp,
     state_reason: Option<GqlStateReason>,
     author: Option<Actor>,
     labels: Nodes<Name>,
@@ -1261,6 +1264,7 @@ impl GqlClosedIssue {
         Some(ClosedItem {
             number: Number(self.number),
             closed_at,
+            updated_at: self.updated_at,
             kind: ClosedKind::Issue {
                 parent: self.parent.map(|p| p.into_parent(linewright)),
                 filed: Filed::read(&author, &self.title, &self.body, linewright),
@@ -1318,6 +1322,7 @@ impl GqlClosedPull {
             number: Number(self.number),
             title: self.title,
             closed_at: self.closed_at?,
+            updated_at: self.updated_at,
             kind: ClosedKind::Pull {
                 closes: closes(self.closing_issues_references),
             },
@@ -1432,6 +1437,7 @@ impl GqlIssue {
             author,
             open: i.state == IssueState::Open,
             created_at: i.created_at,
+            updated_at: i.updated_at,
             labels: i.labels.nodes.into_iter().map(|l| l.name).collect(),
             assignees: logins(i.assignees),
             comments: i.comments.nodes.into_iter().map(Comment::from).collect(),
@@ -1449,6 +1455,7 @@ impl GqlIssue {
                     number: Number(p.number),
                     state: pull_state(&p.state, p.is_draft, p.merged_at, p.closed_at),
                     author: login(p.author),
+                    updated_at: p.updated_at,
                 })
                 .collect(),
         }
@@ -1496,7 +1503,7 @@ fn pull_state(
 
 const PULL_FIELDS: &str = concat!(
     "fragment PullFields on PullRequest {
-  number title body createdAt baseRefName headRefName headRefOid isDraft state mergedAt closedAt
+  number title body createdAt updatedAt baseRefName headRefName headRefOid isDraft state mergedAt closedAt
   mergeable mergeStateStatus canBeRebased reviewDecision
   author { __typename login }
   ",
@@ -1539,6 +1546,7 @@ struct GqlPull {
     title: String,
     body: String,
     created_at: Timestamp,
+    updated_at: Timestamp,
     base_ref_name: String,
     head_ref_name: String,
     head_ref_oid: String,
@@ -1780,6 +1788,7 @@ impl GqlPull {
             body: self.body,
             author: login(self.author),
             created_at: self.created_at,
+            updated_at: self.updated_at,
             head_ref: self.head_ref_name,
             head_sha: self.head_ref_oid,
             state,
@@ -1881,6 +1890,7 @@ impl GqlMerged {
             body: self.body,
             author: login(self.author),
             merged_at,
+            updated_at: self.updated_at,
             base_ref: self.base_ref_name,
             labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
             closes: closes(self.closing_issues_references),
@@ -2789,7 +2799,8 @@ mod tests {
     fn review_required(requests: &Value) -> GqlPull {
         serde_json::from_value(json!({
             "number": 20, "title": "Do the ticket", "body": "",
-            "createdAt": "2026-10-09T12:00:00Z", "baseRefName": "main",
+            "createdAt": "2026-10-09T12:00:00Z", "updatedAt": "2026-10-09T12:00:00Z",
+            "baseRefName": "main",
             "headRefName": "20-do-the-ticket", "headRefOid": "abc", "isDraft": false,
             "state": "OPEN", "mergedAt": null, "closedAt": null,
             "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED", "canBeRebased": true,
@@ -3052,10 +3063,54 @@ mod tests {
     }
 
     #[test]
+    fn an_issue_is_held_with_when_github_last_updated_it_and_each_pull_request_closing_it() {
+        let issue: GqlIssue =
+            serde_json::from_str(include_str!("fixtures/issue-reopened.json")).unwrap();
+
+        let issue = issue.into_issue(&Login::new("linewright"));
+
+        assert_eq!(issue.updated_at, at("2024-09-19T12:01:27Z"));
+        assert_eq!(
+            issue
+                .closed_by
+                .iter()
+                .map(|pull| pull.updated_at)
+                .collect::<Vec<_>>(),
+            [at("2024-10-30T07:11:13Z")]
+        );
+    }
+
+    /// `fixtures/pull-changes-requested.json`, as in
+    /// [`a_pull_request_is_held_with_githubs_review_decision_and_none_where_github_gives_none`].
+    #[test]
+    fn a_pull_request_is_held_with_when_github_last_updated_it() {
+        let pr: GqlPull =
+            serde_json::from_str(include_str!("fixtures/pull-changes-requested.json")).unwrap();
+
+        let pull = pr.into_pull(vec![], &BranchRules::default());
+
+        assert_eq!(pull.updated_at, at("2026-10-17T14:04:59Z"));
+    }
+
+    /// `fixtures/merged-pull.json` is `MergedFields` as GitHub returned it
+    /// for <https://github.com/tibbe/linewright/pull/477>, a spec change
+    /// Linewright designed after its merge.
+    #[test]
+    fn a_merged_pull_request_is_held_with_when_github_last_updated_it() {
+        let pr: GqlMerged =
+            serde_json::from_str(include_str!("fixtures/merged-pull.json")).unwrap();
+
+        let merged = pr.into_merged(at("2026-10-21T14:56:28Z"), vec![]);
+
+        assert_eq!(merged.updated_at, at("2026-10-21T15:05:15Z"));
+    }
+
+    #[test]
     fn an_issue_lists_its_labelings_unlabelings_and_assignments_with_who_made_them() {
         let issue: GqlIssue = serde_json::from_value(json!({
             "number": 12, "title": "Store gadgets", "body": "",
-            "createdAt": "2026-10-09T12:00:00Z", "state": "OPEN",
+            "createdAt": "2026-10-09T12:00:00Z", "updatedAt": "2026-10-09T12:00:00Z",
+            "state": "OPEN",
             "author": {"__typename": "User", "login": "maintainer"},
             "labels": {"nodes": []},
             "assignees": {"nodes": []},
@@ -3168,7 +3223,8 @@ mod tests {
     fn ticket(parent: &Value, closing: &Value) -> Issue {
         let issue: GqlIssue = serde_json::from_value(json!({
             "number": 12, "title": "Store gadgets", "body": "Gadgets persist.",
-            "createdAt": "2026-10-09T12:00:00Z", "state": "OPEN",
+            "createdAt": "2026-10-09T12:00:00Z", "updatedAt": "2026-10-09T12:00:00Z",
+            "state": "OPEN",
             "author": {"__typename": "User", "login": "linewright"},
             "labels": {"nodes": [{"name": "ready-for-agent"}]},
             "assignees": {"nodes": []},
@@ -3229,15 +3285,20 @@ mod tests {
             &json!([
                 {"number": 40, "state": "CLOSED", "isDraft": false, "mergedAt": null,
                  "closedAt": "2026-10-09T13:00:00Z",
+                 "updatedAt": "2026-10-09T15:00:00Z",
                  "author": {"__typename": "User", "login": "alice"}},
                 {"number": 41, "state": "MERGED", "isDraft": false,
                  "mergedAt": "2026-10-09T14:00:00Z", "closedAt": "2026-10-09T14:00:00Z",
+                 "updatedAt": "2026-10-09T15:00:00Z",
                  "author": {"__typename": "User", "login": "alice"}},
                 {"number": 43, "state": "OPEN", "isDraft": true, "mergedAt": null, "closedAt": null,
+                 "updatedAt": "2026-10-09T15:00:00Z",
                  "author": {"__typename": "User", "login": "alice"}},
                 {"number": 44, "state": "OPEN", "isDraft": false, "mergedAt": null, "closedAt": null,
+                 "updatedAt": "2026-10-09T15:00:00Z",
                  "author": {"__typename": "Bot", "login": "renovate"}},
                 {"number": 45, "state": "OPEN", "isDraft": false, "mergedAt": null, "closedAt": null,
+                 "updatedAt": "2026-10-09T15:00:00Z",
                  "author": {"__typename": "User", "login": "linewright"}},
             ]),
         );
@@ -3256,6 +3317,7 @@ mod tests {
                 number: Number(number),
                 author: Login::new(author),
                 state,
+                updated_at: at("15:00"),
             })
         );
     }
@@ -3377,6 +3439,7 @@ mod tests {
                             issue's tickets"
                         .into(),
                     closed_at: at("2026-10-20T14:10:39Z"),
+                    updated_at: at("2026-10-20T14:10:39Z"),
                     kind: ClosedKind::Issue {
                         parent: None,
                         filed: Some(Filed::Tracking {
@@ -3394,6 +3457,7 @@ mod tests {
                             added"
                         .into(),
                     closed_at: at("2026-10-20T14:10:32Z"),
+                    updated_at: at("2026-10-20T14:10:32Z"),
                     kind: ClosedKind::Issue {
                         parent: Some(Parent {
                             number: Number(387),
@@ -3477,6 +3541,7 @@ mod tests {
                 title: "Restore the to-tickets skill to upstream, then make it non-interactive"
                     .into(),
                 closed_at: at("2026-10-18T07:30:05Z"),
+                updated_at: at("2026-10-18T07:30:05Z"),
                 kind: ClosedKind::Pull { closes: vec![] },
             }]
         );

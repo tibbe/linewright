@@ -1,0 +1,79 @@
+{
+  "number": 477,
+  "title": "Order the board's lanes by last change, and mark stalled hand-backs",
+  "body": "## Summary\n\nSpec-only change. The board stopped hoisting Needs a person lanes and orders every unfinished lane by its last change; a stall is a new kind of hand-back with its own label and card line.\n\n```diff\n Order of lanes\n-  lanes with a card in Needs a person, by number\n-  other unfinished lanes, by number\n+  unfinished lanes, latest changed first\n+    a run in flight is happening now\n   finished lanes, latest finished first\n\n Card line\n+  Triage, Needs a person, Ready: ends with how long it has sat in its column\n+  Needs a person: \"stalled\"           when it holds linewright:stalled\n+  In review:      \"stalled\"           before \"checks failed\" etc.\n\n Hand-back\n+  a stall: the work failed, no decision wanted\n+    labels linewright:stalled, cleared when Linewright next works the item\n+    explain says the item is stalled\n```\n\nFiles: `docs/specs/design_system.md`, `docs/specs/repository.md`, `docs/specs/monitoring.md`, `GLOSSARY.md` (new term **Stall**).\n\n## Evidence\n\n- **Before:** the lanes with a hand-back or needs-info card sat at the top of the board for days while implementation runs and reviews sat below them; the order within a group was issue number, so the rule was not visible on the page.\n  **After:** spec review found five issues in the draft (cases instead of a rule, a wrong derivation for spec changes, an undecided Working card, a rule stated three times, and one question); four fixed, the fifth kept as decided. `scripts/check` passes: 947 tests, fmt, markdown, clippy, doc.\n\n## Merge Danger\n\n**Door:** two-way\n\nThe spec leads the code; this merge changes what is to be built, not what runs. Reverting the spec is a revert of four Markdown files.\n\n**Blast Radius:** board\n\nThe code that follows will reorder every lane on the board and add a label to the repository's label set. Nothing changes until that code lands.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+  "mergedAt": "2026-10-21T14:56:28Z",
+  "updatedAt": "2026-10-21T15:05:15Z",
+  "baseRefName": "main",
+  "author": {
+    "__typename": "User",
+    "login": "tibbe"
+  },
+  "closingIssuesReferences": {
+    "nodes": []
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "linewright:designed"
+      }
+    ]
+  },
+  "assignees": {
+    "nodes": []
+  },
+  "files": {
+    "pageInfo": {
+      "hasNextPage": false
+    },
+    "nodes": [
+      {
+        "path": "GLOSSARY.md"
+      },
+      {
+        "path": "docs/specs/design_system.md"
+      },
+      {
+        "path": "docs/specs/monitoring.md"
+      },
+      {
+        "path": "docs/specs/repository.md"
+      }
+    ]
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "AssignedEvent",
+        "createdAt": "2026-10-21T14:57:09Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2026-10-21T15:05:13Z",
+        "label": {
+          "name": "linewright:designed"
+        }
+      },
+      {
+        "__typename": "UnassignedEvent",
+        "createdAt": "2026-10-21T15:05:14Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  }
+}

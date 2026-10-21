@@ -46,6 +46,7 @@ pub fn ticket(number: u64, title: &str) -> Issue {
         author: Login::new("maintainer"),
         open: true,
         created_at: at("2026-09-30T09:00:00Z"),
+        updated_at: at("2026-09-30T09:00:00Z"),
         labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
         assignees: vec![],
         comments: vec![],
@@ -82,6 +83,7 @@ pub fn closed_by(issue: Issue, pr: u64, author: &str) -> Issue {
             number: Number(pr),
             author: Login::new(author),
             state: PullState::Open { draft: false },
+            updated_at: at("2026-09-30T09:00:00Z"),
         }],
         ..issue
     }

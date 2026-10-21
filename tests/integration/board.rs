@@ -81,6 +81,7 @@ fn pull(number: u64, closes: &[u64], checks: &[CheckState]) -> Pull {
         body: String::new(),
         author: Login::new("factory"),
         created_at: at("2026-10-01T11:58:00Z"),
+        updated_at: at("2026-10-01T11:58:00Z"),
         head_ref: format!("{number}-pull"),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: false },
@@ -123,6 +124,7 @@ fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedI
         number: Number(number),
         title: format!("Ticket {number}"),
         closed_at: at(closed_at),
+        updated_at: at(closed_at),
         kind: ClosedKind::Issue {
             parent: None,
             filed: None,
@@ -432,6 +434,7 @@ fn spec_change(number: u64, labels: &[&str]) -> MergedPull {
         body: String::new(),
         author: Login::new("maintainer"),
         merged_at: at("2026-10-01T09:00:00Z"),
+        updated_at: at("2026-10-01T09:00:00Z"),
         base_ref: "main".into(),
         labels: labels.iter().map(ToString::to_string).collect(),
         closes: vec![],
@@ -648,6 +651,7 @@ fn an_issue_in_review_on_someone_elses_pull_request_names_them() {
             number: Number(20),
             author: Login::new("alice"),
             state: PullState::Open { draft: true },
+            updated_at: at("2026-09-30T09:00:00Z"),
         }],
         ..ticket(2, "Not held")
     };

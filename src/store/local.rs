@@ -106,6 +106,7 @@ struct PullRecord {
     body: String,
     author: Login,
     created_at: Timestamp,
+    updated_at: Timestamp,
     head_ref: String,
     state: PullState,
     labels: Vec<String>,
@@ -259,6 +260,7 @@ impl LocalStore {
                     author: Login::new(author),
                     open: true,
                     created_at: now,
+                    updated_at: now,
                     labels: labels.iter().map(ToString::to_string).collect(),
                     assignees: vec![],
                     comments: vec![],
@@ -285,16 +287,15 @@ impl LocalStore {
     }
 
     pub fn comment_as(&self, author: &str, number: Number, body: &str) -> Result<()> {
+        let now = self.now();
         let comment = Comment {
             author: Login::new(author),
             body: body.into(),
-            created_at: self.now(),
+            created_at: now,
         };
-        let mut state = self.state();
-        if let Some(issue) = state.issues.get_mut(&number) {
-            issue.issue.comments.push(comment);
-        } else {
-            state.pull_mut(number)?.comments.push(comment);
+        match self.state().item_written(number, now)? {
+            Written::Issue(record) => record.issue.comments.push(comment),
+            Written::Pull(pull) => pull.comments.push(comment),
         }
         Ok(())
     }
@@ -330,14 +331,16 @@ impl LocalStore {
 
     pub fn close_issue_as(&self, issue: Number, reason: IssueCloseReason) -> Result<()> {
         let now = self.now();
-        self.state().issue_mut(issue)?.close(now, None, reason);
+        self.state()
+            .issue_written(issue, now)?
+            .close(now, None, reason);
         Ok(())
     }
 
     pub fn reopen_issue_as(&self, issue: Number) -> Result<()> {
         let now = self.now();
         let mut state = self.state();
-        let record = state.issue_mut(issue)?;
+        let record = state.issue_written(issue, now)?;
         record.closing = None;
         record.issue.events.push(IssueEvent::Reopened { at: now });
         Ok(())
@@ -446,9 +449,9 @@ impl LocalStore {
     /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>).
     async fn merge_as(&self, pr: Number, by: &str, method: MergeMethod) -> Result<()> {
         let (head_ref, title, default_branch) = {
-            let mut state = self.state();
+            let state = self.state();
             let default_branch = state.default_branch.clone();
-            let record = state.pull_mut(pr)?;
+            let record = state.pull(pr)?;
             (
                 record.head_ref.clone(),
                 record.title.clone(),
@@ -494,52 +497,54 @@ impl LocalStore {
         let files = git::changed_files(&dir, &before).await?;
         let now = self.now();
         let mut state = self.state();
-        let record = state.pull_mut(pr)?;
+        let record = state.pull_written(pr, now)?;
         record.state = PullState::Merged { at: now };
         record.merge = Some((before, after));
         record.files = files;
         let closes = closing_references(&record.body);
         for issue in closes {
-            if let Ok(issue) = state.issue_mut(issue) {
+            if let Ok(issue) = state.issue_written(issue, now) {
                 issue.close(now, Some(pr), IssueCloseReason::Completed);
             }
         }
         Ok(())
     }
 
+    // The branch rules and GitHub's working out of whether a pull request
+    // merges are no writes to it, so they leave when it was last updated.
     pub fn block_merge(&self, pr: Number, requires: Vec<Requirement>) {
-        if let Ok(record) = self.state().pull_mut(pr) {
+        if let Some(record) = self.state().pulls.get_mut(&pr) {
             record.blocked = Some(requires);
         }
     }
 
     /// Has the branch rules require a review of the pull request.
     pub fn require_review(&self, pr: Number) {
-        if let Ok(record) = self.state().pull_mut(pr) {
+        if let Some(record) = self.state().pulls.get_mut(&pr) {
             record.review_ruled = true;
         }
     }
 
     pub fn allow_merge(&self, pr: Number) {
-        if let Ok(record) = self.state().pull_mut(pr) {
+        if let Some(record) = self.state().pulls.get_mut(&pr) {
             record.blocked = None;
         }
     }
 
     pub fn pend_merge_state(&self, pr: Number) {
-        if let Ok(record) = self.state().pull_mut(pr) {
+        if let Some(record) = self.state().pulls.get_mut(&pr) {
             record.merge_state_pending = true;
         }
     }
 
     pub fn work_out_merge_state(&self, pr: Number) {
-        if let Ok(record) = self.state().pull_mut(pr) {
+        if let Some(record) = self.state().pulls.get_mut(&pr) {
             record.merge_state_pending = false;
         }
     }
 
     pub fn refuse_merges(&self, pr: Number, reason: &str) {
-        if let Ok(record) = self.state().pull_mut(pr) {
+        if let Some(record) = self.state().pulls.get_mut(&pr) {
             record.refused = Some(reason.to_string());
         }
     }
@@ -582,7 +587,7 @@ impl LocalStore {
     }
 
     pub fn accept_merges(&self, pr: Number) {
-        if let Ok(record) = self.state().pull_mut(pr) {
+        if let Some(record) = self.state().pulls.get_mut(&pr) {
             record.refused = None;
         }
     }
@@ -611,7 +616,7 @@ impl LocalStore {
 
     pub fn close_pull_as(&self, pr: Number) -> Result<()> {
         let now = self.now();
-        self.state().pull_mut(pr)?.state = PullState::Closed { at: now };
+        self.state().pull_written(pr, now)?.state = PullState::Closed { at: now };
         Ok(())
     }
 
@@ -627,7 +632,7 @@ impl LocalStore {
         let now = self.now();
         let author = Login::new(author);
         let mut store = self.state();
-        let record = store.pull_mut(pr)?;
+        let record = store.pull_written(pr, now)?;
         for (path, comment) in inline {
             let id = format!("T{}-{}", pr.0, record.threads.len() + 1);
             record.threads.push(Thread {
@@ -652,9 +657,13 @@ impl LocalStore {
 
     /// On the pull request's current head.
     pub async fn set_checks(&self, pr: Number, checks: Vec<CheckRecord>) -> Result<()> {
-        let head_ref = self.state().pull_mut(pr)?.head_ref.clone();
+        let head_ref = self.state().pull(pr)?.head_ref.clone();
         let head = self.rev(&head_ref).await?;
-        self.state().pull_mut(pr)?.checks.insert(head, checks);
+        let now = self.now();
+        self.state()
+            .pull_written(pr, now)?
+            .checks
+            .insert(head, checks);
         Ok(())
     }
 
@@ -810,6 +819,7 @@ impl LocalStore {
                     by: by.clone(),
                     at: now,
                 });
+                pull.updated_at = now;
             }
         }
     }
@@ -854,9 +864,9 @@ impl LocalStore {
 
     async fn pull_diff(&self, pr: Number) -> Result<String> {
         let (merge, head_ref, default_branch) = {
-            let mut state = self.state();
+            let state = self.state();
             let default_branch = state.default_branch.clone();
-            let record = state.pull_mut(pr)?;
+            let record = state.pull(pr)?;
             (
                 record.merge.clone(),
                 record.head_ref.clone(),
@@ -872,9 +882,9 @@ impl LocalStore {
 
     async fn pull_view(&self, number: Number) -> Result<Pull> {
         let (record, default_branch) = {
-            let mut state = self.state();
+            let state = self.state();
             let default_branch = state.default_branch.clone();
-            (state.pull_mut(number)?.clone(), default_branch)
+            (state.pull(number)?.clone(), default_branch)
         };
         let head_sha = self.rev(&record.head_ref).await.unwrap_or_default();
         let mergeability = match record.state {
@@ -918,6 +928,7 @@ impl LocalStore {
             body: record.body,
             author: record.author,
             created_at: record.created_at,
+            updated_at: record.updated_at,
             head_ref: record.head_ref,
             head_sha,
             state: record.state,
@@ -994,15 +1005,45 @@ impl State {
         number
     }
 
-    fn issue_mut(&mut self, number: Number) -> Result<&mut IssueRecord> {
-        self.issues
-            .get_mut(&number)
+    /// The issue #`number`, written to at `now`, which moves when it was
+    /// last updated as GitHub's `updatedAt` moves on every write.
+    fn issue_written(&mut self, number: Number, now: Timestamp) -> Result<&mut IssueRecord> {
+        self.item_written(number, now)?
+            .issue()
             .with_context(|| format!("no issue {number}"))
     }
 
-    fn pull_mut(&mut self, number: Number) -> Result<&mut PullRecord> {
+    /// The pull request #`number`, written to at `now`, as
+    /// [`State::issue_written`].
+    fn pull_written(&mut self, number: Number, now: Timestamp) -> Result<&mut PullRecord> {
+        self.item_written(number, now)?
+            .pull()
+            .with_context(|| format!("no pull request {number}"))
+    }
+
+    /// The issue or pull request #`number`, written to at `now`, as
+    /// [`State::issue_written`].
+    fn item_written(&mut self, number: Number, now: Timestamp) -> Result<Written<'_>> {
+        let mut item = self.item_mut(number)?;
+        item.write(now);
+        Ok(item)
+    }
+
+    /// The issue or pull request #`number`, written to only once
+    /// [`Written::write`] says so.
+    fn item_mut(&mut self, number: Number) -> Result<Written<'_>> {
+        if let Some(record) = self.issues.get_mut(&number) {
+            return Ok(Written::Issue(record));
+        }
         self.pulls
             .get_mut(&number)
+            .map(Written::Pull)
+            .with_context(|| format!("no issue or pull request {number}"))
+    }
+
+    fn pull(&self, number: Number) -> Result<&PullRecord> {
+        self.pulls
+            .get(&number)
             .with_context(|| format!("no pull request {number}"))
     }
 
@@ -1043,6 +1084,7 @@ impl State {
                     number: p.number,
                     author: p.author.clone(),
                     state: p.state,
+                    updated_at: p.updated_at,
                 })
                 .collect(),
             ..issue.clone()
@@ -1058,6 +1100,7 @@ impl State {
             number: issue.number,
             title: issue.title,
             closed_at: closing.at,
+            updated_at: issue.updated_at,
             kind: ClosedKind::Issue {
                 parent: issue.parent,
                 filed: issue.filed,
@@ -1083,39 +1126,45 @@ impl State {
     }
 
     fn add_label(&mut self, number: Number, label: &str, now: Timestamp) -> Result<()> {
-        if let Some(issue) = self.issues.get_mut(&number) {
-            if !issue.issue.has_label(label) {
-                issue.issue.labels.push(label.into());
-                issue.issue.events.push(IssueEvent::Labeled {
+        match self.item_mut(number)? {
+            Written::Issue(record) if !record.issue.has_label(label) => {
+                let issue = &mut record.issue;
+                issue.updated_at = now;
+                issue.labels.push(label.into());
+                issue.events.push(IssueEvent::Labeled {
                     label: label.into(),
                     at: now,
                 });
             }
-        } else {
-            let pull = self.pull_mut(number)?;
-            if !pull.has_label(label) {
+            Written::Pull(pull) if !pull.has_label(label) => {
+                pull.updated_at = now;
                 pull.labels.push(label.into());
                 pull.labelings.push(Labeling {
                     label: label.into(),
                     at: now,
                 });
             }
+            Written::Issue(_) | Written::Pull(_) => {}
         }
         Ok(())
     }
 
     fn remove_label(&mut self, number: Number, label: &str, now: Timestamp) -> Result<()> {
-        if let Some(issue) = self.issues.get_mut(&number) {
-            let issue = &mut issue.issue;
-            if issue.has_label(label) {
+        match self.item_mut(number)? {
+            Written::Issue(record) if record.issue.has_label(label) => {
+                let issue = &mut record.issue;
+                issue.updated_at = now;
                 issue.labels.retain(|l| l != label);
                 issue.events.push(IssueEvent::Unlabeled {
                     label: label.into(),
                     at: now,
                 });
             }
-        } else {
-            self.pull_mut(number)?.labels.retain(|l| l != label);
+            Written::Pull(pull) if pull.has_label(label) => {
+                pull.updated_at = now;
+                pull.labels.retain(|l| l != label);
+            }
+            Written::Issue(_) | Written::Pull(_) => {}
         }
         Ok(())
     }
@@ -1132,7 +1181,7 @@ impl State {
             actor: actor.clone(),
             at: now,
         };
-        self.change_assignees(number, assigned)
+        self.change_assignees(number, assigned, now)
     }
 
     fn unassign(
@@ -1147,24 +1196,61 @@ impl State {
             actor: actor.clone(),
             at: now,
         };
-        self.change_assignees(number, unassigned)
+        self.change_assignees(number, unassigned, now)
     }
 
-    /// Records `change` on the issue or pull request #`number`, unless it
-    /// changes nothing.
-    fn change_assignees(&mut self, number: Number, change: Assignment) -> Result<()> {
-        if let Some(record) = self.issues.get_mut(&number) {
-            let issue = &mut record.issue;
-            if changed(&mut issue.assignees, &change) {
-                issue.events.push(IssueEvent::Assignment(change));
-            }
-        } else {
-            let pull = self.pull_mut(number)?;
-            if changed(&mut pull.assignees, &change) {
-                pull.assignments.push(change);
-            }
+    /// Records `change` on the issue or pull request #`number` at `now`,
+    /// unless it changes nothing.
+    fn change_assignees(
+        &mut self,
+        number: Number,
+        change: Assignment,
+        now: Timestamp,
+    ) -> Result<()> {
+        let mut item = self.item_mut(number)?;
+        let changed = match &mut item {
+            Written::Issue(record) => changed(&mut record.issue.assignees, &change),
+            Written::Pull(pull) => changed(&mut pull.assignees, &change),
+        };
+        if !changed {
+            return Ok(());
+        }
+        item.write(now);
+        match item {
+            Written::Issue(record) => record.issue.events.push(IssueEvent::Assignment(change)),
+            Written::Pull(pull) => pull.assignments.push(change),
         }
         Ok(())
+    }
+}
+
+/// An issue's or a pull request's record, to write to.
+enum Written<'a> {
+    Issue(&'a mut IssueRecord),
+    Pull(&'a mut PullRecord),
+}
+
+impl<'a> Written<'a> {
+    /// Moves when it was last updated to `now`, as a write does.
+    fn write(&mut self, now: Timestamp) {
+        match self {
+            Written::Issue(record) => record.issue.updated_at = now,
+            Written::Pull(pull) => pull.updated_at = now,
+        }
+    }
+
+    fn issue(self) -> Option<&'a mut IssueRecord> {
+        match self {
+            Written::Issue(record) => Some(record),
+            Written::Pull(_) => None,
+        }
+    }
+
+    fn pull(self) -> Option<&'a mut PullRecord> {
+        match self {
+            Written::Pull(pull) => Some(pull),
+            Written::Issue(_) => None,
+        }
     }
 }
 
@@ -1205,6 +1291,7 @@ impl PullRecord {
             number: self.number,
             title: self.title.clone(),
             closed_at: at,
+            updated_at: self.updated_at,
             kind: ClosedKind::Pull {
                 closes: closing_references(&self.body),
             },
@@ -1274,6 +1361,7 @@ impl PullRecord {
             body: self.body.clone(),
             author: self.author.clone(),
             merged_at: at,
+            updated_at: self.updated_at,
             base_ref: default_branch.to_string(),
             labels: self.labels.clone(),
             closes: closing_references(&self.body),
@@ -1297,6 +1385,7 @@ impl PullRecord {
             body: body.into(),
             author,
             created_at: now,
+            updated_at: now,
             head_ref: head_ref.into(),
             state: PullState::Open { draft: true },
             labels: vec![],
@@ -1524,9 +1613,9 @@ impl Store for LocalStore {
 
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String> {
         let (merge, head_ref, default_branch) = {
-            let mut state = self.state();
+            let state = self.state();
             let default_branch = state.default_branch.clone();
-            let record = state.pull_mut(pr)?;
+            let record = state.pull(pr)?;
             (
                 record.merge.clone(),
                 record.head_ref.clone(),
@@ -1544,11 +1633,11 @@ impl Store for LocalStore {
     }
 
     async fn check_failures(&self, pr: Number, checks: &[String]) -> Result<Vec<CheckFailure>> {
-        let head_ref = self.state().pull_mut(pr)?.head_ref.clone();
+        let head_ref = self.state().pull(pr)?.head_ref.clone();
         let head = self.rev(&head_ref).await?;
-        let mut state = self.state();
+        let state = self.state();
         let records = state
-            .pull_mut(pr)?
+            .pull(pr)?
             .checks
             .get(&head)
             .cloned()
@@ -1714,11 +1803,10 @@ impl Store for LocalStore {
     }
 
     async fn edit_body(&self, number: Number, body: &str) -> Result<()> {
-        let mut state = self.state();
-        if let Some(issue) = state.issues.get_mut(&number) {
-            issue.issue.body = body.into();
-        } else {
-            state.pull_mut(number)?.body = body.into();
+        let now = self.now();
+        match self.state().item_written(number, now)? {
+            Written::Issue(record) => record.issue.body = body.into(),
+            Written::Pull(pull) => pull.body = body.into(),
         }
         Ok(())
     }
@@ -1728,19 +1816,24 @@ impl Store for LocalStore {
     }
 
     async fn set_issue_type(&self, issue: Number, issue_type: &str) -> Result<()> {
-        self.state().issue_mut(issue)?.issue_type = Some(issue_type.into());
+        let now = self.now();
+        self.state().issue_written(issue, now)?.issue_type = Some(issue_type.into());
         Ok(())
     }
 
     async fn add_sub_issue(&self, parent: Number, child: Number) -> Result<()> {
-        self.state().issue_mut(child)?;
-        self.state().issue_mut(parent)?.sub_issues.push(child);
+        let now = self.now();
+        let mut state = self.state();
+        state.issue_written(child, now)?;
+        state.issue_written(parent, now)?.sub_issues.push(child);
         Ok(())
     }
 
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()> {
-        self.state().issue_mut(blocker)?;
-        self.state().issue_mut(issue)?.blocked_by.push(blocker);
+        let now = self.now();
+        let mut state = self.state();
+        state.issue_written(blocker, now)?;
+        state.issue_written(issue, now)?.blocked_by.push(blocker);
         Ok(())
     }
 
@@ -1766,7 +1859,8 @@ impl Store for LocalStore {
     }
 
     async fn mark_ready(&self, pr: Number) -> Result<()> {
-        self.state().pull_mut(pr)?.state = PullState::Open { draft: false };
+        let now = self.now();
+        self.state().pull_written(pr, now)?.state = PullState::Open { draft: false };
         Ok(())
     }
 
@@ -1775,8 +1869,9 @@ impl Store for LocalStore {
     }
 
     async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()> {
+        let now = self.now();
         let mut state = self.state();
-        let requested = &mut state.pull_mut(pr)?.requested_reviewers;
+        let requested = &mut state.pull_written(pr, now)?.requested_reviewers;
         for reviewer in reviewers {
             if !requested.contains(reviewer) {
                 requested.push(reviewer.clone());
@@ -1787,8 +1882,8 @@ impl Store for LocalStore {
 
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
         let (state, head_ref, blocked, refused) = {
-            let mut state = self.state();
-            let record = state.pull_mut(pr)?;
+            let state = self.state();
+            let record = state.pull(pr)?;
             (
                 record.state,
                 record.head_ref.clone(),
@@ -1822,7 +1917,7 @@ impl Store for LocalStore {
         let mut state = self.state();
         let linewright = state.linewright.clone();
         let thread = state
-            .pull_mut(pr)?
+            .pull_written(pr, now)?
             .threads
             .iter_mut()
             .find(|t| t.id == thread)
@@ -1836,9 +1931,10 @@ impl Store for LocalStore {
     }
 
     async fn resolve_thread(&self, pr: Number, thread: &str) -> Result<()> {
+        let now = self.now();
         let mut state = self.state();
         let thread = state
-            .pull_mut(pr)?
+            .pull_written(pr, now)?
             .threads
             .iter_mut()
             .find(|t| t.id == thread)
