@@ -23,7 +23,7 @@ and `lw logs 42 --follow` shows the agent waiting on a test that hangs.
 5. As an agent, I want the same answers as compact text, and as JSON where
    I extract fields, so that I spend little context and can script against
    them.
-6. As an operator away from Linewright's host, I want the same answers in a
+6. As an operator away from Linewright's host, I want the same facts in a
    browser, so that I follow the pipeline from wherever I am.
 7. As a maintainer, I want to see where my spec change or issue stands and
    what it waits for, as soon as it changes, so that I do not wait on GitHub

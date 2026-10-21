@@ -42,12 +42,14 @@
 
 ## The web UI
 
-`serve` serves a web UI that shows the commands' answers in a browser.
+`serve` serves a web UI for the maintainers: the facts the monitoring
+commands show ([Monitoring](monitoring.md)), chosen and laid out for
+someone scanning a page, in the UI's own words rather than a command's.
 
 | Page        | Path           | Shows                                                       |
 | ----------- | -------------- | ----------------------------------------------------------- |
 | board       | `/`            | the managed items as cards ([The board](#the-board))        |
-| item        | `/items/N`     | what `explain N` shows                                      |
+| item        | `/items/N`     | where #N stands, what it waits for and its runs             |
 | runs        | `/runs`        | what `runs` lists, with its narrowing as filters            |
 | run         | `/runs/ID`     | what `logs` shows of run ID ([The run page](#the-run-page))  |
 | automations | `/automations` | the automations ([The automations page](#the-automations-page)) |
@@ -110,15 +112,48 @@ order:
 
 ### Cards
 
-A card says what the item is and, in one line, what the pipeline is doing or
-waiting for on it.
+A card is the item's number and title and, under them, at most one line that
+says what its column does not: what sets the item apart from the rest of its
+column, or what a person acts on. A card with nothing to add is the title
+alone.
 
-| Part             | Holds                                                                        |
-| ---------------- | ---------------------------------------------------------------------------- |
-| number and title | `#N` and the title, linking to the item page                                 |
-| where it stands  | where it is in the pipeline, as `explain` words it                           |
-| the line         | its run in flight, as the stage and how long it has run; or else each thing it waits for, as `explain` words it; or, in Done, how it ended: merged by which pull request, closed without merging, or closed |
-| pull request     | its pull request, where it has one, with the pull request's CI state         |
+- **Pull requests.** A card that is a pull request carries a pull request
+  icon beside its number.
+- **The first that holds.** Where more than one row of a column holds, the
+  line is the first.
+- **When.** In Done, the line ends with when the item closed.
+
+| Column         | The line                                                                                                                                                                                                                                                               | When                                                                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Triage         | nothing                                                                                                                                                                                                                                                                |                                                                                                                                                         |
+| Needs a person | "reporter asked"                                                                                                                                                                                                                                                       | it holds `needs-info`                                                                                                                                   |
+|                | "handed back"                                                                                                                                                                                                                                                          | it holds `ready-for-human`, and Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged              |
+|                | "decision needed"                                                                                                                                                                                                                                                      | it holds `ready-for-human` otherwise                                                                                                                    |
+| Ready          | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |
+|                | "assigned to alice"                                                                                                                                                                                                                                                    | someone other than Linewright is assigned to it                                                                                                         |
+|                | "paused for the usage limit", "paused for the drain"                                                                                                                                                                                                                   | it would start, but for the hold                                                                                                                        |
+|                | "queued"                                                                                                                                                                                                                                                               | it would start, but the runs in flight are at `max-runs`                                                                                                |
+|                | nothing                                                                                                                                                                                                                                                                | otherwise: the next poll acts on it                                                                                                                     |
+| Working        | its stage and how long it has run, "implementation · 12 min"                                                                                                                                                                                                           | a run is in flight                                                                                                                                      |
+|                | "paused for the usage limit", "paused for the drain", "queued"                                                                                                                                                                                                         | no run is in flight, as in Ready                                                                                                                        |
+| In review      | its pull request, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" |
+| Done           | "closed in #42"                                                                                                                                                                                                                                                        | an issue closed by a merged pull request                                                                                                                |
+|                | "closed as completed", "closed as not planned" or "closed as a duplicate", GitHub's reason; "closed" where the reason is not known                                                                                                                                     | an issue closed otherwise                                                                                                                               |
+|                | "merged"                                                                                                                                                                                                                                                               | a pull request of Linewright's merged                                                                                                                   |
+|                | "closed without merging"                                                                                                                                                                                                                                               | a pull request of Linewright's closed unmerged                                                                                                          |
+|                | "merged · nothing to build"                                                                                                                                                                                                                                            | a spec change designed with nothing to build                                                                                                            |
+
+What stops a pull request merging, in the order the line picks from:
+
+| What stops it merging                                     | When                                       |
+| --------------------------------------------------------- | ------------------------------------------ |
+| its stage and how long it has run, as in Working          | a run is in flight on it                   |
+| "checks failed"                                           | a check failed                             |
+| "checks running"                                          | a check has not finished                   |
+| "conflicts"                                               | it cannot merge cleanly                    |
+| "behind main", naming the default branch                  | it is behind the default branch            |
+| "draft"                                                   | it is a draft                              |
+| "changes requested", "review required" or "approved"      | the review decision, as GitHub words it    |
 
 ### The run page
 

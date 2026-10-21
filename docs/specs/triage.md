@@ -50,7 +50,7 @@ The label says who must answer, and how.
   the people it asks, those GitHub lets it assign, and names them all in the
   comment. A reply, a comment from anyone other than Linewright posted after
   its question, puts the issue back to `needs-triage`.
-- **`ready-for-human`.** The maintainer answers with a label,
+- **`ready-for-human`.** A maintainer answers with a label,
   `ready-for-agent` to implement as decided or `needs-triage` to triage
   again.
 

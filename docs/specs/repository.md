@@ -7,7 +7,7 @@ repository rather than owning it. GitHub is both how people steer it and
 where they see what it is doing, so working with Linewright needs nothing but
 GitHub, and a comment on the issue or pull request records every outcome.
 
-For example, the maintainer hands an issue to Linewright by labeling it, and
+For example, a maintainer hands an issue to Linewright by labeling it, and
 sees that Linewright has taken it on because the issue is assigned to
 Linewright.
 When Linewright cannot finish it, a comment on the issue says why.
@@ -35,7 +35,7 @@ it.
 
 - **Linewright's account.** Its token lets it push branches, open pull
   requests, and read and write issues and labels. Everything Linewright does
-  on GitHub carries that identity, so the maintainer can review its PRs and
+  on GitHub carries that identity, so a maintainer can review its PRs and
   see its claims as assignments. With `--auto-merge`, the account must not be
   able to bypass the default branch's rules (no admin rights, not on a
   ruleset's bypass list), or the reviews they require are skipped.
