@@ -7,15 +7,9 @@
 {%- for card in cell.cards %}
 <li class="card card-border card-sm bg-base-200">
 <div class="card-body gap-1">
-<h3 class="card-title line-clamp-2 text-sm hover:line-clamp-none focus-within:line-clamp-none">{{ card.heading|safe }}</h3>
-<p class="standing text-base-content/70">{{ card.standing|safe }}</p>
-<ul class="line space-y-1">
-{%- for line in card.line %}
-<li>{% call ui::status(line.tone, line.word) %}{% endcall %}{{ line.rest|safe }}</li>
-{%- endfor %}
-</ul>
-{%- if let Some(pull) = card.pull %}
-<p class="pull">pull request: {{ pull.item|safe }}, {% if let Some(tone) = pull.tone %}{% call ui::status(tone, pull.ci) %}{% endcall %}{% else %}{{ pull.ci }}{% endif %}</p>
+<h3 class="card-title line-clamp-2 text-sm hover:line-clamp-none focus-within:line-clamp-none">{% if card.pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ card.heading|safe }}</h3>
+{%- if let Some(line) = card.line %}
+<p class="line text-base-content/70">{{ line|safe }}</p>
 {%- endif %}
 </div>
 </li>

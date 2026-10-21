@@ -611,7 +611,7 @@ pub(crate) fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
 /// The board of `serve`'s view now: an empty one before the first poll.
 pub(crate) fn board_answer(sources: &Sources) -> Board {
     let view = view(sources);
-    view.map(|view| board::board(&view, sources.clock.now()))
+    view.map(|view| board::board(&view, &recorded_or_none(sources), sources.clock.now()))
         .unwrap_or_default()
 }
 

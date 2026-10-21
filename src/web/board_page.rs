@@ -11,10 +11,9 @@ use tokio_util::sync::CancellationToken;
 use super::html::{self, Html};
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
-use crate::board::{Board, Card, CardLine, Column, Ended, Lane, LaneHead};
-use crate::explain;
-use crate::phrase::{Phrase, Tone};
-use crate::status;
+use crate::board::{Board, Card, CardLine, Column, Ended, Hold, Lane, LaneHead, Running, Stop};
+use crate::phrase::Phrase;
+use crate::reconcile::WorkKind;
 
 /// The board (`docs/specs/design_system.md`, The board), ready for the page.
 struct BoardShown {
@@ -42,23 +41,9 @@ struct CellShown {
 /// A card (`docs/specs/design_system.md`, Cards).
 struct CardShown {
     heading: Html,
-    standing: Html,
-    /// Its run in flight, each wait, or how it ended.
-    line: Vec<StatusShown>,
-    pull: Option<PullShown>,
-}
-
-/// A status's word and what follows it.
-struct StatusShown {
-    tone: Tone,
-    word: &'static str,
-    rest: Html,
-}
-
-struct PullShown {
-    item: Html,
-    tone: Option<Tone>,
-    ci: &'static str,
+    /// Whether it carries the pull request icon.
+    pull_request: bool,
+    line: Option<Html>,
 }
 
 impl BoardShown {
@@ -133,59 +118,80 @@ fn counted(n: usize, thing: &str) -> String {
 
 impl CardShown {
     fn of(card: &Card, repo: &str) -> CardShown {
-        let html = |phrase: &Phrase| html::phrase(phrase, repo);
-        let after = |phrase: &Phrase| html::escape(": ").then(&html(phrase));
-        let line = match &card.line {
-            CardLine::Run(run) => vec![StatusShown {
-                tone: Tone::InProgress,
-                word: "run in flight",
-                rest: after(&run.describe()),
-            }],
-            CardLine::Waits(waits) => {
-                let mut waits: Vec<Phrase> = waits.iter().map(status::describe_wait).collect();
-                if waits.is_empty() {
-                    waits.push(explain::NOTHING_WAITED_FOR.into());
-                }
-                waits
-                    .iter()
-                    .map(|wait| StatusShown {
-                        tone: Tone::Pending,
-                        word: "waiting for",
-                        rest: after(wait),
-                    })
-                    .collect()
-            }
-            CardLine::Ended { ended, .. } => vec![ended_shown(*ended, repo)],
-        };
         CardShown {
             heading: html::titled(card.number, &card.title, repo),
-            standing: html(&card.standing),
-            line,
-            pull: card.pull.map(|pull| PullShown {
-                item: html::item(pull.pull_request, repo),
-                tone: pull.ci.tone(),
-                ci: pull.ci.describe(),
-            }),
+            pull_request: card.pull_request,
+            line: card
+                .line
+                .as_ref()
+                .map(|line| html::phrase(&worded(line), repo)),
         }
     }
 }
 
-fn ended_shown(ended: Ended, repo: &str) -> StatusShown {
-    let (tone, word, rest) = match ended {
-        Ended::MergedBy(pull) => (
-            Tone::Success,
-            "merged",
-            html::escape(" by ").then(&html::item(pull, repo)),
-        ),
-        Ended::ClosedUnmerged => (Tone::Cancelled, "closed without merging", Html::default()),
-        Ended::Closed => (Tone::Cancelled, "closed", Html::default()),
-        Ended::NothingToBuild => (
-            Tone::Success,
-            "designed",
-            html::escape(": nothing to build"),
-        ),
+/// `line` in the UI's own words.
+fn worded(line: &CardLine) -> Phrase {
+    match line {
+        CardLine::ReporterAsked => "reporter asked".into(),
+        CardLine::HandedBack => "handed back".into(),
+        CardLine::DecisionNeeded => "decision needed".into(),
+        CardLine::BlockedBy(issue) => Phrase::from("blocked by ").item(*issue),
+        CardLine::AssignedTo(assignee) => format!("assigned to {assignee}").into(),
+        CardLine::Paused(Hold::UsageLimit) => "paused for the usage limit".into(),
+        CardLine::Paused(Hold::Drain) => "paused for the drain".into(),
+        CardLine::Queued => "queued".into(),
+        CardLine::Running(running) => running_worded(*running),
+        CardLine::Review {
+            pull_request,
+            author,
+            stops,
+        } => {
+            let phrase = Phrase::default().item(*pull_request);
+            let phrase = match author {
+                Some(author) => phrase.text(format!(" by {author}")),
+                None => phrase,
+            };
+            match stops {
+                Some(stop) => phrase.text(" · ").then(stop_worded(stop)),
+                None => phrase,
+            }
+        }
+        CardLine::Ended { ended, at } => ended_worded(*ended).text(" · ").time(*at),
+    }
+}
+
+/// A run's stage, as a noun, and how long it has run, kept up as it runs.
+fn running_worded(running: Running) -> Phrase {
+    let stage = match running.stage {
+        WorkKind::Triage => "triage",
+        WorkKind::Design => "design",
+        WorkKind::Implement => "implementation",
+        WorkKind::Rework => "rework",
+        WorkKind::FixCi => "CI fix",
+        WorkKind::Update => "update",
     };
-    StatusShown { tone, word, rest }
+    Phrase::from(format!("{stage} · ")).duration(running.seconds, Some(running.started_at))
+}
+
+fn stop_worded(stop: &Stop) -> Phrase {
+    match stop {
+        Stop::Running(running) => running_worded(*running),
+        Stop::ChecksFailed => "checks failed".into(),
+        Stop::ChecksRunning => "checks running".into(),
+        Stop::Conflicts => "conflicts".into(),
+        Stop::Behind { branch } => format!("behind {branch}").into(),
+        Stop::Draft => "draft".into(),
+    }
+}
+
+fn ended_worded(ended: Ended) -> Phrase {
+    match ended {
+        Ended::ClosedIn(pull) => Phrase::from("closed in ").item(pull),
+        Ended::Closed => "closed".into(),
+        Ended::Merged => "merged".into(),
+        Ended::ClosedUnmerged => "closed without merging".into(),
+        Ended::NothingToBuild => "merged · nothing to build".into(),
+    }
 }
 
 #[derive(Template, WebTemplate)]

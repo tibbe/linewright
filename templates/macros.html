@@ -22,6 +22,14 @@
 </svg>
 {%- endmacro -%}
 
+{#- The icon of a card that is a pull request, drawn as the tones' icons
+    are, and named for screen readers, which read it before the number. -#}
+{%- macro pull_request_icon() -%}
+<svg class="pull-request size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="pull request" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+<circle cx="4" cy="3.5" r="1.75"/><circle cx="4" cy="12.5" r="1.75"/><circle cx="12" cy="12.5" r="1.75"/><path d="M4 5.25v5.5M12 10.75V6.5a2 2 0 0 0-2-2H7.5M9 3l-1.5 1.5L9 6"/>
+</svg>
+{%- endmacro -%}
+
 {#- A navigation link's icon, drawn as the tones' icons are. It is hidden
     from screen readers, so that the link's text is its label. -#}
 {%- macro nav_icon(icon) -%}

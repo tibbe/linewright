@@ -24,8 +24,8 @@ async fn with_a_board() -> World {
     world
 }
 
-/// Each lane's heading, then each card as its column and its lines, as a
-/// reader reads them.
+/// Each lane's heading, then each card as its column, its heading and its
+/// line, as a reader reads them.
 fn board_shown(html: &Html) -> Vec<Vec<String>> {
     let cells = Selector::parse(".cell").unwrap();
     select(html, "#board .lane")
@@ -40,7 +40,7 @@ fn board_shown(html: &Html) -> Vec<Vec<String>> {
                 cell.select(&Selector::parse(".card").unwrap())
                     .map(move |card| {
                         let lines: Vec<String> = card
-                            .select(&Selector::parse("h3, .standing, .line li, .pull").unwrap())
+                            .select(&Selector::parse("h3, .line").unwrap())
                             .map(text)
                             .collect();
                         format!("{column}: {}", lines.join(" | "))
@@ -53,7 +53,7 @@ fn board_shown(html: &Html) -> Vec<Vec<String>> {
 }
 
 #[tokio::test]
-async fn the_board_shows_the_cards_in_their_columns_and_lanes_worded_as_explain_words_them() {
+async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line() {
     let web = Web::start(with_a_board().await).await;
 
     let html = web.page("/").await;
@@ -67,19 +67,15 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_worded_as_explain_
         [
             vec![
                 "#1: Do the thing".to_string(),
-                "Needs a person: #1: Do the thing | with the maintainer \
-                 | waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
-                    .to_string(),
+                "Needs a person: #1: Do the thing | decision needed".to_string(),
             ],
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
-                "Needs a person: #3: Part one | waiting on the reporter \
-                 | waiting for: the reporter: labeled `needs-info`"
-                    .to_string(),
+                "Needs a person: #3: Part one | reporter asked".to_string(),
             ],
             vec![
                 "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
-                "Done: #4: Old idea | closed issue | closed".to_string(),
+                "Done: #4: Old idea | closed · 2026-10-01 12:00:SS UTC".to_string(),
             ],
         ]
     );
@@ -147,8 +143,11 @@ async fn the_boards_stream_sends_the_board_and_the_tab_title_after_a_poll_moves_
         .find(|lane| lane[0].starts_with("#1: Do the thing — finished "))
         .unwrap_or_else(|| panic!("{shown:?}"));
     assert_eq!(
-        lane[1..],
-        ["Done: #1: Do the thing | closed issue | closed"]
+        lane[1..]
+            .iter()
+            .map(|line| unclocked(line))
+            .collect::<Vec<_>>(),
+        ["Done: #1: Do the thing | closed · 2026-10-01 12:00:SS UTC"]
     );
     let title = &moved.iter().find(|(id, _)| id == "title").unwrap().1;
     assert_eq!(text(select(title, "title")[0]), "(1) Board · owner/widgets");
@@ -202,24 +201,20 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         [
             vec![
                 "#1: Do the thing".to_string(),
-                "Needs a person: #1: Do the thing | with the maintainer \
-                 | waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
-                    .to_string(),
+                "Needs a person: #1: Do the thing | decision needed".to_string(),
             ],
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
-                "Needs a person: #3: Part one | waiting on the reporter \
-                 | waiting for: the reporter: labeled `needs-info`"
-                    .to_string(),
+                "Needs a person: #3: Part one | reporter asked".to_string(),
             ],
             vec![
                 "#5: Small thing — 1/1 tickets closed — finished 2026-10-01 12:00:SS UTC"
                     .to_string(),
-                "Done: #6: Only part | closed issue | closed".to_string(),
+                "Done: #6: Only part | closed · 2026-10-01 12:00:SS UTC".to_string(),
             ],
             vec![
                 "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
-                "Done: #4: Old idea | closed issue | closed".to_string(),
+                "Done: #4: Old idea | closed · 2026-10-01 12:00:SS UTC".to_string(),
             ],
         ]
     );
@@ -281,7 +276,7 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
         [
             "div: Triage Needs a person Ready Working In review Done",
             "details: 1 finished lane #1: Do the thing — finished \
-             2026-10-01 12:00:SS UTC #1: Do the thing closed issue closed",
+             2026-10-01 12:00:SS UTC #1: Do the thing closed · 2026-10-01 12:00:SS UTC",
         ]
     );
     let lanes: Vec<Option<&str>> = select(&html, "#finished details")
@@ -290,4 +285,108 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
         .collect();
     assert_eq!(lanes, [Some("lane-1")]);
     web.stop().await;
+}
+
+/// The board's cards, each as its column and what a reader reads of it,
+/// and whether it carries the pull request icon.
+fn cards_shown(html: &Html) -> Vec<(String, bool)> {
+    board_shown(html)
+        .into_iter()
+        .flat_map(|lane| lane.into_iter().skip(1))
+        .map(|card| unclocked(&card))
+        .zip(select(html, "#board .card").into_iter().map(|card| {
+            card.select(&Selector::parse("h3 svg.pull-request").unwrap())
+                .count()
+                == 1
+        }))
+        .collect()
+}
+
+#[tokio::test]
+async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_that_it_was_handed_back()
+ {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .set_checks(
+            pr,
+            vec![check("test", linewright::domain::CheckState::Pending, "")],
+        )
+        .await
+        .unwrap();
+    let web = Web::start(world).await;
+
+    let html = web.page("/").await;
+    let in_review = cards_shown(&html);
+    let links: Vec<&str> = select(&html, "#board .card .line a:not(.github)")
+        .into_iter()
+        .filter_map(|a| a.attr("href"))
+        .collect();
+    web.store.close_pull_as(pr).unwrap();
+    web.store.unlabel_as(ticket, "ready-for-agent").unwrap();
+    web.store.label_as(ticket, "ready-for-human").unwrap();
+    web.deliver_issue(ticket.0).await;
+    let handed_back = eventually_on_the_board(&web, "handed back").await;
+
+    assert_eq!(
+        in_review,
+        [(
+            format!("In review: {ticket}: Do the thing | {pr} · checks running"),
+            false
+        )]
+    );
+    assert_eq!(links, [format!("/items/{}", pr.0)]);
+    assert_eq!(
+        handed_back,
+        [(
+            format!("Needs a person: {ticket}: Do the thing | handed back"),
+            false
+        )]
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request_card_in_done() {
+    let world = World::new().await;
+    let pr = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            "tidy",
+            "Tidy up",
+            "No issue.",
+            &[("src/tidy.txt", "tidy\n")],
+        )
+        .await
+        .unwrap();
+    world.store.merge_pull(pr).await.unwrap();
+    let web = Web::start(world).await;
+
+    let shown = cards_shown(&web.page("/").await);
+
+    assert_eq!(
+        shown,
+        [(
+            format!("Done: {pr}: Tidy up | merged · 2026-10-01 12:00:SS UTC"),
+            true
+        )]
+    );
+    web.stop().await;
+}
+
+/// The board's cards once one of them says `line`.
+async fn eventually_on_the_board(web: &Web, line: &str) -> Vec<(String, bool)> {
+    let waited = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let shown = cards_shown(&web.page("/").await);
+            if shown.iter().any(|(card, _)| card.ends_with(line)) {
+                return shown;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    waited.expect("shown in time")
 }

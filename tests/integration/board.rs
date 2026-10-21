@@ -1,9 +1,13 @@
 use crate::common;
 
 use common::{NOW, at, ticket, view};
-use linewright::board::{Board, Card, CardLine, Column, Ended, LaneHead, board};
+use linewright::board::{
+    Board, Card, CardLine, Column, Ended, Hold, LaneHead, Running, Stop, board,
+};
 use linewright::domain::*;
-use linewright::status::{Ci, View};
+use linewright::reconcile::WorkKind;
+use linewright::runs::{Ending, Recorded, Started, State};
+use linewright::status::View;
 
 /// Where each card is: its lane's number, its column and its number, lane
 /// by lane and column by column.
@@ -47,7 +51,7 @@ fn each_status_label_puts_its_issue_in_its_column() {
         vec![],
     );
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
     assert_eq!(
         placed(&board),
@@ -143,7 +147,7 @@ fn a_claimed_ticket_and_one_with_a_triage_or_design_run_in_flight_are_in_working
     );
 
     assert_eq!(
-        placed(&board(&view, at(NOW))),
+        placed(&board(&view, &[], at(NOW))),
         [
             (1, Column::Working, 1),
             (2, Column::Working, 2),
@@ -159,7 +163,10 @@ fn a_ticket_with_an_open_pull_request_is_in_review() {
         vec![pull(10, &[1], &[CheckState::Passed])],
     );
 
-    assert_eq!(placed(&board(&view, at(NOW))), [(1, Column::InReview, 1)]);
+    assert_eq!(
+        placed(&board(&view, &[], at(NOW))),
+        [(1, Column::InReview, 1)]
+    );
 }
 
 #[test]
@@ -172,7 +179,7 @@ fn a_ticket_closed_within_the_spec_lookback_window_is_in_done_and_one_closed_bef
         ],
     );
 
-    assert_eq!(placed(&board(&view, at(NOW))), [(2, Column::Done, 2)]);
+    assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Done, 2)]);
 }
 
 #[test]
@@ -185,7 +192,7 @@ fn an_item_fitting_two_columns_is_in_the_one_further_right() {
         &["10/rework-1", "2/triage-1"],
     );
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
     assert_eq!(
         placed(&board),
@@ -207,92 +214,159 @@ fn card(board: &Board, number: u64) -> &Card {
         .expect("a card")
 }
 
+/// Linewright's pull request #`number`, closing `closes`, with
+/// `mergeability` and, if `draft`, a draft.
+fn reviewed(
+    number: u64,
+    closes: u64,
+    checks: &[CheckState],
+    mergeability: Mergeability,
+    draft: bool,
+) -> Pull {
+    Pull {
+        mergeability,
+        state: PullState::Open { draft },
+        ..pull(number, &[closes], checks)
+    }
+}
+
 #[test]
-fn a_tickets_card_carries_its_pull_requests_ci_state_and_a_rework_run_on_it() {
-    let view = with_runs(
-        view(
-            vec![assigned(ticket(1, "Reworked"))],
-            vec![pull(10, &[1], &[CheckState::Failed])],
-        ),
-        &["10/rework-1"],
-    );
+fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stops_it_merging() {
+    use CheckState::{Failed, Passed, Pending};
+    use Mergeability::{Behind, Clean, Conflicting};
+    let issues = (1..=7).map(|n| assigned(ticket(n, "Reviewed"))).collect();
+    let pulls = vec![
+        reviewed(11, 1, &[Failed, Pending], Conflicting, true),
+        reviewed(12, 2, &[Failed, Pending], Conflicting, true),
+        reviewed(13, 3, &[Passed, Pending], Conflicting, true),
+        reviewed(14, 4, &[Passed], Conflicting, true),
+        reviewed(15, 5, &[Passed], Behind, true),
+        reviewed(16, 6, &[Passed], Mergeability::Unknown, true),
+        reviewed(17, 7, &[Passed], Clean, false),
+    ];
+    let view = with_runs(view(issues, pulls), &["11/rework-1"]);
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
-    let card = card(&board, 1);
-    assert_eq!(
-        card.pull.map(|pull| (pull.pull_request, pull.ci)),
-        Some((Number(10), Ci::Failing))
-    );
-    let CardLine::Run(run) = &card.line else {
-        panic!("no run: {:?}", card.line);
+    let review = |pull_request: u64, stops: Option<Stop>| {
+        Some(CardLine::Review {
+            pull_request: Number(pull_request),
+            author: None,
+            stops,
+        })
     };
-    assert_eq!(run.id.to_string(), "10/rework-1");
-    assert_eq!(placed(&board), [(1, Column::InReview, 1)]);
+    assert_eq!(
+        (1..=7).map(|n| line(&board, n)).collect::<Vec<_>>(),
+        [
+            review(
+                11,
+                Some(Stop::Running(Running {
+                    stage: WorkKind::Rework,
+                    started_at: at("2026-10-01T11:50:00Z"),
+                    seconds: 630,
+                }))
+            ),
+            review(12, Some(Stop::ChecksFailed)),
+            review(13, Some(Stop::ChecksRunning)),
+            review(14, Some(Stop::Conflicts)),
+            review(
+                15,
+                Some(Stop::Behind {
+                    branch: "main".into()
+                })
+            ),
+            review(16, Some(Stop::Draft)),
+            review(17, None),
+        ]
+    );
+    assert!((1..=7).all(|n| !card(&board, n).pull_request));
 }
 
 #[test]
 fn linewrights_pull_request_closing_no_issue_on_the_board_is_a_card_of_its_own() {
-    let view = view(vec![], vec![pull(10, &[1], &[CheckState::Passed])]);
+    let view = view(vec![], vec![pull(10, &[1], &[CheckState::Pending])]);
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
     assert_eq!(placed(&board), [(10, Column::InReview, 10)]);
+    let card = card(&board, 10);
+    assert!(card.pull_request);
     assert_eq!(
-        card(&board, 10).standing.to_string(),
-        "in review: #10 (ready for review, CI green)"
+        card.line,
+        Some(CardLine::Review {
+            pull_request: Number(10),
+            author: None,
+            stops: Some(Stop::ChecksRunning),
+        })
     );
 }
 
+fn merged(number: u64, closes: &[u64], author: &str, merged_at: &str) -> MergedPull {
+    MergedPull {
+        title: format!("Pull {number}"),
+        author: Login::new(author),
+        merged_at: at(merged_at),
+        closes: closes.iter().copied().map(Number).collect(),
+        files: vec!["src/lib.rs".into()],
+        ..spec_change(number, &[])
+    }
+}
+
 #[test]
-fn a_card_in_done_says_how_its_item_ended() {
+fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
     let mut closed_pull = closed_issue(30, "2026-09-29T12:00:00Z", None);
     closed_pull.kind = ClosedKind::Pull {
         closes: vec![Number(99)],
     };
-    let view = with_closed(
-        view(vec![], vec![]),
+    let view = with_merged(
+        with_closed(
+            view(vec![], vec![]),
+            vec![
+                closed_issue(1, "2026-09-28T12:00:00Z", Some(11)),
+                closed_issue(2, "2026-09-28T13:00:00Z", None),
+                closed_pull,
+            ],
+        ),
         vec![
-            closed_issue(1, "2026-09-28T12:00:00Z", Some(11)),
-            closed_issue(2, "2026-09-28T12:00:00Z", None),
-            closed_pull,
+            // Linewright's, closing #1, which is on the board.
+            merged(11, &[1], "factory", "2026-09-28T12:00:00Z"),
+            // Linewright's, closing no issue on the board.
+            merged(40, &[98], "factory", "2026-09-30T12:00:00Z"),
+            // Someone else's.
+            merged(41, &[], "someone", "2026-09-30T12:00:00Z"),
+            // Linewright's, merged before the spec lookback window opened.
+            merged(42, &[], "factory", "2026-09-20T12:00:00Z"),
         ],
     );
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
-    let ended: Vec<(u64, String, CardLine)> = [1, 2, 30]
-        .map(|n| {
-            let card = card(&board, n);
-            (n, card.standing.to_string(), card.line.clone())
+    let ended = |ended, closed_at| {
+        Some(CardLine::Ended {
+            ended,
+            at: at(closed_at),
         })
-        .to_vec();
+    };
+    let shown: Vec<(u64, bool, Option<CardLine>)> = board
+        .lanes
+        .iter()
+        .flat_map(|lane| lane.cards(Column::Done))
+        .map(|card| (card.number.0, card.pull_request, card.line.clone()))
+        .collect();
     assert_eq!(
-        ended,
+        shown,
         [
-            (
-                1,
-                "closed issue".into(),
-                CardLine::Ended {
-                    ended: Ended::MergedBy(Number(11)),
-                    at: at("2026-09-28T12:00:00Z"),
-                }
-            ),
-            (
-                2,
-                "closed issue".into(),
-                CardLine::Ended {
-                    ended: Ended::Closed,
-                    at: at("2026-09-28T12:00:00Z"),
-                }
-            ),
+            (40, true, ended(Ended::Merged, "2026-09-30T12:00:00Z")),
             (
                 30,
-                "closed pull request".into(),
-                CardLine::Ended {
-                    ended: Ended::ClosedUnmerged,
-                    at: at("2026-09-29T12:00:00Z"),
-                }
+                true,
+                ended(Ended::ClosedUnmerged, "2026-09-29T12:00:00Z")
+            ),
+            (2, false, ended(Ended::Closed, "2026-09-28T13:00:00Z")),
+            (
+                1,
+                false,
+                ended(Ended::ClosedIn(Number(11)), "2026-09-28T12:00:00Z")
             ),
         ]
     );
@@ -352,9 +426,13 @@ fn a_spec_change_is_its_pull_request_in_ready_then_in_working_while_being_design
     let waiting = with_merged(view(vec![], vec![]), vec![spec_change(5, &[])]);
     let designing = with_runs(waiting.clone(), &["5/design-1"]);
 
-    assert_eq!(placed(&board(&waiting, at(NOW))), [(5, Column::Ready, 5)]);
     assert_eq!(
-        placed(&board(&designing, at(NOW))),
+        placed(&board(&waiting, &[], at(NOW))),
+        [(5, Column::Ready, 5)]
+    );
+    assert!(card(&board(&waiting, &[], at(NOW)), 5).pull_request);
+    assert_eq!(
+        placed(&board(&designing, &[], at(NOW))),
         [(5, Column::Working, 5)]
     );
 }
@@ -374,7 +452,7 @@ fn a_spec_change_cut_into_tickets_is_its_tracking_issues_lane() {
     );
 
     assert_eq!(
-        placed(&board(&view, at(NOW))),
+        placed(&board(&view, &[], at(NOW))),
         [(6, Column::Ready, 7), (6, Column::Working, 8)]
     );
 }
@@ -386,15 +464,16 @@ fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
         vec![spec_change(5, &[label::DESIGNED])],
     );
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
     assert_eq!(placed(&board), [(5, Column::Done, 5)]);
+    assert!(card(&board, 5).pull_request);
     assert_eq!(
         card(&board, 5).line,
-        CardLine::Ended {
+        Some(CardLine::Ended {
             ended: Ended::NothingToBuild,
             at: at("2026-10-01T09:00:00Z"),
-        }
+        })
     );
 }
 
@@ -426,7 +505,7 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
         vec![closed_ticket],
     );
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
     assert_eq!(
         heads(&board),
@@ -489,7 +568,7 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
     };
     let view = view(vec![cut, ticket_of_it, added], vec![]);
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
     assert_eq!(
         board.lanes[1].head,
@@ -507,19 +586,39 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
 }
 
 #[test]
-fn an_issue_in_review_on_someone_elses_pull_request_carries_its_ci_state() {
+fn an_issue_in_review_on_someone_elses_pull_request_names_them() {
     let mut theirs = pull(10, &[1], &[CheckState::Pending]);
     theirs.author = Login::new("someone");
-    let view = view(vec![ticket(1, "Theirs")], vec![theirs]);
+    let unheld = Issue {
+        closed_by: vec![ClosingPull {
+            number: Number(20),
+            author: Login::new("alice"),
+            state: PullState::Open { draft: true },
+        }],
+        ..ticket(2, "Not held")
+    };
+    let view = view(vec![ticket(1, "Theirs"), unheld], vec![theirs]);
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
-    assert_eq!(placed(&board), [(1, Column::InReview, 1)]);
     assert_eq!(
-        card(&board, 1)
-            .pull
-            .map(|pull| (pull.pull_request, pull.ci)),
-        Some((Number(10), Ci::Running))
+        placed(&board),
+        [(1, Column::InReview, 1), (2, Column::InReview, 2)]
+    );
+    assert_eq!(
+        [1, 2].map(|n| line(&board, n)),
+        [
+            Some(CardLine::Review {
+                pull_request: Number(10),
+                author: Some(Login::new("someone")),
+                stops: Some(Stop::ChecksRunning),
+            }),
+            Some(CardLine::Review {
+                pull_request: Number(20),
+                author: Some(Login::new("alice")),
+                stops: Some(Stop::Draft),
+            }),
+        ]
     );
 }
 
@@ -574,7 +673,7 @@ fn lanes_needing_a_person_come_first_then_the_other_unfinished_then_the_finished
     );
 
     assert_eq!(
-        lanes(&board(&view, at(NOW))),
+        lanes(&board(&view, &[], at(NOW))),
         [
             (20, None),
             (2, None),
@@ -597,7 +696,7 @@ fn an_items_lane_comes_first_when_it_needs_a_person() {
         vec![],
     );
 
-    assert_eq!(lanes(&board(&view, at(NOW))), [(12, None), (10, None)]);
+    assert_eq!(lanes(&board(&view, &[], at(NOW))), [(12, None), (10, None)]);
 }
 
 #[test]
@@ -614,7 +713,7 @@ fn an_item_closed_in_the_window_is_a_finished_lane_ordered_latest_finished_first
     );
 
     assert_eq!(
-        lanes(&board(&view, at(NOW))),
+        lanes(&board(&view, &[], at(NOW))),
         [
             (5, Some(at("2026-10-01T09:00:00Z"))),
             (30, Some(at("2026-09-30T12:00:00Z"))),
@@ -639,7 +738,7 @@ fn lanes_are_in_number_order_within_their_group() {
     );
 
     assert_eq!(
-        lanes(&board(&view, at(NOW))),
+        lanes(&board(&view, &[], at(NOW))),
         [(2, None), (10, None), (20, None), (5, None)]
     );
 }
@@ -654,7 +753,7 @@ fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_c
     spec.title = "Add invoices".into();
     let view = with_merged(view(vec![issue], vec![pull]), vec![spec]);
 
-    let board = board(&view, at(NOW));
+    let board = board(&view, &[], at(NOW));
 
     assert_eq!(
         heads(&board),
@@ -696,5 +795,203 @@ fn a_tracking_issue_with_a_run_in_flight_on_it_is_its_lane_and_not_a_card() {
         &["10/triage-1"],
     );
 
-    assert_eq!(placed(&board(&view, at(NOW))), [(10, Column::Ready, 11)]);
+    assert_eq!(
+        placed(&board(&view, &[], at(NOW))),
+        [(10, Column::Ready, 11)]
+    );
+}
+
+/// The line on #`number`'s card.
+fn line(board: &Board, number: u64) -> Option<CardLine> {
+    card(board, number).line.clone()
+}
+
+fn recorded(id: &str, ended_at: &str, ending: Ending) -> Recorded {
+    let started = Started::new(id.parse().unwrap(), None).unwrap();
+    let state = State::Ended {
+        at: at(ended_at),
+        ending,
+    };
+    Recorded::new(started, at("2026-10-01T09:00:00Z"), state, vec![], None)
+}
+
+/// Linewright's pull request #`pr`, closing `issue`, closed unmerged at
+/// `closed_at`.
+fn closed_unmerged(issue: Issue, pr: u64, closed_at: &str) -> Issue {
+    let mut issue = common::closed_by(issue, pr, "factory");
+    issue.closed_by[0].state = PullState::Closed { at: at(closed_at) };
+    issue
+}
+
+#[test]
+fn a_card_needing_a_person_says_the_reporter_was_asked_it_was_handed_back_or_a_decision_is_needed()
+{
+    let view = view(
+        vec![
+            labeled(1, &["needs-info"]),
+            labeled(2, &["ready-for-human"]),
+            labeled(3, &["ready-for-human"]),
+            labeled(4, &["ready-for-human"]),
+            closed_unmerged(labeled(5, &["ready-for-human"]), 50, "2026-10-01T10:00:00Z"),
+            closed_unmerged(labeled(6, &["ready-for-human"]), 60, "2026-10-01T10:00:00Z"),
+            labeled(7, &["ready-for-human"]),
+        ],
+        vec![],
+    );
+    let recorded = [
+        // #2: handed back by its last run.
+        recorded("2/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+        // #3: handed back, then triaged again, which asked for a decision.
+        recorded("3/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+        recorded("3/triage-1", "2026-10-01T11:00:00Z", Ending::Done),
+        // #4: a triage that asked for a decision.
+        recorded("4/triage-1", "2026-10-01T10:00:00Z", Ending::Done),
+        // #6: triaged again after its pull request closed unmerged.
+        recorded("6/triage-1", "2026-10-01T11:00:00Z", Ending::Done),
+        // #7: the hand-back of another item.
+        recorded("8/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+    ];
+
+    let board = board(&view, &recorded, at(NOW));
+
+    assert_eq!(
+        [1, 2, 3, 4, 5, 6, 7].map(|n| line(&board, n)),
+        [
+            Some(CardLine::ReporterAsked),
+            Some(CardLine::HandedBack),
+            Some(CardLine::DecisionNeeded),
+            Some(CardLine::DecisionNeeded),
+            Some(CardLine::HandedBack),
+            Some(CardLine::DecisionNeeded),
+            Some(CardLine::DecisionNeeded),
+        ]
+    );
+}
+
+fn blocked_by(issue: Issue, blockers: &[u64]) -> Issue {
+    Issue {
+        blocked_by: blockers
+            .iter()
+            .map(|&n| Linked {
+                number: Number(n),
+                open: true,
+            })
+            .collect(),
+        ..issue
+    }
+}
+
+fn assigned_to(issue: Issue, login: &str) -> Issue {
+    Issue {
+        assignees: vec![Login::new(login)],
+        ..issue
+    }
+}
+
+/// #1, blocked by #9 and #8; #2, assigned to alice;
+/// and #3, ready to claim.
+fn ready_view() -> View {
+    view(
+        vec![
+            blocked_by(ticket(1, "Blocked"), &[9, 8]),
+            assigned_to(ticket(2, "Theirs"), "alice"),
+            ticket(3, "Ready"),
+        ],
+        vec![],
+    )
+}
+
+fn ready_lines(view: &View) -> [Option<CardLine>; 3] {
+    let board = board(view, &[], at(NOW));
+    assert_eq!(
+        placed(&board),
+        [
+            (1, Column::Ready, 1),
+            (2, Column::Ready, 2),
+            (3, Column::Ready, 3)
+        ]
+    );
+    [1, 2, 3].map(|n| line(&board, n))
+}
+
+#[test]
+fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_back() {
+    let blocked = Some(CardLine::BlockedBy(Number(8)));
+    let assigned = Some(CardLine::AssignedTo(Login::new("alice")));
+    let limited = View {
+        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        ..ready_view()
+    };
+    let draining = View {
+        memory: common::draining_since("2026-10-01T11:00:00Z"),
+        ..ready_view()
+    };
+    let full = View {
+        live: (11..=14).map(common::implementing).collect(),
+        ..ready_view()
+    };
+
+    assert_eq!(
+        ready_lines(&ready_view()),
+        [blocked.clone(), assigned.clone(), None]
+    );
+    assert_eq!(
+        ready_lines(&limited),
+        [
+            blocked.clone(),
+            assigned.clone(),
+            Some(CardLine::Paused(Hold::UsageLimit))
+        ]
+    );
+    assert_eq!(
+        ready_lines(&draining),
+        [
+            blocked.clone(),
+            assigned.clone(),
+            Some(CardLine::Paused(Hold::Drain))
+        ]
+    );
+    assert_eq!(
+        ready_lines(&full),
+        [blocked, assigned, Some(CardLine::Queued)]
+    );
+}
+
+#[test]
+fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
+    let working = view(
+        vec![
+            assigned(ticket(1, "Implemented")),
+            labeled(2, &["needs-triage"]),
+            labeled(3, &["ready-for-agent"]),
+        ],
+        vec![],
+    );
+    let running = with_runs(working.clone(), &["1/implement-1", "2/triage-1"]);
+    let limited = View {
+        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        ..with_runs(working, &["2/triage-1"])
+    };
+
+    let running = board(&running, &[], at(NOW));
+    let limited = board(&limited, &[], at(NOW));
+
+    let run = |stage| {
+        Some(CardLine::Running(Running {
+            stage,
+            started_at: at("2026-10-01T11:50:00Z"),
+            seconds: 630,
+        }))
+    };
+    assert_eq!(
+        [1, 2].map(|n| line(&running, n)),
+        [run(WorkKind::Implement), run(WorkKind::Triage)]
+    );
+    assert_eq!(
+        [1, 2].map(|n| line(&limited, n)),
+        [
+            Some(CardLine::Paused(Hold::UsageLimit)),
+            run(WorkKind::Triage)
+        ]
+    );
 }
