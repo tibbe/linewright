@@ -296,13 +296,14 @@ fn run_lines(text: &str) -> Vec<&str> {
 }
 
 #[test]
-fn explain_shows_the_run_in_flight_with_its_quiet_time_then_the_past_runs_as_runs_lists_them() {
+fn explain_shows_the_run_in_flight_with_how_long_it_has_run_then_the_past_runs_as_runs_lists_them()
+{
     let answer = explain(&implementing_42(vec![]), &runs_of_42(), Number(42), at(NOW)).unwrap();
 
     assert_eq!(
         run_lines(&render(&answer, false)),
         [
-            "run in flight: 42/implement-2: #42 implement, running for 30m 30s, quiet for 10m 30s",
+            "run in flight: 42/implement-2: #42 implement, running for 30m 30s",
             "past run: 42/implement-1: interrupted — #42 implement, started 2026-10-01 10:00:00 UTC",
             "past run: 42/triage-1: done — #42 triage, started 2026-10-01 09:00:00 UTC, ran 5m",
         ]
@@ -351,7 +352,7 @@ fn explain_shows_the_latest_three_past_runs_and_points_to_runs_for_the_rest() {
     assert_eq!(
         run_lines(&render(&answer, false)),
         [
-            "run in flight: 42/implement-6: #42 implement, running for 30m 30s, quiet for 10m 30s",
+            "run in flight: 42/implement-6: #42 implement, running for 30m 30s",
             "past run: 42/implement-5: failed — #42 implement, started 2026-10-01 11:00:00 UTC, ran 1m",
             "past run: 42/implement-4: failed — #42 implement, started 2026-10-01 10:00:00 UTC, ran 1m",
             "past run: 42/implement-3: failed — #42 implement, started 2026-10-01 09:00:00 UTC, ran 1m",
@@ -373,7 +374,7 @@ fn explain_shows_three_past_runs_and_leaves_none_out() {
     assert_eq!(
         run_lines(&render(&answer, false)),
         [
-            "run in flight: 42/implement-6: #42 implement, running for 30m 30s, quiet for 10m 30s",
+            "run in flight: 42/implement-6: #42 implement, running for 30m 30s",
             "past run: 42/implement-5: failed — #42 implement, started 2026-10-01 11:00:00 UTC, ran 1m",
             "past run: 42/implement-4: failed — #42 implement, started 2026-10-01 10:00:00 UTC, ran 1m",
             "past run: 42/implement-3: failed — #42 implement, started 2026-10-01 09:00:00 UTC, ran 1m",
@@ -639,7 +640,7 @@ fn an_issue_shows_none_of_the_runs_of_the_pull_request_that_closes_it() {
     assert_eq!(
         run_lines(&render(&answer, false)),
         [
-            "run in flight: 42/implement-2: #42 implement, running for 30m 30s, quiet for 10m 30s",
+            "run in flight: 42/implement-2: #42 implement, running for 30m 30s",
             "past run: 42/implement-1: interrupted — #42 implement, started 2026-10-01 10:00:00 UTC",
             "past run: 42/triage-1: done — #42 triage, started 2026-10-01 09:00:00 UTC, ran 5m",
         ]

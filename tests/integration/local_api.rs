@@ -913,32 +913,32 @@ fn line_starting<'a>(text: &'a str, start: &str) -> Option<&'a str> {
     text.lines().find(|line| line.starts_with(start))
 }
 
-fn quiet_for_seconds(line: &str) -> bool {
-    line.rsplit_once("quiet for ")
-        .is_some_and(|(_, quiet)| quiet.ends_with('s') && !quiet.contains(['m', 'h']))
+fn quiet_seconds(answer: &str) -> Option<i64> {
+    let answer: serde_json::Value = serde_json::from_str(answer).ok()?;
+    answer["runs"][0]["quiet_seconds"].as_i64()
 }
 
 #[tokio::test]
-async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_output() {
+async fn status_and_explain_show_the_run_in_flight_and_keep_its_quiet_time_reset_by_each_output_in_json()
+ {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
     let clock = world.clock.clone();
     let answering = Answering::start(world, false).await;
-    let run = "1/triage-1: #1 triage, running for ";
     eventually_async(|| async {
-        line_starting(&answering.lw(&["status"]).await.stdout, run)
-            .is_some_and(|line| line.contains(", quiet for "))
+        quiet_seconds(&answering.lw(&["status", "--json"]).await.stdout).is_some()
     })
     .await;
 
     clock.advance(chrono::TimeDelta::minutes(25));
     let quiet = answering.lw(&["status"]).await;
+    let quiet_json = answering.lw(&["status", "--json"]).await;
     agent.says();
     eventually_async(|| async {
-        line_starting(&answering.lw(&["status"]).await.stdout, run).is_some_and(quiet_for_seconds)
+        quiet_seconds(&answering.lw(&["status", "--json"]).await.stdout)
+            .is_some_and(|seconds| seconds < 60)
     })
     .await;
-    let heard = answering.lw(&["status"]).await;
     let explained = answering.lw(&["explain", "1"]).await;
     let status_json = answering.lw(&["status", "--json"]).await;
     let explain_json = answering.lw(&["explain", "1", "--json"]).await;
@@ -950,8 +950,11 @@ async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_
         "{}",
         quiet.stdout
     );
-    assert!(lines[5].starts_with(run), "{}", quiet.stdout);
-    assert!(lines[5].contains(", quiet for 25m"), "{}", quiet.stdout);
+    assert!(
+        lines[5].starts_with("1/triage-1: #1 triage, running for 25m"),
+        "{}",
+        quiet.stdout
+    );
     assert_eq!(
         line_starting(&quiet.stdout, "#1:"),
         None,
@@ -959,17 +962,20 @@ async fn status_and_explain_show_the_run_in_flight_its_quiet_time_reset_by_each_
         quiet.stdout
     );
     assert!(
-        line_starting(&heard.stdout, run).is_some_and(|line| line.contains("running for 25m")),
+        quiet_seconds(&quiet_json.stdout).is_some_and(|seconds| seconds >= 25 * 60),
         "{}",
-        heard.stdout
+        quiet_json.stdout
     );
-    let in_flight = line_starting(&explained.stdout, "run in flight: ").unwrap_or_default();
     assert!(
-        in_flight.starts_with("run in flight: 1/triage-1: #1 triage, running for 25m")
-            && quiet_for_seconds(in_flight),
+        line_starting(&explained.stdout, "run in flight: ").is_some_and(
+            |line| line.starts_with("run in flight: 1/triage-1: #1 triage, running for 25m")
+        ),
         "{}",
         explained.stdout
     );
+    for text in [&quiet.stdout, &explained.stdout] {
+        assert!(!text.contains("quiet"), "{text}");
+    }
     let status_json: serde_json::Value = serde_json::from_str(&status_json.stdout).unwrap();
     let explain_json: serde_json::Value = serde_json::from_str(&explain_json.stdout).unwrap();
     for answer in [&status_json["runs"][0], &explain_json["run_in_flight"]] {

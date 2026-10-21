@@ -292,8 +292,8 @@ struct ErrorPage {
     error: String,
 }
 
-/// How often a stream looks for what changed, as a run's activity changes
-/// with nothing sent on `serve`'s view.
+/// How often a stream looks for what changed, as what its regions read on
+/// disk, such as run records, changes with nothing sent on `serve`'s view.
 const SAMPLED_EVERY: Duration = Duration::from_secs(1);
 
 fn samples() -> tokio::time::Interval {

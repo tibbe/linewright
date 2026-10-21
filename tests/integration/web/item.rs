@@ -184,14 +184,12 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
 }
 
 #[tokio::test]
-async fn the_item_pages_stream_sends_the_item_again_when_its_runs_agent_produces_output() {
+async fn the_item_pages_stream_sends_nothing_when_its_runs_agent_produces_output() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
     let web = Web::start(world).await;
     eventually_shown(&web, "/items/1", |lines| {
-        lines
-            .iter()
-            .any(|line| line.starts_with("run in flight: ") && line.contains(", quiet for "))
+        lines.iter().any(|line| line.starts_with("run in flight: "))
     })
     .await;
     let mut events = stream(&web, "/events/items/1").await;
@@ -199,17 +197,11 @@ async fn the_item_pages_stream_sends_the_item_again_when_its_runs_agent_produces
         .await
         .unwrap()
         .unwrap();
-    let quiet = tokio::time::timeout(Duration::from_millis(2500), events.recv()).await;
-    assert!(quiet.is_err(), "sent with nothing changed: {quiet:?}");
 
     agent.says();
-    let heard = tokio::time::timeout(Duration::from_secs(10), events.recv())
-        .await
-        .unwrap()
-        .unwrap();
 
-    let ids: Vec<String> = regions(&heard).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["item"]);
+    let heard = tokio::time::timeout(Duration::from_millis(2500), events.recv()).await;
+    assert!(heard.is_err(), "sent on output alone: {heard:?}");
     drop(agent);
     web.stop().await;
 }

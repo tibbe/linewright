@@ -530,20 +530,11 @@ impl RunInFlight {
         format!("{}: {}", paint.bold(&self.id), self.describe())
     }
 
-    /// What the run is of, how long it has run and its quiet time.
+    /// What the run is of and how long it has run.
     pub(crate) fn describe(&self) -> Phrase {
-        let now = self.started_at + chrono::TimeDelta::seconds(self.duration_seconds);
-        let phrase = describe_of(&self.id.of)
+        describe_of(&self.id.of)
             .text(", running for ")
             .duration(non_negative(self.duration_seconds), Some(self.started_at))
-            .text(", ");
-        match self.quiet_seconds {
-            None => phrase.text("no session yet"),
-            Some(seconds) => phrase.text("quiet for ").duration(
-                non_negative(seconds),
-                Some(now - chrono::TimeDelta::seconds(seconds)),
-            ),
-        }
     }
 }
 

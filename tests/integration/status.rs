@@ -292,7 +292,7 @@ fn with_webhooks_on_and_no_delivery_yet_none_is_shown_accepted() {
 }
 
 #[test]
-fn each_run_in_flight_follows_the_linewright_section_with_how_long_it_has_run_and_been_quiet() {
+fn each_run_in_flight_follows_the_linewright_section_with_how_long_it_has_run() {
     let view = View {
         in_flight: vec![
             in_flight("43/triage-1", "2026-10-01T12:05:00Z", None),
@@ -313,9 +313,9 @@ fn each_run_in_flight_follows_the_linewright_section_with_how_long_it_has_run_an
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:05:00Z"),
         [
-            "42/rework-2: #42 rework, running for 1h 5m, quiet for 25m",
-            "weekly/3: automation weekly, running for 5m, quiet for 1s",
-            "43/triage-1: #43 triage, running for 0s, no session yet",
+            "42/rework-2: #42 rework, running for 1h 5m",
+            "weekly/3: automation weekly, running for 5m",
+            "43/triage-1: #43 triage, running for 0s",
             "",
             "#7: ready to claim — Do the thing",
         ]
@@ -343,7 +343,7 @@ fn an_item_with_a_run_in_flight_shows_as_its_run_not_among_the_other_items() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
-            "9/implement-1: #9 implement, running for 30s, quiet for 20s",
+            "9/implement-1: #9 implement, running for 30s",
             "",
             "#7: ready to claim — Do the thing",
         ]
