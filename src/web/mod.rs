@@ -1,6 +1,7 @@
 //! The web UI (`docs/specs/monitoring.md`, The web UI): pages rendered on
 //! the server, each kept up by one event stream of the regions that changed.
 
+mod automations_page;
 mod board_page;
 mod html;
 mod item_page;
@@ -8,6 +9,7 @@ mod run_page;
 mod runs_page;
 mod server_page;
 
+use automations_page::{Automations, LastRun};
 use html::Html;
 
 use std::collections::HashMap;
@@ -32,7 +34,8 @@ use tokio_util::sync::CancellationToken;
 use crate::api::{self, Sources, Unanswered};
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
-use crate::status::{self, DrainShown, Linewright};
+use crate::runs::{Outcome, RunId};
+use crate::status::{self, DrainShown, Linewright, UnparsedAutomation};
 
 pub(crate) fn routes() -> Router<Sources> {
     Router::new()
@@ -42,6 +45,11 @@ pub(crate) fn routes() -> Router<Sources> {
         .route("/events/items/{number}", get(item_page::item_events))
         .route("/runs", get(runs_page::runs_page))
         .route("/events/runs", get(runs_page::runs_events))
+        .route("/automations", get(automations_page::automations_page))
+        .route(
+            "/events/automations",
+            get(automations_page::automations_events),
+        )
         .route("/server", get(server_page::server_page))
         .route("/events/server", get(server_page::server_events))
         .route("/runs/{*id}", get(run_page::run_page))
@@ -178,10 +186,17 @@ enum Hold {
     WebhooksRefused {
         last_refused: Timestamp,
     },
+    UnparsedAutomation(UnparsedAutomation),
+    /// An automation whose last run failed.
+    AutomationFailed {
+        name: String,
+        run: RunId,
+        outcome: Outcome,
+    },
 }
 
 impl Hold {
-    fn of(linewright: &Linewright) -> Vec<Hold> {
+    fn of(linewright: &Linewright, automations: Option<&Automations>) -> Vec<Hold> {
         let usage_limit = linewright
             .usage_limit_resets_at
             .map(|resets_at| Hold::UsageLimit { resets_at });
@@ -190,9 +205,26 @@ impl Hold {
             .webhooks
             .and_then(|received| received.refused_since_accepted())
             .map(|last_refused| Hold::WebhooksRefused { last_refused });
+        let unparsed = automations
+            .into_iter()
+            .flat_map(|automations| &automations.unparsed)
+            .map(|file| Hold::UnparsedAutomation(file.clone()));
+        let failed = automations
+            .into_iter()
+            .flat_map(|automations| &automations.rows)
+            .filter_map(|row| match &row.last_run {
+                LastRun::Run(run) if run.outcome.failed() => Some(Hold::AutomationFailed {
+                    name: row.name.clone(),
+                    run: run.id.clone(),
+                    outcome: run.outcome,
+                }),
+                LastRun::Run(_) | LastRun::NoneYet { .. } => None,
+            });
         [usage_limit, drain, refused]
             .into_iter()
             .flatten()
+            .chain(unparsed)
+            .chain(failed)
             .collect()
     }
 
@@ -203,6 +235,10 @@ impl Hold {
             Hold::WebhooksRefused { last_refused } => Phrase::from("webhook delivery refused: ")
                 .time(*last_refused)
                 .text(", none accepted since"),
+            Hold::UnparsedAutomation(file) => status::does_not_parse(file),
+            Hold::AutomationFailed { name, run, outcome } => {
+                format!("automation {name}: last run {run} {}", outcome.word()).into()
+            }
         }
     }
 
@@ -214,6 +250,7 @@ impl Hold {
         match self {
             Hold::UsageLimit { .. } => "alert",
             Hold::Drain(_) | Hold::WebhooksRefused { .. } => "alert alert-warning",
+            Hold::UnparsedAutomation(_) | Hold::AutomationFailed { .. } => "alert alert-error",
         }
     }
 
@@ -223,6 +260,8 @@ impl Hold {
             Hold::UsageLimit { .. } | Hold::Drain(_) | Hold::WebhooksRefused { .. } => {
                 "/server".into()
             }
+            Hold::UnparsedAutomation(_) => "/automations".into(),
+            Hold::AutomationFailed { run, .. } => runs_page::run_path(run),
         }
     }
 }
@@ -233,20 +272,43 @@ struct HoldShown {
     href: String,
 }
 
+/// What the frame shows, from one read of `serve`'s view and the runs.
+struct Read {
+    /// What `status` says of Linewright.
+    linewright: Linewright,
+    /// `None` before the first poll.
+    automations: Option<Automations>,
+}
+
+impl Read {
+    fn of(sources: &Sources) -> Read {
+        let view = api::view_now(sources);
+        let recorded = api::recorded_or_none(sources);
+        let now = sources.clock.now();
+        let status = api::status_of(sources, view.as_ref(), &recorded);
+        Read {
+            automations: view
+                .as_ref()
+                .map(|view| Automations::of(&status, view, &recorded, now)),
+            linewright: status.linewright,
+        }
+    }
+}
+
 impl Frame {
     fn of(sources: &Sources) -> Frame {
-        Frame::of_status(sources, &api::status_answer(sources).linewright)
+        Frame::of_read(sources, &Read::of(sources))
     }
 
-    /// The frame, from what `status` says of Linewright.
-    fn of_status(sources: &Sources, linewright: &Linewright) -> Frame {
+    fn of_read(sources: &Sources, read: &Read) -> Frame {
+        let linewright = &read.linewright;
         let repo = sources.work_dir.repo.clone();
         let html = |phrase: &Phrase| html::phrase(phrase, &repo);
         let status_line = StatusLine {
             runs_in_flight: html(&status::runs_in_flight(linewright)),
             last_poll: html(&status::last_poll(linewright)),
         };
-        let holds = Hold::of(linewright)
+        let holds = Hold::of(linewright, read.automations.as_ref())
             .iter()
             .map(|hold| HoldShown {
                 alert: hold.alert(),

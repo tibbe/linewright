@@ -42,6 +42,11 @@ impl Schedule {
             .map_err(|e| anyhow!("`on.schedule` is {expression:?}, not a cron expression: {e}"))
     }
 
+    /// When it runs, in croner's words.
+    pub fn describe(&self) -> String {
+        self.0.describe()
+    }
+
     pub fn next_after(&self, time: Timestamp) -> Option<Timestamp> {
         self.0.find_next_occurrence(&time, false).ok()
     }

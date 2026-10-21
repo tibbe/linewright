@@ -969,6 +969,17 @@ impl Outcome {
         }
     }
 
+    /// Whether the run failed at its work, as opposed to being stopped.
+    pub(crate) fn failed(self) -> bool {
+        matches!(
+            self,
+            Outcome::Ended {
+                ending: Ending::Failed | Ending::HandedBack,
+                ..
+            }
+        )
+    }
+
     pub(crate) fn tone(self) -> Tone {
         match self {
             Outcome::Ended { ending, .. } => match ending {

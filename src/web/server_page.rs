@@ -9,8 +9,8 @@ use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
 use super::html::{self, Html};
-use super::{Frame, Page, events, frame_regions, render};
-use crate::api::{self, Sources};
+use super::{Frame, Page, Read, events, frame_regions, render};
+use crate::api::Sources;
 use crate::status::{self, Fact};
 
 #[derive(Template, WebTemplate)]
@@ -29,9 +29,9 @@ struct ServerRegion<'a> {
 
 /// The frame and the facts, from one answer of `status`.
 fn shown(sources: &Sources) -> (Frame, Vec<Html>) {
-    let linewright = api::status_answer(sources).linewright;
+    let read = Read::of(sources);
     let repo = &sources.work_dir.repo;
-    let facts = status::linewright_facts(&linewright)
+    let facts = status::linewright_facts(&read.linewright)
         .into_iter()
         .map(|fact| match fact {
             Fact::Plain(phrase) | Fact::Warning(phrase) | Fact::Problem(phrase) => {
@@ -39,7 +39,7 @@ fn shown(sources: &Sources) -> (Frame, Vec<Html>) {
             }
         })
         .collect();
-    (Frame::of_status(sources, &linewright), facts)
+    (Frame::of_read(sources, &read), facts)
 }
 
 pub(super) async fn server_page(State(sources): State<Sources>) -> Response {

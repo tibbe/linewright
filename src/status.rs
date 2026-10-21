@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::automation::{AutomationFiles, AutomationName, LastScheduledRuns};
+use crate::automation::{Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::domain::{
     CheckState, Issue, Item, Login, Number, Pull, PullState, Requirement, Snapshot, StatusLabel,
     Timestamp, label,
@@ -317,14 +317,7 @@ pub fn status(
         .iter()
         .map(|automation| AutomationRuns {
             name: automation.name.to_string(),
-            schedule: match view.last_scheduled_runs.get(&automation.name) {
-                None => Schedule::NotRunYet,
-                Some(last_scheduled_run) => match next_run(automation, last_scheduled_run, now) {
-                    NextRun::Due => Schedule::Due,
-                    NextRun::At(next_run) => Schedule::Scheduled { next_run },
-                    NextRun::Never => Schedule::Ended,
-                },
-            },
+            schedule: schedule_of(automation, &view.last_scheduled_runs, now),
             last_run: last_of_automation(recorded, &automation.name).map(LastRun::of),
         })
         .collect();
@@ -350,6 +343,22 @@ pub fn status(
             .collect(),
         automations,
         unparsed_automations,
+    }
+}
+
+/// Where `automation`'s schedule stands, counted from its last scheduled run.
+pub(crate) fn schedule_of(
+    automation: &Automation,
+    last_scheduled_runs: &LastScheduledRuns,
+    now: Timestamp,
+) -> Schedule {
+    match last_scheduled_runs.get(&automation.name) {
+        None => Schedule::NotRunYet,
+        Some(last_scheduled_run) => match next_run(automation, last_scheduled_run, now) {
+            NextRun::Due => Schedule::Due,
+            NextRun::At(next_run) => Schedule::Scheduled { next_run },
+            NextRun::Never => Schedule::Ended,
+        },
     }
 }
 
@@ -600,23 +609,34 @@ pub(crate) fn automation_facts(status: &Status) -> Vec<Fact> {
                 run.started_at,
             )),
         };
-        let next = match automation.schedule {
-            Schedule::NotRunYet => {
-                "not yet counted, its schedule starts when a poll first sees it".into()
-            }
-            Schedule::Due => "due now".into(),
-            Schedule::Scheduled { next_run } => Phrase::default().time(next_run),
-            Schedule::Ended => "none, its schedule ticks no more".into(),
-        };
+        let next = describe_next_run(automation.schedule);
         let name = &automation.name;
         let last = Phrase::from(format!("automation {name} last run: ")).then(last);
         let next = Phrase::from(format!("automation {name} next run: ")).then(next);
         [last, next].map(Fact::Plain)
     });
-    let unparsed = status.unparsed_automations.iter().map(|file| {
-        Fact::Problem(format!("{}: does not parse: {}", file.path, file.reason).into())
-    });
+    let unparsed = status
+        .unparsed_automations
+        .iter()
+        .map(|file| Fact::Problem(does_not_parse(file)));
     runs.chain(unparsed).collect()
+}
+
+/// What is wrong with an automation file that does not parse.
+pub(crate) fn does_not_parse(file: &UnparsedAutomation) -> Phrase {
+    format!("{}: does not parse: {}", file.path, file.reason).into()
+}
+
+/// When an automation runs next, from where its schedule stands.
+pub(crate) fn describe_next_run(schedule: Schedule) -> Phrase {
+    match schedule {
+        Schedule::NotRunYet => {
+            "not yet counted, its schedule starts when a poll first sees it".into()
+        }
+        Schedule::Due => "due now".into(),
+        Schedule::Scheduled { next_run } => Phrase::default().time(next_run),
+        Schedule::Ended => "none, its schedule ticks no more".into(),
+    }
 }
 
 pub(crate) fn describe(state: &ItemState) -> Phrase {

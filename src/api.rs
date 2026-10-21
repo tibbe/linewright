@@ -247,14 +247,28 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
 }
 
 pub(crate) fn status_answer(sources: &Sources) -> Status {
+    let view = view_now(sources);
+    status_of(sources, view.as_ref(), &recorded_or_none(sources))
+}
+
+/// `serve`'s view as it is now, `None` before the first poll.
+pub(crate) fn view_now(sources: &Sources) -> Option<View> {
+    sources.served.borrow().as_ref().map(Served::view_now)
+}
+
+/// Every run's record, or none when they do not read, which is logged.
+pub(crate) fn recorded_or_none(sources: &Sources) -> Vec<Recorded> {
+    Runs::new(&sources.work_dir.resolve()).read_or_none()
+}
+
+/// What `status` answers of `view` and `recorded`.
+pub(crate) fn status_of(sources: &Sources, view: Option<&View>, recorded: &[Recorded]) -> Status {
     let webhooks = sources.deliveries.as_ref().map(Tally::get);
-    let view = sources.served.borrow().as_ref().map(Served::view_now);
-    let recorded = Runs::new(&sources.work_dir.resolve()).read_or_none();
     status::status(
         &sources.serving,
         webhooks,
-        view.as_ref(),
-        &recorded,
+        view,
+        recorded,
         sources.ends.deadline(),
         sources.clock.now(),
     )

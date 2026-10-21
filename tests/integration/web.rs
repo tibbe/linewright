@@ -1,5 +1,6 @@
 use crate::common;
 
+mod automations;
 mod board;
 mod frame;
 mod item;
@@ -30,7 +31,30 @@ struct Web {
     router: Router,
     stopping: CancellationToken,
     store: std::sync::Arc<linewright::store::local::LocalStore>,
+    harness: std::sync::Arc<ScriptedHarness>,
+    clock: std::sync::Arc<FakeClock>,
     _dir: tempfile::TempDir,
+}
+
+/// What `serve` answers from, over `served`, with webhooks off.
+fn sources(
+    dir: &tempfile::TempDir,
+    clock: &std::sync::Arc<FakeClock>,
+    since: linewright::domain::Timestamp,
+    served: tokio::sync::watch::Receiver<Option<linewright::api::Served>>,
+) -> Sources {
+    Sources {
+        serving: linewright::status::Serving { since, max_runs: 4 },
+        served,
+        deliveries: None,
+        clock: clock.clone(),
+        work_dir: linewright::runs::RepoWorkDir {
+            // As `common::config` has it, under the repository's name.
+            base: dir.path().join("work"),
+            repo: REPO.into(),
+        },
+        ends: linewright::ending::Ends::new(),
+    }
 }
 
 impl Web {
@@ -40,7 +64,7 @@ impl Web {
             factory,
             dir,
             store,
-            ..
+            harness,
         } = world;
         let since = clock.now();
         let pending = Pending::default();
@@ -51,16 +75,8 @@ impl Web {
         let stopping = CancellationToken::new();
         let router = api::router(
             Sources {
-                serving: linewright::status::Serving { since, max_runs: 4 },
-                served: serving.served.clone(),
                 deliveries: Some(listener.tally()),
-                clock: clock.clone(),
-                work_dir: linewright::runs::RepoWorkDir {
-                    // As `common::config` has it, under the repository's name.
-                    base: dir.path().join("work"),
-                    repo: REPO.into(),
-                },
-                ends: linewright::ending::Ends::new(),
+                ..sources(&dir, &clock, since, serving.served.clone())
             },
             stopping.clone(),
         );
@@ -75,8 +91,23 @@ impl Web {
             router,
             stopping,
             store,
+            harness,
+            clock,
             _dir: dir,
         }
+    }
+
+    /// A factory beside `serve`'s, as `linewright automation run` starts
+    /// one, over the work directory a world adjusted to `work_dir/REPO`.
+    async fn factory_beside(&self) -> linewright::factory::Factory {
+        linewright::factory::Factory::start(
+            self.store.clone(),
+            self.harness.clone(),
+            self.clock.clone(),
+            config(&self._dir.path().join("work").join(REPO)),
+        )
+        .await
+        .unwrap()
     }
 
     async fn get_from(&self, host: &str, path: &str) -> axum::response::Response {

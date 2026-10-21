@@ -31,7 +31,14 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_the_pages_and_the
     let web = Web::start(with_ticket().await).await;
 
     let mut sidebars = vec![];
-    for path in ["/", "/items/1", "/runs", "/server", "/items/99"] {
+    for path in [
+        "/",
+        "/items/1",
+        "/runs",
+        "/automations",
+        "/server",
+        "/items/99",
+    ] {
         let (_, body) = web.get(path).await;
         let html = Html::parse_document(&body);
         let sidebar = select(&html, ".drawer-side nav");
@@ -51,6 +58,7 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_the_pages_and_the
             [
                 ("Board".to_string(), "/".to_string()),
                 ("Runs".to_string(), "/runs".to_string()),
+                ("Automations".to_string(), "/automations".to_string()),
                 ("Server".to_string(), "/server".to_string()),
             ],
             "{path}"

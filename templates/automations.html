@@ -1,0 +1,42 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+{% block automations -%}
+<section id="automations">
+<h1 class="mb-3 text-lg font-semibold">Automations</h1>
+{%- if !automations.unparsed.is_empty() %}
+<ul class="unparsed mb-4 space-y-1">
+{%- for file in automations.unparsed %}
+<li class="text-error">{{ file|safe }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+{%- if automations.rows.is_empty() %}
+<p>no automations</p>
+{%- else %}
+<div class="overflow-x-auto">
+<table class="table">
+<thead><tr><th>Name</th><th>Schedule</th><th>Last run</th><th>Next run</th></tr></thead>
+<tbody>
+{%- for row in automations.rows %}
+<tr>
+<th>{{ row.name }}</th>
+<td>{{ row.schedule }}</td>
+<td>
+{%- match row.last_run -%}
+{%- when LastRunShown::Run { id, href, tone, word, about } -%}
+<a class="link link-hover" href="{{ href }}">{{ id|safe }}</a>{{ about|safe }} — {% call ui::status(tone, word) %}{% endcall %}
+{%- when LastRunShown::NoneYet(phrase) -%}
+{{ phrase|safe }}
+{%- endmatch -%}
+</td>
+<td>{{ row.next_run|safe }}</td>
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+</div>
+{%- endif %}
+</section>
+{%- endblock %}
+{%- endblock -%}
