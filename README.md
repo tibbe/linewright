@@ -33,13 +33,12 @@ macOS on Apple silicon.
 - `status` asks the running `serve` of the repository what it is doing: since
   when it has run, its polls, the usage limit while one is in force, how many
   runs are in flight, the deliveries with webhooks on, each run in flight with
-  how long it has run and its quiet time, how long since its agent last produced
-  output, the items it tracks, where each is and what Linewright waits for on
-  it, and each automation with its last and next run and any automation file
-  that does not parse. `explain N` asks it where issue or pull request #N
-  stands, when it last read it, each thing Linewright waits for before it acts
-  on it next, such as a free run, the usage limit, CI or the maintainer, its run
-  in flight with its quiet time and its past runs as `runs N` lists them. For an
+  how long it has run, the items it tracks, where each is and what Linewright
+  waits for on it, and each automation with its last and next run and any
+  automation file that does not parse. `explain N` asks it where issue or pull
+  request #N stands, when it last read it, each thing Linewright waits for
+  before it acts on it next, such as a free run, the usage limit, CI or the
+  maintainer, its run in flight and its past runs as `runs N` lists them. For an
   item it does not track, `serve` reads #N from GitHub and `explain` says why
   Linewright leaves it alone, such as a missing label, a closed item, someone
   else's pull request or a merged one that is no spec change; it exits 4 when

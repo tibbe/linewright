@@ -4,9 +4,8 @@ Monitoring lets the operator, the maintainer or an agent see what a running
 Linewright is doing and why, as `serve` itself sees it.
 
 For example, the operator wonders why #42 has not moved in an hour.
-`lw explain 42` shows a rework run on it whose agent has been quiet
-for 25 minutes, and `lw logs 42 --follow` shows the agent waiting on a
-test that hangs.
+`lw explain 42` shows a rework run on it that has gone for 50 minutes,
+and `lw logs 42 --follow` shows the agent waiting on a test that hangs.
 
 ## User Stories
 
@@ -53,8 +52,7 @@ same host.
 order:
 
 1. Linewright itself: the facts in the table below.
-2. Each run in flight: its run ID, item, stage, how long it has run and its
-   quiet time, how long since its agent last produced output.
+2. Each run in flight: its run ID, item, stage and how long it has run.
 3. Each other open managed item: where it stands and, in one line, what
    Linewright is waiting for on it.
 4. The automations, as [Automations](automations.md) describes.
@@ -82,7 +80,7 @@ order:
   - each thing Linewright waits for before it acts on #N next, naming what
     ends the wait, such as "the usage limit, until 14:30 UTC" or "the drain,
     until `serve` restarts";
-  - its run in flight, with its quiet time;
+  - its run in flight;
   - its latest three past runs, as `runs N` lists them.
 - **An item Linewright leaves.** For an item that is not managed,
   `serve` reads #N from GitHub and `explain` says why Linewright leaves it,
@@ -234,7 +232,7 @@ waiting for on it.
 | ---------------- | ---------------------------------------------------------------------------- |
 | number and title | `#N` and the title, linking to the item page                                 |
 | where it stands  | where it is in the pipeline, as `explain` words it                           |
-| the line         | its run in flight, as the stage, how long it has run and its quiet time; or else each thing it waits for, as `explain` words it; or, in Done, how it ended: merged by which pull request, closed without merging, or closed |
+| the line         | its run in flight, as the stage and how long it has run; or else each thing it waits for, as `explain` words it; or, in Done, how it ended: merged by which pull request, closed without merging, or closed |
 | pull request     | its pull request, where it has one, with the pull request's CI state         |
 
 ### The run page
@@ -271,8 +269,6 @@ row per automation.
 - An MCP server.
 - A liveness check for a container healthcheck or a supervisor.
 - A record of each decision Linewright makes on an item; the log holds them.
-- Warnings about, or actions on, a run that stays quiet; the session timeout
-  ends it.
 - Answers from `once` and `automation run` while they run.
 - Direction, not the first version: commands that run single pieces of
   Linewright, so that a coding agent changing Linewright can verify its change.
