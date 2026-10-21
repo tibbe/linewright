@@ -6,6 +6,7 @@ mod html;
 mod item_page;
 mod run_page;
 mod runs_page;
+mod server_page;
 
 use html::Html;
 
@@ -29,8 +30,9 @@ use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::{self, Sources, Unanswered};
-use crate::phrase::{Phrase, Tone};
-use crate::status::{self, Fact};
+use crate::domain::Timestamp;
+use crate::phrase::Phrase;
+use crate::status::{self, DrainShown, Linewright};
 
 pub(crate) fn routes() -> Router<Sources> {
     Router::new()
@@ -40,6 +42,8 @@ pub(crate) fn routes() -> Router<Sources> {
         .route("/events/items/{number}", get(item_page::item_events))
         .route("/runs", get(runs_page::runs_page))
         .route("/events/runs", get(runs_page::runs_events))
+        .route("/server", get(server_page::server_page))
+        .route("/events/server", get(server_page::server_events))
         .route("/runs/{*id}", get(run_page::run_page))
         .route("/events/runs/{*id}", get(run_page::run_events))
         .route("/assets/{name}", get(asset))
@@ -153,56 +157,129 @@ impl Page {
 /// (`docs/specs/monitoring.md`, Navigation, and Holds and problems).
 struct Frame {
     repo: String,
-    facts: Vec<FrameFact>,
-    /// A usage limit in force and a drain under way.
-    banners: Vec<Html>,
+    status_line: StatusLine,
+    holds: Vec<HoldShown>,
 }
 
-struct FrameFact {
-    html: Html,
-    problem: bool,
+/// The runs in flight out of `max-runs`, and the last poll.
+struct StatusLine {
+    runs_in_flight: Html,
+    last_poll: Html,
+}
+
+/// A hold on Linewright's work, shown on every page while it lasts
+/// (`docs/specs/monitoring.md`, Holds and problems).
+enum Hold {
+    UsageLimit {
+        resets_at: Timestamp,
+    },
+    Drain(DrainShown),
+    /// A webhook delivery refused, with none accepted since.
+    WebhooksRefused {
+        last_refused: Timestamp,
+    },
+}
+
+impl Hold {
+    fn of(linewright: &Linewright) -> Vec<Hold> {
+        let usage_limit = linewright
+            .usage_limit_resets_at
+            .map(|resets_at| Hold::UsageLimit { resets_at });
+        let drain = linewright.drain.map(Hold::Drain);
+        let refused = linewright
+            .webhooks
+            .and_then(|received| received.refused_since_accepted())
+            .map(|last_refused| Hold::WebhooksRefused { last_refused });
+        [usage_limit, drain, refused]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    fn phrase(&self) -> Phrase {
+        match self {
+            Hold::UsageLimit { resets_at } => status::usage_limit(*resets_at),
+            Hold::Drain(drain) => status::drain_under_way(*drain),
+            Hold::WebhooksRefused { last_refused } => Phrase::from("webhook delivery refused: ")
+                .time(*last_refused)
+                .text(", none accepted since"),
+        }
+    }
+
+    /// Its alert's classes, in its daisyUI colour
+    /// (`docs/specs/web/design_system.md`, Status): a usage limit is
+    /// neutral, which is daisyUI's alert with no colour of its own. Written
+    /// whole, as `Tone::colour` says why.
+    fn alert(&self) -> &'static str {
+        match self {
+            Hold::UsageLimit { .. } => "alert",
+            Hold::Drain(_) | Hold::WebhooksRefused { .. } => "alert alert-warning",
+        }
+    }
+
+    /// The page that tells more of it.
+    fn href(&self) -> String {
+        match self {
+            Hold::UsageLimit { .. } | Hold::Drain(_) | Hold::WebhooksRefused { .. } => {
+                "/server".into()
+            }
+        }
+    }
+}
+
+struct HoldShown {
+    alert: &'static str,
+    phrase: Html,
+    href: String,
 }
 
 impl Frame {
     fn of(sources: &Sources) -> Frame {
+        Frame::of_status(sources, &api::status_answer(sources).linewright)
+    }
+
+    /// The frame, from what `status` says of Linewright.
+    fn of_status(sources: &Sources, linewright: &Linewright) -> Frame {
         let repo = sources.work_dir.repo.clone();
-        let status = api::status_answer(sources);
         let html = |phrase: &Phrase| html::phrase(phrase, &repo);
-        let mut facts = vec![];
-        let mut banners = vec![];
-        for fact in status::linewright_facts(&status.linewright)
-            .into_iter()
-            .chain(status::automation_facts(&status))
-        {
-            match fact {
-                Fact::Plain(phrase) => facts.push(FrameFact {
-                    html: html(&phrase),
-                    problem: false,
-                }),
-                Fact::Problem(phrase) => facts.push(FrameFact {
-                    html: html(&phrase),
-                    problem: true,
-                }),
-                Fact::Warning(phrase) => banners.push(html(&phrase)),
-            }
-        }
+        let status_line = StatusLine {
+            runs_in_flight: html(&status::runs_in_flight(linewright)),
+            last_poll: html(&status::last_poll(linewright)),
+        };
+        let holds = Hold::of(linewright)
+            .iter()
+            .map(|hold| HoldShown {
+                alert: hold.alert(),
+                phrase: html(&hold.phrase()),
+                href: hold.href(),
+            })
+            .collect();
         Frame {
             repo,
-            facts,
-            banners,
+            status_line,
+            holds,
         }
     }
 }
 
 #[derive(Template)]
-#[template(path = "layout.html", block = "frame")]
-struct FrameRegion<'a> {
+#[template(path = "layout.html", block = "status_line")]
+struct StatusLineRegion<'a> {
+    frame: &'a Frame,
+}
+
+#[derive(Template)]
+#[template(path = "layout.html", block = "holds")]
+struct HoldsRegion<'a> {
     frame: &'a Frame,
 }
 
 /// The frame's regions, which every page's stream sends before its own.
 fn frame_regions(frame: &Frame) -> Vec<(&'static str, String)> {
-    vec![("bar", render(&FrameRegion { frame }))]
+    vec![
+        ("status-line", render(&StatusLineRegion { frame })),
+        ("holds", render(&HoldsRegion { frame })),
+    ]
 }
 
 #[derive(Template, WebTemplate)]

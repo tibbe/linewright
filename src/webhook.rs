@@ -387,6 +387,20 @@ impl Pending {
 pub struct Received {
     pub last_accepted: Option<Timestamp>,
     pub refused: u64,
+    /// Absent from the answers of a `serve` from before it was kept.
+    #[serde(default)]
+    pub last_refused: Option<Timestamp>,
+}
+
+impl Received {
+    /// When a delivery was refused with none accepted since, if one was
+    /// (`docs/specs/monitoring.md`, Holds and problems).
+    pub fn refused_since_accepted(&self) -> Option<Timestamp> {
+        self.last_refused.filter(|refused| {
+            self.last_accepted
+                .is_none_or(|accepted| accepted < *refused)
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -405,7 +419,9 @@ impl Tally {
     }
 
     fn refused(&self) {
-        self.received.lock().unwrap().refused += 1;
+        let mut received = self.received.lock().unwrap();
+        received.refused += 1;
+        received.last_refused = Some(self.clock.now());
     }
 }
 

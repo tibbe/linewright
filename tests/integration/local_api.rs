@@ -362,13 +362,13 @@ async fn with_webhooks_on_status_shows_the_last_accepted_delivery_and_those_refu
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert!(
         lines.iter().any(|line| line
-            .strip_prefix("last delivery accepted: 2026-10-01 12:")
+            .strip_prefix("last webhook delivery accepted: 2026-10-01 12:")
             .is_some_and(|rest| rest.ends_with(" UTC"))),
         "{}",
         output.stdout
     );
     assert!(
-        lines.contains(&"deliveries refused: 2"),
+        lines.contains(&"webhook deliveries refused: 2"),
         "{}",
         output.stdout
     );

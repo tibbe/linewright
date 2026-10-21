@@ -53,7 +53,7 @@ impl Web {
             Sources {
                 serving: linewright::status::Serving { since, max_runs: 4 },
                 served: serving.served.clone(),
-                deliveries: None,
+                deliveries: Some(listener.tally()),
                 clock: clock.clone(),
                 work_dir: linewright::runs::RepoWorkDir {
                     // As `common::config` has it, under the repository's name.

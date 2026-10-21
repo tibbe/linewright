@@ -1,0 +1,11 @@
+{%- extends "layout.html" -%}
+{%- block main -%}
+<section id="server">
+<h1 class="mb-3 text-lg font-semibold">Server</h1>
+<ul class="list rounded-box bg-base-200">
+{%- for fact in facts %}
+<li class="list-row"><span>{{ fact|safe }}</span></li>
+{%- endfor %}
+</ul>
+</section>
+{%- endblock -%}

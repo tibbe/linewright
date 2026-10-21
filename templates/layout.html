@@ -12,26 +12,44 @@
 <script src="{{ page.assets.script }}" defer></script>
 </head>
 <body class="bg-base-100 text-base-content" hx-sse:connect="{{ page.events }}" hx-swap="none">
-{% block frame -%}
-<header id="bar" class="border-b border-base-300 bg-base-200 px-4 py-2">
-<nav class="flex items-baseline gap-4">
-<a class="repo link link-hover font-semibold" href="https://github.com/{{ frame.repo }}">{{ frame.repo }}</a>
-<a class="link link-hover" href="/">Board</a>
-<a class="link link-hover" href="/runs">Runs</a>
-</nav>
-<ul class="facts mt-1 flex flex-wrap gap-x-5 gap-y-1 text-sm text-base-content/70">
-{%- for fact in frame.facts %}
-<li>{% if fact.problem %}{% call ui::status(Tone::Failure, fact.html) %}{% endcall %}{% else %}{{ fact.html|safe }}{% endif %}</li>
+{#- The navigation is a daisyUI drawer: a sidebar at the left on a wide
+    screen, and a menu behind a button on a narrow one
+    (`docs/specs/web/design_system.md`, Navigation). -#}
+<div class="drawer lg:drawer-open">
+<input id="navigation" type="checkbox" class="drawer-toggle">
+<div class="drawer-content min-w-0">
+<label for="navigation" class="btn btn-ghost btn-square drawer-button m-2 lg:hidden" aria-label="Open the navigation">
+<svg class="size-5" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
+</label>
+{% block holds -%}
+<div id="holds" class="flex flex-col gap-2 empty:hidden px-4 pt-2">
+{%- for hold in frame.holds %}
+<div class="{{ hold.alert }}" role="alert"><span class="phrase">{{ hold.phrase|safe }}</span><a class="link" href="{{ hold.href }}">details</a></div>
 {%- endfor %}
-</ul>
-{%- for banner in frame.banners %}
-<p class="banner alert alert-warning mt-2" role="status">{{ banner|safe }}</p>
-{%- endfor %}
-</header>
+</div>
 {%- endblock %}
 <p id="lost" class="alert alert-warning mx-4 mt-2" role="status" hidden>Lost <code>serve</code> <time></time>; reconnecting.</p>
 <main class="p-4">
 {% block main %}{% endblock %}
 </main>
+</div>
+<div class="drawer-side">
+<label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
+<nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4" aria-label="Linewright">
+<a class="repo link link-hover font-semibold" href="https://github.com/{{ frame.repo }}">{{ frame.repo }}</a>
+<ul class="menu w-full p-0">
+<li><a href="/">Board</a></li>
+<li><a href="/runs">Runs</a></li>
+<li><a href="/server">Server</a></li>
+</ul>
+{% block status_line -%}
+<ul id="status-line" class="mt-auto space-y-1 text-sm text-base-content/70">
+<li>{{ frame.status_line.runs_in_flight|safe }}</li>
+<li>{{ frame.status_line.last_poll|safe }}</li>
+</ul>
+{%- endblock %}
+</nav>
+</div>
+</div>
 </body>
 </html>

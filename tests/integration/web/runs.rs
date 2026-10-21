@@ -93,8 +93,8 @@ async fn the_runs_pages_stream_lists_the_runs_again_as_one_starts_and_ends() {
         .unwrap();
     let first = regions(&first);
     let ids: Vec<&str> = first.iter().map(|(id, _)| id.as_str()).collect();
-    assert_eq!(ids, ["bar", "runs"]);
-    let running = runs_shown(&first[1].1);
+    assert_eq!(ids, ["status-line", "holds", "runs"]);
+    let running = runs_shown(&first[2].1);
     assert!(
         running.len() == 1 && running[0].starts_with("1/triage-1: in flight — "),
         "{running:?}"

@@ -260,6 +260,7 @@ fn with_webhooks_on_the_last_accepted_delivery_and_the_refused_ones_are_shown() 
     let webhooks = Received {
         last_accepted: Some(at("2026-10-01T11:59:00Z")),
         refused: 2,
+        last_refused: Some(at("2026-10-01T11:58:00Z")),
     };
 
     let lines = text_with(Some(webhooks), Some(&view(vec![])), "2026-10-01T12:00:30Z");
@@ -267,8 +268,8 @@ fn with_webhooks_on_the_last_accepted_delivery_and_the_refused_ones_are_shown() 
     assert_eq!(
         lines[4..],
         [
-            "last delivery accepted: 2026-10-01 11:59:00 UTC",
-            "deliveries refused: 2",
+            "last webhook delivery accepted: 2026-10-01 11:59:00 UTC",
+            "webhook deliveries refused: 2",
         ]
     );
 }
@@ -283,7 +284,10 @@ fn with_webhooks_on_and_no_delivery_yet_none_is_shown_accepted() {
 
     assert_eq!(
         lines[4..],
-        ["last delivery accepted: none yet", "deliveries refused: 0"]
+        [
+            "last webhook delivery accepted: none yet",
+            "webhook deliveries refused: 0"
+        ]
     );
 }
 
@@ -749,6 +753,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
     let webhooks = Received {
         last_accepted: Some(at("2026-10-01T11:59:00Z")),
         refused: 2,
+        last_refused: Some(at("2026-10-01T11:58:00Z")),
     };
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[("x.md", "bad")]),
@@ -866,6 +871,39 @@ fn the_json_names_each_fact() {
             "unparsed_automations": [],
         })
     );
+}
+
+#[test]
+fn the_json_says_when_a_webhook_delivery_was_last_refused_and_reads_without_it() {
+    let webhooks = Received {
+        last_accepted: Some(at("2026-10-01T11:59:00Z")),
+        refused: 1,
+        last_refused: Some(at("2026-10-01T12:05:00Z")),
+    };
+    let answer = status(
+        &serving(),
+        Some(webhooks),
+        None,
+        &[],
+        None,
+        at("2026-10-01T12:10:00Z"),
+    );
+
+    let mut json = serde_json::to_value(&answer).unwrap();
+    assert_eq!(
+        json["linewright"]["webhooks"],
+        serde_json::json!({
+            "last_accepted": "2026-10-01T11:59:00Z",
+            "refused": 1,
+            "last_refused": "2026-10-01T12:05:00Z",
+        })
+    );
+    json["linewright"]["webhooks"]
+        .as_object_mut()
+        .unwrap()
+        .remove("last_refused");
+    let read: Status = serde_json::from_value(json).unwrap();
+    assert_eq!(read.linewright.webhooks.unwrap().last_refused, None);
 }
 
 #[test]

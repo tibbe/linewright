@@ -99,7 +99,7 @@ async fn the_item_page_of_no_item_says_there_is_none() {
             .collect::<Vec<_>>(),
         ["there is no issue or pull request #99"]
     );
-    assert_eq!(select(&html, "#bar").len(), 1);
+    assert_eq!(select(&html, ".drawer-side nav").len(), 1);
     web.stop().await;
 }
 
@@ -151,7 +151,7 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["bar", "item"]);
+    assert_eq!(ids, ["status-line", "holds", "item"]);
     let quiet = tokio::time::timeout(Duration::from_millis(2500), events.recv()).await;
     assert!(quiet.is_err(), "sent with nothing changed: {quiet:?}");
 

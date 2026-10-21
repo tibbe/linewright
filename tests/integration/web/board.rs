@@ -111,7 +111,7 @@ async fn the_boards_stream_sends_the_board_and_the_tab_title_after_a_poll_moves_
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["bar", "title", "board"]);
+    assert_eq!(ids, ["status-line", "holds", "title", "board"]);
 
     web.store
         .close_issue_as(linewright::domain::Number(1))

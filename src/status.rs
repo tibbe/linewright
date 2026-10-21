@@ -539,44 +539,56 @@ pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
     let polls = linewright.polls;
     let mut facts = vec![
         Fact::Plain(Phrase::from("serving since: ").time(linewright.serving_since)),
-        Fact::Plain(match polls {
-            Some(polls) => Phrase::from("last poll: ").time(polls.last),
-            None => "last poll: none yet".into(),
-        }),
+        Fact::Plain(last_poll(linewright)),
         Fact::Plain(match polls {
             Some(polls) => Phrase::from("next poll: ").time(polls.next),
             None => "next poll: due now".into(),
         }),
     ];
     if let Some(resets_at) = linewright.usage_limit_resets_at {
-        facts.push(Fact::Warning(
-            Phrase::from("usage limit: in force until ").time(resets_at),
-        ));
+        facts.push(Fact::Warning(usage_limit(resets_at)));
     }
     if let Some(drain) = linewright.drain {
-        let mut phrase = Phrase::from("drain: under way since ").time(drain.since);
-        if let Some(deadline) = drain.deadline {
-            phrase = phrase.text("; deadline ").time(deadline);
-        }
-        facts.push(Fact::Warning(phrase));
+        facts.push(Fact::Warning(drain_under_way(drain)));
     }
-    facts.push(Fact::Plain(
-        format!(
-            "runs in flight: {} of {}",
-            linewright.runs_in_flight, linewright.max_runs
-        )
-        .into(),
-    ));
+    facts.push(Fact::Plain(runs_in_flight(linewright)));
     if let Some(received) = linewright.webhooks {
         facts.push(Fact::Plain(match received.last_accepted {
-            Some(at) => Phrase::from("last delivery accepted: ").time(at),
-            None => "last delivery accepted: none yet".into(),
+            Some(at) => Phrase::from("last webhook delivery accepted: ").time(at),
+            None => "last webhook delivery accepted: none yet".into(),
         }));
         facts.push(Fact::Plain(
-            format!("deliveries refused: {}", received.refused).into(),
+            format!("webhook deliveries refused: {}", received.refused).into(),
         ));
     }
     facts
+}
+
+pub(crate) fn last_poll(linewright: &Linewright) -> Phrase {
+    match linewright.polls {
+        Some(polls) => Phrase::from("last poll: ").time(polls.last),
+        None => "last poll: none yet".into(),
+    }
+}
+
+pub(crate) fn runs_in_flight(linewright: &Linewright) -> Phrase {
+    format!(
+        "runs in flight: {} of {}",
+        linewright.runs_in_flight, linewright.max_runs
+    )
+    .into()
+}
+
+pub(crate) fn usage_limit(resets_at: Timestamp) -> Phrase {
+    Phrase::from("usage limit: in force until ").time(resets_at)
+}
+
+pub(crate) fn drain_under_way(drain: DrainShown) -> Phrase {
+    let phrase = Phrase::from("drain: under way since ").time(drain.since);
+    match drain.deadline {
+        Some(deadline) => phrase.text("; deadline ").time(deadline),
+        None => phrase,
+    }
 }
 
 pub(crate) fn automation_facts(status: &Status) -> Vec<Fact> {
