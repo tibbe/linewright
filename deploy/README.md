@@ -14,12 +14,11 @@ CI builds its images from each commit on `main` and pushes them to GHCR, tagged
 repository on the host, which keeps the host's `.env` and
 `compose.override.yaml`; from another machine, run them there over SSH.
 
-1. Copy `.env.example` to `.env`, readable by its owner alone
-   (`chmod 600`), and fill it in: `GH_TOKEN`, the token of
-   the factory's GitHub user, optionally `LINEWRIGHT_SESSION_GITHUB_TOKEN`, a
-   read-only token for the agents (see the
-   [README](../README.md#a-read-only-github-token-for-sessions)), either
-   `ANTHROPIC_API_KEY` or a `CLAUDE_CODE_OAUTH_TOKEN` from
+1. Copy `.env.example` to `.env`, readable by its owner alone (`chmod 600`), and
+   fill it in: `GH_TOKEN`, the token of the factory's GitHub user, optionally
+   `LINEWRIGHT_SESSION_GITHUB_TOKEN`, a read-only token for the agents (see the
+   [running guide](../docs/running.md#a-read-only-github-token-for-sessions)),
+   either `ANTHROPIC_API_KEY` or a `CLAUDE_CODE_OAUTH_TOKEN` from
    `claude setup-token`, and, for webhooks, `LINEWRIGHT_WEBHOOK_SECRET` (see
    [Webhooks](#webhooks)).
 
@@ -59,8 +58,9 @@ exists, webhooks on or not. Create it with `docker network create proxy`, and
 attach NPM's container to it, as an external network in NPM's own
 `compose.yaml`.
 
-1. Set `LINEWRIGHT_WEBHOOK_SECRET` in `.env`, as the repository's
-   [README](../README.md#webhooks) says, and rerun step 3 above.
+1. Set `LINEWRIGHT_WEBHOOK_SECRET` in `.env`, as
+   [Running Linewright](../docs/running.md#webhooks) says, and rerun step 3
+   above.
 
 2. In NPM, add a proxy host:
    - **Domain names**: the public name for the webhook, such as
@@ -69,10 +69,10 @@ attach NPM's container to it, as an external network in NPM's own
      port** `8080`.
    - Under **SSL**, a Let's Encrypt certificate, with **Force SSL** on.
 
-3. Create the repository's webhook as the repository's
-   [README](../README.md#webhooks) says, with that domain name in the payload
-   URL, such as `https://linewright.example.com/`, and the secret from
-   step 1.
+3. Create the repository's webhook as
+   [Running Linewright](../docs/running.md#webhooks) says, with that domain name
+   in the payload URL, such as `https://linewright.example.com/`, and the secret
+   from step 1.
 
 ## Deploying and watching it
 

@@ -6,7 +6,7 @@ questions, discuss designs and draft spec changes. Write code when the user
 asks for code; a ticket you are implementing is that ask. When a request could
 mean either, ask which they want.
 
-See `README.md` for what it does. It is written in Rust and built with cargo.
+It is written in Rust and built with cargo.
 
 ## Specs
 
@@ -47,5 +47,9 @@ Before working in one of these areas, read its guide:
 
 ## User-facing documentation
 
-Any user-facing documentation changes, such as `README.md` and
-`docs/user-guide.md`, require human approval.
+- `README.md`: the front page: a short introduction, a quick start and links to
+  the guides.
+- `docs/user-guide.md`: how to work with Linewright on GitHub.
+- `docs/running.md`: how to operate it: setup, configuration and monitoring.
+
+Any user-facing documentation changes require human approval.
