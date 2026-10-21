@@ -67,6 +67,7 @@ required label, and never renames or deletes one.
 | `ready-for-human`                            | needs a person's decision or action               | Linewright, maintainer                           |
 | `bug`, `enhancement`                         | category, in repositories without issue types     | Linewright (triage), maintainer                  |
 | `linewright:designed`                        | designed, and cut into tickets where it needed cutting | Linewright                                  |
+| `linewright:stalled`                         | handed back in a stall                            | Linewright                                       |
 | the required label, named by `require-label` | Linewright may start work on this item            | maintainer, Linewright                           |
 
 - **Linewright's labels.** Labels only Linewright uses are prefixed
@@ -108,6 +109,11 @@ assigning itself and lets go of it by unassigning itself.
   it cannot finish: it labels an issue `ready-for-human`, unassigns itself
   from the item, removes `linewright:designed` where the design is the item's
   own, and says why in a comment.
+- **Stalls.** A stall labels the item `linewright:stalled` as well, cleared
+  when Linewright next claims or works the item. A session that timed out, a
+  push GitHub refused, checks still failing after the fix attempts and a
+  merge that failed twice are stalls; a question the spec cannot decide, a
+  design with nothing to build and a pull request closed unmerged are not.
 - **Marked for Linewright.** With `require-label` set, an item is marked for
   Linewright when it carries the required label, checked each time Linewright
   claims an item on its own. Work already started carries on without it.

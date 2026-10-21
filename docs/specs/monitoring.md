@@ -76,7 +76,8 @@ order:
   - its parents and its children in the pipeline, such as the issues a pull
     request closes, or the pull requests that close a ticket;
   - where it is in the pipeline, in the states of the issue lifecycle under
-    [Repository](repository.md), and when `serve` last read it;
+    [Repository](repository.md), whether it is stalled, and when `serve`
+    last read it;
   - each thing Linewright waits for before it acts on #N next, naming what
     ends the wait, such as "the usage limit, until 14:30 UTC" or "the drain,
     until `serve` restarts";

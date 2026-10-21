@@ -77,6 +77,12 @@ Linewright's letting go of an item it cannot finish, with the reason, for a
 person to take on.
 _Avoid_: handoff, escalation, reassignment
 
+**Stall**:
+A hand-back in which nothing a person decides is wanted: the work failed,
+and a person fixes what failed or has Linewright try again.
+_Avoid_: blocked, broken, stuck, failed, errored, error, action required,
+needs attention
+
 **In review**:
 An issue's status while an open pull request closes it.
 _Avoid_: pending, in progress

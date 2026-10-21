@@ -102,9 +102,12 @@ order:
   as its head alone, with when its last card closed, and opens on click. The
   finished lanes sit together under one fold that says how many there are
   and opens on click.
-- **Order of lanes.** The lanes with a card in Needs a person come first,
-  then the other unfinished lanes, then the finished lanes; unfinished lanes
-  in number order, and finished lanes latest finished first.
+- **Order of lanes.** The unfinished lanes come first, latest changed first,
+  then the finished lanes, latest finished first. Lanes changed at the same
+  time are in number order.
+- **A lane's last change.** The latest thing that happened, on GitHub or in
+  Linewright, to any of its cards or to a pull request that closes one. A
+  run in flight is happening now.
 - **Order in a column.** Ascending by number, within each lane.
 - **No cap.** A column is never cut.
 - **Needing a person.** The browser tab's title carries the count of cards in
@@ -114,26 +117,29 @@ order:
 
 A card is the item's number and title and, under them, at most one line that
 says what its column does not: what sets the item apart from the rest of its
-column, or what a person acts on. A card with nothing to add is the title
-alone.
+column, what a person acts on, or how long it has sat. A card with nothing
+to add is the title alone.
 
 - **Pull requests.** A card that is a pull request carries a pull request
   icon beside its number.
 - **The first that holds.** Where more than one row of a column holds, the
   line is the first.
-- **When.** In Done, the line ends with when the item closed.
+- **When.** In Done, the line ends with when the item closed. In Triage,
+  Needs a person and Ready, it ends with how long the item has been in its
+  column, or since it was created where that is not known.
 
 | Column         | The line                                                                                                                                                                                                                                                               | When                                                                                                                                                    |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Triage         | nothing                                                                                                                                                                                                                                                                |                                                                                                                                                         |
-| Needs a person | "reporter asked"                                                                                                                                                                                                                                                       | it holds `needs-info`                                                                                                                                   |
+| Triage         | nothing but the time                                                                                                                                                                                                                                                   |                                                                                                                                                         |
+| Needs a person | "stalled"                                                                                                                                                                                                                                                              | it holds `linewright:stalled`                                                                                                                           |
+|                | "reporter asked"                                                                                                                                                                                                                                                       | it holds `needs-info`                                                                                                                                   |
 |                | "handed back"                                                                                                                                                                                                                                                          | it holds `ready-for-human`, and Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged              |
 |                | "decision needed"                                                                                                                                                                                                                                                      | it holds `ready-for-human` otherwise                                                                                                                    |
 | Ready          | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |
 |                | "assigned to alice"                                                                                                                                                                                                                                                    | someone other than Linewright is assigned to it                                                                                                         |
 |                | "paused for the usage limit", "paused for the drain"                                                                                                                                                                                                                   | it would start, but for the hold                                                                                                                        |
 |                | "queued"                                                                                                                                                                                                                                                               | it would start, but the runs in flight are at `max-runs`                                                                                                |
-|                | nothing                                                                                                                                                                                                                                                                | otherwise: the next poll acts on it                                                                                                                     |
+|                | nothing but the time                                                                                                                                                                                                                                                   | otherwise: the next poll acts on it                                                                                                                     |
 | Working        | its stage and how long it has run, "implementation · 12 min"                                                                                                                                                                                                           | a run is in flight                                                                                                                                      |
 |                | "paused for the usage limit", "paused for the drain", "queued"                                                                                                                                                                                                         | no run is in flight, as in Ready                                                                                                                        |
 | In review      | its pull request, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" |
@@ -147,6 +153,7 @@ What stops a pull request merging, in the order the line picks from:
 
 | What stops it merging                                     | When                                       |
 | --------------------------------------------------------- | ------------------------------------------ |
+| "stalled"                                                 | it holds `linewright:stalled`              |
 | its stage and how long it has run, as in Working          | a run is in flight on it                   |
 | "checks failed"                                           | a check failed                             |
 | "checks running"                                          | a check has not finished                   |
