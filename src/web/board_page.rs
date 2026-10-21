@@ -11,7 +11,9 @@ use tokio_util::sync::CancellationToken;
 use super::html::{self, Html};
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
-use crate::board::{Board, Card, CardLine, Column, Ended, Hold, Lane, LaneHead, Running, Stop};
+use crate::board::{
+    Board, Card, CardLine, Column, Elapsed, Ended, Hold, Lane, LaneHead, Running, Stop,
+};
 use crate::domain::{IssueCloseReason, ReviewDecision};
 use crate::phrase::Phrase;
 use crate::reconcile::WorkKind;
@@ -119,13 +121,16 @@ fn counted(n: usize, thing: &str) -> String {
 
 impl CardShown {
     fn of(card: &Card, repo: &str) -> CardShown {
+        let line = card.line.as_ref().map(worded);
+        let sat = card.sat.map(|sat| Phrase::default().then(ticking(sat)));
+        let line = match (line, sat) {
+            (Some(line), Some(sat)) => Some(line.text(" · ").then(sat)),
+            (line, sat) => line.or(sat),
+        };
         CardShown {
             heading: html::titled(card.number, &card.title, repo),
             pull_request: card.pull_request,
-            line: card
-                .line
-                .as_ref()
-                .map(|line| html::phrase(&worded(line), repo)),
+            line: line.map(|line| html::phrase(&line, repo)),
         }
     }
 }
@@ -172,7 +177,12 @@ fn running_worded(running: Running) -> Phrase {
         WorkKind::FixCi => "CI fix",
         WorkKind::Update => "update",
     };
-    Phrase::from(format!("{stage} · ")).duration(running.seconds, Some(running.started_at))
+    Phrase::from(format!("{stage} · ")).then(ticking(running.elapsed))
+}
+
+/// How long `elapsed` has gone on, kept up as it goes on.
+fn ticking(elapsed: Elapsed) -> Phrase {
+    Phrase::default().duration(elapsed.seconds, Some(elapsed.since))
 }
 
 fn stop_worded(stop: &Stop) -> Phrase {

@@ -24,6 +24,15 @@ async fn with_a_board() -> World {
     world
 }
 
+/// `element`'s text, with each duration kept up as it runs, which the fake
+/// clock sets as the test runs, as `DURATION`.
+fn untimed(element: ElementRef) -> String {
+    let ticking = Selector::parse("time[data-since]").unwrap();
+    element.select(&ticking).fold(text(element), |shown, time| {
+        shown.replacen(&text(time), "DURATION", 1)
+    })
+}
+
 /// Each lane's heading, then each card as its column, its heading and its
 /// line, as a reader reads them.
 fn board_shown(html: &Html) -> Vec<Vec<String>> {
@@ -41,7 +50,7 @@ fn board_shown(html: &Html) -> Vec<Vec<String>> {
                     .map(move |card| {
                         let lines: Vec<String> = card
                             .select(&Selector::parse("h3, .line").unwrap())
-                            .map(text)
+                            .map(untimed)
                             .collect();
                         format!("{column}: {}", lines.join(" | "))
                     })
@@ -67,11 +76,11 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         [
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
-                "Needs a person: #3: Part one | reporter asked".to_string(),
+                "Needs a person: #3: Part one | reporter asked · DURATION".to_string(),
             ],
             vec![
                 "#1: Do the thing".to_string(),
-                "Needs a person: #1: Do the thing | decision needed".to_string(),
+                "Needs a person: #1: Do the thing | decision needed · DURATION".to_string(),
             ],
             vec![
                 "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
@@ -201,11 +210,11 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         [
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
-                "Needs a person: #3: Part one | reporter asked".to_string(),
+                "Needs a person: #3: Part one | reporter asked · DURATION".to_string(),
             ],
             vec![
                 "#1: Do the thing".to_string(),
-                "Needs a person: #1: Do the thing | decision needed".to_string(),
+                "Needs a person: #1: Do the thing | decision needed · DURATION".to_string(),
             ],
             vec![
                 "#5: Small thing — 1/1 tickets closed — finished 2026-10-01 12:00:SS UTC"
@@ -327,7 +336,7 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
     web.store.unlabel_as(ticket, "ready-for-agent").unwrap();
     web.store.label_as(ticket, "ready-for-human").unwrap();
     web.deliver_issue(ticket.0).await;
-    let handed_back = eventually_on_the_board(&web, "handed back").await;
+    let handed_back = eventually_on_the_board(&web, "handed back · DURATION").await;
 
     assert_eq!(
         in_review,
@@ -340,7 +349,7 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
     assert_eq!(
         handed_back,
         [(
-            format!("Needs a person: {ticket}: Do the thing | handed back"),
+            format!("Needs a person: {ticket}: Do the thing | handed back · DURATION"),
             false
         )]
     );
@@ -367,7 +376,7 @@ async fn a_stalled_card_says_stalled_in_needs_a_person_and_after_its_pull_reques
         shown,
         [
             (
-                format!("Needs a person: {stalled}: Do another thing | stalled"),
+                format!("Needs a person: {stalled}: Do another thing | stalled · DURATION"),
                 false
             ),
             (
@@ -528,4 +537,56 @@ async fn eventually_on_the_board(web: &Web, line: &str) -> Vec<(String, bool)> {
     })
     .await;
     waited.expect("shown in time")
+}
+
+#[tokio::test]
+async fn a_card_waiting_in_its_column_ends_its_line_with_how_long_it_has_sat_kept_up_as_a_runs() {
+    let world = with_issue_for_triage().await;
+    world
+        .harness
+        .on(WorkKind::Triage, |_| refused_for_the_usage_limit());
+    let blocker = world
+        .store
+        .open_issue("maintainer", "First", "Before.", &["ready-for-human"]);
+    let blocked = world.store.open_issue(
+        "maintainer",
+        "Then",
+        "After.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.store.add_blocked_by(blocked, blocker).await.unwrap();
+    let web = Web::start(world).await;
+
+    let html = web
+        .eventually_page("/", |html| {
+            cards_shown(html)
+                .iter()
+                .any(|(card, _)| card.starts_with("Triage: "))
+        })
+        .await;
+
+    let shown: Vec<String> = cards_shown(&html)
+        .into_iter()
+        .map(|(card, _)| card)
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            // The run refused for the usage limit changed #1 last.
+            "Triage: #1: Export fails | DURATION",
+            "Needs a person: #2: First | decision needed · DURATION",
+            "Ready: #3: Then | blocked by #2 · DURATION",
+        ]
+    );
+    let sat: Vec<&str> = select(&html, "#board .card .line time[data-since]")
+        .into_iter()
+        .filter_map(|time| time.attr("data-since"))
+        .collect();
+    assert_eq!(sat.len(), 3, "{sat:?}");
+    assert!(
+        sat.iter()
+            .all(|since| since.starts_with("2026-10-01T12:00:")),
+        "{sat:?}"
+    );
+    web.stop().await;
 }

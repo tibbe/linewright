@@ -2,7 +2,7 @@ use crate::common;
 
 use common::{NOW, at, ticket, view};
 use linewright::board::{
-    Board, Card, CardLine, Column, Ended, Hold, LaneHead, Running, Stop, board,
+    Board, Card, CardLine, Column, Elapsed, Ended, Hold, LaneHead, Running, Stop, board,
 };
 use linewright::domain::*;
 use linewright::reconcile::WorkKind;
@@ -277,8 +277,10 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
                 11,
                 Some(Stop::Running(Running {
                     stage: WorkKind::Rework,
-                    started_at: at("2026-10-01T11:50:00Z"),
-                    seconds: 630,
+                    elapsed: Elapsed {
+                        since: at("2026-10-01T11:50:00Z"),
+                        seconds: 630,
+                    },
                 }))
             ),
             review(12, Some(Stop::ChecksFailed)),
@@ -1220,8 +1222,10 @@ fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
     let run = |stage| {
         Some(CardLine::Running(Running {
             stage,
-            started_at: at("2026-10-01T11:50:00Z"),
-            seconds: 630,
+            elapsed: Elapsed {
+                since: at("2026-10-01T11:50:00Z"),
+                seconds: 630,
+            },
         }))
     };
     assert_eq!(
@@ -1235,4 +1239,210 @@ fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
             run(WorkKind::Triage)
         ]
     );
+}
+
+/// `issue`, with `events` read.
+fn with_events(issue: Issue, events: Vec<IssueEvent>) -> Issue {
+    Issue { events, ..issue }
+}
+
+fn labeling(label: &str, when: &str) -> IssueEvent {
+    IssueEvent::Labeled {
+        label: label.into(),
+        at: at(when),
+    }
+}
+
+fn unassigning_linewright(when: &str) -> IssueEvent {
+    IssueEvent::Assignment(Assignment::Unassigned {
+        assignee: Login::new("factory"),
+        actor: Login::new("maintainer"),
+        at: at(when),
+    })
+}
+
+/// How long #`number`'s card says it has sat in its column, and since when.
+fn sat(board: &Board, number: u64) -> Option<Elapsed> {
+    card(board, number).sat
+}
+
+/// Sat since `since`, as of `NOW`, 12:00:30, `seconds` before it.
+fn sat_since(since: &str, seconds: u64) -> Elapsed {
+    Elapsed {
+        since: at(since),
+        seconds,
+    }
+}
+
+#[test]
+fn a_card_in_triage_has_sat_since_needs_triage_was_applied_or_the_issue_reopened() {
+    let view = view(
+        vec![
+            with_events(
+                labeled(1, &["needs-triage"]),
+                vec![labeling("needs-triage", "2026-10-01T10:00:00Z")],
+            ),
+            with_events(
+                labeled(2, &["needs-triage"]),
+                vec![
+                    labeling("needs-triage", "2026-10-01T09:00:00Z"),
+                    IssueEvent::Reopened {
+                        at: at("2026-10-01T11:00:00Z"),
+                    },
+                ],
+            ),
+            // Created 2026-09-30T09:00:00Z, with no event read.
+            labeled(3, &["needs-triage"]),
+        ],
+        vec![],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        [1, 2, 3].map(|n| sat(&board, n)),
+        [
+            Some(sat_since("2026-10-01T10:00:00Z", 2 * 3600 + 30)),
+            Some(sat_since("2026-10-01T11:00:00Z", 3600 + 30)),
+            Some(sat_since("2026-09-30T09:00:00Z", 27 * 3600 + 30)),
+        ]
+    );
+    assert_eq!(line(&board, 1), None, "nothing but the time");
+}
+
+#[test]
+fn a_card_needing_a_person_has_sat_since_the_label_it_holds_was_applied() {
+    let view = view(
+        vec![
+            with_events(
+                labeled(1, &["needs-info"]),
+                vec![
+                    labeling("needs-triage", "2026-10-01T08:00:00Z"),
+                    labeling("needs-info", "2026-10-01T10:00:00Z"),
+                ],
+            ),
+            with_events(
+                labeled(2, &["ready-for-human"]),
+                vec![labeling("ready-for-human", "2026-10-01T11:00:00Z")],
+            ),
+            labeled(3, &["ready-for-human"]),
+        ],
+        vec![],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        [1, 2, 3].map(|n| sat(&board, n)),
+        [
+            Some(sat_since("2026-10-01T10:00:00Z", 2 * 3600 + 30)),
+            Some(sat_since("2026-10-01T11:00:00Z", 3600 + 30)),
+            Some(sat_since("2026-09-30T09:00:00Z", 27 * 3600 + 30)),
+        ]
+    );
+    assert_eq!(line(&board, 1), Some(CardLine::ReporterAsked));
+}
+
+#[test]
+fn a_ready_card_has_sat_since_ready_for_agent_was_applied_or_linewright_unassigned() {
+    let view = view(
+        vec![
+            blocked_by(
+                with_events(
+                    labeled(1, &["ready-for-agent"]),
+                    vec![labeling("ready-for-agent", "2026-10-01T10:00:00Z")],
+                ),
+                &[9],
+            ),
+            with_events(
+                labeled(2, &["ready-for-agent"]),
+                vec![
+                    labeling("ready-for-agent", "2026-10-01T09:00:00Z"),
+                    unassigning_linewright("2026-10-01T11:00:00Z"),
+                ],
+            ),
+            labeled(3, &["ready-for-agent"]),
+        ],
+        vec![],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        [1, 2, 3].map(|n| sat(&board, n)),
+        [
+            Some(sat_since("2026-10-01T10:00:00Z", 2 * 3600 + 30)),
+            Some(sat_since("2026-10-01T11:00:00Z", 3600 + 30)),
+            Some(sat_since("2026-09-30T09:00:00Z", 27 * 3600 + 30)),
+        ]
+    );
+    assert_eq!(line(&board, 1), Some(CardLine::BlockedBy(Number(9))));
+}
+
+#[test]
+fn a_ready_spec_change_has_sat_since_its_merge_linewright_unassigned_or_the_required_label() {
+    let unassigned = MergedPull {
+        events: vec![unassigning_linewright("2026-10-01T10:30:00Z")],
+        ..spec_change(6, &[])
+    };
+    let relabeled = MergedPull {
+        events: vec![
+            unassigning_linewright("2026-10-01T10:30:00Z"),
+            labeling("linewright", "2026-10-01T11:15:00Z"),
+        ],
+        ..spec_change(7, &["linewright"])
+    };
+    let mut view = with_merged(
+        view(vec![], vec![]),
+        vec![spec_change(5, &["linewright"]), unassigned, relabeled],
+    );
+    view.policy.require_label = Some("linewright".into());
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        placed(&board),
+        [
+            (5, Column::Ready, 5),
+            (6, Column::Ready, 6),
+            (7, Column::Ready, 7),
+        ]
+    );
+    assert_eq!(
+        [5, 6, 7].map(|n| sat(&board, n)),
+        [
+            Some(sat_since("2026-10-01T09:00:00Z", 3 * 3600 + 30)),
+            Some(sat_since("2026-10-01T10:30:00Z", 3600 + 30 * 60 + 30)),
+            Some(sat_since("2026-10-01T11:15:00Z", 45 * 60 + 30)),
+        ]
+    );
+}
+
+#[test]
+fn working_in_review_and_done_cards_have_no_time_in_their_column() {
+    let view = with_closed(
+        with_runs(
+            view(
+                vec![
+                    labeled(1, &["needs-triage"]),
+                    assigned(ticket(2, "Reviewed")),
+                ],
+                vec![pull(10, &[2], &[CheckState::Passed])],
+            ),
+            &["1/triage-1"],
+        ),
+        vec![closed_issue(3, "2026-09-30T12:00:00Z", Some(13))],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        placed(&board),
+        [
+            (1, Column::Working, 1),
+            (2, Column::InReview, 2),
+            (3, Column::Done, 3),
+        ]
+    );
+    assert_eq!([1, 2, 3].map(|n| sat(&board, n)), [None, None, None]);
 }

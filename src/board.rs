@@ -6,7 +6,8 @@ use std::cmp::Reverse;
 
 use crate::domain::{
     CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, Login, Mergeability, Number, Pull,
-    PullState, ReviewDecision, SubIssue, Timestamp, Tracks,
+    PullState, ReviewDecision, StatusLabel, SubIssue, Timestamp, Tracks, last_labeling,
+    last_unassigned,
 };
 use crate::reconcile::{NotSpecChange, Wait, WorkKind, not_a_spec_change};
 use crate::runs::{Ending, Recorded, RunOf, State};
@@ -146,8 +147,13 @@ pub struct Card {
     pub title: String,
     /// Whether it is a pull request, which carries a pull request icon.
     pub pull_request: bool,
-    /// What its column does not say; `None` shows the title alone.
+    /// What its column does not say; `None` shows the title alone, or
+    /// nothing but the time where it has sat.
     pub line: Option<CardLine>,
+    /// How long it has sat in its column (`docs/specs/design_system.md`,
+    /// Cards, When), since it last entered it, which its line ends with: set
+    /// in Triage, Needs a person and Ready alone.
+    pub sat: Option<Elapsed>,
     /// When it last changed, for its lane's order.
     changed: Timestamp,
 }
@@ -165,6 +171,7 @@ impl Card {
             title: title.to_string(),
             pull_request,
             line,
+            sat: None,
             changed,
         }
     }
@@ -231,8 +238,25 @@ pub enum Hold {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Running {
     pub stage: WorkKind,
-    pub started_at: Timestamp,
+    pub elapsed: Elapsed,
+}
+
+/// How long something has gone on, kept up as it goes on: a run, or an
+/// item's stay in its column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Elapsed {
+    pub since: Timestamp,
     pub seconds: u64,
+}
+
+impl Elapsed {
+    /// From `since` to `now`, none if `since` is later.
+    fn of(since: Timestamp, now: Timestamp) -> Elapsed {
+        Elapsed {
+            since,
+            seconds: u64::try_from((now - since).num_seconds()).unwrap_or(0),
+        }
+    }
 }
 
 /// What stops a pull request merging.
@@ -337,13 +361,16 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         };
         // A spec change not yet designed is its merged pull request.
         let pull_request = snapshot.merged_pull(managed.number).is_some();
-        let card = Card::new(
-            managed.number,
-            &managed.title,
-            pull_request,
-            line,
-            changed(&on),
-        );
+        let card = Card {
+            sat: sat(column, managed.number, view, now),
+            ..Card::new(
+                managed.number,
+                &managed.title,
+                pull_request,
+                line,
+                changed(&on),
+            )
+        };
         cards.push((column, card));
     }
     for item in &closed {
@@ -712,6 +739,53 @@ fn last_change(view: &View, recorded: &[Recorded], items: &[Number], now: Timest
         .unwrap_or_default()
 }
 
+/// How long the item #`number` has sat in `column`, where its card says so:
+/// since it last entered one of the column's states, by the latest of the
+/// events read that move it there, or else since it was created, or for a
+/// spec change since it merged.
+fn sat(column: Column, number: Number, view: &View, now: Timestamp) -> Option<Elapsed> {
+    let snapshot = &view.snapshot;
+    let linewright = &view.policy.linewright;
+    let since = if let Some(issue) = snapshot.issue(number) {
+        let entered = match column {
+            Column::Triage => vec![
+                issue.last_labeled(StatusLabel::NeedsTriage),
+                issue.last_reopened(),
+            ],
+            Column::NeedsAPerson => vec![
+                issue
+                    .status_label()
+                    .and_then(|held| issue.last_labeled(held)),
+            ],
+            Column::Ready => vec![
+                issue.last_labeled(StatusLabel::ReadyForAgent),
+                last_unassigned(&issue.events, linewright),
+            ],
+            Column::Working | Column::InReview | Column::Done => return None,
+        };
+        entered
+            .into_iter()
+            .flatten()
+            .max()
+            .unwrap_or(issue.created_at)
+    } else {
+        let pr = snapshot
+            .merged_pull(number)
+            .filter(|_| column == Column::Ready)?;
+        let required = view
+            .policy
+            .require_label
+            .as_deref()
+            .and_then(|required| last_labeling(&pr.events, required))
+            .map(|order| order.at);
+        [last_unassigned(&pr.events, linewright), required]
+            .into_iter()
+            .flatten()
+            .fold(pr.merged_at, Timestamp::max)
+    };
+    Some(Elapsed::of(since, now))
+}
+
 /// The run in flight on any of `items`.
 fn run_on(view: &View, items: &[Number], now: Timestamp) -> Option<Running> {
     view.in_flight.iter().find_map(|run| {
@@ -720,8 +794,7 @@ fn run_on(view: &View, items: &[Number], now: Timestamp) -> Option<Running> {
         };
         items.contains(&item).then(|| Running {
             stage,
-            started_at: run.started_at,
-            seconds: u64::try_from((now - run.started_at).num_seconds()).unwrap_or(0),
+            elapsed: Elapsed::of(run.started_at, now),
         })
     })
 }
