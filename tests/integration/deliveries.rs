@@ -180,7 +180,7 @@ async fn an_issue_closed_is_held_among_the_closed_items_on_the_delivery_about_it
         .open_issue("reporter", "Crash", "It crashes.", &["needs-info"]);
     let served = serve(world, NEVER).await;
 
-    served.store.close_issue_as(issue).unwrap();
+    served.store.close_issue_as_completed(issue).unwrap();
     served.deliver("issues", about_issue(issue)).await;
 
     let closed = || {
@@ -372,7 +372,7 @@ async fn closing_an_issue_stops_its_run_on_the_delivery() {
     let served = serve(world, NEVER).await;
     eventually(|| harness.started.load(Ordering::SeqCst) == 1).await;
 
-    served.store.close_issue_as(issue).unwrap();
+    served.store.close_issue_as_completed(issue).unwrap();
     served.deliver("issues", about_issue(issue)).await;
 
     eventually(|| harness.stopped.load(Ordering::SeqCst) == 1).await;
@@ -390,7 +390,7 @@ async fn reopening_an_issue_ready_for_agent_claims_it_on_the_delivery() {
         "Please.",
         &["ready-for-agent", "linewright:designed"],
     );
-    world.store.close_issue_as(issue).unwrap();
+    world.store.close_issue_as_completed(issue).unwrap();
     let served = serve(world, NEVER).await;
 
     served.store.reopen_issue_as(issue).unwrap();

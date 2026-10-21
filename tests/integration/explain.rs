@@ -37,6 +37,7 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         labels: vec![],
         assignees: vec![Login::new("factory")],
         assignments: vec![],
+        review_decision: None,
     }
 }
 

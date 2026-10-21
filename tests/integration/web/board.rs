@@ -20,7 +20,7 @@ async fn with_a_board() -> World {
         "Maybe.",
         &["ready-for-agent", "linewright:designed"],
     );
-    world.store.close_issue_as(closed).unwrap();
+    world.store.close_issue_as_completed(closed).unwrap();
     world
 }
 
@@ -75,7 +75,7 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
             ],
             vec![
                 "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
-                "Done: #4: Old idea | closed · 2026-10-01 12:00:SS UTC".to_string(),
+                "Done: #4: Old idea | closed as completed · 2026-10-01 12:00:SS UTC".to_string(),
             ],
         ]
     );
@@ -122,7 +122,7 @@ async fn the_boards_stream_sends_the_board_and_the_tab_title_after_a_poll_moves_
     assert_eq!(ids, ["status-line", "holds", "title", "board"]);
 
     web.store
-        .close_issue_as(linewright::domain::Number(1))
+        .close_issue_as_completed(linewright::domain::Number(1))
         .unwrap();
     web.deliver_issue(1).await;
     let moved = loop {
@@ -147,7 +147,7 @@ async fn the_boards_stream_sends_the_board_and_the_tab_title_after_a_poll_moves_
             .iter()
             .map(|line| unclocked(line))
             .collect::<Vec<_>>(),
-        ["Done: #1: Do the thing | closed · 2026-10-01 12:00:SS UTC"]
+        ["Done: #1: Do the thing | closed as completed · 2026-10-01 12:00:SS UTC"]
     );
     let title = &moved.iter().find(|(id, _)| id == "title").unwrap().1;
     assert_eq!(text(select(title, "title")[0]), "(1) Board · owner/widgets");
@@ -167,7 +167,7 @@ async fn with_a_finished_lane() -> World {
         .store
         .open_issue(LINEWRIGHT, "Only part", "Of it.", &["ready-for-agent"]);
     world.store.add_sub_issue(tracking, part).await.unwrap();
-    world.store.close_issue_as(part).unwrap();
+    world.store.close_issue_as_completed(part).unwrap();
     world
 }
 
@@ -210,11 +210,11 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
             vec![
                 "#5: Small thing — 1/1 tickets closed — finished 2026-10-01 12:00:SS UTC"
                     .to_string(),
-                "Done: #6: Only part | closed · 2026-10-01 12:00:SS UTC".to_string(),
+                "Done: #6: Only part | closed as completed · 2026-10-01 12:00:SS UTC".to_string(),
             ],
             vec![
                 "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
-                "Done: #4: Old idea | closed · 2026-10-01 12:00:SS UTC".to_string(),
+                "Done: #4: Old idea | closed as completed · 2026-10-01 12:00:SS UTC".to_string(),
             ],
         ]
     );
@@ -254,7 +254,7 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
     let world = with_ticket().await;
     world
         .store
-        .close_issue_as(linewright::domain::Number(1))
+        .close_issue_as_completed(linewright::domain::Number(1))
         .unwrap();
     let web = Web::start(world).await;
 
@@ -276,7 +276,7 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
         [
             "div: Triage Needs a person Ready Working In review Done",
             "details: 1 finished lane #1: Do the thing — finished \
-             2026-10-01 12:00:SS UTC #1: Do the thing closed · 2026-10-01 12:00:SS UTC",
+             2026-10-01 12:00:SS UTC #1: Do the thing closed as completed · 2026-10-01 12:00:SS UTC",
         ]
     );
     let lanes: Vec<Option<&str>> = select(&html, "#finished details")
@@ -372,6 +372,111 @@ async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request
             format!("Done: {pr}: Tidy up | merged · 2026-10-01 12:00:SS UTC"),
             true
         )]
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn an_issue_closed_without_a_merge_shows_githubs_reason_for_closing_it() {
+    use linewright::domain::IssueCloseReason::{Completed, Duplicate, NotPlanned};
+    let world = World::new().await;
+    for (title, reason) in [
+        ("Done it", Completed),
+        ("Never mind", NotPlanned),
+        ("Same as another", Duplicate),
+    ] {
+        let issue = world.store.open_issue(
+            "maintainer",
+            title,
+            "Maybe.",
+            &["ready-for-agent", "linewright:designed"],
+        );
+        world.store.close_issue_as(issue, reason).unwrap();
+    }
+    let web = Web::start(world).await;
+
+    let mut shown: Vec<String> = cards_shown(&web.page("/").await)
+        .into_iter()
+        .map(|(card, _)| card)
+        .collect();
+    shown.sort();
+
+    assert_eq!(
+        shown,
+        [
+            "Done: #1: Done it | closed as completed · 2026-10-01 12:00:SS UTC",
+            "Done: #2: Never mind | closed as not planned · 2026-10-01 12:00:SS UTC",
+            "Done: #3: Same as another | closed as a duplicate · 2026-10-01 12:00:SS UTC",
+        ]
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with_its_review_decision()
+ {
+    use linewright::domain::{CheckState, ReviewState};
+    let mut world = World::new().await;
+    let mut in_review = vec![];
+    for _ in 0..5 {
+        let (ticket, pr) = world.ticket_in_review().await;
+        world
+            .store
+            .set_checks(pr, vec![check("test", CheckState::Passed, "")])
+            .await
+            .unwrap();
+        in_review.push((ticket, pr));
+    }
+    let [
+        (unruled_ticket, unruled),
+        (required_ticket, required),
+        (changes_ticket, changes),
+        (approved_ticket, approved),
+        (approved_unruled_ticket, approved_unruled),
+    ] = in_review[..]
+    else {
+        unreachable!();
+    };
+    for pr in [required, changes, approved] {
+        world.store.require_review(pr);
+    }
+    world.rework_asked(changes);
+    world
+        .store
+        .review_as(
+            "maintainer",
+            changes,
+            ReviewState::ChangesRequested,
+            "Rename it.",
+            &[],
+        )
+        .unwrap();
+    for pr in [approved, approved_unruled] {
+        world
+            .store
+            .review_as("maintainer", pr, ReviewState::Approved, "", &[])
+            .unwrap();
+    }
+    // The rework answers the review, whose decision stands.
+    world.poll().await;
+    let web = Web::start(world).await;
+
+    let shown: Vec<String> = cards_shown(&web.page("/").await)
+        .into_iter()
+        .map(|(card, _)| card)
+        .collect();
+
+    let says = |ticket, line: String| format!("In review: {ticket}: Do the thing | {line}");
+    assert_eq!(
+        shown,
+        [
+            says(unruled_ticket, format!("{unruled}")),
+            says(required_ticket, format!("{required} · review required")),
+            says(changes_ticket, format!("{changes} · changes requested")),
+            says(approved_ticket, format!("{approved} · approved")),
+            // No rule requires a review, so GitHub decides none.
+            says(approved_unruled_ticket, format!("{approved_unruled}")),
+        ]
     );
     web.stop().await;
 }

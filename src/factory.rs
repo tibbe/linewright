@@ -17,7 +17,8 @@ use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::credentials::Credentials;
 use crate::domain::{
-    Item, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
+    IssueCloseReason, Item, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule,
+    label,
 };
 use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
@@ -31,7 +32,7 @@ use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
-use crate::store::{CloseReason, IssueRead, Store};
+use crate::store::{IssueRead, Store};
 use crate::webhook::{self, Pending};
 
 #[derive(Clone, Debug)]
@@ -827,7 +828,9 @@ impl Factory {
             Action::CloseTracking { issue } => {
                 info!(issue = issue.0, "closing tracking issue");
                 store.comment(*issue, "All tickets are closed.").await?;
-                store.close_issue(*issue, CloseReason::Completed).await?;
+                store
+                    .close_issue(*issue, IssueCloseReason::Completed)
+                    .await?;
             }
             Action::DiscardCut(discarding) => {
                 let Discard {
@@ -974,7 +977,7 @@ async fn run_and_log(
 /// Closes `issue`, of a cut discarded, as not planned, saying why in `note`.
 async fn discard(store: &dyn Store, issue: Number, note: &str) -> Result<()> {
     store.comment(issue, note).await?;
-    store.close_issue(issue, CloseReason::NotPlanned).await
+    store.close_issue(issue, IssueCloseReason::NotPlanned).await
 }
 
 /// What an item of a cut discarded to design `designed` again says, the

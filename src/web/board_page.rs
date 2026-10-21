@@ -12,6 +12,7 @@ use super::html::{self, Html};
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
 use crate::board::{Board, Card, CardLine, Column, Ended, Hold, Lane, LaneHead, Running, Stop};
+use crate::domain::{IssueCloseReason, ReviewDecision};
 use crate::phrase::Phrase;
 use crate::reconcile::WorkKind;
 
@@ -181,13 +182,19 @@ fn stop_worded(stop: &Stop) -> Phrase {
         Stop::Conflicts => "conflicts".into(),
         Stop::Behind { branch } => format!("behind {branch}").into(),
         Stop::Draft => "draft".into(),
+        Stop::Review(ReviewDecision::ChangesRequested) => "changes requested".into(),
+        Stop::Review(ReviewDecision::ReviewRequired) => "review required".into(),
+        Stop::Review(ReviewDecision::Approved) => "approved".into(),
     }
 }
 
 fn ended_worded(ended: Ended) -> Phrase {
     match ended {
         Ended::ClosedIn(pull) => Phrase::from("closed in ").item(pull),
-        Ended::Closed => "closed".into(),
+        Ended::Closed(None) => "closed".into(),
+        Ended::Closed(Some(IssueCloseReason::Completed)) => "closed as completed".into(),
+        Ended::Closed(Some(IssueCloseReason::NotPlanned)) => "closed as not planned".into(),
+        Ended::Closed(Some(IssueCloseReason::Duplicate)) => "closed as a duplicate".into(),
         Ended::Merged => "merged".into(),
         Ended::ClosedUnmerged => "closed without merging".into(),
         Ended::NothingToBuild => "merged · nothing to build".into(),

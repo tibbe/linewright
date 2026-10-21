@@ -732,6 +732,19 @@ pub struct Pull {
     pub assignees: Vec<Login>,
     /// Oldest first.
     pub assignments: Vec<Assignment>,
+    /// `None` where no review decides whether it merges.
+    #[serde(default)]
+    pub review_decision: Option<ReviewDecision>,
+}
+
+/// Where a pull request stands with its reviews, as GitHub decides it
+/// (<https://docs.github.com/en/graphql/reference/enums#pullrequestreviewdecision>).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReviewDecision {
+    ChangesRequested,
+    ReviewRequired,
+    Approved,
 }
 
 impl Pull {
@@ -1051,9 +1064,23 @@ pub enum ClosedKind {
         labels: Vec<String>,
         /// The pull request whose merge closed it.
         merged_by: Option<Number>,
+        /// `None` where it is not known, as in a snapshot taken before
+        /// Linewright read it.
+        #[serde(default)]
+        reason: Option<IssueCloseReason>,
     },
     /// Linewright's, closed without merging.
     Pull { closes: Vec<Number> },
+}
+
+/// Why an issue was closed, as GitHub records it
+/// (<https://docs.github.com/en/graphql/reference/enums#issuestatereason>).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum IssueCloseReason {
+    Completed,
+    NotPlanned,
+    Duplicate,
 }
 
 impl Snapshot {
@@ -1302,4 +1329,42 @@ pub fn closing_references(body: &str) -> Vec<Number> {
             digits.parse().ok().map(Number)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A snapshot as Linewright wrote it before it held a closed issue's
+    /// reason and a pull request's review decision.
+    #[test]
+    fn a_snapshot_written_before_reasons_and_review_decisions_loads_with_neither_known() {
+        let snapshot: Snapshot = serde_json::from_str(
+            r#"{
+              "default_branch": "main",
+              "issues": [],
+              "pulls": [{
+                "number": 10, "title": "Pull 10", "body": "", "author": "factory",
+                "created_at": "2026-10-01T11:58:00Z", "head_ref": "10-pull",
+                "head_sha": "abc123", "state": {"state": "open", "draft": false},
+                "closes": [1], "pushes": [], "mergeability": "unknown",
+                "rebaseability": "unknown", "checks": [], "comments": [], "reviews": [],
+                "threads": [], "labels": [], "assignees": ["factory"], "assignments": []
+              }],
+              "merged": [],
+              "closed": [{
+                "number": 2, "title": "Ticket 2", "closed_at": "2026-09-28T13:00:00Z",
+                "kind": "issue", "parent": null, "filed": null, "sub_issues": [],
+                "labels": ["ready-for-agent"], "merged_by": null
+              }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.pulls[0].review_decision, None);
+        assert!(matches!(
+            snapshot.closed[0].kind,
+            ClosedKind::Issue { reason: None, .. }
+        ));
+    }
 }

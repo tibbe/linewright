@@ -65,7 +65,7 @@ async fn an_issue_a_person_closed_and_linewrights_pull_request_closed_unmerged_a
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
     world.store.close_pull_as(pr).unwrap();
-    world.store.close_issue_as(ticket).unwrap();
+    world.store.close_issue_as_completed(ticket).unwrap();
 
     let closed = closed_items_served(world).await;
 

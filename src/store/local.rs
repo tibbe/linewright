@@ -8,16 +8,16 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::{
-    AnyItem, Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
-    RepoSettings, Store,
+    AnyItem, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode, RepoSettings,
+    Store,
 };
 use crate::clock::Clock;
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
-    ClosingPull, Comment, Filed, Issue, IssueEvent, Linked, Login, MergeMethod, MergeMethods,
-    Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement,
-    Review, ReviewState, Snapshot, SubIssue, Thread, TicketBranch, TicketBranchName, Timestamp,
-    closed_within, closing_references,
+    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, MergeMethod,
+    MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
+    Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread, TicketBranch,
+    TicketBranchName, Timestamp, closed_within, closing_references,
 };
 use crate::git;
 
@@ -82,6 +82,7 @@ struct Closing {
     at: Timestamp,
     /// The pull request whose merge closed the issue.
     merged_by: Option<Number>,
+    reason: IssueCloseReason,
 }
 
 #[derive(Clone, Serialize)]
@@ -118,6 +119,9 @@ struct PullRecord {
     reviews: Vec<Review>,
     threads: Vec<Thread>,
     requested_reviewers: Vec<Login>,
+    /// Whether the branch rules require a review of it, which gives it a
+    /// review decision.
+    review_ruled: bool,
     blocked: Option<Vec<Requirement>>,
     merge_state_pending: bool,
     refused: Option<String>,
@@ -319,9 +323,14 @@ impl LocalStore {
             .unassign(number, &Login::new(login), &Login::new(actor), now)
     }
 
-    pub fn close_issue_as(&self, issue: Number) -> Result<()> {
+    /// As GitHub closes it by default.
+    pub fn close_issue_as_completed(&self, issue: Number) -> Result<()> {
+        self.close_issue_as(issue, IssueCloseReason::Completed)
+    }
+
+    pub fn close_issue_as(&self, issue: Number, reason: IssueCloseReason) -> Result<()> {
         let now = self.now();
-        self.state().issue_mut(issue)?.close(now, None);
+        self.state().issue_mut(issue)?.close(now, None, reason);
         Ok(())
     }
 
@@ -492,7 +501,7 @@ impl LocalStore {
         let closes = closing_references(&record.body);
         for issue in closes {
             if let Ok(issue) = state.issue_mut(issue) {
-                issue.close(now, Some(pr));
+                issue.close(now, Some(pr), IssueCloseReason::Completed);
             }
         }
         Ok(())
@@ -501,6 +510,13 @@ impl LocalStore {
     pub fn block_merge(&self, pr: Number, requires: Vec<Requirement>) {
         if let Ok(record) = self.state().pull_mut(pr) {
             record.blocked = Some(requires);
+        }
+    }
+
+    /// Has the branch rules require a review of the pull request.
+    pub fn require_review(&self, pr: Number) {
+        if let Ok(record) = self.state().pull_mut(pr) {
+            record.review_ruled = true;
         }
     }
 
@@ -894,6 +910,7 @@ impl LocalStore {
                     .collect()
             })
             .unwrap_or_default();
+        let review_decision = record.review_decision();
         Ok(Pull {
             number,
             closes: closing_references(&record.body),
@@ -914,6 +931,7 @@ impl LocalStore {
             labels: record.labels,
             assignees: record.assignees,
             assignments: record.assignments,
+            review_decision,
         })
     }
 
@@ -1046,6 +1064,7 @@ impl State {
                 sub_issues: issue.sub_issues,
                 labels: issue.labels,
                 merged_by: closing.merged_by,
+                reason: Some(closing.reason),
             },
         })
     }
@@ -1166,8 +1185,12 @@ impl IssueRecord {
         self.closing.is_none()
     }
 
-    fn close(&mut self, at: Timestamp, merged_by: Option<Number>) {
-        self.closing = Some(Closing { at, merged_by });
+    fn close(&mut self, at: Timestamp, merged_by: Option<Number>, reason: IssueCloseReason) {
+        self.closing = Some(Closing {
+            at,
+            merged_by,
+            reason,
+        });
     }
 }
 
@@ -1190,6 +1213,35 @@ impl PullRecord {
 
     fn is_open(&self) -> bool {
         matches!(self.state, PullState::Open { .. })
+    }
+
+    /// As GitHub decides it: none unless the rules require a review, then
+    /// changes requested in a reviewer's latest review, else an approval,
+    /// else a review required.
+    fn review_decision(&self) -> Option<ReviewDecision> {
+        if !self.review_ruled {
+            return None;
+        }
+        let mut latest: BTreeMap<&Login, ReviewState> = BTreeMap::new();
+        for review in &self.reviews {
+            match review.state {
+                ReviewState::Commented => {}
+                ReviewState::Dismissed => {
+                    latest.remove(&review.author);
+                }
+                state @ (ReviewState::Approved | ReviewState::ChangesRequested) => {
+                    latest.insert(&review.author, state);
+                }
+            }
+        }
+        let any = |held: ReviewState| latest.values().any(|state| *state == held);
+        Some(if any(ReviewState::ChangesRequested) {
+            ReviewDecision::ChangesRequested
+        } else if any(ReviewState::Approved) {
+            ReviewDecision::Approved
+        } else {
+            ReviewDecision::ReviewRequired
+        })
     }
 
     fn has_label(&self, label: &str) -> bool {
@@ -1256,6 +1308,7 @@ impl PullRecord {
             reviews: vec![],
             threads: vec![],
             requested_reviewers: vec![],
+            review_ruled: false,
             blocked: None,
             merge_state_pending: false,
             refused: None,
@@ -1670,8 +1723,8 @@ impl Store for LocalStore {
         Ok(())
     }
 
-    async fn close_issue(&self, issue: Number, _reason: CloseReason) -> Result<()> {
-        self.close_issue_as(issue)
+    async fn close_issue(&self, issue: Number, reason: IssueCloseReason) -> Result<()> {
+        self.close_issue_as(issue, reason)
     }
 
     async fn set_issue_type(&self, issue: Number, issue_type: &str) -> Result<()> {

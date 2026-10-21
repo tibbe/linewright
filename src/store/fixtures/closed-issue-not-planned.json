@@ -1,0 +1,40 @@
+{
+  "number": 305,
+  "title": "Give agents a code map so they read less of the largest files",
+  "body": "## What happened\n\nImplementers read all of `src/reconcile.rs` (1,604 lines), `src/domain.rs` and the store modules in their first minutes, and every later call sends those reads again.\n\n- In #284, #285 and #288, these early reads were 48–52% of the input tokens.\n- `287/implement-1` had 135k tokens of context before its first edit and 259k by its end ($8.84, 30 minutes). `282/implement-1` found its way with `grep` and line ranges, and stayed at 61k.\n- Tests that depend on the changed code only showed up at the full check:\n  - new `Pull` fields broke fixtures in `tests/explain.rs`, `tests/fix_brief.rs` and `tests/status.rs` (#287);\n  - a changed helper broke 11 tests (#285);\n  - `tests/refresh.rs` asserts on reconcile's actions (#288).\n- Three runs used greps of 7–15K characters to list the helpers in the 4,374-line `tests/pipeline.rs`.\n\nReading the spec cost much less, 17–78K characters a run, so 20276fe saves little here.\n\n## Recommendation\n\nWrite `docs/code-map.md`, and point to it from the area guides in `AGENTS.md` (\"Before changing `src/` or `tests/`\"). It should cover:\n\n- what each module owns, and its entry points: `reconcile::decisions`, `Wait` and `Action`; the `Issue` and `Pull` helpers; the shell in `run.rs`; the GraphQL in `store/github.rs`;\n- where event-history lookups live;\n- where each kind of test goes, and where its fixtures are (`tests/common/mod.rs`, `tests/views/mod.rs`);\n- what a new `Issue` or `Pull` field touches;\n- the scripted runtime's helpers and rules: wait for a session to begin, and give a handler that blocks a `multi_thread` runtime.\n\nKeep it to what `grep` doesn't show, such as what a module owns and which tests depend on what, so it doesn't go stale.\n\n## To decide\n\nWhether to also split `src/reconcile.rs`, for example by item kind.\n",
+  "closedAt": "2026-10-18T06:16:11Z",
+  "stateReason": "NOT_PLANNED",
+  "author": {
+    "__typename": "User",
+    "login": "tibbe"
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "ready-for-human"
+      }
+    ]
+  },
+  "assignees": {
+    "nodes": []
+  },
+  "subIssues": {
+    "nodes": []
+  },
+  "parent": {
+    "number": 308,
+    "title": "Retro: the agents' environment, from the runs on #269 and #281",
+    "body": "A retrospective of the 23 agent sessions behind two spec changes:\n\n- #268 (tracking issue #269, tickets #270–#273)\n- #277 (tracking issue #281, tickets #282–#288)\n\nThe sessions cost about $64: $14 for #269 and $50 for #281. They ran the briefs of Linewright 8c2638f, before the deployment moved to c8060e9, and each worked in a clone of `main` as it was then.\n\nThe work came out well. Every pull request but #276 passed CI on its first push, and none needed changes in review. The cost was in how the work was done. Each finding is a sub-issue, most severe first:\n\n1. #300 Keep Linewright's secrets out of agent sessions and their transcripts\n2. #301 Give work two tickets need its own ticket when cutting a spec change\n3. #302 Keep an update run to the update\n4. #303 Fix the shared build cache, which breaks when the session that started it ends\n5. #304 Make a hung test name itself, locally and in CI\n6. #305 Give agents a code map so they read less of the largest files\n7. #306 Close the gaps the code reviewers left\n8. #307 Catch with checks the mechanical mistakes the reviewers keep finding\n\n## Already on `main`\n\nWhat the same runs show about two changes merged since:\n\n- **1b79095 (review once):** it saves about 3.5 minutes where a second review round ran. But those second rounds caught real bugs three times, so it goes with #306. It also makes #302 worse.\n- **20276fe (the spec change's diff, and less of the spec read):** it changes little. Reading the spec cost 17–78K characters a run, against far more code.\n\n## Seen along the way\n\nThese are about Linewright's own behaviour, not the agents' environment:\n\n- Five tickets got an `implement-2` run that started and was cancelled 2–6s after the ticket closed.\n- Each pull request gets two \"Ready for review\" comments.\n- #292 and #291 merged before #290, whose ticket blocked #284 and #285. That forced two more update runs on #290.\n",
+    "author": {
+      "__typename": "User",
+      "login": "tibbe"
+    }
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "closer": null
+      }
+    ]
+  }
+}

@@ -43,6 +43,7 @@ fn pull() -> Pull {
         labels: vec![],
         assignees: vec![Login::new("factory")],
         assignments: vec![],
+        review_decision: None,
     }
 }
 

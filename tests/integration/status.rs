@@ -943,6 +943,7 @@ fn linewrights_pull_request_is_managed_with_its_own_waits_and_its_ticket_waits_f
             actor: Login::new("maintainer"),
             at: at("2026-10-01T11:59:00Z"),
         }],
+        review_decision: None,
     };
     let unlabeled = Issue {
         labels: vec![],

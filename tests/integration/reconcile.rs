@@ -1731,6 +1731,7 @@ fn pull(number: u64, closes: u64) -> Pull {
             actor: Login::new("maintainer"),
             at: t(1),
         }],
+        review_decision: None,
     }
 }
 

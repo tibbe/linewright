@@ -2200,12 +2200,12 @@ async fn a_ticket_cut_from_an_issue_handed_back_keeps_the_design_of_the_issue() 
 async fn an_issue_cut_into_tickets_is_closed_once_all_of_them_are() {
     let (mut world, issue, [store_ticket, list_ticket]) = issue_cut_into_tickets().await;
 
-    world.store.close_issue_as(store_ticket).unwrap();
+    world.store.close_issue_as_completed(store_ticket).unwrap();
     world.poll().await;
 
     assert!(world.issue(issue).open);
 
-    world.store.close_issue_as(list_ticket).unwrap();
+    world.store.close_issue_as_completed(list_ticket).unwrap();
     world.poll().await;
 
     let closed = world.issue(issue);
@@ -2899,7 +2899,7 @@ async fn a_blocked_ticket_assigned_to_linewright_by_hand_is_held_assigned_until_
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
     assert_eq!(world.issue(ticket).comments, []);
 
-    world.store.close_issue_as(blocker).unwrap();
+    world.store.close_issue_as_completed(blocker).unwrap();
     world.poll().await;
 
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
@@ -3393,7 +3393,7 @@ async fn a_run_cancelled_by_closing_its_ticket_pushes_its_work_and_the_branch_is
     let mut world = World::new().await;
 
     let ticket = cancelled_with_edits(&mut world, |world, ticket| {
-        world.store.close_issue_as(ticket).unwrap();
+        world.store.close_issue_as_completed(ticket).unwrap();
     })
     .await;
 
@@ -4071,7 +4071,7 @@ async fn closing_a_ticket_with_no_open_pull_request_deletes_its_branch() {
     let mut world = World::new().await;
     let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
 
-    world.store.close_issue_as(ticket).unwrap();
+    world.store.close_issue_as_completed(ticket).unwrap();
     world.poll().await;
 
     assert!(!has_branch(&world, &branch));
@@ -4083,7 +4083,7 @@ async fn closing_a_ticket_whose_pull_request_is_open_leaves_its_branch() {
     let (ticket, pr) = world.ticket_in_review().await;
     let branch = world.store.snapshot_pull(pr).await.head_ref;
 
-    world.store.close_issue_as(ticket).unwrap();
+    world.store.close_issue_as_completed(ticket).unwrap();
     world.poll().await;
 
     assert!(has_branch(&world, &branch));
@@ -4105,7 +4105,7 @@ async fn a_branch_named_for_a_closed_issue_whose_head_a_person_made_is_left() {
         .await
         .unwrap();
 
-    world.store.close_issue_as(issue).unwrap();
+    world.store.close_issue_as_completed(issue).unwrap();
     world.poll().await;
 
     assert!(has_branch(&world, &branch));
@@ -4135,7 +4135,7 @@ async fn only_a_branch_named_as_linewright_names_a_closed_tickets_branch_is_dele
             .unwrap();
     }
 
-    world.store.close_issue_as(issue).unwrap();
+    world.store.close_issue_as_completed(issue).unwrap();
     world.poll().await;
 
     assert!(!has_branch(&world, &named));
@@ -4149,7 +4149,7 @@ async fn the_branch_of_a_ticket_closed_while_linewright_was_stopped_is_deleted_a
     let mut world = World::new().await;
     let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
 
-    world.store.close_issue_as(ticket).unwrap();
+    world.store.close_issue_as_completed(ticket).unwrap();
     world.restart(|_| {}).await;
     world.poll().await;
 

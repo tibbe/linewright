@@ -9,8 +9,8 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, ClosedItem, Issue, Item, Login, MergeMethod, MergeMethods, MergedPull, Number,
-    Pull, Snapshot, Timestamp, UpdateMethod, UpdateRule,
+    CheckFailure, ClosedItem, Issue, IssueCloseReason, Item, Login, MergeMethod, MergeMethods,
+    MergedPull, Number, Pull, Snapshot, Timestamp, UpdateMethod, UpdateRule,
 };
 use crate::redaction::Redaction;
 
@@ -230,12 +230,6 @@ fn missing_permission(output: &str) -> Option<String> {
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CloseReason {
-    Completed,
-    NotPlanned,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IssueRead {
     Held {
@@ -365,7 +359,7 @@ pub trait Store: Send + Sync {
     async fn comment(&self, number: Number, body: &str) -> Result<()>;
     async fn create_issue(&self, issue: NewIssue) -> Result<Number>;
     async fn edit_body(&self, number: Number, body: &str) -> Result<()>;
-    async fn close_issue(&self, issue: Number, reason: CloseReason) -> Result<()>;
+    async fn close_issue(&self, issue: Number, reason: IssueCloseReason) -> Result<()>;
     async fn set_issue_type(&self, issue: Number, issue_type: &str) -> Result<()>;
     async fn add_sub_issue(&self, parent: Number, child: Number) -> Result<()>;
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()>;

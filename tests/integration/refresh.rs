@@ -47,7 +47,7 @@ async fn refreshing_an_issue_closed_since_the_poll_cancels_its_run() {
     );
     world.factory.cycle().await.unwrap();
 
-    world.store.close_issue_as(issue).unwrap();
+    world.store.close_issue_as_completed(issue).unwrap();
     let actions = world.factory.refresh([Item::Issue(issue)]).await.unwrap();
 
     assert_eq!(

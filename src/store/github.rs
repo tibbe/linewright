@@ -11,16 +11,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    AnyItem, Categories, CloseReason, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
-    RepoSettings, Store,
+    AnyItem, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode, RepoSettings,
+    Store,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
-    ClosingPull, Comment, Filed, Issue, IssueEvent, JobLog, Linked, Login, MergeMethod,
-    Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability, Requirement,
-    Review, ReviewState, Snapshot, SubIssue, Thread, TicketBranch, TicketBranchName, Timestamp,
-    closed_within, label,
+    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Linked, Login,
+    MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
+    Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread, TicketBranch,
+    TicketBranchName, Timestamp, closed_within, label,
 };
 use crate::git;
 
@@ -1204,7 +1204,7 @@ struct GqlClosingPull {
 const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
     name: "ClosedIssueFields",
     text: "fragment ClosedIssueFields on Issue {
-  number title body closedAt
+  number title body closedAt stateReason
   author { __typename login }
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
@@ -1221,6 +1221,7 @@ struct GqlClosedIssue {
     title: String,
     body: String,
     closed_at: Option<Timestamp>,
+    state_reason: Option<GqlStateReason>,
     author: Option<Actor>,
     labels: Nodes<Name>,
     sub_issues: Option<Nodes<SubIssueNode>>,
@@ -1266,9 +1267,33 @@ impl GqlClosedIssue {
                 sub_issues: sub_issues(self.sub_issues),
                 labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
                 merged_by,
+                reason: self.state_reason.and_then(GqlStateReason::reason),
             },
             title: self.title,
         })
+    }
+}
+
+/// <https://docs.github.com/en/graphql/reference/enums#issuestatereason>
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GqlStateReason {
+    Completed,
+    NotPlanned,
+    Duplicate,
+    /// `REOPENED`, which an open issue carries, or one added since.
+    #[serde(other)]
+    Other,
+}
+
+impl GqlStateReason {
+    fn reason(self) -> Option<IssueCloseReason> {
+        match self {
+            GqlStateReason::Completed => Some(IssueCloseReason::Completed),
+            GqlStateReason::NotPlanned => Some(IssueCloseReason::NotPlanned),
+            GqlStateReason::Duplicate => Some(IssueCloseReason::Duplicate),
+            GqlStateReason::Other => None,
+        }
     }
 }
 
@@ -1524,7 +1549,7 @@ struct GqlPull {
     mergeable: String,
     merge_state_status: String,
     can_be_rebased: bool,
-    review_decision: Option<String>,
+    review_decision: Option<GqlReviewDecision>,
     author: Option<Actor>,
     closing_issues_references: Option<Nodes<NumberNode>>,
     comments: Nodes<GqlComment>,
@@ -1535,6 +1560,29 @@ struct GqlPull {
     labels: Nodes<Name>,
     assignees: Nodes<LoginNode>,
     timeline_items: Nodes<GqlAssignment>,
+}
+
+/// <https://docs.github.com/en/graphql/reference/enums#pullrequestreviewdecision>
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GqlReviewDecision {
+    ChangesRequested,
+    ReviewRequired,
+    Approved,
+    /// One added since.
+    #[serde(other)]
+    Other,
+}
+
+impl GqlReviewDecision {
+    fn decision(self) -> Option<ReviewDecision> {
+        match self {
+            GqlReviewDecision::ChangesRequested => Some(ReviewDecision::ChangesRequested),
+            GqlReviewDecision::ReviewRequired => Some(ReviewDecision::ReviewRequired),
+            GqlReviewDecision::Approved => Some(ReviewDecision::Approved),
+            GqlReviewDecision::Other => None,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1651,10 +1699,10 @@ impl GqlPull {
     /// needed then.
     fn requirements(&self, rules: &BranchRules) -> Vec<Requirement> {
         let mut requires = vec![];
-        match (self.review_decision.as_deref(), self.code_owner_review()) {
-            (Some("REVIEW_REQUIRED"), Some(review)) => requires.push(review),
+        match (self.review_decision, self.code_owner_review()) {
+            (Some(GqlReviewDecision::ReviewRequired), Some(review)) => requires.push(review),
             (_, Some(review)) if rules.code_owner_review => requires.push(review),
-            (Some("REVIEW_REQUIRED" | "CHANGES_REQUESTED"), _) => {
+            (Some(GqlReviewDecision::ReviewRequired | GqlReviewDecision::ChangesRequested), _) => {
                 requires.push(Requirement::Approval);
             }
             _ => {}
@@ -1725,6 +1773,7 @@ impl GqlPull {
             (_, true) => Rebaseability::Rebaseable,
             (_, false) => Rebaseability::NotRebaseable,
         };
+        let review_decision = self.review_decision.and_then(GqlReviewDecision::decision);
         Pull {
             number: Number(self.number),
             title: self.title,
@@ -1773,6 +1822,7 @@ impl GqlPull {
                     comments: t.comments.nodes.into_iter().map(Comment::from).collect(),
                 })
                 .collect(),
+            review_decision,
             labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
             assignees: self
                 .assignees
@@ -2585,10 +2635,11 @@ impl Store for GitHub {
         .await
     }
 
-    async fn close_issue(&self, issue: Number, reason: CloseReason) -> Result<()> {
+    async fn close_issue(&self, issue: Number, reason: IssueCloseReason) -> Result<()> {
         let reason = match reason {
-            CloseReason::Completed => "completed",
-            CloseReason::NotPlanned => "not_planned",
+            IssueCloseReason::Completed => "completed",
+            IssueCloseReason::NotPlanned => "not_planned",
+            IssueCloseReason::Duplicate => "duplicate",
         };
         self.rest_ok(
             Method::PATCH,
@@ -2850,6 +2901,36 @@ mod tests {
             pr.requirements(&BranchRules::default()),
             [Requirement::Approval]
         );
+    }
+
+    /// `fixtures/pull-changes-requested.json` is `PullFields` as GitHub
+    /// returned it for <https://github.com/tibbe/linewright/pull/16>, on
+    /// which its maintainer requested changes. The other decisions are
+    /// GitHub's documented values
+    /// (<https://docs.github.com/en/graphql/reference/enums#pullrequestreviewdecision>).
+    #[test]
+    fn a_pull_request_is_held_with_githubs_review_decision_and_none_where_github_gives_none() {
+        let decision = |review_decision: Option<Value>| {
+            let mut pr: Value =
+                serde_json::from_str(include_str!("fixtures/pull-changes-requested.json")).unwrap();
+            if let Some(review_decision) = review_decision {
+                pr["reviewDecision"] = review_decision;
+            }
+            let pr: GqlPull = serde_json::from_value(pr).unwrap();
+            pr.into_pull(vec![], &BranchRules::default())
+                .review_decision
+        };
+
+        assert_eq!(decision(None), Some(ReviewDecision::ChangesRequested));
+        assert_eq!(
+            decision(Some(json!("REVIEW_REQUIRED"))),
+            Some(ReviewDecision::ReviewRequired)
+        );
+        assert_eq!(
+            decision(Some(json!("APPROVED"))),
+            Some(ReviewDecision::Approved)
+        );
+        assert_eq!(decision(Some(json!(null))), None);
     }
 
     fn no_review_decision(requests: &Value) -> GqlPull {
@@ -3304,6 +3385,7 @@ mod tests {
                         sub_issues: vec![ticket(388), ticket(389)],
                         labels: vec![],
                         merged_by: None,
+                        reason: Some(IssueCloseReason::Completed),
                     },
                 },
                 ClosedItem {
@@ -3321,10 +3403,54 @@ mod tests {
                         sub_issues: vec![],
                         labels: vec!["ready-for-agent".into(), "linewright:designed".into()],
                         merged_by: Some(Number(391)),
+                        reason: Some(IssueCloseReason::Completed),
                     },
                 },
             ]
         );
+    }
+
+    /// `fixtures/closed-issue-not-planned.json` is `ClosedIssueFields` as
+    /// GitHub returned it for <https://github.com/tibbe/linewright/issues/305>,
+    /// which its maintainer closed as not planned.
+    #[test]
+    fn an_issue_closed_as_not_planned_is_held_with_that_reason() {
+        let issue: GqlClosedIssue =
+            serde_json::from_str(include_str!("fixtures/closed-issue-not-planned.json")).unwrap();
+
+        let closed = issue.into_closed(&Login::new("tibbe-bot")).unwrap();
+
+        let ClosedKind::Issue { reason, .. } = closed.kind else {
+            panic!("an issue");
+        };
+        assert_eq!(reason, Some(IssueCloseReason::NotPlanned));
+    }
+
+    /// The fixture with GitHub's other documented reasons
+    /// (<https://docs.github.com/en/graphql/reference/enums#issuestatereason>).
+    #[test]
+    fn a_closed_issue_is_held_with_githubs_reason_and_none_where_github_gives_none() {
+        let reason = |state_reason: Value| {
+            let mut issue: Value =
+                serde_json::from_str(include_str!("fixtures/closed-issue-not-planned.json"))
+                    .unwrap();
+            issue["stateReason"] = state_reason;
+            let issue: GqlClosedIssue = serde_json::from_value(issue).unwrap();
+            match issue.into_closed(&Login::new("tibbe-bot")).unwrap().kind {
+                ClosedKind::Issue { reason, .. } => reason,
+                ClosedKind::Pull { .. } => panic!("an issue"),
+            }
+        };
+
+        assert_eq!(
+            reason(json!("COMPLETED")),
+            Some(IssueCloseReason::Completed)
+        );
+        assert_eq!(
+            reason(json!("DUPLICATE")),
+            Some(IssueCloseReason::Duplicate)
+        );
+        assert_eq!(reason(json!(null)), None);
     }
 
     /// `fixtures/closed-pulls.json` is the page of closed pull requests

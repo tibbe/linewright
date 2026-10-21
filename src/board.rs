@@ -5,8 +5,8 @@
 use std::cmp::Reverse;
 
 use crate::domain::{
-    CheckState, ClosedItem, ClosedKind, Issue, Login, Mergeability, Number, PullState, SubIssue,
-    Timestamp, Tracks,
+    CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, Login, Mergeability, Number,
+    PullState, ReviewDecision, SubIssue, Timestamp, Tracks,
 };
 use crate::reconcile::{NotSpecChange, Wait, WorkKind, not_a_spec_change};
 use crate::runs::{Ending, Recorded, RunOf, State};
@@ -233,6 +233,8 @@ pub enum Stop {
         branch: String,
     },
     Draft,
+    /// Its review decision, whatever it is.
+    Review(ReviewDecision),
 }
 
 /// How an item in Done ended.
@@ -240,8 +242,8 @@ pub enum Stop {
 pub enum Ended {
     /// An issue closed by the merge of the pull request.
     ClosedIn(Number),
-    /// An issue closed otherwise.
-    Closed,
+    /// An issue closed otherwise, with GitHub's reason where it is known.
+    Closed(Option<IssueCloseReason>),
     /// A pull request of Linewright's, merged.
     Merged,
     /// A pull request of Linewright's, closed without merging.
@@ -254,7 +256,7 @@ impl Ended {
     /// Whether it is how a pull request ended, rather than an issue.
     fn of_pull_request(self) -> bool {
         match self {
-            Ended::ClosedIn(_) | Ended::Closed => false,
+            Ended::ClosedIn(_) | Ended::Closed(_) => false,
             Ended::Merged | Ended::ClosedUnmerged | Ended::NothingToBuild => true,
         }
     }
@@ -318,13 +320,16 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         cards.push((column, card));
     }
     for item in &closed {
-        let ClosedKind::Issue { merged_by, .. } = item.kind else {
+        let ClosedKind::Issue {
+            merged_by, reason, ..
+        } = item.kind
+        else {
             continue;
         };
         if item.tracks(linewright).is_some() {
             continue;
         }
-        let ended = merged_by.map_or(Ended::Closed, Ended::ClosedIn);
+        let ended = merged_by.map_or(Ended::Closed(reason), Ended::ClosedIn);
         cards.push(Card::ended(item.number, &item.title, ended, item.closed_at));
     }
     let on_the_board: Vec<Number> = cards.iter().map(|(_, card)| card.number).collect();
@@ -581,6 +586,7 @@ fn review_line(
             branch: snapshot.default_branch.clone(),
         }),
         matches!(pull_state, Some(PullState::Open { draft: true })).then_some(Stop::Draft),
+        pull.and_then(|pull| pull.review_decision).map(Stop::Review),
     ];
     Some(CardLine::Review {
         pull_request,

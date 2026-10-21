@@ -101,6 +101,7 @@ fn pull(number: u64, closes: &[u64], checks: &[CheckState]) -> Pull {
         labels: vec![],
         assignees: vec![Login::new("factory")],
         assignments: vec![],
+        review_decision: None,
     }
 }
 
@@ -128,6 +129,7 @@ fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedI
             sub_issues: vec![],
             labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
             merged_by: merged_by.map(Number),
+            reason: None,
         },
     }
 }
@@ -234,15 +236,26 @@ fn reviewed(
 fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stops_it_merging() {
     use CheckState::{Failed, Passed, Pending};
     use Mergeability::{Behind, Clean, Conflicting};
-    let issues = (1..=7).map(|n| assigned(ticket(n, "Reviewed"))).collect();
+    use ReviewDecision::{Approved, ChangesRequested, ReviewRequired};
+    let issues = (1..=10).map(|n| assigned(ticket(n, "Reviewed"))).collect();
+    let decided = |pull: Pull, review_decision| Pull {
+        review_decision: Some(review_decision),
+        ..pull
+    };
     let pulls = vec![
         reviewed(11, 1, &[Failed, Pending], Conflicting, true),
         reviewed(12, 2, &[Failed, Pending], Conflicting, true),
         reviewed(13, 3, &[Passed, Pending], Conflicting, true),
         reviewed(14, 4, &[Passed], Conflicting, true),
         reviewed(15, 5, &[Passed], Behind, true),
-        reviewed(16, 6, &[Passed], Mergeability::Unknown, true),
+        decided(
+            reviewed(16, 6, &[Passed], Mergeability::Unknown, true),
+            ChangesRequested,
+        ),
         reviewed(17, 7, &[Passed], Clean, false),
+        decided(reviewed(18, 8, &[Passed], Clean, false), ChangesRequested),
+        decided(reviewed(19, 9, &[Passed], Clean, false), ReviewRequired),
+        decided(reviewed(20, 10, &[Passed], Clean, false), Approved),
     ];
     let view = with_runs(view(issues, pulls), &["11/rework-1"]);
 
@@ -256,7 +269,7 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
         })
     };
     assert_eq!(
-        (1..=7).map(|n| line(&board, n)).collect::<Vec<_>>(),
+        (1..=10).map(|n| line(&board, n)).collect::<Vec<_>>(),
         [
             review(
                 11,
@@ -277,9 +290,12 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
             ),
             review(16, Some(Stop::Draft)),
             review(17, None),
+            review(18, Some(Stop::Review(ChangesRequested))),
+            review(19, Some(Stop::Review(ReviewRequired))),
+            review(20, Some(Stop::Review(Approved))),
         ]
     );
-    assert!((1..=7).all(|n| !card(&board, n).pull_request));
+    assert!((1..=10).all(|n| !card(&board, n).pull_request));
 }
 
 #[test]
@@ -312,6 +328,16 @@ fn merged(number: u64, closes: &[u64], author: &str, merged_at: &str) -> MergedP
     }
 }
 
+/// Issue #`number`, closed by a person as `reason` `number` minutes past
+/// 13:00 on 2026-09-28.
+fn closed_as(number: u64, reason: IssueCloseReason) -> ClosedItem {
+    let mut closed = closed_issue(number, &format!("2026-09-28T13:{number:02}:00Z"), None);
+    if let ClosedKind::Issue { reason: held, .. } = &mut closed.kind {
+        *held = Some(reason);
+    }
+    closed
+}
+
 #[test]
 fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
     let mut closed_pull = closed_issue(30, "2026-09-29T12:00:00Z", None);
@@ -324,6 +350,9 @@ fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
             vec![
                 closed_issue(1, "2026-09-28T12:00:00Z", Some(11)),
                 closed_issue(2, "2026-09-28T13:00:00Z", None),
+                closed_as(3, IssueCloseReason::Completed),
+                closed_as(4, IssueCloseReason::NotPlanned),
+                closed_as(5, IssueCloseReason::Duplicate),
                 closed_pull,
             ],
         ),
@@ -362,7 +391,31 @@ fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
                 true,
                 ended(Ended::ClosedUnmerged, "2026-09-29T12:00:00Z")
             ),
-            (2, false, ended(Ended::Closed, "2026-09-28T13:00:00Z")),
+            (
+                5,
+                false,
+                ended(
+                    Ended::Closed(Some(IssueCloseReason::Duplicate)),
+                    "2026-09-28T13:05:00Z"
+                )
+            ),
+            (
+                4,
+                false,
+                ended(
+                    Ended::Closed(Some(IssueCloseReason::NotPlanned)),
+                    "2026-09-28T13:04:00Z"
+                )
+            ),
+            (
+                3,
+                false,
+                ended(
+                    Ended::Closed(Some(IssueCloseReason::Completed)),
+                    "2026-09-28T13:03:00Z"
+                )
+            ),
+            (2, false, ended(Ended::Closed(None), "2026-09-28T13:00:00Z")),
             (
                 1,
                 false,
@@ -489,6 +542,7 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
         sub_issues: vec![],
         labels: vec![label::DESIGNED.into()],
         merged_by: Some(Number(40)),
+        reason: None,
     };
     let view = with_closed(
         view(
@@ -634,6 +688,7 @@ fn closed_ticket(number: u64, tracking: u64, closed_at: &str) -> ClosedItem {
         sub_issues: vec![],
         labels: vec![label::DESIGNED.into()],
         merged_by: Some(Number(number + 100)),
+        reason: None,
     };
     closed
 }

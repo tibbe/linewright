@@ -1,0 +1,126 @@
+{
+  "number": 16,
+  "title": "Run workflows on their schedule in `serve` and `once`",
+  "body": "## Summary\n\nEach poll now reads `.linewright/workflows/` on the default branch and starts the workflows that are due. The due rule sits in the reconcile step, so a single function applies the `max-workers` ceiling to pipeline runs and workflow runs together.\n\n```\nFactory::cycle\n├─ store.snapshot(...)\n├─ self.workflows()            list_files + parse; a file that does not parse is logged and skipped\n├─ reconcile(snapshot, live, Workflows { defined, last_runs, in_flight }, now, policy)\n│   ├─ pipeline starts         room = max-workers − pipeline runs − workflow runs in flight\n│   └─ schedule(..., room left)\n│        due ⇔ next tick after last run ≤ now ∧ no run in flight\n│        first seen ⇒ recorded as run now, no run\n│        → RunWorkflow(w)…, then RecordLastRuns(..) if the record changed\n└─ execute\n    ├─ RunWorkflow      spawns the same run `workflow run NAME` starts; a run that fails is logged\n    └─ RecordLastRuns   <work-dir>/workflow-runs.json, written to a temp file then renamed into place\n```\n\n- **The record:** it is written to `<work-dir>/workflow-runs.json`, survives a restart and never goes to GitHub. `workflow run NAME` leaves it alone.\n- **Replay:** it sets `schedule_workflows = false`, so no workflow runs.\n- **Store:** it gains `list_files(branch, dir)`, backed by `git ls-tree` locally and the contents API on GitHub.\n- **Priority:** workflow runs get the room the pipeline's runs leave, since no person is waiting on them.\n- **Order:** the record is written after the runs start. A stop between the two leaves the workflow due again after a restart, rather than recording a run that never started.\n\n## Evidence\n\n- **Before:** `a_workflow_runs_on_the_first_poll_after_its_schedule_ticks` failed: `left: 0, right: 1` workflow sessions.\n  **After:** `cargo test --locked` passes, including:\n  - `tests/reconcile.rs`, the due rule:\n    - ticked since the last run → run plus record\n    - not yet due → nothing\n    - first seen → record only\n    - five missed ticks → one run\n    - in flight → nothing, then one run once it ends\n    - the ceiling, with workflows getting the room the pipeline leaves\n    - first seen with no room → still recorded\n  - `tests/workflow_schedule.rs`, end to end with the fake clock:\n    - runs on the poll after a tick\n    - first seen does not run\n    - five hours stopped, then a restart → one run, and the record is under the work directory\n    - a file that does not parse is skipped and the other workflow runs\n    - with `max-workers` 1 the run waits for the implementer\n    - `workflow run` by hand leaves the schedule as it was\n  - `tests/replay.rs`: `a_replay_runs_no_workflows`, with the clock moved past a tick mid-replay. It fails if replay leaves scheduling on.\n- `cargo fmt`, `clippy`, `test` and `doc` all pass with warnings denied.\n\n## Merge Danger\n\n**Door:** two-way\n\nThe only new state is a local bookkeeping file under the work directory.\n\n**Blast Radius:** moderate\n\n- Every `serve` and `once` poll now makes one extra GitHub request to list the workflow directory, plus one per workflow file.\n- Workflow runs share `max-workers` with the pipeline.\n- Repositories with no `.linewright/workflows/` see no other change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCloses #7",
+  "createdAt": "2026-10-09T08:36:15Z",
+  "baseRefName": "main",
+  "headRefName": "7-run-workflows-on-their-schedule-in-serve",
+  "headRefOid": "b74a3e1f13e99969023fe9805def243263f91303",
+  "isDraft": false,
+  "state": "MERGED",
+  "mergedAt": "2026-10-09T09:17:17Z",
+  "closedAt": "2026-10-09T09:17:17Z",
+  "mergeable": "UNKNOWN",
+  "mergeStateStatus": "UNKNOWN",
+  "canBeRebased": false,
+  "reviewDecision": "CHANGES_REQUESTED",
+  "author": {
+    "__typename": "User",
+    "login": "tibbe-bot"
+  },
+  "closingIssuesReferences": {
+    "nodes": [
+      {
+        "number": 7
+      }
+    ]
+  },
+  "labels": {
+    "nodes": []
+  },
+  "assignees": {
+    "nodes": []
+  },
+  "timelineItems": {
+    "nodes": []
+  },
+  "comments": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "body": "> *Linewright, update*\n\nMerged `origin/main` into the branch. There was one conflict, in `src/factory.rs`.\n\n- **What main changed:** a workflow run now files the issues its result returns, as the machine user, instead of only logging them. Main also took `issues` out of the `workflow run finished` log line.\n- **What this branch had done:** it moved that log line out of `Factory::run_workflow` into `run_and_log`, so that `workflow run NAME` and scheduled runs share it.\n- **How it was resolved:** I kept the branch's `Factory::workflows` and made main's log change inside `run_and_log`. Both paths go through `run::workflow`, so a scheduled run now files its issues just as a run by hand does. I also updated the doc comment on `run_and_log` to say it files the issues.\n\n`cargo fmt`, `clippy --all-targets`, `test` and `doc` all pass with warnings denied, including `workflow_run.rs` (15 tests), `workflow_schedule.rs` (6), `reconcile.rs` (35) and `replay.rs` (3).",
+        "createdAt": "2026-10-09T08:40:25Z"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "body": "> *Linewright, review*\n\nCI is green: ready for review.",
+        "createdAt": "2026-10-09T08:42:55Z"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "body": "> *Linewright, rework*\n\nRebased the branch on the latest `main` (`bdbe4b3`, *File the issues a workflow run returns*) and dropped the merge commit. The branch is now one commit on top of `main`:\n\n```\n* b74a3e1 Run workflows on their schedule in `serve` and `once`\n* bdbe4b3 File the issues a workflow run returns   ← origin/main\n```\n\n- **Conflict:** the only one was in `src/factory.rs`. I resolved it the same way the merge did: main's change to the log line goes inside `run_and_log`, and the branch's `Factory::workflows` stays. The rebased tree is byte-for-byte the same as the merge commit `4d5dc39` (`git diff 4d5dc39 HEAD` is empty), so no code changed.\n- **Commit message:** it now also says that a scheduled run is the same run `workflow run NAME` starts, so it files the issues its result returns too. On top of the new `main`, that holds from this commit on.\n- **Checks:** `cargo fmt`, then `clippy --all-targets`, `test` and `doc`, all with warnings denied, pass on the rebased commit. That includes `workflow_schedule.rs` (6 tests), `workflow_run.rs` (15), `reconcile.rs` (35) and `replay.rs` (3).\n\nThis rewrites the branch's history, so the push has to be a force-push.",
+        "createdAt": "2026-10-09T09:16:32Z"
+      }
+    ]
+  },
+  "reviews": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "state": "CHANGES_REQUESTED",
+        "body": "Rebase the branch on latest `main`.",
+        "submittedAt": "2026-10-09T09:14:38Z"
+      }
+    ]
+  },
+  "reviewRequests": {
+    "nodes": [
+      {
+        "asCodeOwner": false,
+        "requestedReviewer": {
+          "__typename": "User",
+          "login": "tibbe"
+        }
+      }
+    ]
+  },
+  "reviewThreads": {
+    "nodes": []
+  },
+  "statusCheckRollup": {
+    "contexts": {
+      "nodes": [
+        {
+          "__typename": "CheckRun",
+          "name": "fmt",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "clippy",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "doc",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        }
+      ]
+    }
+  }
+}

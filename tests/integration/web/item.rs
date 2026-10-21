@@ -63,7 +63,7 @@ async fn the_item_page_of_an_item_linewright_leaves_says_why() {
         "Maybe.",
         &["ready-for-agent", "linewright:designed"],
     );
-    world.store.close_issue_as(closed).unwrap();
+    world.store.close_issue_as_completed(closed).unwrap();
     let web = Web::start(world).await;
 
     let html = web.page(&format!("/items/{}", closed.0)).await;

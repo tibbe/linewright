@@ -736,7 +736,7 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
         "Maybe.",
         &["ready-for-agent", "linewright:designed"],
     );
-    world.store.close_issue_as(closed).unwrap();
+    world.store.close_issue_as_completed(closed).unwrap();
     let answering = Answering::start(world, false).await;
 
     let output = answering.lw(&["explain", &closed.0.to_string()]).await;
