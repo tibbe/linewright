@@ -211,7 +211,7 @@ pub(super) async fn board_page(State(sources): State<Sources>) -> Response {
     let repo = &sources.work_dir.repo;
     let board = api::board_answer(&sources);
     BoardPage {
-        page: Page::new(board_title(&board, repo), "/events/".into()),
+        page: Page::new(board_title(&board, repo), "/events/".into()).filling_the_viewport(),
         frame: Frame::of(&sources),
         board: BoardShown::of(&board, repo),
     }

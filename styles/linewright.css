@@ -29,8 +29,8 @@
 }
 
 /* What daisyUI has no component for: the link to an item on GitHub beside
-   the link to its page, and the run page's transcript, which the server
-   writes as `logs` shows it. */
+   the link to its page, the board's lane heads, and the run page's
+   transcript, which the server writes as `logs` shows it. */
 @layer components {
   a.github::after {
     content: "\2197" / "";
@@ -38,7 +38,19 @@
     font-size: 0.8em;
   }
 
+  /* A lane's head, unfinished or finished, sticky under the board's column
+     heads while the reader is in its lane. */
+  .board .lane-head {
+    @apply sticky top-(--column-heads) z-10 h-(--lane-head) bg-base-100 pt-2 font-semibold;
+  }
+
   .transcript .entry:target > .line,
+  /* A lane's head, unfinished or finished, sticky under the board's column
+     heads while the reader is in its lane. */
+  .board .lane-head {
+    @apply sticky top-(--column-heads) z-10 h-(--lane-head) bg-base-100 pt-2 font-semibold;
+  }
+
   .transcript .entry:target > details > summary {
     @apply bg-warning/20;
   }

@@ -21,3 +21,22 @@
 {%- endmatch -%}
 </svg>
 {%- endmacro -%}
+
+{#- A navigation link's icon, drawn as the tones' icons are. It is hidden
+    from screen readers, so that the link's text is its label. -#}
+{%- macro nav_icon(icon) -%}
+<svg class="size-5 shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+{%- match icon -%}
+{%- when crate::web::NavIcon::Repo -%}
+<path d="M3.25 13.5v-10a1.75 1.75 0 0 1 1.75-1.75h7.75v10H5a1.75 1.75 0 0 0 0 3.5h7.75"/>
+{%- when crate::web::NavIcon::Board -%}
+<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="M6 2.75v10.5M10 2.75v10.5"/>
+{%- when crate::web::NavIcon::Runs -%}
+<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="M4.75 6l2 2-2 2M8.75 10h2.5"/>
+{%- when crate::web::NavIcon::Automations -%}
+<path d="M9.25 1.75L3.75 9h4.25l-1.25 5.25L12.25 7H8z"/>
+{%- when crate::web::NavIcon::Server -%}
+<rect x="2" y="2.25" width="12" height="4.75" rx="1"/><rect x="2" y="9" width="12" height="4.75" rx="1"/><path d="M4.75 4.625h.01M4.75 11.375h.01"/>
+{%- endmatch -%}
+</svg>
+{%- endmacro -%}

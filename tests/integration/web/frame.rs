@@ -20,6 +20,12 @@ fn holds(html: &Html) -> Vec<(String, String)> {
         .collect()
 }
 
+/// How many icons `element` holds that a screen reader skips, so that its
+/// text alone is its label.
+fn icons(element: ElementRef) -> usize {
+    select_in(element, r#"svg[aria-hidden="true"]"#).len()
+}
+
 fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>> {
     element
         .select(&Selector::parse(selector).unwrap())
@@ -27,7 +33,8 @@ fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>>
 }
 
 #[tokio::test]
-async fn every_page_has_the_same_sidebar_naming_the_repository_the_pages_and_the_status_line() {
+async fn every_page_has_the_same_sidebar_naming_the_repository_the_pages_with_their_icons_and_the_status_line()
+ {
     let web = Web::start(with_ticket().await).await;
 
     let mut sidebars = vec![];
@@ -49,17 +56,18 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_the_pages_and_the
             Some("https://github.com/owner/widgets")
         );
         assert_eq!(text(repo[0]), "owner/widgets");
-        let links: Vec<(String, String)> = select(&html, ".drawer-side .menu a")
+        assert_eq!(icons(repo[0]), 1, "{path}");
+        let links: Vec<(String, String, usize)> = select(&html, ".drawer-side .menu a")
             .into_iter()
-            .map(|a| (text(a), a.attr("href").unwrap().to_string()))
+            .map(|a| (text(a), a.attr("href").unwrap().to_string(), icons(a)))
             .collect();
         assert_eq!(
             links,
             [
-                ("Board".to_string(), "/".to_string()),
-                ("Runs".to_string(), "/runs".to_string()),
-                ("Automations".to_string(), "/automations".to_string()),
-                ("Server".to_string(), "/server".to_string()),
+                ("Board".to_string(), "/".to_string(), 1),
+                ("Runs".to_string(), "/runs".to_string(), 1),
+                ("Automations".to_string(), "/automations".to_string(), 1),
+                ("Server".to_string(), "/server".to_string(), 1),
             ],
             "{path}"
         );

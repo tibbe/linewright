@@ -1,12 +1,13 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- macro cells(lane) -%}
+<div class="grid grid-cols-(--columns) gap-2">
 {%- for cell in lane.cells %}
 <ul class="cell flex flex-col gap-2" aria-label="{{ cell.column }}">
 {%- for card in cell.cards %}
 <li class="card card-border card-sm bg-base-200">
 <div class="card-body gap-1">
-<h3 class="card-title text-sm">{{ card.heading|safe }}</h3>
+<h3 class="card-title line-clamp-2 text-sm hover:line-clamp-none focus-within:line-clamp-none">{{ card.heading|safe }}</h3>
 <p class="standing text-base-content/70">{{ card.standing|safe }}</p>
 <ul class="line space-y-1">
 {%- for line in card.line %}
@@ -21,32 +22,49 @@
 {%- endfor %}
 </ul>
 {%- endfor %}
+</div>
+{%- endmacro -%}
+{#- A lane's head, sticky under the column heads while the reader is in
+    its lane, and its text sticky at the left as the board scrolls
+    sideways, cut to the board's visible width so that it can stay there. -#}
+{%- macro lane_head(lane) -%}
+<span class="sticky left-0 inline-block max-w-[100cqw] truncate align-top">{{ lane.head|safe }}</span>
 {%- endmacro -%}
 {%- block main -%}
-<section id="board">
+<section id="board" class="@container h-full overflow-auto">
 {#- Six columns, never cut, with a lane per piece of work as rows under
     them; the finished lanes folded, under one fold, after the rest. Each
     fold has an id, so that the stream's updates keep it as the reader left
-    it. -#}
-<div class="board grid grid-cols-[repeat(6,minmax(14rem,1fr))] gap-2 overflow-x-auto">
+    it.
+    The board is the box that scrolls, on both axes, so that its heads stick
+    as it scrolls either way. Each lane is a block of its own rather than
+    part of one grid, because a grid item sticks only within its grid area:
+    https://developer.mozilla.org/en-US/docs/Web/CSS/position#sticky -#}
+{#- The board's columns share its width, each at least 200px
+    (`docs/specs/web/design_system.md`, Board). Every grid on the board
+    takes them from `--columns`, so that the column heads and each lane's
+    cells line up. The board is as wide as the grids at their narrowest,
+    six columns and the five `gap-2` gaps between them, so that the lane
+    heads span the cells under them. -#}
+<div class="board min-w-[calc(6*200px+5*--spacing(2))] [--column-heads:2rem] [--columns:repeat(6,minmax(200px,1fr))] [--lane-head:2.5rem]">
+<div class="sticky top-0 z-20 grid h-(--column-heads) grid-cols-(--columns) items-center gap-2 bg-base-100">
 {%- for column in board.columns %}
 <h2 class="column font-semibold">{{ column }}</h2>
 {%- endfor %}
+</div>
 {%- for lane in board.unfinished %}
-<section class="lane contents" id="{{ lane.id }}">
-<h2 class="lane-head col-span-full mt-3 border-t border-base-300 pt-2 font-semibold">{{ lane.head|safe }}</h2>
+<section class="lane" id="{{ lane.id }}">
+<h2 class="lane-head mt-3 border-t border-base-300">{% call lane_head(lane) %}{% endcall %}</h2>
 {%- call cells(lane) %}{% endcall %}
 </section>
 {%- endfor %}
 {%- if !board.finished.is_empty() %}
-<details id="finished" class="col-span-full mt-3 border-t border-base-300 pt-2">
+<details id="finished" class="mt-3 border-t border-base-300 pt-2">
 <summary class="cursor-pointer font-semibold">{{ board.finished_count() }}</summary>
 {%- for lane in board.finished %}
 <details class="lane mt-2" id="{{ lane.id }}">
-<summary class="lane-head cursor-pointer font-semibold">{{ lane.head|safe }}</summary>
-<div class="mt-2 grid grid-cols-[repeat(6,minmax(14rem,1fr))] gap-2">
+<summary class="lane-head cursor-pointer">{% call lane_head(lane) %}{% endcall %}</summary>
 {%- call cells(lane) %}{% endcall %}
-</div>
 </details>
 {%- endfor %}
 </details>

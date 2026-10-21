@@ -134,6 +134,9 @@ struct Page {
     title: String,
     /// The path of the page's event stream.
     events: String,
+    /// Whether the page is as tall as the viewport, its `main` scrolling in
+    /// its own box rather than the page scrolling.
+    fills_viewport: bool,
     assets: PageAssets,
 }
 
@@ -151,6 +154,7 @@ impl Page {
         Page {
             title,
             events,
+            fills_viewport: false,
             assets: PageAssets {
                 css: path("linewright.css"),
                 script: path("linewright.js"),
@@ -159,6 +163,24 @@ impl Page {
             },
         }
     }
+
+    fn filling_the_viewport(self) -> Page {
+        Page {
+            fills_viewport: true,
+            ..self
+        }
+    }
+}
+
+/// The icon of a link in the navigation, drawn by `macros.html`'s
+/// `nav_icon`.
+#[derive(Clone, Copy)]
+enum NavIcon {
+    Repo,
+    Board,
+    Runs,
+    Automations,
+    Server,
 }
 
 /// The frame every page has around its own regions

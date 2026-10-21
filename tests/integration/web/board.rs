@@ -279,12 +279,7 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
     assert_eq!(
         shown,
         [
-            "h2: Triage",
-            "h2: Needs a person",
-            "h2: Ready",
-            "h2: Working",
-            "h2: In review",
-            "h2: Done",
+            "div: Triage Needs a person Ready Working In review Done",
             "details: 1 finished lane #1: Do the thing — finished \
              2026-10-01 12:00:SS UTC #1: Do the thing closed issue closed",
         ]

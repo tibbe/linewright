@@ -1,4 +1,8 @@
 {%- import "macros.html" as ui -%}
+{#- In the rail, a link's label is under its icon. -#}
+{%- macro nav_link(href, icon, label) -%}
+<li><a class="lg:max-2xl:flex lg:max-2xl:flex-col lg:max-2xl:items-center lg:max-2xl:gap-1 lg:max-2xl:px-0 lg:max-2xl:text-xs" href="{{ href }}">{% call ui::nav_icon(icon) %}{% endcall %}<span>{{ label }}</span></a></li>
+{%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -12,39 +16,46 @@
 <script src="{{ page.assets.script }}" defer></script>
 </head>
 <body class="bg-base-100 text-base-content" hx-sse:connect="{{ page.events }}" hx-swap="none">
-{#- The navigation is a daisyUI drawer: a sidebar at the left on a wide
-    screen, and a menu behind a button on a narrow one
-    (`docs/specs/web/design_system.md`, Navigation). -#}
+{#- The navigation is a daisyUI drawer: a sidebar at the left from `2xl`,
+    where the board fits beside it; a rail of the links' icons with their
+    labels under them from `lg`; and a menu behind a button below that
+    (`docs/specs/web/design_system.md`, Navigation). The breakpoints are the
+    same on every page (`docs/specs/design_system.md`, Navigation).
+    A page that fills the viewport, as the board does, scrolls in its `main`
+    and not as a whole, so that its own box is the one that scrolls
+    sideways. -#}
 <div class="drawer lg:drawer-open">
 <input id="navigation" type="checkbox" class="drawer-toggle">
-<div class="drawer-content min-w-0">
-<label for="navigation" class="btn btn-ghost btn-square drawer-button m-2 lg:hidden" aria-label="Open the navigation">
+<div class="drawer-content min-w-0{% if page.fills_viewport %} flex h-dvh flex-col{% endif %}">
+<label for="navigation" class="btn btn-ghost btn-square drawer-button m-2 shrink-0 lg:hidden" aria-label="Open the navigation">
 <svg class="size-5" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
 </label>
 {% block holds -%}
-<div id="holds" class="flex flex-col gap-2 empty:hidden px-4 pt-2">
+<div id="holds" class="flex shrink-0 flex-col gap-2 empty:hidden px-4 pt-2">
 {%- for hold in frame.holds %}
 <div class="{{ hold.alert }}" role="alert"><span class="phrase">{{ hold.phrase|safe }}</span><a class="link" href="{{ hold.href }}">details</a></div>
 {%- endfor %}
 </div>
 {%- endblock %}
-<p id="lost" class="alert alert-warning mx-4 mt-2" role="status" hidden>Lost <code>serve</code> <time></time>; reconnecting.</p>
-<main class="p-4">
+<p id="lost" class="alert alert-warning mx-4 mt-2 shrink-0" role="status" hidden>Lost <code>serve</code> <time></time>; reconnecting.</p>
+<main class="{% if page.fills_viewport %}min-h-0 flex-1 px-2 py-4{% else %}p-4{% endif %}">
 {% block main %}{% endblock %}
 </main>
 </div>
 <div class="drawer-side">
 <label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
-<nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4" aria-label="Linewright">
-<a class="repo link link-hover font-semibold" href="https://github.com/{{ frame.repo }}">{{ frame.repo }}</a>
+<nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
+{#- In the rail, the repository's name is cut to the rail's width, and
+    whole on hover and on focus. -#}
+<a class="repo group link link-hover flex items-center gap-2 font-semibold lg:max-2xl:w-full lg:max-2xl:flex-col lg:max-2xl:gap-1 lg:max-2xl:text-xs" href="https://github.com/{{ frame.repo }}">{% call ui::nav_icon(crate::web::NavIcon::Repo) %}{% endcall %}<span class="min-w-0 lg:max-2xl:max-w-full lg:max-2xl:truncate lg:max-2xl:group-hover:overflow-visible lg:max-2xl:group-hover:whitespace-normal lg:max-2xl:group-hover:break-all lg:max-2xl:group-focus-visible:overflow-visible lg:max-2xl:group-focus-visible:whitespace-normal lg:max-2xl:group-focus-visible:break-all">{{ frame.repo }}</span></a>
 <ul class="menu w-full p-0">
-<li><a href="/">Board</a></li>
-<li><a href="/runs">Runs</a></li>
-<li><a href="/automations">Automations</a></li>
-<li><a href="/server">Server</a></li>
+{%- call nav_link("/", crate::web::NavIcon::Board, "Board") %}{% endcall %}
+{%- call nav_link("/runs", crate::web::NavIcon::Runs, "Runs") %}{% endcall %}
+{%- call nav_link("/automations", crate::web::NavIcon::Automations, "Automations") %}{% endcall %}
+{%- call nav_link("/server", crate::web::NavIcon::Server, "Server") %}{% endcall %}
 </ul>
 {% block status_line -%}
-<ul id="status-line" class="mt-auto space-y-1 text-sm text-base-content/70">
+<ul id="status-line" class="mt-auto space-y-1 text-sm text-base-content/70 lg:max-2xl:w-full lg:max-2xl:px-1 lg:max-2xl:text-xs lg:max-2xl:break-words">
 <li>{{ frame.status_line.runs_in_flight|safe }}</li>
 <li>{{ frame.status_line.last_poll|safe }}</li>
 </ul>
