@@ -66,12 +66,12 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         shown,
         [
             vec![
-                "#1: Do the thing".to_string(),
-                "Needs a person: #1: Do the thing | decision needed".to_string(),
-            ],
-            vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
                 "Needs a person: #3: Part one | reporter asked".to_string(),
+            ],
+            vec![
+                "#1: Do the thing".to_string(),
+                "Needs a person: #1: Do the thing | decision needed".to_string(),
             ],
             vec![
                 "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
@@ -83,7 +83,7 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         .into_iter()
         .map(|lane| lane.attr("id"))
         .collect();
-    assert_eq!(lanes, [Some("lane-1"), Some("lane-2"), Some("lane-4")]);
+    assert_eq!(lanes, [Some("lane-2"), Some("lane-1"), Some("lane-4")]);
     let columns: Vec<String> = select(&html, "#board .column")
         .into_iter()
         .map(text)
@@ -103,7 +103,7 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();
-    assert_eq!(links, ["/items/1", "/items/3", "/items/4"]);
+    assert_eq!(links, ["/items/3", "/items/1", "/items/4"]);
     let title = select(&html, "title");
     assert_eq!(text(title[0]), "(2) Board · owner/widgets");
     assert_no_status_by_colour_alone(&html);
@@ -200,12 +200,12 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         shown,
         [
             vec![
-                "#1: Do the thing".to_string(),
-                "Needs a person: #1: Do the thing | decision needed".to_string(),
-            ],
-            vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
                 "Needs a person: #3: Part one | reporter asked".to_string(),
+            ],
+            vec![
+                "#1: Do the thing".to_string(),
+                "Needs a person: #1: Do the thing | decision needed".to_string(),
             ],
             vec![
                 "#5: Small thing — 1/1 tickets closed — finished 2026-10-01 12:00:SS UTC"
@@ -493,11 +493,13 @@ async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with
     world.poll().await;
     let web = Web::start(world).await;
 
-    let shown: Vec<String> = cards_shown(&web.page("/").await)
+    let mut shown: Vec<String> = cards_shown(&web.page("/").await)
         .into_iter()
         .map(|(card, _)| card)
         .collect();
 
+    // In the tickets' order, whatever the lanes'.
+    shown.sort();
     let says = |ticket, line: String| format!("In review: {ticket}: Do the thing | {line}");
     assert_eq!(
         shown,

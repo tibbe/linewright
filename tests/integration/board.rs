@@ -56,9 +56,9 @@ fn each_status_label_puts_its_issue_in_its_column() {
     assert_eq!(
         placed(&board),
         [
+            (1, Column::Triage, 1),
             (2, Column::NeedsAPerson, 2),
             (3, Column::NeedsAPerson, 3),
-            (1, Column::Triage, 1),
             (4, Column::Ready, 4),
             (5, Column::Ready, 5),
         ]
@@ -153,9 +153,9 @@ fn a_claimed_ticket_and_one_with_a_triage_or_design_run_in_flight_are_in_working
     assert_eq!(
         placed(&board(&view, &[], at(NOW))),
         [
-            (1, Column::Working, 1),
             (2, Column::Working, 2),
             (3, Column::Working, 3),
+            (1, Column::Working, 1),
         ]
     );
 }
@@ -628,7 +628,7 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
     let board = board(&view, &[], at(NOW));
 
     assert_eq!(
-        board.lanes[1].head,
+        board.lanes[0].head,
         LaneHead::Tracking {
             number: Number(30),
             title: "Cut".into(),
@@ -638,7 +638,7 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
     );
     assert_eq!(
         placed(&board),
-        [(34, Column::NeedsAPerson, 34), (30, Column::Ready, 31)]
+        [(30, Column::Ready, 31), (34, Column::NeedsAPerson, 34)]
     );
 }
 
@@ -706,16 +706,28 @@ fn lanes(board: &Board) -> Vec<(u64, Option<Timestamp>)> {
         .collect()
 }
 
+/// `issue`, last updated on GitHub at `updated_at`.
+fn updated(issue: Issue, updated_at: &str) -> Issue {
+    Issue {
+        updated_at: at(updated_at),
+        ..issue
+    }
+}
+
 #[test]
-fn lanes_needing_a_person_come_first_then_the_other_unfinished_then_the_finished_latest_first() {
+fn unfinished_lanes_come_first_latest_changed_first_then_the_finished_lanes_latest_finished_first()
+{
     let view = with_closed(
         view(
             vec![
-                labeled(2, &["needs-triage"]),
+                updated(labeled(2, &["needs-triage"]), "2026-10-01T11:00:00Z"),
                 tracking_issue(10, 9, &[(11, true)]),
-                cut_from(ticket(11, "Ready"), 10, 9),
+                updated(cut_from(ticket(11, "Ready"), 10, 9), "2026-10-01T10:00:00Z"),
                 tracking_issue(20, 19, &[(21, true), (22, false)]),
-                cut_from(labeled(21, &["needs-info"]), 20, 19),
+                updated(
+                    cut_from(labeled(21, &["needs-info"]), 20, 19),
+                    "2026-10-01T09:30:00Z",
+                ),
                 tracking_issue(30, 29, &[(31, false), (32, false)]),
                 tracking_issue(40, 39, &[(41, false)]),
                 tracking_issue(50, 49, &[(51, false)]),
@@ -734,9 +746,9 @@ fn lanes_needing_a_person_come_first_then_the_other_unfinished_then_the_finished
     assert_eq!(
         lanes(&board(&view, &[], at(NOW))),
         [
-            (20, None),
             (2, None),
             (10, None),
+            (20, None),
             (40, Some(at("2026-09-30T12:00:00Z"))),
             (30, Some(at("2026-09-29T12:00:00Z"))),
             (50, Some(at("2026-09-29T12:00:00Z"))),
@@ -745,17 +757,155 @@ fn lanes_needing_a_person_come_first_then_the_other_unfinished_then_the_finished
 }
 
 #[test]
-fn an_items_lane_comes_first_when_it_needs_a_person() {
+fn a_lane_whose_card_was_commented_on_most_recently_comes_first() {
+    let commented = Issue {
+        comments: vec![Comment {
+            author: Login::new("alice"),
+            body: "Still wanted.".into(),
+            created_at: at("2026-10-01T11:00:00Z"),
+        }],
+        ..updated(labeled(2, &["ready-for-agent"]), "2026-10-01T11:00:00Z")
+    };
     let view = view(
         vec![
-            labeled(12, &["needs-info"]),
-            tracking_issue(10, 9, &[(11, true)]),
-            cut_from(ticket(11, "Ready"), 10, 9),
+            updated(labeled(1, &["ready-for-agent"]), "2026-10-01T10:00:00Z"),
+            commented,
         ],
         vec![],
     );
 
-    assert_eq!(lanes(&board(&view, &[], at(NOW))), [(12, None), (10, None)]);
+    assert_eq!(lanes(&board(&view, &[], at(NOW))), [(2, None), (1, None)]);
+}
+
+#[test]
+fn a_lane_with_a_run_in_flight_comes_before_every_unfinished_lane_without_one() {
+    let view = with_runs(
+        view(
+            vec![
+                updated(labeled(2, &["ready-for-agent"]), "2026-10-01T12:00:29Z"),
+                labeled(3, &["needs-triage"]),
+            ],
+            vec![],
+        ),
+        &["3/triage-1"],
+    );
+
+    assert_eq!(lanes(&board(&view, &[], at(NOW))), [(3, None), (2, None)]);
+}
+
+#[test]
+fn lanes_changed_at_the_same_time_are_in_number_order() {
+    let view = view(
+        vec![
+            labeled(5, &["needs-info"]),
+            labeled(3, &["ready-for-agent"]),
+            tracking_issue(10, 9, &[(11, true)]),
+            cut_from(labeled(11, &["ready-for-human"]), 10, 9),
+        ],
+        vec![],
+    );
+
+    assert_eq!(
+        lanes(&board(&view, &[], at(NOW))),
+        [(3, None), (5, None), (10, None)]
+    );
+}
+
+#[test]
+fn a_lane_needing_a_person_is_not_hoisted_above_one_changed_since() {
+    let view = view(
+        vec![
+            updated(labeled(1, &["needs-info"]), "2026-10-01T10:00:00Z"),
+            updated(labeled(2, &["ready-for-agent"]), "2026-10-01T11:00:00Z"),
+        ],
+        vec![],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(lanes(&board), [(2, None), (1, None)]);
+    assert_eq!(board.needing_a_person, 1);
+}
+
+#[test]
+fn a_pull_request_closing_a_card_counts_toward_its_lanes_last_change() {
+    let linewrights = Pull {
+        updated_at: at("2026-10-01T11:00:00Z"),
+        ..pull(10, &[2], &[CheckState::Passed])
+    };
+    let view = view(
+        vec![
+            updated(labeled(1, &["ready-for-agent"]), "2026-10-01T10:00:00Z"),
+            assigned(ticket(2, "Reviewed")),
+            closed_unmerged(labeled(3, &["ready-for-human"]), 30, "2026-10-01T11:30:00Z"),
+        ],
+        vec![linewrights],
+    );
+
+    assert_eq!(
+        lanes(&board(&view, &[], at(NOW))),
+        [(3, None), (2, None), (1, None)]
+    );
+}
+
+#[test]
+fn someone_elses_open_pull_request_closing_a_card_counts_toward_its_lanes_last_change() {
+    let mut theirs = common::closed_by(ticket(2, "Theirs"), 20, "alice");
+    theirs.closed_by[0].updated_at = at("2026-10-01T11:30:00Z");
+    let view = view(
+        vec![
+            updated(labeled(1, &["ready-for-agent"]), "2026-10-01T11:00:00Z"),
+            theirs,
+        ],
+        vec![],
+    );
+
+    assert_eq!(lanes(&board(&view, &[], at(NOW))), [(2, None), (1, None)]);
+}
+
+#[test]
+fn a_run_that_ended_without_writing_to_github_counts_toward_its_lanes_last_change() {
+    let view = view(
+        vec![
+            labeled(2, &["ready-for-agent"]),
+            updated(labeled(1, &["ready-for-agent"]), "2026-10-01T10:00:00Z"),
+        ],
+        vec![],
+    );
+    let recorded = [recorded(
+        "2/implement-1",
+        "2026-10-01T11:00:00Z",
+        Ending::Cancelled,
+    )];
+
+    assert_eq!(
+        lanes(&board(&view, &recorded, at(NOW))),
+        [(2, None), (1, None)]
+    );
+}
+
+#[test]
+fn a_run_counts_toward_its_lanes_last_change_from_when_it_started() {
+    let view = view(
+        vec![
+            labeled(2, &["ready-for-agent"]),
+            updated(labeled(1, &["ready-for-agent"]), "2026-10-01T08:00:00Z"),
+        ],
+        vec![],
+    );
+    let started = Started::new("2/implement-1".parse().unwrap(), None).unwrap();
+    let interrupted = Recorded::new(
+        started,
+        at("2026-10-01T09:00:00Z"),
+        State::Interrupted,
+        vec![],
+        None,
+    );
+
+    assert_eq!(
+        lanes(&board(&view, &[interrupted], at(NOW))),
+        [(2, None), (1, None)]
+    );
 }
 
 #[test]
@@ -782,27 +932,6 @@ fn an_item_closed_in_the_window_is_a_finished_lane_ordered_latest_finished_first
 }
 
 #[test]
-fn lanes_are_in_number_order_within_their_group() {
-    let view = view(
-        vec![
-            labeled(2, &["needs-info"]),
-            tracking_issue(5, 4, &[(6, true)]),
-            cut_from(ticket(6, "Ready"), 5, 4),
-            tracking_issue(20, 19, &[(21, true)]),
-            cut_from(labeled(21, &["ready-for-human"]), 20, 19),
-            tracking_issue(10, 9, &[(11, true)]),
-            cut_from(labeled(11, &["needs-info"]), 10, 9),
-        ],
-        vec![],
-    );
-
-    assert_eq!(
-        lanes(&board(&view, &[], at(NOW))),
-        [(2, None), (10, None), (20, None), (5, None)]
-    );
-}
-
-#[test]
 fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_card() {
     let mut issue = labeled(2, &["needs-triage"]);
     issue.title = "Standalone".into();
@@ -814,29 +943,30 @@ fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_c
 
     let board = board(&view, &[], at(NOW));
 
+    // Latest changed first: the pull request, the spec change, the issue.
     assert_eq!(
         heads(&board),
         [
             LaneHead::Item {
-                number: Number(2),
-                title: "Standalone".into()
+                number: Number(30),
+                title: "Tidy up".into()
             },
             LaneHead::Item {
                 number: Number(5),
                 title: "Add invoices".into()
             },
             LaneHead::Item {
-                number: Number(30),
-                title: "Tidy up".into()
+                number: Number(2),
+                title: "Standalone".into()
             },
         ]
     );
     assert_eq!(
         placed(&board),
         [
-            (2, Column::Triage, 2),
-            (5, Column::Ready, 5),
             (30, Column::InReview, 30),
+            (5, Column::Ready, 5),
+            (2, Column::Triage, 2),
         ]
     );
 }

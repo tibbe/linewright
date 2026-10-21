@@ -1155,6 +1155,25 @@ impl Snapshot {
             || self.merged_pull(number).is_some_and(MergedPull::is_stalled)
     }
 
+    /// When GitHub last updated #`number`, of the issues, pull requests,
+    /// merged ones and closed items the snapshot holds.
+    pub fn updated_at(&self, number: Number) -> Option<Timestamp> {
+        let issue = self.issue(number).map(|issue| issue.updated_at);
+        let pull = self.pull(number).map(|pull| pull.updated_at);
+        let merged = self.merged_pull(number).map(|merged| merged.updated_at);
+        let closed = self
+            .closed
+            .iter()
+            .filter(|item| item.number == number)
+            .map(|item| item.updated_at);
+        issue
+            .into_iter()
+            .chain(pull)
+            .chain(merged)
+            .chain(closed)
+            .max()
+    }
+
     pub fn pulls_closing(&self, issue: &Issue) -> Vec<ClosingPull> {
         let held = self
             .pulls

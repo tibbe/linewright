@@ -94,28 +94,25 @@ impl Lane {
         }
     }
 
-    /// Its place on the board (`docs/specs/design_system.md`, The board, Order
-    /// of lanes): by its group, the finished latest first, then by number.
-    fn order(&self) -> (Group, Reverse<Option<Timestamp>>, Number) {
-        let finished = self.finished();
-        let group = if finished.is_some() {
-            Group::Finished
-        } else if self.cards(Column::NeedsAPerson).is_empty() {
-            Group::Unfinished
-        } else {
-            Group::NeedingAPerson
-        };
-        (group, Reverse(finished), self.head.number())
+    /// When any of its cards last changed (`docs/specs/design_system.md`,
+    /// The board, A lane's last change).
+    fn last_change(&self) -> Timestamp {
+        self.columns
+            .iter()
+            .flatten()
+            .map(|card| card.changed)
+            .max()
+            .unwrap_or_default()
     }
-}
 
-/// The groups of lanes, in the board's order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Group {
-    /// With a card in Needs a person.
-    NeedingAPerson,
-    Unfinished,
-    Finished,
+    /// Its place on the board (`docs/specs/design_system.md`, The board, Order
+    /// of lanes): the unfinished first, latest changed first, then the
+    /// finished, latest finished first, then by number.
+    fn order(&self) -> (bool, Reverse<Timestamp>, Number) {
+        let finished = self.finished();
+        let latest = finished.unwrap_or_else(|| self.last_change());
+        (finished.is_some(), Reverse(latest), self.head.number())
+    }
 }
 
 /// What a lane is the work of (`GLOSSARY.md`, **Lane**).
@@ -151,25 +148,40 @@ pub struct Card {
     pub pull_request: bool,
     /// What its column does not say; `None` shows the title alone.
     pub line: Option<CardLine>,
+    /// When it last changed, for its lane's order.
+    changed: Timestamp,
 }
 
 impl Card {
-    fn new(number: Number, title: &str, pull_request: bool, line: Option<CardLine>) -> Card {
+    fn new(
+        number: Number,
+        title: &str,
+        pull_request: bool,
+        line: Option<CardLine>,
+        changed: Timestamp,
+    ) -> Card {
         Card {
             number,
             title: title.to_string(),
             pull_request,
             line,
+            changed,
         }
     }
 
     /// The card in Done of an item that ended as `ended` at `closed_at`.
-    fn ended(number: Number, title: &str, ended: Ended, closed_at: Timestamp) -> (Column, Card) {
+    fn ended(
+        number: Number,
+        title: &str,
+        ended: Ended,
+        closed_at: Timestamp,
+        changed: Timestamp,
+    ) -> (Column, Card) {
         let line = CardLine::Ended {
             ended,
             at: closed_at,
         };
-        let card = Card::new(number, title, ended.of_pull_request(), Some(line));
+        let card = Card::new(number, title, ended.of_pull_request(), Some(line), changed);
         (Column::Done, card)
     }
 }
@@ -282,6 +294,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     let (pulls, items): (Vec<Managed>, Vec<Managed>) = status::managed(view, now)
         .into_iter()
         .partition(|managed| snapshot.pull(managed.number).is_some());
+    let changed = |on: &[Number]| last_change(view, recorded, on, now);
     let closing = |item: Number| -> Vec<&Managed> {
         pulls
             .iter()
@@ -324,7 +337,13 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         };
         // A spec change not yet designed is its merged pull request.
         let pull_request = snapshot.merged_pull(managed.number).is_some();
-        let card = Card::new(managed.number, &managed.title, pull_request, line);
+        let card = Card::new(
+            managed.number,
+            &managed.title,
+            pull_request,
+            line,
+            changed(&on),
+        );
         cards.push((column, card));
     }
     for item in &closed {
@@ -338,7 +357,13 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             continue;
         }
         let ended = merged_by.map_or(Ended::Closed(reason), Ended::ClosedIn);
-        cards.push(Card::ended(item.number, &item.title, ended, item.closed_at));
+        cards.push(Card::ended(
+            item.number,
+            &item.title,
+            ended,
+            item.closed_at,
+            changed(&[item.number]),
+        ));
     }
     let on_the_board: Vec<Number> = cards.iter().map(|(_, card)| card.number).collect();
     let closes_none = |closes: &[Number]| !closes.iter().any(|n| on_the_board.contains(n));
@@ -352,7 +377,8 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         let run = run_on(view, &[managed.number], now);
         let line = review_line(&managed.state, None, run, view);
         let pull_request = true;
-        let card = Card::new(managed.number, &managed.title, pull_request, line);
+        let changed = changed(&[managed.number]);
+        let card = Card::new(managed.number, &managed.title, pull_request, line, changed);
         cards.push((Column::InReview, card));
     }
     for item in &closed {
@@ -367,6 +393,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             &item.title,
             Ended::ClosedUnmerged,
             item.closed_at,
+            changed(&[item.number]),
         ));
     }
     for pr in &snapshot.merged {
@@ -376,6 +403,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
                 &pr.title,
                 Ended::Merged,
                 pr.merged_at,
+                changed(&[pr.number]),
             ));
         }
     }
@@ -424,6 +452,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
                 &pr.title,
                 Ended::NothingToBuild,
                 pr.merged_at,
+                changed(&[pr.number]),
             ));
         }
     }
@@ -642,6 +671,45 @@ impl Tracker {
             tickets: self.tickets.len(),
         }
     }
+}
+
+/// When anything last happened to `items`, a card's item and its pull
+/// requests (`docs/specs/design_system.md`, The board, A lane's last
+/// change): on GitHub, as it last updated them and every pull request
+/// closing them, and as those merged or closed, and in Linewright, as its
+/// runs on them started and ended. A run in flight is happening `now`.
+fn last_change(view: &View, recorded: &[Recorded], items: &[Number], now: Timestamp) -> Timestamp {
+    let snapshot = &view.snapshot;
+    let on_github = items.iter().filter_map(|&item| snapshot.updated_at(item));
+    let closings = items
+        .iter()
+        .filter_map(|&item| snapshot.issue(item))
+        .flat_map(|issue| &issue.closed_by)
+        .flat_map(|pull| match pull.state {
+            PullState::Merged { at } | PullState::Closed { at } => {
+                [Some(at), Some(pull.updated_at)]
+            }
+            PullState::Open { .. } => [None, Some(pull.updated_at)],
+        })
+        .flatten();
+    let runs = recorded
+        .iter()
+        .filter(|run| run.id.of.item().is_some_and(|item| items.contains(&item)))
+        .flat_map(|run| {
+            let ended = match run.state {
+                State::Ended { at, .. } => Some(at),
+                State::InFlight | State::Interrupted => None,
+            };
+            [Some(run.started_at), ended]
+        })
+        .flatten();
+    let in_flight = run_on(view, items, now).map(|_| now);
+    on_github
+        .chain(closings)
+        .chain(runs)
+        .chain(in_flight)
+        .max()
+        .unwrap_or_default()
 }
 
 /// The run in flight on any of `items`.

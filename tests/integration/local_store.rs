@@ -100,12 +100,7 @@ async fn branches_whose_names_differ_only_in_case_are_kept_apart() {
 /// closed.
 async fn updated_at(world: &World, number: Number) -> Timestamp {
     let snapshot = world.store.snapshot(Timestamp::MIN_UTC).await.unwrap();
-    let closed = snapshot.closed.iter().find(|item| item.number == number);
-    snapshot
-        .issue(number)
-        .map(|issue| issue.updated_at)
-        .or(closed.map(|item| item.updated_at))
-        .expect("the snapshot holds it")
+    snapshot.updated_at(number).expect("the snapshot holds it")
 }
 
 #[tokio::test]
