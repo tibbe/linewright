@@ -271,13 +271,26 @@ fn a_card_in_done_says_how_its_item_ended() {
             (
                 1,
                 "closed issue".into(),
-                CardLine::Ended(Ended::MergedBy(Number(11)))
+                CardLine::Ended {
+                    ended: Ended::MergedBy(Number(11)),
+                    at: at("2026-09-28T12:00:00Z"),
+                }
             ),
-            (2, "closed issue".into(), CardLine::Ended(Ended::Closed)),
+            (
+                2,
+                "closed issue".into(),
+                CardLine::Ended {
+                    ended: Ended::Closed,
+                    at: at("2026-09-28T12:00:00Z"),
+                }
+            ),
             (
                 30,
                 "closed pull request".into(),
-                CardLine::Ended(Ended::ClosedUnmerged)
+                CardLine::Ended {
+                    ended: Ended::ClosedUnmerged,
+                    at: at("2026-09-29T12:00:00Z"),
+                }
             ),
         ]
     );
@@ -377,7 +390,13 @@ fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
     let board = board(&view, at(NOW));
 
     assert_eq!(placed(&board), [(None, Column::Done, 5)]);
-    assert_eq!(card(&board, 5).line, CardLine::Ended(Ended::NothingToBuild));
+    assert_eq!(
+        card(&board, 5).line,
+        CardLine::Ended {
+            ended: Ended::NothingToBuild,
+            at: at("2026-10-01T09:00:00Z"),
+        }
+    );
 }
 
 #[test]
@@ -474,7 +493,7 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
 
     let board = board(&view, at(NOW));
 
-    let head = board.lanes[0].head.as_ref().unwrap();
+    let head = board.lanes[1].head.as_ref().unwrap();
     assert_eq!(
         (head.number, head.tickets_closed, head.tickets),
         (Number(30), 1, 2)
@@ -482,8 +501,8 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
     assert_eq!(
         placed(&board),
         [
-            (Some(30), Column::Ready, 31),
-            (None, Column::NeedsAPerson, 34)
+            (None, Column::NeedsAPerson, 34),
+            (Some(30), Column::Ready, 31)
         ]
     );
 }
@@ -502,5 +521,138 @@ fn an_issue_in_review_on_someone_elses_pull_request_carries_its_ci_state() {
             .pull
             .map(|pull| (pull.pull_request, pull.ci)),
         Some((Number(10), Ci::Running))
+    );
+}
+
+/// Ticket #`number` of tracking issue #`tracking`, closed at `closed_at`.
+fn closed_ticket(number: u64, tracking: u64, closed_at: &str) -> ClosedItem {
+    let mut closed = closed_issue(number, closed_at, Some(number + 100));
+    closed.kind = ClosedKind::Issue {
+        parent: Some(Parent {
+            number: Number(tracking),
+            spec_change: Some(Number(tracking - 1)),
+        }),
+        filed: None,
+        sub_issues: vec![],
+        labels: vec![label::DESIGNED.into()],
+        merged_by: Some(Number(number + 100)),
+    };
+    closed
+}
+
+/// Each lane's tracking issue, if any, and when it finished, if it did.
+fn lanes(board: &Board) -> Vec<(Option<u64>, Option<Timestamp>)> {
+    board
+        .lanes
+        .iter()
+        .map(|lane| {
+            (
+                lane.head.as_ref().map(|head| head.number.0),
+                lane.finished(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn lanes_needing_a_person_come_first_then_the_other_unfinished_then_the_finished_latest_first() {
+    let view = with_closed(
+        view(
+            vec![
+                labeled(2, &["needs-triage"]),
+                tracking_issue(10, 9, &[(11, true)]),
+                cut_from(ticket(11, "Ready"), 10, 9),
+                tracking_issue(20, 19, &[(21, true), (22, false)]),
+                cut_from(labeled(21, &["needs-info"]), 20, 19),
+                tracking_issue(30, 29, &[(31, false), (32, false)]),
+                tracking_issue(40, 39, &[(41, false)]),
+                tracking_issue(50, 49, &[(51, false)]),
+            ],
+            vec![],
+        ),
+        vec![
+            closed_ticket(22, 20, "2026-09-30T12:00:00Z"),
+            closed_ticket(31, 30, "2026-09-29T12:00:00Z"),
+            closed_ticket(32, 30, "2026-09-27T12:00:00Z"),
+            closed_ticket(41, 40, "2026-09-30T12:00:00Z"),
+            closed_ticket(51, 50, "2026-09-29T12:00:00Z"),
+        ],
+    );
+
+    assert_eq!(
+        lanes(&board(&view, at(NOW))),
+        [
+            (Some(20), None),
+            (Some(10), None),
+            (None, None),
+            (Some(40), Some(at("2026-09-30T12:00:00Z"))),
+            (Some(30), Some(at("2026-09-29T12:00:00Z"))),
+            (Some(50), Some(at("2026-09-29T12:00:00Z"))),
+        ]
+    );
+}
+
+#[test]
+fn the_lane_with_no_tracking_issue_comes_first_when_it_has_a_card_needing_a_person() {
+    let view = view(
+        vec![
+            labeled(2, &["needs-info"]),
+            tracking_issue(10, 9, &[(11, true)]),
+            cut_from(ticket(11, "Ready"), 10, 9),
+        ],
+        vec![],
+    );
+
+    assert_eq!(
+        lanes(&board(&view, at(NOW))),
+        [(None, None), (Some(10), None)]
+    );
+}
+
+#[test]
+fn the_lane_with_no_tracking_issue_is_finished_when_all_its_cards_are_in_done() {
+    let view = with_merged(
+        with_closed(
+            view(vec![tracking_issue(30, 29, &[(31, false)])], vec![]),
+            vec![
+                closed_issue(1, "2026-09-28T12:00:00Z", Some(11)),
+                closed_ticket(31, 30, "2026-09-30T12:00:00Z"),
+            ],
+        ),
+        vec![spec_change(5, &[label::DESIGNED])],
+    );
+
+    assert_eq!(
+        lanes(&board(&view, at(NOW))),
+        [
+            (None, Some(at("2026-10-01T09:00:00Z"))),
+            (Some(30), Some(at("2026-09-30T12:00:00Z"))),
+        ]
+    );
+}
+
+#[test]
+fn lanes_needing_a_person_are_in_number_order_with_the_one_with_no_tracking_issue_last() {
+    let view = view(
+        vec![
+            labeled(2, &["needs-info"]),
+            tracking_issue(5, 4, &[(6, true)]),
+            cut_from(ticket(6, "Ready"), 5, 4),
+            tracking_issue(20, 19, &[(21, true)]),
+            cut_from(labeled(21, &["ready-for-human"]), 20, 19),
+            tracking_issue(10, 9, &[(11, true)]),
+            cut_from(labeled(11, &["needs-info"]), 10, 9),
+        ],
+        vec![],
+    );
+
+    assert_eq!(
+        lanes(&board(&view, at(NOW))),
+        [
+            (Some(10), None),
+            (Some(20), None),
+            (None, None),
+            (Some(5), None)
+        ]
     );
 }

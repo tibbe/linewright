@@ -82,6 +82,8 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+# Runs the web UI's script, against stand-ins for the browser and htmx.
+boa_engine = { version = "0.22", default-features = false }
 # Reads the web UI's pages as a reader sees them.
 scraper = "0.27"
 # Paused time, for the session timeout under the usage limit.

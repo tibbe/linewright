@@ -1,18 +1,6 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
-{%- block main -%}
-<section id="board">
-{#- Six columns, never cut, with a lane per tracking issue as rows under
-    them. -#}
-<div class="board grid grid-cols-[repeat(6,minmax(14rem,1fr))] gap-2 overflow-x-auto">
-{%- for column in board.columns %}
-<h2 class="column font-semibold">{{ column }}</h2>
-{%- endfor %}
-{%- for lane in board.lanes %}
-<section class="lane contents">
-{%- if let Some(head) = lane.head %}
-<h2 class="lane-head col-span-full mt-3 border-t border-base-300 pt-2 font-semibold">{{ head|safe }}</h2>
-{%- endif %}
+{%- macro cells(lane) -%}
 {%- for cell in lane.cells %}
 <ul class="cell flex flex-col gap-2" aria-label="{{ cell.column }}">
 {%- for card in cell.cards %}
@@ -33,8 +21,36 @@
 {%- endfor %}
 </ul>
 {%- endfor %}
+{%- endmacro -%}
+{%- block main -%}
+<section id="board">
+{#- Six columns, never cut, with a lane per tracking issue as rows under
+    them; the finished lanes folded, under one fold, after the rest. Each
+    fold has an id, so that the stream's updates keep it as the reader left
+    it. -#}
+<div class="board grid grid-cols-[repeat(6,minmax(14rem,1fr))] gap-2 overflow-x-auto">
+{%- for column in board.columns %}
+<h2 class="column font-semibold">{{ column }}</h2>
+{%- endfor %}
+{%- for lane in board.unfinished %}
+<section class="lane contents" id="{{ lane.id }}">
+<h2 class="lane-head col-span-full mt-3 border-t border-base-300 pt-2 font-semibold">{{ lane.head|safe }}</h2>
+{%- call cells(lane) %}{% endcall %}
 </section>
 {%- endfor %}
+{%- if !board.finished.is_empty() %}
+<details id="finished" class="col-span-full mt-3 border-t border-base-300 pt-2">
+<summary class="cursor-pointer font-semibold">{{ board.finished_count() }}</summary>
+{%- for lane in board.finished %}
+<details class="lane mt-2" id="{{ lane.id }}">
+<summary class="lane-head cursor-pointer font-semibold">{{ lane.head|safe }}</summary>
+<div class="mt-2 grid grid-cols-[repeat(6,minmax(14rem,1fr))] gap-2">
+{%- call cells(lane) %}{% endcall %}
+</div>
+</details>
+{%- endfor %}
+</details>
+{%- endif %}
 </div>
 </section>
 {%- endblock -%}

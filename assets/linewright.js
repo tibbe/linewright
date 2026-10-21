@@ -1,11 +1,21 @@
 // Linewright's own script for the web UI (docs/specs/design_system.md): it
 // says since when the page lost `serve`, shows times in the reader's time
-// zone and durations in the reader's locale, keeping them up, and keeps a
-// run's transcript at its latest entry while the reader is there. htmx's
+// zone and durations in the reader's locale, keeping them up, keeps a run's
+// transcript at its latest entry while the reader is there, and keeps each
+// fold as the reader opened or closed it through updates. htmx's
 // `hx-sse` extension keeps the page up from its event stream:
 // https://four.htmx.org/extensions/hx-sse (htmx 4.0.0).
 (() => {
   "use strict";
+
+  // An update morphs the page into the server's, but for whether a fold is
+  // open, which is the reader's until they open the page again. The hook is
+  // htmx's `htmx:before:morph:attr` event:
+  // https://four.htmx.org/docs/extension-authoring-guide#event-hooks
+  htmx.registerExtension("linewright-folds", {
+    htmx_before_morph_attr: (element, detail) =>
+      !(element.tagName === "DETAILS" && detail.attrName === "open"),
+  });
 
   const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
   const absolute = new Intl.DateTimeFormat(undefined, {

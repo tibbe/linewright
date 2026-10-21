@@ -5,6 +5,7 @@ mod frame;
 mod item;
 mod run;
 mod runs;
+mod script;
 mod serving;
 
 use std::time::Duration;

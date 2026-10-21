@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use super::html::{self, Html};
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
-use crate::board::{Board, Card, CardLine, Column, Ended};
+use crate::board::{Board, Card, CardLine, Column, Ended, Lane};
 use crate::explain;
 use crate::phrase::{Phrase, Tone};
 use crate::status;
@@ -19,12 +19,18 @@ use crate::status;
 /// The board (`docs/specs/monitoring.md`, The board), ready for the page.
 struct BoardShown {
     columns: [&'static str; Column::ALL.len()],
-    lanes: Vec<LaneShown>,
+    /// The lanes not finished, in the board's order.
+    unfinished: Vec<LaneShown>,
+    /// The finished lanes, latest finished first, each folded.
+    finished: Vec<LaneShown>,
 }
 
 struct LaneShown {
-    /// The tracking issue and its tickets closed of total.
-    head: Option<Html>,
+    /// The id of its fold, stable through updates.
+    id: String,
+    /// The tracking issue and its tickets closed of total, or "No tracking
+    /// issue" and its count of cards; and when it finished, if it did.
+    head: Html,
     cells: Vec<CellShown>,
 }
 
@@ -57,33 +63,76 @@ struct PullShown {
 
 impl BoardShown {
     fn of(board: &Board, repo: &str) -> BoardShown {
-        let lanes = board
+        let (finished, unfinished): (Vec<&Lane>, Vec<&Lane>) = board
             .lanes
             .iter()
-            .map(|lane| LaneShown {
-                head: lane.head.as_ref().map(|head| {
-                    html::titled(head.number, &head.title, repo).then(&html::escape(&format!(
-                        " — {}/{} tickets closed",
-                        head.tickets_closed, head.tickets
-                    )))
-                }),
-                cells: Column::ALL
-                    .into_iter()
-                    .map(|column| CellShown {
-                        column: column.name(),
-                        cards: lane
-                            .cards(column)
-                            .iter()
-                            .map(|card| CardShown::of(card, repo))
-                            .collect(),
-                    })
-                    .collect(),
-            })
-            .collect();
+            .partition(|lane| lane.finished().is_some());
+        let shown = |lanes: Vec<&Lane>| {
+            lanes
+                .into_iter()
+                .map(|lane| LaneShown::of(lane, repo))
+                .collect()
+        };
         BoardShown {
             columns: Column::ALL.map(Column::name),
-            lanes,
+            unfinished: shown(unfinished),
+            finished: shown(finished),
         }
+    }
+
+    /// The finished fold's summary: how many finished lanes there are.
+    fn finished_count(&self) -> String {
+        counted(self.finished.len(), "finished lane")
+    }
+}
+
+impl LaneShown {
+    fn of(lane: &Lane, repo: &str) -> LaneShown {
+        let (id, head) = match &lane.head {
+            Some(head) => (
+                format!("lane-{}", head.number.0),
+                html::titled(head.number, &head.title, repo).then(&html::escape(&format!(
+                    " — {}/{} tickets closed",
+                    head.tickets_closed, head.tickets
+                ))),
+            ),
+            None => (
+                "lane-none".into(),
+                html::escape(&format!(
+                    "No tracking issue — {}",
+                    counted(lane.count(), "card")
+                )),
+            ),
+        };
+        let head = match lane.finished() {
+            Some(at) => head
+                .then(&html::escape(" — finished "))
+                .then(&html::time(at)),
+            None => head,
+        };
+        LaneShown {
+            id,
+            head,
+            cells: Column::ALL
+                .into_iter()
+                .map(|column| CellShown {
+                    column: column.name(),
+                    cards: lane
+                        .cards(column)
+                        .iter()
+                        .map(|card| CardShown::of(card, repo))
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// `n` and `thing`, plural but for one.
+fn counted(n: usize, thing: &str) -> String {
+    match n {
+        1 => format!("1 {thing}"),
+        _ => format!("{n} {thing}s"),
     }
 }
 
@@ -111,7 +160,7 @@ impl CardShown {
                     })
                     .collect()
             }
-            CardLine::Ended(ended) => vec![ended_shown(*ended, repo)],
+            CardLine::Ended { ended, .. } => vec![ended_shown(*ended, repo)],
         };
         CardShown {
             heading: html::titled(card.number, &card.title, repo),

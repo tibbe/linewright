@@ -2,6 +2,8 @@
 //! item as a card in a column, in a lane per tracking issue, from `serve`'s
 //! view and the time alone.
 
+use std::cmp::Reverse;
+
 use crate::domain::{ClosedItem, ClosedKind, Login, Number, SubIssue, Timestamp, Tracks};
 use crate::phrase::Phrase;
 use crate::reconcile::{NotSpecChange, Wait, not_a_spec_change};
@@ -50,7 +52,7 @@ pub struct Board {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lane {
-    /// `None` for the last lane, of the items with no tracking issue.
+    /// `None` for the lane of the items with no tracking issue.
     pub head: Option<LaneHead>,
     /// By column, each ascending by number.
     columns: [Vec<Card>; Column::ALL.len()],
@@ -60,6 +62,61 @@ impl Lane {
     pub fn cards(&self, column: Column) -> &[Card] {
         &self.columns[column as usize]
     }
+
+    /// The count of its cards.
+    pub fn count(&self) -> usize {
+        self.columns.iter().map(Vec::len).sum()
+    }
+
+    /// When its last card closed, if every card is in Done.
+    pub fn finished(&self) -> Option<Timestamp> {
+        let open = Column::ALL
+            .into_iter()
+            .filter(|&column| column != Column::Done)
+            .any(|column| !self.cards(column).is_empty());
+        if open {
+            return None;
+        }
+        self.cards(Column::Done)
+            .iter()
+            .filter_map(|card| match card.line {
+                CardLine::Ended { at, .. } => Some(at),
+                CardLine::Run(_) | CardLine::Waits(_) => None,
+            })
+            .max()
+    }
+
+    fn of(head: Option<LaneHead>) -> Lane {
+        Lane {
+            head,
+            columns: Default::default(),
+        }
+    }
+
+    /// Its place on the board (`docs/specs/monitoring.md`, The board, Order
+    /// of lanes): by its group, the finished latest first, then by number,
+    /// with no tracking issue last.
+    fn order(&self) -> (Group, Reverse<Option<Timestamp>>, bool, Option<Number>) {
+        let finished = self.finished();
+        let group = if finished.is_some() {
+            Group::Finished
+        } else if self.cards(Column::NeedsAPerson).is_empty() {
+            Group::Unfinished
+        } else {
+            Group::NeedingAPerson
+        };
+        let number = self.head.as_ref().map(|head| head.number);
+        (group, Reverse(finished), number.is_none(), number)
+    }
+}
+
+/// The groups of lanes, in the board's order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Group {
+    /// With a card in Needs a person.
+    NeedingAPerson,
+    Unfinished,
+    Finished,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,14 +156,23 @@ impl Card {
         }
     }
 
-    /// The card in Done of an item that ended as `ended`, standing as
-    /// `explain` words a closed or merged item.
-    fn ended(number: Number, title: &str, standing: &str, ended: Ended) -> (Column, Card) {
+    /// The card in Done of an item that ended as `ended` at `closed_at`,
+    /// standing as `explain` words a closed or merged item.
+    fn ended(
+        number: Number,
+        title: &str,
+        standing: &str,
+        ended: Ended,
+        closed_at: Timestamp,
+    ) -> (Column, Card) {
         let card = Card {
             number,
             title: title.to_string(),
             standing: standing.into(),
-            line: CardLine::Ended(ended),
+            line: CardLine::Ended {
+                ended,
+                at: closed_at,
+            },
             pull: None,
         };
         (Column::Done, card)
@@ -119,7 +185,11 @@ pub enum CardLine {
     Run(RunInFlight),
     /// Empty when Linewright waits for nothing: it acts at its next poll.
     Waits(Vec<Wait>),
-    Ended(Ended),
+    /// In Done: how it ended, and when it closed.
+    Ended {
+        ended: Ended,
+        at: Timestamp,
+    },
 }
 
 /// How an item in Done ended.
@@ -189,7 +259,13 @@ pub fn board(view: &View, now: Timestamp) -> Board {
             continue;
         }
         let ended = merged_by.map_or(Ended::Closed, Ended::MergedBy);
-        cards.push(Card::ended(item.number, &item.title, "closed issue", ended));
+        cards.push(Card::ended(
+            item.number,
+            &item.title,
+            "closed issue",
+            ended,
+            item.closed_at,
+        ));
     }
     let on_the_board: Vec<Number> = cards.iter().map(|(_, card)| card.number).collect();
     let closes_none = |closes: &[Number]| !closes.iter().any(|n| on_the_board.contains(n));
@@ -216,6 +292,7 @@ pub fn board(view: &View, now: Timestamp) -> Board {
             &item.title,
             "closed pull request",
             Ended::ClosedUnmerged,
+            item.closed_at,
         ));
     }
 
@@ -263,6 +340,7 @@ pub fn board(view: &View, now: Timestamp) -> Board {
                 &pr.title,
                 "merged pull request",
                 Ended::NothingToBuild,
+                pr.merged_at,
             ));
         }
     }
@@ -270,15 +348,9 @@ pub fn board(view: &View, now: Timestamp) -> Board {
     cards.sort_by_key(|(_, card)| card.number);
     let mut lanes: Vec<Lane> = trackers
         .iter()
-        .map(|tracker| Lane {
-            head: Some(tracker.head.clone()),
-            columns: Default::default(),
-        })
+        .map(|tracker| Lane::of(Some(tracker.head.clone())))
         .collect();
-    let mut rest = Lane {
-        head: None,
-        columns: Default::default(),
-    };
+    let mut rest = Lane::of(None);
     for (column, card) in cards {
         let lane = trackers
             .iter()
@@ -287,7 +359,8 @@ pub fn board(view: &View, now: Timestamp) -> Board {
         lane.columns[column as usize].push(card);
     }
     lanes.push(rest);
-    lanes.retain(|lane| lane.columns.iter().any(|cell| !cell.is_empty()));
+    lanes.retain(|lane| lane.count() > 0);
+    lanes.sort_by_key(Lane::order);
     let needing_a_person = lanes
         .iter()
         .map(|lane| lane.cards(Column::NeedsAPerson).len())
