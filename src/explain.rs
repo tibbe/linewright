@@ -798,6 +798,9 @@ fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> Phrase {
         IssueExclusion::NoTickets => {
             "it is a tracking issue with no tickets, and none are being cut".into()
         }
+        IssueExclusion::NotMarked { label } => Phrase::from("it is not labeled ")
+            .code(label.clone())
+            .text(", the required label, and Linewright has not worked it"),
     }
 }
 
@@ -828,23 +831,6 @@ fn describe_not_spec_change(because: &NotSpecChange) -> Phrase {
         NotSpecChange::Designed { label } => Phrase::from("it is labeled ")
             .code(label.name())
             .text(": designed already"),
-        NotSpecChange::Unassigned {
-            at,
-            required_label: None,
-        } => Phrase::from("Linewright was unassigned from it ")
-            .time(*at)
-            .text(": assign Linewright to cut it again"),
-        NotSpecChange::Unassigned {
-            at,
-            required_label: Some(label),
-        } => Phrase::from("Linewright was unassigned from it ")
-            .time(*at)
-            .text(", and ")
-            .code(label.clone())
-            .text(
-                ", the required label, was not applied since: assign Linewright or apply the \
-                 label to cut it again",
-            ),
         NotSpecChange::BeforeLookback {
             merged_at,
             window_opened,

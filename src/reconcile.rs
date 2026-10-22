@@ -542,8 +542,13 @@ pub enum Wait {
     },
     Reporter,
     Maintainer,
-    /// Linewright is not assigned to the pull request.
-    Unassigned,
+    /// Linewright was unassigned from the item and is not assigned to it
+    /// again. Applying `required_label`, when set, picks a spec change up
+    /// again too.
+    Unassigned {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        required_label: Option<String>,
+    },
     RequiredLabel {
         label: String,
     },
@@ -676,7 +681,12 @@ pub fn decisions(
             PullClaim::Claimed => {}
             PullClaim::NeverAssigned => plan.claim(Item::Pull(pr.number)),
             PullClaim::Unassigned => {
-                plan.wait(pr.number, Wait::Unassigned);
+                plan.wait(
+                    pr.number,
+                    Wait::Unassigned {
+                        required_label: None,
+                    },
+                );
                 continue;
             }
         }
@@ -1925,7 +1935,17 @@ pub fn pending_spec_changes<'a>(
 /// `cancel_reason` does not look at the required label, so a cut under way
 /// survives its removal.
 fn is_spec_change(pr: &MergedPull, snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> bool {
-    not_a_spec_change(pr, &snapshot.default_branch, now, policy).is_none()
+    spec_change(pr, &snapshot.default_branch, now, policy) == Ok(SpecChange::Pending)
+}
+
+/// What a merged pull request is as a spec change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SpecChange {
+    /// Linewright cuts it.
+    Pending,
+    /// Linewright was unassigned from it, and `required_label`, when one is
+    /// set, was not applied again since.
+    Unassigned { required_label: Option<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1945,24 +1965,19 @@ pub enum NotSpecChange {
         merged_at: Timestamp,
         window_opened: Timestamp,
     },
-    /// Linewright was unassigned from it, and `required_label`, when one is
-    /// set, was not applied again since.
-    Unassigned {
-        at: Timestamp,
-        required_label: Option<String>,
-    },
     RequiredLabel {
         label: String,
     },
 }
 
-/// Rules that hold for good are checked first.
-pub fn not_a_spec_change(
+/// What merged `pr` is as a spec change, or why it is none. Rules that hold
+/// for good are checked first.
+pub fn spec_change(
     pr: &MergedPull,
     default_branch: &str,
     now: Timestamp,
     policy: &Policy,
-) -> Option<NotSpecChange> {
+) -> Result<SpecChange, NotSpecChange> {
     let window_opened = now - policy.spec_lookback;
     let because = if pr.author == policy.linewright {
         NotSpecChange::Linewrights
@@ -1982,19 +1997,20 @@ pub fn not_a_spec_change(
             window_opened,
         }
     } else if pr.is_assigned(&policy.linewright) {
-        return None;
-    } else if let Some(at) =
-        pr.unassigned_since_labeled(&policy.linewright, policy.require_label.as_deref())
+        return Ok(SpecChange::Pending);
+    } else if pr
+        .unassigned_since_labeled(&policy.linewright, policy.require_label.as_deref())
+        .is_some()
     {
-        NotSpecChange::Unassigned {
-            at,
+        return Ok(SpecChange::Unassigned {
             required_label: policy.require_label.clone(),
+        });
+    } else if let Some(label) = policy.require_label.as_ref().filter(|l| !pr.has_label(l)) {
+        NotSpecChange::RequiredLabel {
+            label: label.clone(),
         }
     } else {
-        let unlabeled = policy.require_label.as_ref().filter(|l| !pr.has_label(l));
-        return unlabeled.map(|label| NotSpecChange::RequiredLabel {
-            label: label.clone(),
-        });
+        return Ok(SpecChange::Pending);
     };
-    Some(because)
+    Err(because)
 }

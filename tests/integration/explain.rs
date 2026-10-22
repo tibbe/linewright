@@ -1,8 +1,8 @@
 use crate::common;
 
 use common::{
-    NOW, at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled,
-    sub_issue, ticket, view,
+    NOW, assigning_linewright, at, closed_by, draining_since, implementing, in_flight,
+    limited_until, linewright_letting_go, relabeled, sub_issue, ticket, view,
 };
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
@@ -1006,6 +1006,39 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
 }
 
 #[test]
+fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_names_the_label() {
+    let unmarked = ticket(42, "Add invoices");
+    let mut view = view(vec![unmarked.clone()], vec![]);
+    view.policy.require_label = Some("linewright".into());
+
+    assert_eq!(explain(&view, &[], Number(42), at(NOW)), None);
+    assert_eq!(
+        left_alone_text(&view, &AnyItem::HeldIssue(Box::new(unmarked)))[3],
+        "left alone: it is not labeled `linewright`, the required label, and Linewright has not \
+         worked it"
+    );
+}
+
+#[test]
+fn with_a_required_label_an_issue_without_it_that_linewright_handed_back_is_managed() {
+    let handed_back = Issue {
+        labels: vec!["ready-for-agent".into(), label::STALLED.into()],
+        events: vec![
+            assigning_linewright("2026-10-01T10:00:00Z"),
+            linewright_letting_go("2026-10-01T11:00:00Z"),
+        ],
+        ..ticket(42, "Add invoices")
+    };
+    let mut view = view(vec![handed_back], vec![]);
+    view.policy.require_label = Some("linewright".into());
+
+    assert_eq!(
+        text(&view, 42)[1],
+        "state: ready to claim, waiting for its design · stalled"
+    );
+}
+
+#[test]
 fn a_tracking_issue_with_no_tickets_is_left_alone_as_such() {
     let tracking = Issue {
         author: Login::new("factory"),
@@ -1245,25 +1278,44 @@ fn unassigned_at(minute: &str) -> MergedPull {
     }
 }
 
+fn read_merged_text(view: &View, pull: MergedPull) -> Vec<String> {
+    let answer = explain_read(
+        view,
+        &[],
+        &AnyItem::Merged {
+            pull: Box::new(pull),
+            tracking_issues: vec![],
+        },
+        at(NOW),
+    );
+    lines_of(&render_answer(&answer, false))
+}
+
 #[test]
-fn a_merged_pull_request_linewright_was_unassigned_from_says_assigning_it_cuts_it_again() {
+fn a_merged_pull_request_linewright_was_unassigned_from_waits_for_its_design_and_linewright() {
     assert_eq!(
-        merged_text(&view(vec![], vec![]), unassigned_at("30")),
-        "left alone: it is no spec change: Linewright was unassigned from it 2026-10-01 \
-         09:30:00 UTC: assign Linewright to cut it again"
+        read_merged_text(&view(vec![], vec![]), unassigned_at("30"))[1..],
+        [
+            "state: spec change waiting for its design",
+            "last read: 2026-10-01 12:00:30 UTC",
+            "waiting for: the maintainer: Linewright is unassigned, until they assign it again",
+        ]
     );
 }
 
 #[test]
-fn with_a_required_label_a_merged_pull_request_linewright_was_unassigned_from_names_the_label() {
+fn with_a_required_label_a_merged_pull_request_linewright_was_unassigned_from_is_managed() {
     let mut view = view(vec![], vec![]);
     view.policy.require_label = Some("linewright".into());
 
     assert_eq!(
-        merged_text(&view, unassigned_at("30")),
-        "left alone: it is no spec change: Linewright was unassigned from it 2026-10-01 \
-         09:30:00 UTC, and `linewright`, the required label, was not applied since: assign \
-         Linewright or apply the label to cut it again"
+        read_merged_text(&view, unassigned_at("30"))[1..],
+        [
+            "state: spec change waiting for its design",
+            "last read: 2026-10-01 12:00:30 UTC",
+            "waiting for: the maintainer: Linewright is unassigned, until they assign it again or \
+             label it `linewright`, the required label",
+        ]
     );
 }
 
@@ -2216,6 +2268,7 @@ fn linewrights_stalled_pull_request_says_so_on_its_state_line() {
 fn a_stalled_spec_change_left_alone_says_so_on_its_state_line_and_in_its_json() {
     let stalled = MergedPull {
         labels: vec!["linewright".into(), label::STALLED.into()],
+        merged_at: at("2026-09-01T09:00:00Z"),
         ..unassigned_at("30")
     };
     let answer = explain_read(

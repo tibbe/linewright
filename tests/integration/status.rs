@@ -3,8 +3,8 @@ use crate::common;
 use chrono::TimeDelta;
 
 use common::{
-    at, closed_by, draining_since, implementing, in_flight, limited_until, relabeled, sub_issue,
-    ticket,
+    assigning_linewright, at, closed_by, draining_since, implementing, in_flight, limited_until,
+    linewright_letting_go, relabeled, sub_issue, ticket,
 };
 use linewright::automation::{AutomationFiles, LastScheduledRuns, Unparsed};
 use linewright::domain::*;
@@ -963,4 +963,69 @@ fn linewrights_pull_request_is_managed_with_its_own_waits_and_its_ticket_waits_f
              is unassigned, until they assign it again — Do #7",
         ]
     );
+}
+
+/// The ready issue, labeled `ready-for-agent` but not the required label
+/// `linewright`, and so not marked for Linewright.
+fn unmarked_view(issue: Issue) -> View {
+    let mut view = view(vec![issue]);
+    view.policy.require_label = Some("linewright".into());
+    view
+}
+
+fn managed_numbers(view: &View) -> Vec<Number> {
+    status(
+        &serving(),
+        None,
+        Some(view),
+        &[],
+        None,
+        at("2026-10-01T12:00:30Z"),
+    )
+    .items
+    .iter()
+    .map(|item| item.number)
+    .collect()
+}
+
+#[test]
+fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_is_not_managed() {
+    assert_eq!(managed_numbers(&unmarked_view(ready_issue())), []);
+}
+
+#[test]
+fn without_a_required_label_an_issue_asking_for_a_step_is_managed() {
+    assert_eq!(managed_numbers(&view(vec![ready_issue()])), [Number(7)]);
+}
+
+#[test]
+fn an_issue_without_the_required_label_that_linewright_has_worked_is_managed() {
+    let handed_back = Issue {
+        labels: vec!["ready-for-agent".into(), label::STALLED.into()],
+        events: vec![
+            assigning_linewright("2026-10-01T10:00:00Z"),
+            linewright_letting_go("2026-10-01T11:00:00Z"),
+        ],
+        ..ready_issue()
+    };
+    let assigned = Issue {
+        assignees: vec![Login::new("factory")],
+        ..ready_issue()
+    };
+    let opened = Issue {
+        author: Login::new("factory"),
+        ..ready_issue()
+    };
+    let closed_by_its_own = closed_by(ready_issue(), 43, "factory");
+
+    for worked in [handed_back, assigned, opened, closed_by_its_own] {
+        assert_eq!(managed_numbers(&unmarked_view(worked)), [Number(7)]);
+    }
+}
+
+#[test]
+fn an_issue_without_the_required_label_that_someone_elses_pull_request_closes_is_not_managed() {
+    let closed = closed_by(ready_issue(), 43, "alice");
+
+    assert_eq!(managed_numbers(&unmarked_view(closed)), []);
 }

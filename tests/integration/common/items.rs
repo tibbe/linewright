@@ -89,6 +89,34 @@ pub fn closed_by(issue: Issue, pr: u64, author: &str) -> Issue {
     }
 }
 
+/// Linewright assigned to an item by itself at `when`, as a claim does.
+pub fn assigning_linewright(when: &str) -> IssueEvent {
+    IssueEvent::Assignment(Assignment::Assigned {
+        assignee: Login::new("factory"),
+        actor: Login::new("factory"),
+        at: at(when),
+    })
+}
+
+/// Linewright unassigning itself from an item at `when`, as a hand-back
+/// does.
+pub fn linewright_letting_go(when: &str) -> IssueEvent {
+    IssueEvent::Assignment(Assignment::Unassigned {
+        assignee: Login::new("factory"),
+        actor: Login::new("factory"),
+        at: at(when),
+    })
+}
+
+/// Linewright unassigned from an item by the maintainer at `when`.
+pub fn unassigning_linewright(when: &str) -> IssueEvent {
+    IssueEvent::Assignment(Assignment::Unassigned {
+        assignee: Login::new("factory"),
+        actor: Login::new("maintainer"),
+        at: at(when),
+    })
+}
+
 pub fn implementing(issue: u64) -> LiveRun {
     LiveRun {
         subject: Subject::Issue(Number(issue)),

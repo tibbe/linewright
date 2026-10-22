@@ -1429,7 +1429,12 @@ fn a_pull_request_linewright_is_unassigned_from_starts_nothing_and_waits_for_the
         let world = in_review(pr);
 
         assert_eq!(at(&world, 10), vec![]);
-        assert_eq!(waits_on(&world, 20), [Wait::Unassigned]);
+        assert_eq!(
+            waits_on(&world, 20),
+            [Wait::Unassigned {
+                required_label: None
+            }]
+        );
     }
 }
 

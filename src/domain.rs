@@ -566,6 +566,20 @@ impl Issue {
         self.assignees.contains(login)
     }
 
+    /// Whether `linewright` has worked it (`GLOSSARY.md`, **Managed**), as
+    /// `snapshot`, which holds the pull requests closing it, tells.
+    pub fn worked_by(&self, linewright: &Login, snapshot: &Snapshot) -> bool {
+        self.author == *linewright
+            || self.is_assigned(linewright)
+            || last_assignment(&self.events, linewright).is_some()
+            || last_unassignment(&self.events, linewright).is_some()
+            || snapshot
+                .pulls_closing(self)
+                .iter()
+                .any(|pr| pr.author == *linewright)
+            || self.tracks(linewright).is_some()
+    }
+
     pub fn last_reopened(&self) -> Option<Timestamp> {
         self.events
             .iter()

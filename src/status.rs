@@ -11,8 +11,8 @@ use crate::domain::{
 };
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{
-    Automations, Decisions, Drain, LiveRun, Memory, NextRun, NotSpecChange, Policy, Relabel, Wait,
-    decisions, next_run, not_a_spec_change, open_pull_for, worked_pulls,
+    Automations, Decisions, Drain, LiveRun, Memory, NextRun, NotSpecChange, Policy, Relabel,
+    SpecChange, Wait, decisions, next_run, open_pull_for, spec_change, worked_pulls,
 };
 use crate::runs::{
     InFlight, Recorded, RunId, RunInFlight, RunOf, StartedBy, describe_start, last_of_automation,
@@ -407,6 +407,11 @@ pub(crate) fn managed(view: &View, now: Timestamp) -> Vec<Managed> {
 pub enum IssueExclusion {
     NoPipelineLabel,
     NoTickets,
+    /// Its labels ask for a step, but it is not marked for Linewright, and
+    /// Linewright has not worked it.
+    NotMarked {
+        label: String,
+    },
 }
 
 pub(crate) fn standing(
@@ -416,6 +421,14 @@ pub(crate) fn standing(
     waiting_for: &[Wait],
 ) -> Result<ItemState, IssueExclusion> {
     let state = issue_state(issue, snapshot, policy)?;
+    if let Some(label) = &policy.require_label
+        && !issue.has_label(label)
+        && !issue.worked_by(&policy.linewright, snapshot)
+    {
+        return Err(IssueExclusion::NotMarked {
+            label: label.clone(),
+        });
+    }
     if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
         return Err(IssueExclusion::NoTickets);
     }
@@ -424,17 +437,20 @@ pub(crate) fn standing(
 
 /// Where merged `pr` stands as a spec change, with the waits its standing
 /// implies alone, which the decisions' waits for it follow; or why it is no
-/// spec change.
+/// spec change. A spec change Linewright was unassigned from has been
+/// worked (`GLOSSARY.md`, **Managed**), so it stays managed, though
+/// Linewright does not cut it.
 pub(crate) fn spec_change_standing(
     pr: &MergedPull,
     snapshot: &Snapshot,
     now: Timestamp,
     policy: &Policy,
 ) -> Result<(ItemState, Vec<Wait>), NotSpecChange> {
-    match not_a_spec_change(pr, &snapshot.default_branch, now, policy) {
-        None => Ok((ItemState::WaitingForDesign, vec![])),
-        Some(because) => Err(because),
-    }
+    let waits = match spec_change(pr, &snapshot.default_branch, now, policy)? {
+        SpecChange::Pending => vec![],
+        SpecChange::Unassigned { required_label } => vec![Wait::Unassigned { required_label }],
+    };
+    Ok((ItemState::WaitingForDesign, waits))
 }
 
 fn issue_state(
@@ -716,8 +732,17 @@ pub(crate) fn describe_wait(wait: &Wait) -> Phrase {
             label::ANSWERS.map(|(answer, _)| Phrase::default().code(answer)),
             " or ",
         )),
-        Wait::Unassigned => {
-            "the maintainer: Linewright is unassigned, until they assign it again".into()
+        Wait::Unassigned { required_label } => {
+            let phrase = Phrase::from(
+                "the maintainer: Linewright is unassigned, until they assign it again",
+            );
+            match required_label {
+                Some(label) => phrase
+                    .text(" or label it ")
+                    .code(label.clone())
+                    .text(", the required label"),
+                None => phrase,
+            }
         }
         Wait::RequiredLabel { label } => Phrase::from("the maintainer: to label it ")
             .code(label.clone())

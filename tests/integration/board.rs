@@ -1,6 +1,6 @@
 use crate::common;
 
-use common::{NOW, at, ticket, view};
+use common::{NOW, assigning_linewright, at, ticket, unassigning_linewright, view};
 use linewright::board::{
     Board, Card, CardLine, Column, Elapsed, Ended, Hold, LaneHead, Running, Stop, board,
 };
@@ -1253,14 +1253,6 @@ fn labeling(label: &str, when: &str) -> IssueEvent {
     }
 }
 
-fn unassigning_linewright(when: &str) -> IssueEvent {
-    IssueEvent::Assignment(Assignment::Unassigned {
-        assignee: Login::new("factory"),
-        actor: Login::new("maintainer"),
-        at: at(when),
-    })
-}
-
 /// How long #`number`'s card says it has sat in its column, and since when.
 fn sat(board: &Board, number: u64) -> Option<Elapsed> {
     card(board, number).sat
@@ -1445,4 +1437,32 @@ fn working_in_review_and_done_cards_have_no_time_in_their_column() {
         ]
     );
     assert_eq!([1, 2, 3].map(|n| sat(&board, n)), [None, None, None]);
+}
+
+#[test]
+fn a_spec_change_linewright_was_unassigned_from_is_ready() {
+    let unassigned = MergedPull {
+        assignees: vec![],
+        events: vec![unassigning_linewright("2026-10-01T10:30:00Z")],
+        ..spec_change(6, &[])
+    };
+    let view = with_merged(view(vec![], vec![]), vec![unassigned]);
+
+    assert_eq!(placed(&board(&view, &[], at(NOW))), [(6, Column::Ready, 6)]);
+}
+
+#[test]
+fn with_a_required_label_an_issue_without_it_is_on_the_board_only_once_linewright_has_worked_it() {
+    let unmarked = ticket(1, "Never touched");
+    let handed_back = Issue {
+        events: vec![
+            assigning_linewright("2026-10-01T10:00:00Z"),
+            unassigning_linewright("2026-10-01T10:30:00Z"),
+        ],
+        ..ticket(2, "Handed back")
+    };
+    let mut view = view(vec![unmarked, handed_back], vec![]);
+    view.policy.require_label = Some("linewright".into());
+
+    assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Ready, 2)]);
 }
