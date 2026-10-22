@@ -99,10 +99,7 @@ async fn in_the_rail_the_repository_is_its_owners_avatar_with_its_name_as_a_tool
     );
     assert_eq!(avatar.attr("alt"), Some(""), "the avatar is decorative");
     assert!(
-        avatar
-            .value()
-            .has_class("hidden", scraper::CaseSensitivity::CaseSensitive)
-            && in_the_rail(avatar).contains(&"block"),
+        has_classes(avatar, &["hidden"]) && in_the_rail(avatar).contains(&"block"),
         "only the rail shows the avatar: {}",
         avatar.html()
     );
@@ -191,9 +188,7 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
         "{holds:?}"
     );
     assert!(
-        select(&html, "#holds .alert")[0]
-            .value()
-            .has_class("alert-warning", scraper::CaseSensitivity::CaseSensitive),
+        has_classes(select(&html, "#holds .alert")[0], &["alert-warning"]),
         "{}",
         html.html()
     );
@@ -300,13 +295,7 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
     }
 
     let alert = select(&shown, ".alert")[0];
-    assert!(
-        alert
-            .value()
-            .has_class("alert-error", scraper::CaseSensitivity::CaseSensitive),
-        "{}",
-        alert.html()
-    );
+    assert!(has_classes(alert, &["alert-error"]), "{}", alert.html());
     // Pages that need a poll that succeeded say so, under the same frame.
     for path in ["/", "/runs", "/automations", "/server", "/items/1"] {
         let (_, body) = web.get(path).await;

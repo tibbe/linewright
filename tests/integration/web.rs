@@ -187,6 +187,20 @@ fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>>
         .collect()
 }
 
+/// Whether `element` has every one of `classes`.
+fn has_classes(element: ElementRef, classes: &[&str]) -> bool {
+    classes.iter().all(|class| {
+        element
+            .value()
+            .has_class(class, scraper::CaseSensitivity::CaseSensitive)
+    })
+}
+
+/// Whether `element` has none of `classes`.
+fn lacks_classes(element: ElementRef, classes: &[&str]) -> bool {
+    !classes.iter().any(|class| has_classes(element, &[class]))
+}
+
 /// The path of the event stream the page connects to.
 fn events_path(html: &Html) -> Option<&str> {
     select(html, "body")[0].attr("hx-sse:connect")

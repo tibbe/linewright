@@ -267,12 +267,7 @@ async fn a_lane_head_cut_to_fit_is_whole_on_hover_and_on_keyboard_focus() {
     let heads = select(&html, "#board .lane-head");
     assert_eq!(heads.len(), 4);
     for head in heads {
-        assert!(
-            head.value()
-                .has_class("group", scraper::CaseSensitivity::CaseSensitive),
-            "{}",
-            head.html()
-        );
+        assert!(has_classes(head, &["group"]), "{}", head.html());
         let cut = select_in(head, ":scope > span")[0];
         let classes: Vec<&str> = cut.value().classes().collect();
         assert!(
@@ -285,6 +280,39 @@ async fn a_lane_head_cut_to_fit_is_whole_on_hover_and_on_keyboard_focus() {
             .all(|class| classes.contains(class)),
             "{}",
             head.html()
+        );
+    }
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn each_lane_is_a_surface_sunk_into_the_page_with_its_cards_raised_on_it() {
+    let web = Web::start(with_a_finished_lane().await).await;
+
+    let html = web.page("/").await;
+
+    let lanes = select(&html, "#board .lane");
+    assert_eq!(lanes.len(), 4);
+    for lane in lanes {
+        assert!(
+            has_classes(
+                lane,
+                &["bg-base-200", "border", "border-base-300", "rounded-box"]
+            ),
+            "{}",
+            lane.html()
+        );
+        for head in select_in(lane, ".lane-head") {
+            assert!(lacks_classes(head, &["border-t"]), "{}", head.html());
+        }
+    }
+    let cards = select(&html, "#board .card");
+    assert_eq!(cards.len(), 4);
+    for card in cards {
+        assert!(
+            has_classes(card, &["card", "bg-base-100"]) && lacks_classes(card, &["card-border"]),
+            "{}",
+            card.html()
         );
     }
     web.stop().await;
