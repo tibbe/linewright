@@ -134,8 +134,8 @@ struct Page {
     title: String,
     /// The path of the page's event stream.
     events: String,
-    /// Whether the page is as tall as the viewport, its `main` scrolling in
-    /// its own box rather than the page scrolling.
+    /// Whether the page is as tall as the viewport, its `main` a flex column
+    /// whose `.scroll-box` scrolls rather than the page.
     fills_viewport: bool,
     assets: PageAssets,
 }

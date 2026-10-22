@@ -115,6 +115,33 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
     web.stop().await;
 }
 
+/// The classes of the elements `selector` matches.
+fn classes<'a>(html: &'a Html, selector: &str) -> Vec<Vec<&'a str>> {
+    select(html, selector)
+        .into_iter()
+        .map(|element| element.value().classes().collect())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_automations_table_pins_its_heads_in_a_box_scrolling_both_ways_under_the_unparsed_files()
+ {
+    let world = with_automations(&[("weekly", WEEKLY), ("broken", BROKEN)]).await;
+    let web = Web::start(world).await;
+
+    let html = web.page("/automations").await;
+
+    let tables = classes(&html, "#automations .scroll-box > table");
+    assert_eq!(tables.len(), 1, "{tables:?}");
+    assert!(
+        tables[0].contains(&"table") && tables[0].contains(&"table-pin-rows"),
+        "{tables:?}"
+    );
+    let after_the_unparsed = select(&html, "#automations .unparsed ~ .scroll-box");
+    assert_eq!(after_the_unparsed.len(), 1);
+    web.stop().await;
+}
+
 #[tokio::test]
 async fn the_sidebar_links_to_the_automations_page_between_the_runs_and_the_server() {
     let web = Web::start(with_ticket().await).await;

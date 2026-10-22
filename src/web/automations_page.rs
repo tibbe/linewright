@@ -180,7 +180,8 @@ pub(super) async fn automations_page(State(sources): State<Sources>) -> Response
     let page = Page::new(
         format!("Automations · {}", sources.work_dir.repo),
         "/events/automations".into(),
-    );
+    )
+    .filling_the_viewport();
     match shown(&sources) {
         (frame, Some(automations)) => AutomationsPage {
             page,

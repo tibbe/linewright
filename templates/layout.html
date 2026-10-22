@@ -21,9 +21,11 @@
     labels under them from `lg`; and a menu behind a button below that
     (`docs/specs/web/design_system.md`, Navigation). The breakpoints are the
     same on every page (`docs/specs/design_system.md`, Navigation).
-    A page that fills the viewport, as the board does, scrolls in its `main`
-    and not as a whole, so that its own box is the one that scrolls
-    sideways. -#}
+    A page that fills the viewport does not scroll as a whole: its `main` is
+    a flex column, the content above its `.scroll-box` keeps its height, and
+    the box takes the rest and scrolls on both axes, so that what is sticky
+    in it sticks to the box's top as it scrolls either way
+    (`docs/specs/design_system.md`, Tables and Layout). -#}
 <div class="drawer lg:drawer-open">
 <input id="navigation" type="checkbox" class="drawer-toggle">
 <div class="drawer-content min-w-0{% if page.fills_viewport %} flex h-dvh flex-col{% endif %}">
@@ -38,7 +40,7 @@
 </div>
 {%- endblock %}
 <p id="lost" class="alert alert-warning mx-4 mt-2 shrink-0" role="status" hidden>Lost <code>serve</code> <time></time>; reconnecting.</p>
-<main class="{% if page.fills_viewport %}min-h-0 flex-1 px-2 py-4{% else %}p-4{% endif %}">
+<main class="{% if page.fills_viewport %}flex min-h-0 flex-1 flex-col px-2 py-4{% else %}p-4{% endif %}">
 {% block main %}{% endblock %}
 </main>
 </div>

@@ -2,7 +2,7 @@
 {%- import "macros.html" as ui -%}
 {%- block main -%}
 {% block automations -%}
-<section id="automations">
+<section id="automations" class="flex min-h-0 flex-1 flex-col">
 <h1 class="mb-3 text-lg font-semibold">Automations</h1>
 {%- if !automations.unparsed.is_empty() %}
 <ul class="unparsed mb-4 space-y-1">
@@ -14,8 +14,8 @@
 {%- if automations.rows.is_empty() %}
 <p>no automations</p>
 {%- else %}
-<div class="overflow-x-auto">
-<table class="table">
+<div class="scroll-box">
+<table class="table table-pin-rows">
 <thead><tr><th>Name</th><th>Schedule</th><th>Last run</th><th>Next run</th></tr></thead>
 <tbody>
 {%- for row in automations.rows %}

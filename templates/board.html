@@ -25,13 +25,13 @@
 <span class="sticky left-0 inline-block max-w-[100cqw] truncate align-top">{{ lane.head|safe }}</span>
 {%- endmacro -%}
 {%- block main -%}
-<section id="board" class="@container h-full overflow-auto">
+<section id="board" class="scroll-box @container">
 {#- Six columns, never cut, with a lane per piece of work as rows under
     them; the finished lanes folded, under one fold, after the rest. Each
     fold has an id, so that the stream's updates keep it as the reader left
     it.
-    The board is the box that scrolls, on both axes, so that its heads stick
-    as it scrolls either way. Each lane is a block of its own rather than
+    The board is the page's scroll box, so that its heads stick as it
+    scrolls either way. Each lane is a block of its own rather than
     part of one grid, because a grid item sticks only within its grid area:
     https://developer.mozilla.org/en-US/docs/Web/CSS/position#sticky -#}
 {#- The board's columns share its width, each at least 200px
