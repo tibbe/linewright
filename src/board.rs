@@ -207,11 +207,14 @@ pub enum CardLine {
     // Ready, and Working with no run in flight.
     BlockedBy(Number),
     AssignedTo(Login),
+    /// Linewright was unassigned from it.
+    Unassigned,
     Paused(Hold),
     Queued,
     // Working.
     Running(Running),
     // In review.
+    /// Of an item other than its pull request.
     Review {
         pull_request: Number,
         /// Who opened it, when not Linewright.
@@ -219,6 +222,8 @@ pub enum CardLine {
         /// What stops it merging, the first that holds.
         stops: Option<Stop>,
     },
+    /// Of the pull request itself, what stops it merging.
+    MergeStop(Stop),
     // Done.
     Ended {
         ended: Ended,
@@ -355,7 +360,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
                 recorded,
                 linewright,
             ),
-            Column::Ready => ready_line(&waits),
+            Column::Ready => ready_line(issue, &waits),
             Column::Working => working_line(run, &waits),
             Column::InReview => review_line(&managed.state, issue, run, view),
         };
@@ -402,7 +407,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             continue;
         }
         let run = run_on(view, &[managed.number], now);
-        let line = review_line(&managed.state, None, run, view);
+        let line = merge_stop(managed.number, None, run, view).map(CardLine::MergeStop);
         let pull_request = true;
         let changed = changed(&[managed.number]);
         let card = Card::new(managed.number, &managed.title, pull_request, line, changed);
@@ -565,26 +570,23 @@ fn let_go_of(issue: &Issue, recorded: &[Recorded], linewright: &Login) -> bool {
         .is_some_and(|(_, let_go)| let_go)
 }
 
-/// The line in Ready, from what the item waits for.
-fn ready_line(waits: &[Wait]) -> Option<CardLine> {
-    let blocker = waits
-        .iter()
-        .filter_map(|wait| {
-            let Wait::Blocker { issue } = wait else {
-                return None;
-            };
-            Some(*issue)
-        })
-        .min();
+/// The line in Ready, from its issue's open blockers, if it is an issue,
+/// and what it waits for. An issue waiting for someone else or for its
+/// label again waits for nothing past that, so its blockers come from the
+/// issue itself.
+fn ready_line(issue: Option<&Issue>, waits: &[Wait]) -> Option<CardLine> {
+    let blocker = issue.and_then(|issue| issue.open_blockers().into_iter().min());
     let assignee = waits.iter().find_map(|wait| {
         let Wait::Assignee { assignee } = wait else {
             return None;
         };
         Some(assignee.clone())
     });
+    let unassigned = waits.iter().any(Wait::is_unassigned);
     first([
         blocker.map(CardLine::BlockedBy),
         assignee.map(CardLine::AssignedTo),
+        unassigned.then_some(CardLine::Unassigned),
         held(waits),
     ])
 }
@@ -607,9 +609,8 @@ fn held(waits: &[Wait]) -> Option<CardLine> {
     ])
 }
 
-/// The line in In review: its pull request and what stops it merging.
-/// Someone else's pull request the snapshot does not hold is known only by
-/// `issue`'s reference to it.
+/// The line in In review of an item other than its pull request: its pull
+/// request and what stops it merging.
 fn review_line(
     state: &ItemState,
     issue: Option<&Issue>,
@@ -630,6 +631,22 @@ fn review_line(
     } else {
         return None;
     };
+    Some(CardLine::Review {
+        pull_request,
+        author,
+        stops: merge_stop(pull_request, issue, run, view),
+    })
+}
+
+/// What stops `pull_request` merging, the first that holds. Someone else's
+/// pull request the snapshot does not hold is known only by `issue`'s
+/// reference to it.
+fn merge_stop(
+    pull_request: Number,
+    issue: Option<&Issue>,
+    run: Option<Running>,
+    view: &View,
+) -> Option<Stop> {
     let snapshot = &view.snapshot;
     let pull = snapshot.pull(pull_request);
     let pull_state = pull.map(|pull| pull.state).or_else(|| {
@@ -655,11 +672,7 @@ fn review_line(
         matches!(pull_state, Some(PullState::Open { draft: true })).then_some(Stop::Draft),
         pull.and_then(|pull| pull.review_decision).map(Stop::Review),
     ];
-    Some(CardLine::Review {
-        pull_request,
-        author,
-        stops: first(stops),
-    })
+    first(stops)
 }
 
 /// A tracking issue, open or closed in the window, heading its lane.

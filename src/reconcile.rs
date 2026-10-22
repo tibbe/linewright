@@ -566,6 +566,21 @@ pub enum Wait {
     },
 }
 
+impl Wait {
+    /// Whether it is for what Linewright being unassigned from the item
+    /// asks: being assigned again, or its label applied again.
+    pub fn is_unassigned(&self) -> bool {
+        matches!(
+            self,
+            Wait::Unassigned { .. }
+                | Wait::Relabel {
+                    since: Relabel::Unassigned { .. },
+                    ..
+                }
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum Relabel {
@@ -1465,7 +1480,7 @@ fn implementation(
 
 /// Returns whether any blocker is open.
 fn wait_for_blockers(issue: &Issue, plan: &mut Plan) -> bool {
-    let blockers = open_numbers(&issue.blocked_by);
+    let blockers = issue.open_blockers();
     for &blocker in &blockers {
         plan.wait(issue.number, Wait::Blocker { issue: blocker });
     }

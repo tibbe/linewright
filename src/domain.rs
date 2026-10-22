@@ -493,6 +493,15 @@ impl Issue {
         self.labels.iter().any(|l| l == label)
     }
 
+    /// The open issues that block it.
+    pub fn open_blockers(&self) -> Vec<Number> {
+        self.blocked_by
+            .iter()
+            .filter(|l| l.open)
+            .map(|l| l.number)
+            .collect()
+    }
+
     /// Whether it was handed back in a stall, and Linewright has not worked
     /// it since (`docs/specs/repository.md`, "Stalls").
     pub fn is_stalled(&self) -> bool {

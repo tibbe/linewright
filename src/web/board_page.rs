@@ -144,6 +144,7 @@ fn worded(line: &CardLine) -> Phrase {
         CardLine::DecisionNeeded => "decision needed".into(),
         CardLine::BlockedBy(issue) => Phrase::from("blocked by ").item(*issue),
         CardLine::AssignedTo(assignee) => format!("assigned to {assignee}").into(),
+        CardLine::Unassigned => "unassigned".into(),
         CardLine::Paused(Hold::UsageLimit) => "paused for the usage limit".into(),
         CardLine::Paused(Hold::Drain) => "paused for the drain".into(),
         CardLine::Queued => "queued".into(),
@@ -163,6 +164,7 @@ fn worded(line: &CardLine) -> Phrase {
                 None => phrase,
             }
         }
+        CardLine::MergeStop(stop) => stop_worded(stop),
         CardLine::Ended { ended, at } => ended_worded(*ended).text(" · ").time(*at),
     }
 }

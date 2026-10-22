@@ -622,3 +622,62 @@ async fn a_card_waiting_in_its_column_ends_its_line_with_how_long_it_has_sat_kep
     );
     web.stop().await;
 }
+
+#[tokio::test]
+async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_leaves_off_its_number()
+ {
+    use linewright::domain::CheckState;
+    let world = World::new().await;
+    let let_go = world.store.open_issue(
+        "maintainer",
+        "Let go",
+        "Later.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world
+        .store
+        .assign_as(LINEWRIGHT, let_go, LINEWRIGHT)
+        .unwrap();
+    world
+        .store
+        .unassign_as("maintainer", let_go, LINEWRIGHT)
+        .unwrap();
+    // An issue closed before the spec lookback window is not on the board.
+    let untidy = world
+        .store
+        .open_issue("maintainer", "Untidy", "Tidy it.", &[]);
+    let pr = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            "tidy",
+            "Tidy up",
+            &format!("Closes {untidy}."),
+            &[("src/tidy.txt", "tidy\n")],
+        )
+        .await
+        .unwrap();
+    world
+        .store
+        .set_checks(pr, vec![check("test", CheckState::Pending, "")])
+        .await
+        .unwrap();
+    world.store.close_issue_as_completed(untidy).unwrap();
+    world.clock.advance(chrono::TimeDelta::days(8));
+    let web = Web::start(world).await;
+
+    let mut shown: Vec<String> = cards_shown(&web.page("/").await)
+        .into_iter()
+        .map(|(card, _)| card)
+        .collect();
+    shown.sort();
+
+    assert_eq!(
+        shown,
+        [
+            format!("In review: {pr}: Tidy up | checks running"),
+            format!("Ready: {let_go}: Let go | unassigned · DURATION"),
+        ]
+    );
+    web.stop().await;
+}

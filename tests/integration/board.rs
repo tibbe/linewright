@@ -311,13 +311,24 @@ fn linewrights_pull_request_closing_no_issue_on_the_board_is_a_card_of_its_own()
     assert_eq!(placed(&board), [(10, Column::InReview, 10)]);
     let card = card(&board, 10);
     assert!(card.pull_request);
+    assert_eq!(card.line, Some(CardLine::MergeStop(Stop::ChecksRunning)));
+}
+
+#[test]
+fn a_pull_request_card_says_only_what_stops_it_merging_and_nothing_when_nothing_does() {
+    let view = view(
+        vec![],
+        vec![
+            pull(10, &[1], &[CheckState::Failed]),
+            pull(11, &[2], &[CheckState::Passed]),
+        ],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
     assert_eq!(
-        card.line,
-        Some(CardLine::Review {
-            pull_request: Number(10),
-            author: None,
-            stops: Some(Stop::ChecksRunning),
-        })
+        [10, 11].map(|n| line(&board, n)),
+        [Some(CardLine::MergeStop(Stop::ChecksFailed)), None]
     );
 }
 
@@ -1465,4 +1476,60 @@ fn with_a_required_label_an_issue_without_it_is_on_the_board_only_once_linewrigh
     view.policy.require_label = Some("linewright".into());
 
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Ready, 2)]);
+}
+
+#[test]
+fn a_ready_card_linewright_was_unassigned_from_says_so_after_its_blocker_and_assignee() {
+    let unassigned = |issue: Issue| {
+        with_events(
+            issue,
+            vec![
+                labeling("ready-for-agent", "2026-10-01T09:00:00Z"),
+                assigning_linewright("2026-10-01T10:00:00Z"),
+                unassigning_linewright("2026-10-01T11:00:00Z"),
+            ],
+        )
+    };
+    let spec_change = MergedPull {
+        assignees: vec![],
+        events: vec![unassigning_linewright("2026-10-01T10:30:00Z")],
+        ..spec_change(4, &[])
+    };
+    let view = View {
+        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        ..with_merged(
+            view(
+                vec![
+                    unassigned(blocked_by(ticket(1, "Blocked"), &[9])),
+                    unassigned(assigned_to(ticket(2, "Theirs"), "alice")),
+                    unassigned(ticket(3, "Let go")),
+                ],
+                vec![],
+            ),
+            vec![spec_change],
+        )
+    };
+
+    let board = board(&view, &[], at(NOW));
+
+    let mut placed = placed(&board);
+    placed.sort_by_key(|(_, _, card)| *card);
+    assert_eq!(
+        placed,
+        [
+            (1, Column::Ready, 1),
+            (2, Column::Ready, 2),
+            (3, Column::Ready, 3),
+            (4, Column::Ready, 4),
+        ]
+    );
+    assert_eq!(
+        [1, 2, 3, 4].map(|n| line(&board, n)),
+        [
+            Some(CardLine::BlockedBy(Number(9))),
+            Some(CardLine::AssignedTo(Login::new("alice"))),
+            Some(CardLine::Unassigned),
+            Some(CardLine::Unassigned),
+        ]
+    );
 }
