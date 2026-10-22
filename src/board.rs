@@ -9,7 +9,7 @@ use crate::domain::{
     PullState, ReviewDecision, StatusLabel, SubIssue, Timestamp, Tracks, last_labeling,
     last_unassigned,
 };
-use crate::reconcile::{NotSpecChange, Wait, WorkKind, not_a_spec_change};
+use crate::reconcile::{NotSpecChange, Wait, WorkKind};
 use crate::runs::{Ending, Recorded, RunOf, State};
 use crate::status::{self, ItemState, Managed, View};
 
@@ -467,8 +467,8 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
 
     for pr in &snapshot.merged {
         let designed = matches!(
-            not_a_spec_change(pr, &snapshot.default_branch, now, &view.policy),
-            Some(NotSpecChange::Designed { .. })
+            status::spec_change_standing(pr, snapshot, now, &view.policy),
+            Err(NotSpecChange::Designed { .. })
         );
         let cut = trackers
             .iter()

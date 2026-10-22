@@ -6,13 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    CheckState, Issue, Item, Login, Number, Pull, PullState, Requirement, Snapshot, StatusLabel,
-    Timestamp, label,
+    CheckState, Issue, Item, Login, MergedPull, Number, Pull, PullState, Requirement, Snapshot,
+    StatusLabel, Timestamp, label,
 };
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{
-    Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
-    next_run, open_pull_for, pending_spec_changes, worked_pulls,
+    Automations, Decisions, Drain, LiveRun, Memory, NextRun, NotSpecChange, Policy, Relabel, Wait,
+    decisions, next_run, not_a_spec_change, open_pull_for, worked_pulls,
 };
 use crate::runs::{
     InFlight, Recorded, RunId, RunInFlight, RunOf, StartedBy, describe_start, last_of_automation,
@@ -366,12 +366,17 @@ pub(crate) fn managed(view: &View, now: Timestamp) -> Vec<Managed> {
     let snapshot = &view.snapshot;
     let mut waits = view.decisions(now).waits;
     let mut items = vec![];
-    for pr in pending_spec_changes(snapshot, now, &view.policy) {
+    for pr in &snapshot.merged {
+        let Ok((state, mut waiting_for)) = spec_change_standing(pr, snapshot, now, &view.policy)
+        else {
+            continue;
+        };
+        waiting_for.extend(waits.remove(&pr.number).unwrap_or_default());
         items.push(Managed {
             number: pr.number,
             title: pr.title.clone(),
-            state: ItemState::WaitingForDesign,
-            waiting_for: waits.remove(&pr.number).unwrap_or_default(),
+            state,
+            waiting_for,
         });
     }
     for issue in snapshot.issues.iter().filter(|i| i.open) {
@@ -415,6 +420,21 @@ pub(crate) fn standing(
         return Err(IssueExclusion::NoTickets);
     }
     Ok(state)
+}
+
+/// Where merged `pr` stands as a spec change, with the waits its standing
+/// implies alone, which the decisions' waits for it follow; or why it is no
+/// spec change.
+pub(crate) fn spec_change_standing(
+    pr: &MergedPull,
+    snapshot: &Snapshot,
+    now: Timestamp,
+    policy: &Policy,
+) -> Result<(ItemState, Vec<Wait>), NotSpecChange> {
+    match not_a_spec_change(pr, &snapshot.default_branch, now, policy) {
+        None => Ok((ItemState::WaitingForDesign, vec![])),
+        Some(because) => Err(because),
+    }
 }
 
 fn issue_state(

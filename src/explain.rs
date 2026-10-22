@@ -8,10 +8,11 @@ use crate::domain::{
     Tracks, label,
 };
 use crate::phrase::{Phrase, Tone};
-use crate::reconcile::{NotSpecChange, NotWorked, Wait, not_a_spec_change, worked_ticket};
+use crate::reconcile::{NotSpecChange, NotWorked, Wait, worked_ticket};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
-    InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, managed, standing,
+    InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, managed,
+    spec_change_standing, standing,
 };
 use crate::store::AnyItem;
 
@@ -523,13 +524,12 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             }
         }
         AnyItem::Merged { pull: merged, .. } => {
-            let default_branch = &fresh.snapshot.default_branch;
-            match not_a_spec_change(merged, default_branch, now, &fresh.policy) {
-                None => {
-                    let state = ItemState::WaitingForDesign;
-                    return managed_as(&merged.title, state, take_waits());
+            match spec_change_standing(merged, &fresh.snapshot, now, &fresh.policy) {
+                Ok((state, mut waiting_for)) => {
+                    waiting_for.extend(take_waits());
+                    return managed_as(&merged.title, state, waiting_for);
                 }
-                Some(left_alone) => (
+                Err(left_alone) => (
                     &merged.title,
                     LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }),
                 ),
