@@ -36,9 +36,7 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
     };
     web.eventually_page("/runs", done).await;
 
-    let html = web
-        .page("/runs?item=&stage=triage&since=2026-10-01&limit=1")
-        .await;
+    let html = web.page("/runs?item=&stage=triage&since=2026-10-01").await;
 
     assert_eq!(
         runs_heads(&html),
@@ -52,10 +50,10 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
     );
     assert!(started(&shown[0][4], "12:00"), "{shown:?}");
     assert!(seconds(&shown[0][5]), "{shown:?}");
-    assert_eq!(shown[1], ["left out: 1 earlier run; show them all"]);
-    let last = select(&html, "#runs tbody tr:last-child > td");
-    assert_eq!(last.len(), 1);
-    assert_eq!(last[0].attr("colspan"), Some("6"));
+    assert_eq!(
+        shown[1][..4],
+        ["done", "1/triage-1", "#1: Export fails", "triage"]
+    );
     let links: Vec<&str> = select(&html, "#runs tbody a:not(.github)")
         .into_iter()
         .filter_map(|a| a.attr("href"))
@@ -65,7 +63,8 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
         [
             "/runs/2/triage-1",
             "/items/2",
-            "/runs?stage=triage&since=2026-10-01"
+            "/runs/1/triage-1",
+            "/items/1"
         ]
     );
     let fields: Vec<(&str, String)> = select(&html, "form input, form select")
@@ -87,7 +86,6 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
             ("item", String::new()),
             ("stage", "triage".to_string()),
             ("since", "2026-10-01".to_string()),
-            ("limit", "1".to_string()),
         ]
     );
     assert_eq!(select(&html, "form")[0].attr("method"), Some("get"));
@@ -216,16 +214,41 @@ async fn the_runs_page_with_no_runs_to_list_says_so_in_place_of_the_table() {
 }
 
 #[tokio::test]
+async fn the_runs_page_narrowed_to_an_item_without_runs_says_so_in_place_of_the_table() {
+    let web = Web::start(with_ticket().await).await;
+
+    let (status, body) = web.get("/runs?item=5").await;
+
+    assert_eq!(status, 200);
+    let html = Html::parse_document(&body);
+    assert_eq!(text(select(&html, "#runs")[0]), "No runs");
+    let events_path = events_path(&html).unwrap().to_string();
+    assert_eq!(events_path, "/events/runs?item=5");
+    let mut events = stream(&web, &events_path).await;
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let runs = regions(&first)
+        .into_iter()
+        .find(|(id, _)| id == "runs")
+        .map(|(_, runs)| runs)
+        .unwrap();
+    assert_eq!(text(select(&runs, "#runs")[0]), "No runs");
+    web.stop().await;
+}
+
+#[tokio::test]
 async fn the_runs_page_says_why_a_narrowing_does_not_read() {
     let web = Web::start(with_ticket().await).await;
 
-    let (status, body) = web.get("/runs?limit=many").await;
+    let (status, body) = web.get("/runs?item=abc").await;
 
     assert_eq!(status, 400);
     let html = Html::parse_document(&body);
     assert_eq!(
         text(select(&html, "#runs")[0]),
-        "\"many\" is not a number of runs"
+        "\"abc\" is not an issue or pull request number"
     );
     web.stop().await;
 }

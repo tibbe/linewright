@@ -55,14 +55,9 @@ pub(super) struct LeftOut {
 }
 
 impl RunsShown {
-    /// The runs of `listing`, each with its item, titled where `snapshot`
-    /// holds it; the earlier runs it left out listed at `all_runs_href`.
-    pub(super) fn all(
-        listing: &Listing,
-        snapshot: Option<&Snapshot>,
-        repo: &str,
-        all_runs_href: String,
-    ) -> RunsShown {
+    /// The runs of `listing`, uncut, each with its item, titled where
+    /// `snapshot` holds it.
+    pub(super) fn all(listing: &Listing, snapshot: Option<&Snapshot>, repo: &str) -> RunsShown {
         let item = |run: &Run| match &run.id.of {
             RunOf::Work { item, .. } => {
                 ItemCell::Item(match snapshot.and_then(|snapshot| snapshot.title(*item)) {
@@ -79,7 +74,7 @@ impl RunsShown {
                 .map(|run| (item(run), RunRow::of(run, repo)))
                 .collect(),
         );
-        RunsShown::of(listing, rows, all_runs_href)
+        RunsShown::of(listing, rows, None)
     }
 
     /// #`item`'s runs, as `runs` listed them narrowed to it, without the
@@ -95,17 +90,17 @@ impl RunsShown {
                 .map(|run| RunRow::of(run, repo))
                 .collect(),
         );
-        RunsShown::of(&listing, rows, format!("/runs?item={}", item.0))
+        let left_out = (listing.left_out > 0).then(|| LeftOut {
+            earlier: runs::earlier_runs(listing.left_out),
+            href: format!("/runs?item={}", item.0),
+        });
+        RunsShown::of(&listing, rows, left_out)
     }
 
-    fn of(listing: &Listing, rows: Rows, all_runs_href: String) -> RunsShown {
+    fn of(listing: &Listing, rows: Rows, left_out: Option<LeftOut>) -> RunsShown {
         if listing.runs.is_empty() {
             return RunsShown::NoRuns;
         }
-        let left_out = (listing.left_out > 0).then(|| LeftOut {
-            earlier: runs::earlier_runs(listing.left_out),
-            href: all_runs_href,
-        });
         RunsShown::Table(RunsTable { rows, left_out })
     }
 }

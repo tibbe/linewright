@@ -1,5 +1,6 @@
-//! The runs page (`docs/specs/design_system.md`, The web UI): what `runs`
-//! lists, with its narrowing as the fields of a form.
+//! The runs page (`docs/specs/design_system.md`, Lists of runs): every run,
+//! narrowed by the item, the stage and the time since which runs started as
+//! the fields of a form.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -29,8 +30,6 @@ pub(super) struct Fields {
     stage: String,
     #[serde(default)]
     since: String,
-    #[serde(default)]
-    limit: String,
 }
 
 /// The narrowing the form asks for, read as `runs` reads its own.
@@ -45,7 +44,6 @@ struct Narrowed {
     stage: Option<WorkKind>,
     /// Read as `--since` reads it, so that a duration stays one ago.
     since: Option<Since>,
-    limit: Option<usize>,
 }
 
 impl Narrowing {
@@ -54,7 +52,6 @@ impl Narrowing {
             item: fields.item.trim().to_string(),
             stage: fields.stage.trim().to_string(),
             since: fields.since.trim().to_string(),
-            limit: fields.limit.trim().to_string(),
         };
         Narrowing {
             narrowed: Narrowed::of(&fields),
@@ -62,19 +59,11 @@ impl Narrowing {
         }
     }
 
-    /// The fields given, with or without the limit, as the query of `path`.
-    fn path(&self, path: &str, limited: bool) -> String {
+    /// The fields given, as the query of `path`.
+    fn path(&self, path: &str) -> String {
         let mut query = form_urlencoded::Serializer::new(String::new());
-        let Fields {
-            item,
-            stage,
-            since,
-            limit,
-        } = &self.fields;
-        for (name, value) in [("item", item), ("stage", stage), ("since", since)]
-            .into_iter()
-            .chain(limited.then_some(("limit", limit)))
-        {
+        let Fields { item, stage, since } = &self.fields;
+        for (name, value) in [("item", item), ("stage", stage), ("since", since)] {
             if !value.is_empty() {
                 query.append_pair(name, value);
             }
@@ -101,19 +90,7 @@ impl Narrowed {
             .map(str::parse::<WorkKind>)
             .transpose()?;
         let since = given(&fields.since).map(config::parse_since).transpose()?;
-        let limit = given(&fields.limit)
-            .map(|limit| {
-                limit
-                    .parse()
-                    .map_err(|_| format!("{limit:?} is not a number of runs"))
-            })
-            .transpose()?;
-        Ok(Narrowed {
-            item,
-            stage,
-            since,
-            limit,
-        })
+        Ok(Narrowed { item, stage, since })
     }
 
     fn query(&self, now: Timestamp) -> runs::Query {
@@ -121,7 +98,7 @@ impl Narrowed {
             item: self.item,
             stage: self.stage,
             since: self.since.map(|since| since.at(now)),
-            limit: self.limit,
+            limit: None,
         }
     }
 }
@@ -131,7 +108,6 @@ struct Form {
     item: String,
     stages: Vec<(&'static str, bool)>,
     since: String,
-    limit: String,
 }
 
 impl Form {
@@ -143,13 +119,13 @@ impl Form {
                 .map(|stage| (stage.name(), fields.stage == stage.name()))
                 .collect(),
             since: fields.since.clone(),
-            limit: fields.limit.clone(),
         }
     }
 }
 
-/// The runs as the narrowing lists them, or why they are not listed, and
-/// the status the page answers with.
+/// The runs as the narrowing lists them, all of them, or why they are not
+/// listed, and the status the page answers with. An item without runs is
+/// "No runs", not a page that is not there.
 fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
     let now = sources.clock.now();
     let query = match &narrowing.narrowed {
@@ -163,10 +139,10 @@ fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
                 &listing,
                 view.as_ref().map(|view| &*view.snapshot),
                 &sources.work_dir.repo,
-                narrowing.path("/runs", false),
             );
             (StatusCode::OK, runs)
         }
+        Err(runs::ListError::NoRuns(_)) => (StatusCode::OK, RunsShown::NoRuns),
         Err(e) => {
             let (status, error) = unanswered(e);
             (status, RunsShown::Unlisted(error))
@@ -198,7 +174,7 @@ pub(super) async fn runs_page(
     let page = RunsPage {
         page: Page::new(
             format!("Runs · {}", sources.work_dir.repo),
-            narrowing.path("/events/runs", true),
+            narrowing.path("/events/runs"),
         )
         .filling_the_viewport(),
         frame: Frame::of(&sources),

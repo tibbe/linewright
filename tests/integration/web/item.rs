@@ -154,7 +154,7 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
 }
 
 #[tokio::test]
-async fn the_item_page_shows_the_latest_ten_runs_and_links_the_rest_to_the_runs_page() {
+async fn the_item_page_shows_the_latest_ten_runs_and_links_to_all_of_them_on_the_runs_page() {
     let web = Web::start(with_ticket().await).await;
     for n in 1..=12 {
         record_interrupted(&web, 1, n, &format!("2026-10-01T{:02}:00:00Z", n - 1));
@@ -180,6 +180,8 @@ async fn the_item_page_shows_the_latest_ten_runs_and_links_the_rest_to_the_runs_
     assert_eq!(last[0].attr("colspan"), Some("5"));
     let more = select(&html, "#runs tbody tr:last-child a");
     assert_eq!(more[0].attr("href"), Some("/runs?item=1"));
+    let all = runs_shown(&web.page("/runs?item=1").await);
+    assert_eq!(all.len(), 12, "{all:?}");
     let tables = classes(&html, "#runs .scroll-box > table");
     assert!(
         tables[0].contains(&"table") && tables[0].contains(&"table-pin-rows"),
