@@ -30,7 +30,7 @@ use crate::ending::{self, Ends};
 use crate::explain;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
 use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
-use crate::status::{self, FailedPolls, Serving, Status, View};
+use crate::status::{self, Polling, Serving, Status, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::web;
@@ -156,14 +156,34 @@ impl Served {
     }
 }
 
+/// What `serve` publishes for the local API to answer from, as
+/// [`Sources`] receives it.
+pub struct Publish {
+    pub served: watch::Sender<Option<Served>>,
+    pub polling: watch::Sender<Option<Polling>>,
+}
+
+impl Publish {
+    /// The senders, and the receivers of `served` and `polling`.
+    pub fn new() -> (
+        Publish,
+        watch::Receiver<Option<Served>>,
+        watch::Receiver<Option<Polling>>,
+    ) {
+        let (served, served_from) = watch::channel(None);
+        let (polling, polling_from) = watch::channel(None);
+        (Publish { served, polling }, served_from, polling_from)
+    }
+}
+
 #[derive(Clone)]
 pub struct Sources {
     pub serving: Serving,
     /// `None` until the first poll that succeeds.
     pub served: watch::Receiver<Option<Served>>,
-    /// The polls failed since the last that succeeded, kept apart from
-    /// `served` so that they show before any poll has succeeded.
-    pub failed_polls: watch::Receiver<Option<FailedPolls>>,
+    /// `None` until the first poll ends; kept apart from `served` so that
+    /// polls that failed show before any has succeeded.
+    pub polling: watch::Receiver<Option<Polling>>,
     /// Set with webhooks on.
     pub deliveries: Option<Tally>,
     pub clock: Arc<dyn Clock>,
@@ -268,7 +288,7 @@ pub(crate) fn status_of(sources: &Sources, view: Option<&View>, recorded: &[Reco
     status::status(
         &sources.serving,
         webhooks,
-        sources.failed_polls.borrow().clone(),
+        sources.polling.borrow().as_ref(),
         view,
         recorded,
         sources.ends.deadline(),

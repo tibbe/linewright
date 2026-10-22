@@ -99,7 +99,7 @@ impl Answering {
             Sources {
                 serving: linewright::status::Serving { since, max_runs: 4 },
                 served: serving.served.clone(),
-                failed_polls: serving.failed_polls.clone(),
+                polling: serving.polling.clone(),
                 deliveries: listener.as_ref().map(Listener::tally),
                 clock: clock.clone(),
                 work_dir: linewright::runs::RepoWorkDir {
@@ -297,10 +297,11 @@ async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
 
 /// Waits until `count` polls have failed since the last that succeeded.
 async fn polls_failed(answering: &Answering, count: u64) {
-    let mut failed_polls = answering.serving.failed_polls.clone();
-    let failed = failed_polls.wait_for(|failed| {
-        failed
+    let mut polling = answering.serving.polling.clone();
+    let failed = polling.wait_for(|polling| {
+        polling
             .as_ref()
+            .and_then(|polling| polling.failed.as_ref())
             .is_some_and(|failed| failed.count.get() == count)
     });
     within(
@@ -380,7 +381,12 @@ async fn a_first_poll_that_fails_shows_before_any_poll_has_succeeded() {
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines[1..3], ["last poll: none yet", "next poll: due now"]);
+    assert_eq!(lines[1], "last poll: none yet");
+    assert!(
+        lines[2].starts_with("next poll: 2026-10-01 13:00:"),
+        "an hour on: {}",
+        output.stdout
+    );
     assert!(
         lines[3].starts_with("polls failed: 1 at 2026-10-01 12:00:")
             && lines[3].ends_with(" UTC: taking a snapshot: Bad credentials"),

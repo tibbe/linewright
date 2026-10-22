@@ -12,7 +12,7 @@ use linewright::reconcile::{LiveRun, Memory, Subject, WorkKind};
 use linewright::runs::{Ending, Recorded, Started, StartedBy, State};
 use std::num::NonZeroU64;
 
-use linewright::status::{FailedPolls, Poll, Serving, Status, View, render, status};
+use linewright::status::{FailedPolls, Poll, Polling, Serving, Status, View, render, status};
 use linewright::webhook::Received;
 
 fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationFiles {
@@ -1082,9 +1082,13 @@ fn a_poll_that_succeeds_clears_the_failed_polls() {
     assert_eq!(FailedPolls::after(once, Poll::Succeeded), None);
 }
 
-fn two_failed() -> Option<FailedPolls> {
+/// Polling after two failed polls, the next at 12:02.
+fn two_failed() -> Polling {
     let once = failed(None, "2026-10-01T12:00:00Z", "GitHub is down");
-    failed(once, "2026-10-01T12:01:00Z", "bad credentials")
+    Polling {
+        next: at("2026-10-01T12:02:00Z"),
+        failed: failed(once, "2026-10-01T12:01:00Z", "bad credentials"),
+    }
 }
 
 #[test]
@@ -1092,7 +1096,7 @@ fn polls_failed_since_the_last_that_succeeded_show_after_the_next_poll() {
     let answer = status(
         &serving(),
         None,
-        two_failed(),
+        Some(&two_failed()),
         Some(&view(vec![])),
         &[],
         None,
@@ -1112,11 +1116,16 @@ fn polls_failed_since_the_last_that_succeeded_show_after_the_next_poll() {
 }
 
 #[test]
-fn polls_failed_before_the_first_that_succeeded_show() {
+fn polls_failed_before_the_first_that_succeeded_show_with_the_next_poll() {
+    let polling = Polling {
+        next: at("2026-10-01T11:01:00Z"),
+        failed: failed(None, "2026-10-01T11:00:00Z", "bad credentials"),
+    };
+
     let answer = status(
         &serving(),
         None,
-        failed(None, "2026-10-01T11:00:00Z", "bad credentials"),
+        Some(&polling),
         None,
         &[],
         None,
@@ -1124,8 +1133,14 @@ fn polls_failed_before_the_first_that_succeeded_show() {
     );
 
     assert_eq!(
-        render(&answer, false).lines().nth(3),
-        Some("polls failed: 1 at 2026-10-01 11:00:00 UTC: bad credentials")
+        render(&answer, false).lines().collect::<Vec<_>>(),
+        [
+            "serving since: 2026-10-01 11:00:00 UTC",
+            "last poll: none yet",
+            "next poll: 2026-10-01 11:01:00 UTC",
+            "polls failed: 1 at 2026-10-01 11:00:00 UTC: bad credentials",
+            "runs in flight: 0 of 4",
+        ]
     );
 }
 
@@ -1134,7 +1149,7 @@ fn polls_failed_are_in_the_json_and_a_client_reads_an_answer_without_them() {
     let answer = status(
         &serving(),
         None,
-        two_failed(),
+        Some(&two_failed()),
         Some(&view(vec![])),
         &[],
         None,

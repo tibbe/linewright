@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use linewright::api::{self, Api, EventId, RequestError, Resume, Served, Sources, Unanswered};
+use linewright::api::{self, Api, EventId, Publish, RequestError, Resume, Sources, Unanswered};
 use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
@@ -519,8 +519,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 }
                 None => None,
             };
-            let (served, answered_from) = tokio::sync::watch::channel(None);
-            let (failed_polls, failures_from) = tokio::sync::watch::channel(None);
+            let (publish, served, polling) = Publish::new();
             let api = Api::serve(
                 claimed,
                 Sources {
@@ -528,15 +527,15 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                         since,
                         max_runs: config.max_runs,
                     },
-                    served: answered_from,
-                    failed_polls: failures_from,
+                    served,
+                    polling,
                     deliveries: listener.as_ref().map(Listener::tally),
                     clock,
                     work_dir,
                     ends: ends.clone(),
                 },
             );
-            let stopped = serve(&config, &ends, &pending, &served, &failed_polls).await;
+            let stopped = serve(&config, &ends, &pending, &publish).await;
             if let Some(listener) = listener {
                 listener.stop().await;
             }
@@ -602,13 +601,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
     done.map(|()| ExitCode::SUCCESS)
 }
 
-async fn serve(
-    config: &Config,
-    ends: &Ends,
-    pending: &Pending,
-    served: &tokio::sync::watch::Sender<Option<Served>>,
-    failed_polls: &tokio::sync::watch::Sender<Option<status::FailedPolls>>,
-) -> Result<()> {
+async fn serve(config: &Config, ends: &Ends, pending: &Pending, publish: &Publish) -> Result<()> {
     // No run can be in flight yet, so every drain or stop ends `serve` alike.
     let mut factory = tokio::select! {
         factory = start(config, OnUsageLimit::Wait, ends.clone()) => factory?,
@@ -617,10 +610,7 @@ async fn serve(
             return Ok(());
         }
     };
-    match factory
-        .serve(config.poll_interval, pending, served, failed_polls)
-        .await
-    {
+    match factory.serve(config.poll_interval, pending, publish).await {
         ServeEnd::Drained => {}
         ServeEnd::Stop => {
             info!("stopping: cancelling the runs in flight");

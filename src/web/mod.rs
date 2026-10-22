@@ -16,7 +16,6 @@ use html::Html;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
-use std::num::NonZeroU64;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -213,8 +212,6 @@ struct Frame {
 /// A hold on Linewright's work, shown on every page while it lasts
 /// (`docs/specs/design_system.md`, Holds and problems).
 enum Hold {
-    /// Polls failed, with none succeeded since.
-    PollsFailed(FailedPolls),
     UsageLimit {
         resets_at: Timestamp,
     },
@@ -223,6 +220,8 @@ enum Hold {
     WebhooksRefused {
         last_refused: Timestamp,
     },
+    /// Polls failed, with none succeeded since.
+    PollsFailed(FailedPolls),
     UnparsedAutomation(UnparsedAutomation),
     /// An automation whose last run failed.
     AutomationFailed {
@@ -258,7 +257,7 @@ impl Hold {
                 }),
                 LastRun::Run(_) | LastRun::NoneYet { .. } => None,
             });
-        [failed_polls, usage_limit, drain, refused]
+        [usage_limit, drain, refused, failed_polls]
             .into_iter()
             .flatten()
             .chain(unparsed)
@@ -268,12 +267,7 @@ impl Hold {
 
     fn phrase(&self) -> Phrase {
         match self {
-            Hold::PollsFailed(failed) if failed.count == NonZeroU64::MIN => {
-                Phrase::from("poll failed: ").time(failed.since)
-            }
-            Hold::PollsFailed(failed) => {
-                Phrase::from(format!("polls failed: {} since ", failed.count)).time(failed.since)
-            }
+            Hold::PollsFailed(failed) => status::polls_failed_since(failed),
             Hold::UsageLimit { resets_at } => status::usage_limit(*resets_at),
             Hold::Drain(drain) => status::drain_under_way(*drain),
             Hold::WebhooksRefused { last_refused } => Phrase::from("webhook delivery refused: ")

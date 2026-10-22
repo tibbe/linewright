@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::TimeDelta;
-use linewright::api::Served;
+use linewright::api::{Publish, Served};
 use linewright::briefs::Briefs;
 use linewright::credentials::Credentials;
 use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number};
@@ -10,7 +10,7 @@ use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::WorkKind;
 use linewright::redaction::Redaction;
 use linewright::spec_glob::SpecGlob;
-use linewright::status::FailedPolls;
+use linewright::status::{FailedPolls, Polling};
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::Pending;
 use tokio::task::JoinHandle;
@@ -351,7 +351,7 @@ pub struct Serving {
     draining: CancellationToken,
     handle: JoinHandle<ServeEnd>,
     pub served: tokio::sync::watch::Receiver<Option<Served>>,
-    pub failed_polls: tokio::sync::watch::Receiver<Option<FailedPolls>>,
+    pub polling: tokio::sync::watch::Receiver<Option<Polling>>,
 }
 
 impl Serving {
@@ -362,12 +362,9 @@ impl Serving {
     ) -> Serving {
         let stopping = factory.stopping();
         let draining = factory.draining();
-        let (sender, served) = tokio::sync::watch::channel(None);
-        let (failures, failed_polls) = tokio::sync::watch::channel(None);
+        let (publish, served, polling) = Publish::new();
         let handle = tokio::spawn(async move {
-            let end = factory
-                .serve(poll_interval, &pending, &sender, &failures)
-                .await;
+            let end = factory.serve(poll_interval, &pending, &publish).await;
             factory.stop().await;
             end
         });
@@ -376,7 +373,7 @@ impl Serving {
             draining,
             handle,
             served,
-            failed_polls,
+            polling,
         }
     }
 
@@ -404,6 +401,14 @@ impl Serving {
     /// Waits for serving to end, however long that takes.
     pub async fn finished(self) -> ServeEnd {
         self.handle.await.unwrap()
+    }
+
+    /// The polls failed since the last that succeeded, as last published.
+    pub fn failed_polls(&self) -> Option<FailedPolls> {
+        self.polling
+            .borrow()
+            .as_ref()
+            .and_then(|polling| polling.failed.clone())
     }
 
     pub async fn kill(self) {

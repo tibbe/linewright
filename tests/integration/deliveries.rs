@@ -574,7 +574,7 @@ async fn a_failed_read_for_a_delivery_is_no_failed_poll() {
     })
     .await;
 
-    assert_eq!(*served.serving.failed_polls.borrow(), None);
+    assert_eq!(served.serving.failed_polls(), None);
     served.stop().await;
 }
 

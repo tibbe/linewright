@@ -37,19 +37,19 @@ struct Web {
     _dir: tempfile::TempDir,
 }
 
-/// What `serve` answers from, over `served` and `failed_polls`, with
-/// webhooks off.
+/// What `serve` answers from, over `served` and `polling`, with webhooks
+/// off.
 fn sources(
     dir: &tempfile::TempDir,
     clock: &std::sync::Arc<FakeClock>,
     since: linewright::domain::Timestamp,
     served: tokio::sync::watch::Receiver<Option<linewright::api::Served>>,
-    failed_polls: tokio::sync::watch::Receiver<Option<linewright::status::FailedPolls>>,
+    polling: tokio::sync::watch::Receiver<Option<linewright::status::Polling>>,
 ) -> Sources {
     Sources {
         serving: linewright::status::Serving { since, max_runs: 4 },
         served,
-        failed_polls,
+        polling,
         deliveries: None,
         clock: clock.clone(),
         work_dir: linewright::runs::RepoWorkDir {
@@ -97,7 +97,7 @@ impl Web {
                     &clock,
                     since,
                     serving.served.clone(),
-                    serving.failed_polls.clone(),
+                    serving.polling.clone(),
                 )
             },
             stopping.clone(),

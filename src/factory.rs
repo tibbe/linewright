@@ -11,7 +11,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::api::Served;
+use crate::api::{Publish, Served};
 use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::briefs::Briefs;
 use crate::clock::Clock;
@@ -30,7 +30,7 @@ use crate::reconcile::{
 use crate::run::{self, AutomationEnd, Shell};
 use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::spec_glob::SpecGlob;
-use crate::status::{FailedPolls, Poll, Polls, View};
+use crate::status::{FailedPolls, Poll, Polling, Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::store::{IssueRead, Store};
 use crate::webhook::{self, Pending};
@@ -352,19 +352,19 @@ impl Factory {
     }
 
     /// A refresh never races a poll: one still running when the poll falls
-    /// due finishes first. Only polls count toward `failed_polls`: a refresh
-    /// that fails leaves the next poll to catch up.
+    /// due finishes first. Only polls count among the polls failed: a
+    /// refresh that fails leaves the next poll to catch up.
     pub async fn serve(
         &mut self,
         poll_interval: Duration,
         pending: &Pending,
-        served: &tokio::sync::watch::Sender<Option<Served>>,
-        failed_polls: &tokio::sync::watch::Sender<Option<FailedPolls>>,
+        publish: &Publish,
     ) -> ServeEnd {
         let ends = self.ends.clone();
         let clock = self.shell.clock.clone();
         let stopping = ends.stopping();
         let draining = ends.draining();
+        let mut failed = None;
         while !stopping.is_cancelled() {
             // The poll reads what deliveries named before it as well.
             pending.take();
@@ -380,10 +380,14 @@ impl Factory {
                     }
                 }
             };
-            failed_polls.send_modify(|failed| *failed = FailedPolls::after(failed.take(), poll));
+            failed = FailedPolls::after(failed, poll);
             let next_poll = Instant::now() + poll_interval;
             let next_poll_at = self.shell.clock.now() + poll_interval;
-            served.send_replace(self.served(next_poll_at));
+            publish.polling.send_replace(Some(Polling {
+                next: next_poll_at,
+                failed: failed.clone(),
+            }));
+            publish.served.send_replace(self.served(next_poll_at));
             loop {
                 if self.drained() {
                     info!("drained: no run is in flight");
@@ -413,7 +417,7 @@ impl Factory {
                     }
                     Some(limit) = self.refusals.recv() => self.refused(limit),
                 }
-                served.send_replace(self.served(next_poll_at));
+                publish.served.send_replace(self.served(next_poll_at));
             }
         }
         ServeEnd::Stop

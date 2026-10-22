@@ -293,10 +293,7 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
         let (_, body) = web.get(path).await;
         let held = holds(&Html::parse_document(&body));
         assert!(
-            held.len() == 1
-                && held[0].0.starts_with("poll")
-                && held[0].0.contains(" failed")
-                && held[0].1 == "/server",
+            held.len() == 1 && held[0].0.starts_with("polls failed: ") && held[0].1 == "/server",
             "{path}: {held:?}"
         );
     }
