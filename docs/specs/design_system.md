@@ -9,6 +9,11 @@
 - What the reader opened or closed stays so through updates, until they
   open the page again.
 
+## Words
+
+- A page states what is so, not what to do about it; how to work with
+  Linewright is the user guide's.
+
 ## Navigation
 
 - Every page has the same navigation.
@@ -34,17 +39,18 @@
 
 - As the reader scrolls, the column heads stay at the top, with the head of
   the lane they are in under them.
-- A card's title is on at most two lines, and whole on hover.
+- A card's title is on at most two lines.
 
 ## Tables
 
 - As the reader scrolls, a table's column heads stay at the top.
-- A title in a table is on one line, and whole on hover.
+- A title in a table is on one line.
 
 ## Layout
 
 - Content wider than the page scrolls sideways on its own, not the page with
   it.
+- Text cut to fit is whole on hover and on keyboard focus.
 
 ## Colour scheme
 
@@ -60,18 +66,17 @@ someone scanning a page, in the UI's own words rather than a command's.
 | ----------- | -------------- | ----------------------------------------------------------- |
 | board       | `/`            | the managed items as cards ([The board](#the-board))        |
 | item        | `/items/N`     | where #N stands, what it waits for and its runs ([Lists of runs](#lists-of-runs)) |
-| runs        | `/runs`        | what `runs` lists, with its narrowing as filters ([Lists of runs](#lists-of-runs)) |
+| runs        | `/runs`        | every run ([Lists of runs](#lists-of-runs))                 |
 | run         | `/runs/ID`     | what `logs` shows of run ID ([The run page](#the-run-page))  |
 | automations | `/automations` | the automations ([The automations page](#the-automations-page)) |
-| server      | `/server`      | the facts about Linewright itself, as `status` shows them   |
+| server      | `/server`      | the facts about Linewright itself ([The server page](#the-server-page)) |
 
 ### Navigation
 
 | Part        | Holds                                                     |
 | ----------- | --------------------------------------------------------- |
-| name        | the repository's name, linking to it on GitHub            |
-| links       | the board, the runs, the automations and the server pages |
-| status line | the runs in flight out of `max-runs`, and the last poll   |
+| name  | the repository's name, linking to it on GitHub            |
+| links | the board, the runs, the automations and the server pages |
 
 ### Holds and problems
 
@@ -80,6 +85,7 @@ someone scanning a page, in the UI's own words rather than a command's.
 | a usage limit in force                   | the server page  |
 | a drain under way                        | the server page  |
 | a webhook delivery refused since the last one accepted | the server page |
+| a poll that failed since the last that succeeded | the server page |
 | an automation file that does not parse   | the automations page |
 | an automation whose last run failed      | that run         |
 
@@ -147,12 +153,13 @@ to add is the title alone.
 |                | "decision needed"                                                                                                                                                                                                                                                      | it holds `ready-for-human` otherwise                                                                                                                    |
 | Ready          | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |
 |                | "assigned to alice"                                                                                                                                                                                                                                                    | someone other than Linewright is assigned to it                                                                                                         |
+|                | "unassigned"                                                                                                                                                                                                                                                           | Linewright was unassigned from it                                                                                                                       |
 |                | "paused for the usage limit", "paused for the drain"                                                                                                                                                                                                                   | it would start, but for the hold                                                                                                                        |
 |                | "queued"                                                                                                                                                                                                                                                               | it would start, but the runs in flight are at `max-runs`                                                                                                |
 |                | nothing but the time                                                                                                                                                                                                                                                   | otherwise: the next poll acts on it                                                                                                                     |
 | Working        | its stage and how long it has run, "implementation · 12 min"                                                                                                                                                                                                           | a run is in flight                                                                                                                                      |
 |                | "paused for the usage limit", "paused for the drain", "queued"                                                                                                                                                                                                         | no run is in flight, as in Ready                                                                                                                        |
-| In review      | its pull request, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" |
+| In review      | its pull request, where the card is not the pull request itself, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" |
 | Done           | "closed in #42"                                                                                                                                                                                                                                                        | an issue closed by a merged pull request                                                                                                                |
 |                | "closed as completed", "closed as not planned" or "closed as a duplicate", GitHub's reason; "closed" where the reason is not known                                                                                                                                     | an issue closed otherwise                                                                                                                               |
 |                | "merged"                                                                                                                                                                                                                                                               | a pull request of Linewright's merged                                                                                                                   |
@@ -185,6 +192,8 @@ A list of runs is a table with a row per run, newest first.
 | Started  | when the run started, with an automation's run by hand marked there                                                    |
 | Duration | the run's duration                                                                                                     |
 
+- **On the runs page.** Filters for the item, the stage and the time since
+  which runs started narrow the list.
 - **On the item page.** The list leaves out the Item column.
 - **No runs.** "No runs" stands in place of the table.
 - **A cut list.** The item page shows #N's latest ten runs. A last row,
@@ -215,6 +224,21 @@ row per automation.
 | schedule | when it runs, in words                                                  |
 | last run | its last run, with its outcome, linking to the run; or, before its first, when Linewright first saw it |
 | next run | when it runs next                                                       |
+
+### The server page
+
+The server page shows the facts about Linewright itself.
+
+| Fact                                                            | Shown                  |
+| --------------------------------------------------------------- | ---------------------- |
+| since when `serve` has run                                      | always                 |
+| the last poll and the next                                      | always                 |
+| the polls failed since the last that succeeded, with the last error | while there are any |
+| the usage limit and when it resets                              | while one is in force  |
+| the drain, since when, and its deadline if set                  | while one is under way |
+| the runs in flight out of `max-runs`                            | always                 |
+| the time of the last webhook delivery accepted                  | with webhooks on       |
+| the webhook deliveries refused since `serve` started            | with webhooks on       |
 
 ## Out of scope
 

@@ -110,10 +110,11 @@ assigning itself and lets go of it by unassigning itself.
   from the item, removes `linewright:designed` where the design is the item's
   own, and says why in a comment.
 - **Stalls.** A stall labels the item `linewright:stalled` as well, cleared
-  when Linewright next claims or works the item. A session that timed out, a
-  push GitHub refused, checks still failing after the fix attempts and a
-  merge that failed twice are stalls; a question the spec cannot decide, a
-  design with nothing to build and a pull request closed unmerged are not.
+  when Linewright next claims or works the item. For example, a session that
+  timed out, a push GitHub refused, checks still failing after the fix
+  attempts and a merge that failed twice are stalls; a question the spec
+  cannot decide, a design with nothing to build, a session that gave up with
+  its reason and a pull request closed unmerged are not.
 - **Marked for Linewright.** With `require-label` set, an item is marked for
   Linewright when it carries the required label, checked each time Linewright
   claims an item on its own. Work already started carries on without it.

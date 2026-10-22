@@ -61,6 +61,7 @@ order:
 | ---------------------------------------------- | ---------------------- |
 | since when `serve` has run                     | always                 |
 | the last poll and the next                     | always                 |
+| the polls failed since the last that succeeded, with the last error | while there are any |
 | the usage limit and when it resets             | while one is in force  |
 | the drain, since when, and its deadline if set | while one is under way |
 | the runs in flight out of `max-runs`           | always                 |

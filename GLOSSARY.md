@@ -78,8 +78,8 @@ person to take on.
 _Avoid_: handoff, escalation, reassignment
 
 **Stall**:
-A hand-back in which nothing a person decides is wanted: the work failed,
-and a person fixes what failed or has Linewright try again.
+A hand-back in which Linewright judged nothing: something it relies on
+failed it, and a person fixes what failed or has Linewright try again.
 _Avoid_: blocked, broken, stuck, failed, errored, error, action required,
 needs attention
 
@@ -111,7 +111,8 @@ The board's row for one piece of work: a tracking issue with its tickets, or
 an item worked as one.
 
 **Managed**:
-Of an item: it asks for a step of the pipeline, or Linewright has worked it.
+Of an item: it is marked for Linewright and asks for a step of the pipeline,
+or Linewright has worked it.
 _Avoid_: tracked, watched, monitored, in the pool
 
 **Usage limit**:
