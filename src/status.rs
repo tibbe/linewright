@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::{self, Write as _};
+use std::num::NonZeroU64;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -100,6 +101,10 @@ pub struct Linewright {
     pub serving_since: Timestamp,
     /// `None` before the first poll, which is due at once.
     pub polls: Option<Polls>,
+    /// Set only while polls have failed since the last that succeeded.
+    /// Absent from the answers of a `serve` that does not count them.
+    #[serde(default)]
+    pub failed_polls: Option<FailedPolls>,
     /// Set only while a usage limit is in force.
     pub usage_limit_resets_at: Option<Timestamp>,
     /// Set only while a drain is under way.
@@ -114,6 +119,50 @@ pub struct Linewright {
 pub struct Polls {
     pub last: Timestamp,
     pub next: Timestamp,
+}
+
+/// The polls failed since the last that succeeded
+/// (`docs/specs/monitoring.md`, status).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailedPolls {
+    pub count: NonZeroU64,
+    /// When the first of them failed.
+    pub since: Timestamp,
+    /// When the latest of them failed.
+    pub last_at: Timestamp,
+    /// The latest's error, with Linewright's credentials redacted.
+    pub last_error: String,
+}
+
+/// How a poll ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Poll {
+    Succeeded,
+    Failed { at: Timestamp, error: String },
+}
+
+impl FailedPolls {
+    /// The polls failed since the last that succeeded, `previous` before
+    /// `poll` and the returned after it.
+    pub fn after(previous: Option<FailedPolls>, poll: Poll) -> Option<FailedPolls> {
+        let Poll::Failed { at, error } = poll else {
+            return None;
+        };
+        Some(match previous {
+            None => FailedPolls {
+                count: NonZeroU64::MIN,
+                since: at,
+                last_at: at,
+                last_error: error,
+            },
+            Some(previous) => FailedPolls {
+                count: previous.count.saturating_add(1),
+                since: previous.since,
+                last_at: at,
+                last_error: error,
+            },
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,11 +324,13 @@ pub struct DrainShown {
     pub deadline: Option<Timestamp>,
 }
 
-/// `view` is `None` before the first poll; `recorded` is every run's record;
-/// `drain_deadline` is the deadline of the drain under way, if any.
+/// `failed_polls` are those since the last that succeeded, if any; `view`
+/// is `None` before the first poll that succeeded; `recorded` is every run's
+/// record; `drain_deadline` is the deadline of the drain under way, if any.
 pub fn status(
     serving: &Serving,
     webhooks: Option<Received>,
+    failed_polls: Option<FailedPolls>,
     view: Option<&View>,
     recorded: &[Recorded],
     drain_deadline: Option<Timestamp>,
@@ -288,6 +339,7 @@ pub fn status(
     let linewright = Linewright {
         serving_since: serving.since,
         polls: view.map(|v| v.polls),
+        failed_polls,
         usage_limit_resets_at: view
             .and_then(|v| v.memory.usage_limit)
             .map(|limit| limit.resets_at)
@@ -590,6 +642,9 @@ pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
             None => "next poll: due now".into(),
         }),
     ];
+    if let Some(failed) = &linewright.failed_polls {
+        facts.push(Fact::Problem(polls_failed(failed)));
+    }
     if let Some(resets_at) = linewright.usage_limit_resets_at {
         facts.push(Fact::Warning(usage_limit(resets_at)));
     }
@@ -622,6 +677,18 @@ fn runs_in_flight(linewright: &Linewright) -> Phrase {
         linewright.runs_in_flight, linewright.max_runs
     )
     .into()
+}
+
+fn polls_failed(failed: &FailedPolls) -> Phrase {
+    let phrase = if failed.count == NonZeroU64::MIN {
+        Phrase::from("polls failed: 1 at ").time(failed.last_at)
+    } else {
+        Phrase::from(format!("polls failed: {} since ", failed.count))
+            .time(failed.since)
+            .text(", the last at ")
+            .time(failed.last_at)
+    };
+    phrase.text(": ").text(&failed.last_error)
 }
 
 pub(crate) fn usage_limit(resets_at: Timestamp) -> Phrase {

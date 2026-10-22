@@ -38,6 +38,37 @@ impl Answering {
         runtime_dir: tempfile::TempDir,
         claimed: api::Claimed,
     ) -> Answering {
+        let answering = Answering::serve(
+            world,
+            webhooks,
+            runtime_dir,
+            claimed,
+            Duration::from_hours(1),
+        )
+        .await;
+        let mut served = answering.serving.served.clone();
+        tokio::time::timeout(Duration::from_secs(10), served.wait_for(Option::is_some))
+            .await
+            .expect("the first poll")
+            .unwrap();
+        answering
+    }
+
+    /// Serves `world`'s factory, polling every `poll_interval`, with webhooks
+    /// off, without waiting for its first poll.
+    async fn start_polling(world: World, poll_interval: Duration) -> Answering {
+        let runtime_dir = tempfile::tempdir().unwrap();
+        let claimed = api::claim(&socket_dir(runtime_dir.path()), REPO).unwrap();
+        Answering::serve(world, false, runtime_dir, claimed, poll_interval).await
+    }
+
+    async fn serve(
+        world: World,
+        webhooks: bool,
+        runtime_dir: tempfile::TempDir,
+        claimed: api::Claimed,
+        poll_interval: Duration,
+    ) -> Answering {
         let pending = Pending::default();
         let listener = if webhooks {
             Some(
@@ -62,12 +93,13 @@ impl Answering {
         let since = clock.now();
         // As `common::config` has it.
         let work_dir = dir.path().join("work");
-        let serving = Serving::start(factory, Duration::from_hours(1), pending);
+        let serving = Serving::start(factory, poll_interval, pending);
         let api = Api::serve(
             claimed,
             Sources {
                 serving: linewright::status::Serving { since, max_runs: 4 },
                 served: serving.served.clone(),
+                failed_polls: serving.failed_polls.clone(),
                 deliveries: listener.as_ref().map(Listener::tally),
                 clock: clock.clone(),
                 work_dir: linewright::runs::RepoWorkDir {
@@ -77,11 +109,6 @@ impl Answering {
                 ends: ends.clone(),
             },
         );
-        let mut served = serving.served.clone();
-        tokio::time::timeout(Duration::from_secs(10), served.wait_for(Option::is_some))
-            .await
-            .expect("the first poll")
-            .unwrap();
         Answering {
             serving,
             api,
@@ -264,6 +291,101 @@ async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
     assert_eq!(
         lines[5],
         "#1: with the maintainer — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — Do the thing"
+    );
+    answering.stop().await;
+}
+
+/// Waits until `count` polls have failed since the last that succeeded.
+async fn polls_failed(answering: &Answering, count: u64) {
+    let mut failed_polls = answering.serving.failed_polls.clone();
+    let failed = failed_polls.wait_for(|failed| {
+        failed
+            .as_ref()
+            .is_some_and(|failed| failed.count.get() == count)
+    });
+    within(
+        Duration::from_secs(10),
+        format!("{count} failed polls"),
+        failed,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn status_shows_the_polls_failed_since_the_last_that_succeeded_with_the_last_error_redacted()
+{
+    let world = World::with(|config| {
+        config.work_dir = config.work_dir.join(REPO);
+        config.credentials = credentials_of(&[("GITHUB_TOKEN", "ghp_sekrit")]);
+    })
+    .await;
+    let store = world.store.clone();
+    store.fail_reads("GitHub is down");
+    let answering = Answering::start_polling(world, Duration::from_millis(500)).await;
+    polls_failed(&answering, 1).await;
+    answering.clock.advance(chrono::TimeDelta::minutes(5));
+    store.fail_reads("GitHub refused ghp_sekrit");
+    polls_failed(&answering, 2).await;
+    // No poll follows a drain.
+    answering.serving.drain();
+
+    let text = answering.lw(&["status"]).await;
+    let json = answering.lw(&["status", "--json"]).await;
+
+    // The fake clock ticks a second at each reading, so the times are
+    // checked to the minute.
+    assert_eq!(text.code, Some(0), "{}", text.stderr);
+    let line = text.stdout.lines().nth(3).unwrap_or_default();
+    let (since, last) = line
+        .strip_prefix("polls failed: 2 since 2026-10-01 12:00:")
+        .and_then(|line| line.split_once(" UTC, the last at 2026-10-01 12:05:"))
+        .unwrap_or_else(|| panic!("{}", text.stdout));
+    assert_eq!(since.len(), 2, "{line}");
+    assert_eq!(
+        &last[2..],
+        " UTC: taking a snapshot: GitHub refused [redacted]",
+        "{line}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    let failed = &json["linewright"]["failed_polls"];
+    assert_eq!(failed["count"], 2);
+    assert!(
+        failed["since"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-10-01T12:00:")
+    );
+    assert!(
+        failed["last_at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-10-01T12:05:")
+    );
+    assert_eq!(
+        failed["last_error"],
+        "taking a snapshot: GitHub refused [redacted]"
+    );
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn a_first_poll_that_fails_shows_before_any_poll_has_succeeded() {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world.store.fail_reads("Bad credentials");
+    let answering = Answering::start_polling(world, Duration::from_hours(1)).await;
+    polls_failed(&answering, 1).await;
+
+    let output = answering.lw(&["status"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let lines: Vec<&str> = output.stdout.lines().collect();
+    assert_eq!(lines[1..3], ["last poll: none yet", "next poll: due now"]);
+    assert!(
+        lines[3].starts_with("polls failed: 1 at 2026-10-01 12:00:")
+            && lines[3].ends_with(" UTC: taking a snapshot: Bad credentials"),
+        "{}",
+        output.stdout
     );
     answering.stop().await;
 }

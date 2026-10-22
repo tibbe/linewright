@@ -556,6 +556,28 @@ async fn a_failed_read_for_a_delivery_is_logged_and_the_next_poll_catches_up() {
     served.stop().await;
 }
 
+#[tokio::test]
+async fn a_failed_read_for_a_delivery_is_no_failed_poll() {
+    let (log, _guard) = Log::capture();
+    let world = World::new().await;
+    let issue = world
+        .store
+        .open_issue("maintainer", "Do the thing", "Please.", &[]);
+    let served = serve(world, Duration::from_hours(1)).await;
+
+    served.store.fail_reads("GitHub is down");
+    served.deliver("issues", about_issue(issue)).await;
+    eventually(|| {
+        log.lines("ERROR")
+            .iter()
+            .any(|line| line.contains("deliveries failed"))
+    })
+    .await;
+
+    assert_eq!(*served.serving.failed_polls.borrow(), None);
+    served.stop().await;
+}
+
 const CI_EVENTS: [&str; 3] = ["check_run", "check_suite", "status"];
 
 /// The pull requests a check names are left empty, as GitHub leaves them

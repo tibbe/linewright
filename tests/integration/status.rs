@@ -10,7 +10,9 @@ use linewright::automation::{AutomationFiles, LastScheduledRuns, Unparsed};
 use linewright::domain::*;
 use linewright::reconcile::{LiveRun, Memory, Subject, WorkKind};
 use linewright::runs::{Ending, Recorded, Started, StartedBy, State};
-use linewright::status::{Serving, Status, View, render, status};
+use std::num::NonZeroU64;
+
+use linewright::status::{FailedPolls, Poll, Serving, Status, View, render, status};
 use linewright::webhook::Received;
 
 fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationFiles {
@@ -83,7 +85,7 @@ fn text_of(
     recorded: &[Recorded],
     now: &str,
 ) -> Vec<String> {
-    let answer = status(&serving(), webhooks, view, recorded, None, at(now));
+    let answer = status(&serving(), webhooks, None, view, recorded, None, at(now));
     render(&answer, false).lines().map(str::to_string).collect()
 }
 
@@ -180,10 +182,19 @@ fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
     };
     let now = at("2026-10-01T12:00:30Z");
 
-    let shown =
-        serde_json::to_value(status(&serving(), None, Some(&draining), &[], None, now)).unwrap();
+    let shown = serde_json::to_value(status(
+        &serving(),
+        None,
+        None,
+        Some(&draining),
+        &[],
+        None,
+        now,
+    ))
+    .unwrap();
     let none = serde_json::to_value(status(
         &serving(),
+        None,
         None,
         Some(&view(vec![])),
         &[],
@@ -208,7 +219,7 @@ fn a_drain_with_a_deadline_shows_it_in_text_and_json() {
     let now = at("2026-10-01T12:00:30Z");
     let deadline = Some(at("2026-10-01T14:00:20Z"));
 
-    let answer = status(&serving(), None, Some(&draining), &[], deadline, now);
+    let answer = status(&serving(), None, None, Some(&draining), &[], deadline, now);
     let shown = serde_json::to_value(&answer).unwrap();
     let text = render(&answer, false);
 
@@ -245,6 +256,7 @@ fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
 
     let answer = status(
         &serving(),
+        None,
         None,
         Some(&view),
         &[],
@@ -723,6 +735,7 @@ fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
     let answer = status(
         &serving(),
         None,
+        None,
         Some(&view),
         &[],
         None,
@@ -755,6 +768,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
     let answer = status(
         &serving(),
         Some(webhooks),
+        None,
         Some(&view),
         &[automation_run(
             "weekly/2",
@@ -792,6 +806,7 @@ fn the_json_names_each_fact() {
     let answer = status(
         &serving(),
         None,
+        None,
         Some(&view),
         &recorded,
         None,
@@ -807,6 +822,7 @@ fn the_json_names_each_fact() {
                     "last": "2026-10-01T12:00:00Z",
                     "next": "2026-10-01T12:01:00Z",
                 },
+                "failed_polls": null,
                 "usage_limit_resets_at": null,
                 "drain": null,
                 "runs_in_flight": 2,
@@ -862,6 +878,7 @@ fn the_json_says_when_a_webhook_delivery_was_last_refused_and_reads_without_it()
         &serving(),
         Some(webhooks),
         None,
+        None,
         &[],
         None,
         at("2026-10-01T12:10:00Z"),
@@ -893,6 +910,7 @@ fn before_an_automations_first_run_its_json_has_no_last_run() {
     };
     let answer = status(
         &serving(),
+        None,
         None,
         Some(&view),
         &[],
@@ -977,6 +995,7 @@ fn managed_numbers(view: &View) -> Vec<Number> {
     status(
         &serving(),
         None,
+        None,
         Some(view),
         &[],
         None,
@@ -1028,4 +1047,114 @@ fn an_issue_without_the_required_label_that_someone_elses_pull_request_closes_is
     let closed = closed_by(ready_issue(), 43, "alice");
 
     assert_eq!(managed_numbers(&unmarked_view(closed)), []);
+}
+
+fn failed(previous: Option<FailedPolls>, time: &str, error: &str) -> Option<FailedPolls> {
+    FailedPolls::after(
+        previous,
+        Poll::Failed {
+            at: at(time),
+            error: error.into(),
+        },
+    )
+}
+
+#[test]
+fn each_failed_poll_counts_from_the_first_and_keeps_the_latest_error() {
+    let once = failed(None, "2026-10-01T12:00:00Z", "GitHub is down");
+    let twice = failed(once, "2026-10-01T12:01:00Z", "bad credentials");
+
+    assert_eq!(
+        twice,
+        Some(FailedPolls {
+            count: NonZeroU64::new(2).unwrap(),
+            since: at("2026-10-01T12:00:00Z"),
+            last_at: at("2026-10-01T12:01:00Z"),
+            last_error: "bad credentials".into(),
+        })
+    );
+}
+
+#[test]
+fn a_poll_that_succeeds_clears_the_failed_polls() {
+    let once = failed(None, "2026-10-01T12:00:00Z", "GitHub is down");
+
+    assert_eq!(FailedPolls::after(once, Poll::Succeeded), None);
+}
+
+fn two_failed() -> Option<FailedPolls> {
+    let once = failed(None, "2026-10-01T12:00:00Z", "GitHub is down");
+    failed(once, "2026-10-01T12:01:00Z", "bad credentials")
+}
+
+#[test]
+fn polls_failed_since_the_last_that_succeeded_show_after_the_next_poll() {
+    let answer = status(
+        &serving(),
+        None,
+        two_failed(),
+        Some(&view(vec![])),
+        &[],
+        None,
+        at("2026-10-01T12:01:30Z"),
+    );
+
+    let text = render(&answer, false);
+
+    assert_eq!(
+        text.lines().nth(3),
+        Some(
+            "polls failed: 2 since 2026-10-01 12:00:00 UTC, the last at \
+             2026-10-01 12:01:00 UTC: bad credentials"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn polls_failed_before_the_first_that_succeeded_show() {
+    let answer = status(
+        &serving(),
+        None,
+        failed(None, "2026-10-01T11:00:00Z", "bad credentials"),
+        None,
+        &[],
+        None,
+        at("2026-10-01T11:00:05Z"),
+    );
+
+    assert_eq!(
+        render(&answer, false).lines().nth(3),
+        Some("polls failed: 1 at 2026-10-01 11:00:00 UTC: bad credentials")
+    );
+}
+
+#[test]
+fn polls_failed_are_in_the_json_and_a_client_reads_an_answer_without_them() {
+    let answer = status(
+        &serving(),
+        None,
+        two_failed(),
+        Some(&view(vec![])),
+        &[],
+        None,
+        at("2026-10-01T12:01:30Z"),
+    );
+    let mut json = serde_json::to_value(&answer).unwrap();
+
+    assert_eq!(
+        json["linewright"]["failed_polls"],
+        serde_json::json!({
+            "count": 2,
+            "since": "2026-10-01T12:00:00Z",
+            "last_at": "2026-10-01T12:01:00Z",
+            "last_error": "bad credentials",
+        })
+    );
+    json["linewright"]
+        .as_object_mut()
+        .unwrap()
+        .remove("failed_polls");
+    let read: Status = serde_json::from_value(json).unwrap();
+    assert_eq!(read.linewright.failed_polls, None);
 }

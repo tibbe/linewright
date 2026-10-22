@@ -255,6 +255,68 @@ async fn a_hold_comes_and_goes_through_the_stream() {
     web.stop().await;
 }
 
+/// The holds region of the next event `events` sends that holds it.
+async fn next_holds(events: &mut tokio::sync::mpsc::UnboundedReceiver<String>) -> Html {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("an event in time")
+            .unwrap();
+        if let Some((_, holds)) = regions(&event).into_iter().find(|(id, _)| id == "holds") {
+            return holds;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
+    let world = with_ticket().await;
+    world.store.fail_reads("GitHub is down");
+    let web = Web::polling(world, Duration::from_millis(200)).await;
+    let mut events = stream(&web, "/events/").await;
+
+    let mut shown = next_holds(&mut events).await;
+    while select(&shown, ".alert").is_empty() {
+        shown = next_holds(&mut events).await;
+    }
+
+    let alert = select(&shown, ".alert")[0];
+    assert!(
+        alert
+            .value()
+            .has_class("alert-error", scraper::CaseSensitivity::CaseSensitive),
+        "{}",
+        alert.html()
+    );
+    // Pages that need a poll that succeeded say so, under the same frame.
+    for path in ["/", "/runs", "/automations", "/server", "/items/1"] {
+        let (_, body) = web.get(path).await;
+        let held = holds(&Html::parse_document(&body));
+        assert!(
+            held.len() == 1
+                && held[0].0.starts_with("poll")
+                && held[0].0.contains(" failed")
+                && held[0].1 == "/server",
+            "{path}: {held:?}"
+        );
+    }
+
+    let facts = server_facts(&web.page("/server").await);
+    assert!(
+        facts.iter().any(|fact| fact.starts_with("polls failed: ")
+            && fact.ends_with(": taking a snapshot: GitHub is down")),
+        "{facts:?}"
+    );
+
+    web.store.restore_reads();
+
+    while !select(&shown, ".alert").is_empty() {
+        shown = next_holds(&mut events).await;
+    }
+    assert_eq!(holds(&web.page("/").await), Vec::<(String, String)>::new());
+    web.stop().await;
+}
+
 /// The server page's facts, as a reader reads them.
 fn server_facts(html: &Html) -> Vec<String> {
     select(html, "#server li").into_iter().map(text).collect()

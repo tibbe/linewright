@@ -520,6 +520,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 None => None,
             };
             let (served, answered_from) = tokio::sync::watch::channel(None);
+            let (failed_polls, failures_from) = tokio::sync::watch::channel(None);
             let api = Api::serve(
                 claimed,
                 Sources {
@@ -528,13 +529,14 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                         max_runs: config.max_runs,
                     },
                     served: answered_from,
+                    failed_polls: failures_from,
                     deliveries: listener.as_ref().map(Listener::tally),
                     clock,
                     work_dir,
                     ends: ends.clone(),
                 },
             );
-            let stopped = serve(&config, &ends, &pending, &served).await;
+            let stopped = serve(&config, &ends, &pending, &served, &failed_polls).await;
             if let Some(listener) = listener {
                 listener.stop().await;
             }
@@ -605,6 +607,7 @@ async fn serve(
     ends: &Ends,
     pending: &Pending,
     served: &tokio::sync::watch::Sender<Option<Served>>,
+    failed_polls: &tokio::sync::watch::Sender<Option<status::FailedPolls>>,
 ) -> Result<()> {
     // No run can be in flight yet, so every drain or stop ends `serve` alike.
     let mut factory = tokio::select! {
@@ -614,7 +617,10 @@ async fn serve(
             return Ok(());
         }
     };
-    match factory.serve(config.poll_interval, pending, served).await {
+    match factory
+        .serve(config.poll_interval, pending, served, failed_polls)
+        .await
+    {
         ServeEnd::Drained => {}
         ServeEnd::Stop => {
             info!("stopping: cancelling the runs in flight");

@@ -37,16 +37,19 @@ struct Web {
     _dir: tempfile::TempDir,
 }
 
-/// What `serve` answers from, over `served`, with webhooks off.
+/// What `serve` answers from, over `served` and `failed_polls`, with
+/// webhooks off.
 fn sources(
     dir: &tempfile::TempDir,
     clock: &std::sync::Arc<FakeClock>,
     since: linewright::domain::Timestamp,
     served: tokio::sync::watch::Receiver<Option<linewright::api::Served>>,
+    failed_polls: tokio::sync::watch::Receiver<Option<linewright::status::FailedPolls>>,
 ) -> Sources {
     Sources {
         serving: linewright::status::Serving { since, max_runs: 4 },
         served,
+        failed_polls,
         deliveries: None,
         clock: clock.clone(),
         work_dir: linewright::runs::RepoWorkDir {
@@ -60,6 +63,18 @@ fn sources(
 
 impl Web {
     async fn start(world: World) -> Web {
+        let web = Web::polling(world, Duration::from_hours(1)).await;
+        let mut served = web.serving.served.clone();
+        tokio::time::timeout(Duration::from_secs(10), served.wait_for(Option::is_some))
+            .await
+            .expect("the first poll")
+            .unwrap();
+        web
+    }
+
+    /// `serve` polling every `poll_interval`, without waiting for its first
+    /// poll.
+    async fn polling(world: World, poll_interval: Duration) -> Web {
         let World {
             clock,
             factory,
@@ -72,20 +87,21 @@ impl Web {
         let listener = Listener::bind(&webhooks("127.0.0.1:0"), pending.clone(), clock.clone())
             .await
             .unwrap();
-        let serving = Serving::start(factory, Duration::from_hours(1), pending);
+        let serving = Serving::start(factory, poll_interval, pending);
         let stopping = CancellationToken::new();
         let router = api::router(
             Sources {
                 deliveries: Some(listener.tally()),
-                ..sources(&dir, &clock, since, serving.served.clone())
+                ..sources(
+                    &dir,
+                    &clock,
+                    since,
+                    serving.served.clone(),
+                    serving.failed_polls.clone(),
+                )
             },
             stopping.clone(),
         );
-        let mut served = serving.served.clone();
-        tokio::time::timeout(Duration::from_secs(10), served.wait_for(Option::is_some))
-            .await
-            .expect("the first poll")
-            .unwrap();
         Web {
             serving,
             listener,

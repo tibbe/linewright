@@ -10,6 +10,7 @@ use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::WorkKind;
 use linewright::redaction::Redaction;
 use linewright::spec_glob::SpecGlob;
+use linewright::status::FailedPolls;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::Pending;
 use tokio::task::JoinHandle;
@@ -350,6 +351,7 @@ pub struct Serving {
     draining: CancellationToken,
     handle: JoinHandle<ServeEnd>,
     pub served: tokio::sync::watch::Receiver<Option<Served>>,
+    pub failed_polls: tokio::sync::watch::Receiver<Option<FailedPolls>>,
 }
 
 impl Serving {
@@ -361,8 +363,11 @@ impl Serving {
         let stopping = factory.stopping();
         let draining = factory.draining();
         let (sender, served) = tokio::sync::watch::channel(None);
+        let (failures, failed_polls) = tokio::sync::watch::channel(None);
         let handle = tokio::spawn(async move {
-            let end = factory.serve(poll_interval, &pending, &sender).await;
+            let end = factory
+                .serve(poll_interval, &pending, &sender, &failures)
+                .await;
             factory.stop().await;
             end
         });
@@ -371,6 +376,7 @@ impl Serving {
             draining,
             handle,
             served,
+            failed_polls,
         }
     }
 

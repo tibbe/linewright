@@ -30,7 +30,7 @@ use crate::reconcile::{
 use crate::run::{self, AutomationEnd, Shell};
 use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::spec_glob::SpecGlob;
-use crate::status::{Polls, View};
+use crate::status::{FailedPolls, Poll, Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::store::{IssueRead, Store};
 use crate::webhook::{self, Pending};
@@ -352,12 +352,14 @@ impl Factory {
     }
 
     /// A refresh never races a poll: one still running when the poll falls
-    /// due finishes first.
+    /// due finishes first. Only polls count toward `failed_polls`: a refresh
+    /// that fails leaves the next poll to catch up.
     pub async fn serve(
         &mut self,
         poll_interval: Duration,
         pending: &Pending,
         served: &tokio::sync::watch::Sender<Option<Served>>,
+        failed_polls: &tokio::sync::watch::Sender<Option<FailedPolls>>,
     ) -> ServeEnd {
         let ends = self.ends.clone();
         let clock = self.shell.clock.clone();
@@ -366,9 +368,19 @@ impl Factory {
         while !stopping.is_cancelled() {
             // The poll reads what deliveries named before it as well.
             pending.take();
-            if let Err(e) = self.cycle().await {
-                error!(error = format!("{e:#}"), "poll failed");
-            }
+            let poll = match self.cycle().await {
+                Ok(_) => Poll::Succeeded,
+                Err(e) => {
+                    // Redacted as recorded, as the same text is logged.
+                    let error = self.shell.credentials.redaction().apply(&format!("{e:#}"));
+                    error!(error, "poll failed");
+                    Poll::Failed {
+                        at: self.shell.clock.now(),
+                        error,
+                    }
+                }
+            };
+            failed_polls.send_modify(|failed| *failed = FailedPolls::after(failed.take(), poll));
             let next_poll = Instant::now() + poll_interval;
             let next_poll_at = self.shell.clock.now() + poll_interval;
             served.send_replace(self.served(next_poll_at));

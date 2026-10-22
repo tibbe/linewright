@@ -16,6 +16,7 @@ use html::Html;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
+use std::num::NonZeroU64;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -36,7 +37,7 @@ use crate::api::{self, Sources, Unanswered};
 use crate::domain::{Repo, Timestamp};
 use crate::phrase::Phrase;
 use crate::runs::{Outcome, RunId};
-use crate::status::{self, DrainShown, Linewright, UnparsedAutomation};
+use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
 
 pub(crate) fn routes() -> Router<Sources> {
     Router::new()
@@ -212,6 +213,8 @@ struct Frame {
 /// A hold on Linewright's work, shown on every page while it lasts
 /// (`docs/specs/design_system.md`, Holds and problems).
 enum Hold {
+    /// Polls failed, with none succeeded since.
+    PollsFailed(FailedPolls),
     UsageLimit {
         resets_at: Timestamp,
     },
@@ -231,6 +234,7 @@ enum Hold {
 
 impl Hold {
     fn of(linewright: &Linewright, automations: Option<&Automations>) -> Vec<Hold> {
+        let failed_polls = linewright.failed_polls.clone().map(Hold::PollsFailed);
         let usage_limit = linewright
             .usage_limit_resets_at
             .map(|resets_at| Hold::UsageLimit { resets_at });
@@ -254,7 +258,7 @@ impl Hold {
                 }),
                 LastRun::Run(_) | LastRun::NoneYet { .. } => None,
             });
-        [usage_limit, drain, refused]
+        [failed_polls, usage_limit, drain, refused]
             .into_iter()
             .flatten()
             .chain(unparsed)
@@ -264,6 +268,12 @@ impl Hold {
 
     fn phrase(&self) -> Phrase {
         match self {
+            Hold::PollsFailed(failed) if failed.count == NonZeroU64::MIN => {
+                Phrase::from("poll failed: ").time(failed.since)
+            }
+            Hold::PollsFailed(failed) => {
+                Phrase::from(format!("polls failed: {} since ", failed.count)).time(failed.since)
+            }
             Hold::UsageLimit { resets_at } => status::usage_limit(*resets_at),
             Hold::Drain(drain) => status::drain_under_way(*drain),
             Hold::WebhooksRefused { last_refused } => Phrase::from("webhook delivery refused: ")
@@ -284,16 +294,19 @@ impl Hold {
         match self {
             Hold::UsageLimit { .. } => "alert",
             Hold::Drain(_) | Hold::WebhooksRefused { .. } => "alert alert-warning",
-            Hold::UnparsedAutomation(_) | Hold::AutomationFailed { .. } => "alert alert-error",
+            Hold::PollsFailed(_) | Hold::UnparsedAutomation(_) | Hold::AutomationFailed { .. } => {
+                "alert alert-error"
+            }
         }
     }
 
     /// The page that tells more of it.
     fn href(&self) -> String {
         match self {
-            Hold::UsageLimit { .. } | Hold::Drain(_) | Hold::WebhooksRefused { .. } => {
-                "/server".into()
-            }
+            Hold::PollsFailed(_)
+            | Hold::UsageLimit { .. }
+            | Hold::Drain(_)
+            | Hold::WebhooksRefused { .. } => "/server".into(),
             Hold::UnparsedAutomation(_) => "/automations".into(),
             Hold::AutomationFailed { run, .. } => run_path(run),
         }

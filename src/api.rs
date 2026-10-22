@@ -30,7 +30,7 @@ use crate::ending::{self, Ends};
 use crate::explain;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
 use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
-use crate::status::{self, Serving, Status, View};
+use crate::status::{self, FailedPolls, Serving, Status, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::web;
@@ -159,8 +159,11 @@ impl Served {
 #[derive(Clone)]
 pub struct Sources {
     pub serving: Serving,
-    /// `None` until the first poll.
+    /// `None` until the first poll that succeeds.
     pub served: watch::Receiver<Option<Served>>,
+    /// The polls failed since the last that succeeded, kept apart from
+    /// `served` so that they show before any poll has succeeded.
+    pub failed_polls: watch::Receiver<Option<FailedPolls>>,
     /// Set with webhooks on.
     pub deliveries: Option<Tally>,
     pub clock: Arc<dyn Clock>,
@@ -265,6 +268,7 @@ pub(crate) fn status_of(sources: &Sources, view: Option<&View>, recorded: &[Reco
     status::status(
         &sources.serving,
         webhooks,
+        sources.failed_polls.borrow().clone(),
         view,
         recorded,
         sources.ends.deadline(),

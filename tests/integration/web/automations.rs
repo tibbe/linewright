@@ -236,8 +236,15 @@ async fn a_run_handed_back_is_a_failed_last_run() {
 async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
     let world = with_automations(&[("weekly", WEEKLY)]).await;
     let (_unpolled, served) = tokio::sync::watch::channel(None);
+    let (_unfailed, failed_polls) = tokio::sync::watch::channel(None);
     let router = api::router(
-        sources(&world.dir, &world.clock, world.clock.now(), served),
+        sources(
+            &world.dir,
+            &world.clock,
+            world.clock.now(),
+            served,
+            failed_polls,
+        ),
         CancellationToken::new(),
     );
     let request = axum::http::Request::get("/automations")
