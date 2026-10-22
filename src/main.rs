@@ -90,7 +90,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
         Ok(repo) => repo,
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    let body = match api::get_answer(&socket_dir(), repo, resource).await {
+    let body = match api::get_answer(&socket_dir(), &repo, resource).await {
         Ok(body) => body,
         Err(e) => return print_answer(Err(refused(e))),
     };
@@ -129,7 +129,7 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
     };
     let dir = socket_dir();
     let resource = format!("/api/drain?{}", api::query_string(&Asked { timeout }));
-    let taken = match api::post_answer(&dir, repo, &resource).await {
+    let taken = match api::post_answer(&dir, &repo, &resource).await {
         Ok(body) => match read_as::<Taken>(&body, "a drain taken") {
             Ok(taken) => taken,
             Err(e) => return print_answer(Err(e)),
@@ -165,7 +165,7 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
         } else {
             tokio::time::sleep(DRAIN_ASKS_EVERY).await;
         }
-        let status = match api::get_answer(&dir, repo, "/api/status").await {
+        let status = match api::get_answer(&dir, &repo, "/api/status").await {
             Ok(body) => match read_as::<status::Status>(&body, "a status") {
                 Ok(status) => Some(status),
                 Err(e) => return print_answer(Err(e)),
@@ -562,7 +562,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             let number: u64 = number
                 .parse()
                 .with_context(|| format!("{target:?} is not owner/name#N"))?;
-            let github = GitHub::connect(repo, token()?).await?;
+            let github = GitHub::connect(&repo.parse()?, token()?).await?;
             let sessions = config.work_dir.join(repo).join("sessions");
             case::capture(&github, Number(number), &dir, &sessions).await?;
             println!("Captured {target} in {}", dir.display());
@@ -649,7 +649,7 @@ fn token() -> Result<String> {
 }
 
 async fn connect(config: &Config, token: String) -> Result<GitHub> {
-    GitHub::connect(config.required_repo()?, token).await
+    GitHub::connect(&config.required_repo()?, token).await
 }
 
 fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {

@@ -33,7 +33,7 @@ use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::{self, Sources, Unanswered};
-use crate::domain::Timestamp;
+use crate::domain::{Repo, Timestamp};
 use crate::phrase::Phrase;
 use crate::runs::{Outcome, RunId};
 use crate::status::{self, DrainShown, Linewright, UnparsedAutomation};
@@ -59,12 +59,16 @@ pub(crate) fn routes() -> Router<Sources> {
         .layer(middleware::from_fn(confined))
 }
 
-/// Has the browser run only the scripts Linewright serves.
+/// Has the browser run only the scripts Linewright serves, and show only
+/// its own images and the repository owner's GitHub avatar, which
+/// `github.com` redirects to `avatars.githubusercontent.com`.
 async fn confined(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("default-src 'self'"),
+        HeaderValue::from_static(
+            "default-src 'self'; img-src 'self' https://github.com https://avatars.githubusercontent.com",
+        ),
     );
     response
 }
@@ -184,18 +188,25 @@ enum NavIcon {
     Server,
 }
 
+impl NavIcon {
+    /// Its classes. In the rail, the repository's owner's avatar stands in
+    /// for the repository's icon (`docs/specs/web/design_system.md`,
+    /// Navigation).
+    fn classes(self) -> &'static str {
+        match self {
+            NavIcon::Repo => "size-5 shrink-0 lg:max-2xl:hidden",
+            NavIcon::Board | NavIcon::Runs | NavIcon::Automations | NavIcon::Server => {
+                "size-5 shrink-0"
+            }
+        }
+    }
+}
+
 /// The frame every page has around its own regions
 /// (`docs/specs/design_system.md`, Navigation, and Holds and problems).
 struct Frame {
-    repo: String,
-    status_line: StatusLine,
+    repo: Repo,
     holds: Vec<HoldShown>,
-}
-
-/// The runs in flight out of `max-runs`, and the last poll.
-struct StatusLine {
-    runs_in_flight: Html,
-    last_poll: Html,
 }
 
 /// A hold on Linewright's work, shown on every page while it lasts
@@ -327,10 +338,6 @@ impl Frame {
         let linewright = &read.linewright;
         let repo = sources.work_dir.repo.clone();
         let html = |phrase: &Phrase| html::phrase(phrase, &repo);
-        let status_line = StatusLine {
-            runs_in_flight: html(&status::runs_in_flight(linewright)),
-            last_poll: html(&status::last_poll(linewright)),
-        };
         let holds = Hold::of(linewright, read.automations.as_ref())
             .iter()
             .map(|hold| HoldShown {
@@ -339,18 +346,8 @@ impl Frame {
                 href: hold.href(),
             })
             .collect();
-        Frame {
-            repo,
-            status_line,
-            holds,
-        }
+        Frame { repo, holds }
     }
-}
-
-#[derive(Template)]
-#[template(path = "layout.html", block = "status_line")]
-struct StatusLineRegion<'a> {
-    frame: &'a Frame,
 }
 
 #[derive(Template)]
@@ -361,10 +358,7 @@ struct HoldsRegion<'a> {
 
 /// The frame's regions, which every page's stream sends before its own.
 fn frame_regions(frame: &Frame) -> Vec<(&'static str, String)> {
-    vec![
-        ("status-line", render(&StatusLineRegion { frame })),
-        ("holds", render(&HoldsRegion { frame })),
-    ]
+    vec![("holds", render(&HoldsRegion { frame }))]
 }
 
 #[derive(Template, WebTemplate)]

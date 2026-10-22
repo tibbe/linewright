@@ -19,8 +19,8 @@ use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Linked, Login,
     MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
-    Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread, TicketBranch,
-    TicketBranchName, Timestamp, closed_within, label,
+    Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread,
+    TicketBranch, TicketBranchName, Timestamp, closed_within, label,
 };
 use crate::git;
 
@@ -81,18 +81,15 @@ struct Viewer {
 }
 
 impl GitHub {
-    pub async fn connect(repo: &str, token: String) -> Result<GitHub> {
-        let (owner, name) = repo
-            .split_once('/')
-            .with_context(|| format!("the repository {repo:?} is not owner/name"))?;
+    pub async fn connect(repo: &Repo, token: String) -> Result<GitHub> {
         let http = reqwest::Client::builder()
             .user_agent("linewright")
             .build()?;
         let mut github = GitHub {
             http,
             token,
-            owner: owner.into(),
-            name: name.into(),
+            owner: repo.owner().into(),
+            name: repo.name().into(),
             viewer: Viewer {
                 login: String::new(),
                 id: 0,

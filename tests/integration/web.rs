@@ -52,7 +52,7 @@ fn sources(
         work_dir: linewright::runs::RepoWorkDir {
             // As `common::config` has it, under the repository's name.
             base: dir.path().join("work"),
-            repo: REPO.into(),
+            repo: REPO.parse().unwrap(),
         },
         ends: linewright::ending::Ends::new(),
     }
@@ -162,6 +162,13 @@ impl Web {
 
 fn select<'a>(html: &'a Html, selector: &str) -> Vec<ElementRef<'a>> {
     html.select(&Selector::parse(selector).unwrap()).collect()
+}
+
+/// What `selector` selects in `element`.
+fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>> {
+    element
+        .select(&Selector::parse(selector).unwrap())
+        .collect()
 }
 
 /// The path of the event stream the page connects to.

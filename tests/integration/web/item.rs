@@ -256,7 +256,7 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["status-line", "holds", "item", "runs"]);
+    assert_eq!(ids, ["holds", "item", "runs"]);
     let quiet = tokio::time::timeout(Duration::from_millis(2500), events.recv()).await;
     assert!(quiet.is_err(), "sent with nothing changed: {quiet:?}");
 

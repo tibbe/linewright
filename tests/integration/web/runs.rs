@@ -112,10 +112,10 @@ async fn the_runs_pages_stream_lists_the_runs_again_as_one_starts_and_ends() {
         .unwrap();
     let first = regions(&first);
     let ids: Vec<&str> = first.iter().map(|(id, _)| id.as_str()).collect();
-    assert_eq!(ids, ["status-line", "holds", "runs"]);
-    let running = runs_shown(&first[2].1);
+    assert_eq!(ids, ["holds", "runs"]);
+    let running = runs_shown(&first[1].1);
     assert!(has_run(&running, "in flight", "1/triage-1"), "{running:?}");
-    let ticking = select(&first[2].1, "#runs tbody td:last-child time[data-since]");
+    let ticking = select(&first[1].1, "#runs tbody td:last-child time[data-since]");
     assert!(
         ticking.first().is_some_and(|time| time
             .attr("data-since")

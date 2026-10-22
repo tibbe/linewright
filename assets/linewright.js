@@ -1,8 +1,9 @@
 // Linewright's own script for the web UI (docs/specs/design_system.md): it
 // says since when the page lost `serve`, shows times in the reader's time
 // zone and durations in the reader's locale, keeping them up, keeps a run's
-// transcript at its latest entry while the reader is there, and keeps each
-// fold as the reader opened or closed it through updates. htmx's
+// transcript at its latest entry while the reader is there, keeps each
+// fold as the reader opened or closed it through updates, and hides a
+// tooltip on Escape. htmx's
 // `hx-sse` extension keeps the page up from its event stream:
 // https://four.htmx.org/extensions/hx-sse (htmx 4.0.0).
 (() => {
@@ -174,6 +175,26 @@
     setTimeout(() => {
       htmx.ajax("GET", document.body.getAttribute("hx-sse:connect"), { source: document.body });
     }, 5000);
+  });
+
+  // Escape hides a daisyUI tooltip that shows, until the pointer leaves it
+  // or focus moves, as WCAG 1.4.13 asks
+  // (https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus).
+  // A tooltip whose `data-tip` is empty shows nothing.
+  const tooltips = [...document.querySelectorAll("[data-tip]")].map((tooltip) => {
+    const tip = tooltip.dataset.tip;
+    const show = () => {
+      tooltip.dataset.tip = tip;
+    };
+    tooltip.addEventListener("pointerleave", show);
+    tooltip.addEventListener("focusout", show);
+    return tooltip;
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    for (const tooltip of tooltips) {
+      if (tooltip.matches(":hover, :has(:focus-visible)")) tooltip.dataset.tip = "";
+    }
   });
 
   tick();

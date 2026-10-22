@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::automation::AutomationName;
-use crate::domain::{Number, Timestamp};
+use crate::domain::{Number, Repo, Timestamp};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{DoneRun, OLD_DESIGN, WorkKind};
 use crate::records;
@@ -993,7 +993,7 @@ pub fn answer(work_dir: &RepoWorkDir, query: &Query, now: Timestamp) -> Result<L
 #[derive(Clone, Debug)]
 pub struct RepoWorkDir {
     pub base: PathBuf,
-    pub repo: String,
+    pub repo: Repo,
 }
 
 impl RepoWorkDir {
@@ -1005,8 +1005,8 @@ impl RepoWorkDir {
     }
 }
 
-fn work_dir(base: &Path, repo: &str) -> PathBuf {
-    let exact = base.join(repo);
+fn work_dir(base: &Path, repo: &Repo) -> PathBuf {
+    let exact = base.join(&**repo);
     if exact.exists() {
         return exact;
     }
@@ -1017,7 +1017,7 @@ fn work_dir(base: &Path, repo: &str) -> PathBuf {
                 .is_some_and(|found| found.eq_ignore_ascii_case(name))
         })
     };
-    repo.split_once('/')
-        .and_then(|(owner, name)| spelled(&spelled(base, owner)?, name))
+    spelled(base, repo.owner())
+        .and_then(|owner| spelled(&owner, repo.name()))
         .unwrap_or(exact)
 }

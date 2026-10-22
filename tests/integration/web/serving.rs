@@ -45,7 +45,7 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
 
     assert_eq!(
         page.headers()["content-security-policy"],
-        "default-src 'self'"
+        "default-src 'self'; img-src 'self' https://github.com https://avatars.githubusercontent.com"
     );
     assert_eq!(select(&html, "script:not([src])").len(), 0);
     let named: Vec<(&str, &str)> = scripts

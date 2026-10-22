@@ -573,14 +573,14 @@ pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
     facts
 }
 
-pub(crate) fn last_poll(linewright: &Linewright) -> Phrase {
+fn last_poll(linewright: &Linewright) -> Phrase {
     match linewright.polls {
         Some(polls) => Phrase::from("last poll: ").time(polls.last),
         None => "last poll: none yet".into(),
     }
 }
 
-pub(crate) fn runs_in_flight(linewright: &Linewright) -> Phrase {
+fn runs_in_flight(linewright: &Linewright) -> Phrase {
     format!(
         "runs in flight: {} of {}",
         linewright.runs_in_flight, linewright.max_runs

@@ -1,10 +1,5 @@
 use super::*;
 
-/// The sidebar's status line, as a reader reads it.
-fn status_line(html: &Html) -> String {
-    text(select(html, "#status-line")[0])
-}
-
 /// Each hold's words, and where it links.
 fn holds(html: &Html) -> Vec<(String, String)> {
     select(html, "#holds .alert")
@@ -26,15 +21,8 @@ fn icons(element: ElementRef) -> usize {
     select_in(element, r#"svg[aria-hidden="true"]"#).len()
 }
 
-fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>> {
-    element
-        .select(&Selector::parse(selector).unwrap())
-        .collect()
-}
-
 #[tokio::test]
-async fn every_page_has_the_same_sidebar_naming_the_repository_the_pages_with_their_icons_and_the_status_line()
- {
+async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_with_their_icons() {
     let web = Web::start(with_ticket().await).await;
 
     let mut sidebars = vec![];
@@ -71,62 +59,70 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_the_pages_with_th
             ],
             "{path}"
         );
-        let line = status_line(&html);
-        assert!(
-            line.strip_prefix("runs in flight: 0 of 4 last poll: 2026-10-01 12:00:")
-                .is_some_and(|rest| rest.ends_with(" UTC")),
-            "{path}: {line}"
-        );
+        assert_eq!(select(&html, "#status-line").len(), 0, "{path}");
         assert_eq!(holds(&html), Vec::<(String, String)>::new(), "{path}");
         sidebars.push(select(&html, ".drawer-side nav")[0].html());
     }
-    let without_times: Vec<String> = sidebars
-        .iter()
-        .map(|sidebar| sidebar.split("<time").next().unwrap().to_string())
-        .collect();
     assert!(
-        without_times.windows(2).all(|pair| pair[0] == pair[1]),
+        sidebars.windows(2).all(|pair| pair[0] == pair[1]),
         "{sidebars:?}"
     );
     web.stop().await;
 }
 
-#[tokio::test]
-async fn the_status_line_follows_the_runs_as_they_start_and_end() {
-    let world = with_issue_for_triage().await;
-    let agent = world.harness.hold();
-    let web = Web::start(world).await;
-    let mut events = stream(&web, "/events/").await;
+/// `element`'s classes in the rail, without their `lg:max-2xl:` prefix.
+fn in_the_rail(element: ElementRef<'_>) -> Vec<&str> {
+    element
+        .value()
+        .classes()
+        .filter_map(|class| class.strip_prefix("lg:max-2xl:"))
+        .collect()
+}
 
-    let mut agent = Some(agent);
-    let mut lines: Vec<String> = vec![];
-    while !(agent.is_none()
-        && lines
-            .last()
-            .is_some_and(|line| line.starts_with("runs in flight: 0 of 4")))
-    {
-        let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
-            .await
-            .expect("an event in time")
-            .unwrap();
-        for (id, region) in regions(&event) {
-            if id != "status-line" {
-                continue;
-            }
-            let line = text(select(&region, "#status-line")[0]);
-            if line.starts_with("runs in flight: 1 of 4") {
-                // The run ends once the line has shown it in flight.
-                agent = None;
-            }
-            lines.push(line);
-        }
-    }
+#[tokio::test]
+async fn in_the_rail_the_repository_is_its_owners_avatar_with_its_name_as_a_tooltip_and_hidden_text()
+ {
+    let web = Web::start(with_ticket().await).await;
+
+    let html = web.page("/runs").await;
+
+    let repo = select(&html, ".drawer-side a.repo")[0];
+    let avatars = select_in(repo, "img");
+    assert_eq!(avatars.len(), 1, "{}", repo.html());
+    let avatar = avatars[0];
     assert!(
-        lines
-            .iter()
-            .any(|line| line.starts_with("runs in flight: 1 of 4")),
-        "{lines:?}"
+        avatar
+            .attr("src")
+            .is_some_and(|src| src.starts_with("https://github.com/owner.png")),
+        "{}",
+        avatar.html()
     );
+    assert_eq!(avatar.attr("alt"), Some(""), "the avatar is decorative");
+    assert!(
+        avatar
+            .value()
+            .has_class("hidden", scraper::CaseSensitivity::CaseSensitive)
+            && in_the_rail(avatar).contains(&"block"),
+        "only the rail shows the avatar: {}",
+        avatar.html()
+    );
+    let icon = select_in(repo, "svg")[0];
+    assert!(in_the_rail(icon).contains(&"hidden"), "{}", icon.html());
+    let names = select_in(repo, "span");
+    assert_eq!(names.len(), 1, "{}", repo.html());
+    assert_eq!(text(names[0]), "owner/widgets");
+    assert!(
+        in_the_rail(names[0]).contains(&"sr-only"),
+        "{}",
+        names[0].html()
+    );
+    let tooltip = select(&html, ".drawer-side :has(> a.repo)")[0];
+    assert!(
+        in_the_rail(tooltip).contains(&"tooltip"),
+        "{}",
+        tooltip.html()
+    );
+    assert_eq!(tooltip.attr("data-tip"), Some("owner/widgets"));
     web.stop().await;
 }
 
@@ -239,7 +235,7 @@ async fn a_hold_comes_and_goes_through_the_stream() {
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids[..2], ["status-line", "holds"]);
+    assert_eq!(ids[..1], ["holds"]);
 
     Request {
         signature: None,
@@ -326,7 +322,7 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["status-line", "holds", "server"]);
+    assert_eq!(ids, ["holds", "server"]);
 
     Request {
         signature: None,

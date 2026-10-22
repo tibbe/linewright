@@ -7,7 +7,7 @@ use chrono::TimeDelta;
 use clap::{Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::domain::{MergeMethod, Number, Timestamp, UpdateMethod};
+use crate::domain::{MergeMethod, Number, Repo, Timestamp, UpdateMethod};
 use crate::drain::Timeout;
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
@@ -355,14 +355,17 @@ const KEYS: [&str; 20] = [
 ];
 
 impl Config {
-    pub fn required_repo(&self) -> Result<&str> {
-        self.repo.as_deref().context("set `repo` (owner/name)")
+    pub fn required_repo(&self) -> Result<Repo> {
+        self.repo
+            .as_deref()
+            .context("set `repo` (owner/name)")?
+            .parse()
     }
 
     pub fn repo_work_dir(&self) -> Result<RepoWorkDir> {
         Ok(RepoWorkDir {
             base: self.work_dir.clone(),
-            repo: self.required_repo()?.to_string(),
+            repo: self.required_repo()?,
         })
     }
 

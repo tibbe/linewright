@@ -134,12 +134,6 @@ async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_li
     web.stop().await;
 }
 
-fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>> {
-    element
-        .select(&Selector::parse(selector).unwrap())
-        .collect()
-}
-
 #[tokio::test]
 async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everything_open() {
     let (web, html) = run_page_of_implemented().await;

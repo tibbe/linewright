@@ -20,9 +20,11 @@
 {%- endmacro -%}
 {#- A lane's head, sticky under the column heads while the reader is in
     its lane, and its text sticky at the left as the board scrolls
-    sideways, cut to the board's visible width so that it can stay there. -#}
+    sideways, cut to the board's visible width so that it can stay there,
+    and whole on hover and on keyboard focus, expanding in place
+    (`docs/specs/design_system.md`, Layout). Its head is the `group`. -#}
 {%- macro lane_head(lane) -%}
-<span class="sticky left-0 inline-block max-w-[100cqw] truncate align-top">{{ lane.head|safe }}</span>
+<span class="sticky left-0 inline-block max-w-[100cqw] truncate align-top group-hover:whitespace-normal group-focus-within:whitespace-normal">{{ lane.head|safe }}</span>
 {%- endmacro -%}
 {%- block main -%}
 <section id="board" class="scroll-box @container">
@@ -48,7 +50,7 @@
 </div>
 {%- for lane in board.unfinished %}
 <section class="lane" id="{{ lane.id }}">
-<h2 class="lane-head mt-3 border-t border-base-300">{% call lane_head(lane) %}{% endcall %}</h2>
+<h2 class="lane-head group mt-3 border-t border-base-300">{% call lane_head(lane) %}{% endcall %}</h2>
 {%- call cells(lane) %}{% endcall %}
 </section>
 {%- endfor %}
@@ -57,7 +59,7 @@
 <summary class="cursor-pointer font-semibold">{{ board.finished_count() }}</summary>
 {%- for lane in board.finished %}
 <details class="lane mt-2" id="{{ lane.id }}">
-<summary class="lane-head cursor-pointer">{% call lane_head(lane) %}{% endcall %}</summary>
+<summary class="lane-head group cursor-pointer">{% call lane_head(lane) %}{% endcall %}</summary>
 {%- call cells(lane) %}{% endcall %}
 </details>
 {%- endfor %}

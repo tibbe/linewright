@@ -72,7 +72,7 @@ impl Answering {
                 clock: clock.clone(),
                 work_dir: linewright::runs::RepoWorkDir {
                     base: work_dir,
-                    repo: REPO.into(),
+                    repo: REPO.parse().unwrap(),
                 },
                 ends: ends.clone(),
             },

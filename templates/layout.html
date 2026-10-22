@@ -25,10 +25,13 @@
     a flex column, the content above its `.scroll-box` keeps its height, and
     the box takes the rest and scrolls on both axes, so that what is sticky
     in it sticks to the box's top as it scrolls either way
-    (`docs/specs/design_system.md`, Tables and Layout). -#}
+    (`docs/specs/design_system.md`, Tables and Layout).
+    The content is a stacking context of its own, so that what sticks in it
+    stays under the navigation, and the rail does not clip what overflows
+    it, so that the repository's tooltip shows over the page. -#}
 <div class="drawer lg:drawer-open">
 <input id="navigation" type="checkbox" class="drawer-toggle">
-<div class="drawer-content min-w-0{% if page.fills_viewport %} flex h-dvh flex-col{% endif %}">
+<div class="drawer-content isolate min-w-0{% if page.fills_viewport %} flex h-dvh flex-col{% endif %}">
 <label for="navigation" class="btn btn-ghost btn-square drawer-button m-2 shrink-0 lg:hidden" aria-label="Open the navigation">
 <svg class="size-5" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
 </label>
@@ -44,24 +47,23 @@
 {% block main %}{% endblock %}
 </main>
 </div>
-<div class="drawer-side">
+<div class="drawer-side lg:max-2xl:overflow-visible">
 <label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
 <nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
-{#- In the rail, the repository's name is cut to the rail's width, and
-    whole on hover and on focus. -#}
-<a class="repo group link link-hover flex items-center gap-2 font-semibold lg:max-2xl:w-full lg:max-2xl:flex-col lg:max-2xl:gap-1 lg:max-2xl:text-xs" href="https://github.com/{{ frame.repo }}">{% call ui::nav_icon(crate::web::NavIcon::Repo) %}{% endcall %}<span class="min-w-0 lg:max-2xl:max-w-full lg:max-2xl:truncate lg:max-2xl:group-hover:overflow-visible lg:max-2xl:group-hover:whitespace-normal lg:max-2xl:group-hover:break-all lg:max-2xl:group-focus-visible:overflow-visible lg:max-2xl:group-focus-visible:whitespace-normal lg:max-2xl:group-focus-visible:break-all">{{ frame.repo }}</span></a>
+{#- In the rail, the repository is its owner's GitHub avatar in place of
+    its icon, with its name whole on hover and on keyboard focus as a daisyUI
+    tooltip, which the page's script hides on Escape
+    (`docs/specs/web/design_system.md`, Navigation). There the name is
+    hidden text, the link's accessible name, and the avatar is decorative. -#}
+<div class="lg:max-2xl:tooltip lg:max-2xl:tooltip-right lg:max-2xl:w-full" data-tip="{{ frame.repo }}">
+<a class="repo link link-hover flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}">{% call ui::nav_icon(crate::web::NavIcon::Repo) %}{% endcall %}<img class="hidden size-8 rounded-full lg:max-2xl:block" src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
+</div>
 <ul class="menu w-full p-0">
 {%- call nav_link("/", crate::web::NavIcon::Board, "Board") %}{% endcall %}
 {%- call nav_link("/runs", crate::web::NavIcon::Runs, "Runs") %}{% endcall %}
 {%- call nav_link("/automations", crate::web::NavIcon::Automations, "Automations") %}{% endcall %}
 {%- call nav_link("/server", crate::web::NavIcon::Server, "Server") %}{% endcall %}
 </ul>
-{% block status_line -%}
-<ul id="status-line" class="mt-auto space-y-1 text-sm text-base-content/70 lg:max-2xl:w-full lg:max-2xl:px-1 lg:max-2xl:text-xs lg:max-2xl:break-words">
-<li>{{ frame.status_line.runs_in_flight|safe }}</li>
-<li>{{ frame.status_line.last_poll|safe }}</li>
-</ul>
-{%- endblock %}
 </nav>
 </div>
 </div>

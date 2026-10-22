@@ -17,6 +17,53 @@ impl fmt::Display for Number {
     }
 }
 
+/// A GitHub repository, as `owner/name`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Repo {
+    full: String,
+    /// Where `full`'s `/` is.
+    slash: usize,
+}
+
+impl Repo {
+    pub fn owner(&self) -> &str {
+        &self.full[..self.slash]
+    }
+
+    pub fn name(&self) -> &str {
+        &self.full[self.slash + 1..]
+    }
+}
+
+impl std::str::FromStr for Repo {
+    type Err = anyhow::Error;
+
+    fn from_str(full: &str) -> anyhow::Result<Repo> {
+        match full.split_once('/') {
+            Some((owner, name)) if !owner.is_empty() && !name.is_empty() => Ok(Repo {
+                full: full.to_string(),
+                slash: owner.len(),
+            }),
+            _ => anyhow::bail!("the repository {full:?} is not owner/name"),
+        }
+    }
+}
+
+/// `owner/name`, as the commands and the pages name the repository.
+impl std::ops::Deref for Repo {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.full
+    }
+}
+
+impl fmt::Display for Repo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.full)
+    }
+}
+
 /// A GitHub login, which GitHub matches regardless of case
 /// (<https://docs.github.com/en/get-started/learning-about-github/types-of-github-accounts>):
 /// two logins differing only in case are equal.

@@ -128,7 +128,7 @@ async fn the_boards_stream_sends_the_board_and_the_tab_title_after_a_poll_moves_
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["status-line", "holds", "title", "board"]);
+    assert_eq!(ids, ["holds", "title", "board"]);
 
     web.store
         .close_issue_as_completed(linewright::domain::Number(1))
@@ -255,6 +255,38 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         finished.starts_with("2026-10-01T12:00:"),
         "a time the page's script shows relative: {finished}"
     );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn a_lane_head_cut_to_fit_is_whole_on_hover_and_on_keyboard_focus() {
+    let web = Web::start(with_a_finished_lane().await).await;
+
+    let html = web.page("/").await;
+
+    let heads = select(&html, "#board .lane-head");
+    assert_eq!(heads.len(), 4);
+    for head in heads {
+        assert!(
+            head.value()
+                .has_class("group", scraper::CaseSensitivity::CaseSensitive),
+            "{}",
+            head.html()
+        );
+        let cut = select_in(head, ":scope > span")[0];
+        let classes: Vec<&str> = cut.value().classes().collect();
+        assert!(
+            [
+                "truncate",
+                "group-hover:whitespace-normal",
+                "group-focus-within:whitespace-normal"
+            ]
+            .iter()
+            .all(|class| classes.contains(class)),
+            "{}",
+            head.html()
+        );
+    }
     web.stop().await;
 }
 
