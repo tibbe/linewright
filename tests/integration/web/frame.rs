@@ -155,6 +155,16 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
     for path in ["/", "/runs", "/server"] {
         assert_eq!(holds(&web.page(path).await), held, "{path}");
     }
+    let facts = server_facts(&web.page("/server").await);
+    assert_eq!(
+        facts.get(2),
+        Some(&ServerFact {
+            label: "Usage limit".into(),
+            value: "in force until 2026-10-13 07:50:00 UTC".into(),
+            tone: Some("badge-neutral".into()),
+        }),
+        "{facts:?}"
+    );
     web.stop().await;
 }
 
@@ -186,6 +196,15 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
             .has_class("alert-warning", scraper::CaseSensitivity::CaseSensitive),
         "{}",
         html.html()
+    );
+    let facts = server_facts(&web.page("/server").await);
+    let drain = &facts[2];
+    assert!(
+        drain.label == "Drain"
+            && drain.value.starts_with("started 2026-10-01 ")
+            && !drain.value.contains("deadline")
+            && drain.tone.as_deref() == Some("badge-warning"),
+        "{facts:?}"
     );
     drop(agent);
     web.stop().await;
@@ -299,11 +318,28 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
     }
 
     let facts = server_facts(&web.page("/server").await);
+    let failed = facts
+        .iter()
+        .find(|fact| fact.label == "Failed polls")
+        .unwrap_or_else(|| panic!("{facts:?}"));
+    assert_eq!(failed.tone.as_deref(), Some("badge-error"), "{facts:?}");
+    // The count, when the first and the last failed, and the last's error.
+    let shape = |value: &str| match value.split_once(", the first 2026-10-01 ") {
+        Some((count, rest)) => {
+            count.parse::<u64>().is_ok_and(|count| count > 1) && rest.contains(", the last ")
+        }
+        None => value.starts_with("1, 2026-10-01 "),
+    };
     assert!(
-        facts.iter().any(|fact| fact.starts_with("polls failed: ")
-            && fact.ends_with(": taking a snapshot: GitHub is down")),
-        "{facts:?}"
+        shape(&failed.value)
+            && failed
+                .value
+                .ends_with(" UTC: taking a snapshot: GitHub is down"),
+        "{failed:?}"
     );
+    // Before any poll has succeeded, the polls stand as none yet.
+    assert_eq!(facts[1].label, "Polls", "{facts:?}");
+    assert!(facts[1].value.starts_with("none yet, next "), "{facts:?}");
 
     web.store.restore_reads();
 
@@ -314,13 +350,45 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
     web.stop().await;
 }
 
-/// The server page's facts, as a reader reads them.
-fn server_facts(html: &Html) -> Vec<String> {
-    select(html, "#server li").into_iter().map(text).collect()
+/// A fact of the server page, as a reader reads it, with the colour of
+/// the tone its label shows in, if it has one.
+#[derive(Debug, PartialEq, Eq)]
+struct ServerFact {
+    label: String,
+    value: String,
+    tone: Option<String>,
+}
+
+/// The server page's facts, in order.
+fn server_facts(html: &Html) -> Vec<ServerFact> {
+    select(html, "#server tr")
+        .into_iter()
+        .map(|row| {
+            let label = select_in(row, "th")[0];
+            ServerFact {
+                label: text(label),
+                value: text(select_in(row, "td")[0]),
+                tone: select_in(label, ".tone").first().and_then(|tone| {
+                    tone.value()
+                        .classes()
+                        .find(|class| class.starts_with("badge-") && *class != "badge-sm")
+                        .map(str::to_string)
+                }),
+            }
+        })
+        .collect()
+}
+
+/// The server page's facts, as label and value.
+fn labelled(facts: &[ServerFact]) -> Vec<(&str, &str)> {
+    facts
+        .iter()
+        .map(|fact| (fact.label.as_str(), fact.value.as_str()))
+        .collect()
 }
 
 #[tokio::test]
-async fn the_server_page_shows_the_facts_about_linewright_as_status_does() {
+async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label() {
     let world = with_ticket().await;
     world
         .store
@@ -341,27 +409,31 @@ async fn the_server_page_shows_the_facts_about_linewright_as_status_does() {
     let html = web.page("/server").await;
 
     let facts = server_facts(&html);
-    let labels: Vec<&str> = facts
-        .iter()
-        .map(|fact| {
-            fact.split_once(": ")
-                .map_or(fact.as_str(), |(label, _)| label)
-        })
-        .collect();
+    let labels: Vec<&str> = facts.iter().map(|fact| fact.label.as_str()).collect();
     assert_eq!(
         labels,
         [
-            "serving since",
-            "last poll",
-            "next poll",
-            "runs in flight",
-            "last webhook delivery accepted",
-            "webhook deliveries refused",
+            "Started",
+            "Polls",
+            "Runs in flight",
+            "Last webhook delivery accepted",
+            "Webhook deliveries refused",
         ],
         "{facts:?}"
     );
-    assert_eq!(facts[3], "runs in flight: 0 of 4");
-    assert_eq!(facts[5], "webhook deliveries refused: 0");
+    assert!(facts[0].value.starts_with("2026-10-01 "), "{:?}", facts[0]);
+    let polls = facts[1]
+        .value
+        .strip_prefix("last 2026-10-01 ")
+        .and_then(|rest| rest.split_once(" UTC, next 2026-10-01 "));
+    assert!(polls.is_some(), "{:?}", facts[1]);
+    assert_eq!(labelled(&facts[2..3]), [("Runs in flight", "0 of 4")]);
+    assert!(facts[3].value.starts_with("2026-10-01 "), "{:?}", facts[3]);
+    assert_eq!(labelled(&facts[4..]), [("Webhook deliveries refused", "0")]);
+    assert!(facts.iter().all(|fact| fact.tone.is_none()), "{facts:?}");
+    // The times are `<time>` elements, which the page's script shows past
+    // ones relative and future ones absolute.
+    assert_eq!(select(&html, "#server time[datetime]").len(), 4);
     assert!(
         !html.html().contains("automation weekly"),
         "the automations' facts are not shown: {}",
@@ -402,7 +474,7 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
     assert!(
         server
             .as_ref()
-            .is_some_and(|facts| facts.contains(&"webhook deliveries refused: 1".to_string())),
+            .is_some_and(|facts| labelled(facts).contains(&("Webhook deliveries refused", "1"))),
         "{server:?}"
     );
     web.stop().await;

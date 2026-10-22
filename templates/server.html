@@ -1,11 +1,24 @@
 {%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
 {%- block main -%}
 <section id="server">
 <h1 class="mb-3 text-lg font-semibold">Server</h1>
-<ul class="list rounded-box bg-base-200">
+<table class="table w-auto rounded-box bg-base-200">
+<tbody>
 {%- for fact in facts %}
-<li class="list-row"><span>{{ fact|safe }}</span></li>
+<tr>
+<th>
+{%- match fact.tone -%}
+{%- when Some(tone) -%}
+{% call ui::status(tone, fact.label) %}{% endcall %}
+{%- when None -%}
+{{ fact.label }}
+{%- endmatch -%}
+</th>
+<td>{{ fact.value|safe }}</td>
+</tr>
 {%- endfor %}
-</ul>
+</tbody>
+</table>
 </section>
 {%- endblock -%}

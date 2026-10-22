@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::{self, Sources, Unanswered};
 use crate::domain::{Repo, Timestamp};
-use crate::phrase::Phrase;
+use crate::phrase::{Phrase, Tone};
 use crate::runs::{Outcome, RunId};
 use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
 
@@ -280,17 +280,27 @@ impl Hold {
         }
     }
 
-    /// Its alert's classes, in its daisyUI colour
-    /// (`docs/specs/web/design_system.md`, Status): a usage limit is
-    /// neutral, which is daisyUI's alert with no colour of its own. Written
-    /// whole, as `Tone::colour` says why.
-    fn alert(&self) -> &'static str {
+    /// Its tone (`docs/specs/web/design_system.md`, Status): a usage limit
+    /// shows neutral, the tone it shares with a cancelled run.
+    fn tone(&self) -> Tone {
         match self {
-            Hold::UsageLimit { .. } => "alert",
-            Hold::Drain(_) | Hold::WebhooksRefused { .. } => "alert alert-warning",
+            Hold::UsageLimit { .. } => Tone::Cancelled,
+            Hold::Drain(_) | Hold::WebhooksRefused { .. } => Tone::InProgress,
             Hold::PollsFailed(_) | Hold::UnparsedAutomation(_) | Hold::AutomationFailed { .. } => {
-                "alert alert-error"
+                Tone::Failure
             }
+        }
+    }
+
+    /// Its alert's classes, in its tone's daisyUI colour: neutral is
+    /// daisyUI's alert with no colour of its own. Written whole, as
+    /// `Tone::colour` says why.
+    fn alert(&self) -> &'static str {
+        match self.tone() {
+            Tone::Cancelled => "alert",
+            Tone::InProgress | Tone::Pending => "alert alert-warning",
+            Tone::Failure => "alert alert-error",
+            Tone::Success => "alert alert-success",
         }
     }
 

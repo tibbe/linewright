@@ -659,51 +659,85 @@ impl Fact {
     }
 }
 
-pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
-    let polls = linewright.polls;
-    let mut facts = vec![
-        Fact::Plain(Phrase::from("serving since: ").time(linewright.serving_since)),
-        Fact::Plain(last_poll(linewright)),
-        Fact::Plain(match polls {
-            Some(polls) => Phrase::from("next poll: ").time(polls.next),
-            None => "next poll: due now".into(),
-        }),
-    ];
-    if let Some(failed) = &linewright.failed_polls {
-        facts.push(Fact::Problem(polls_failed(failed)));
-    }
-    if let Some(resets_at) = linewright.usage_limit_resets_at {
-        facts.push(Fact::Warning(usage_limit(resets_at)));
-    }
-    if let Some(drain) = linewright.drain {
-        facts.push(Fact::Warning(drain_under_way(drain)));
-    }
-    facts.push(Fact::Plain(runs_in_flight(linewright)));
-    if let Some(received) = linewright.webhooks {
-        facts.push(Fact::Plain(match received.last_accepted {
-            Some(at) => Phrase::from("last webhook delivery accepted: ").time(at),
-            None => "last webhook delivery accepted: none yet".into(),
-        }));
-        facts.push(Fact::Plain(
-            format!("webhook deliveries refused: {}", received.refused).into(),
-        ));
-    }
-    facts
+/// A fact about Linewright itself, of those `status` and the server page
+/// show (`docs/specs/monitoring.md`, status, and
+/// `docs/specs/design_system.md`, The server page), each in its own words.
+pub(crate) enum LinewrightFact<'a> {
+    ServingSince(Timestamp),
+    /// The last poll and the next.
+    Polls(Option<PollsShown>),
+    FailedPolls(&'a FailedPolls),
+    UsageLimit {
+        resets_at: Timestamp,
+    },
+    Drain(DrainShown),
+    RunsInFlight {
+        runs: usize,
+        max_runs: usize,
+    },
+    /// The last delivery accepted and the deliveries refused.
+    Webhooks(Received),
 }
 
-fn last_poll(linewright: &Linewright) -> Phrase {
-    match linewright.polls.and_then(|polls| polls.last) {
+impl Linewright {
+    /// The facts shown of it, in the specs' order, each only while it shows.
+    pub(crate) fn facts(&self) -> Vec<LinewrightFact<'_>> {
+        [
+            Some(LinewrightFact::ServingSince(self.serving_since)),
+            Some(LinewrightFact::Polls(self.polls)),
+            self.failed_polls.as_ref().map(LinewrightFact::FailedPolls),
+            self.usage_limit_resets_at
+                .map(|resets_at| LinewrightFact::UsageLimit { resets_at }),
+            self.drain.map(LinewrightFact::Drain),
+            Some(LinewrightFact::RunsInFlight {
+                runs: self.runs_in_flight,
+                max_runs: self.max_runs,
+            }),
+            self.webhooks.map(LinewrightFact::Webhooks),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
+pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
+    linewright
+        .facts()
+        .into_iter()
+        .flat_map(|fact| match fact {
+            LinewrightFact::ServingSince(since) => {
+                vec![Fact::Plain(Phrase::from("serving since: ").time(since))]
+            }
+            LinewrightFact::Polls(polls) => vec![
+                Fact::Plain(last_poll(polls)),
+                Fact::Plain(match polls {
+                    Some(polls) => Phrase::from("next poll: ").time(polls.next),
+                    None => "next poll: due now".into(),
+                }),
+            ],
+            LinewrightFact::FailedPolls(failed) => vec![Fact::Problem(polls_failed(failed))],
+            LinewrightFact::UsageLimit { resets_at } => vec![Fact::Warning(usage_limit(resets_at))],
+            LinewrightFact::Drain(drain) => vec![Fact::Warning(drain_under_way(drain))],
+            LinewrightFact::RunsInFlight { runs, max_runs } => vec![Fact::Plain(
+                format!("runs in flight: {runs} of {max_runs}").into(),
+            )],
+            LinewrightFact::Webhooks(received) => vec![
+                Fact::Plain(match received.last_accepted {
+                    Some(at) => Phrase::from("last webhook delivery accepted: ").time(at),
+                    None => "last webhook delivery accepted: none yet".into(),
+                }),
+                Fact::Plain(format!("webhook deliveries refused: {}", received.refused).into()),
+            ],
+        })
+        .collect()
+}
+
+fn last_poll(polls: Option<PollsShown>) -> Phrase {
+    match polls.and_then(|polls| polls.last) {
         Some(last) => Phrase::from("last poll: ").time(last),
         None => "last poll: none yet".into(),
     }
-}
-
-fn runs_in_flight(linewright: &Linewright) -> Phrase {
-    format!(
-        "runs in flight: {} of {}",
-        linewright.runs_in_flight, linewright.max_runs
-    )
-    .into()
 }
 
 fn polls_failed(failed: &FailedPolls) -> Phrase {
