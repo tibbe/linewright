@@ -2262,3 +2262,117 @@ async fn a_timeout_that_is_not_a_duration_exits_2() {
         output.stderr
     );
 }
+
+#[tokio::test]
+async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing() {
+    use tokio::io::AsyncWriteExt;
+    let answering = Answering::start(World::new().await, false).await;
+    let runtime_dir = answering.runtime_dir.path().to_path_buf();
+    let dir = socket_dir(&runtime_dir);
+    let socket = api::socket_path(&dir, REPO);
+    // Half a request, which `serve` waits for the rest of as it stops.
+    let mut open = tokio::net::UnixStream::connect(&socket).await.unwrap();
+    open.write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n")
+        .await
+        .unwrap();
+    let drain = Watching::start(&runtime_dir, &["drain"]);
+    drain.shows("drain: begun\n").await;
+    let Answering {
+        serving,
+        api,
+        runtime_dir: _runtime_dir,
+        _dir,
+        ..
+    } = answering;
+    within(STOPPING, "serve drains", serving.finished()).await;
+    let stopped = tokio::spawn(api.stop());
+    eventually(|| {
+        matches!(
+            std::os::unix::net::UnixStream::connect(&socket),
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused
+        )
+    })
+    .await;
+
+    // Four times as long as `drain` waits between asking.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let while_stopping = drain.shown();
+    let claimed_while_stopping = api::claim(&dir, REPO);
+    assert!(socket.exists());
+    drop(open);
+    let (code, shown, stderr) = drain.exits().await;
+    let claimed = api::claim(&dir, REPO);
+
+    assert!(
+        matches!(
+            claimed_while_stopping,
+            Err(ClaimError::AlreadyServing { .. })
+        ),
+        "the claim was released while stopping"
+    );
+    assert_eq!(while_stopping, "drain: begun\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(shown, "drain: begun\nserve: exited\n");
+    assert!(claimed.is_ok(), "{:?}", claimed.err());
+    within(STOPPING, "the API stops", stopped).await.unwrap();
+}
+
+#[tokio::test]
+async fn drain_returns_once_a_killed_serve_has_left_its_socket_behind() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let (path, listener) = stand_in_socket(runtime_dir.path());
+    std::fs::set_permissions(
+        path.parent().unwrap(),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    // Left as the kernel releases the lock of a `serve` killed.
+    std::fs::write(path.with_extension("lock"), "").unwrap();
+    // Takes the drain, then dies without removing its socket.
+    let killed = tokio::spawn(async move {
+        let (mut asked, _) = listener.accept().await.unwrap();
+        let mut request = vec![];
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            asked.read_exact(&mut byte).await.unwrap();
+            request.push(byte[0]);
+        }
+        let body = r#"{"was":"serving","serving_since":"2026-10-01T12:00:00Z","runs":[]}"#;
+        let answer = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        asked.write_all(answer.as_bytes()).await.unwrap();
+        asked.shutdown().await.unwrap();
+    });
+
+    let output = lw(runtime_dir.path(), &["drain"]).await;
+
+    killed.await.unwrap();
+    assert!(path.exists());
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert_eq!(output.stdout, "drain: begun\nserve: exited\n");
+}
+
+#[tokio::test]
+async fn a_serve_starting_while_drain_looks_at_the_claim_takes_it() {
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let dir = socket_dir(runtime_dir.path());
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let lock = std::fs::File::create(api::socket_path(&dir, REPO).with_extension("lock")).unwrap();
+    // As `drain` looks, held for longer.
+    lock.lock_shared().unwrap();
+    let looked = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(lock);
+    });
+
+    let claimed = tokio::task::spawn_blocking(move || api::claim(&dir, REPO))
+        .await
+        .unwrap();
+
+    looked.await.unwrap();
+    assert!(claimed.is_ok(), "{:?}", claimed.err());
+}

@@ -170,7 +170,13 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
                 Ok(status) => Some(status),
                 Err(e) => return print_answer(Err(e)),
             },
-            Err(RequestError::NotServing { .. }) => None,
+            // `serve` stops answering before it releases its claim, which a
+            // new `serve` needs.
+            Err(RequestError::NotServing { .. }) => match api::is_claimed(&dir, &repo) {
+                Ok(true) => continue,
+                Ok(false) => None,
+                Err(e) => return print_answer(Err(failed(&e))),
+            },
             // Asked again: a `serve` that hangs up is about to exit.
             Err(RequestError::HungUp(_)) => continue,
             Err(e) => return print_answer(Err(refused(e))),

@@ -103,7 +103,8 @@ pub enum Said {
     },
     /// The drain's deadline passed with runs in flight.
     BecameAStop,
-    /// `serve` has exited: its socket is gone.
+    /// `serve` has exited: it no longer answers and has released its claim
+    /// on the repository, or another has started since.
     Exited,
 }
 

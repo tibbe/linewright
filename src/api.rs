@@ -67,10 +67,16 @@ pub struct Claimed {
     lock: File,
 }
 
+/// How long [`claim`] waits out [`is_claimed`] looking at the lock, which
+/// takes it for a moment only.
+const WAITS_OUT_LOOKING_FOR: std::time::Duration = std::time::Duration::from_secs(1);
+/// How soon [`claim`] tries the lock again when only looking holds it.
+const TRIES_AGAIN_AFTER: std::time::Duration = std::time::Duration::from_millis(1);
+
 pub fn claim(dir: &Path, repo: &str) -> Result<Claimed, ClaimError> {
     private_dir(dir)?;
     let path = socket_path(dir, repo);
-    let lock_path = path.with_extension("lock");
+    let lock_path = lock_path(dir, repo);
     let lock = File::options()
         .create(true)
         .truncate(false)
@@ -78,16 +84,28 @@ pub fn claim(dir: &Path, repo: &str) -> Result<Claimed, ClaimError> {
         .mode(0o600)
         .open(&lock_path)
         .with_context(|| format!("opening {}", lock_path.display()))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => {
-            return Err(ClaimError::AlreadyServing {
-                repo: repo.to_string(),
-                path: path.display().to_string(),
-            });
-        }
-        Err(TryLockError::Error(e)) => {
-            Err(e).with_context(|| format!("locking {}", lock_path.display()))?;
+    let looked_until = std::time::Instant::now() + WAITS_OUT_LOOKING_FOR;
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(TryLockError::WouldBlock) => {
+                if is_claimed(dir, repo)? {
+                    return Err(ClaimError::AlreadyServing {
+                        repo: repo.to_string(),
+                        path: path.display().to_string(),
+                    });
+                }
+                if std::time::Instant::now() >= looked_until {
+                    Err(anyhow::anyhow!(
+                        "{} stays locked, though not by a `serve`",
+                        lock_path.display()
+                    ))?;
+                }
+                std::thread::sleep(TRIES_AGAIN_AFTER);
+            }
+            Err(TryLockError::Error(e)) => {
+                Err(e).with_context(|| format!("locking {}", lock_path.display()))?;
+            }
         }
     }
     // Left behind by a `serve` that died.
@@ -101,6 +119,30 @@ pub fn claim(dir: &Path, repo: &str) -> Result<Claimed, ClaimError> {
         path,
         lock,
     })
+}
+
+/// Whether a `serve` holds the claim on `repo` on this host. It looks by
+/// taking a shared lock on the claim's lock for a moment, which only a
+/// `serve`'s exclusive lock blocks; [`claim`] tells that shared lock apart
+/// from a `serve`'s and waits it out.
+pub fn is_claimed(dir: &Path, repo: &str) -> Result<bool> {
+    let lock_path = lock_path(dir, repo);
+    let lock = match File::open(&lock_path) {
+        Ok(lock) => lock,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e).with_context(|| format!("opening {}", lock_path.display())),
+    };
+    match lock.try_lock_shared() {
+        Ok(()) => Ok(false),
+        Err(TryLockError::WouldBlock) => Ok(true),
+        Err(TryLockError::Error(e)) => {
+            Err(e).with_context(|| format!("looking at the lock on {}", lock_path.display()))
+        }
+    }
+}
+
+fn lock_path(dir: &Path, repo: &str) -> PathBuf {
+    socket_path(dir, repo).with_extension("lock")
 }
 
 fn remove_if_present(path: &Path) -> Result<()> {
