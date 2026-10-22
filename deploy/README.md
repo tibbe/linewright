@@ -74,6 +74,31 @@ attach NPM's container to it, as an external network in NPM's own
    in the payload URL, such as `https://linewright.example.com/`, and the secret
    from step 1.
 
+## The web UI
+
+`serve` serves the web UI on its Unix socket, which is in the container's
+`/tmp` unless you put it on the host. To reach it through an SSH tunnel, mount
+a directory of the host's, owned by the agents' user (`chown 10001:100`), at
+`/run/user/10001`, and make it the runtime directory, in
+`compose.override.yaml`:
+
+```yaml
+services:
+  linewright:
+    volumes: ["/srv/linewright-run:/run/user/10001"]
+    environment: {XDG_RUNTIME_DIR: /run/user/10001}
+```
+
+Restart it, then forward a port to the socket from your machine and open
+`http://localhost:8080`:
+
+```sh
+ssh -N -L 8080:/srv/linewright-run/linewright/HASH.sock HOST
+```
+
+The socket's name, in the directory's `linewright/`, stays the same across
+restarts.
+
 ## Deploying and watching it
 
 From another machine, run each command in the host's clone:
