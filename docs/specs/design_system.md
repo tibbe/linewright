@@ -39,6 +39,7 @@
 
 - As the reader scrolls, the column heads stay at the top, with the head of
   the lane they are in under them.
+- A lane is a surface sunk into the page, and its cards are raised on it.
 - A card's title is on at most two lines.
 
 ## Tables

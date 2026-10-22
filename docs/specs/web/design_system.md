@@ -29,6 +29,9 @@ unchanged.
 
 - The columns share the board's width, each at least 200px, and all six fit
   beside the navigation rail from 1440px wide.
+- **A lane** is a `base-200` box bordered `base-300`, with daisyUI's box
+  radius.
+- **A card** is a daisyUI `card` on `base-100`.
 
 ## Tables
 
