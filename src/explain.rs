@@ -657,6 +657,19 @@ impl Answer {
 
     /// What `explain` shows of the item, after its number and title.
     pub(crate) fn lines(&self) -> Vec<Line<'_>> {
+        let runs = match self {
+            Answer::Managed(explanation) => &explanation.runs,
+            Answer::LeftAlone(left_alone) => &left_alone.runs,
+        };
+        let mut lines = self.lines_without_runs();
+        lines.extend(runs.lines());
+        lines
+    }
+
+    /// [`Answer::lines`] up to its runs: the item's facts and waits, without
+    /// the run in flight, the past runs and how many were left out.
+    #[allow(dead_code, reason = "the item page's runs table is to call it")]
+    pub(crate) fn lines_without_runs(&self) -> Vec<Line<'_>> {
         match self {
             Answer::Managed(explanation) => explanation_lines(explanation),
             Answer::LeftAlone(left_alone) => left_alone_lines(left_alone),
@@ -699,7 +712,6 @@ fn left_alone_lines(left_alone: &LeftAlone) -> Vec<Line<'_>> {
             Line::fact("last read", Phrase::default().time(left_alone.last_read)),
             Line::fact("left alone", why),
         ])
-        .chain(left_alone.runs.lines())
         .collect()
 }
 
@@ -739,7 +751,6 @@ fn explanation_lines(explanation: &Explanation) -> Vec<Line<'_>> {
         ])
         .chain(nothing)
         .chain(explanation.waiting_for.iter().map(Line::Wait))
-        .chain(explanation.runs.lines())
         .collect()
 }
 
