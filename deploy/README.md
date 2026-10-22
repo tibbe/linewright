@@ -81,8 +81,10 @@ From another machine, run each command in the host's clone:
 
 - Deploy another version: once CI has pushed its images, `git pull`, so
   `compose.yaml` matches them, and rerun step 3. For a commit other than the
-  latest on `main`, check it out and set `LINEWRIGHT_TAG=sha-...`. A restart
-  drops the runs in flight. Check `lw status` first.
+  latest on `main`, check it out and set `LINEWRIGHT_TAG=sha-...`. Docker
+  drains the old container before it starts the new one, so `up -d` returns
+  once the runs in flight have finished, up to `stop_grace_period`; `lw status`
+  shows them.
 - The commit it runs, from its image's labels:
 
   ```sh
