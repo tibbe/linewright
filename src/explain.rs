@@ -123,10 +123,10 @@ impl ItemRuns {
         let past = self.past_runs.iter().map(Line::Past);
         let left_out = (self.past_runs_left_out > 0).then(|| {
             let how = format!("lw runs {}", self.runs_of.0);
-            Line::fact(
+            Line::Item(ItemLine::fact(
                 "left out",
                 runs::left_out_phrase(self.past_runs_left_out, &how),
-            )
+            ))
         });
         in_flight.chain(past).chain(left_out)
     }
@@ -254,9 +254,9 @@ impl Family {
         family
     }
 
-    fn lines(&self) -> impl Iterator<Item = Line<'_>> {
+    fn lines(&self) -> impl Iterator<Item = ItemLine<'_>> {
         let parents = self.parents.iter().map(|parent| {
-            Line::fact(
+            ItemLine::fact(
                 "parent",
                 Phrase::from(parent.number)
                     .text(", ")
@@ -264,7 +264,7 @@ impl Family {
             )
         });
         let children = self.children.iter().map(|child| {
-            Line::fact(
+            ItemLine::fact(
                 "child",
                 Phrase::from(child.number)
                     .text(", ")
@@ -594,19 +594,24 @@ fn pull_standing(
 
 /// What `explain` shows of an item, after the heading naming it.
 pub(crate) enum Line<'a> {
+    Item(ItemLine<'a>),
+    InFlight(&'a RunInFlight),
+    Past(&'a Run),
+}
+
+/// A line of what `explain` shows of an item that is not one of its runs.
+pub(crate) enum ItemLine<'a> {
     Fact {
         label: &'static str,
         phrase: Phrase,
         tone: Option<Tone>,
     },
     Wait(&'a Wait),
-    InFlight(&'a RunInFlight),
-    Past(&'a Run),
 }
 
-impl Line<'_> {
-    fn fact(label: &'static str, phrase: Phrase) -> Line<'static> {
-        Line::Fact {
+impl ItemLine<'_> {
+    fn fact(label: &'static str, phrase: Phrase) -> ItemLine<'static> {
+        ItemLine::Fact {
             label,
             phrase,
             tone: None,
@@ -615,8 +620,16 @@ impl Line<'_> {
 
     pub(crate) fn label(&self) -> &'static str {
         match self {
-            Line::Fact { label, .. } => label,
-            Line::Wait(_) => "waiting for",
+            ItemLine::Fact { label, .. } => label,
+            ItemLine::Wait(_) => "waiting for",
+        }
+    }
+}
+
+impl Line<'_> {
+    fn label(&self) -> &'static str {
+        match self {
+            Line::Item(line) => line.label(),
             Line::InFlight(_) => "run in flight",
             Line::Past(_) => "past run",
         }
@@ -624,8 +637,8 @@ impl Line<'_> {
 
     fn render(&self, paint: Paint) -> String {
         let shown = match self {
-            Line::Fact { phrase, .. } => phrase.to_string(),
-            Line::Wait(wait) => describe_wait(wait).to_string(),
+            Line::Item(ItemLine::Fact { phrase, .. }) => phrase.to_string(),
+            Line::Item(ItemLine::Wait(wait)) => describe_wait(wait).to_string(),
             Line::InFlight(run) => run.render(paint),
             Line::Past(run) => runs::render_run(run, paint),
         };
@@ -656,20 +669,21 @@ impl Answer {
     }
 
     /// What `explain` shows of the item, after its number and title.
-    pub(crate) fn lines(&self) -> Vec<Line<'_>> {
+    fn lines(&self) -> Vec<Line<'_>> {
         let runs = match self {
             Answer::Managed(explanation) => &explanation.runs,
             Answer::LeftAlone(left_alone) => &left_alone.runs,
         };
-        let mut lines = self.lines_without_runs();
-        lines.extend(runs.lines());
-        lines
+        self.lines_without_runs()
+            .into_iter()
+            .map(Line::Item)
+            .chain(runs.lines())
+            .collect()
     }
 
     /// [`Answer::lines`] up to its runs: the item's facts and waits, without
     /// the run in flight, the past runs and how many were left out.
-    #[allow(dead_code, reason = "the item page's runs table is to call it")]
-    pub(crate) fn lines_without_runs(&self) -> Vec<Line<'_>> {
+    pub(crate) fn lines_without_runs(&self) -> Vec<ItemLine<'_>> {
         match self {
             Answer::Managed(explanation) => explanation_lines(explanation),
             Answer::LeftAlone(left_alone) => left_alone_lines(left_alone),
@@ -677,7 +691,7 @@ impl Answer {
     }
 }
 
-fn left_alone_lines(left_alone: &LeftAlone) -> Vec<Line<'_>> {
+fn left_alone_lines(left_alone: &LeftAlone) -> Vec<ItemLine<'_>> {
     let closed = || Phrase::from("it is closed");
     let (state, why) = match &left_alone.item {
         LeftAloneItem::Issue(LeftAloneIssue::Closed) => ("closed issue", closed()),
@@ -704,13 +718,13 @@ fn left_alone_lines(left_alone: &LeftAlone) -> Vec<Line<'_>> {
         .family
         .lines()
         .chain([
-            Line::Fact {
+            ItemLine::Fact {
                 label: "state",
                 phrase: with_stall(state.into(), left_alone.stalled),
                 tone,
             },
-            Line::fact("last read", Phrase::default().time(left_alone.last_read)),
-            Line::fact("left alone", why),
+            ItemLine::fact("last read", Phrase::default().time(left_alone.last_read)),
+            ItemLine::fact("left alone", why),
         ])
         .collect()
 }
@@ -727,7 +741,7 @@ fn with_stall(state: Phrase, stalled: bool) -> Phrase {
 /// What Linewright waits for on an item it acts on at its next poll.
 pub(crate) const NOTHING_WAITED_FOR: &str = "nothing: Linewright acts on it at its next poll";
 
-fn explanation_lines(explanation: &Explanation) -> Vec<Line<'_>> {
+fn explanation_lines(explanation: &Explanation) -> Vec<ItemLine<'_>> {
     let (state, tone) = match &explanation.standing {
         Standing::PullRequest { review, .. } | Standing::Item(ItemState::InReview(review)) => {
             (review.describe(), review.ci.tone())
@@ -737,20 +751,20 @@ fn explanation_lines(explanation: &Explanation) -> Vec<Line<'_>> {
     let nothing = explanation
         .waiting_for
         .is_empty()
-        .then(|| Line::fact("waiting for", NOTHING_WAITED_FOR.into()));
+        .then(|| ItemLine::fact("waiting for", NOTHING_WAITED_FOR.into()));
     explanation
         .family
         .lines()
         .chain([
-            Line::Fact {
+            ItemLine::Fact {
                 label: "state",
                 phrase: with_stall(state, explanation.stalled),
                 tone,
             },
-            Line::fact("last read", Phrase::default().time(explanation.last_read)),
+            ItemLine::fact("last read", Phrase::default().time(explanation.last_read)),
         ])
         .chain(nothing)
-        .chain(explanation.waiting_for.iter().map(Line::Wait))
+        .chain(explanation.waiting_for.iter().map(ItemLine::Wait))
         .collect()
 }
 

@@ -167,8 +167,8 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
     let web = Web::start(world).await;
-    eventually_shown(&web, "/items/1", |lines| {
-        lines.iter().any(|line| line.starts_with("run in flight: "))
+    web.eventually_page("/items/1", |html| {
+        has_run(&runs_shown(html), "in flight", "1/triage-1")
     })
     .await;
 

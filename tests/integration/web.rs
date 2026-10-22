@@ -224,20 +224,6 @@ fn assert_no_status_by_colour_alone(html: &Html) {
     }
 }
 
-async fn eventually_shown(web: &Web, path: &str, shown: impl Fn(&[String]) -> bool) -> Html {
-    let waited = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let html = web.page(path).await;
-            if shown(&item_lines(&html)) {
-                return html;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await;
-    waited.expect("shown in time")
-}
-
 /// The data of each event the stream at `path` sends.
 async fn stream(web: &Web, path: &str) -> tokio::sync::mpsc::UnboundedReceiver<String> {
     let response = web.get_from("localhost", path).await;
@@ -286,7 +272,58 @@ fn regions(event: &str) -> Vec<(String, Html)> {
         .collect()
 }
 
-/// The runs page's lines, as a reader reads them.
-fn runs_shown(html: &Html) -> Vec<String> {
-    select(html, "#runs li").into_iter().map(text).collect()
+/// The column heads of the table of runs, as a reader reads them.
+fn runs_heads(html: &Html) -> Vec<String> {
+    select(html, "#runs thead th")
+        .into_iter()
+        .map(text)
+        .collect()
+}
+
+/// Each row of the table of runs, cell by cell, as a reader reads them.
+fn runs_shown(html: &Html) -> Vec<Vec<String>> {
+    select(html, "#runs tbody tr")
+        .into_iter()
+        .map(|row| {
+            row.select(&Selector::parse("td, th").unwrap())
+                .map(text)
+                .collect()
+        })
+        .collect()
+}
+
+/// Whether `rows` holds the run `id` with the outcome `outcome`.
+fn has_run(rows: &[Vec<String>], outcome: &str, id: &str) -> bool {
+    rows.iter()
+        .any(|row| row.len() > 1 && row[0] == outcome && row[1] == id)
+}
+
+/// The classes of the elements `selector` matches.
+fn classes<'a>(html: &'a Html, selector: &str) -> Vec<Vec<&'a str>> {
+    select(html, selector)
+        .into_iter()
+        .map(|element| element.value().classes().collect())
+        .collect()
+}
+
+/// Records run `n` of #`item`'s triage as started at `started_at` and never
+/// ended nor in flight: interrupted, as when its process died.
+fn record_interrupted(web: &Web, item: u64, n: u32, started_at: &str) {
+    let dir = web
+        ._dir
+        .path()
+        .join("work")
+        .join(REPO)
+        .join("runs/items")
+        .join(item.to_string());
+    std::fs::create_dir_all(&dir).unwrap();
+    let record = serde_json::json!({
+        "item": item,
+        "stage": "triage",
+        "n": n,
+        "started_at": started_at,
+        "end": null,
+        "sessions": [],
+    });
+    std::fs::write(dir.join(format!("triage-{n}.json")), record.to_string()).unwrap();
 }

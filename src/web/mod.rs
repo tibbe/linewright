@@ -7,6 +7,7 @@ mod html;
 mod item_page;
 mod run_page;
 mod runs_page;
+mod runs_table;
 mod server_page;
 
 use automations_page::{Automations, LastRun};
@@ -283,7 +284,7 @@ impl Hold {
                 "/server".into()
             }
             Hold::UnparsedAutomation(_) => "/automations".into(),
-            Hold::AutomationFailed { run, .. } => runs_page::run_path(run),
+            Hold::AutomationFailed { run, .. } => run_path(run),
         }
     }
 }
@@ -384,6 +385,11 @@ fn samples() -> tokio::time::Interval {
     let mut samples = tokio::time::interval(SAMPLED_EVERY);
     samples.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     samples
+}
+
+/// The path of run `id`'s page.
+fn run_path(id: &RunId) -> String {
+    format!("/runs/{id}")
 }
 
 /// `path` with `query`, if there is one.

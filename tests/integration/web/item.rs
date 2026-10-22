@@ -104,17 +104,21 @@ async fn the_item_page_of_no_item_says_there_is_none() {
 }
 
 #[tokio::test]
-async fn the_item_page_shows_the_run_in_flight_ticking_and_then_the_run_past() {
+async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run_past() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
     let web = Web::start(world).await;
 
-    let in_flight = "run in flight: 1/triage-1: #1 triage, running for ";
-    let running_html = eventually_shown(&web, "/items/1", |lines| {
-        lines.iter().any(|line| line.starts_with(in_flight))
-    })
-    .await;
-    let running = select(&running_html, "#item li time[data-since]");
+    let running_html = web
+        .eventually_page("/items/1", |html| {
+            has_run(&runs_shown(html), "in flight", "1/triage-1")
+        })
+        .await;
+    assert_eq!(
+        runs_heads(&running_html),
+        ["Outcome", "Run", "Stage", "Started", "Duration"]
+    );
+    let running = select(&running_html, "#runs tbody td:last-child time[data-since]");
     assert!(
         running.first().is_some_and(|time| time
             .attr("data-since")
@@ -123,21 +127,122 @@ async fn the_item_page_shows_the_run_in_flight_ticking_and_then_the_run_past() {
         "{}",
         running_html.html()
     );
-    let status: Vec<String> = select(&running_html, "#item .tone")
-        .into_iter()
-        .map(text)
-        .collect();
-    assert!(status.contains(&"run in flight".to_string()), "{status:?}");
+    let facts = item_lines(&running_html);
+    assert!(
+        !facts.iter().any(|line| line.starts_with("run in flight")),
+        "{facts:?}"
+    );
 
     drop(agent);
-    let past = "past run: 1/triage-1: done — #1 triage, started ";
-    let html = eventually_shown(&web, "/items/1", |lines| {
-        lines.iter().any(|line| line.starts_with(past))
-    })
-    .await;
-    let done: Vec<ElementRef> = select(&html, "#item .tone.badge-success");
+    let html = web
+        .eventually_page("/items/1", |html| {
+            has_run(&runs_shown(html), "done", "1/triage-1")
+        })
+        .await;
+    let shown = runs_shown(&html);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0][..3], ["done", "1/triage-1", "triage"]);
+    let done: Vec<ElementRef> = select(&html, "#runs .tone.badge-success");
     assert_eq!(done.into_iter().map(text).collect::<Vec<_>>(), ["done"]);
+    let lines = item_lines(&html);
+    assert!(
+        !lines.iter().any(|line| line.starts_with("past run")),
+        "{lines:?}"
+    );
     assert_no_status_by_colour_alone(&html);
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_page_shows_the_latest_ten_runs_and_links_the_rest_to_the_runs_page() {
+    let web = Web::start(with_ticket().await).await;
+    for n in 1..=12 {
+        record_interrupted(&web, 1, n, &format!("2026-10-01T{:02}:00:00Z", n - 1));
+    }
+
+    let html = web.page("/items/1").await;
+
+    let shown = runs_shown(&html);
+    assert_eq!(shown.len(), 11, "{shown:?}");
+    assert_eq!(
+        shown[0],
+        [
+            "interrupted",
+            "1/triage-12",
+            "triage",
+            "2026-10-01 11:00:00 UTC",
+            ""
+        ]
+    );
+    assert_eq!(shown[9][1], "1/triage-3");
+    assert_eq!(shown[10], ["left out: 2 earlier runs; show them all"]);
+    let last = select(&html, "#runs tbody tr:last-child > td");
+    assert_eq!(last[0].attr("colspan"), Some("5"));
+    let more = select(&html, "#runs tbody tr:last-child a");
+    assert_eq!(more[0].attr("href"), Some("/runs?item=1"));
+    let tables = classes(&html, "#runs .scroll-box > table");
+    assert!(
+        tables[0].contains(&"table") && tables[0].contains(&"table-pin-rows"),
+        "{tables:?}"
+    );
+    assert_eq!(select(&html, "#item ~ #runs .scroll-box").len(), 1);
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_page_of_an_item_with_no_runs_says_so() {
+    let web = Web::start(with_ticket().await).await;
+
+    let html = web.page("/items/1").await;
+
+    assert_eq!(text(select(&html, "#runs")[0]), "No runs");
+    assert_eq!(
+        select(&html, "#runs table"),
+        [] as [scraper::ElementRef<'_>; 0]
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_pages_stream_sends_the_runs_of_an_item_linewright_leaves_as_they_change() {
+    let world = with_ticket().await;
+    let closed = world
+        .store
+        .open_issue("maintainer", "Old idea", "Maybe.", &["ready-for-agent"]);
+    world.store.close_issue_as_completed(closed).unwrap();
+    let web = Web::start(world).await;
+    let mut events = stream(&web, &format!("/events/items/{}", closed.0)).await;
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let none = regions(&first)
+        .into_iter()
+        .find(|(id, _)| id == "runs")
+        .map(|(_, html)| text(select(&html, "#runs")[0]));
+    assert_eq!(none.as_deref(), Some("No runs"));
+
+    record_interrupted(&web, closed.0, 1, "2026-10-01T11:00:00Z");
+    let changed = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let runs = regions(&changed)
+        .into_iter()
+        .find(|(id, _)| id == "runs")
+        .map(|(_, html)| runs_shown(&html))
+        .expect("the runs' region");
+    assert_eq!(
+        runs,
+        [[
+            "interrupted",
+            &format!("{}/triage-1", closed.0),
+            "triage",
+            "2026-10-01 11:00:00 UTC",
+            ""
+        ]]
+    );
     web.stop().await;
 }
 
@@ -151,7 +256,7 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["status-line", "holds", "item"]);
+    assert_eq!(ids, ["status-line", "holds", "item", "runs"]);
     let quiet = tokio::time::timeout(Duration::from_millis(2500), events.recv()).await;
     assert!(quiet.is_err(), "sent with nothing changed: {quiet:?}");
 
@@ -188,8 +293,8 @@ async fn the_item_pages_stream_sends_nothing_when_its_runs_agent_produces_output
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
     let web = Web::start(world).await;
-    eventually_shown(&web, "/items/1", |lines| {
-        lines.iter().any(|line| line.starts_with("run in flight: "))
+    web.eventually_page("/items/1", |html| {
+        has_run(&runs_shown(html), "in flight", "1/triage-1")
     })
     .await;
     let mut events = stream(&web, "/events/items/1").await;

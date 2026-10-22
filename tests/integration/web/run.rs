@@ -46,12 +46,10 @@ async fn run_page_of_implemented() -> (Web, Html) {
     let web = Web::start(implemented_as_recorded().await).await;
     let html = web
         .eventually_page("/runs?item=1", |html| {
-            runs_shown(html)
-                .iter()
-                .any(|run| run.starts_with("1/implement-1: done"))
+            has_run(&runs_shown(html), "done", "1/implement-1")
         })
         .await;
-    let link = select(&html, "#runs li a")[0]
+    let link = select(&html, "#runs tbody a")[0]
         .attr("href")
         .unwrap()
         .to_string();
@@ -336,9 +334,7 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     agent.writes(&turn[7..].concat());
     drop(agent);
     web.eventually_page("/runs?item=1", |html| {
-        runs_shown(html)
-            .iter()
-            .any(|run| run.starts_with("1/triage-1: done"))
+        has_run(&runs_shown(html), "done", "1/triage-1")
     })
     .await;
     let rest = transcript_events(&mut events, |sent| {
@@ -479,7 +475,7 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
     let runs = web.page("/runs").await;
     let html = web.page("/runs/weekly/1").await;
 
-    let links: Vec<&str> = select(&runs, "#runs li a")
+    let links: Vec<&str> = select(&runs, "#runs tbody td:nth-child(2) a")
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();

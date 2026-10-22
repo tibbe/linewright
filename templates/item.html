@@ -1,7 +1,8 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- block main -%}
-<section id="item">
+{% block item -%}
+<section id="item" class="mb-4">
 <h1>{{ item.heading|safe }}: {{ item.title }}</h1>
 <ul class="lines space-y-1">
 {%- for line in item.lines %}
@@ -11,11 +12,15 @@
 {{ label }}: {% if let Some(tone) = tone %}{% call ui::status(tone, phrase) %}{% endcall %}{% else %}{{ phrase|safe }}{% endif %}
 {%- when LineShown::Status { label, tone, phrase } -%}
 {% call ui::status(tone, label) %}{% endcall %}: {{ phrase|safe }}
-{%- when LineShown::Past { label, run, outcome, word, about } -%}
-{{ label }}: {{ run|safe }}: {% call ui::status(outcome, word) %}{% endcall %} — {{ about|safe }}
 {%- endmatch -%}
 </li>
 {%- endfor %}
 </ul>
 </section>
+{%- endblock %}
+{% block runs -%}
+<section id="runs" class="flex min-h-0 flex-1 flex-col">
+{%- call ui::runs(runs) %}{% endcall %}
+</section>
+{%- endblock %}
 {%- endblock -%}

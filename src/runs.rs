@@ -950,14 +950,23 @@ pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
 pub(crate) fn describe_run(run: &Run) -> Phrase {
     let phrase =
         describe_of(&run.id.of).then(describe_start(run.started().by_hand(), run.started_at));
+    match duration(run) {
+        Some(duration) => phrase.text(", ran ").then(duration),
+        None => phrase,
+    }
+}
+
+/// How long a run ran, running on while it is in flight; `None` for an
+/// interrupted run, which ran for no known time.
+pub(crate) fn duration(run: &Run) -> Option<Phrase> {
     match run.outcome {
         Outcome::Ended { seconds, .. } => {
-            phrase.text(", ran ").duration(non_negative(seconds), None)
+            Some(Phrase::default().duration(non_negative(seconds), None))
         }
-        Outcome::InFlight { seconds } => phrase
-            .text(", ran ")
-            .duration(non_negative(seconds), Some(run.started_at)),
-        Outcome::Interrupted => phrase,
+        Outcome::InFlight { seconds } => {
+            Some(Phrase::default().duration(non_negative(seconds), Some(run.started_at)))
+        }
+        Outcome::Interrupted => None,
     }
 }
 

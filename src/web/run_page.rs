@@ -19,8 +19,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use super::html;
-use super::runs_page::run_path;
-use super::{ErrorPage, Frame, Page, Sent, frame_regions, render, samples, unanswered, with_query};
+use super::{
+    ErrorPage, Frame, Page, Sent, frame_regions, render, run_path, samples, unanswered, with_query,
+};
 use crate::api::{EventId, Sources};
 use crate::domain::Timestamp;
 use crate::logs::{Following, LogsError, Which};

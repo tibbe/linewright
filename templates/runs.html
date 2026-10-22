@@ -15,23 +15,8 @@
 <button class="btn btn-sm btn-primary">Show</button>
 </form>
 {% block runs -%}
-<section id="runs">
-{%- match runs %}
-{%- when RunsShown::Listed { runs, left_out } %}
-{%- if runs.is_empty() %}
-<p>no runs</p>
-{%- endif %}
-<ul class="lines space-y-1">
-{%- for run in runs %}
-<li><a class="link link-hover" href="{{ run.href }}">{{ run.id|safe }}</a>: {% call ui::status(run.tone, run.word) %}{% endcall %} — {{ run.about|safe }}</li>
-{%- endfor %}
-{%- if let Some(left_out) = left_out %}
-<li class="left-out">left out: {{ left_out.earlier }}; <a class="link" href="{{ left_out.href }}">show them all</a></li>
-{%- endif %}
-</ul>
-{%- when RunsShown::Unlisted(error) %}
-<p>{{ error }}</p>
-{%- endmatch %}
+<section id="runs" class="flex min-h-0 flex-1 flex-col">
+{%- call ui::runs(runs) %}{% endcall %}
 </section>
 {%- endblock %}
 {%- endblock -%}

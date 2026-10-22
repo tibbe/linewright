@@ -1134,6 +1134,34 @@ pub enum IssueCloseReason {
     Duplicate,
 }
 
+/// An item as a snapshot holds it, of whichever kind.
+enum Held<'a> {
+    Issue(&'a Issue),
+    Pull(&'a Pull),
+    Merged(&'a MergedPull),
+    Closed(&'a ClosedItem),
+}
+
+impl<'a> Held<'a> {
+    fn title(self) -> &'a str {
+        match self {
+            Held::Issue(issue) => &issue.title,
+            Held::Pull(pull) => &pull.title,
+            Held::Merged(merged) => &merged.title,
+            Held::Closed(closed) => &closed.title,
+        }
+    }
+
+    fn updated_at(self) -> Timestamp {
+        match self {
+            Held::Issue(issue) => issue.updated_at,
+            Held::Pull(pull) => pull.updated_at,
+            Held::Merged(merged) => merged.updated_at,
+            Held::Closed(closed) => closed.updated_at,
+        }
+    }
+}
+
 impl Snapshot {
     pub fn issue(&self, number: Number) -> Option<&Issue> {
         self.issues.iter().find(|i| i.number == number)
@@ -1155,23 +1183,30 @@ impl Snapshot {
             || self.merged_pull(number).is_some_and(MergedPull::is_stalled)
     }
 
+    /// The title of #`number`, of the issues, pull requests, merged ones and
+    /// closed items the snapshot holds.
+    pub fn title(&self, number: Number) -> Option<&str> {
+        self.held(number).next().map(Held::title)
+    }
+
     /// When GitHub last updated #`number`, of the issues, pull requests,
     /// merged ones and closed items the snapshot holds.
     pub fn updated_at(&self, number: Number) -> Option<Timestamp> {
-        let issue = self.issue(number).map(|issue| issue.updated_at);
-        let pull = self.pull(number).map(|pull| pull.updated_at);
-        let merged = self.merged_pull(number).map(|merged| merged.updated_at);
+        self.held(number).map(Held::updated_at).max()
+    }
+
+    /// Each issue, pull request, merged one and closed item the snapshot
+    /// holds as #`number`.
+    fn held(&self, number: Number) -> impl Iterator<Item = Held<'_>> {
+        let issue = self.issue(number).map(Held::Issue);
+        let pull = self.pull(number).map(Held::Pull);
+        let merged = self.merged_pull(number).map(Held::Merged);
         let closed = self
             .closed
             .iter()
-            .filter(|item| item.number == number)
-            .map(|item| item.updated_at);
-        issue
-            .into_iter()
-            .chain(pull)
-            .chain(merged)
-            .chain(closed)
-            .max()
+            .filter(move |item| item.number == number)
+            .map(Held::Closed);
+        issue.into_iter().chain(pull).chain(merged).chain(closed)
     }
 
     pub fn pulls_closing(&self, issue: &Issue) -> Vec<ClosingPull> {

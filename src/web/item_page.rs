@@ -9,10 +9,11 @@ use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
 use super::html::{self, Html};
+use super::runs_table::RunsShown;
 use super::{ErrorPage, Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::domain::Number;
-use crate::explain::{self, Line};
+use crate::explain::{self, ItemLine};
 use crate::phrase::{Phrase, Tone};
 use crate::runs;
 use crate::status;
@@ -32,51 +33,33 @@ enum LineShown {
         tone: Option<Tone>,
         phrase: Html,
     },
-    /// A wait or a run in flight, whose label is its status.
+    /// A wait, whose label is its status.
     Status {
         label: &'static str,
         tone: Tone,
         phrase: Html,
     },
-    Past {
-        label: &'static str,
-        run: Html,
-        outcome: Tone,
-        word: &'static str,
-        about: Html,
-    },
 }
 
 impl ItemShown {
+    /// Its runs are left to [`item_runs`], to show as a table.
     fn of(answer: &explain::Answer, repo: &str) -> ItemShown {
         let html = |phrase: &Phrase| html::phrase(phrase, repo);
         let lines = answer
-            .lines()
+            .lines_without_runs()
             .iter()
             .map(|line| {
                 let label = line.label();
                 match line {
-                    Line::Fact { phrase, tone, .. } => LineShown::Fact {
+                    ItemLine::Fact { phrase, tone, .. } => LineShown::Fact {
                         label,
                         tone: *tone,
                         phrase: html(phrase),
                     },
-                    Line::Wait(wait) => LineShown::Status {
+                    ItemLine::Wait(wait) => LineShown::Status {
                         label,
                         tone: Tone::Pending,
                         phrase: html(&status::describe_wait(wait)),
-                    },
-                    Line::InFlight(run) => LineShown::Status {
-                        label,
-                        tone: Tone::InProgress,
-                        phrase: html::escape(&format!("{}: ", run.id)).then(&html(&run.describe())),
-                    },
-                    Line::Past(run) => LineShown::Past {
-                        label,
-                        run: html::escape(&run.id.to_string()),
-                        outcome: run.outcome.tone(),
-                        word: run.outcome.word(),
-                        about: html(&runs::describe_run(run)),
                     },
                 }
             })
@@ -89,18 +72,41 @@ impl ItemShown {
     }
 }
 
+/// How many of an item's runs its page lists, the latest
+/// (`docs/specs/design_system.md`, Lists of runs).
+const RUNS_SHOWN: usize = 10;
+
+/// #`number`'s latest runs, from their records, whether or not Linewright
+/// manages it.
+fn item_runs(sources: &Sources, number: Number) -> RunsShown {
+    let query = runs::Query {
+        item: Some(number),
+        limit: Some(RUNS_SHOWN),
+        ..runs::Query::default()
+    };
+    let listed = runs::list(api::recorded_or_none(sources), &query, sources.clock.now());
+    RunsShown::of_item(listed, number, &sources.work_dir.repo)
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "item.html")]
 struct ItemPage {
     page: Page,
     frame: Frame,
     item: ItemShown,
+    runs: RunsShown,
 }
 
 #[derive(Template)]
-#[template(path = "item.html", block = "main")]
+#[template(path = "item.html", block = "item")]
 struct ItemRegion<'a> {
     item: &'a ItemShown,
+}
+
+#[derive(Template)]
+#[template(path = "item.html", block = "runs")]
+struct RunsRegion<'a> {
+    runs: &'a RunsShown,
 }
 
 pub(super) async fn item_page(
@@ -110,11 +116,13 @@ pub(super) async fn item_page(
     let page = Page::new(
         format!("{number} · {}", sources.work_dir.repo),
         format!("/events/items/{}", number.0),
-    );
+    )
+    .filling_the_viewport();
     let frame = Frame::of(&sources);
     match api::item_answer(&sources, number).await {
         Ok(answer) => ItemPage {
             item: ItemShown::of(&answer, &sources.work_dir.repo),
+            runs: item_runs(&sources, number),
             page,
             frame,
         }
@@ -133,8 +141,10 @@ fn error_page(page: Page, frame: Frame, e: &Unexplained) -> Response {
     (e.status(), page).into_response()
 }
 
-/// The item page's regions: the frame's, and the item as `serve`'s view
-/// explains it, without reading GitHub, when it holds the item.
+/// The item page's regions: the frame's, the item as `serve`'s view
+/// explains it, without reading GitHub, when it holds the item, and its runs
+/// from their records, so that they keep up whether or not the view holds
+/// it.
 pub(super) async fn item_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
@@ -149,6 +159,8 @@ pub(super) async fn item_events(
             let item = ItemShown::of(&answer, &sources.work_dir.repo);
             regions.push(("item", render(&ItemRegion { item: &item })));
         }
+        let runs = item_runs(&sources, number);
+        regions.push(("runs", render(&RunsRegion { runs: &runs })));
         regions
     };
     events(regions, stopping)

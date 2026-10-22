@@ -10,14 +10,14 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use super::html::{self, Html};
+use super::runs_table::RunsShown;
 use super::{Frame, Page, events, frame_regions, render, unanswered, with_query};
-use crate::api::Sources;
+use crate::api::{self, Sources};
 use crate::config::{self, Since};
 use crate::domain::{Number, Timestamp};
 use crate::phrase::Tone;
 use crate::reconcile::WorkKind;
-use crate::runs::{self, Run};
+use crate::runs;
 
 /// The form's fields as the reader filled them in, an empty one leaving the
 /// list unnarrowed by it.
@@ -148,71 +148,28 @@ impl Form {
     }
 }
 
-/// The list, ready for the page, or why there is none.
-enum RunsShown {
-    Listed {
-        runs: Vec<RunShown>,
-        left_out: Option<LeftOut>,
-    },
-    Unlisted(String),
-}
-
-/// A run as `runs` prints it, with its ID linking to its page.
-struct RunShown {
-    id: Html,
-    href: String,
-    tone: Tone,
-    word: &'static str,
-    about: Html,
-}
-
-impl RunShown {
-    fn of(run: &Run, repo: &str) -> RunShown {
-        RunShown {
-            id: html::escape(&run.id.to_string()),
-            href: run_path(&run.id),
-            tone: run.outcome.tone(),
-            word: run.outcome.word(),
-            about: html::phrase(&runs::describe_run(run), repo),
+/// The runs as the narrowing lists them, or why they are not listed, and
+/// the status the page answers with.
+fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
+    let now = sources.clock.now();
+    let query = match &narrowing.narrowed {
+        Ok(narrowed) => narrowed.query(now),
+        Err(e) => return (StatusCode::BAD_REQUEST, RunsShown::Unlisted(e.clone())),
+    };
+    match runs::answer(&sources.work_dir, &query, now) {
+        Ok(listing) => {
+            let view = api::view(sources);
+            let runs = RunsShown::all(
+                &listing,
+                view.as_ref().map(|view| &*view.snapshot),
+                &sources.work_dir.repo,
+                narrowing.path("/runs", false),
+            );
+            (StatusCode::OK, runs)
         }
-    }
-}
-
-pub(super) fn run_path(id: &runs::RunId) -> String {
-    format!("/runs/{id}")
-}
-
-/// How many runs a cut list left out, and the whole list.
-struct LeftOut {
-    earlier: String,
-    href: String,
-}
-
-impl RunsShown {
-    fn of(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
-        let now = sources.clock.now();
-        let query = match &narrowing.narrowed {
-            Ok(narrowed) => narrowed.query(now),
-            Err(e) => return (StatusCode::BAD_REQUEST, RunsShown::Unlisted(e.clone())),
-        };
-        match runs::answer(&sources.work_dir, &query, now) {
-            Ok(listing) => {
-                let repo = &sources.work_dir.repo;
-                let left_out = (listing.left_out > 0).then(|| LeftOut {
-                    earlier: runs::earlier_runs(listing.left_out),
-                    href: narrowing.path("/runs", false),
-                });
-                let runs = listing
-                    .runs
-                    .iter()
-                    .map(|run| RunShown::of(run, repo))
-                    .collect();
-                (StatusCode::OK, RunsShown::Listed { runs, left_out })
-            }
-            Err(e) => {
-                let (status, error) = unanswered(e);
-                (status, RunsShown::Unlisted(error))
-            }
+        Err(e) => {
+            let (status, error) = unanswered(e);
+            (status, RunsShown::Unlisted(error))
         }
     }
 }
@@ -237,12 +194,13 @@ pub(super) async fn runs_page(
     Query(fields): Query<Fields>,
 ) -> Response {
     let narrowing = Narrowing::of(&fields);
-    let (status, runs) = RunsShown::of(&sources, &narrowing);
+    let (status, runs) = listed(&sources, &narrowing);
     let page = RunsPage {
         page: Page::new(
             format!("Runs · {}", sources.work_dir.repo),
             narrowing.path("/events/runs", true),
-        ),
+        )
+        .filling_the_viewport(),
         frame: Frame::of(&sources),
         form: Form::of(&narrowing.fields),
         runs,
@@ -260,7 +218,7 @@ pub(super) async fn runs_events(
     let narrowing = Narrowing::of(&fields);
     let regions = move || {
         let mut regions = frame_regions(&Frame::of(&sources));
-        let (_, runs) = RunsShown::of(&sources, &narrowing);
+        let (_, runs) = listed(&sources, &narrowing);
         regions.push(("runs", render(&RunsRegion { runs: &runs })));
         regions
     };

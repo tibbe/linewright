@@ -115,14 +115,6 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
     web.stop().await;
 }
 
-/// The classes of the elements `selector` matches.
-fn classes<'a>(html: &'a Html, selector: &str) -> Vec<Vec<&'a str>> {
-    select(html, selector)
-        .into_iter()
-        .map(|element| element.value().classes().collect())
-        .collect()
-}
-
 #[tokio::test]
 async fn the_automations_table_pins_its_heads_in_a_box_scrolling_both_ways_under_the_unparsed_files()
  {
