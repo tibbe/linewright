@@ -36,6 +36,16 @@
   the lane they are in under them.
 - A card's title is on at most two lines, and whole on hover.
 
+## Tables
+
+- As the reader scrolls, a table's column heads stay at the top.
+- A title in a table is on one line, and whole on hover.
+
+## Layout
+
+- Content wider than the page scrolls sideways on its own, not the page with
+  it.
+
 ## Colour scheme
 
 - Light or dark follows the reader's preference.
@@ -49,8 +59,8 @@ someone scanning a page, in the UI's own words rather than a command's.
 | Page        | Path           | Shows                                                       |
 | ----------- | -------------- | ----------------------------------------------------------- |
 | board       | `/`            | the managed items as cards ([The board](#the-board))        |
-| item        | `/items/N`     | where #N stands, what it waits for and its runs             |
-| runs        | `/runs`        | what `runs` lists, with its narrowing as filters            |
+| item        | `/items/N`     | where #N stands, what it waits for and its runs ([Lists of runs](#lists-of-runs)) |
+| runs        | `/runs`        | what `runs` lists, with its narrowing as filters ([Lists of runs](#lists-of-runs)) |
 | run         | `/runs/ID`     | what `logs` shows of run ID ([The run page](#the-run-page))  |
 | automations | `/automations` | the automations ([The automations page](#the-automations-page)) |
 | server      | `/server`      | the facts about Linewright itself, as `status` shows them   |
@@ -161,6 +171,25 @@ What stops a pull request merging, in the order the line picks from:
 | "behind main", naming the default branch                  | it is behind the default branch            |
 | "draft"                                                   | it is a draft                              |
 | "changes requested", "review required" or "approved"      | the review decision, as GitHub words it    |
+
+### Lists of runs
+
+A list of runs is a table with a row per run, newest first.
+
+| Column   | Holds                                                                                                                  |
+| -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Outcome  | the run's outcome                                                                                                      |
+| Run      | the run ID, linking to the run page                                                                                    |
+| Item     | the item's number, and its title where Linewright knows it; for an automation's run, "automation" and its name, linking to the automations page |
+| Stage    | the run's stage                                                                                                        |
+| Started  | when the run started, with an automation's run by hand marked there                                                    |
+| Duration | the run's duration                                                                                                     |
+
+- **On the item page.** The list leaves out the Item column.
+- **No runs.** "No runs" stands in place of the table.
+- **A cut list.** The item page shows #N's latest ten runs. A last row,
+  across the table, says how many earlier runs were left out and links to the
+  runs page narrowed to #N.
 
 ### The run page
 

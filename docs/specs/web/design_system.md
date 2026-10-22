@@ -26,5 +26,9 @@ unchanged.
 ## Board
 
 - The columns share the board's width, each at least 200px, and all six fit
-  beside the navigation rail from 1440px wide. Where they do not fit, the
-  board scrolls sideways on its own, not the page with it.
+  beside the navigation rail from 1440px wide.
+
+## Tables
+
+- **A table** is a daisyUI `table`, its column heads pinned.
+- **"By hand"** is a daisyUI `badge`.
