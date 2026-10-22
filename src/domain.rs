@@ -794,8 +794,7 @@ pub enum Item {
     Pull(Number),
 }
 
-/// Whether a hand-back is a stall (`GLOSSARY.md`, **Stall**): the work
-/// failed and no decision is wanted.
+/// Whether a hand-back is a stall (`GLOSSARY.md`, **Stall**).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandBackKind {
     /// Labels the item [`label::STALLED`] (`docs/specs/repository.md`,
