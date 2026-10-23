@@ -25,10 +25,20 @@
 
 ## Time
 
-- A past time is shown relative, such as "5 min ago", keeping up as time
-  passes, with the absolute time in the reader's time zone shown on hover.
-- A future time is shown absolute, in the reader's time zone.
-- A duration reads the same on every page.
+- **Past times.** A past time is shown relative, in words and rounded down
+  to whole minutes, hours or days, such as "5 minutes ago", keeping up as
+  time passes, with the absolute time in the reader's time zone shown on
+  hover. Under a minute it is "just now", and past 30 days it is the date,
+  such as "on Sep 12", with the year when it is not this year, such as "on
+  Sep 12, 2025".
+- **Future times.** A future time is shown absolute, in the reader's time
+  zone.
+- **Durations.** A run's duration is shown in narrow units, to its two
+  largest units that are not zero, such as "45s", "1m 43s", "3h 2m" or
+  "1d 5m", and "0s" under a second, keeping up as time passes for a run in
+  flight.
+- **Waiting.** How long anything else has gone on is shown as when it
+  began, a past time.
 
 ## Status
 
@@ -144,7 +154,7 @@ order:
 
 A card is the item's number and title and, under them, at most one line that
 says what its column does not: what sets the item apart from the rest of its
-column, what a person acts on, or how long it has sat. A card with nothing
+column, what a person acts on, or since when it has sat. A card with nothing
 to add is the title alone.
 
 - **Pull requests.** A card that is a pull request carries a pull request
@@ -152,8 +162,8 @@ to add is the title alone.
 - **The first that holds.** Where more than one row of a column holds, the
   line is the first.
 - **When.** In Done, the line ends with when the item closed. In Triage,
-  Needs a person and Ready, it ends with how long the item has been in its
-  column, or since it was created where that is not known.
+  Needs a person and Ready, it ends with when the item entered its column,
+  or when it was created where that is not known.
 
 | Column         | The line                                                                                                                                                                                                                                                               | When                                                                                                                                                    |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -168,7 +178,7 @@ to add is the title alone.
 |                | "paused for the usage limit", "paused for the drain"                                                                                                                                                                                                                   | it would start, but for the hold                                                                                                                        |
 |                | "queued"                                                                                                                                                                                                                                                               | it would start, but the runs in flight are at `max-runs`                                                                                                |
 |                | nothing but the time                                                                                                                                                                                                                                                   | otherwise: the next poll acts on it                                                                                                                     |
-| Working        | its stage and how long it has run, "implementation · 12 min"                                                                                                                                                                                                           | a run is in flight                                                                                                                                      |
+| Working        | its stage and how long it has run, "implementation · 12m"                                                                                                                                                                                                              | a run is in flight                                                                                                                                      |
 |                | "paused for the usage limit", "paused for the drain", "queued"                                                                                                                                                                                                         | no run is in flight, as in Ready                                                                                                                        |
 | In review      | its pull request, where the card is not the pull request itself, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" |
 | Done           | "closed in #42"                                                                                                                                                                                                                                                        | an issue closed by a merged pull request                                                                                                                |

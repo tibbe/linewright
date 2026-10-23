@@ -119,11 +119,13 @@ that started a session.
 - **Sessions and turns.** The transcript shows each of the run's sessions in
   order, and marks each turn after the first with the follow-up that started
   it.
-- **Lines.** Each line starts with the time since its session started. The
-  agent's messages show in full. Each tool call shows on one line: the tool,
-  its main argument and a short account of its result, such as the lines
-  read or the exit status, or `running` while the call has not returned. A
-  sub-agent's work shows indented under the call that started it.
+- **Lines.** Each line starts with the time since its session started, as
+  h:mm:ss with the hours left out under an hour, such as `2:10` or
+  `1:02:10`. The agent's messages show in full. Each tool call shows on one
+  line: the tool, its main argument and a short account of its result, such
+  as the lines read or the exit status, or `running` while the call has not
+  returned. A sub-agent's work shows indented under the call that started
+  it.
 - **`--verbose`.** It shows everything the transcript holds, including the
   agent's thinking, each tool's full input and result, and the brief and
   follow-ups.
