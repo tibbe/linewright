@@ -162,6 +162,9 @@ image the operator builds with those in it.
 
 - **TLS.** Linewright listens over plain HTTP; TLS, where wanted, is a
   reverse proxy's in front.
+- **Behind a proxy.** Event streams ask a reverse proxy in front to pass each
+  event on as it is sent, unchanged, and to keep no copy, and send something
+  at least every 15 seconds, so that the proxy never closes one as idle.
 - **The shell.** Agents' commands run in `bash`, whatever shell the operator
   uses.
 - **As installed.** A session never updates the harness, in the background
