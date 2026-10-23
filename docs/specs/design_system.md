@@ -71,6 +71,16 @@ someone scanning a page, in the UI's own words rather than a command's.
 | automations | `/automations` | the automations ([The automations page](#the-automations-page)) |
 | server      | `/server`      | the facts about Linewright itself ([The server page](#the-server-page)) |
 
+### Serving
+
+`serve` serves the web UI on `ui-address`, a host and port, and serves none
+when `ui-address` is empty.
+
+- **Requests answered.** Only those whose `Host` is local
+  ([The local API](architecture.md#the-local-api)), an IP address or one of
+  `ui-hosts`, each compared ignoring case, port and a trailing dot. The
+  others get 421 Misdirected Request.
+
 ### Navigation
 
 | Part        | Holds                                                     |
@@ -242,5 +252,6 @@ The server page shows the facts about Linewright itself.
 
 ## Out of scope
 
+- A login of Linewright's own for the web UI.
 - A layout of the board for narrow screens.
 - Acting from the UI on `serve` or on the work.

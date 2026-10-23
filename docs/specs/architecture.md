@@ -134,9 +134,9 @@ Automations sit beside the pipeline.
 repository, its runs and their transcripts, and takes the operator's requests
 of it, such as a drain.
 
-- **Clients.** The monitoring commands, `drain` and the web UI are its
-  clients. The API must also be able to serve an MCP server, a `lw mcp`
-  subcommand on stdio that is a client of the socket.
+- **Clients.** The monitoring commands and `drain` are its clients. The API
+  must also be able to serve an MCP server, a `lw mcp` subcommand on stdio
+  that is a client of the socket.
 
 | aspect | decision |
 |---|---|
@@ -146,13 +146,15 @@ of it, such as a drain.
 | A transcript being followed | server-sent events, which a reader resumes by event id |
 | Access | file permissions: only `serve`'s user can open the socket |
 | The socket's path | derived from the repository, in a short per-user directory such as `$XDG_RUNTIME_DIR` |
-| Requests answered | only those whose `Host` is local |
+| Requests answered | only those whose `Host` is local: `localhost` or a loopback address, ignoring case, port and a trailing dot |
 
 ## The web UI
 
-`serve` serves the web UI itself, on the same socket as the local API, as
-HTML rendered on the server.
+`serve` serves the web UI itself, on a port of its own, as HTML rendered on
+the server.
 
+- **Access**: whoever reaches the port; who reaches it is the operator's to
+  restrict, such as with an authenticating proxy in front.
 - **Rendered on the server**: askama templates, with htmx; a live update is a
   server-sent event carrying an HTML fragment, one event stream per page.
 - **Styled with daisyUI**, on Tailwind.

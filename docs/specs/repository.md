@@ -169,10 +169,11 @@ Linewright records every outcome in a comment on the item it concerns.
 Linewright exits with an error at startup when it cannot work.
 
 - **Checks.** The token can push to the repository; the sessions' token, when
-  set, can read it; and, with `--auto-merge`, the repository allows the merge
+  set, can read it; with `--auto-merge`, the repository allows the merge
   method and the update method keeps the branch mergeable with it
   (`update-branch` `merge` cannot keep a branch rebase-mergeable); with
-  webhooks on, `serve` can listen on `webhook-address`; and `webhook-address`
-  is not set without the webhook secret.
+  webhooks on, `serve` can listen on `webhook-address`; `webhook-address` is
+  not set without the webhook secret; and, unless `ui-address` is empty,
+  `serve` can listen on it.
 - **One Linewright per repository.** A `serve` started for a repository whose
   `serve` already runs on the same host exits with an error saying so.

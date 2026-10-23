@@ -86,6 +86,8 @@ default.
 | `repo` (`owner/name`)                        | required                                    |
 | `poll-interval`                              | 60s                                         |
 | `webhook-address`                            | `0.0.0.0:8080`                              |
+| `ui-address`                                 | `127.0.0.1:8081`                            |
+| `ui-hosts` (host names)                      | none: local names only                      |
 | `spec-glob`                                  | `docs/**/*.md`                              |
 | `spec-lookback`                              | 7d                                          |
 | `max-runs`                                   | 4                                           |
@@ -153,6 +155,8 @@ Linewright runs wherever `git`, `bash`, the harness and the project's
 toolchain are on the path: directly on a machine, or in a container whose
 image the operator builds with those in it.
 
+- **TLS.** Linewright listens over plain HTTP; TLS, where wanted, is a
+  reverse proxy's in front.
 - **The shell.** Agents' commands run in `bash`, whatever shell the operator
   uses.
 - **As installed.** A session never updates the harness, in the background
@@ -160,9 +164,10 @@ image the operator builds with those in it.
   installed.
 - **The log.** The server logs each decision and action, readable for a
   person tailing it and structured (JSON lines) for machines, by the
-  `log-format` setting. With webhooks on, that includes the address it
-  listens on, each delivery and what it names, and each delivery refused and
-  why.
+  `log-format` setting. That includes, while it serves the web UI, its
+  address and each request it refuses and why, and, with webhooks on, the
+  address it listens on for them, each delivery and what it names, and each
+  delivery refused and why.
 - **Permissions.** Agents run without permission prompts; the container is
   the isolation when one is used.
 - **Systems.** Unix-like systems: Linux and macOS.

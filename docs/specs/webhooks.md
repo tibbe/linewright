@@ -32,9 +32,8 @@ Setting the webhook secret turns webhooks on.
   accept deliveries without one. A delivery whose signature is missing or
   does not match is refused and logged, and its response does not say why.
 - **Listening.** `serve` then also listens for deliveries on the
-  `webhook-address` setting, a host and port (default `0.0.0.0:8080`), over
-  plain HTTP; TLS, where wanted, is a reverse proxy's in front. `once`,
-  `status` and the other commands do not listen.
+  `webhook-address` setting, a host and port (default `0.0.0.0:8080`).
+  `once`, `status` and the other commands do not listen.
 - **Polling.** Polling continues at `poll-interval` with webhooks on: GitHub
   does not redeliver a failed delivery, so the poll is what catches a missed
   one.

@@ -157,8 +157,8 @@ a terminal.
 
 ## Out of scope
 
-- Monitoring from another host other than through a shell on, or a tunnel to,
-  Linewright's; the direction is an authenticating proxy in front of the UI.
+- The monitoring commands from another host other than through a shell on,
+  or a tunnel to, Linewright's.
 - An MCP server.
 - A liveness check for a container healthcheck or a supervisor.
 - A record of each decision Linewright makes on an item; the log holds them.
