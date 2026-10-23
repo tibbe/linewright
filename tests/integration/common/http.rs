@@ -21,3 +21,22 @@ pub async fn send_over(
         .unwrap();
     sender.send_request(request).await.unwrap()
 }
+
+/// That `headers` are an event stream's that asks a reverse proxy in front to
+/// pass each event on as it is sent, unchanged, and to keep no copy
+/// (docs/specs/operation.md, Running: Behind a proxy): `no-store` and
+/// `no-transform` (RFC 9111, section 5.2.2), with nothing else that allows a
+/// copy, and nginx's `X-Accel-Buffering: no`
+/// (<https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering>).
+pub fn assert_passes_through_a_proxy(headers: &axum::http::HeaderMap) {
+    let all = |name| -> Vec<&str> {
+        headers
+            .get_all(name)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect()
+    };
+    assert_eq!(all("content-type"), ["text/event-stream"]);
+    assert_eq!(all("cache-control"), ["no-store, no-transform"]);
+    assert_eq!(all("x-accel-buffering"), ["no"]);
+}

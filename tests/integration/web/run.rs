@@ -545,3 +545,18 @@ async fn the_page_of_no_run_says_there_is_none() {
     }
     web.stop().await;
 }
+
+#[tokio::test]
+async fn the_run_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
+    let web = Web::start(implemented_as_recorded().await).await;
+    web.eventually_page("/runs?item=1", |html| {
+        has_run(&runs_shown(html), "done", "1/implement-1")
+    })
+    .await;
+
+    let response = web.response("/events/runs/1/implement-1").await;
+
+    assert_eq!(response.status(), 200);
+    assert_passes_through_a_proxy(response.headers());
+    web.stop().await;
+}

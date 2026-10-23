@@ -128,3 +128,52 @@ async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
     ui.stop().await;
     web.stop().await;
 }
+
+#[tokio::test]
+async fn a_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
+    let web = Web::start(with_ticket().await).await;
+
+    let response = web.response("/events/items/1").await;
+
+    assert_eq!(response.status(), 200);
+    assert_passes_through_a_proxy(response.headers());
+    web.stop().await;
+}
+
+// The keep-alive is a comment line (WHATWG HTML, 9.2.6), sent once a stream
+// has been quiet for 15 seconds (docs/specs/operation.md, Running: Behind a
+// proxy).
+#[tokio::test]
+async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_and_none_before() {
+    let web = Web::start(with_ticket().await).await;
+    // Paused once serving, so that time moves on only when nothing else can.
+    tokio::time::pause();
+    let response = web.response("/events/items/1").await;
+    let mut body = response.into_body();
+    let mut next = async || {
+        let frame = body.frame().await.unwrap().unwrap();
+        String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap()
+    };
+
+    let regions = next().await;
+    let sent = tokio::time::Instant::now();
+    let first = next().await;
+    let first_after = sent.elapsed();
+    let second = next().await;
+    let second_after = sent.elapsed();
+
+    assert!(regions.starts_with("data: "), "{regions}");
+    assert_eq!([first, second], [":\n\n", ":\n\n"]);
+    // Tokio's timer rounds each deadline up to the next millisecond.
+    let tick = Duration::from_millis(1);
+    let quiet = Duration::from_secs(15);
+    assert!(
+        (quiet..=quiet + tick).contains(&first_after),
+        "{first_after:?}"
+    );
+    assert!(
+        (quiet * 2..=quiet * 2 + tick * 2).contains(&second_after),
+        "{second_after:?}"
+    );
+    web.stop().await;
+}

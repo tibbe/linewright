@@ -8,7 +8,7 @@ use axum::body::Bytes;
 use axum::extract::{Path as Resource, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
@@ -459,9 +459,7 @@ async fn follow_logs(
     .flat_map(|events| {
         futures_util::stream::iter(events.into_iter().map(Ok::<_, std::convert::Infallible>))
     });
-    Sse::new(events)
-        .keep_alive(KeepAlive::default())
-        .into_response()
+    crate::event_stream::respond(events)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

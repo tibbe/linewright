@@ -2434,3 +2434,21 @@ async fn a_serve_starting_while_drain_looks_at_the_claim_takes_it() {
     looked.await.unwrap();
     assert!(claimed.is_ok(), "{:?}", claimed.err());
 }
+
+#[tokio::test]
+async fn following_a_transcript_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
+    let (agent, answering, _runtime_dir) = triage_under_way().await;
+
+    let response = send(
+        answering.runtime_dir.path(),
+        hyper::Method::GET,
+        "localhost",
+        "/api/logs/follow?item=1",
+    )
+    .await;
+
+    assert_eq!(response.status(), 200);
+    assert_passes_through_a_proxy(response.headers());
+    drop(agent);
+    answering.stop().await;
+}

@@ -1,0 +1,4 @@
+# https://doc.rust-lang.org/clippy/lint_configuration.html#disallowed-types
+disallowed-types = [
+    { path = "axum::response::sse::Sse", reason = "`event_stream::respond` builds every event stream's response, so each passes through a reverse proxy (docs/specs/operation.md, Running: Behind a proxy)" },
+]

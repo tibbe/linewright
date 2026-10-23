@@ -11,7 +11,7 @@ use askama_web::WebTemplate;
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::Value;
@@ -696,9 +696,7 @@ pub(super) async fn run_events(
         let events = stream.next().await?.into_iter().map(Ok::<_, Infallible>);
         Some((futures_util::stream::iter(events), stream))
     });
-    Sse::new(futures_util::StreamExt::flatten(events))
-        .keep_alive(KeepAlive::default())
-        .into_response()
+    crate::event_stream::respond(futures_util::StreamExt::flatten(events))
 }
 
 struct RunStream {

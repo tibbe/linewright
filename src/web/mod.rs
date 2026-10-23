@@ -25,7 +25,7 @@ use askama_web::WebTemplate;
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Router};
@@ -550,7 +550,5 @@ fn events(
             }
         },
     );
-    Sse::new(events)
-        .keep_alive(KeepAlive::default())
-        .into_response()
+    crate::event_stream::respond(events)
 }
