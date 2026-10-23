@@ -66,7 +66,7 @@ Put what sessions need in the repository (its `.claude/settings.json` or
 ## Secrets
 
 Agent sessions get only the environment variables they need, and Linewright
-redacts its credentials from transcripts, its log and what it posts.
+redacts secrets from transcripts, its log and what it posts.
 
 ### A read-only GitHub token for sessions
 
@@ -99,6 +99,16 @@ which sessions read. At startup Linewright logs the names of the variables it
 keeps from sessions, so a build that fails only in a session shows there what
 to add.
 
+Credentials your agents need for other services, such as a cloud account or a
+database, go in `session-env` too, and every session gets them. Name the
+variables that hold secrets in `secrets` as well, so that Linewright redacts
+them:
+
+```toml
+session-env = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"]
+secrets = ["AWS_SECRET_ACCESS_KEY"]
+```
+
 | for | add to `session-env` |
 |---|---|
 | Rust | `CARGO_HOME`, `RUSTUP_HOME` |
@@ -117,8 +127,9 @@ session-env = ["CARGO_HOME", "RUSTUP_HOME"]
 
 Sessions can read Claude Code's credential and every file of the user
 Linewright runs as. Give Linewright a Claude Code credential of its own, and
-run it as a user, or in a container, without other credentials such as
-`~/.config/gh`, `~/.netrc`, `~/.aws` or `~/.git-credentials`.
+run it as a user, or in a container, that holds no credentials you don't mean
+sessions to have, such as in `~/.config/gh`, `~/.netrc`, `~/.aws` or
+`~/.git-credentials`.
 
 ## Monitoring
 

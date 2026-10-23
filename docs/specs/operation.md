@@ -95,6 +95,7 @@ default.
 | `model`                                      | one model for every stage                   |
 | `briefs` (a directory)                       | the briefs Linewright ships                 |
 | `session-env` (variable names)               | none                                        |
+| `secrets` (variable names)                   | none                                        |
 | `session-timeout`                            | 60m                                         |
 | `result-retries`                             | 1                                           |
 | `ci-grace`                                   | 5m                                          |
@@ -117,6 +118,10 @@ default.
   variable and is `LINEWRIGHT_WEBHOOK_SECRET`, and the GitHub token agent
   sessions are given in place of Linewright's (see
   [Repository](repository.md)) is `LINEWRIGHT_SESSION_GITHUB_TOKEN`.
+- **Secrets.** `secrets` names the variables whose values are secrets
+  ([Architecture](architecture.md#capabilities-and-credentials)); a name
+  ending in `*` names every variable with that prefix. A name without `*`
+  whose variable is unset or empty is an error at startup.
 - **Times and durations.** Every time and duration given to Linewright, as a
   setting or as a command's argument, takes the same forms: a time in RFC
   3339 (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC
@@ -183,6 +188,7 @@ image the operator builds with those in it.
 ## Out of scope
 
 - One container per run, instead of agents as processes beside the manager.
+- Giving some sessions credentials that others don't, such as only triage's.
 - Keeping sessions from credentials in files Linewright's user can read, such
   as `~/.config/gh/hosts.yml` or `~/.aws/credentials`. A container, or a user
   of its own that holds no other credentials, is the isolation.

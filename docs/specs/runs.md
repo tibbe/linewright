@@ -75,7 +75,7 @@ A run ends in one of these outcomes, each with its name in JSON.
   the run continues. A gap already filed for the item and still open is not
   filed again.
 - **A result the manager can't accept.** A session's result the manager
-  cannot parse, or whose work holds a credential
+  cannot parse, or whose work holds a secret
   ([Architecture](architecture.md)), whether Linewright finds it or GitHub
   refuses the push over it, goes back to the session with the reason, so it
   can answer again (`result-retries`). The reason names the variable, the
@@ -91,7 +91,7 @@ A run ends in one of these outcomes, each with its name in JSON.
 - **Unfinished work.** A run that works on a branch and ends before it
   finishes pushes its work so far to the branch, with what its session left
   uncommitted as an unfinished commit. The next run on the branch folds the
-  unfinished commit into its own commits. Work that holds a credential is
+  unfinished commit into its own commits. Work that holds a secret is
   not pushed.
 - **Cancelling.** A run is cancelled when its item stops asking for its work,
   as under [Repository](repository.md), or when `serve` stops. A cancelled

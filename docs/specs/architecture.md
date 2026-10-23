@@ -111,11 +111,13 @@ their work nothing.
   session is given, or where Linewright would malfunction without it. Anything
   else, such as an agent writing to GitHub outside its result, is the brief's to
   prevent.
-- **Credentials are redacted.** What Linewright keeps, logs or posts has
-  credentials replaced by `[redacted]`, except the commits it pushes: a commit
-  holding a credential is refused ([Runs](runs.md)). Redaction is best effort.
-- **A credential** is the value of a variable in Linewright's environment whose
-  name ends in `_TOKEN`, `_KEY`, `_SECRET` or `_PASSWORD`.
+- **Secrets are redacted.** What Linewright keeps, logs or posts has secrets
+  replaced by `[redacted]`, except the commits it pushes: a commit holding a
+  secret is refused ([Runs](runs.md)). Redaction is best effort. A secret of 1
+  to 5 characters is neither redacted nor refused, which Linewright warns of at
+  startup, naming its variable; an empty one is ignored.
+- **A secret** is the value of a variable Linewright reads a credential from,
+  or of one `secrets` names ([Configuration](operation.md#configuration)).
 - **Identity is a user account**: a token for a GitHub user dedicated to
   Linewright, whose assignments are its claims.
 
