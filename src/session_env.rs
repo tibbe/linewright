@@ -4,7 +4,10 @@
 use std::ffi::OsString;
 
 use crate::store::github::{SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
+use crate::variable_names::{self, VariableNames, matches};
 use crate::webhook::SECRET_VARIABLE;
+
+const SETTING: &str = "session-env";
 
 /// The spec's table: every session is given these.
 const TABLE: &[&str] = &[
@@ -50,19 +53,11 @@ fn never_passed(name: &str) -> bool {
     NEVER_PASSED.contains(&name)
 }
 
-/// `pattern` is a variable's name, or a prefix when it ends in `*`.
-fn matches(pattern: &str, name: &str) -> bool {
-    match pattern.strip_suffix('*') {
-        Some(prefix) => name.starts_with(prefix),
-        None => name == pattern,
-    }
-}
-
 /// The `session-env` setting: the variables sessions are given beyond the
 /// table's.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionEnv {
-    patterns: Vec<String>,
+    names: VariableNames,
 }
 
 /// The variables of Linewright's environment that sessions are given. Only
@@ -89,29 +84,27 @@ impl SessionEnv {
     /// Refuses a name `session-env` never passes, and a `*` anywhere but at
     /// a name's end.
     pub fn new(names: impl IntoIterator<Item = String>) -> Result<SessionEnv, String> {
-        let patterns = names
+        let names: Vec<String> = names
             .into_iter()
             .map(|name| {
                 if never_passed(&name) {
                     return Err(format!(
-                        "the setting `session-env` names `{name}`: sessions are never given \
+                        "the setting `{SETTING}` names `{name}`: sessions are never given \
                          Linewright's GitHub tokens or its webhook secret"
                     ));
                 }
-                if name.trim_end_matches('*').contains('*') {
-                    return Err(format!(
-                        "the setting `session-env` names `{name}`: a `*` can only end a name"
-                    ));
-                }
+                variable_names::check(SETTING, &name)?;
                 Ok(name)
             })
             .collect::<Result<_, _>>()?;
-        Ok(SessionEnv { patterns })
+        Ok(SessionEnv {
+            names: VariableNames::new(SETTING, names)?,
+        })
     }
 
     fn passes(&self, name: &str) -> bool {
         TABLE.iter().any(|pattern| matches(pattern, name))
-            || (!never_passed(name) && self.patterns.iter().any(|pattern| matches(pattern, name)))
+            || (!never_passed(name) && self.names.matches(name))
     }
 
     /// `set_by_linewright` names the variables Linewright sets for sessions

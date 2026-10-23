@@ -444,6 +444,21 @@ fn a_session_env_pattern_matching_a_credential_of_linewrights_is_no_error() {
 }
 
 #[test]
+fn session_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
+    for name in ["CARGO_*_HOME", "*CARGO"] {
+        let error =
+            resolve(&["--session-env", &format!("RUSTUP_HOME,{name}")], &[], None).unwrap_err();
+
+        assert!(
+            error.contains(&format!(
+                "the setting `session-env` names `{name}`: a `*` can only end a name"
+            )),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn help_lists_session_env_with_its_default() {
     let (help, line) = help_for("--session-env");
     assert!(line.contains("[default: none]"), "{help}");
