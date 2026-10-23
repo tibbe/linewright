@@ -76,9 +76,9 @@
     return durations.format(Object.fromEntries(largest));
   }
 
-  // A past time relative, with the absolute time on hover; a future one
-  // absolute; a settled duration from its seconds, and a running one as long
-  // as it has run.
+  // A past time relative, with the absolute time in the page's tooltip; a
+  // future one absolute, with no tip; a settled duration from its seconds,
+  // and a running one as long as it has run.
   function tick() {
     const now = Date.now();
     for (const time of document.querySelectorAll(`time[datetime]:not(${settledDuration})`)) {
@@ -87,10 +87,10 @@
       const shown = absolute.format(at);
       if (at <= now) {
         time.textContent = ago(at, now);
-        time.title = shown;
+        time.dataset.tip = shown;
       } else {
         time.textContent = shown;
-        time.removeAttribute("title");
+        time.removeAttribute("data-tip");
       }
     }
     if (!durations) return;
@@ -232,8 +232,30 @@
     return outermostCut || innermost;
   }
 
+  // The cut text that `focused` holds, if any, which shows for it on
+  // keyboard focus: a finished lane's `summary` takes focus itself, and its
+  // head's text is in it.
+  const cutIn = (focused) =>
+    [...focused.querySelectorAll("*")].find(
+      (element) => element.hasAttribute("data-tip-cut") && isCut(element),
+    ) || null;
+
   const textOf = (trigger) =>
     trigger.getAttribute("data-tip") ?? trigger.textContent.replace(/\s+/g, " ").trim();
+
+  // While its tip shows, a trigger whose tip is in neither its text nor its
+  // label, such as a past time, is described by it, so that assistive tech
+  // reads it too: https://www.w3.org/WAI/ARIA/apg/patterns/tooltip/
+  // Cut text holds its whole text, and a labelled trigger its tip.
+  const describes = (trigger) =>
+    !trigger.hasAttribute("data-tip-cut") && !trigger.hasAttribute("aria-label");
+
+  // `shownFor` becomes `trigger`, or none.
+  function showFor(trigger) {
+    if (shownFor && shownFor !== trigger) shownFor.removeAttribute("aria-describedby");
+    shownFor = trigger;
+    if (trigger && describes(trigger)) trigger.setAttribute("aria-describedby", tip.id);
+  }
 
   function cancelLeaving() {
     clearTimeout(leaving);
@@ -243,7 +265,7 @@
   function hide() {
     cancelLeaving();
     if (!shownFor) return;
-    shownFor = null;
+    showFor(null);
     tip.hidePopover();
     tip.dataset.tip = "";
   }
@@ -255,7 +277,7 @@
     if (!text) return hide();
     tip.dataset.tip = text;
     if (!shownFor) tip.showPopover();
-    shownFor = trigger;
+    showFor(trigger);
     place();
   }
 
@@ -329,12 +351,12 @@
   document.addEventListener("focusin", (event) => {
     dismissed = null;
     if (!event.target.matches(":focus-visible")) return;
-    const trigger = triggerOf(event.target);
+    const trigger = triggerOf(event.target) || cutIn(event.target);
     if (trigger) show(trigger);
   });
   document.addEventListener("focusout", (event) => {
     dismissed = null;
-    if (shownFor && shownFor.contains(event.target)) hide();
+    if (shownFor && (shownFor.contains(event.target) || event.target.contains(shownFor))) hide();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || !shownFor) return;

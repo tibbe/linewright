@@ -84,7 +84,7 @@ fn page_link(number: Number, text: &str) -> String {
 
 fn github(number: Number, repo: &str) -> String {
     format!(
-        r#"<a class="github" href="{href}" aria-label="{number} on GitHub" title="{number} on GitHub"></a>"#,
+        r#"<a class="github" href="{href}" aria-label="{number} on GitHub" data-tip="{number} on GitHub"></a>"#,
         href = escape(&format!("https://github.com/{repo}/issues/{}", number.0)),
     )
 }
@@ -107,9 +107,12 @@ pub(crate) fn run_id(id: &RunId, repo: &str) -> Html {
     }
 }
 
+/// `at` as a `<time>`, focusable so that the absolute time the page's
+/// script gives a past time in its tooltip shows on keyboard focus too
+/// (`docs/specs/design_system.md`, Layout).
 pub(crate) fn time(at: Timestamp) -> Html {
     Html(format!(
-        r#"<time datetime="{}">{}</time>"#,
+        r#"<time datetime="{}" tabindex="0">{}</time>"#,
         iso(at),
         utc(at)
     ))

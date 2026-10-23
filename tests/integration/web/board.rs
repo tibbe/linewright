@@ -310,7 +310,7 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
 }
 
 #[tokio::test]
-async fn a_lane_head_cut_to_fit_is_whole_on_hover_and_on_keyboard_focus() {
+async fn a_lane_head_and_a_card_title_cut_to_fit_are_whole_in_the_pages_tooltip_not_in_place() {
     let web = Web::start(with_a_finished_lane().await).await;
 
     let html = web.page("/").await;
@@ -318,20 +318,50 @@ async fn a_lane_head_cut_to_fit_is_whole_on_hover_and_on_keyboard_focus() {
     let heads = select(&html, "#board .lane-head");
     assert_eq!(heads.len(), 4);
     for head in heads {
-        assert!(has_classes(head, &["group"]), "{}", head.html());
+        assert!(lacks_classes(head, &["group"]), "{}", head.html());
         let cut = select_in(head, ":scope > span")[0];
-        let classes: Vec<&str> = cut.value().classes().collect();
-        assert!(
-            [
-                "truncate",
-                "group-hover:whitespace-normal",
-                "group-focus-within:whitespace-normal"
-            ]
-            .iter()
-            .all(|class| classes.contains(class)),
+        assert!(has_classes(cut, &["truncate"]), "{}", head.html());
+        assert!(cut.attr("data-tip-cut").is_some(), "{}", head.html());
+        assert_eq!(grows_in_place(cut), Vec::<&str>::new(), "{}", head.html());
+    }
+    let titles = select(&html, "#board .card h3");
+    assert_ne!(titles, [] as [scraper::ElementRef<'_>; 0]);
+    for title in titles {
+        assert!(has_classes(title, &["line-clamp-2"]), "{}", title.html());
+        assert!(title.attr("data-tip-cut").is_some(), "{}", title.html());
+        assert_eq!(
+            grows_in_place(title),
+            Vec::<&str>::new(),
             "{}",
-            head.html()
+            title.html()
         );
+    }
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_title() {
+    let web = Web::start(with_a_board().await).await;
+
+    let html = web.page("/").await;
+
+    assert_eq!(select(&html, "[title]").len(), 0);
+    let github: Vec<(Option<&str>, Option<&str>)> = select(&html, "#board .card a.github")
+        .into_iter()
+        .map(|a| (a.attr("aria-label"), a.attr("data-tip")))
+        .collect();
+    assert_eq!(
+        github,
+        [
+            (Some("#3 on GitHub"), Some("#3 on GitHub")),
+            (Some("#1 on GitHub"), Some("#1 on GitHub")),
+            (Some("#4 on GitHub"), Some("#4 on GitHub")),
+        ]
+    );
+    let times = select(&html, "#board time[datetime]");
+    assert_ne!(times, [] as [scraper::ElementRef<'_>; 0]);
+    for time in times {
+        assert_eq!(time.attr("tabindex"), Some("0"), "{}", time.html());
     }
     web.stop().await;
 }

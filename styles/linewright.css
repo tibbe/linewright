@@ -54,8 +54,7 @@
 
   /* A lane's head, unfinished or finished, sticky under the board's column
      heads while the reader is in its lane, in its lane's colour so that it
-     reads as part of it while stuck, and taller while its text is whole
-     (templates/board.html). */
+     reads as part of it while stuck (templates/board.html). */
   .board .lane-head {
     @apply sticky top-(--column-heads) z-10 min-h-(--lane-head) bg-base-200 pt-2 font-semibold;
   }

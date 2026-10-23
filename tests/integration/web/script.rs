@@ -139,6 +139,8 @@ function node(attributes, ...children) {
     },
     hasAttribute(name) { return name in this.attributes; },
     getAttribute(name) { return name in this.attributes ? this.attributes[name] : null; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    removeAttribute(name) { delete this.attributes[name]; },
     contains(other) {
       for (let at = other; at; at = at.parentElement) if (at === this) return true;
       return false;
@@ -164,6 +166,7 @@ function node(attributes, ...children) {
   return element;
 }
 var tip = {
+  id: "tip",
   open: false,
   parentElement: root,
   dataset: { tip: "" },
@@ -350,6 +353,31 @@ async fn one_tip_shows_on_hover_or_keyboard_focus_until_focus_moves() {
 }
 
 #[tokio::test]
+async fn keyboard_focus_on_what_holds_a_cut_text_shows_it_whole_until_focus_moves() {
+    let page = r##"
+var head = node({ "data-tip-cut": "" }, "#4: Old idea — finished on Oct 1");
+var summary = node({}, head);
+var uncutHead = node({ "data-tip-cut": "" }, "#5: Short");
+var uncutSummary = node({}, uncutHead);
+head.cut = true;
+summary.focusVisible = true;
+uncutSummary.focusVisible = true;
+page(summary, uncutSummary);
+"##;
+    let tips = after_each(
+        page,
+        &[
+            r#"fire("focusin", { target: summary });"#,
+            r#"fire("focusout", { target: summary });"#,
+            r#"fire("focusin", { target: uncutSummary });"#,
+        ],
+    )
+    .await;
+
+    assert_eq!(tips, ["#4: Old idea — finished on Oct 1", "-", "-"]);
+}
+
+#[tokio::test]
 async fn escape_hides_the_tip_until_the_pointer_leaves_the_trigger_or_focus_moves() {
     let escape = r#"fire("keydown", { key: "Escape" });"#;
     let tips = after_each(
@@ -426,6 +454,36 @@ async fn a_trigger_an_update_brings_shows_its_tip_and_one_it_takes_away_hides_it
 }
 
 #[tokio::test]
+async fn a_trigger_whose_tip_is_not_in_its_text_or_label_is_described_by_it_while_it_shows() {
+    let page = r##"
+var time = node({ "data-tip": "Oct 23, 2026, 11:00:00 UTC" }, "1 hour ago");
+var stamp = node({ "data-tip": "2026-10-13 10:09:11 UTC" }, "0:03");
+var github = node({ "data-tip": "#12 on GitHub", "aria-label": "#12 on GitHub" });
+var title = node({ "data-tip-cut": "" }, "A long title");
+title.cut = true;
+page(time, stamp, github, title);
+const described = () =>
+  [time, stamp, github, title].map((trigger) => trigger.getAttribute("aria-describedby") ?? "-").join(" ");
+"##;
+    let tips = after_each(
+        page,
+        &[
+            "point(null, time); steps.push(described());",
+            "point(time, stamp); steps.push(described());",
+            "point(stamp, github); steps.push(described());",
+            "point(github, title); steps.push(described());",
+            "point(title, time); point(time, null); elapse(); steps.push(described());",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        tips.iter().step_by(2).collect::<Vec<_>>(),
+        ["tip - - -", "- tip - -", "- - - -", "- - - -", "- - - -",]
+    );
+}
+
+#[tokio::test]
 async fn the_tip_lies_over_its_trigger_above_it_or_below_where_there_is_no_room_inside_the_viewport()
  {
     let page = r#"
@@ -485,8 +543,12 @@ Intl = {
 };
 var times = [];
 function time(attributes) {
-  const shown = { title: "", textContent: "", dataset: {}, ...attributes };
-  shown.removeAttribute = (name) => { if (name === "title") shown.title = ""; };
+  const shown = { textContent: "", dataset: {}, ...attributes };
+  shown.hasAttribute = (name) => name === "title" ? "title" in shown : name.startsWith("data-") && name.slice(5) in shown.dataset;
+  shown.removeAttribute = (name) => {
+    if (name === "title") delete shown.title;
+    else if (name.startsWith("data-")) delete shown.dataset[name.slice(5)];
+  };
   times.push(shown);
   return shown;
 }
@@ -515,6 +577,10 @@ async fn on_the_page(page: &str, asked: &str) -> Vec<String> {
         .collect()
 }
 
+/// How the stand-in for `Intl` in `TIMES` echoes a time formatted as the
+/// absolute time.
+const ABSOLUTE: &str = r#"date(en, {"year":"numeric","month":"short","day":"numeric","hour":"2-digit","minute":"2-digit","second":"2-digit","timeZoneName":"short"})"#;
+
 /// A `<time>` for each of `datetimes`.
 fn times(datetimes: &[&str]) -> String {
     datetimes
@@ -524,7 +590,8 @@ fn times(datetimes: &[&str]) -> String {
 }
 
 #[tokio::test]
-async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days() {
+async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days_with_its_absolute_time_in_the_tip()
+ {
     // Each as old, as of `NOW`, as its comment says.
     let datetimes = [
         "2026-10-23T11:59:01Z", // 59 s
@@ -541,7 +608,7 @@ async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days()
 
     let shown = on_the_page(
         &times(&datetimes),
-        r#"times.map((time) => `${time.textContent} | ${time.title}`).join("\n")"#,
+        r#"times.map((time) => `${time.textContent} | ${time.dataset.tip} | ${time.hasAttribute("title")}`).join("\n")"#,
     )
     .await;
 
@@ -567,13 +634,12 @@ async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days()
             format!("on {date_with_year}: 2025-09-12T10:00:00.000Z"),
         ]
     );
-    let absolute = r#"date(en, {"year":"numeric","month":"short","day":"numeric","hour":"2-digit","minute":"2-digit","second":"2-digit","timeZoneName":"short"})"#;
-    let titles: Vec<&str> = shown
+    let tips: Vec<&str> = shown
         .iter()
         .map(|line| line.split(" | ").nth(1).unwrap())
         .collect();
     assert_eq!(
-        titles,
+        tips,
         [
             "2026-10-23T11:59:01.000Z",
             "2026-10-23T11:59:00.000Z",
@@ -586,8 +652,28 @@ async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days()
             "2026-09-23T11:59:59.000Z",
             "2025-09-12T10:00:00.000Z",
         ]
-        .map(|at| format!("{absolute}: {at}")),
-        "the absolute time on hover"
+        .map(|at| format!("{ABSOLUTE}: {at}")),
+        "the absolute time in the page's tooltip"
+    );
+    assert!(
+        shown.iter().all(|line| line.ends_with(" | false")),
+        "no title: {shown:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_future_time_reads_as_its_absolute_time_with_no_tip() {
+    let page = r#"time({ dateTime: "2026-10-23T12:00:01Z", dataset: { tip: "stale" } });"#;
+
+    let shown = on_the_page(
+        page,
+        r#"times.map((time) => `${time.textContent} | ${time.hasAttribute("data-tip")}`).join("\n")"#,
+    )
+    .await;
+
+    assert_eq!(
+        shown,
+        [format!("{ABSOLUTE}: 2026-10-23T12:00:01.000Z | false")]
     );
 }
 

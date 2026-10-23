@@ -51,8 +51,9 @@
 
 {#- A list of runs (`docs/specs/design_system.md`, Lists of runs) in the
     page's scroll box, its heads pinned (`docs/specs/web/design_system.md`,
-    Tables). A title is on one line, and whole on hover and on focus, as a
-    board card's is. A cut list's last row spans the table. -#}
+    Tables). A title is on one line, and whole in the page's tooltip
+    while it is cut, as a board card's is. A cut list's last row spans the
+    table. -#}
 {%- macro runs(shown) -%}
 {%- match shown %}
 {%- when crate::web::runs_table::RunsShown::Table(table) %}
@@ -65,7 +66,7 @@
 <td>{% call status(row.tone, row.word) %}{% endcall %}</td>
 <td><a class="link link-hover whitespace-nowrap" href="{{ row.href }}">{{ row.id|safe }}</a></td>
 {%- if let Some(item) = item %}
-<td><div class="line-clamp-1 min-w-48 max-w-md hover:line-clamp-none focus-within:line-clamp-none">
+<td><div class="line-clamp-1 min-w-48 max-w-md" data-tip-cut>
 {%- match item -%}
 {%- when crate::web::runs_table::ItemCell::Item(item) -%}
 {{ item|safe }}

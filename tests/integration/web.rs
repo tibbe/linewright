@@ -210,6 +210,25 @@ fn has_classes(element: ElementRef, classes: &[&str]) -> bool {
     })
 }
 
+/// Classes that would grow cut text in place on hover or on focus, moving
+/// what is around it.
+fn grows_in_place(element: ElementRef<'_>) -> Vec<&str> {
+    element
+        .value()
+        .classes()
+        .filter(|class| {
+            [
+                "hover:",
+                "focus-within:",
+                "group-hover:",
+                "group-focus-within:",
+            ]
+            .iter()
+            .any(|variant| class.starts_with(variant))
+        })
+        .collect()
+}
+
 /// Whether `element` has none of `classes`.
 fn lacks_classes(element: ElementRef, classes: &[&str]) -> bool {
     !classes.iter().any(|class| has_classes(element, &[class]))

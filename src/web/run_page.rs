@@ -333,16 +333,16 @@ fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
 }
 
 /// The time since the session started, linking to the entry, with when it
-/// happened on hover.
+/// happened in the page's tooltip.
 fn stamp_html(id: &str, stamp: StampView) -> String {
     let elapsed = stamp
         .elapsed_seconds
         .map_or(String::new(), transcript::elapsed);
-    let title = stamp
-        .at
-        .map_or(String::new(), |at| format!(r#" title="{}""#, html::utc(at)));
+    let tip = stamp.at.map_or(String::new(), |at| {
+        format!(r#" data-tip="{}""#, html::utc(at))
+    });
     format!(
-        r##"<a class="at inline-block min-w-[4em] text-right text-base-content/60" href="#{id}"{title}>{elapsed}</a>"##
+        r##"<a class="at inline-block min-w-[4em] text-right text-base-content/60" href="#{id}"{tip}>{elapsed}</a>"##
     )
 }
 

@@ -254,7 +254,8 @@ async fn the_runs_page_says_why_a_narrowing_does_not_read() {
 }
 
 #[tokio::test]
-async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_on_one_line() {
+async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_on_one_line_whole_in_the_tooltip()
+ {
     let web = Web::start(with_two_issues_triaged().await).await;
     let html = web
         .eventually_page("/runs", |html| runs_shown(html).len() == 2)
@@ -267,17 +268,18 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
         "{tables:?}"
     );
     assert_eq!(select(&html, "form ~ #runs .scroll-box").len(), 1);
-    for title in classes(&html, "#runs tbody td:nth-child(3) > *") {
-        assert!(
-            [
-                "line-clamp-1",
-                "hover:line-clamp-none",
-                "focus-within:line-clamp-none"
-            ]
-            .iter()
-            .all(|class| title.contains(class)),
-            "{title:?}"
+    let titles = select(&html, "#runs tbody td:nth-child(3) > *");
+    assert_eq!(titles.len(), 2);
+    for title in titles {
+        assert!(has_classes(title, &["line-clamp-1"]), "{}", title.html());
+        assert_eq!(
+            grows_in_place(title),
+            Vec::<&str>::new(),
+            "{}",
+            title.html()
         );
+        assert!(title.attr("data-tip-cut").is_some(), "{}", title.html());
     }
+    assert_eq!(select(&html, "[title]").len(), 0);
     web.stop().await;
 }

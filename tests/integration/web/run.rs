@@ -162,6 +162,20 @@ async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_li
 }
 
 #[tokio::test]
+async fn the_run_pages_entry_stamp_shows_when_the_entry_happened_in_the_pages_tooltip() {
+    let (web, html) = run_page_of_implemented().await;
+
+    let stamp = select(&html, "#transcript a.at")
+        .into_iter()
+        .find(|stamp| text(*stamp) == "0:03")
+        .unwrap();
+    // The session started at 10:09:08, and the entry 3 seconds after.
+    assert_eq!(stamp.attr("data-tip"), Some("2026-10-13 10:09:11 UTC"));
+    assert_eq!(select(&html, "[title]").len(), 0);
+    web.stop().await;
+}
+
+#[tokio::test]
 async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everything_open() {
     let (web, html) = run_page_of_implemented().await;
     let switch = select(&html, "[role=switch]");
