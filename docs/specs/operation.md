@@ -106,6 +106,11 @@ default.
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
+- **A feature's settings.** A setting that only one feature uses can be set
+  only while that feature is on, and is an error at startup otherwise
+  ([Startup](repository.md#startup)): `webhook-address` without the webhook
+  secret, `ui-hosts` with `ui-address` empty, `merge-method` without
+  `auto-merge`.
 - **Credentials.** They are the environment variables their tools already
   use, so an existing setup is picked up: `GITHUB_TOKEN` or `GH_TOKEN` as
   `gh` reads them, and `ANTHROPIC_API_KEY`. The webhook secret has no such

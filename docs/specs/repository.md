@@ -172,8 +172,9 @@ Linewright exits with an error at startup when it cannot work.
   set, can read it; with `--auto-merge`, the repository allows the merge
   method and the update method keeps the branch mergeable with it
   (`update-branch` `merge` cannot keep a branch rebase-mergeable); with
-  webhooks on, `serve` can listen on `webhook-address`; `webhook-address` is
-  not set without the webhook secret; and, unless `ui-address` is empty,
-  `serve` can listen on it.
+  webhooks on, `serve` can listen on `webhook-address`; no setting is set
+  while the feature that uses it is off
+  ([Configuration](operation.md#configuration)); and, unless `ui-address` is
+  empty, `serve` can listen on it.
 - **One Linewright per repository.** A `serve` started for a repository whose
   `serve` already runs on the same host exits with an error saying so.
