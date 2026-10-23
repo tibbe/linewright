@@ -122,10 +122,10 @@ fn counted(n: usize, thing: &str) -> String {
 impl CardShown {
     fn of(card: &Card, repo: &str) -> CardShown {
         let line = card.line.as_ref().map(worded);
-        let sat = card.sat.map(|sat| Phrase::default().then(ticking(sat)));
-        let line = match (line, sat) {
-            (Some(line), Some(sat)) => Some(line.text(" · ").then(sat)),
-            (line, sat) => line.or(sat),
+        let entered = card.entered.map(|at| Phrase::default().time(at));
+        let line = match (line, entered) {
+            (Some(line), Some(entered)) => Some(line.text(" · ").then(entered)),
+            (line, entered) => line.or(entered),
         };
         CardShown {
             heading: html::titled(card.number, &card.title, repo),

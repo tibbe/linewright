@@ -1264,21 +1264,13 @@ fn labeling(label: &str, when: &str) -> IssueEvent {
     }
 }
 
-/// How long #`number`'s card says it has sat in its column, and since when.
-fn sat(board: &Board, number: u64) -> Option<Elapsed> {
-    card(board, number).sat
-}
-
-/// Sat since `since`, as of `NOW`, 12:00:30, `seconds` before it.
-fn sat_since(since: &str, seconds: u64) -> Elapsed {
-    Elapsed {
-        since: at(since),
-        seconds,
-    }
+/// When #`number`'s card says it entered its column.
+fn entered(board: &Board, number: u64) -> Option<Timestamp> {
+    card(board, number).entered
 }
 
 #[test]
-fn a_card_in_triage_has_sat_since_needs_triage_was_applied_or_the_issue_reopened() {
+fn a_card_in_triage_entered_its_column_when_needs_triage_was_applied_or_the_issue_reopened() {
     let view = view(
         vec![
             with_events(
@@ -1303,18 +1295,18 @@ fn a_card_in_triage_has_sat_since_needs_triage_was_applied_or_the_issue_reopened
     let board = board(&view, &[], at(NOW));
 
     assert_eq!(
-        [1, 2, 3].map(|n| sat(&board, n)),
+        [1, 2, 3].map(|n| entered(&board, n)),
         [
-            Some(sat_since("2026-10-01T10:00:00Z", 2 * 3600 + 30)),
-            Some(sat_since("2026-10-01T11:00:00Z", 3600 + 30)),
-            Some(sat_since("2026-09-30T09:00:00Z", 27 * 3600 + 30)),
+            Some(at("2026-10-01T10:00:00Z")),
+            Some(at("2026-10-01T11:00:00Z")),
+            Some(at("2026-09-30T09:00:00Z")),
         ]
     );
     assert_eq!(line(&board, 1), None, "nothing but the time");
 }
 
 #[test]
-fn a_card_needing_a_person_has_sat_since_the_label_it_holds_was_applied() {
+fn a_card_needing_a_person_entered_its_column_when_the_label_it_holds_was_applied() {
     let view = view(
         vec![
             with_events(
@@ -1336,18 +1328,18 @@ fn a_card_needing_a_person_has_sat_since_the_label_it_holds_was_applied() {
     let board = board(&view, &[], at(NOW));
 
     assert_eq!(
-        [1, 2, 3].map(|n| sat(&board, n)),
+        [1, 2, 3].map(|n| entered(&board, n)),
         [
-            Some(sat_since("2026-10-01T10:00:00Z", 2 * 3600 + 30)),
-            Some(sat_since("2026-10-01T11:00:00Z", 3600 + 30)),
-            Some(sat_since("2026-09-30T09:00:00Z", 27 * 3600 + 30)),
+            Some(at("2026-10-01T10:00:00Z")),
+            Some(at("2026-10-01T11:00:00Z")),
+            Some(at("2026-09-30T09:00:00Z")),
         ]
     );
     assert_eq!(line(&board, 1), Some(CardLine::ReporterAsked));
 }
 
 #[test]
-fn a_ready_card_has_sat_since_ready_for_agent_was_applied_or_linewright_unassigned() {
+fn a_ready_card_entered_its_column_when_ready_for_agent_was_applied_or_linewright_unassigned() {
     let view = view(
         vec![
             blocked_by(
@@ -1372,18 +1364,19 @@ fn a_ready_card_has_sat_since_ready_for_agent_was_applied_or_linewright_unassign
     let board = board(&view, &[], at(NOW));
 
     assert_eq!(
-        [1, 2, 3].map(|n| sat(&board, n)),
+        [1, 2, 3].map(|n| entered(&board, n)),
         [
-            Some(sat_since("2026-10-01T10:00:00Z", 2 * 3600 + 30)),
-            Some(sat_since("2026-10-01T11:00:00Z", 3600 + 30)),
-            Some(sat_since("2026-09-30T09:00:00Z", 27 * 3600 + 30)),
+            Some(at("2026-10-01T10:00:00Z")),
+            Some(at("2026-10-01T11:00:00Z")),
+            Some(at("2026-09-30T09:00:00Z")),
         ]
     );
     assert_eq!(line(&board, 1), Some(CardLine::BlockedBy(Number(9))));
 }
 
 #[test]
-fn a_ready_spec_change_has_sat_since_its_merge_linewright_unassigned_or_the_required_label() {
+fn a_ready_spec_change_entered_its_column_when_its_merge_linewright_unassigned_or_the_required_label()
+ {
     let unassigned = MergedPull {
         events: vec![unassigning_linewright("2026-10-01T10:30:00Z")],
         ..spec_change(6, &[])
@@ -1412,11 +1405,11 @@ fn a_ready_spec_change_has_sat_since_its_merge_linewright_unassigned_or_the_requ
         ]
     );
     assert_eq!(
-        [5, 6, 7].map(|n| sat(&board, n)),
+        [5, 6, 7].map(|n| entered(&board, n)),
         [
-            Some(sat_since("2026-10-01T09:00:00Z", 3 * 3600 + 30)),
-            Some(sat_since("2026-10-01T10:30:00Z", 3600 + 30 * 60 + 30)),
-            Some(sat_since("2026-10-01T11:15:00Z", 45 * 60 + 30)),
+            Some(at("2026-10-01T09:00:00Z")),
+            Some(at("2026-10-01T10:30:00Z")),
+            Some(at("2026-10-01T11:15:00Z")),
         ]
     );
 }
@@ -1447,7 +1440,7 @@ fn working_in_review_and_done_cards_have_no_time_in_their_column() {
             (3, Column::Done, 3),
         ]
     );
-    assert_eq!([1, 2, 3].map(|n| sat(&board, n)), [None, None, None]);
+    assert_eq!([1, 2, 3].map(|n| entered(&board, n)), [None, None, None]);
 }
 
 #[test]

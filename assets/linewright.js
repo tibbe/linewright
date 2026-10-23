@@ -1,6 +1,6 @@
 // Linewright's own script for the web UI (docs/specs/design_system.md): it
-// says since when the page lost `serve`, shows times in the reader's time
-// zone and durations in the reader's locale, keeping them up, keeps a run's
+// says since when the page lost `serve`, shows times and durations in the
+// page's language and the reader's time zone, keeping them up, keeps a run's
 // transcript at its latest entry while the reader is there, keeps each
 // fold as the reader opened or closed it through updates, and hides a
 // tooltip on Escape. htmx's
@@ -18,8 +18,13 @@
       !(element.tagName === "DETAILS" && detail.attrName === "open"),
   });
 
-  const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-  const absolute = new Intl.DateTimeFormat(undefined, {
+  // Every time and duration reads in the page's language, as the words
+  // around it do, and in the reader's time zone.
+  const lang = document.documentElement.lang;
+  // "1 day ago", never "yesterday": the days are whole days back, not
+  // calendar days.
+  const relative = new Intl.RelativeTimeFormat(lang, { numeric: "always" });
+  const absolute = new Intl.DateTimeFormat(lang, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -28,42 +33,47 @@
     second: "2-digit",
     timeZoneName: "short",
   });
-  const units = [
-    ["year", 31557600],
-    ["month", 2630016],
-    ["week", 604800],
-    ["day", 86400],
-    ["hour", 3600],
-    ["minute", 60],
-    ["second", 1],
-  ];
+  const dateThisYear = new Intl.DateTimeFormat(lang, { month: "short", day: "numeric" });
+  const dateWithYear = new Intl.DateTimeFormat(lang, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 
-  function ago(seconds) {
-    for (const [unit, size] of units) {
-      if (seconds >= size || unit === "second") {
-        return relative.format(-Math.floor(seconds / size), unit);
-      }
-    }
+  // A past time `at` as of `now` in words, rounded down: `just now`, then
+  // minutes, hours or days up to 30 days, then its date, with its year where
+  // that is not this year's.
+  function ago(at, now) {
+    const seconds = Math.floor((now - at) / 1000);
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return relative.format(-Math.floor(seconds / 60), "minute");
+    if (seconds < 86400) return relative.format(-Math.floor(seconds / 3600), "hour");
+    if (seconds <= 30 * 86400) return relative.format(-Math.floor(seconds / 86400), "day");
+    const thisYear = new Date(at).getFullYear() === new Date(now).getFullYear();
+    return `on ${(thisYear ? dateThisYear : dateWithYear).format(at)}`;
   }
 
-  // A duration in the reader's locale (`1h 5m 3s`), balanced into days,
-  // hours, minutes and seconds, zero units left out. Where the browser lacks
-  // Intl.DurationFormat, a duration keeps the server's text.
-  const durations = Intl.DurationFormat && new Intl.DurationFormat(undefined, { style: "narrow" });
+  // A duration in narrow units, balanced into days, hours, minutes and
+  // seconds, of which it shows the two largest that are not zero (`1d 5m`).
+  // Where the browser lacks Intl.DurationFormat, a duration keeps the
+  // server's text.
+  const durations = Intl.DurationFormat && new Intl.DurationFormat(lang, { style: "narrow" });
   // `durations` writes nothing for a duration of zero, which reads `0s`.
   const zeroDuration = Intl.DurationFormat &&
-    new Intl.DurationFormat(undefined, { style: "narrow", secondsDisplay: "always" });
+    new Intl.DurationFormat(lang, { style: "narrow", secondsDisplay: "always" });
   // A settled duration, as the server writes one: `datetime="PT{seconds}S"`.
   const settledDuration = '[datetime^="PT"]';
 
   function duration(seconds) {
     if (seconds === 0) return zeroDuration.format({ seconds: 0 });
-    return durations.format({
+    const balanced = {
       days: Math.floor(seconds / 86400),
       hours: Math.floor((seconds % 86400) / 3600),
       minutes: Math.floor((seconds % 3600) / 60),
       seconds: seconds % 60,
-    });
+    };
+    const largest = Object.entries(balanced).filter(([, n]) => n > 0).slice(0, 2);
+    return durations.format(Object.fromEntries(largest));
   }
 
   // A past time relative, with the absolute time on hover; a future one
@@ -76,7 +86,7 @@
       if (Number.isNaN(at)) continue;
       const shown = absolute.format(at);
       if (at <= now) {
-        time.textContent = ago(Math.floor((now - at) / 1000));
+        time.textContent = ago(at, now);
         time.title = shown;
       } else {
         time.textContent = shown;

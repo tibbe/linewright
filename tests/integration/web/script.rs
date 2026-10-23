@@ -143,3 +143,159 @@ steps.join("\n")
         ]
     );
 }
+
+/// The moment the clock in `TIMES` stops at.
+const NOW: &str = "2026-10-23T12:00:00Z";
+
+/// Stand-ins for `Intl`'s formatters that echo the language, the options and
+/// what they format, a clock stopped at `now`, and the page's `<time>`s,
+/// which `times` holds by the `datetime` or `data-since` they carry.
+const TIMES: &str = r#"
+Date.now = () => now;
+document.documentElement.lang = "en";
+const echoed = (name, lang, options) =>
+  `${name}(${lang}, ${JSON.stringify(options)})`;
+Intl = {
+  RelativeTimeFormat: function (lang, options) {
+    this.format = (value, unit) => `${echoed("relative", lang, options)}: ${value} ${unit}`;
+  },
+  DateTimeFormat: function (lang, options) {
+    this.format = (at) =>
+      `${echoed("date", lang, options)}: ${new Date(at).toISOString()}`;
+  },
+  DurationFormat: function (lang, options) {
+    this.format = (duration) =>
+      `${echoed("duration", lang, options)}: ${JSON.stringify(duration)}`;
+  },
+};
+var times = [];
+function time(attributes) {
+  const shown = { title: "", textContent: "", dataset: {}, ...attributes };
+  shown.removeAttribute = (name) => { if (name === "title") shown.title = ""; };
+  times.push(shown);
+  return shown;
+}
+document.querySelectorAll = (selector) => {
+  if (selector.includes("data-since")) return times.filter((time) => time.dataset.since);
+  if (selector.includes(":not(")) {
+    return times.filter((time) => time.dateTime && !time.dateTime.startsWith("PT"));
+  }
+  if (selector.includes('datetime^="PT"')) {
+    return times.filter((time) => time.dateTime && time.dateTime.startsWith("PT"));
+  }
+  return [];
+};
+"#;
+
+/// What `asked` evaluates to, line by line, once the served script has run
+/// on a page holding the times `page` adds, as of `NOW`.
+async fn on_the_page(page: &str, asked: &str) -> Vec<String> {
+    let web = Web::start(with_ticket().await).await;
+    let script = served_script(&web).await;
+    web.stop().await;
+    let clock = format!("var now = Date.parse({NOW:?});");
+    evaluated(&[BROWSER, &clock, TIMES, page, &script, asked])
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// A `<time>` for each of `datetimes`.
+fn times(datetimes: &[&str]) -> String {
+    datetimes
+        .iter()
+        .map(|at| format!("time({{ dateTime: {at:?} }});\n"))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days() {
+    // Each as old, as of `NOW`, as its comment says.
+    let datetimes = [
+        "2026-10-23T11:59:01Z", // 59 s
+        "2026-10-23T11:59:00Z", // 1 min
+        "2026-10-23T11:00:01Z", // 59 min 59 s
+        "2026-10-23T11:00:00Z", // 1 h
+        "2026-10-22T12:01:00Z", // 23 h 59 min
+        "2026-10-22T12:00:00Z", // 1 day
+        "2026-10-21T13:00:00Z", // 47 h, two calendar days back
+        "2026-09-23T12:00:00Z", // 30 days
+        "2026-09-23T11:59:59Z", // 30 days and 1 s
+        "2025-09-12T10:00:00Z", // a past year
+    ];
+
+    let shown = on_the_page(
+        &times(&datetimes),
+        r#"times.map((time) => `${time.textContent} | ${time.title}`).join("\n")"#,
+    )
+    .await;
+
+    let relative = r#"relative(en, {"numeric":"always"})"#;
+    let date_this_year = r#"date(en, {"month":"short","day":"numeric"})"#;
+    let date_with_year = r#"date(en, {"year":"numeric","month":"short","day":"numeric"})"#;
+    let words: Vec<&str> = shown
+        .iter()
+        .map(|line| line.split(" | ").next().unwrap())
+        .collect();
+    assert_eq!(
+        words,
+        [
+            "just now".to_string(),
+            format!("{relative}: -1 minute"),
+            format!("{relative}: -59 minute"),
+            format!("{relative}: -1 hour"),
+            format!("{relative}: -23 hour"),
+            format!("{relative}: -1 day"),
+            format!("{relative}: -1 day"),
+            format!("{relative}: -30 day"),
+            format!("on {date_this_year}: 2026-09-23T11:59:59.000Z"),
+            format!("on {date_with_year}: 2025-09-12T10:00:00.000Z"),
+        ]
+    );
+    let absolute = r#"date(en, {"year":"numeric","month":"short","day":"numeric","hour":"2-digit","minute":"2-digit","second":"2-digit","timeZoneName":"short"})"#;
+    let titles: Vec<&str> = shown
+        .iter()
+        .map(|line| line.split(" | ").nth(1).unwrap())
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "2026-10-23T11:59:01.000Z",
+            "2026-10-23T11:59:00.000Z",
+            "2026-10-23T11:00:01.000Z",
+            "2026-10-23T11:00:00.000Z",
+            "2026-10-22T12:01:00.000Z",
+            "2026-10-22T12:00:00.000Z",
+            "2026-10-21T13:00:00.000Z",
+            "2026-09-23T12:00:00.000Z",
+            "2026-09-23T11:59:59.000Z",
+            "2025-09-12T10:00:00.000Z",
+        ]
+        .map(|at| format!("{absolute}: {at}")),
+        "the absolute time on hover"
+    );
+}
+
+#[tokio::test]
+async fn a_runs_duration_reads_its_two_largest_units_that_are_not_zero() {
+    // 45 s, 1 min 43 s, 3 h 2 min 7 s, 1 day 0 h 5 min 9 s and none, settled,
+    // then 3 h 2 min 7 s of a run in flight.
+    let page = times(&["PT45S", "PT103S", "PT10927S", "PT86709S", "PT0S"])
+        + r#"time({ dataset: { since: "2026-10-23T08:57:53Z" } });"#;
+
+    let shown = on_the_page(&page, r#"times.map((time) => time.textContent).join("\n")"#).await;
+
+    let narrow = r#"duration(en, {"style":"narrow"})"#;
+    let zero = r#"duration(en, {"style":"narrow","secondsDisplay":"always"})"#;
+    assert_eq!(
+        shown,
+        [
+            format!(r#"{narrow}: {{"seconds":45}}"#),
+            format!(r#"{narrow}: {{"minutes":1,"seconds":43}}"#),
+            format!(r#"{narrow}: {{"hours":3,"minutes":2}}"#),
+            format!(r#"{narrow}: {{"days":1,"minutes":5}}"#),
+            format!(r#"{zero}: {{"seconds":0}}"#),
+            format!(r#"{narrow}: {{"hours":3,"minutes":2}}"#),
+        ]
+    );
+}

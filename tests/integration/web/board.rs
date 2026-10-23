@@ -76,11 +76,13 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         [
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
-                "Needs a person: #3: Part one | reporter asked · DURATION".to_string(),
+                "Needs a person: #3: Part one | reporter asked · 2026-10-01 12:00:SS UTC"
+                    .to_string(),
             ],
             vec![
                 "#1: Do the thing".to_string(),
-                "Needs a person: #1: Do the thing | decision needed · DURATION".to_string(),
+                "Needs a person: #1: Do the thing | decision needed · 2026-10-01 12:00:SS UTC"
+                    .to_string(),
             ],
             vec![
                 "#4: Old idea — finished 2026-10-01 12:00:SS UTC".to_string(),
@@ -210,11 +212,13 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         [
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
-                "Needs a person: #3: Part one | reporter asked · DURATION".to_string(),
+                "Needs a person: #3: Part one | reporter asked · 2026-10-01 12:00:SS UTC"
+                    .to_string(),
             ],
             vec![
                 "#1: Do the thing".to_string(),
-                "Needs a person: #1: Do the thing | decision needed · DURATION".to_string(),
+                "Needs a person: #1: Do the thing | decision needed · 2026-10-01 12:00:SS UTC"
+                    .to_string(),
             ],
             vec![
                 "#5: Small thing — 1/1 tickets closed — finished 2026-10-01 12:00:SS UTC"
@@ -396,7 +400,7 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
     web.store.unlabel_as(ticket, "ready-for-agent").unwrap();
     web.store.label_as(ticket, "ready-for-human").unwrap();
     web.deliver_issue(ticket.0).await;
-    let handed_back = eventually_on_the_board(&web, "handed back · DURATION").await;
+    let handed_back = eventually_on_the_board(&web, "handed back · 2026-10-01 12:00:SS UTC").await;
 
     assert_eq!(
         in_review,
@@ -409,7 +413,9 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
     assert_eq!(
         handed_back,
         [(
-            format!("Needs a person: {ticket}: Do the thing | handed back · DURATION"),
+            format!(
+                "Needs a person: {ticket}: Do the thing | handed back · 2026-10-01 12:00:SS UTC"
+            ),
             false
         )]
     );
@@ -436,7 +442,9 @@ async fn a_stalled_card_says_stalled_in_needs_a_person_and_after_its_pull_reques
         shown,
         [
             (
-                format!("Needs a person: {stalled}: Do another thing | stalled · DURATION"),
+                format!(
+                    "Needs a person: {stalled}: Do another thing | stalled · 2026-10-01 12:00:SS UTC"
+                ),
                 false
             ),
             (
@@ -600,7 +608,7 @@ async fn eventually_on_the_board(web: &Web, line: &str) -> Vec<(String, bool)> {
 }
 
 #[tokio::test]
-async fn a_card_waiting_in_its_column_ends_its_line_with_how_long_it_has_sat_kept_up_as_a_runs() {
+async fn a_card_waiting_in_its_column_ends_its_line_with_when_it_entered_its_column() {
     let world = with_issue_for_triage().await;
     world
         .harness
@@ -633,20 +641,25 @@ async fn a_card_waiting_in_its_column_ends_its_line_with_how_long_it_has_sat_kep
         shown,
         [
             // The run refused for the usage limit changed #1 last.
-            "Triage: #1: Export fails | DURATION",
-            "Needs a person: #2: First | decision needed · DURATION",
-            "Ready: #3: Then | blocked by #2 · DURATION",
+            "Triage: #1: Export fails | 2026-10-01 12:00:SS UTC",
+            "Needs a person: #2: First | decision needed · 2026-10-01 12:00:SS UTC",
+            "Ready: #3: Then | blocked by #2 · 2026-10-01 12:00:SS UTC",
         ]
     );
-    let sat: Vec<&str> = select(&html, "#board .card .line time[data-since]")
+    let entered: Vec<&str> = select(&html, "#board .card .line time[datetime]")
         .into_iter()
-        .filter_map(|time| time.attr("data-since"))
+        .filter_map(|time| time.attr("datetime"))
         .collect();
-    assert_eq!(sat.len(), 3, "{sat:?}");
+    assert_eq!(entered.len(), 3, "{entered:?}");
     assert!(
-        sat.iter()
-            .all(|since| since.starts_with("2026-10-01T12:00:")),
-        "{sat:?}"
+        entered
+            .iter()
+            .all(|at| at.starts_with("2026-10-01T12:00:") && at.ends_with('Z')),
+        "{entered:?}"
+    );
+    assert!(
+        select(&html, "#board .card .line time[data-since]").is_empty(),
+        "no card's wait ticks as a duration"
     );
     web.stop().await;
 }
@@ -704,7 +717,7 @@ async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_
         shown,
         [
             format!("In review: {pr}: Tidy up | checks running"),
-            format!("Ready: {let_go}: Let go | unassigned · DURATION"),
+            format!("Ready: {let_go}: Let go | unassigned · 2026-10-01 12:00:SS UTC"),
         ]
     );
     web.stop().await;
