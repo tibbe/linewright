@@ -76,28 +76,21 @@ attach NPM's container to it, as an external network in NPM's own
 
 ## The web UI
 
-`serve` serves the web UI on its Unix socket, which is in the container's
-`/tmp` unless you put it on the host. To reach it through an SSH tunnel, mount
-a directory of the host's, owned by the agents' user (`chown 10001:100`), at
-`/run/user/10001`, and make it the runtime directory, in
-`compose.override.yaml`:
-
-```yaml
-services:
-  linewright:
-    volumes: ["/srv/linewright-run:/run/user/10001"]
-    environment: {XDG_RUNTIME_DIR: /run/user/10001}
-```
-
-Restart it, then forward a port to the socket from your machine and open
-`http://localhost:8080`:
+`linewright` serves the web UI on `0.0.0.0:8081` in its container
+(`LINEWRIGHT_UI_ADDRESS`), and `ui-relay`, a socat container like
+`webhook-relay`, publishes it on the host's loopback, `127.0.0.1:8081`:
+`fenced` is internal, so Docker publishes no port of `linewright`'s itself.
+On the host, open `http://localhost:8081`; from your machine, forward a port
+to it and open `http://localhost:8081`:
 
 ```sh
-ssh -N -L 8080:/srv/linewright-run/linewright/HASH.sock HOST
+ssh -N -L 8081:localhost:8081 HOST
 ```
 
-The socket's name, in the directory's `linewright/`, stays the same across
-restarts.
+To reach it through NPM instead, add a proxy host for it, with access
+restricted to your users, forwarding to the host's `127.0.0.1:8081`, and add
+its domain name to `ui-hosts` in `compose.override.yaml`, such as
+`environment: {LINEWRIGHT_UI_HOSTS: linewright-ui.example.com}`.
 
 ## Deploying and watching it
 

@@ -94,8 +94,9 @@ async fn without_auto_merge_neither_the_merge_method_nor_update_branch_is_checke
 }
 
 /// Returns whether it succeeded and what it wrote to stderr. It gets a
-/// runtime directory of its own, so that `serve`s run by tests at the same
-/// time don't claim the same socket.
+/// runtime directory of its own and serves the web UI on a port the system
+/// chooses, so that `serve`s run by tests at the same time don't claim the
+/// same socket or port.
 fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
     let dir = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
@@ -103,6 +104,7 @@ fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, Str
         .current_dir(dir.path())
         .env("PATH", path)
         .env("XDG_RUNTIME_DIR", dir.path())
+        .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .envs(env.iter().copied())
         .output()
@@ -213,6 +215,78 @@ fn serve_refuses_a_webhook_address_it_cannot_listen_on() {
     assert!(!succeeded, "{error}");
     assert!(error.contains("webhook-address"), "{error}");
     assert!(error.contains(&address), "{error}");
+}
+
+#[test]
+fn serve_refuses_a_ui_address_it_cannot_listen_on_before_it_talks_to_github() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = taken.local_addr().unwrap().to_string();
+
+    let empty = tempfile::tempdir().unwrap();
+    // Without a token, startup would fail at its first call to GitHub.
+    let (succeeded, error) = lw(
+        empty.path(),
+        &["--repo", "owner/name", "--ui-address", &address, "serve"],
+        &[("GH_TOKEN", ""), ("GITHUB_TOKEN", "")],
+    );
+
+    assert!(!succeeded, "{error}");
+    assert!(error.contains("ui-address"), "{error}");
+    assert!(error.contains(&address), "{error}");
+}
+
+/// What `serve` logs as JSON lines, with `ui_address` as its `ui-address`,
+/// until startup fails for want of `git`.
+fn serve_log_lines(ui_address: &str) -> Vec<serde_json::Value> {
+    let empty = tempfile::tempdir().unwrap();
+    let (_, log) = lw(
+        empty.path(),
+        &[
+            "--repo",
+            "owner/name",
+            "--ui-address",
+            ui_address,
+            "--log-format",
+            "json",
+            "serve",
+        ],
+        &[],
+    );
+    log.lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[test]
+fn serve_logs_the_address_it_serves_the_web_ui_on() {
+    let lines = serve_log_lines("127.0.0.1:0");
+
+    let serving: Vec<&serde_json::Value> = lines
+        .iter()
+        .filter(|line| line["fields"]["message"] == "serving the web UI")
+        .collect();
+    assert_eq!(serving.len(), 1, "{lines:?}");
+    let address = serving[0]["fields"]["address"].as_str().unwrap();
+    let port = address.strip_prefix("127.0.0.1:").unwrap();
+    assert_ne!(port, "0", "{address}");
+}
+
+#[test]
+fn with_an_empty_ui_address_serve_serves_no_web_ui() {
+    let lines = serve_log_lines("");
+
+    assert!(
+        lines
+            .iter()
+            .all(|line| line["fields"]["message"] != "serving the web UI"),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(
+            |line| line["fields"]["message"] == "answering the monitoring commands and `drain`"
+        ),
+        "{lines:?}"
+    );
 }
 
 #[test]
@@ -587,6 +661,7 @@ fn sigquit_while_serve_is_starting_ends_it_with_status_0() {
         .env("PATH", bin.path())
         .env("XDG_RUNTIME_DIR", runtime_dir.path())
         .env("GH_TOKEN", "token")
+        .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .stderr(std::process::Stdio::null())
         .spawn()

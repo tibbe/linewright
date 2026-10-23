@@ -34,7 +34,6 @@ use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
 use crate::status::{self, Polling, Serving, Status, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
-use crate::web;
 use crate::webhook::Tally;
 
 pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> PathBuf {
@@ -255,15 +254,6 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .with_state(sources)
 }
 
-/// What the socket answers: the web UI's pages, streams and assets, and
-/// the local API for everything else, both only to requests whose `Host`
-/// is local.
-fn socket_router(sources: Sources, stopping: CancellationToken) -> Router {
-    web::router(sources.clone(), stopping.clone())
-        .layer(middleware::from_fn(local_only))
-        .fallback_service(router(sources, stopping))
-}
-
 async fn no_such_resource() -> Response {
     error_response(StatusCode::NOT_FOUND, "no such resource")
 }
@@ -285,9 +275,9 @@ impl Api {
             lock,
         } = claimed;
         let stopping = CancellationToken::new();
-        let router = socket_router(sources, stopping.clone());
+        let router = router(sources, stopping.clone());
         let listening = Listening::spawn(listener, router, "answering on the local API");
-        info!(socket = %path.display(), "answering the monitoring commands, `drain` and the web UI");
+        info!(socket = %path.display(), "answering the monitoring commands and `drain`");
         Api {
             path,
             stopping,

@@ -9,6 +9,8 @@ use linewright::api::{self, Api, ClaimError, Sources};
 use linewright::clock::Clock;
 use linewright::ending::{Ends, Event, Signal};
 use linewright::factory::ServeEnd;
+use linewright::host::Hosts;
+use linewright::web;
 use linewright::webhook::{Listener, Pending};
 use tokio_util::sync::CancellationToken;
 
@@ -18,6 +20,8 @@ struct Answering {
     ends: Ends,
     clock: std::sync::Arc<FakeClock>,
     listener: Option<Listener>,
+    /// The web UI, on a port the system chose.
+    ui: web::Listener,
     runtime_dir: tempfile::TempDir,
     _dir: tempfile::TempDir,
 }
@@ -94,27 +98,31 @@ impl Answering {
         // As `common::config` has it.
         let work_dir = dir.path().join("work");
         let serving = Serving::start(factory, poll_interval, pending);
-        let api = Api::serve(
-            claimed,
-            Sources {
-                serving: linewright::status::Serving { since, max_runs: 4 },
-                served: serving.served.clone(),
-                polling: serving.polling.clone(),
-                deliveries: listener.as_ref().map(Listener::tally),
-                clock: clock.clone(),
-                work_dir: linewright::runs::RepoWorkDir {
-                    base: work_dir,
-                    repo: REPO.parse().unwrap(),
-                },
-                ends: ends.clone(),
+        let sources = Sources {
+            serving: linewright::status::Serving { since, max_runs: 4 },
+            served: serving.served.clone(),
+            polling: serving.polling.clone(),
+            deliveries: listener.as_ref().map(Listener::tally),
+            clock: clock.clone(),
+            work_dir: linewright::runs::RepoWorkDir {
+                base: work_dir,
+                repo: REPO.parse().unwrap(),
             },
-        );
+            ends: ends.clone(),
+        };
+        let ui = web::Ui {
+            address: "127.0.0.1:0".parse().unwrap(),
+            hosts: Hosts::default(),
+        };
+        let ui = web::Listener::bind(&ui, sources.clone()).await.unwrap();
+        let api = Api::serve(claimed, sources);
         Answering {
             serving,
             api,
             ends,
             clock,
             listener,
+            ui,
             runtime_dir,
             _dir: dir,
         }
@@ -124,13 +132,14 @@ impl Answering {
         lw(self.runtime_dir.path(), args).await
     }
 
-    /// Stops the API once serving ends of its own accord, as `serve` exits
-    /// then, and gives what serving ended with.
+    /// Stops the listeners once serving ends of its own accord, as `serve`
+    /// exits then and in its order, and gives what serving ended with.
     fn exits_once_served(self) -> tokio::task::JoinHandle<ServeEnd> {
         let Answering {
             serving,
             api,
             listener,
+            ui,
             runtime_dir,
             _dir,
             ..
@@ -140,6 +149,7 @@ impl Answering {
             if let Some(listener) = listener {
                 within(STOPPING, "the webhook listener stops", listener.stop()).await;
             }
+            within(STOPPING, "the web UI stops", ui.stop()).await;
             within(STOPPING, "the API stops", api.stop()).await;
             // Kept until `serve` exits.
             drop((runtime_dir, _dir));
@@ -151,6 +161,7 @@ impl Answering {
         if let Some(listener) = self.listener {
             within(STOPPING, "the webhook listener stops", listener.stop()).await;
         }
+        within(STOPPING, "the web UI stops", self.ui.stop()).await;
         within(STOPPING, "the API stops", self.api.stop()).await;
         within(STOPPING, "serving stops", self.serving.stop()).await;
     }
@@ -190,6 +201,7 @@ async fn lw_with(runtime_dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Out
         .args(args)
         .current_dir(cwd.path())
         .env("XDG_RUNTIME_DIR", runtime_dir)
+        .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .envs(env.iter().copied())
         .kill_on_drop(true)
@@ -206,15 +218,6 @@ async fn lw_with(runtime_dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Out
 
 async fn get(runtime_dir: &Path, host: &str, resource: &str) -> (u16, String) {
     request(runtime_dir, hyper::Method::GET, host, resource).await
-}
-
-/// The status of the answer to a GET, without waiting for its body, as an
-/// event stream's does not end.
-async fn status(runtime_dir: &Path, host: &str, resource: &str) -> u16 {
-    send(runtime_dir, hyper::Method::GET, host, resource)
-        .await
-        .status()
-        .as_u16()
 }
 
 async fn request(
@@ -522,34 +525,21 @@ async fn with_webhooks_on_status_shows_the_last_accepted_delivery_and_those_refu
 }
 
 #[tokio::test]
-async fn a_request_for_the_web_ui_whose_host_is_not_local_is_refused_for_pages_assets_and_streams()
-{
+async fn the_socket_serves_no_web_ui() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
     let dir = answering.runtime_dir.path();
-    let (_, page) = get(dir, "localhost", "/items/1").await;
-    let page = scraper::Html::parse_document(&page);
-    let assets: Vec<String> = page
-        .select(&scraper::Selector::parse("link[rel=stylesheet], script[src]").unwrap())
-        .map(|asset| {
-            let asset = asset.value();
-            asset
-                .attr("href")
-                .or_else(|| asset.attr("src"))
-                .unwrap()
-                .to_string()
-        })
-        .collect();
-    assert_eq!(assets.len(), 4);
-    let paths = ["/items/1", "/events/items/1"]
-        .into_iter()
-        .map(str::to_string)
-        .chain(assets);
 
-    for path in paths {
-        let refused = status(dir, "evil.example", &path).await;
-        let answered = status(dir, "localhost", &path).await;
-        assert_eq!(refused, 403, "{path}");
-        assert_eq!(answered, 200, "{path}");
+    for path in [
+        "/",
+        "/items/1",
+        "/events/items/1",
+        "/server",
+        "/assets/linewright.css",
+    ] {
+        let (status, body) = get(dir, "localhost", path).await;
+
+        assert_eq!(status, 404, "{path}: {body}");
+        assert!(body.contains("no such resource"), "{path}: {body}");
     }
     answering.stop().await;
 }
@@ -568,6 +558,8 @@ async fn a_request_whose_host_is_not_local_is_refused() {
         get(dir, "localhost", "/api/status").await,
         get(dir, "127.0.0.1:8080", "/api/status").await,
         get(dir, "[::1]:8080", "/api/status").await,
+        get(dir, "LOCALHOST.", "/api/status").await,
+        get(dir, "localhost.:8080", "/api/status").await,
     ];
 
     for (status, body) in refused {
@@ -1898,6 +1890,34 @@ async fn drain_with_no_run_in_flight_returns_once_serve_has_exited() {
         within(STOPPING, "serve exits", exited).await.unwrap(),
         ServeEnd::Drained
     );
+}
+
+#[tokio::test]
+async fn once_drain_returns_a_new_serve_can_serve_the_web_ui_on_the_same_address() {
+    let answering = Answering::start(World::new().await, false).await;
+    let runtime_dir = answering.runtime_dir.path().to_path_buf();
+    let address = answering.ui.local_address();
+    let connection = tokio::net::TcpStream::connect(address).await.unwrap();
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(connection))
+            .await
+            .unwrap();
+    tokio::spawn(connection);
+    let request = hyper::Request::get("/events/")
+        .header("Host", "localhost")
+        .body(http_body_util::Empty::<axum::body::Bytes>::new())
+        .unwrap();
+    let stream = sender.send_request(request).await.unwrap();
+    assert_eq!(stream.status(), 200);
+    let exited = answering.exits_once_served();
+
+    let drain = Watching::start(&runtime_dir, &["drain"]);
+    let (code, _, stderr) = drain.exits().await;
+
+    assert_eq!(code, Some(0), "{stderr}");
+    std::net::TcpListener::bind(address).expect("the web UI's address is free");
+    drop(stream);
+    within(STOPPING, "serve exits", exited).await.unwrap();
 }
 
 #[tokio::test]

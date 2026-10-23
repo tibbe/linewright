@@ -23,7 +23,7 @@ use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES}
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::webhook::{Listener, Pending};
 use linewright::{COMMAND, COMMIT, VERSION};
-use linewright::{explain, status};
+use linewright::{explain, status, web};
 use tokio::signal::unix::signal;
 use tracing::{error, info};
 
@@ -526,24 +526,32 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 None => None,
             };
             let (publish, served, polling) = Publish::new();
-            let api = Api::serve(
-                claimed,
-                Sources {
-                    serving: status::Serving {
-                        since,
-                        max_runs: config.max_runs,
-                    },
-                    served,
-                    polling,
-                    deliveries: listener.as_ref().map(Listener::tally),
-                    clock,
-                    work_dir,
-                    ends: ends.clone(),
+            let sources = Sources {
+                serving: status::Serving {
+                    since,
+                    max_runs: config.max_runs,
                 },
-            );
+                served,
+                polling,
+                deliveries: listener.as_ref().map(Listener::tally),
+                clock,
+                work_dir,
+                ends: ends.clone(),
+            };
+            let ui = match &config.ui {
+                Some(ui) => Some(web::Listener::bind(ui, sources.clone()).await?),
+                None => None,
+            };
+            let api = Api::serve(claimed, sources);
             let stopped = serve(&config, &ends, &pending, &publish).await;
             if let Some(listener) = listener {
                 listener.stop().await;
+            }
+            // Before the claim is released, which `drain` waits for, so
+            // that a `serve` started once it returns can listen on the
+            // same `ui-address`.
+            if let Some(ui) = ui {
+                ui.stop().await;
             }
             api.stop().await;
             stopped

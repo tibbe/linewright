@@ -9,11 +9,13 @@ use clap::{Args, Parser, Subcommand};
 use crate::automation::AutomationName;
 use crate::domain::{MergeMethod, Number, Repo, Timestamp, UpdateMethod};
 use crate::drain::Timeout;
+use crate::host::Hosts;
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
 use crate::session_env::SessionEnv;
 use crate::spec_glob::SpecGlob;
+use crate::web;
 use crate::webhook::{self, Webhooks};
 
 #[derive(Parser, Debug)]
@@ -216,6 +218,14 @@ pub struct Settings {
     /// `LINEWRIGHT_WEBHOOK_SECRET` set [default: 0.0.0.0:8080]
     #[arg(long, global = true)]
     pub webhook_address: Option<String>,
+    /// The host and port `serve` serves the web UI on; empty for none
+    /// [default: 127.0.0.1:8081]
+    #[arg(long, global = true)]
+    pub ui_address: Option<String>,
+    /// The host names the web UI answers besides the local ones and IP
+    /// addresses, comma-separated [default: none]
+    #[arg(long, global = true, value_name = "NAMES")]
+    pub ui_hosts: Option<String>,
     /// The tracked Markdown files that are the spec [default: docs/**/*.md]
     #[arg(long, global = true)]
     pub spec_glob: Option<String>,
@@ -282,6 +292,8 @@ pub struct Config {
     pub repo: Option<String>,
     pub poll_interval: Duration,
     pub webhooks: Option<Webhooks>,
+    /// `None` when `ui-address` is empty.
+    pub ui: Option<web::Ui>,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
     pub max_runs: usize,
@@ -307,6 +319,8 @@ impl Settings {
             ("repo", &self.repo),
             ("poll-interval", &self.poll_interval),
             ("webhook-address", &self.webhook_address),
+            ("ui-address", &self.ui_address),
+            ("ui-hosts", &self.ui_hosts),
             ("spec-glob", &self.spec_glob),
             ("spec-lookback", &self.spec_lookback),
             ("max-runs", &self.max_runs),
@@ -331,10 +345,19 @@ impl Settings {
     }
 }
 
-const KEYS: [&str; 20] = [
+/// The settings that are lists, and what each holds, which may be an array
+/// in the file.
+const LISTS: [(&str, &str); 2] = [
+    ("session-env", "a variable's name"),
+    ("ui-hosts", "a host name"),
+];
+
+const KEYS: [&str; 22] = [
     "repo",
     "poll-interval",
     "webhook-address",
+    "ui-address",
+    "ui-hosts",
     "spec-glob",
     "spec-lookback",
     "max-runs",
@@ -492,6 +515,19 @@ impl Config {
             }
             None => None,
         };
+        let ui = match value("ui-address", "127.0.0.1:8081").as_str() {
+            "" => None,
+            address => Some(web::Ui {
+                address: address
+                    .parse()
+                    .map_err(|e| not_one("ui-address", address, e))?,
+                hosts: match get("ui-hosts").as_deref() {
+                    None | Some("") => Hosts::default(),
+                    Some(names) => Hosts::new(names.split(','))
+                        .map_err(|e| wrong("ui-hosts", format!("the setting `ui-hosts` {e}")))?,
+                },
+            }),
+        };
         let session_env = get("session-env")
             .unwrap_or_default()
             .parse::<SessionEnv>()
@@ -507,6 +543,7 @@ impl Config {
             repo: get("repo"),
             poll_interval: duration("poll-interval", "60s")?,
             webhooks,
+            ui,
             spec_glob,
             spec_lookback: delta("spec-lookback", "7d")?,
             max_runs: number("max-runs", "4")? as usize,
@@ -575,13 +612,15 @@ fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
                 toml::Value::String(s) => s,
                 toml::Value::Integer(i) => i.to_string(),
                 toml::Value::Boolean(b) => b.to_string(),
-                // In the form its flag takes, names separated by commas.
-                toml::Value::Array(names) if key == "session-env" => names
+                // In the form its flag takes, separated by commas.
+                toml::Value::Array(entries) if let Some(holds) = list(&key) => entries
                     .into_iter()
-                    .map(|name| match name.as_str() {
-                        Some(variable) if !variable.contains(',') => Ok(variable.to_string()),
+                    .map(|entry| match entry.as_str() {
+                        Some(entry) if !entry.is_empty() && !entry.contains(',') => {
+                            Ok(entry.to_string())
+                        }
                         Some(_) | None => bail!(
-                            "{}: the setting `{key}` holds {name}, not a variable's name",
+                            "{}: the setting `{key}` holds {entry}, not {holds}",
                             path.display()
                         ),
                     })
@@ -598,4 +637,11 @@ fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
             Ok((key, value))
         })
         .collect()
+}
+
+/// What the list setting `key` holds, `None` when it is not a list.
+fn list(key: &str) -> Option<&'static str> {
+    LISTS
+        .iter()
+        .find_map(|&(list, holds)| (list == key).then_some(holds))
 }

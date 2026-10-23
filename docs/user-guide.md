@@ -222,15 +222,16 @@ the branch to have it start over. Closing the issue deletes it.
 
 ## Following Linewright in a browser
 
-`serve` serves a web UI on the same Unix socket as the monitoring commands.
-Whoever runs Linewright can open it to you through an SSH tunnel from your
-machine to that socket, whose path `serve` logs as it starts:
+`serve` serves a web UI on a port of its own, `http://localhost:8081` on the
+machine it runs on unless whoever runs Linewright set it otherwise. Open the
+address they give you: the UI's own, or the address of the proxy they put in
+front of it. Without either, forward a port to it from your machine over SSH:
 
 ```sh
-ssh -N -L 8080:/run/user/1000/linewright/0123456789abcdef.sock linewright-host
+ssh -N -L 8081:localhost:8081 linewright-host
 ```
 
-Then open `http://localhost:8080`.
+Then open `http://localhost:8081`.
 
 ## Recurring work
 

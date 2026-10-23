@@ -21,6 +21,8 @@ services:
     env_file: .env
     environment:
       LINEWRIGHT_WORK_DIR: /data
+      # Answering outside the container, for `ui-relay`.
+      LINEWRIGHT_UI_ADDRESS: 0.0.0.0:8081
       CLAUDE_CONFIG_DIR: /home/linewright/.claude
       XDG_CACHE_HOME: /tmp/cache
       http_proxy: http://proxy:4750
@@ -63,6 +65,20 @@ services:
         # The name the reverse proxy reaches it by, unique on the shared
         # network.
         aliases: [linewright-webhook]
+
+  # Publishes the web UI on the host's loopback: Docker publishes no port of
+  # a container on `fenced` alone, which is internal. It forwards to
+  # linewright's ui-address and nowhere else, so it opens no way out of
+  # `fenced`.
+  ui-relay:
+    image: ghcr.io/tibbe/linewright-webhook-relay:${LINEWRIGHT_TAG:-main}
+    command: ["TCP-LISTEN:8081,fork,reuseaddr", "TCP:linewright:8081"]
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    ports: ["127.0.0.1:8081:8081"]
+    networks: [fenced, default]
 
 networks:
   fenced:

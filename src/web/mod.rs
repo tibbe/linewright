@@ -16,12 +16,13 @@ use html::Html;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
+use std::net::SocketAddr;
 use std::sync::LazyLock;
 use std::time::Duration;
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::extract::{Path, Request};
+use axum::extract::{Path, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -31,17 +32,65 @@ use axum::{Extension, Router};
 use rust_embed::Embed;
 use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use crate::api::{self, Sources, Unanswered};
 use crate::domain::{Repo, Timestamp};
+use crate::host::{HostName, Hosts};
+use crate::listening::{Address, Listening};
 use crate::phrase::{Phrase, Tone};
 use crate::runs::{Outcome, RunId};
 use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
 
-/// The web UI: its pages, their event streams and their assets.
-/// `stopping` ends the event streams, so that stopping waits only for the
-/// answers being given.
-pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
+/// Where the web UI is served and the names it answers besides the local
+/// ones and IP addresses (`docs/specs/design_system.md`, Serving).
+#[derive(Clone, Debug)]
+pub struct Ui {
+    pub address: Address,
+    pub hosts: Hosts,
+}
+
+/// The web UI listening on its port, until [`Listener::stop`].
+pub struct Listener {
+    address: SocketAddr,
+    /// Ends the event streams.
+    stopping: CancellationToken,
+    listening: Listening,
+}
+
+impl Listener {
+    /// Serves the web UI on `ui`'s address, with an error naming
+    /// `ui-address` when it cannot.
+    pub async fn bind(ui: &Ui, sources: Sources) -> anyhow::Result<Listener> {
+        let socket = ui.address.bind("ui-address").await?;
+        let address = socket.local_addr()?;
+        let stopping = CancellationToken::new();
+        let router = router(sources, ui.hosts.clone(), stopping.clone());
+        let listening = Listening::spawn(socket, router, "serving the web UI");
+        info!(address = %address, "serving the web UI");
+        Ok(Listener {
+            address,
+            stopping,
+            listening,
+        })
+    }
+
+    /// The address it listens on, with the port the system chose for port 0.
+    pub fn local_address(&self) -> SocketAddr {
+        self.address
+    }
+
+    /// Ends the event streams, and returns once it no longer listens.
+    pub async fn stop(self) {
+        self.stopping.cancel();
+        self.listening.stop().await;
+    }
+}
+
+/// The web UI: its pages, their event streams and their assets, answering
+/// only the requests whose `Host` `hosts` answers. `stopping` ends the event
+/// streams, so that stopping waits only for the answers being given.
+pub fn router(sources: Sources, hosts: Hosts, stopping: CancellationToken) -> Router {
     Router::new()
         .route("/", get(board_page::board_page))
         .route("/events/", get(board_page::board_events))
@@ -61,8 +110,29 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/assets/{name}", get(asset))
         .layer(middleware::from_fn(confined))
         .fallback(|| async { (StatusCode::NOT_FOUND, "no such page") })
+        .layer(middleware::from_fn_with_state(hosts, misdirected))
         .layer(Extension(stopping))
         .with_state(sources)
+}
+
+/// Refuses a request whose `Host` is not local, an IP address or one of
+/// `ui-hosts`, such as one a web page sends under a name it controls that
+/// it has pointed at the UI's address.
+async fn misdirected(State(hosts): State<Hosts>, request: Request, next: Next) -> Response {
+    if HostName::of(request.headers()).is_some_and(|host| hosts.answers(&host)) {
+        return next.run(request).await;
+    }
+    let host = request.headers().get(header::HOST);
+    warn!(
+        host = %host.map_or("none".into(), |host| String::from_utf8_lossy(host.as_bytes())),
+        reason = "its Host is not local, an IP address or one of `ui-hosts`",
+        "refused a request for the web UI"
+    );
+    (
+        StatusCode::MISDIRECTED_REQUEST,
+        "this name is not one the web UI answers to",
+    )
+        .into_response()
 }
 
 /// Has the browser run only the scripts Linewright serves, and show only

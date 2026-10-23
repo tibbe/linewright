@@ -4,6 +4,7 @@ use std::time::Duration;
 use clap::{CommandFactory, Parser};
 use linewright::config::{Cli, Config, LogFormat, ResolveError};
 use linewright::domain::MergeMethod;
+use linewright::host::HostName;
 use linewright::session_env::SessionEnv;
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
@@ -379,8 +380,136 @@ fn help_lists_session_env_with_its_default() {
 }
 
 #[test]
-fn only_session_env_is_a_list_in_the_file() {
+fn only_the_list_settings_are_lists_in_the_file() {
     let error = resolve(&[], &[], Some("repo = [\"acme/widgets\"]\n")).unwrap_err();
 
     assert!(error.contains("`repo`"), "{error}");
+}
+
+#[test]
+fn the_web_ui_is_served_on_127_0_0_1_8081_answering_only_local_names_by_default() {
+    let config = resolve(&[], &[], None).unwrap();
+
+    let ui = config.ui.unwrap();
+    assert_eq!(ui.address.to_string(), "127.0.0.1:8081");
+    assert!(ui.hosts.answers(&HostName::parse("localhost").unwrap()));
+    assert!(
+        !ui.hosts
+            .answers(&HostName::parse("linewright.example.com").unwrap())
+    );
+}
+
+#[test]
+fn an_empty_ui_address_serves_no_web_ui() {
+    let from_flag = resolve(&["--ui-address", ""], &[], None).unwrap();
+    let from_env = resolve(&[], &[("LINEWRIGHT_UI_ADDRESS", "")], None).unwrap();
+    let from_file = resolve(&[], &[], Some("ui-address = \"\"\n")).unwrap();
+
+    assert!(from_flag.ui.is_none());
+    assert!(from_env.ui.is_none());
+    assert!(from_file.ui.is_none());
+}
+
+#[test]
+fn the_ui_address_is_a_flag_the_environment_or_the_file() {
+    let address = |args: &[&str], env: &[(&str, &str)], file| {
+        resolve(args, env, file)
+            .unwrap()
+            .ui
+            .unwrap()
+            .address
+            .to_string()
+    };
+    let file = Some("ui-address = \"0.0.0.0:9000\"\n");
+    let env = [("LINEWRIGHT_UI_ADDRESS", "localhost:9001")];
+
+    assert_eq!(address(&[], &[], file), "0.0.0.0:9000");
+    assert_eq!(address(&[], &env, file), "localhost:9001");
+    assert_eq!(
+        address(&["--ui-address", "[::1]:9002"], &env, file),
+        "[::1]:9002"
+    );
+}
+
+#[test]
+fn a_ui_address_that_is_not_a_host_and_port_is_an_error_naming_the_setting() {
+    for bad in [
+        "8081",
+        "localhost",
+        ":8081",
+        "localhost:http",
+        "localhost:99999",
+    ] {
+        let error = resolve(&["--ui-address", bad], &[], None).unwrap_err();
+
+        assert!(error.contains("ui-address"), "{bad}: {error}");
+    }
+}
+
+/// Whether the web UI `config` sets up answers a request whose `Host` is
+/// `host`.
+fn answers(config: &Config, host: &str) -> bool {
+    let host = HostName::parse(host).unwrap();
+    config.ui.as_ref().unwrap().hosts.answers(&host)
+}
+
+#[test]
+fn ui_hosts_is_a_comma_separated_flag_or_variable_or_a_list_or_string_in_the_file() {
+    let list = Some("ui-hosts = [\"a.example\", \"B.example.\"]\n");
+    let string = Some("ui-hosts = \"c.example\"\n");
+    let env = [("LINEWRIGHT_UI_HOSTS", "d.example,e.example")];
+
+    let from_list = resolve(&[], &[], list).unwrap();
+    let from_string = resolve(&[], &[], string).unwrap();
+    let from_env = resolve(&[], &env, list).unwrap();
+    let from_flag = resolve(&["--ui-hosts", "f.example,g.example"], &env, list).unwrap();
+
+    assert!(answers(&from_list, "a.example"));
+    assert!(answers(&from_list, "b.example"));
+    assert!(!answers(&from_list, "c.example"));
+    assert!(answers(&from_string, "c.example"));
+    assert!(answers(&from_env, "d.example"));
+    assert!(answers(&from_env, "e.example"));
+    assert!(!answers(&from_env, "a.example"));
+    assert!(answers(&from_flag, "f.example"));
+    assert!(answers(&from_flag, "g.example"));
+    assert!(!answers(&from_flag, "d.example"));
+}
+
+#[test]
+fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_setting() {
+    for bad in [
+        "a.example,",
+        "a.example,,b.example",
+        "a.example:8081",
+        "https://a.example",
+        "*.example",
+        "a example",
+        ".",
+    ] {
+        let error = resolve(&["--ui-hosts", bad], &[], None).unwrap_err();
+
+        assert!(error.contains("ui-hosts"), "{bad:?}: {error}");
+    }
+    for bad in ["[\"a.example\", 7]", "[\"\"]", "[\"a.example,b.example\"]"] {
+        let file = format!("ui-hosts = {bad}\n");
+        let error = resolve(&[], &[], Some(&file)).unwrap_err();
+
+        assert!(error.contains("ui-hosts"), "{bad}: {error}");
+    }
+}
+
+#[test]
+fn ui_hosts_empty_names_no_host() {
+    let from_flag = resolve(&["--ui-hosts", ""], &[], None).unwrap();
+    let from_file = resolve(&[], &[], Some("ui-hosts = []\n")).unwrap();
+
+    assert!(!answers(&from_flag, "a.example"));
+    assert!(answers(&from_file, "localhost"));
+}
+
+#[test]
+fn help_lists_the_ui_address_with_its_default() {
+    let (help, line) = help_for("--ui-address");
+    assert!(line.contains("127.0.0.1:8081"), "{help}");
 }

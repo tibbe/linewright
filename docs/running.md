@@ -134,9 +134,36 @@ directory without it. `runs` and `logs` read the records `serve` keeps in the
 work directory when no `serve` runs. They exit 3 when they need a `serve` and
 none runs for the repository, and 4 when #N or the run ID names nothing.
 
-`serve` also serves a web UI on the socket, which a browser reaches through an
-SSH tunnel, as [the user guide](user-guide.md#following-linewright-in-a-browser)
-shows.
+## The web UI
+
+`serve` also serves a web UI, on `ui-address`, a host and port,
+`127.0.0.1:8081` unless set otherwise, and logs that address as it starts. It
+exits at startup if it cannot listen there. Set `ui-address` to an empty value
+to serve no web UI. The UI has no login of its own: whoever reaches the port
+can read it.
+
+It answers only requests whose `Host` is `localhost`, an IP address or one of
+the names in `ui-hosts`, ignoring case, port and a trailing dot, so that a web
+page elsewhere cannot read it under a name it controls. Every other request
+gets `421 Misdirected Request`, and `serve` logs each with the `Host` it named.
+
+- **On the same machine**, open `http://localhost:8081`.
+- **From another machine**, forward a port to it over SSH,
+  `ssh -N -L 8081:localhost:8081 HOST`, and open `http://localhost:8081`.
+- **Behind a reverse proxy** that authenticates its users and terminates
+  TLS, add the name the proxy serves it under to `ui-hosts`, unless the proxy
+  sends `Host: localhost`:
+
+  ```toml
+  ui-hosts = ["linewright.example.com"]
+  ```
+
+  As a flag or variable, `ui-hosts` is comma-separated:
+  `--ui-hosts linewright.example.com,linewright.internal`.
+
+In a container, set `ui-address` to `0.0.0.0:8081`, so the UI answers outside
+the container, and publish the port on the host's loopback, such as
+`127.0.0.1:8081:8081`. [`deploy/`](../deploy/README.md#the-web-ui) does that.
 
 ## Webhooks
 

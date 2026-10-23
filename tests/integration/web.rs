@@ -17,6 +17,7 @@ use common::*;
 use http_body_util::BodyExt as _;
 use linewright::api::Sources;
 use linewright::clock::Clock;
+use linewright::host::Hosts;
 use linewright::reconcile::WorkKind;
 use linewright::store::Store as _;
 use linewright::web;
@@ -30,6 +31,7 @@ use tower::ServiceExt as _;
 struct Web {
     serving: Serving,
     listener: Listener,
+    sources: Sources,
     router: Router,
     stopping: CancellationToken,
     store: std::sync::Arc<linewright::store::local::LocalStore>,
@@ -90,22 +92,21 @@ impl Web {
             .unwrap();
         let serving = Serving::start(factory, poll_interval, pending);
         let stopping = CancellationToken::new();
-        let router = web::router(
-            Sources {
-                deliveries: Some(listener.tally()),
-                ..sources(
-                    &dir,
-                    &clock,
-                    since,
-                    serving.served.clone(),
-                    serving.polling.clone(),
-                )
-            },
-            stopping.clone(),
-        );
+        let sources = Sources {
+            deliveries: Some(listener.tally()),
+            ..sources(
+                &dir,
+                &clock,
+                since,
+                serving.served.clone(),
+                serving.polling.clone(),
+            )
+        };
+        let router = web::router(sources.clone(), Hosts::default(), stopping.clone());
         Web {
             serving,
             listener,
+            sources,
             router,
             stopping,
             store,
@@ -128,8 +129,23 @@ impl Web {
         .unwrap()
     }
 
+    /// The web UI listening on a port of its own, answering `hosts` besides
+    /// the local names and IP addresses.
+    async fn listen(&self, hosts: &[&str]) -> web::Listener {
+        let ui = web::Ui {
+            address: "127.0.0.1:0".parse().unwrap(),
+            hosts: Hosts::new(hosts.iter().copied()).unwrap(),
+        };
+        web::Listener::bind(&ui, self.sources.clone())
+            .await
+            .unwrap()
+    }
+
     async fn response(&self, path: &str) -> axum::response::Response {
-        let request = axum::http::Request::get(path).body(Body::empty()).unwrap();
+        let request = axum::http::Request::get(path)
+            .header("Host", "localhost")
+            .body(Body::empty())
+            .unwrap();
         self.router.clone().oneshot(request).await.unwrap()
     }
 
