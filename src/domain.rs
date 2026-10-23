@@ -227,25 +227,45 @@ pub mod label {
         pub description: Option<String>,
     }
 
+    /// What names the labels only Linewright uses.
+    const PREFIX: &str = "linewright:";
+
     /// A change Linewright makes to the repository's labels at startup.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub enum LabelChange {
         Create(Label),
+        /// Sets the description of the label the repository spells `name`.
+        Describe {
+            name: String,
+            description: &'static str,
+        },
     }
 
-    /// The changes that give the repository the labels in `wanted` it lacks, matching names case-insensitively as GitHub
-    /// does, and leave every other label as it is
-    /// (`docs/specs/repository.md`, Labels).
+    /// The changes that give the repository the labels in `wanted` it lacks,
+    /// matching names case-insensitively as GitHub does, and set the
+    /// description of each `linewright:` label it has to its meaning, leaving
+    /// every other label as it is (`docs/specs/repository.md`, Labels).
     pub fn label_changes(existing: &[RepoLabel], wanted: &[Label]) -> Vec<LabelChange> {
         wanted
             .iter()
-            .filter(|wanted| {
-                !existing
+            .filter_map(|wanted| {
+                let found = existing
                     .iter()
-                    .any(|label| label.name.to_lowercase() == wanted.name.to_lowercase())
+                    .find(|label| label.name.to_lowercase() == wanted.name.to_lowercase());
+                match found {
+                    None => Some(LabelChange::Create(*wanted)),
+                    Some(label)
+                        if wanted.name.starts_with(PREFIX)
+                            && label.description.as_deref() != Some(wanted.description) =>
+                    {
+                        Some(LabelChange::Describe {
+                            name: label.name.clone(),
+                            description: wanted.description,
+                        })
+                    }
+                    Some(_) => None,
+                }
             })
-            .copied()
-            .map(LabelChange::Create)
             .collect()
     }
 }
@@ -1680,13 +1700,65 @@ mod tests {
     }
 
     #[test]
-    fn a_label_the_repository_has_with_another_description_is_left_as_it_is() {
+    fn a_label_without_the_linewright_prefix_with_another_description_is_left_as_it_is() {
         let changes = label::label_changes(
             &[label::RepoLabel {
                 name: "bug".into(),
                 description: Some("Broken".into()),
             }],
             &[bug()],
+        );
+
+        assert_eq!(changes, []);
+    }
+
+    fn stalled() -> label::Label {
+        label::Label {
+            name: "linewright:stalled",
+            description: "Handed back in a stall",
+        }
+    }
+
+    #[test]
+    fn a_linewright_label_with_another_description_is_described_under_the_repositorys_spelling() {
+        let changes = label::label_changes(
+            &[label::RepoLabel {
+                name: "Linewright:Stalled".into(),
+                description: Some("Stuck".into()),
+            }],
+            &[stalled()],
+        );
+
+        assert_eq!(
+            changes,
+            [label::LabelChange::Describe {
+                name: "Linewright:Stalled".into(),
+                description: "Handed back in a stall",
+            }]
+        );
+    }
+
+    #[test]
+    fn a_linewright_label_with_no_description_is_described() {
+        let changes = label::label_changes(&existing(&["linewright:stalled"]), &[stalled()]);
+
+        assert_eq!(
+            changes,
+            [label::LabelChange::Describe {
+                name: "linewright:stalled".into(),
+                description: "Handed back in a stall",
+            }]
+        );
+    }
+
+    #[test]
+    fn a_linewright_label_already_holding_its_meaning_is_left_as_it_is() {
+        let changes = label::label_changes(
+            &[label::RepoLabel {
+                name: "linewright:stalled".into(),
+                description: Some("Handed back in a stall".into()),
+            }],
+            &[stalled()],
         );
 
         assert_eq!(changes, []);

@@ -208,6 +208,10 @@ impl Factory {
                     .create_label(&label)
                     .await
                     .with_context(|| format!("creating label {}", label.name))?,
+                label::LabelChange::Describe { name, description } => store
+                    .describe_label(&name, description)
+                    .await
+                    .with_context(|| format!("describing label {name}"))?,
             }
         }
         info!(

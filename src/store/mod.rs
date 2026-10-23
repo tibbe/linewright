@@ -308,6 +308,8 @@ pub trait Store: Send + Sync {
     /// Every label in the repository.
     async fn labels(&self) -> Result<Vec<label::RepoLabel>>;
     async fn create_label(&self, label: &label::Label) -> Result<()>;
+    /// Sets the description of the label the repository spells `name`.
+    async fn describe_label(&self, name: &str, description: &str) -> Result<()>;
     /// Whether the repository has the label `name`. Adding a label by name
     /// can create it, so a label Linewright must not create is checked first.
     async fn label_exists(&self, name: &str) -> Result<bool>;

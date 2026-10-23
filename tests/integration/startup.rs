@@ -583,6 +583,10 @@ async fn startup_leaves_the_labels_the_repository_has_as_they_are_whatever_their
                 description: "Waiting for us to look",
             },
             label::Label {
+                name: "needs-info",
+                description: "Waiting on the reporter",
+            },
+            label::Label {
                 name: "bug",
                 description: "Broken",
             },
@@ -598,8 +602,31 @@ async fn startup_leaves_the_labels_the_repository_has_as_they_are_whatever_their
         Some("Waiting for us to look".to_string())
     );
     assert_eq!(
+        world.store.label_description("needs-info"),
+        Some("Waiting on the reporter".to_string())
+    );
+    assert_eq!(
         world.store.label_description("bug"),
         Some("Broken".to_string())
+    );
+}
+
+#[tokio::test]
+async fn startup_sets_a_linewright_label_with_another_description_back_to_its_meaning() {
+    let repository = Repository {
+        labels: vec![label::Label {
+            name: "Linewright:Stalled",
+            description: "Stuck",
+        }],
+        ..Repository::default()
+    };
+
+    let world = World::with_repository(repository, |_| {}).await;
+
+    assert!(!world.store.has_label("linewright:stalled"));
+    assert_eq!(
+        world.store.label_description("Linewright:Stalled"),
+        Some("Handed back in a stall".to_string())
     );
 }
 

@@ -1459,6 +1459,16 @@ impl Store for LocalStore {
         Ok(())
     }
 
+    async fn describe_label(&self, name: &str, description: &str) -> Result<()> {
+        let mut state = self.state();
+        let label = state
+            .labels
+            .get_mut(name)
+            .with_context(|| format!("no label {name}"))?;
+        *label = description.to_string();
+        Ok(())
+    }
+
     async fn label_exists(&self, name: &str) -> Result<bool> {
         Ok(self.has_label(name))
     }

@@ -928,6 +928,23 @@ fn percent_encode(text: &str) -> String {
         .collect()
 }
 
+/// The path, under the repository, of the label `name`
+/// (<https://docs.github.com/en/rest/issues/labels>).
+fn label_path(name: &str) -> String {
+    format!("/labels/{}", percent_encode(name))
+}
+
+/// The method, path under the repository and body of the request that sets
+/// the description of the label `name`
+/// (<https://docs.github.com/en/rest/issues/labels#update-a-label>).
+fn describe_label_request(name: &str, description: &str) -> (Method, String, Value) {
+    (
+        Method::PATCH,
+        label_path(name),
+        json!({"description": description}),
+    )
+}
+
 /// A login as REST spells it: GraphQL leaves the `[bot]` suffix off bots.
 fn login(actor: Option<Actor>) -> Login {
     match actor {
@@ -2083,11 +2100,7 @@ impl Store for GitHub {
 
     async fn label_exists(&self, name: &str) -> Result<bool> {
         let response = self
-            .send(
-                Method::GET,
-                &self.repo_path(&format!("/labels/{}", percent_encode(name))),
-                None,
-            )
+            .send(Method::GET, &self.repo_path(&label_path(name)), None)
             .await?;
         match response.status() {
             s if s.is_success() => Ok(true),
@@ -2113,6 +2126,12 @@ impl Store for GitHub {
             Some(json!({"name": label.name, "description": label.description, "color": "ededed"})),
         )
         .await
+    }
+
+    async fn describe_label(&self, name: &str, description: &str) -> Result<()> {
+        let (method, path, body) = describe_label_request(name, description);
+        self.rest_ok(method, &self.repo_path(&path), Some(body))
+            .await
     }
 
     async fn snapshot(&self, window_opened: Timestamp) -> Result<Snapshot> {
@@ -3673,5 +3692,19 @@ mod tests {
                 read("bug", "Something isn't working"),
             ]
         );
+    }
+
+    /// As GitHub documents updating a label
+    /// (<https://docs.github.com/en/rest/issues/labels#update-a-label>):
+    /// `PATCH /repos/{owner}/{repo}/labels/{name}`, the name a path segment,
+    /// with the new `description` in the body.
+    #[test]
+    fn a_label_named_with_a_colon_is_described_at_its_percent_encoded_name() {
+        let (method, path, body) =
+            describe_label_request("linewright:stalled", "Handed back in a stall");
+
+        assert_eq!(method, Method::PATCH);
+        assert_eq!(path, "/labels/linewright%3Astalled");
+        assert_eq!(body, json!({"description": "Handed back in a stall"}));
     }
 }
