@@ -60,7 +60,9 @@
 
 - Content wider than the page scrolls sideways on its own, not the page with
   it.
-- Text cut to fit is whole on hover and on keyboard focus.
+- What a page shows on hover it also shows on keyboard focus, over the
+  page, until the pointer leaves it or focus moves. Text cut to fit is shown
+  whole this way.
 
 ## Colour scheme
 
