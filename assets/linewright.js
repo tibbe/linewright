@@ -2,8 +2,8 @@
 // says since when the page lost `serve`, shows times and durations in the
 // page's language and the reader's time zone, keeping them up, keeps a run's
 // transcript at its latest entry while the reader is there, keeps each
-// fold as the reader opened or closed it through updates, and hides a
-// tooltip on Escape. htmx's
+// fold as the reader opened or closed it through updates, and shows the
+// page's tooltip. htmx's
 // `hx-sse` extension keeps the page up from its event stream:
 // https://four.htmx.org/extensions/hx-sse (htmx 4.0.0).
 (() => {
@@ -123,6 +123,7 @@
   // `entries`: whether the message added to the transcript.
   function swapped(entries) {
     tick();
+    refreshTip();
     if (!latest || !entries) return;
     if (stuck) toBottom();
     else latest.hidden = false;
@@ -187,25 +188,161 @@
     }, 5000);
   });
 
-  // Escape hides a daisyUI tooltip that shows, until the pointer leaves it
-  // or focus moves, as WCAG 1.4.13 asks
-  // (https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus).
-  // A tooltip whose `data-tip` is empty shows nothing.
-  const tooltips = [...document.querySelectorAll("[data-tip]")].map((tooltip) => {
-    const tip = tooltip.dataset.tip;
-    const show = () => {
-      tooltip.dataset.tip = tip;
-    };
-    tooltip.addEventListener("pointerleave", show);
-    tooltip.addEventListener("focusout", show);
-    return tooltip;
+  // The page's one tooltip, `#tip`, shows the tip of one trigger at a time:
+  // an element with `data-tip`, which always shows it, or `data-tip-cut`,
+  // which shows its `data-tip`, or else its text, only while it or an element
+  // in it is cut. It shows on hover and on keyboard focus, over the page,
+  // until the pointer leaves it or focus moves, and Escape hides it
+  // (`docs/specs/design_system.md`, Layout; WCAG 1.4.13,
+  // https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus).
+  // Its listeners are the document's, so a trigger that an update brings
+  // works as one the page loaded with.
+  const tip = document.getElementById("tip");
+  // The trigger whose tip shows, if any.
+  let shownFor = null;
+  // The trigger whose tip Escape hid, until the pointer leaves it or focus
+  // moves.
+  let dismissed = null;
+  // The pending hide after the pointer left the trigger and the tip.
+  let leaving = null;
+  // How long the pointer may be off the trigger and the tip before the tip
+  // hides, so that it can cross the gap between them.
+  const leaveDelay = 100;
+  // How near the viewport's edges the tip may come.
+  const edge = 8;
+
+  const isCut = (element) =>
+    [element, ...element.querySelectorAll("*")].some(
+      (cut) => cut.scrollWidth > cut.clientWidth || cut.scrollHeight > cut.clientHeight,
+    );
+
+  // The trigger that shows for `target`: of the triggers it is in, the
+  // outermost cut text, which shows all its triggers hold, or else the
+  // innermost that always shows.
+  function triggerOf(target) {
+    let innermost = null;
+    let outermostCut = null;
+    for (let element = target; element && element.hasAttribute; element = element.parentElement) {
+      if (element.hasAttribute("data-tip-cut")) {
+        if (isCut(element)) outermostCut = element;
+      } else if (!innermost && element.hasAttribute("data-tip")) {
+        innermost = element;
+      }
+    }
+    return outermostCut || innermost;
+  }
+
+  const textOf = (trigger) =>
+    trigger.getAttribute("data-tip") ?? trigger.textContent.replace(/\s+/g, " ").trim();
+
+  function cancelLeaving() {
+    clearTimeout(leaving);
+    leaving = null;
+  }
+
+  function hide() {
+    cancelLeaving();
+    if (!shownFor) return;
+    shownFor = null;
+    tip.hidePopover();
+    tip.dataset.tip = "";
+  }
+
+  function show(trigger) {
+    cancelLeaving();
+    if (trigger === dismissed) return;
+    const text = textOf(trigger);
+    if (!text) return hide();
+    tip.dataset.tip = text;
+    if (!shownFor) tip.showPopover();
+    shownFor = trigger;
+    place();
+  }
+
+  // Where the tip goes for a trigger whose box is `box`, drawn by daisyUI
+  // above it as `drawn`, its width, height and distance from the box's
+  // bottom, in a viewport `viewportWidth` wide: below the box where there is
+  // no room above, and `shift` along it to stay inside the viewport.
+  function placement(box, drawn, viewportWidth) {
+    const below = box.bottom - drawn.bottom - drawn.height < 0;
+    const left = box.left + box.width / 2 - drawn.width / 2;
+    const shift =
+      Math.max(0, edge - left) - Math.max(0, left + drawn.width - (viewportWidth - edge));
+    return { below, shift };
+  }
+
+  // Lays the tip's box over its trigger's, so that daisyUI draws the tip
+  // over the trigger as `placement` says.
+  function place() {
+    if (!shownFor) return;
+    const box = shownFor.getBoundingClientRect();
+    Object.assign(tip.style, {
+      left: `${box.left}px`,
+      top: `${box.top}px`,
+      width: `${box.width}px`,
+      height: `${box.height}px`,
+    });
+    tip.style.removeProperty("--tt-trans");
+    tip.classList.toggle("tooltip-bottom", false);
+    tip.classList.toggle("tooltip-top", true);
+    const drawn = getComputedStyle(tip, "::before");
+    const { below, shift } = placement(
+      box,
+      {
+        width: parseFloat(drawn.width),
+        height: parseFloat(drawn.height),
+        bottom: parseFloat(drawn.bottom),
+      },
+      window.innerWidth,
+    );
+    tip.classList.toggle("tooltip-top", !below);
+    tip.classList.toggle("tooltip-bottom", below);
+    if (shift) tip.style.setProperty("--tt-trans", `calc(-50% + ${shift}px)`);
+  }
+
+  // After an update, the tip hides if its trigger is gone or no longer
+  // shows, and otherwise shows what the trigger now holds where it now is.
+  function refreshTip() {
+    if (!shownFor) return;
+    const trigger = shownFor.isConnected && triggerOf(shownFor);
+    if (trigger) show(trigger);
+    else hide();
+  }
+
+  // Whether `node` is on the tip or on the trigger it shows for.
+  const onShown = (node) => node === tip || (shownFor && shownFor.contains(node));
+
+  document.addEventListener("pointerover", (event) => {
+    const trigger = event.target === tip ? shownFor : triggerOf(event.target);
+    if (!trigger) return;
+    if (trigger === shownFor) cancelLeaving();
+    else show(trigger);
+  });
+  document.addEventListener("pointerout", (event) => {
+    const leaves = (element) =>
+      element.contains(event.target) && !element.contains(event.relatedTarget);
+    if (dismissed && leaves(dismissed)) dismissed = null;
+    if (!shownFor || !onShown(event.target) || onShown(event.relatedTarget)) return;
+    cancelLeaving();
+    leaving = setTimeout(hide, leaveDelay);
+  });
+  document.addEventListener("focusin", (event) => {
+    dismissed = null;
+    if (!event.target.matches(":focus-visible")) return;
+    const trigger = triggerOf(event.target);
+    if (trigger) show(trigger);
+  });
+  document.addEventListener("focusout", (event) => {
+    dismissed = null;
+    if (shownFor && shownFor.contains(event.target)) hide();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    for (const tooltip of tooltips) {
-      if (tooltip.matches(":hover, :has(:focus-visible)")) tooltip.dataset.tip = "";
-    }
+    if (event.key !== "Escape" || !shownFor) return;
+    dismissed = shownFor;
+    hide();
   });
+  document.addEventListener("scroll", place, true);
+  window.addEventListener("resize", place);
 
   tick();
   setInterval(tick, 1000);

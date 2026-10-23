@@ -27,8 +27,7 @@
     in it sticks to the box's top as it scrolls either way
     (`docs/specs/design_system.md`, Tables and Layout).
     The content is a stacking context of its own, so that what sticks in it
-    stays under the navigation, and the rail does not clip what overflows
-    it, so that the repository's tooltip shows over the page. -#}
+    stays under the navigation. -#}
 <div class="drawer lg:drawer-open">
 <input id="navigation" type="checkbox" class="drawer-toggle">
 <div class="drawer-content isolate min-w-0{% if page.fills_viewport %} flex h-dvh flex-col{% endif %}">
@@ -47,17 +46,15 @@
 {% block main %}{% endblock %}
 </main>
 </div>
-<div class="drawer-side lg:max-2xl:overflow-visible">
+<div class="drawer-side">
 <label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
 <nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
 {#- In the rail, the repository is its owner's GitHub avatar in place of
-    its icon, with its name whole on hover and on keyboard focus as a daisyUI
-    tooltip, which the page's script hides on Escape
+    its icon, with its name in the page's tooltip
     (`docs/specs/web/design_system.md`, Navigation). There the name is
-    hidden text, the link's accessible name, and the avatar is decorative. -#}
-<div class="lg:max-2xl:tooltip lg:max-2xl:tooltip-right lg:max-2xl:w-full" data-tip="{{ frame.repo }}">
-<a class="repo link link-hover flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}">{% call ui::nav_icon(crate::web::NavIcon::Repo) %}{% endcall %}<img class="hidden size-8 rounded-full lg:max-2xl:block" src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
-</div>
+    hidden text, so cut, the link's accessible name, and the avatar is
+    decorative; in the sidebar the name is whole and no tip shows. -#}
+<a class="repo link link-hover flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut>{% call ui::nav_icon(crate::web::NavIcon::Repo) %}{% endcall %}<img class="hidden size-8 rounded-full lg:max-2xl:block" src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
 <ul class="menu w-full p-0">
 {%- call nav_link("/", crate::web::NavIcon::Board, "Board") %}{% endcall %}
 {%- call nav_link("/runs", crate::web::NavIcon::Runs, "Runs") %}{% endcall %}
@@ -67,5 +64,13 @@
 </nav>
 </div>
 </div>
+{#- The page's one tooltip, which its script lays over the trigger it shows
+    the tip of: a daisyUI `tooltip` drawn from its `data-tip`, as a popover
+    in the top layer, so that no overflow clips it and no sticky head covers
+    it. Its box overrides the UA's `[popover]` styles and never takes the
+    trigger's pointer; its tip does, so the pointer can move onto it
+    (`docs/specs/design_system.md`, Layout). No region holds it, so no update
+    morphs it. -#}
+<div id="tip" popover="manual" role="tooltip" class="tooltip tooltip-open tooltip-top fixed inset-auto m-0 overflow-visible border-0 bg-transparent p-0 pointer-events-none not-open:hidden before:pointer-events-auto after:pointer-events-auto" data-tip=""></div>
 </body>
 </html>

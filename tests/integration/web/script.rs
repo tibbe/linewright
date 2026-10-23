@@ -90,56 +90,371 @@ const morphed = (tagName, attrName, newValue) =>
     );
 }
 
-#[tokio::test]
-async fn escape_hides_a_tooltip_shown_until_the_pointer_leaves_it_or_focus_moves() {
+/// Stand-ins for the page's `#tip` and its triggers, and for the events the
+/// browser sends the document: `node(attributes, ...children)` makes an
+/// element, `page(...)` puts elements on the page, `fire(type, event)` sends
+/// an event to the listeners the script added, and `elapse()` runs the
+/// timers it set. `shown()` is what the tip shows, or `-` while it is hidden.
+const TIPS: &str = r#"
+var listeners = {};
+function listen(type, listener) { (listeners[type] = listeners[type] || []).push(listener); }
+document.addEventListener = listen;
+document.body = { addEventListener: listen, getAttribute() { return null; } };
+window.addEventListener = (type, listener) => listen(`window ${type}`, listener);
+window.innerWidth = 1000;
+function fire(type, event) { for (const listener of listeners[type] || []) listener(event); }
+var timers = [];
+function setTimeout(callback) { timers.push(callback); return timers.length; }
+function clearTimeout(id) { if (id) timers[id - 1] = null; }
+function elapse() {
+  const due = timers;
+  timers = [];
+  for (const callback of due) if (callback) callback();
+}
+var root = { parentElement: null, children: [] };
+function adopt(parent, children) {
+  for (const child of children) {
+    child.parentElement = parent;
+    parent.children.push(child);
+  }
+}
+function page(...elements) { adopt(root, elements); }
+// An element 100 by 20 at (450, 300), which is cut where `cut` says so.
+function node(attributes, ...children) {
+  const element = {
+    attributes,
+    children: [],
+    text: "",
+    focusVisible: false,
+    clientWidth: 100,
+    clientHeight: 20,
+    scrollHeight: 20,
+    rect: { left: 450, top: 300, width: 100, height: 20 },
+    get scrollWidth() { return this.cut ? 300 : 100; },
+    get textContent() { return this.text + this.children.map((child) => child.textContent).join(""); },
+    get isConnected() {
+      let at = this;
+      while (at.parentElement) at = at.parentElement;
+      return at === root;
+    },
+    hasAttribute(name) { return name in this.attributes; },
+    getAttribute(name) { return name in this.attributes ? this.attributes[name] : null; },
+    contains(other) {
+      for (let at = other; at; at = at.parentElement) if (at === this) return true;
+      return false;
+    },
+    querySelectorAll(selector) {
+      if (selector !== "*") return [];
+      return this.children.flatMap((child) => [child, ...child.querySelectorAll("*")]);
+    },
+    matches(selector) { return selector === ":focus-visible" && this.focusVisible; },
+    getBoundingClientRect() {
+      const { left, top, width, height } = this.rect;
+      return { left, top, width, height, right: left + width, bottom: top + height };
+    },
+    remove() {
+      this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+      this.parentElement = null;
+    },
+  };
+  for (const child of children) {
+    if (typeof child === "string") element.text += child;
+    else adopt(element, [child]);
+  }
+  return element;
+}
+var tip = {
+  open: false,
+  parentElement: root,
+  dataset: { tip: "" },
+  classes: ["tooltip", "tooltip-open", "tooltip-top"],
+  style: {
+    properties: {},
+    setProperty(name, value) { this.properties[name] = value; },
+    removeProperty(name) { delete this.properties[name]; },
+  },
+  classList: {
+    toggle(name, on) {
+      tip.classes = tip.classes.filter((other) => other !== name);
+      if (on) tip.classes.push(name);
+    },
+  },
+  showPopover() { this.open = true; },
+  hidePopover() { this.open = false; },
+  contains(other) { return other === this; },
+};
+document.getElementById = (id) => (id === "tip" ? tip : null);
+// The tip as daisyUI draws it, 120 by 28, 8px above the box it is laid over.
+var drawn = { width: 120, height: 28 };
+function getComputedStyle(element, pseudo) {
+  if (element !== tip || pseudo !== "::before") return {};
+  return {
+    width: `${drawn.width}px`,
+    height: `${drawn.height}px`,
+    bottom: `${parseFloat(tip.style.height) + 8}px`,
+  };
+}
+function shown() { return tip.open ? tip.dataset.tip : "-"; }
+// The pointer moving from `from` onto `to`, as the browser sends it.
+function point(from, to) {
+  if (from) fire("pointerout", { target: from, relatedTarget: to });
+  if (to) fire("pointerover", { target: to, relatedTarget: from });
+}
+"#;
+
+/// What `asked` evaluates to, line by line, once the served script has run
+/// on a page that `page` builds of the stand-ins in `TIPS`.
+async fn with_tips(page: &str, asked: &str) -> Vec<String> {
     let web = Web::start(with_ticket().await).await;
     let script = served_script(&web).await;
     web.stop().await;
-
-    // Two tooltips, the first under the pointer, with the listeners the
-    // script adds to them and to the document.
-    let tooltips = r#"
-var keydown = null;
-function tooltip(shown) {
-  return {
-    shown,
-    dataset: { tip: "owner/widgets" },
-    listeners: {},
-    addEventListener(type, listener) { this.listeners[type] = listener; },
-    matches(selector) { return this.shown && selector.includes(":hover"); },
-  };
+    evaluated(&[BROWSER, TIPS, page, &script, asked])
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
-var hovered = tooltip(true);
-var other = tooltip(false);
-document.querySelectorAll = (selector) => selector === "[data-tip]" ? [hovered, other] : [];
-document.addEventListener = (type, listener) => { if (type === "keydown") keydown = listener; };
+
+#[tokio::test]
+async fn the_tip_shows_the_innermost_trigger_unless_a_cut_text_holds_it() {
+    let page = r#"
+var plain = node({ "data-tip": "plain" }, "x");
+var cutAlone = node({ "data-tip-cut": "" }, "  The   whole\n title ");
+var uncutAlone = node({ "data-tip-cut": "" }, "whole");
+var inner = node({ "data-tip": "inner" });
+var outer = node({ "data-tip": "outer" }, inner);
+var inCut = node({ "data-tip": "in cut" });
+var cutHead = node({ "data-tip-cut": "" }, "Head ", inCut);
+var inUncut = node({ "data-tip": "in uncut" });
+var uncutHead = node({ "data-tip-cut": "" }, "Head ", inUncut);
+var hidden = node({}, "owner/widgets");
+var repo = node({ "data-tip": "owner/widgets", "data-tip-cut": "" }, hidden);
+var bare = node({});
+cutAlone.cut = true;
+cutHead.cut = true;
+hidden.cut = true;
+page(plain, cutAlone, uncutAlone, outer, cutHead, uncutHead, repo, bare);
 "#;
     let asked = r#"
-const tips = () => `${hovered.dataset.tip}|${other.dataset.tip}`;
-const steps = [];
-keydown({ key: "Enter" });
-steps.push(tips());
-keydown({ key: "Escape" });
-steps.push(tips());
-hovered.listeners.pointerleave({});
-steps.push(tips());
-keydown({ key: "Escape" });
-steps.push(tips());
-hovered.listeners.focusout({});
-steps.push(tips());
-steps.join("\n")
+[plain, cutAlone, uncutAlone, inner, outer, inCut, inUncut, repo, hidden, bare]
+  .map((target) => {
+    point(null, target);
+    const tip = shown();
+    point(target, null);
+    elapse();
+    return tip;
+  })
+  .join("\n")
 "#;
-    let answers = evaluated(&[BROWSER, tooltips, &script, asked]);
 
-    // An empty `data-tip` is a daisyUI tooltip with nothing to show.
+    let tips = with_tips(page, asked).await;
+
     assert_eq!(
-        answers.lines().collect::<Vec<_>>(),
+        tips,
         [
-            "owner/widgets|owner/widgets",
-            "|owner/widgets",
-            "owner/widgets|owner/widgets",
-            "|owner/widgets",
-            "owner/widgets|owner/widgets",
+            "plain",
+            "The whole title",
+            "-",
+            "inner",
+            "outer",
+            "Head",
+            "in uncut",
+            "owner/widgets",
+            "owner/widgets",
+            "-",
+        ]
+    );
+}
+
+/// Two triggers, the first holding a link, for the steps of `asked`.
+const TWO_TRIGGERS: &str = r#"
+var link = node({});
+var first = node({ "data-tip": "first" }, link);
+var second = node({ "data-tip": "second" });
+var elsewhere = node({});
+page(first, second, elsewhere);
+"#;
+
+/// What the tip shows after each of `steps`, a JavaScript statement each.
+async fn after_each(page: &str, steps: &[&str]) -> Vec<String> {
+    let asked = steps
+        .iter()
+        .map(|step| format!("{step}\nsteps.push(shown());\n"))
+        .collect::<String>();
+    with_tips(
+        page,
+        &format!("const steps = [];\n{asked}steps.join(\"\\n\")"),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_tip_hides_once_the_pointer_has_left_the_trigger_and_the_tip() {
+    let tips = after_each(
+        TWO_TRIGGERS,
+        &[
+            "point(null, first);",
+            "point(first, link);",
+            "point(link, first); elapse();",
+            "point(first, tip); elapse();",
+            "point(tip, link); elapse();",
+            "point(link, elsewhere);",
+            "point(elsewhere, first); elapse();",
+            "point(first, elsewhere); elapse();",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        tips,
+        [
+            "first", // onto the trigger
+            "first", // onto an element in it
+            "first", // back, a move within it
+            "first", // onto the tip
+            "first", // back onto the trigger
+            "first", // off both, until a short delay passes
+            "first", // back before it passed
+            "-",     // off both for the delay
+        ]
+    );
+}
+
+#[tokio::test]
+async fn one_tip_shows_on_hover_or_keyboard_focus_until_focus_moves() {
+    let tips = after_each(
+        TWO_TRIGGERS,
+        &[
+            r#"fire("focusin", { target: link });"#,
+            r#"link.focusVisible = true; fire("focusin", { target: link });"#,
+            "point(null, second);",
+            r#"fire("focusout", { target: link });"#,
+            r#"fire("focusin", { target: link });"#,
+            "point(null, elsewhere); point(elsewhere, null); elapse();",
+            r#"fire("focusout", { target: link });"#,
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        tips,
+        [
+            "-",      // focus by the pointer
+            "first",  // keyboard focus
+            "second", // the pointer on another trigger takes its place
+            "second", // focus leaving another trigger
+            "first",  // keyboard focus again
+            "first",  // the pointer moving elsewhere
+            "-",      // focus leaving the trigger
+        ]
+    );
+}
+
+#[tokio::test]
+async fn escape_hides_the_tip_until_the_pointer_leaves_the_trigger_or_focus_moves() {
+    let escape = r#"fire("keydown", { key: "Escape" });"#;
+    let tips = after_each(
+        TWO_TRIGGERS,
+        &[
+            "point(null, first);",
+            r#"fire("keydown", { key: "Enter" });"#,
+            escape,
+            "point(first, link);",
+            "point(link, first);",
+            "point(first, elsewhere); elapse();",
+            "point(elsewhere, first);",
+            escape,
+            r#"link.focusVisible = true; fire("focusin", { target: link });"#,
+            escape,
+            r#"fire("focusout", { target: link });"#,
+            "point(first, elsewhere); point(elsewhere, first);",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        tips,
+        [
+            "first", // hovered
+            "first", // another key
+            "-",     // Escape
+            "-",     // moves within the trigger
+            "-",     // and back
+            "-",     // the pointer leaves
+            "first", // and comes back
+            "-",     // Escape
+            "first", // focus moves
+            "-",     // Escape
+            "-",     // focus moves off
+            "first", // the pointer leaves and comes back
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_trigger_an_update_brings_shows_its_tip_and_one_it_takes_away_hides_it() {
+    let update = r#"fire("htmx:sse:after:message", { detail: { message: { id: "" } } });"#;
+    let tips = after_each(
+        "page();",
+        &[
+            r#"var card = node({ "data-tip-cut": "" }, "A long title"); card.cut = true; page(card);"#,
+            "point(null, card);",
+            r#"card.text = "A longer title";"#,
+            update,
+            "card.cut = false;",
+            update,
+            "card.cut = true; point(card, null); point(null, card);",
+            "card.remove();",
+            update,
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        tips,
+        [
+            "-",
+            "A long title",
+            "A long title",   // until the update
+            "A longer title", // re-read
+            "A longer title",
+            "-", // no longer cut
+            "A longer title",
+            "A longer title",
+            "-", // gone
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_tip_lies_over_its_trigger_above_it_or_below_where_there_is_no_room_inside_the_viewport()
+ {
+    let page = r#"
+var trigger = node({ "data-tip": "tip" });
+page(trigger);
+const placed = () =>
+  [tip.style.left, tip.style.top, tip.style.width, tip.style.height, tip.classes.join(" "),
+   tip.style.properties["--tt-trans"] || "centred"].join(" ");
+"#;
+    let tips = after_each(
+        page,
+        &[
+            "point(null, trigger); steps.push(placed());",
+            "trigger.rect.top = 35; fire(\"scroll\", {}); steps.push(placed());",
+            "trigger.rect.top = 36; trigger.rect.left = 0; fire(\"window resize\", {}); steps.push(placed());",
+            "trigger.rect.left = 900; fire(\"scroll\", {}); steps.push(placed());",
+        ],
+    )
+    .await;
+
+    // The tip is 120 wide and 28 high, 8 above the box: above it from a
+    // top of 36, and from 8 off each side of the 1000-wide viewport.
+    assert_eq!(
+        tips.iter().step_by(2).collect::<Vec<_>>(),
+        [
+            "450px 300px 100px 20px tooltip tooltip-open tooltip-top centred",
+            "450px 35px 100px 20px tooltip tooltip-open tooltip-bottom centred",
+            "0px 36px 100px 20px tooltip tooltip-open tooltip-top calc(-50% + 18px)",
+            "900px 36px 100px 20px tooltip tooltip-open tooltip-top calc(-50% + -18px)",
         ]
     );
 }

@@ -70,6 +70,40 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
     web.stop().await;
 }
 
+#[tokio::test]
+async fn every_page_has_one_tooltip_outside_every_region_for_its_script_to_show() {
+    let web = Web::start(with_ticket().await).await;
+
+    for path in [
+        "/",
+        "/items/1",
+        "/runs",
+        "/runs/1/triage-1",
+        "/automations",
+        "/server",
+        "/items/99",
+    ] {
+        let (_, body) = web.get(path).await;
+        let html = Html::parse_document(&body);
+        let tips = select(&html, "[popover], .tooltip");
+        assert_eq!(tips.len(), 1, "{path}: {tips:?}");
+        let tip = tips[0];
+        assert_eq!(tip.attr("id"), Some("tip"), "{path}");
+        assert_eq!(tip.attr("popover"), Some("manual"), "{path}");
+        assert_eq!(tip.attr("role"), Some("tooltip"), "{path}");
+        assert_eq!(tip.attr("data-tip"), Some(""), "{path}");
+        assert!(
+            has_classes(tip, &["tooltip", "tooltip-open"]),
+            "{path}: {}",
+            tip.html()
+        );
+        // No region holds it, so no update morphs it away.
+        let parent = ElementRef::wrap(tip.parent().unwrap()).unwrap();
+        assert_eq!(parent.value().name(), "body", "{path}");
+    }
+    web.stop().await;
+}
+
 /// `element`'s classes in the rail, without their `lg:max-2xl:` prefix.
 fn in_the_rail(element: ElementRef<'_>) -> Vec<&str> {
     element
@@ -80,7 +114,7 @@ fn in_the_rail(element: ElementRef<'_>) -> Vec<&str> {
 }
 
 #[tokio::test]
-async fn in_the_rail_the_repository_is_its_owners_avatar_with_its_name_as_a_tooltip_and_hidden_text()
+async fn in_the_rail_the_repository_is_its_owners_avatar_with_its_name_as_a_tip_while_cut_and_hidden_text()
  {
     let web = Web::start(with_ticket().await).await;
 
@@ -113,13 +147,16 @@ async fn in_the_rail_the_repository_is_its_owners_avatar_with_its_name_as_a_tool
         "{}",
         names[0].html()
     );
-    let tooltip = select(&html, ".drawer-side :has(> a.repo)")[0];
-    assert!(
-        in_the_rail(tooltip).contains(&"tooltip"),
-        "{}",
-        tooltip.html()
+    // The page's script shows the tip while the name is cut, which the
+    // rail's `sr-only` does and the sidebar does not.
+    assert_eq!(repo.attr("data-tip"), Some("owner/widgets"));
+    assert_eq!(repo.attr("data-tip-cut"), Some(""));
+    assert_eq!(
+        select(&html, ".drawer-side [class*='tooltip']").len(),
+        0,
+        "the page's one tooltip is the repository's: {}",
+        repo.html()
     );
-    assert_eq!(tooltip.attr("data-tip"), Some("owner/widgets"));
     web.stop().await;
 }
 
