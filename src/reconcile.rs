@@ -1552,7 +1552,7 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
                 kind: HandBackKind::Stall,
                 reason: format!(
                     "CI did not complete within {}: {} still running.",
-                    humanize(policy.ci_timeout),
+                    Phrase::default().span(policy.ci_timeout, None),
                     code_list(&pending)
                 ),
             });
@@ -1865,10 +1865,6 @@ fn code_list(names: &[String]) -> String {
         .map(|n| format!("`{n}`"))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn humanize(delta: TimeDelta) -> String {
-    humantime::format_duration(delta.to_std().unwrap_or_default()).to_string()
 }
 
 /// Whether Linewright was unassigned from `issue`, by anyone, after it was

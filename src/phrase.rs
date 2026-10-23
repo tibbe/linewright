@@ -1,5 +1,7 @@
 use std::fmt;
 
+use chrono::TimeDelta;
+
 use crate::domain::{Number, Timestamp};
 
 /// Wording the monitoring commands show, with the items, times, durations
@@ -79,6 +81,13 @@ impl Phrase {
         self.push(Segment::Duration { seconds, since })
     }
 
+    /// `span` as a duration, as 0 when it is negative, as one measured on
+    /// clocks that disagree can be.
+    #[must_use]
+    pub fn span(self, span: TimeDelta, since: Option<Timestamp>) -> Phrase {
+        self.duration(u64::try_from(span.num_seconds()).unwrap_or(0), since)
+    }
+
     #[must_use]
     pub fn code(self, code: impl Into<String>) -> Phrase {
         self.push(Segment::Code(code.into()))
@@ -145,15 +154,35 @@ impl fmt::Display for Phrase {
                 Segment::Text(text) => f.write_str(text)?,
                 Segment::Item(number) => write!(f, "{number}")?,
                 Segment::Time(at) => write!(f, "{}", at.format("%Y-%m-%d %H:%M:%S UTC"))?,
-                Segment::Duration { seconds, .. } => {
-                    let duration = std::time::Duration::from_secs(*seconds);
-                    write!(f, "{}", humantime::format_duration(duration))?;
-                }
+                Segment::Duration { seconds, .. } => write_duration(f, *seconds)?,
                 Segment::Code(code) => write!(f, "`{code}`")?,
             }
         }
         Ok(())
     }
+}
+
+/// `seconds` to its two largest units that are not zero, in narrow units, and
+/// `0s` for none (`docs/specs/design_system.md`, Time, Durations): the twin of
+/// `duration()` in `assets/linewright.js`.
+fn write_duration(f: &mut fmt::Formatter<'_>, seconds: u64) -> fmt::Result {
+    if seconds == 0 {
+        return f.write_str("0s");
+    }
+    let balanced = [
+        (seconds / 86_400, "d"),
+        (seconds % 86_400 / 3_600, "h"),
+        (seconds % 3_600 / 60, "m"),
+        (seconds % 60, "s"),
+    ];
+    let largest = balanced.iter().filter(|(n, _)| *n > 0).take(2);
+    for (i, (n, unit)) in largest.enumerate() {
+        if i > 0 {
+            f.write_str(" ")?;
+        }
+        write!(f, "{n}{unit}")?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

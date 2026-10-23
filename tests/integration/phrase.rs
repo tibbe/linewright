@@ -18,8 +18,16 @@ fn a_phrase_reads_as_the_commands_word_items_times_durations_and_labels() {
         .duration(0, None);
     assert_eq!(
         phrase.to_string(),
-        "waiting for #42, labeled `needs-info` since 2026-03-04 05:06:07 UTC, for 1h 5m 3s and 0s"
+        "waiting for #42, labeled `needs-info` since 2026-03-04 05:06:07 UTC, for 1h 5m and 0s"
     );
+}
+
+/// `docs/specs/design_system.md`, Time, Durations.
+#[test]
+fn a_duration_reads_as_its_two_largest_units_that_are_not_zero() {
+    let shown = [45, 103, 10_929, 86_700]
+        .map(|seconds| Phrase::default().duration(seconds, None).to_string());
+    assert_eq!(shown, ["45s", "1m 43s", "3h 2m", "1d 5m"]);
 }
 
 #[test]

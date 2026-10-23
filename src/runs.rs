@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
+use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -486,16 +487,11 @@ impl RunInFlight {
 
     /// What the run is of and how long it has run.
     pub(crate) fn describe(&self) -> Phrase {
-        describe_of(&self.id.of)
-            .text(", running for ")
-            .duration(non_negative(self.duration_seconds), Some(self.started_at))
+        describe_of(&self.id.of).text(", running for ").span(
+            TimeDelta::seconds(self.duration_seconds),
+            Some(self.started_at),
+        )
     }
-}
-
-/// A duration measured on clocks that may disagree, as 0 when they make it
-/// negative.
-fn non_negative(seconds: i64) -> u64 {
-    u64::try_from(seconds).unwrap_or(0)
 }
 
 fn describe_of(of: &RunOf) -> Phrase {
@@ -961,10 +957,10 @@ pub(crate) fn describe_run(run: &Run) -> Phrase {
 pub(crate) fn duration(run: &Run) -> Option<Phrase> {
     match run.outcome {
         Outcome::Ended { seconds, .. } => {
-            Some(Phrase::default().duration(non_negative(seconds), None))
+            Some(Phrase::default().span(TimeDelta::seconds(seconds), None))
         }
         Outcome::InFlight { seconds } => {
-            Some(Phrase::default().duration(non_negative(seconds), Some(run.started_at)))
+            Some(Phrase::default().span(TimeDelta::seconds(seconds), Some(run.started_at)))
         }
         Outcome::Interrupted => None,
     }

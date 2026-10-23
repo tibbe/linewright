@@ -2035,6 +2035,35 @@ fn checks_that_never_complete_hand_the_pull_request_back_at_the_ci_timeout() {
     ));
 }
 
+/// `docs/specs/design_system.md`, Time, Durations.
+#[test]
+fn the_ci_timeout_hand_back_says_the_timeout_to_its_two_largest_units() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("e2e", CheckState::Pending)];
+    let policy = Policy {
+        ci_timeout: TimeDelta::seconds(10_929),
+        ..policy()
+    };
+
+    let actions = reconcile(
+        &in_review(pr),
+        &[],
+        &Memory::default(),
+        &Automations::default(),
+        t(4 * 60),
+        &policy,
+    );
+
+    assert!(
+        matches!(
+            actions.as_slice(),
+            [Action::HandBack { reason, .. }]
+                if reason == "CI did not complete within 3h 2m: `e2e` still running."
+        ),
+        "{actions:?}"
+    );
+}
+
 fn rework(issue: u64, pr: u64) -> Action {
     Action::Start(Work::Rework {
         issue: Number(issue),

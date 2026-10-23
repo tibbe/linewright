@@ -640,6 +640,23 @@ fn a_list_cut_to_its_limit_ends_saying_how_many_it_left_out_and_how_to_show_them
     );
 }
 
+/// `docs/specs/design_system.md`, Time, Durations.
+#[test]
+fn a_run_shows_how_long_it_ran_to_its_two_largest_units() {
+    let mut run = work(1, WorkKind::Implement, 1, "2026-10-14T09:00:00Z");
+    run.state = State::Ended {
+        at: at("2026-10-14T12:02:09Z"),
+        ending: Ending::Done,
+    };
+
+    let listing = runs::list(vec![run], &Query::default(), at("2026-10-14T13:00:00Z")).unwrap();
+
+    assert_eq!(
+        runs::render(&listing, false),
+        "1/implement-1: done — #1 implement, started 2026-10-14 09:00:00 UTC, ran 3h 2m\n"
+    );
+}
+
 #[test]
 fn a_run_in_flight_has_run_until_now_and_one_interrupted_for_no_known_time() {
     let mut in_flight = work(1, WorkKind::Rework, 2, "2026-10-14T12:00:00Z");

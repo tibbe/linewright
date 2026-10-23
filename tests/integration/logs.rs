@@ -171,9 +171,56 @@ pub(crate) fn implement_as_recorded(world: &World) {
     });
 }
 
+/// Implementing sessions start a sub-agent that runs for 3h 2m 9s and makes
+/// 3 tool calls, then answer with the result.
+pub(crate) fn implement_with_a_sub_agent_of_3h_2m_9s(world: &World) {
+    world.harness.on(WorkKind::Implement, |call| {
+        let message = |kind: &str, at: &str, content: serde_json::Value| {
+            json!({"type": kind, "timestamp": at, "message": {"content": content}})
+        };
+        let mut returned = message(
+            "user",
+            "2026-10-13T13:02:11Z",
+            json!([{"type": "tool_result", "tool_use_id": "a1", "content": "Clean."}]),
+        );
+        returned["tool_use_result"] = json!({
+            "status": "completed",
+            "totalDurationMs": 10_929_400,
+            "totalToolUseCount": 3,
+        });
+        let events = [
+            json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+            message(
+                "assistant",
+                "2026-10-13T10:00:02Z",
+                json!([{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"description": "Review"}}]),
+            ),
+            returned,
+            message(
+                "assistant",
+                "2026-10-13T13:02:15Z",
+                json!([{"type": "text", "text": "The review came back clean."}]),
+            ),
+        ];
+        let output = call.spec.record.join(linewright::transcript::OUTPUT);
+        std::fs::write(
+            &output,
+            events.iter().map(|event| format!("{event}\n")).collect::<String>(),
+        )
+        .unwrap();
+        commit_in(&call.spec.dir, &[("src/done.txt", "done\n")], "Do it");
+        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
+    });
+}
+
 async fn implemented_as_recorded() -> (World, tempfile::TempDir) {
+    implemented_by(implement_as_recorded).await
+}
+
+/// #1 implemented in a run whose sessions `implement` scripts.
+async fn implemented_by(implement: fn(&World)) -> (World, tempfile::TempDir) {
     let (mut world, work_dir) = world_in_work_dir().await;
-    implement_as_recorded(&world);
+    implement(&world);
     world.store.open_issue(
         "maintainer",
         "Ship gh",
@@ -205,6 +252,27 @@ async fn logs_shows_the_items_latest_run_compact() {
     );
     assert!(
         lines[12].starts_with(" 3:22  follow-up: Your final message could not be used: "),
+        "{}",
+        output.stdout
+    );
+}
+
+/// `docs/specs/monitoring.md`, logs, Lines; `docs/specs/design_system.md`,
+/// Time, Durations.
+#[tokio::test]
+async fn logs_shows_how_long_a_sub_agent_ran_as_a_duration_and_each_line_at_its_time() {
+    let (_world, work_dir) = implemented_by(implement_with_a_sub_agent_of_3h_2m_9s).await;
+
+    let output = lw_in(work_dir.path(), &["logs", "1"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let lines: Vec<&str> = output.stdout.lines().skip(2).collect();
+    assert_eq!(
+        lines,
+        [
+            " 0:02  Agent(Review) → done, 3 tool uses, 3h 2m",
+            "3:02:15  The review came back clean.",
+        ],
         "{}",
         output.stdout
     );

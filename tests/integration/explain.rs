@@ -325,6 +325,23 @@ fn explain_shows_the_run_in_flight_with_how_long_it_has_run_then_the_past_runs_a
     );
 }
 
+/// `docs/specs/design_system.md`, Time, Durations.
+#[test]
+fn explain_shows_how_long_the_run_in_flight_has_run_to_its_two_largest_units() {
+    let answer = explain(
+        &implementing_42(vec![]),
+        &runs_of_42(),
+        Number(42),
+        at("2026-10-01T14:32:09Z"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_lines(&render(&answer, false))[0],
+        "run in flight: 42/implement-2: #42 implement, running for 3h 2m"
+    );
+}
+
 fn five_past_runs_of_42() -> Vec<Recorded> {
     let mut runs: Vec<Recorded> = (1..=5)
         .map(|n| {

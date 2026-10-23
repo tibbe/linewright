@@ -3,8 +3,13 @@ use super::*;
 /// #1 implemented in a run whose transcript is the one recorded, with a
 /// sub-agent's work and a call that failed.
 async fn implemented_as_recorded() -> World {
+    implemented_by(crate::logs::implement_as_recorded).await
+}
+
+/// #1 implemented in a run whose sessions `implement` scripts.
+async fn implemented_by(implement: fn(&World)) -> World {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    crate::logs::implement_as_recorded(&world);
+    implement(&world);
     world.store.open_issue(
         "maintainer",
         "Ship gh",
@@ -43,7 +48,12 @@ fn entry_of(element: ElementRef) -> Option<ElementRef> {
 }
 
 async fn run_page_of_implemented() -> (Web, Html) {
-    let web = Web::start(implemented_as_recorded().await).await;
+    run_page_of(implemented_as_recorded().await).await
+}
+
+/// #1's run page, once its run is done.
+async fn run_page_of(world: World) -> (Web, Html) {
+    let web = Web::start(world).await;
     let html = web
         .eventually_page("/runs?item=1", |html| {
             has_run(&runs_shown(html), "done", "1/implement-1")
@@ -64,6 +74,23 @@ fn cut(shown: &[String], chars: usize) -> Vec<String> {
         .iter()
         .map(|line| line.chars().take(chars).collect())
         .collect()
+}
+
+/// `docs/specs/monitoring.md`, logs, Lines; `docs/specs/design_system.md`,
+/// Time, Durations.
+#[tokio::test]
+async fn the_run_page_shows_how_long_a_sub_agent_ran_as_a_duration() {
+    let (_web, html) =
+        run_page_of(implemented_by(crate::logs::implement_with_a_sub_agent_of_3h_2m_9s).await)
+            .await;
+
+    assert_eq!(
+        transcript_shown(&html, false)[2..],
+        [
+            "0:02 Agent(Review) → done, 3 tool uses, 3h 2m",
+            "3:02:15 The review came back clean.",
+        ]
+    );
 }
 
 #[tokio::test]
