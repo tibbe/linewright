@@ -1,6 +1,6 @@
 use super::*;
 
-/// #1 with the maintainer; #2 cut into #3, which waits on the people asked;
+/// #1 with the maintainer; #2 cut into #3, which waits on alice, asked;
 /// and #4, closed.
 async fn with_a_board() -> World {
     let world = with_ticket().await;
@@ -13,6 +13,7 @@ async fn with_a_board() -> World {
     let part = world
         .store
         .open_issue(LINEWRIGHT, "Part one", "Of it.", &["needs-info"]);
+    world.store.assign_as(LINEWRIGHT, part, "alice").unwrap();
     world.store.add_sub_issue(tracking, part).await.unwrap();
     let closed = world.store.open_issue(
         "maintainer",
@@ -76,8 +77,7 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         [
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
-                "Needs a person: #3: Part one | reporter asked · 2026-10-01 12:00:SS UTC"
-                    .to_string(),
+                "Needs a person: #3: Part one | asked alice · 2026-10-01 12:00:SS UTC".to_string(),
             ],
             vec![
                 "#1: Do the thing".to_string(),
@@ -118,6 +118,54 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
     let title = select(&html, "title");
     assert_eq!(text(title[0]), "(2) Board · owner/widgets");
     assert_no_status_by_colour_alone(&html);
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn a_card_waiting_on_the_people_asked_names_them_as_a_list_or_says_people_asked() {
+    let world = with_ticket().await;
+    let two = world
+        .store
+        .open_issue("maintainer", "Two", "Who?", &["needs-info"]);
+    for person in ["alice", "bob"] {
+        world.store.assign_as(LINEWRIGHT, two, person).unwrap();
+    }
+    let three = world
+        .store
+        .open_issue("maintainer", "Three", "Who?", &["needs-info"]);
+    for person in ["alice", "bob", "carol"] {
+        world.store.assign_as(LINEWRIGHT, three, person).unwrap();
+    }
+    world
+        .store
+        .open_issue("maintainer", "Nobody", "Who?", &["needs-info"]);
+    let linewright = world
+        .store
+        .open_issue("maintainer", "Linewright", "Who?", &["needs-info"]);
+    world
+        .store
+        .assign_as(LINEWRIGHT, linewright, LINEWRIGHT)
+        .unwrap();
+    let web = Web::start(world).await;
+
+    let html = web.page("/").await;
+
+    // Lanes come latest changed first.
+    let lines: Vec<String> = board_shown(&html)
+        .iter()
+        .flatten()
+        .filter(|line| line.starts_with("Needs a person: #") && !line.contains("#1:"))
+        .map(|line| unclocked(line))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "Needs a person: #5: Linewright | people asked · 2026-10-01 12:00:SS UTC",
+            "Needs a person: #4: Nobody | people asked · 2026-10-01 12:00:SS UTC",
+            "Needs a person: #3: Three | asked alice, bob and carol · 2026-10-01 12:00:SS UTC",
+            "Needs a person: #2: Two | asked alice and bob · 2026-10-01 12:00:SS UTC",
+        ]
+    );
     web.stop().await;
 }
 
@@ -212,8 +260,7 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         [
             vec![
                 "#2: Big thing — 0/1 tickets closed".to_string(),
-                "Needs a person: #3: Part one | reporter asked · 2026-10-01 12:00:SS UTC"
-                    .to_string(),
+                "Needs a person: #3: Part one | asked alice · 2026-10-01 12:00:SS UTC".to_string(),
             ],
             vec![
                 "#1: Do the thing".to_string(),

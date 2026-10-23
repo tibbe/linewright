@@ -201,7 +201,8 @@ pub enum CardLine {
     // Needs a person.
     /// Handed back in a stall (`GLOSSARY.md`, **Stall**).
     Stalled,
-    ReporterAsked,
+    /// The people asked (`docs/specs/design_system.md`, Cards).
+    Asked(Vec<Login>),
     HandedBack,
     DecisionNeeded,
     // Ready, and Working with no run in flight.
@@ -536,9 +537,10 @@ fn needs_a_person_line(
     linewright: &Login,
 ) -> Option<CardLine> {
     let let_go = issue.is_some_and(|issue| let_go_of(issue, recorded, linewright));
+    let asked = || CardLine::Asked(issue.map_or(vec![], |issue| issue.assignees_but(linewright)));
     first([
         stalled.then_some(CardLine::Stalled),
-        matches!(state, ItemState::WaitingOnThePeopleAsked).then_some(CardLine::ReporterAsked),
+        matches!(state, ItemState::WaitingOnThePeopleAsked).then(asked),
         (matches!(state, ItemState::WithTheMaintainer) && let_go).then_some(CardLine::HandedBack),
         matches!(state, ItemState::WithTheMaintainer).then_some(CardLine::DecisionNeeded),
     ])

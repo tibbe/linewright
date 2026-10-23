@@ -1026,8 +1026,7 @@ fn closed_unmerged(issue: Issue, pr: u64, closed_at: &str) -> Issue {
 }
 
 #[test]
-fn a_card_needing_a_person_says_the_reporter_was_asked_it_was_handed_back_or_a_decision_is_needed()
-{
+fn a_card_needing_a_person_says_who_was_asked_it_was_handed_back_or_a_decision_is_needed() {
     let view = view(
         vec![
             labeled(1, &["needs-info"]),
@@ -1059,7 +1058,7 @@ fn a_card_needing_a_person_says_the_reporter_was_asked_it_was_handed_back_or_a_d
     assert_eq!(
         [1, 2, 3, 4, 5, 6, 7].map(|n| line(&board, n)),
         [
-            Some(CardLine::ReporterAsked),
+            Some(CardLine::Asked(vec![])),
             Some(CardLine::HandedBack),
             Some(CardLine::DecisionNeeded),
             Some(CardLine::DecisionNeeded),
@@ -1071,10 +1070,40 @@ fn a_card_needing_a_person_says_the_reporter_was_asked_it_was_handed_back_or_a_d
 }
 
 #[test]
+fn a_card_waiting_on_the_people_asked_names_its_assignees_in_order_but_linewright() {
+    let with_assignees = |number, assignees: &[&str]| Issue {
+        assignees: assignees.iter().map(|a| Login::new(*a)).collect(),
+        ..labeled(number, &["needs-info"])
+    };
+    let view = view(
+        vec![
+            with_assignees(1, &["alice"]),
+            with_assignees(2, &["bob", "alice"]),
+            with_assignees(3, &["alice", "factory", "bob", "carol"]),
+            with_assignees(4, &["factory"]),
+        ],
+        vec![],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    let logins = |logins: &[&str]| logins.iter().map(|l| Login::new(*l)).collect();
+    assert_eq!(
+        [1, 2, 3, 4].map(|n| line(&board, n)),
+        [
+            Some(CardLine::Asked(logins(&["alice"]))),
+            Some(CardLine::Asked(logins(&["bob", "alice"]))),
+            Some(CardLine::Asked(logins(&["alice", "bob", "carol"]))),
+            Some(CardLine::Asked(vec![])),
+        ]
+    );
+}
+
+#[test]
 fn a_stalled_card_needing_a_person_says_so_first() {
     let view = view(
         vec![
-            labeled(1, &["needs-info", label::STALLED]),
+            assigned_to(labeled(1, &["needs-info", label::STALLED]), "alice"),
             labeled(2, &["ready-for-human", label::STALLED]),
             labeled(3, &["ready-for-human", label::STALLED]),
         ],
@@ -1335,7 +1364,7 @@ fn a_card_needing_a_person_entered_its_column_when_the_label_it_holds_was_applie
             Some(at("2026-09-30T09:00:00Z")),
         ]
     );
-    assert_eq!(line(&board, 1), Some(CardLine::ReporterAsked));
+    assert_eq!(line(&board, 1), Some(CardLine::Asked(vec![])));
 }
 
 #[test]

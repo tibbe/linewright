@@ -139,7 +139,11 @@ impl CardShown {
 fn worded(line: &CardLine) -> Phrase {
     match line {
         CardLine::Stalled => "stalled".into(),
-        CardLine::ReporterAsked => "reporter asked".into(),
+        CardLine::Asked(people) if people.is_empty() => "people asked".into(),
+        CardLine::Asked(people) => Phrase::from("asked ").then(Phrase::list(
+            people.iter().map(|person| Phrase::from(person.to_string())),
+            "and",
+        )),
         CardLine::HandedBack => "handed back".into(),
         CardLine::DecisionNeeded => "decision needed".into(),
         CardLine::BlockedBy(issue) => Phrase::from("blocked by ").item(*issue),

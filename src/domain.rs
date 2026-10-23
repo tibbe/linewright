@@ -662,6 +662,15 @@ impl Issue {
         }
     }
 
+    /// Its assignees but `login`, in GitHub's order.
+    pub fn assignees_but(&self, login: &Login) -> Vec<Login> {
+        self.assignees
+            .iter()
+            .filter(|a| *a != login)
+            .cloned()
+            .collect()
+    }
+
     /// The other assignees `actor` assigned: those whose last assignment
     /// among the events `actor` made. One whose assignment fell out of the
     /// events read counts as assigned by someone else.
