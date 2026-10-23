@@ -342,10 +342,14 @@ fn a_webhook_address_that_is_not_a_host_and_port_is_an_error_naming_the_setting(
 #[test]
 fn a_webhook_address_without_the_secret_is_an_error_naming_the_secret() {
     let flag = resolve(&["--webhook-address", "127.0.0.1:9000"], &[], None).unwrap_err();
+    let env = resolve(&[], &[("LINEWRIGHT_WEBHOOK_ADDRESS", "0.0.0.0:8080")], None).unwrap_err();
     let file = resolve(&[], &[], Some("webhook-address = \"127.0.0.1:9000\"\n")).unwrap_err();
+    // The default only with the secret set.
+    let the_default = resolve(&["--webhook-address", "0.0.0.0:8080"], &[], None).unwrap_err();
 
-    assert!(flag.contains("LINEWRIGHT_WEBHOOK_SECRET"), "{flag}");
-    assert!(file.contains("LINEWRIGHT_WEBHOOK_SECRET"), "{file}");
+    for error in [flag, env, file, the_default] {
+        assert!(error.contains("LINEWRIGHT_WEBHOOK_SECRET"), "{error}");
+    }
 }
 
 #[test]
@@ -381,6 +385,10 @@ fn help_for(flag: &str) -> (String, String) {
 fn help_lists_the_webhook_address_with_its_default() {
     let (help, line) = help_for("--webhook-address");
     assert!(line.contains("0.0.0.0:8080"), "{help}");
+    assert!(
+        line.contains("[default: 0.0.0.0:8080 with `LINEWRIGHT_WEBHOOK_SECRET` set"),
+        "{help}"
+    );
 }
 
 fn session_env(names: &[&str]) -> SessionEnv {
@@ -573,18 +581,38 @@ fn ui_hosts_with_no_web_ui_is_an_error_naming_both() {
     let flag = resolve(&["--ui-address", "", "--ui-hosts", "a.example"], &[], None).unwrap_err();
     let env = resolve(&[], &[no_ui[0], ("LINEWRIGHT_UI_HOSTS", "a.example")], None).unwrap_err();
     let file = resolve(&[], &no_ui, Some("ui-hosts = [\"a.example\"]\n")).unwrap_err();
-    let empty_flag = resolve(&["--ui-hosts", ""], &no_ui, None).unwrap_err();
-    let empty_list = resolve(&[], &[], Some("ui-address = \"\"\nui-hosts = []\n")).unwrap_err();
-    // Not parsed with no web UI, so not refused as malformed.
-    let malformed = resolve(&["--ui-hosts", "a/b"], &no_ui, None).unwrap_err();
 
-    for error in [flag, env, file, empty_flag, empty_list, malformed] {
+    for error in [flag, env, file] {
         assert_eq!(
             error,
             "the setting `ui-hosts` is set, but `ui-address` is empty: \
              set `ui-address` to serve the web UI, or unset `ui-hosts`"
         );
     }
+}
+
+#[test]
+fn ui_hosts_naming_no_host_is_at_its_default_so_allowed_with_no_web_ui() {
+    let no_ui = [("LINEWRIGHT_UI_ADDRESS", "")];
+    let flag = resolve(&["--ui-hosts", ""], &no_ui, None);
+    let env = resolve(&[], &[no_ui[0], ("LINEWRIGHT_UI_HOSTS", "")], None);
+    let file = resolve(&[], &[], Some("ui-address = \"\"\nui-hosts = []\n"));
+
+    for config in [flag, env, file] {
+        assert!(config.unwrap().ui.is_none());
+    }
+}
+
+#[test]
+fn a_malformed_ui_hosts_with_no_web_ui_is_an_error_naming_what_is_wrong() {
+    let error = resolve(
+        &["--ui-hosts", "a/b"],
+        &[("LINEWRIGHT_UI_ADDRESS", "")],
+        None,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("names \"a/b\""), "{error}");
 }
 
 #[test]
