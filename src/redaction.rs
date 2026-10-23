@@ -1,27 +1,27 @@
-//! Keeping Linewright's credentials out of what it keeps, logs or posts
+//! Keeping Linewright's secrets out of what it keeps, logs or posts
 //! (`docs/specs/architecture.md`, the redaction decision).
 
 use aho_corasick::{AhoCorasick, MatchKind};
 
-use crate::credentials::Credential;
+use crate::secrets::Secret;
 
 pub const REDACTED: &str = "[redacted]";
 
-/// Replaces the credentials' values with [`REDACTED`]. The default redacts
+/// Replaces the secrets' values with [`REDACTED`]. The default redacts
 /// nothing.
 #[derive(Clone, Default)]
 pub struct Redaction {
-    /// `None` when no credential is set, as a matcher needs a pattern.
+    /// `None` when no secret is set, as a matcher needs a pattern.
     matcher: Option<AhoCorasick>,
 }
 
 impl Redaction {
-    pub fn of(credentials: &[Credential]) -> Redaction {
+    pub fn of(secrets: &[Secret]) -> Redaction {
         let mut patterns = Vec::new();
-        for credential in credentials {
-            let value = credential.value().to_string();
+        for secret in secrets {
+            let value = secret.value().to_string();
             // The harness's events and transcript write text in JSON strings,
-            // and a session's result is often JSON itself, so a credential
+            // and a session's result is often JSON itself, so a secret
             // can be escaped twice.
             let once = json_escaped(&value);
             let twice = json_escaped(&once);
@@ -31,12 +31,12 @@ impl Redaction {
         if patterns.is_empty() {
             return Redaction::default();
         }
-        // Leftmost-longest, so a credential that holds another is redacted
+        // Leftmost-longest, so a secret that holds another is redacted
         // whole.
         let matcher = AhoCorasick::builder()
             .match_kind(MatchKind::LeftmostLongest)
             .build(patterns)
-            .expect("the credentials make a matcher");
+            .expect("the secrets make a matcher");
         Redaction {
             matcher: Some(matcher),
         }

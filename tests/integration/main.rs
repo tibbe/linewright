@@ -3,7 +3,7 @@ mod automation_run;
 mod automation_schedule;
 mod board;
 mod closed_items;
-mod committed_credentials;
+mod committed_secrets;
 mod common;
 mod config;
 mod deliveries;

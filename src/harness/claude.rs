@@ -242,7 +242,7 @@ impl ClaudeCode {
 
     /// Each line is redacted as it comes, and what the turn answers once
     /// more: its result is text of its own, such as JSON, that can hold a
-    /// credential escaped once more than the line does.
+    /// secret escaped once more than the line does.
     async fn turn(
         &self,
         spec: &SessionSpec,

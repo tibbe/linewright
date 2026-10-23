@@ -11,7 +11,6 @@ use linewright::briefs::Briefs;
 use linewright::case;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{AutomationCommand, Cli, Command, Config, LogFormat, ResolveError, Since};
-use linewright::credentials::Credentials;
 use linewright::domain::Number;
 use linewright::drain::{self, Asked, Said, Stop, Taken, Timeout, Waiting, Was};
 use linewright::ending::{Ends, Event, Signal, Step, StopBy};
@@ -19,6 +18,7 @@ use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::runs::{self, Query, RepoWorkDir};
+use linewright::secrets::Secrets;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::webhook::{Listener, Pending};
@@ -666,19 +666,19 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }
 
-/// The token sessions are given and Linewright's credentials, redacted from
+/// The token sessions are given and Linewright's secrets, redacted from
 /// what they say, for the harness and the factory alike.
 struct SessionCredentials {
     token: SessionToken,
-    credentials: Credentials,
+    secrets: Secrets,
 }
 
 impl SessionCredentials {
-    /// Reads the credentials to redact from Linewright's environment.
+    /// Reads the secrets to redact from Linewright's environment.
     fn new(token: SessionToken) -> SessionCredentials {
         SessionCredentials {
             token,
-            credentials: Credentials::of(std::env::vars_os()),
+            secrets: Secrets::of(std::env::vars_os()),
         }
     }
 }
@@ -703,7 +703,7 @@ fn harness(config: &Config, bash: PathBuf, sessions: &SessionCredentials) -> Cla
         model: config.model.clone(),
         github_token,
         environment: split.given,
-        redaction: sessions.credentials.redaction().clone(),
+        redaction: sessions.secrets.redaction().clone(),
     }
 }
 
@@ -740,7 +740,7 @@ fn factory_config(
         schedule_automations: true,
         waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
         session_token: sessions.token,
-        credentials: sessions.credentials,
+        secrets: sessions.secrets,
         ends,
     }
 }

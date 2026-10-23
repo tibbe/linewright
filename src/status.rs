@@ -147,7 +147,7 @@ pub struct FailedPolls {
     pub since: Timestamp,
     /// When the latest of them failed.
     pub last_at: Timestamp,
-    /// The latest's error, with Linewright's credentials redacted.
+    /// The latest's error, with Linewright's secrets redacted.
     pub last_error: String,
 }
 

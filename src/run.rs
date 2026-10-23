@@ -11,7 +11,6 @@ use tracing::{info, warn};
 use crate::automation::Automation;
 use crate::briefs::Briefs;
 use crate::clock::Clock;
-use crate::credentials::{Credentials, Held};
 use crate::domain::{
     HandBackKind, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
     addressed_to, closing_references, label,
@@ -27,6 +26,7 @@ use crate::results::{
     PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs};
+use crate::secrets::{Held, Secrets};
 use crate::spec_gap::{self, FiledGaps};
 use crate::store::{
     AnyItem, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError, PushMode,
@@ -48,7 +48,7 @@ pub(crate) struct Shell {
     pub work_dir: PathBuf,
     pub runs: Runs,
     pub waits_out_usage_limit: bool,
-    pub credentials: Credentials,
+    pub secrets: Secrets,
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
 }
 
@@ -168,7 +168,7 @@ async fn push(shell: &Shell, dir: &Path, branch: &str, mode: PushMode) -> Pushed
     match shell.store.push(dir, branch, mode).await {
         Ok(()) => Pushed::Done,
         Err(PushError::PushProtection { secrets }) => {
-            Pushed::Protected(secrets.redacted(shell.credentials.redaction()))
+            Pushed::Protected(secrets.redacted(shell.secrets.redaction()))
         }
         Err(PushError::MissingPermission { reason }) => Pushed::Refused(reason),
         Err(PushError::Failed(e)) => Pushed::Failed(e),
@@ -243,7 +243,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 return Ending::Done;
             }
             Err(Failure::Infrastructure { error: e, .. }) if !retried => {
-                let error = shell.credentials.redaction().apply(&format!("{e:#}"));
+                let error = shell.secrets.redaction().apply(&format!("{e:#}"));
                 warn!(subject = ?subject, error, "infrastructure failure; retrying once");
                 retried = true;
             }
@@ -296,7 +296,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
     // left in its clone.
     let posted = |text: &str| {
         shell
-            .credentials
+            .secrets
             .redaction()
             .apply(text)
             .replace(&work_dir, "<work-dir>")
@@ -1232,7 +1232,7 @@ fn in_order(tickets: &[FiledTicket]) -> String {
 enum Kept {
     Nothing,
     Pushed,
-    /// The work holds a credential, so it was not pushed.
+    /// The work holds a secret, so it was not pushed.
     Held(Held),
     /// GitHub's push protection refused the push over the secrets it found,
     /// redacted.
@@ -1256,7 +1256,7 @@ async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch:
 /// Keeps the work of a run on a pull request that stopped before it finished
 /// on the pull request's branch, unless its session changed nothing since
 /// the clone stood at `before`, the pull request closed or the work holds a
-/// credential: docs/specs/runs.md, "Ending". The push leases the branch at `start`, so commits others pushed
+/// secret: docs/specs/runs.md, "Ending". The push leases the branch at `start`, so commits others pushed
 /// since are not overwritten.
 async fn keep_unfinished_pull_work(
     shell: &Shell,
@@ -1283,7 +1283,7 @@ async fn keep_unfinished_pull_work(
 
 /// Commits what a stopped run's session left uncommitted, and pushes
 /// `branch` with `mode` when that leaves it past `past`, unless the commits
-/// the push adds hold a credential. Those are the commits past `past` and
+/// the push adds hold a secret. Those are the commits past `past` and
 /// past each of `taken_in`, the branches the work took in.
 async fn push_unfinished(
     shell: &Shell,
@@ -1298,7 +1298,7 @@ async fn push_unfinished(
         return Ok(Kept::Nothing);
     }
     let bases = [&[past], taken_in].concat();
-    if let Some(held) = held_credential(shell, dir, &bases).await? {
+    if let Some(held) = held_secret(shell, dir, &bases).await? {
         return Ok(Kept::Held(held));
     }
     match push(shell, dir, branch, mode).await {
@@ -1309,18 +1309,18 @@ async fn push_unfinished(
     }
 }
 
-/// The first credential the commits on the clone's `HEAD` past each of
+/// The first secret the commits on the clone's `HEAD` past each of
 /// `past` add: docs/specs/runs.md, "A result the manager can't accept".
-async fn held_credential(shell: &Shell, dir: &Path, past: &[&str]) -> Result<Option<Held>> {
+async fn held_secret(shell: &Shell, dir: &Path, past: &[&str]) -> Result<Option<Held>> {
     let additions = git::additions(dir, "HEAD", past).await?;
-    Ok(shell.credentials.held(&additions))
+    Ok(shell.secrets.held(&additions))
 }
 
 /// What became of a stopped run's work on `branch`, logged when it was not
 /// kept. Git's output is redacted, as hooks the session left in its clone
-/// can print a credential.
+/// can print a secret.
 fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
-    let redacted = |text: &str| shell.credentials.redaction().apply(text);
+    let redacted = |text: &str| shell.secrets.redaction().apply(text);
     let kept = match kept {
         Ok(Kept::Refused(reason)) => Kept::Refused(redacted(&reason)),
         Ok(kept) => kept,
@@ -1425,8 +1425,8 @@ async fn implement(
                 &unfinished,
             )));
         }
-        if let Some(held) = held_credential(shell, dir, &[base]).await? {
-            return Err(Rejection::Retry(prompts::held_credential(
+        if let Some(held) = held_secret(shell, dir, &[base]).await? {
+            return Err(Rejection::Retry(prompts::held_secret(
                 &shell.briefs.prompts,
                 &held,
             )));
@@ -1705,8 +1705,8 @@ async fn pull_work(
                 &unfinished,
             )));
         }
-        if let Some(held) = held_credential(shell, dir, &[base, upstream]).await? {
-            return Err(Rejection::Retry(prompts::held_credential(
+        if let Some(held) = held_secret(shell, dir, &[base, upstream]).await? {
+            return Err(Rejection::Retry(prompts::held_secret(
                 &shell.briefs.prompts,
                 &held,
             )));

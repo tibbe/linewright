@@ -446,8 +446,12 @@ fn a_session_env_pattern_matching_a_credential_of_linewrights_is_no_error() {
 #[test]
 fn session_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
     for name in ["CARGO_*_HOME", "*CARGO"] {
-        let error =
-            resolve(&["--session-env", &format!("RUSTUP_HOME,{name}")], &[], None).unwrap_err();
+        let error = resolve(
+            &["--session-env", &format!("RUSTUP_HOME,{name}")],
+            &[],
+            None,
+        )
+        .unwrap_err();
 
         assert!(
             error.contains(&format!(

@@ -234,7 +234,7 @@ async fn a_blocked_run_whose_work_github_refuses_over_a_secret_says_the_work_was
 #[tokio::test]
 async fn what_github_reports_of_a_secret_is_redacted() {
     let mut world = World::with(|config| {
-        config.credentials = credentials_of(&[("DEPLOY_KEY", "push_protection")]);
+        config.secrets = secrets_of(&[("DEPLOY_KEY", "push_protection")]);
     })
     .await;
     let store = world.store.clone();

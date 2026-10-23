@@ -328,7 +328,7 @@ async fn status_shows_the_polls_failed_since_the_last_that_succeeded_with_the_la
 {
     let world = World::with(|config| {
         config.work_dir = config.work_dir.join(REPO);
-        config.credentials = credentials_of(&[("GITHUB_TOKEN", "ghp_sekrit")]);
+        config.secrets = secrets_of(&[("GITHUB_TOKEN", "ghp_sekrit")]);
     })
     .await;
     let store = world.store.clone();

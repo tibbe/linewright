@@ -7,10 +7,10 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use crate::automation::Automation;
-use crate::credentials::Held;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Parent, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::Feedback;
+use crate::secrets::Held;
 use crate::spec_gap::FiledGaps;
 use crate::store::FoundSecrets;
 
@@ -193,7 +193,7 @@ values!(FullLog { job, repo });
 values!(FiledGapsPart { gaps });
 values!(ParseError { error });
 values!(LooseEnds { problem });
-values!(HeldCredential {
+values!(HeldSecret {
     commit,
     variable,
     file
@@ -386,7 +386,7 @@ pub struct Prompts {
     full_log: Template<FullLog>,
     filed_gaps: Template<FiledGapsPart>,
     fold_unfinished: Template<Commits>,
-    held_credential: Template<HeldCredential>,
+    held_secret: Template<HeldSecret>,
     pushed_secret: Template<PushedSecret>,
     parse_error: Template<ParseError>,
     loose_ends: Template<LooseEnds>,
@@ -418,7 +418,7 @@ impl Prompts {
             full_log: template!(source, "parts/full-log.md")?,
             filed_gaps: template!(source, "parts/filed-gaps.md")?,
             fold_unfinished: template!(source, "parts/fold-unfinished.md")?,
-            held_credential: template!(source, "parts/held-credential.md")?,
+            held_secret: template!(source, "parts/held-credential.md")?,
             pushed_secret: template!(source, "parts/pushed-secret.md")?,
             parse_error: template!(source, "follow-ups/parse-error.md")?,
             loose_ends: template!(source, "follow-ups/loose-ends.md")?,
@@ -658,11 +658,11 @@ pub fn fold_unfinished(prompts: &Prompts, unfinished: &UnfinishedCommits) -> Str
 }
 
 /// What a `done` answer is sent back with while its commits hold a
-/// credential, as `held` says.
-pub fn held_credential(prompts: &Prompts, held: &Held) -> String {
+/// secret, as `held` says.
+pub fn held_secret(prompts: &Prompts, held: &Held) -> String {
     loose_ends(
         prompts,
-        &prompts.held_credential.fill(&HeldCredential {
+        &prompts.held_secret.fill(&HeldSecret {
             commit: held.commit.clone(),
             variable: held.variable.clone(),
             file: held.file.clone(),

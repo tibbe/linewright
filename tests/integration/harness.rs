@@ -634,7 +634,7 @@ const CREDENTIAL: &str = "ghp_s3cr3t";
 
 /// A session that prints `CREDENTIAL` in all it says, as one that ran `env`
 /// would, and ends with `last`, if any.
-fn harness_printing_a_credential(dir: &Path, last: Option<Value>) -> ClaudeCode {
+fn harness_printing_a_secret(dir: &Path, last: Option<Value>) -> ClaudeCode {
     let program = dir.join("claude");
     let said = json!({"type": "assistant", "message": {"content": [
         {"type": "text", "text": format!("GH_TOKEN={CREDENTIAL}")},
@@ -660,9 +660,9 @@ fn harness_printing_a_credential(dir: &Path, last: Option<Value>) -> ClaudeCode 
 }
 
 #[tokio::test]
-async fn a_credential_a_session_prints_is_kept_and_answered_redacted() {
+async fn a_secret_a_session_prints_is_kept_and_answered_redacted() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_printing_a_credential(
+    let harness = harness_printing_a_secret(
         dir.path(),
         Some(json!({
             "type": "result", "subtype": "success", "is_error": false,
@@ -683,9 +683,9 @@ async fn a_credential_a_session_prints_is_kept_and_answered_redacted() {
 }
 
 #[tokio::test]
-async fn a_failed_sessions_log_tail_has_its_credentials_redacted() {
+async fn a_failed_sessions_log_tail_has_its_secrets_redacted() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_printing_a_credential(dir.path(), None);
+    let harness = harness_printing_a_secret(dir.path(), None);
 
     let error = harness
         .start(&triage_session(dir.path()))
@@ -699,9 +699,9 @@ async fn a_failed_sessions_log_tail_has_its_credentials_redacted() {
 }
 
 #[tokio::test]
-async fn a_failed_sessions_reason_has_its_credentials_redacted() {
+async fn a_failed_sessions_reason_has_its_secrets_redacted() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_printing_a_credential(
+    let harness = harness_printing_a_secret(
         dir.path(),
         Some(json!({
             "type": "result", "subtype": "error_max_turns", "is_error": true,
@@ -724,9 +724,9 @@ async fn a_failed_sessions_reason_has_its_credentials_redacted() {
 }
 
 #[tokio::test]
-async fn a_credential_that_holds_another_is_redacted_whole() {
+async fn a_secret_that_holds_another_is_redacted_whole() {
     let dir = tempfile::tempdir().unwrap();
-    let mut harness = harness_printing_a_credential(dir.path(), None);
+    let mut harness = harness_printing_a_secret(dir.path(), None);
     harness.redaction = redaction_of(&[("GH_TOKEN", CREDENTIAL), ("GH_PREFIX_TOKEN", "ghp_")]);
 
     let error = harness

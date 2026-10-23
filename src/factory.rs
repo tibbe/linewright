@@ -15,7 +15,6 @@ use crate::api::{Publish, Served};
 use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::briefs::Briefs;
 use crate::clock::Clock;
-use crate::credentials::Credentials;
 use crate::domain::{
     AutoMerge, IssueCloseReason, Item, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
@@ -28,6 +27,7 @@ use crate::reconcile::{
 };
 use crate::run::{self, AutomationEnd, Shell};
 use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
+use crate::secrets::Secrets;
 use crate::spec_glob::SpecGlob;
 use crate::status::{FailedPolls, Poll, Polling, Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
@@ -54,11 +54,11 @@ pub struct FactoryConfig {
     pub schedule_automations: bool,
     pub waits_out_usage_limit: bool,
     pub session_token: SessionToken,
-    /// Linewright's credentials, refused in the commits a session's result
+    /// Linewright's secrets, refused in the commits a session's result
     /// would push, and redacted from what a session's work prints that
     /// reaches Linewright other than through the harness, such as git's
     /// output from hooks the session left in its clone.
-    pub credentials: Credentials,
+    pub secrets: Secrets,
     /// What drains and stops the factory.
     pub ends: Ends,
 }
@@ -262,7 +262,7 @@ impl Factory {
             runs: runs.clone(),
             work_dir: config.work_dir,
             waits_out_usage_limit: config.waits_out_usage_limit,
-            credentials: config.credentials,
+            secrets: config.secrets,
             report_refusal,
         };
         Ok(Factory {
@@ -379,7 +379,7 @@ impl Factory {
                 Ok(_) => Poll::Succeeded,
                 Err(e) => {
                     // Redacted as recorded, as the same text is logged.
-                    let error = self.shell.credentials.redaction().apply(&format!("{e:#}"));
+                    let error = self.shell.secrets.redaction().apply(&format!("{e:#}"));
                     error!(error, "poll failed");
                     Poll::Failed {
                         at: self.shell.clock.now(),

@@ -238,7 +238,7 @@ fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted()
     for (path, contents) in &out {
         assert!(
             !contents.contains("s3cr3t"),
-            "a credential in {}: {contents}",
+            "a secret in {}: {contents}",
             path.display()
         );
     }
@@ -263,7 +263,7 @@ fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted()
 }
 
 #[test]
-fn a_replayed_session_leaves_redacted_every_variable_named_as_a_credential_and_no_other() {
+fn a_replayed_session_leaves_redacted_every_variable_named_as_a_secret_and_no_other() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(dir.path(), &[]);
     let bin = dir.path().join("bin");
@@ -291,7 +291,7 @@ fn a_replayed_session_leaves_redacted_every_variable_named_as_a_credential_and_n
     for (path, contents) in files_under(&dir.path().join("out")) {
         assert!(
             !contents.contains("s3cr3t"),
-            "a credential in {}: {contents}",
+            "a secret in {}: {contents}",
             path.display()
         );
     }

@@ -5248,11 +5248,11 @@ async fn a_push_refused_for_a_reason_not_recognized_is_retried_once_then_handed_
 }
 
 #[tokio::test]
-async fn a_hand_back_says_nothing_of_a_credential_the_sessions_work_printed() {
+async fn a_hand_back_says_nothing_of_a_secret_the_sessions_work_printed() {
     // A hook the session left in its clone can print one as Linewright
     // pushes.
     let mut world = World::with(|config| {
-        config.credentials = credentials_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
+        config.secrets = secrets_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
     })
     .await;
     implement(&world);
@@ -5383,10 +5383,10 @@ async fn a_blocking_spec_gap_in_a_pull_request_run_hands_the_pull_request_back()
 }
 
 #[tokio::test]
-async fn a_stopped_runs_work_that_cannot_be_kept_logs_nothing_of_a_credential_its_push_printed() {
+async fn a_stopped_runs_work_that_cannot_be_kept_logs_nothing_of_a_secret_its_push_printed() {
     let (log, _guard) = Log::capture();
     let mut world = World::with(|config| {
-        config.credentials = credentials_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
+        config.secrets = secrets_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
     })
     .await;
     world.harness.on(WorkKind::Implement, |call| {

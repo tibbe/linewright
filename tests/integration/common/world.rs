@@ -4,13 +4,13 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
 use linewright::briefs::Briefs;
-use linewright::credentials::Credentials;
 use linewright::domain::{
     AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, label,
 };
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::WorkKind;
 use linewright::redaction::Redaction;
+use linewright::secrets::Secrets;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{FailedPolls, Polling};
 use linewright::store::Store;
@@ -32,9 +32,9 @@ pub const REQUIRED: &str = "linewright";
 /// Auto-merge on, by the repository's merge method.
 pub const AUTO_MERGE: Option<AutoMerge> = Some(AutoMerge { merge_method: None });
 
-/// The credentials of an environment holding `variables`.
-pub fn credentials_of(variables: &[(&str, &str)]) -> Credentials {
-    Credentials::of(
+/// The secrets of an environment holding `variables`.
+pub fn secrets_of(variables: &[(&str, &str)]) -> Secrets {
+    Secrets::of(
         variables
             .iter()
             .map(|(name, value)| (name.into(), value.into())),
@@ -43,7 +43,7 @@ pub fn credentials_of(variables: &[(&str, &str)]) -> Credentials {
 
 /// The redaction of an environment holding `variables`.
 pub fn redaction_of(variables: &[(&str, &str)]) -> Redaction {
-    credentials_of(variables).redaction().clone()
+    secrets_of(variables).redaction().clone()
 }
 
 pub struct World {
@@ -101,7 +101,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         schedule_automations: true,
         waits_out_usage_limit: false,
         session_token: SessionToken::Withheld,
-        credentials: Credentials::default(),
+        secrets: Secrets::default(),
         ends: linewright::ending::Ends::new(),
     }
 }

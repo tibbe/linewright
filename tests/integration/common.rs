@@ -7,7 +7,7 @@
 //! - `LINEWRIGHT`: the login Linewright works as.
 //! - `REQUIRED`: the label a factory requires when set to require one.
 //! - `AUTO_MERGE`: auto-merge on, by the repository's merge method.
-//! - `credentials_of`: the credentials of an environment holding some variables.
+//! - `secrets_of`: the secrets of an environment holding some variables.
 //! - `redaction_of`: the redaction of an environment holding some variables.
 //! - `World`: a factory over a local store, a scripted harness and a fake clock.
 //!   - `new`, `serving`, `with`, `with_repository`, `start`: start one, as
