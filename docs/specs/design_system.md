@@ -33,10 +33,9 @@
   Sep 12, 2025".
 - **Future times.** A future time is shown absolute, in the reader's time
   zone.
-- **Durations.** A run's duration is shown in narrow units, to its two
-  largest units that are not zero, such as "45s", "1m 43s", "3h 2m" or
-  "1d 5m", and "0s" under a second, keeping up as time passes for a run in
-  flight.
+- **Durations.** A duration is shown in narrow units, to its two largest
+  units that are not zero, such as "45s", "1m 43s", "3h 2m" or "1d 5m", and
+  "0s" under a second, keeping up as time passes for a run in flight.
 - **Waiting.** How long anything else has gone on is shown as when it
   began, a past time.
 
@@ -169,7 +168,7 @@ to add is the title alone.
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Triage         | nothing but the time                                                                                                                                                                                                                                                   |                                                                                                                                                         |
 | Needs a person | "stalled"                                                                                                                                                                                                                                                              | it holds `linewright:stalled`                                                                                                                           |
-|                | "reporter asked"                                                                                                                                                                                                                                                       | it holds `needs-info`                                                                                                                                   |
+|                | "asked alice", "asked alice and bob", "asked alice, bob and carol": the issue's assignees, in GitHub's order; "people asked" with none                                                                                                                                 | it holds `needs-info`                                                                                                                                   |
 |                | "handed back"                                                                                                                                                                                                                                                          | it holds `ready-for-human`, and Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged              |
 |                | "decision needed"                                                                                                                                                                                                                                                      | it holds `ready-for-human` otherwise                                                                                                                    |
 | Ready          | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |

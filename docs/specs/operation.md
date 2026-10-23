@@ -85,7 +85,7 @@ default.
 | -------------------------------------------- | ------------------------------------------- |
 | `repo` (`owner/name`)                        | required                                    |
 | `poll-interval`                              | 60s                                         |
-| `webhook-address`                            | `0.0.0.0:8080`                              |
+| `webhook-address`                            | `0.0.0.0:8080` with the webhook secret set; none without it |
 | `ui-address`                                 | `127.0.0.1:8081`                            |
 | `ui-hosts` (host names)                      | none: local names only                      |
 | `spec-glob`                                  | `docs/**/*.md`                              |
@@ -106,8 +106,8 @@ default.
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
-- **A feature's settings.** A setting that only one feature uses can be set
-  only while that feature is on, and is an error at startup otherwise
+- **A feature's settings.** A setting that only one feature uses is an error
+  at startup when it is not at its default while that feature is off
   ([Startup](repository.md#startup)): `webhook-address` without the webhook
   secret, `ui-hosts` with `ui-address` empty, `merge-method` without
   `auto-merge`.

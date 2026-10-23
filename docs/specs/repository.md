@@ -57,7 +57,9 @@ it.
 ## Labels
 
 Linewright creates any of its labels that are missing at startup, except the
-required label, and never renames or deletes one.
+required label. Every label is the repository's: Linewright leaves it as the
+people there keep it, except that at every startup it sets each
+`linewright:` label's description to its meaning below.
 
 | label                                        | meaning                                                | set by                                            |
 | -------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------- |
@@ -172,8 +174,8 @@ Linewright exits with an error at startup when it cannot work.
   set, can read it; with `--auto-merge`, the repository allows the merge
   method and the update method keeps the branch mergeable with it
   (`update-branch` `merge` cannot keep a branch rebase-mergeable); with
-  webhooks on, `serve` can listen on `webhook-address`; no setting is set
-  while the feature that uses it is off
+  webhooks on, `serve` can listen on `webhook-address`; every setting of a
+  feature that is off is at its default
   ([Configuration](operation.md#configuration)); and, unless `ui-address` is
   empty, `serve` can listen on it.
 - **One Linewright per repository.** A `serve` started for a repository whose
