@@ -153,6 +153,9 @@ settings that the rules under [Running](#running) need, such as the shell.
   variable.
 - **Linewright's own win.** A variable Linewright sets itself replaces one of
   the same name the table or `session-env` passes.
+- **Credentials passed.** The credentials the table passes are the values of
+  the variables the harness reads one from, and the password in a proxy
+  variable's URL, both as written in the URL and percent-decoded.
 - **Never passed.** `session-env` never passes Linewright's GitHub tokens or
   the webhook secret: a pattern skips them, and naming one is an error at
   startup.
@@ -189,9 +192,10 @@ image the operator builds with those in it.
 
 - One container per run, instead of agents as processes beside the manager.
 - Giving some sessions credentials that others don't, such as only triage's.
-- Keeping sessions from credentials in files Linewright's user can read, such
-  as `~/.config/gh/hosts.yml` or `~/.aws/credentials`. A container, or a user
-  of its own that holds no other credentials, is the isolation.
+- Keeping sessions from, or redacting, credentials stored where Linewright's
+  user can read them, such as `~/.config/gh/hosts.yml`, `~/.aws/credentials`
+  or the harness's own login. A container, or a user of its own that holds no
+  other credentials, is the isolation.
 - How Linewright is released (`docs/releasing.md`).
 - Calling off a drain; the restart it ends in takes the work up again.
 - A setting that bounds every drain; the bound is each request's.

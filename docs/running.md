@@ -102,7 +102,8 @@ to add.
 Credentials your agents need for other services, such as a cloud account or a
 database, go in `session-env` too, and every session gets them. Name the
 variables that hold secrets in `secrets` as well, so that Linewright redacts
-them:
+them; it redacts on its own those sessions get without your naming them,
+such as Claude Code's login or a proxy's password:
 
 ```toml
 session-env = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"]
@@ -113,7 +114,7 @@ secrets = ["AWS_SECRET_ACCESS_KEY"]
 |---|---|
 | Rust | `CARGO_HOME`, `RUSTUP_HOME` |
 | Java | `JAVA_HOME` |
-| Claude Code on Amazon Bedrock | `AWS_*` |
+| Claude Code on Amazon Bedrock | `AWS_*`, and its secrets, such as `AWS_BEARER_TOKEN_BEDROCK` or `AWS_SECRET_ACCESS_KEY`, to `secrets` |
 | Claude Code on Google Vertex AI | `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS` |
 | Claude Code's other settings | their names, such as `DISABLE_TELEMETRY` or `BASH_DEFAULT_TIMEOUT_MS` |
 

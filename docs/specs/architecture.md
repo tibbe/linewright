@@ -116,8 +116,10 @@ their work nothing.
   secret is refused ([Runs](runs.md)). Redaction is best effort. A secret of 1
   to 5 characters is neither redacted nor refused, which Linewright warns of at
   startup, naming its variable; an empty one is ignored.
-- **A secret** is the value of a variable Linewright reads a credential from,
-  or of one `secrets` names ([Configuration](operation.md#configuration)).
+- **A secret** is the value of a variable Linewright reads a credential from
+  or that `secrets` names ([Configuration](operation.md#configuration)), or a
+  credential the table of sessions' variables passes
+  ([Sessions' environment](operation.md#sessions-environment)).
 - **Identity is a user account**: a token for a GitHub user dedicated to
   Linewright, whose assignments are its claims.
 
