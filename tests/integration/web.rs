@@ -15,10 +15,11 @@ use axum::Router;
 use axum::body::Body;
 use common::*;
 use http_body_util::BodyExt as _;
-use linewright::api::{self, Sources};
+use linewright::api::Sources;
 use linewright::clock::Clock;
 use linewright::reconcile::WorkKind;
 use linewright::store::Store as _;
+use linewright::web;
 use linewright::webhook::{Listener, Pending};
 use scraper::{ElementRef, Html, Selector};
 use tokio_util::sync::CancellationToken;
@@ -89,7 +90,7 @@ impl Web {
             .unwrap();
         let serving = Serving::start(factory, poll_interval, pending);
         let stopping = CancellationToken::new();
-        let router = api::router(
+        let router = web::router(
             Sources {
                 deliveries: Some(listener.tally()),
                 ..sources(
@@ -127,16 +128,13 @@ impl Web {
         .unwrap()
     }
 
-    async fn get_from(&self, host: &str, path: &str) -> axum::response::Response {
-        let request = axum::http::Request::get(path)
-            .header("Host", host)
-            .body(Body::empty())
-            .unwrap();
+    async fn response(&self, path: &str) -> axum::response::Response {
+        let request = axum::http::Request::get(path).body(Body::empty()).unwrap();
         self.router.clone().oneshot(request).await.unwrap()
     }
 
     async fn get(&self, path: &str) -> (u16, String) {
-        let response = self.get_from("localhost", path).await;
+        let response = self.response(path).await;
         let status = response.status().as_u16();
         let body = response.into_body().collect().await.unwrap().to_bytes();
         (status, String::from_utf8(body.to_vec()).unwrap())
@@ -263,7 +261,7 @@ fn assert_no_status_by_colour_alone(html: &Html) {
 
 /// The data of each event the stream at `path` sends.
 async fn stream(web: &Web, path: &str) -> tokio::sync::mpsc::UnboundedReceiver<String> {
-    let response = web.get_from("localhost", path).await;
+    let response = web.response(path).await;
     assert_eq!(response.status(), 200);
     assert!(
         response.headers()["content-type"]

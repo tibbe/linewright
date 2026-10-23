@@ -2,23 +2,19 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::net::SocketAddr;
-use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, bail};
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpListener;
 use tokio::sync::Notify;
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info, info_span, warn};
+use tracing::{info, info_span, warn};
 
 use crate::clock::Clock;
 use crate::domain::{Item, Number, Snapshot, Timestamp};
+use crate::listening::{Address, Listening};
 
 pub const SECRET_VARIABLE: &str = "LINEWRIGHT_WEBHOOK_SECRET";
 
@@ -40,59 +36,6 @@ impl Secret {
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret(..)")
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Address {
-    /// Without the brackets of an IPv6 address.
-    host: String,
-    port: u16,
-}
-
-impl Address {
-    pub fn host(&self) -> &str {
-        &self.host
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-}
-
-impl FromStr for Address {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> anyhow::Result<Address> {
-        let (host, port) = value
-            .rsplit_once(':')
-            .context("it is a host and port, such as `0.0.0.0:8080`")?;
-        let host = match host.strip_prefix('[') {
-            Some(bracketed) => bracketed.strip_suffix(']'),
-            None if host.contains(':') => None,
-            None => Some(host),
-        }
-        .context("an IPv6 host is in brackets, such as `[::1]:8080`")?;
-        if host.is_empty() {
-            bail!("it has no host: listen on every address with `0.0.0.0`");
-        }
-        let port = port
-            .parse()
-            .with_context(|| format!("the port {port:?} is not a number from 0 to 65535"))?;
-        Ok(Address {
-            host: host.to_string(),
-            port,
-        })
-    }
-}
-
-impl fmt::Display for Address {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.host.contains(':') {
-            write!(f, "[{}]:{}", self.host, self.port)
-        } else {
-            write!(f, "{}:{}", self.host, self.port)
-        }
     }
 }
 
@@ -428,8 +371,7 @@ impl Tally {
 pub struct Listener {
     address: SocketAddr,
     tally: Tally,
-    stop: CancellationToken,
-    task: JoinHandle<()>,
+    listening: Listening,
 }
 
 /// <https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap>
@@ -441,10 +383,7 @@ impl Listener {
         pending: Pending,
         clock: Arc<dyn Clock>,
     ) -> anyhow::Result<Listener> {
-        let address = &webhooks.address;
-        let socket = TcpListener::bind((address.host(), address.port()))
-            .await
-            .with_context(|| format!("listening on the setting `webhook-address`, {address}"))?;
+        let socket = webhooks.address.bind("webhook-address").await?;
         let local = socket.local_addr()?;
         let secret = webhooks.secret.clone();
         let tally = Tally {
@@ -459,24 +398,12 @@ impl Listener {
                 }
             })
             .layer(DefaultBodyLimit::max(PAYLOAD_CAP));
-        let stop = CancellationToken::new();
-        let task = tokio::spawn({
-            let stop = stop.clone();
-            async move {
-                let served = axum::serve(socket, router)
-                    .with_graceful_shutdown(stop.cancelled_owned())
-                    .await;
-                if let Err(e) = served {
-                    error!(error = %e, "receiving webhook deliveries failed");
-                }
-            }
-        });
+        let listening = Listening::spawn(socket, router, "receiving webhook deliveries");
         info!(address = %local, "listening for webhook deliveries");
         Ok(Listener {
             address: local,
             tally,
-            stop,
-            task,
+            listening,
         })
     }
 
@@ -490,8 +417,7 @@ impl Listener {
     }
 
     pub async fn stop(self) {
-        self.stop.cancel();
-        let _ = self.task.await;
+        self.listening.stop().await;
     }
 }
 

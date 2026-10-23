@@ -208,6 +208,15 @@ async fn get(runtime_dir: &Path, host: &str, resource: &str) -> (u16, String) {
     request(runtime_dir, hyper::Method::GET, host, resource).await
 }
 
+/// The status of the answer to a GET, without waiting for its body, as an
+/// event stream's does not end.
+async fn status(runtime_dir: &Path, host: &str, resource: &str) -> u16 {
+    send(runtime_dir, hyper::Method::GET, host, resource)
+        .await
+        .status()
+        .as_u16()
+}
+
 async fn request(
     runtime_dir: &Path,
     method: hyper::Method,
@@ -215,6 +224,18 @@ async fn request(
     resource: &str,
 ) -> (u16, String) {
     use http_body_util::BodyExt;
+    let response = send(runtime_dir, method, host, resource).await;
+    let status = response.status().as_u16();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(body.to_vec()).unwrap())
+}
+
+async fn send(
+    runtime_dir: &Path,
+    method: hyper::Method,
+    host: &str,
+    resource: &str,
+) -> hyper::Response<hyper::body::Incoming> {
     let path = api::socket_path(&socket_dir(runtime_dir), REPO);
     let stream = tokio::net::UnixStream::connect(path).await.unwrap();
     let (mut sender, connection) =
@@ -228,10 +249,7 @@ async fn request(
         .header("Host", host)
         .body(http_body_util::Empty::<axum::body::Bytes>::new())
         .unwrap();
-    let response = sender.send_request(request).await.unwrap();
-    let status = response.status().as_u16();
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    (status, String::from_utf8(body.to_vec()).unwrap())
+    sender.send_request(request).await.unwrap()
 }
 
 /// A world whose work dir is `REPO`'s, as `serve`'s API reads it.
@@ -500,6 +518,39 @@ async fn with_webhooks_on_status_shows_the_last_accepted_delivery_and_those_refu
         "{}",
         output.stdout
     );
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn a_request_for_the_web_ui_whose_host_is_not_local_is_refused_for_pages_assets_and_streams()
+{
+    let answering = Answering::start(with_ticket_and_automation().await, false).await;
+    let dir = answering.runtime_dir.path();
+    let (_, page) = get(dir, "localhost", "/items/1").await;
+    let page = scraper::Html::parse_document(&page);
+    let assets: Vec<String> = page
+        .select(&scraper::Selector::parse("link[rel=stylesheet], script[src]").unwrap())
+        .map(|asset| {
+            let asset = asset.value();
+            asset
+                .attr("href")
+                .or_else(|| asset.attr("src"))
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(assets.len(), 4);
+    let paths = ["/items/1", "/events/items/1"]
+        .into_iter()
+        .map(str::to_string)
+        .chain(assets);
+
+    for path in paths {
+        let refused = status(dir, "evil.example", &path).await;
+        let answered = status(dir, "localhost", &path).await;
+        assert_eq!(refused, 403, "{path}");
+        assert_eq!(answered, 200, "{path}");
+    }
     answering.stop().await;
 }
 
@@ -806,6 +857,7 @@ async fn the_api_answers_under_api_and_no_longer_at_the_root() {
 
     for (status, body) in at_the_root {
         assert_eq!(status, 404, "{body}");
+        assert_eq!(body, r#"{"error":"no such resource"}"#);
     }
     assert_eq!(under_api.0, 200, "{}", under_api.1);
     answering.stop().await;

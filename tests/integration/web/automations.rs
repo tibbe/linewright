@@ -237,7 +237,7 @@ async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
     let world = with_automations(&[("weekly", WEEKLY)]).await;
     let (_unpolled, served) = tokio::sync::watch::channel(None);
     let (_unended, polling) = tokio::sync::watch::channel(None);
-    let router = api::router(
+    let router = web::router(
         sources(&world.dir, &world.clock, world.clock.now(), served, polling),
         CancellationToken::new(),
     );

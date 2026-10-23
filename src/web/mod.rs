@@ -21,13 +21,13 @@ use std::time::Duration;
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Router;
 use axum::extract::{Path, Request};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::{Extension, Router};
 use rust_embed::Embed;
 use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
@@ -38,7 +38,10 @@ use crate::phrase::{Phrase, Tone};
 use crate::runs::{Outcome, RunId};
 use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
 
-pub(crate) fn routes() -> Router<Sources> {
+/// The web UI: its pages, their event streams and their assets.
+/// `stopping` ends the event streams, so that stopping waits only for the
+/// answers being given.
+pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
     Router::new()
         .route("/", get(board_page::board_page))
         .route("/events/", get(board_page::board_events))
@@ -57,6 +60,9 @@ pub(crate) fn routes() -> Router<Sources> {
         .route("/events/runs/{*id}", get(run_page::run_events))
         .route("/assets/{name}", get(asset))
         .layer(middleware::from_fn(confined))
+        .fallback(|| async { (StatusCode::NOT_FOUND, "no such page") })
+        .layer(Extension(stopping))
+        .with_state(sources)
 }
 
 /// Has the browser run only the scripts Linewright serves, and show only

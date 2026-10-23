@@ -1,4 +1,5 @@
-use linewright::webhook::{Address, Listener, Secret, Webhooks};
+use linewright::listening::Address;
+use linewright::webhook::{Listener, Secret, Webhooks};
 
 pub const SECRET: &str = "It's a Secret to Everybody";
 

@@ -18,7 +18,6 @@ use hyper_util::rt::TokioIo;
 use sha2::Digest;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::watch;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -28,6 +27,8 @@ use crate::domain::{Number, Timestamp};
 use crate::drain::{Asked, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::explain;
+use crate::host::HostName;
+use crate::listening::Listening;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
 use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
 use crate::status::{self, Polling, Serving, Status, View};
@@ -234,9 +235,9 @@ pub struct Sources {
     pub ends: Ends,
 }
 
-/// The local API under `/api/` and the web UI, answering only requests
-/// whose `Host` is local. `stopping` ends the event streams, so that
-/// stopping waits only for the answers being given.
+/// The local API, under `/api/`, answering only requests whose `Host` is
+/// local. `stopping` ends the event streams, so that stopping waits only
+/// for the answers being given.
 pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
     let api = Router::new()
         .route("/status", get(answer_status))
@@ -248,17 +249,30 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/stop", get(answer_stop));
     Router::new()
         .nest("/api", api)
-        .merge(web::routes())
-        .fallback(|| async { error_response(StatusCode::NOT_FOUND, "no such resource") })
+        .fallback(no_such_resource)
         .layer(middleware::from_fn(local_only))
         .layer(Extension(stopping))
         .with_state(sources)
 }
 
+/// What the socket answers: the web UI's pages, streams and assets, and
+/// the local API for everything else, both only to requests whose `Host`
+/// is local.
+fn socket_router(sources: Sources, stopping: CancellationToken) -> Router {
+    web::router(sources.clone(), stopping.clone())
+        .layer(middleware::from_fn(local_only))
+        .fallback_service(router(sources, stopping))
+}
+
+async fn no_such_resource() -> Response {
+    error_response(StatusCode::NOT_FOUND, "no such resource")
+}
+
 pub struct Api {
     path: PathBuf,
-    stop: CancellationToken,
-    task: JoinHandle<()>,
+    /// Ends the event streams.
+    stopping: CancellationToken,
+    listening: Listening,
     /// Held until the socket is removed.
     lock: File,
 }
@@ -270,31 +284,21 @@ impl Api {
             path,
             lock,
         } = claimed;
-        let stop = CancellationToken::new();
-        let router = router(sources, stop.clone());
-        let task = tokio::spawn({
-            let stop = stop.clone();
-            async move {
-                let served = axum::serve(listener, router)
-                    .with_graceful_shutdown(stop.cancelled_owned())
-                    .await;
-                if let Err(e) = served {
-                    error!(error = %e, "answering on the local API failed");
-                }
-            }
-        });
+        let stopping = CancellationToken::new();
+        let router = socket_router(sources, stopping.clone());
+        let listening = Listening::spawn(listener, router, "answering on the local API");
         info!(socket = %path.display(), "answering the monitoring commands, `drain` and the web UI");
         Api {
             path,
-            stop,
-            task,
+            stopping,
+            listening,
             lock,
         }
     }
 
     pub async fn stop(self) {
-        self.stop.cancel();
-        let _ = self.task.await;
+        self.stopping.cancel();
+        self.listening.stop().await;
         if let Err(e) = remove_if_present(&self.path) {
             error!(
                 error = format!("{e:#}"),
@@ -706,30 +710,13 @@ pub(crate) async fn item_answer(
 /// Refuses a request whose `Host` is not local, such as one a web page
 /// sends through a tunnel to the socket under a name it controls.
 async fn local_only(request: Request, next: Next) -> Response {
-    let host = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|host| host.to_str().ok());
-    if !host.is_some_and(is_local) {
+    if !HostName::of(request.headers()).is_some_and(|host| host.is_local()) {
         return error_response(
             StatusCode::FORBIDDEN,
             "only requests whose `Host` is local are answered",
         );
     }
     next.run(request).await
-}
-
-fn is_local(host: &str) -> bool {
-    let name = match host.strip_prefix('[') {
-        Some(bracketed) => bracketed.split_once(']').map(|(address, _)| address),
-        None => Some(host.split_once(':').map_or(host, |(name, _)| name)),
-    };
-    name.is_some_and(|name| {
-        name.eq_ignore_ascii_case("localhost")
-            || name
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|address| address.is_loopback())
-    })
 }
 
 fn json_response(status: StatusCode, body: &impl serde::Serialize) -> Response {
