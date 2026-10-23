@@ -377,6 +377,35 @@ const KEYS: [&str; 22] = [
     "log-format",
 ];
 
+/// A feature, the settings only it uses and what turns it on or off: its
+/// settings can be set only while it is on (`docs/specs/operation.md`,
+/// Configuration, A feature's settings).
+struct Feature {
+    settings: &'static [&'static str],
+    /// The settings that turn it on or off, which an error is blamed on.
+    switches: &'static [&'static str],
+    /// What is off and how to turn it on, after "is set, but".
+    when_off: fn() -> String,
+}
+
+struct Features {
+    webhooks: Feature,
+}
+
+const FEATURES: Features = Features {
+    // Turned on by the environment's secret, which no setting holds.
+    webhooks: Feature {
+        settings: &["webhook-address"],
+        switches: &[],
+        when_off: || {
+            format!(
+                "`{}` is not: set it to the webhook's secret to turn webhooks on",
+                webhook::SECRET_VARIABLE
+            )
+        },
+    },
+};
+
 impl Config {
     pub fn required_repo(&self) -> Result<Repo> {
         self.repo
@@ -423,6 +452,19 @@ impl Config {
             )
         };
         let wrong = |key: &str, error: String| blame(&[key], anyhow!(error));
+        // Run before the feature's settings are parsed, so that they are
+        // parsed only while it is on.
+        let refuse_while_off = |feature: &Feature, on: bool| match feature
+            .settings
+            .iter()
+            .find(|key| get(key).is_some())
+        {
+            Some(key) if !on => Err(blame(
+                feature.switches,
+                anyhow!("the setting `{key}` is set, but {}", (feature.when_off)()),
+            )),
+            _ => Ok(()),
+        };
         let value = |key: &str, default: &str| get(key).unwrap_or_else(|| default.to_string());
         let duration = |key: &str, default: &str| {
             let value = value(key, default);
@@ -494,24 +536,17 @@ impl Config {
                 })?
                 .join("linewright"),
         };
-        let webhook_address = get("webhook-address");
-        let webhooks = match env(webhook::SECRET_VARIABLE).and_then(webhook::Secret::new) {
+        let secret = env(webhook::SECRET_VARIABLE).and_then(webhook::Secret::new);
+        refuse_while_off(&FEATURES.webhooks, secret.is_some())?;
+        let webhooks = match secret {
             Some(secret) => {
-                let address = webhook_address.unwrap_or_else(|| "0.0.0.0:8080".into());
+                let address = value("webhook-address", "0.0.0.0:8080");
                 Some(Webhooks {
                     address: address
                         .parse()
                         .map_err(|e| not_one("webhook-address", &address, e))?,
                     secret,
                 })
-            }
-            None if webhook_address.is_some() => {
-                // What is missing is the environment's.
-                return Err(ResolveError::Elsewhere(anyhow!(
-                    "the setting `webhook-address` is set, but `{}` is not: set it to the \
-                         webhook's secret to turn webhooks on",
-                    webhook::SECRET_VARIABLE
-                )));
             }
             None => None,
         };
