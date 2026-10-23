@@ -17,7 +17,7 @@ use common::*;
 use http_body_util::BodyExt as _;
 use linewright::api::Sources;
 use linewright::clock::Clock;
-use linewright::host::Hosts;
+use linewright::host::UiHosts;
 use linewright::reconcile::WorkKind;
 use linewright::store::Store as _;
 use linewright::web;
@@ -102,7 +102,7 @@ impl Web {
                 serving.polling.clone(),
             )
         };
-        let router = web::router(sources.clone(), Hosts::default(), stopping.clone());
+        let router = web::router(sources.clone(), UiHosts::default(), stopping.clone());
         Web {
             serving,
             listener,
@@ -134,7 +134,7 @@ impl Web {
     async fn listen(&self, hosts: &[&str]) -> web::Listener {
         let ui = web::Ui {
             address: "127.0.0.1:0".parse().unwrap(),
-            hosts: Hosts::new(hosts.iter().copied()).unwrap(),
+            hosts: UiHosts::new(hosts.iter().copied()).unwrap(),
         };
         web::Listener::bind(&ui, self.sources.clone())
             .await

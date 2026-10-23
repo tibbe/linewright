@@ -36,7 +36,7 @@ use tracing::{info, warn};
 
 use crate::api::{self, Sources, Unanswered};
 use crate::domain::{Repo, Timestamp};
-use crate::host::{HostName, Hosts};
+use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 use crate::phrase::{Phrase, Tone};
 use crate::runs::{Outcome, RunId};
@@ -47,7 +47,7 @@ use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomatio
 #[derive(Clone, Debug)]
 pub struct Ui {
     pub address: Address,
-    pub hosts: Hosts,
+    pub hosts: UiHosts,
 }
 
 /// The web UI listening on its port, until [`Listener::stop`].
@@ -90,7 +90,7 @@ impl Listener {
 /// The web UI: its pages, their event streams and their assets, answering
 /// only the requests whose `Host` `hosts` answers. `stopping` ends the event
 /// streams, so that stopping waits only for the answers being given.
-pub fn router(sources: Sources, hosts: Hosts, stopping: CancellationToken) -> Router {
+pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> Router {
     Router::new()
         .route("/", get(board_page::board_page))
         .route("/events/", get(board_page::board_events))
@@ -118,14 +118,18 @@ pub fn router(sources: Sources, hosts: Hosts, stopping: CancellationToken) -> Ro
 /// Refuses a request whose `Host` is not local, an IP address or one of
 /// `ui-hosts`, such as one a web page sends under a name it controls that
 /// it has pointed at the UI's address.
-async fn misdirected(State(hosts): State<Hosts>, request: Request, next: Next) -> Response {
-    if HostName::of(request.headers()).is_some_and(|host| hosts.answers(&host)) {
-        return next.run(request).await;
-    }
-    let host = request.headers().get(header::HOST);
+async fn misdirected(State(hosts): State<UiHosts>, request: Request, next: Next) -> Response {
+    let headers = request.headers();
+    let reason = match HostName::of(headers) {
+        Some(host) if hosts.answers(&host) => return next.run(request).await,
+        Some(_) => "its Host is not local, an IP address or one of `ui-hosts`",
+        None if headers.contains_key(header::HOST) => "its Host cannot be read",
+        None => "it has no Host",
+    };
+    let host = headers.get(header::HOST);
     warn!(
         host = %host.map_or("none".into(), |host| String::from_utf8_lossy(host.as_bytes())),
-        reason = "its Host is not local, an IP address or one of `ui-hosts`",
+        reason,
         "refused a request for the web UI"
     );
     (

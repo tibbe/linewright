@@ -87,10 +87,23 @@ to it and open `http://localhost:8081`:
 ssh -N -L 8081:localhost:8081 HOST
 ```
 
-To reach it through NPM instead, add a proxy host for it, with access
-restricted to your users, forwarding to the host's `127.0.0.1:8081`, and add
-its domain name to `ui-hosts` in `compose.override.yaml`, such as
-`environment: {LINEWRIGHT_UI_HOSTS: linewright-ui.example.com}`.
+The UI has no login of its own. To reach it through NPM instead, add a proxy
+host for it with an access list that lets in only your users:
+
+- **Domain names**: the public name for the UI, such as
+  `linewright-ui.example.com`.
+- **Scheme** `http`, **Forward hostname** `linewright-ui`, the name
+  `ui-relay` has on the `proxy` network, **Forward port** `8081`.
+- Under **SSL**, a Let's Encrypt certificate, with **Force SSL** on.
+
+Then add that name to `ui-hosts` in `compose.override.yaml`, so the UI
+answers requests for it, and restart it:
+
+```yaml
+services:
+  linewright:
+    environment: {LINEWRIGHT_UI_HOSTS: linewright-ui.example.com}
+```
 
 ## Deploying and watching it
 

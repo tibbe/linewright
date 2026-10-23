@@ -91,6 +91,10 @@
 //! - `signed`: sends a signed JSON delivery of an event.
 //! - `signed_form`: sends a signed form-encoded delivery of an event.
 //!
+//! # `http`: requests over a connection
+//!
+//! - `send_over`: sends a request over a stream, with a `Host` or none.
+//!
 //! # `files`: git and files
 //!
 //! - `commit_in`: writes files in a checkout and commits them.
@@ -118,6 +122,7 @@ mod cli;
 mod clock;
 mod files;
 mod harness;
+mod http;
 mod items;
 mod webhooks;
 mod world;
@@ -127,6 +132,7 @@ pub use cli::*;
 pub use clock::*;
 pub use files::*;
 pub use harness::*;
+pub use http::*;
 pub use items::*;
 pub use webhooks::*;
 pub use world::*;

@@ -9,7 +9,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::automation::AutomationName;
 use crate::domain::{MergeMethod, Number, Repo, Timestamp, UpdateMethod};
 use crate::drain::Timeout;
-use crate::host::Hosts;
+use crate::host::UiHosts;
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
@@ -515,17 +515,20 @@ impl Config {
             }
             None => None,
         };
+        // Checked with no web UI too, so that a wrong one is found before
+        // it is in use.
+        let ui_hosts = match get("ui-hosts").as_deref() {
+            None | Some("") => UiHosts::default(),
+            Some(names) => UiHosts::new(names.split(','))
+                .map_err(|e| wrong("ui-hosts", format!("the setting `ui-hosts` {e}")))?,
+        };
         let ui = match value("ui-address", "127.0.0.1:8081").as_str() {
             "" => None,
             address => Some(web::Ui {
                 address: address
                     .parse()
                     .map_err(|e| not_one("ui-address", address, e))?,
-                hosts: match get("ui-hosts").as_deref() {
-                    None | Some("") => Hosts::default(),
-                    Some(names) => Hosts::new(names.split(','))
-                        .map_err(|e| wrong("ui-hosts", format!("the setting `ui-hosts` {e}")))?,
-                },
+                hosts: ui_hosts,
             }),
         };
         let session_env = get("session-env")
@@ -613,7 +616,7 @@ fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
                 toml::Value::Integer(i) => i.to_string(),
                 toml::Value::Boolean(b) => b.to_string(),
                 // In the form its flag takes, separated by commas.
-                toml::Value::Array(entries) if let Some(holds) = list(&key) => entries
+                toml::Value::Array(entries) if let Some(holds) = list_holds(&key) => entries
                     .into_iter()
                     .map(|entry| match entry.as_str() {
                         Some(entry) if !entry.is_empty() && !entry.contains(',') => {
@@ -640,7 +643,7 @@ fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
 }
 
 /// What the list setting `key` holds, `None` when it is not a list.
-fn list(key: &str) -> Option<&'static str> {
+fn list_holds(key: &str) -> Option<&'static str> {
     LISTS
         .iter()
         .find_map(|&(list, holds)| (list == key).then_some(holds))

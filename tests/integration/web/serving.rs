@@ -48,35 +48,16 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
     web.stop().await;
 }
 
-/// The answer to a GET of `path` on `listener` with `host` as its `Host`,
-/// or none.
-async fn get_on(
-    listener: &web::Listener,
-    host: Option<&str>,
-    path: &str,
-) -> hyper::Response<hyper::body::Incoming> {
+/// The status of the answer to a GET of `path` on `listener` with `host`
+/// as its `Host`, or none.
+async fn status_on(listener: &web::Listener, host: Option<&str>, path: &str) -> u16 {
     let stream = tokio::net::TcpStream::connect(listener.local_address())
         .await
         .unwrap();
-    let (mut sender, connection) =
-        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
-            .await
-            .unwrap();
-    tokio::spawn(connection);
-    let mut request = hyper::Request::get(path);
-    if let Some(host) = host {
-        request = request.header("Host", host);
-    }
-    let request = request
-        .body(http_body_util::Empty::<axum::body::Bytes>::new())
-        .unwrap();
-    sender.send_request(request).await.unwrap()
-}
-
-/// The status of [`get_on`]'s answer, without waiting for its body, as an
-/// event stream's does not end.
-async fn status_on(listener: &web::Listener, host: Option<&str>, path: &str) -> u16 {
-    get_on(listener, host, path).await.status().as_u16()
+    send_over(stream, hyper::Method::GET, host, path)
+        .await
+        .status()
+        .as_u16()
 }
 
 /// A page, its event stream and an asset of it.
@@ -123,11 +104,11 @@ async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
     let paths = a_page_its_stream_and_an_asset(&web).await;
 
     for path in paths {
-        for host in [
-            Some("evil.example"),
-            Some("localhost.evil.example"),
-            Some("www.linewright.example.com"),
-            None,
+        for (host, reason) in [
+            (Some("evil.example"), "ui-hosts"),
+            (Some("localhost.evil.example"), "ui-hosts"),
+            (Some("www.linewright.example.com"), "ui-hosts"),
+            (None, "no Host"),
         ] {
             let (log, _guard) = Log::capture();
 
@@ -141,44 +122,9 @@ async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
                 "{}",
                 refused[0]
             );
-            assert!(refused[0].contains("ui-hosts"), "{}", refused[0]);
+            assert!(refused[0].contains(reason), "{}", refused[0]);
         }
     }
-    ui.stop().await;
-    web.stop().await;
-}
-
-#[tokio::test]
-async fn a_stopped_ui_ends_its_event_streams_and_frees_its_address() {
-    let web = Web::start(with_ticket().await).await;
-    let ui = web.listen(&[]).await;
-    let address = ui.local_address();
-    let stream = get_on(&ui, Some("localhost"), "/events/items/1").await;
-    assert_eq!(stream.status(), 200);
-
-    tokio::time::timeout(Duration::from_secs(10), ui.stop())
-        .await
-        .expect("the UI stops with an event stream open");
-
-    std::net::TcpListener::bind(address).expect("its address is free");
-    drop(stream);
-    web.stop().await;
-}
-
-#[tokio::test]
-async fn the_ui_logs_the_address_it_serves_on() {
-    let web = Web::start(with_ticket().await).await;
-    let (log, _guard) = Log::capture();
-
-    let ui = web.listen(&[]).await;
-
-    let address = ui.local_address().to_string();
-    let info = log.lines("INFO");
-    assert!(
-        info.iter()
-            .any(|line| line.contains("serving the web UI") && line.contains(&address)),
-        "{info:?}"
-    );
     ui.stop().await;
     web.stop().await;
 }

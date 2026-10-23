@@ -9,7 +9,7 @@ use linewright::api::{self, Api, ClaimError, Sources};
 use linewright::clock::Clock;
 use linewright::ending::{Ends, Event, Signal};
 use linewright::factory::ServeEnd;
-use linewright::host::Hosts;
+use linewright::host::UiHosts;
 use linewright::web;
 use linewright::webhook::{Listener, Pending};
 use tokio_util::sync::CancellationToken;
@@ -112,7 +112,7 @@ impl Answering {
         };
         let ui = web::Ui {
             address: "127.0.0.1:0".parse().unwrap(),
-            hosts: Hosts::default(),
+            hosts: UiHosts::default(),
         };
         let ui = web::Listener::bind(&ui, sources.clone()).await.unwrap();
         let api = Api::serve(claimed, sources);
@@ -241,18 +241,7 @@ async fn send(
 ) -> hyper::Response<hyper::body::Incoming> {
     let path = api::socket_path(&socket_dir(runtime_dir), REPO);
     let stream = tokio::net::UnixStream::connect(path).await.unwrap();
-    let (mut sender, connection) =
-        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
-            .await
-            .unwrap();
-    tokio::spawn(connection);
-    let request = hyper::Request::builder()
-        .method(method)
-        .uri(resource)
-        .header("Host", host)
-        .body(http_body_util::Empty::<axum::body::Bytes>::new())
-        .unwrap();
-    sender.send_request(request).await.unwrap()
+    send_over(stream, method, Some(host), resource).await
 }
 
 /// A world whose work dir is `REPO`'s, as `serve`'s API reads it.
@@ -1898,16 +1887,13 @@ async fn once_drain_returns_a_new_serve_can_serve_the_web_ui_on_the_same_address
     let runtime_dir = answering.runtime_dir.path().to_path_buf();
     let address = answering.ui.local_address();
     let connection = tokio::net::TcpStream::connect(address).await.unwrap();
-    let (mut sender, connection) =
-        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(connection))
-            .await
-            .unwrap();
-    tokio::spawn(connection);
-    let request = hyper::Request::get("/events/")
-        .header("Host", "localhost")
-        .body(http_body_util::Empty::<axum::body::Bytes>::new())
-        .unwrap();
-    let stream = sender.send_request(request).await.unwrap();
+    let stream = send_over(
+        connection,
+        hyper::Method::GET,
+        Some("localhost"),
+        "/events/",
+    )
+    .await;
     assert_eq!(stream.status(), 200);
     let exited = answering.exits_once_served();
 

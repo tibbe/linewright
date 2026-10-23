@@ -51,12 +51,12 @@ impl HostName {
 /// The names the web UI answers besides the local ones and IP addresses:
 /// the `ui-hosts` setting (`docs/specs/design_system.md`, Serving).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Hosts(Vec<HostName>);
+pub struct UiHosts(Vec<HostName>);
 
-impl Hosts {
+impl UiHosts {
     /// From `names`, each a host name such as `linewright.example.com`,
     /// with what is wrong with the first that is not.
-    pub fn new<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Hosts, String> {
+    pub fn new<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<UiHosts, String> {
         names
             .into_iter()
             .map(|name| {
@@ -74,7 +74,7 @@ impl Hosts {
                 }
             })
             .collect::<Result<_, _>>()
-            .map(Hosts)
+            .map(UiHosts)
     }
 
     /// Whether the web UI answers a request whose `Host` is `host`: a local

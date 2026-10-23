@@ -66,10 +66,10 @@ services:
         # network.
         aliases: [linewright-webhook]
 
-  # Publishes the web UI on the host's loopback: Docker publishes no port of
-  # a container on `fenced` alone, which is internal. It forwards to
-  # linewright's ui-address and nowhere else, so it opens no way out of
-  # `fenced`.
+  # Publishes the web UI on the host's loopback, and to the reverse proxy:
+  # Docker publishes no port of a container on `fenced` alone, which is
+  # internal. It forwards to linewright's ui-address and nowhere else, so it
+  # opens no way out of `fenced`.
   ui-relay:
     image: ghcr.io/tibbe/linewright-webhook-relay:${LINEWRIGHT_TAG:-main}
     command: ["TCP-LISTEN:8081,fork,reuseaddr", "TCP:linewright:8081"]
@@ -78,7 +78,11 @@ services:
     security_opt: ["no-new-privileges:true"]
     read_only: true
     ports: ["127.0.0.1:8081:8081"]
-    networks: [fenced, default]
+    networks:
+      fenced:
+      default:
+      npm-proxy:
+        aliases: [linewright-ui]
 
 networks:
   fenced:

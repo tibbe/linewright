@@ -505,7 +505,15 @@ fn ui_hosts_empty_names_no_host() {
     let from_file = resolve(&[], &[], Some("ui-hosts = []\n")).unwrap();
 
     assert!(!answers(&from_flag, "a.example"));
+    assert!(!answers(&from_file, "a.example"));
     assert!(answers(&from_file, "localhost"));
+}
+
+#[test]
+fn a_bad_ui_hosts_entry_is_an_error_even_with_no_web_ui() {
+    let error = resolve(&["--ui-address", "", "--ui-hosts", "a/b"], &[], None).unwrap_err();
+
+    assert!(error.contains("ui-hosts"), "{error}");
 }
 
 #[test]
