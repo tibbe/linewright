@@ -10,7 +10,7 @@ use async_trait::async_trait;
 
 use crate::domain::{
     CheckFailure, ClosedItem, Issue, IssueCloseReason, Item, Login, MergeMethod, MergeMethods,
-    MergedPull, Number, Pull, Snapshot, Timestamp, UpdateMethod, UpdateRule,
+    MergedPull, Number, Pull, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
 use crate::redaction::Redaction;
 
@@ -305,8 +305,9 @@ pub trait Store: Send + Sync {
     /// Fails, saying what it lacks, when `token` cannot read the repository.
     async fn check_reads(&self, token: &str) -> Result<()>;
     async fn settings(&self) -> Result<RepoSettings>;
-    /// Creates any of `labels` (name, description) that are missing.
-    async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()>;
+    /// Every label in the repository.
+    async fn labels(&self) -> Result<Vec<label::RepoLabel>>;
+    async fn create_label(&self, label: &label::Label) -> Result<()>;
     /// Whether the repository has the label `name`. Adding a label by name
     /// can create it, so a label Linewright must not create is checked first.
     async fn label_exists(&self, name: &str) -> Result<bool>;

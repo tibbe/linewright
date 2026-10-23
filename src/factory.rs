@@ -201,10 +201,15 @@ impl Factory {
             }
             settings.check_auto_merge(config.update_method)?;
         }
-        store
-            .ensure_labels(&label::ALL)
-            .await
-            .context("creating labels")?;
+        let labels = store.labels().await.context("listing labels")?;
+        for change in label::label_changes(&labels, &label::ALL) {
+            match change {
+                label::LabelChange::Create(label) => store
+                    .create_label(&label)
+                    .await
+                    .with_context(|| format!("creating label {}", label.name))?,
+            }
+        }
         info!(
             account = %identity.login,
             default_branch = %settings.default_branch,

@@ -5,12 +5,15 @@ use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
 use linewright::briefs::Briefs;
 use linewright::credentials::Credentials;
-use linewright::domain::{AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number};
+use linewright::domain::{
+    AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, label,
+};
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::WorkKind;
 use linewright::redaction::Redaction;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{FailedPolls, Polling};
+use linewright::store::Store;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::webhook::Pending;
 use tokio::task::JoinHandle;
@@ -56,6 +59,8 @@ pub struct Repository {
     pub allowed_merge_methods: MergeMethods,
     /// GitHub tokens that cannot read the repository.
     pub unreadable_by: Vec<&'static str>,
+    /// The labels the repository has before Linewright starts.
+    pub labels: Vec<label::Label>,
 }
 
 impl Repository {
@@ -73,6 +78,7 @@ impl Default for Repository {
             linear_history: false,
             allowed_merge_methods: MergeMethods::all(),
             unreadable_by: vec![],
+            labels: vec![],
         }
     }
 }
@@ -156,6 +162,9 @@ impl World {
             .unwrap();
         for token in repository.unreadable_by {
             store.refuse_reads_by(token);
+        }
+        for label in &repository.labels {
+            Store::create_label(&*store, label).await.unwrap();
         }
         let harness = Arc::new(ScriptedHarness::default());
         let mut config = config(&dir.path().join("work"));

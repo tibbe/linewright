@@ -17,7 +17,7 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, MergeMethod,
     MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
     Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread, TicketBranch,
-    TicketBranchName, Timestamp, closed_within, closing_references,
+    TicketBranchName, Timestamp, closed_within, closing_references, label,
 };
 use crate::git;
 
@@ -1440,14 +1440,22 @@ impl Store for LocalStore {
         ))
     }
 
-    async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()> {
-        let mut state = self.state();
-        for (name, description) in labels {
-            state
-                .labels
-                .entry(name.to_string())
-                .or_insert_with(|| description.to_string());
-        }
+    async fn labels(&self) -> Result<Vec<label::RepoLabel>> {
+        Ok(self
+            .state()
+            .labels
+            .iter()
+            .map(|(name, description)| label::RepoLabel {
+                name: name.clone(),
+                description: Some(description.clone()).filter(|d| !d.is_empty()),
+            })
+            .collect())
+    }
+
+    async fn create_label(&self, label: &label::Label) -> Result<()> {
+        self.state()
+            .labels
+            .insert(label.name.to_string(), label.description.to_string());
         Ok(())
     }
 

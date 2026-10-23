@@ -1,7 +1,7 @@
 use crate::common;
 
 use common::*;
-use linewright::domain::{AutoMerge, MergeMethod, UpdateMethod};
+use linewright::domain::{AutoMerge, MergeMethod, UpdateMethod, label};
 use linewright::factory::{FactoryConfig, SessionToken};
 
 async fn refused(repository: Repository, adjust: impl FnOnce(&mut FactoryConfig)) -> String {
@@ -553,6 +553,35 @@ async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() 
             "Needs a person's decision or action",
         ]
         .map(|description| Some(description.to_string()))
+    );
+}
+
+#[tokio::test]
+async fn startup_leaves_the_labels_the_repository_has_as_they_are_whatever_their_case() {
+    let repository = Repository {
+        labels: vec![
+            label::Label {
+                name: "Needs-Triage",
+                description: "Waiting for us to look",
+            },
+            label::Label {
+                name: "bug",
+                description: "Broken",
+            },
+        ],
+        ..Repository::default()
+    };
+
+    let world = World::with_repository(repository, |_| {}).await;
+
+    assert!(!world.store.has_label("needs-triage"));
+    assert_eq!(
+        world.store.label_description("Needs-Triage"),
+        Some("Waiting for us to look".to_string())
+    );
+    assert_eq!(
+        world.store.label_description("bug"),
+        Some("Broken".to_string())
     );
 }
 

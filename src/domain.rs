@@ -192,22 +192,62 @@ pub mod label {
         (NEEDS_TRIAGE, "to triage it again"),
     ];
 
-    pub const ALL: [(&str, &str); 8] = [
-        (NEEDS_TRIAGE, "Not yet assessed"),
-        (
+    /// One of Linewright's labels, with what it means.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Label {
+        pub name: &'static str,
+        pub description: &'static str,
+    }
+
+    const fn label(name: &'static str, description: &'static str) -> Label {
+        Label { name, description }
+    }
+
+    pub const ALL: [Label; 8] = [
+        label(NEEDS_TRIAGE, "Not yet assessed"),
+        label(
             NEEDS_INFO,
             "Its assessment waits on a fact only a person knows",
         ),
-        (READY_FOR_AGENT, "Decided: an agent could build it"),
-        (READY_FOR_HUMAN, "Needs a person's decision or action"),
-        (BUG, "Something is broken"),
-        (ENHANCEMENT, "New feature or improvement"),
-        (
+        label(READY_FOR_AGENT, "Decided: an agent could build it"),
+        label(READY_FOR_HUMAN, "Needs a person's decision or action"),
+        label(BUG, "Something is broken"),
+        label(ENHANCEMENT, "New feature or improvement"),
+        label(
             DESIGNED,
             "Designed, and cut into tickets where it needed cutting",
         ),
-        (STALLED, "Handed back in a stall"),
+        label(STALLED, "Handed back in a stall"),
     ];
+
+    /// A label in the repository, named as the repository spells it.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct RepoLabel {
+        pub name: String,
+        pub description: Option<String>,
+    }
+
+    /// A change Linewright makes to the repository's labels at startup.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum LabelChange {
+        Create(Label),
+    }
+
+    /// The changes that give the repository the labels in `wanted` it lacks, matching names case-insensitively as GitHub
+    /// does, and leave every other label as it is
+    /// (`docs/specs/repository.md`, Labels).
+    pub fn label_changes(existing: &[RepoLabel], wanted: &[Label]) -> Vec<LabelChange> {
+        wanted
+            .iter()
+            .filter(|wanted| {
+                !existing
+                    .iter()
+                    .any(|label| label.name.to_lowercase() == wanted.name.to_lowercase())
+            })
+            .copied()
+            .map(LabelChange::Create)
+            .collect()
+    }
 }
 
 /// A label that says a merged pull request was designed.
@@ -1599,5 +1639,56 @@ mod tests {
         assert_eq!(snapshot.pulls[0].updated_at, epoch);
         assert_eq!(snapshot.merged[0].updated_at, epoch);
         assert_eq!(snapshot.closed[0].updated_at, epoch);
+    }
+
+    fn existing(names: &[&str]) -> Vec<label::RepoLabel> {
+        names
+            .iter()
+            .map(|name| label::RepoLabel {
+                name: name.to_string(),
+                description: None,
+            })
+            .collect()
+    }
+
+    fn bug() -> label::Label {
+        label::Label {
+            name: "bug",
+            description: "Something is broken",
+        }
+    }
+
+    fn needs_triage() -> label::Label {
+        label::Label {
+            name: "needs-triage",
+            description: "Not yet assessed",
+        }
+    }
+
+    #[test]
+    fn a_wanted_label_the_repository_lacks_is_created_with_its_description() {
+        let changes = label::label_changes(&existing(&["bug"]), &[bug(), needs_triage()]);
+
+        assert_eq!(changes, [label::LabelChange::Create(needs_triage())]);
+    }
+
+    #[test]
+    fn a_wanted_label_the_repository_has_under_another_case_is_not_created() {
+        let changes = label::label_changes(&existing(&["Needs-Triage"]), &[needs_triage()]);
+
+        assert_eq!(changes, []);
+    }
+
+    #[test]
+    fn a_label_the_repository_has_with_another_description_is_left_as_it_is() {
+        let changes = label::label_changes(
+            &[label::RepoLabel {
+                name: "bug".into(),
+                description: Some("Broken".into()),
+            }],
+            &[bug()],
+        );
+
+        assert_eq!(changes, []);
     }
 }

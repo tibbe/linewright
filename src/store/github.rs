@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -957,6 +958,43 @@ impl From<GqlComment> for Comment {
 #[derive(Deserialize)]
 struct Name {
     name: String,
+}
+
+/// A label as GitHub's REST API returns it
+/// (<https://docs.github.com/en/rest/issues/labels>).
+#[derive(Clone, Deserialize)]
+struct RestLabel {
+    name: String,
+    description: Option<String>,
+}
+
+impl From<RestLabel> for label::RepoLabel {
+    fn from(label: RestLabel) -> label::RepoLabel {
+        label::RepoLabel {
+            name: label.name,
+            description: label.description,
+        }
+    }
+}
+
+/// Every item of a REST listing GitHub pages by `per_page` and `page`
+/// (<https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api>),
+/// fetching `page(n)` from the first page until one comes back short.
+async fn every_page<T, F, Fut>(per_page: usize, mut page: F) -> Result<Vec<T>>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: Future<Output = Result<Vec<T>>>,
+{
+    let mut items = vec![];
+    for n in 1.. {
+        let got = page(n).await?;
+        let done = got.len() < per_page;
+        items.extend(got);
+        if done {
+            break;
+        }
+    }
+    Ok(items)
 }
 
 #[derive(Deserialize)]
@@ -2058,33 +2096,23 @@ impl Store for GitHub {
         }
     }
 
-    async fn ensure_labels(&self, labels: &[(&str, &str)]) -> Result<()> {
-        let mut existing: Vec<String> = vec![];
-        for page in 1.. {
-            let names: Vec<Name> = self
-                .rest(
-                    Method::GET,
-                    &self.repo_path(&format!("/labels?per_page=100&page={page}")),
-                    None,
-                )
-                .await?;
-            let done = names.len() < 100;
-            existing.extend(names.into_iter().map(|n| n.name.to_lowercase()));
-            if done {
-                break;
-            }
-        }
-        for (name, description) in labels {
-            if !existing.contains(&name.to_lowercase()) {
-                self.rest_ok(
-                    Method::POST,
-                    &self.repo_path("/labels"),
-                    Some(json!({"name": name, "description": description, "color": "ededed"})),
-                )
-                .await?;
-            }
-        }
-        Ok(())
+    async fn labels(&self) -> Result<Vec<label::RepoLabel>> {
+        const PER_PAGE: usize = 100;
+        let labels: Vec<RestLabel> = every_page(PER_PAGE, |page| async move {
+            let path = self.repo_path(&format!("/labels?per_page={PER_PAGE}&page={page}"));
+            self.rest(Method::GET, &path, None).await
+        })
+        .await?;
+        Ok(labels.into_iter().map(label::RepoLabel::from).collect())
+    }
+
+    async fn create_label(&self, label: &label::Label) -> Result<()> {
+        self.rest_ok(
+            Method::POST,
+            &self.repo_path("/labels"),
+            Some(json!({"name": label.name, "description": label.description, "color": "ededed"})),
+        )
+        .await
     }
 
     async fn snapshot(&self, window_opened: Timestamp) -> Result<Snapshot> {
@@ -3609,5 +3637,41 @@ mod tests {
         );
         assert_eq!(closed("2026-10-18T08:00:00Z", "tibbe"), []);
         assert_eq!(closed("2026-10-18T07:00:00Z", "tibbe-bot"), []);
+    }
+
+    /// `fixtures/labels.json` is the example response GitHub documents for
+    /// listing a repository's labels
+    /// (<https://docs.github.com/en/rest/issues/labels#list-labels-for-a-repository>).
+    #[tokio::test]
+    async fn the_repositorys_labels_are_read_with_their_descriptions_from_every_page() {
+        let documented: Vec<RestLabel> =
+            serde_json::from_str(include_str!("fixtures/labels.json")).unwrap();
+        let mut pages = vec![documented.clone(), documented[..1].to_vec(), documented].into_iter();
+        let mut asked = vec![];
+
+        let labels = every_page(2, |n| {
+            asked.push(n);
+            let page = pages.next().unwrap();
+            async move { Ok(page) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(asked, [1, 2]);
+        let read = |name: &str, description: &str| label::RepoLabel {
+            name: name.into(),
+            description: Some(description.into()),
+        };
+        assert_eq!(
+            labels
+                .into_iter()
+                .map(label::RepoLabel::from)
+                .collect::<Vec<_>>(),
+            [
+                read("bug", "Something isn't working"),
+                read("enhancement", "New feature or request"),
+                read("bug", "Something isn't working"),
+            ]
+        );
     }
 }
