@@ -17,8 +17,7 @@ use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::credentials::Credentials;
 use crate::domain::{
-    IssueCloseReason, Item, MergeMethod, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule,
-    label,
+    AutoMerge, IssueCloseReason, Item, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
 use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
@@ -47,9 +46,8 @@ pub struct FactoryConfig {
     pub session_timeout: std::time::Duration,
     /// `None` follows the repository's settings.
     pub update_method: Option<UpdateMethod>,
-    pub auto_merge: bool,
-    /// `None` follows the repository's settings.
-    pub merge_method: Option<MergeMethod>,
+    /// `None` leaves green pull requests for review.
+    pub auto_merge: Option<AutoMerge>,
     pub require_label: Option<String>,
     pub briefs: Briefs,
     pub work_dir: PathBuf,
@@ -197,10 +195,10 @@ impl Factory {
         if let Some(method) = config.update_method {
             settings.update_rule = UpdateRule::Always(method);
         }
-        if let Some(method) = config.merge_method {
-            settings.merge_method = method;
-        }
-        if config.auto_merge {
+        if let Some(auto_merge) = config.auto_merge {
+            if let Some(method) = auto_merge.merge_method {
+                settings.merge_method = method;
+            }
             settings.check_auto_merge(config.update_method)?;
         }
         store
@@ -211,7 +209,7 @@ impl Factory {
             account = %identity.login,
             default_branch = %settings.default_branch,
             update_rule = ?settings.update_rule,
-            auto_merge = config.auto_merge,
+            auto_merge = config.auto_merge.is_some(),
             merge_method = %settings.merge_method,
             "started"
         );
@@ -239,7 +237,7 @@ impl Factory {
                 ci_grace: config.ci_grace,
                 ci_timeout: config.ci_timeout,
                 ci_attempts: config.ci_attempts,
-                auto_merge: config.auto_merge.then_some(settings.merge_method),
+                auto_merge: config.auto_merge.map(|_| settings.merge_method),
                 update_rule: settings.update_rule,
                 allowed_merge_methods: settings.allowed_merge_methods.clone(),
                 require_label: config.require_label,

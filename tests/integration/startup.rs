@@ -1,12 +1,12 @@
 use crate::common;
 
 use common::*;
-use linewright::domain::{MergeMethod, UpdateMethod};
+use linewright::domain::{AutoMerge, MergeMethod, UpdateMethod};
 use linewright::factory::{FactoryConfig, SessionToken};
 
 async fn refused(repository: Repository, adjust: impl FnOnce(&mut FactoryConfig)) -> String {
     let started = World::start(repository, |config| {
-        config.auto_merge = true;
+        config.auto_merge = AUTO_MERGE;
         adjust(config);
     })
     .await;
@@ -22,7 +22,9 @@ async fn with_auto_merge_a_merge_method_the_repository_disallows_is_an_error_nam
     let repository = Repository::allowing([MergeMethod::Merge, MergeMethod::Rebase]);
 
     let error = refused(repository, |config| {
-        config.merge_method = Some(MergeMethod::Squash);
+        config.auto_merge = Some(AutoMerge {
+            merge_method: Some(MergeMethod::Squash),
+        });
     })
     .await;
 
@@ -62,9 +64,11 @@ async fn with_auto_merge_the_merge_method_in_effect_is_logged() {
     let (log, _guard) = Log::capture();
     let repository = Repository::allowing([MergeMethod::Squash, MergeMethod::Rebase]);
 
-    World::start(repository, |config| config.auto_merge = true)
-        .await
-        .unwrap();
+    World::start(repository, |config| {
+        config.auto_merge = AUTO_MERGE;
+    })
+    .await
+    .unwrap();
 
     let started: Vec<String> = log
         .lines("INFO")
@@ -76,21 +80,15 @@ async fn with_auto_merge_the_merge_method_in_effect_is_logged() {
 }
 
 #[tokio::test]
-async fn without_auto_merge_neither_the_merge_method_nor_update_branch_is_checked() {
+async fn without_auto_merge_update_branch_is_not_checked() {
     let rebase_only = Repository::allowing([MergeMethod::Rebase]);
-    let squash_only = Repository::allowing([MergeMethod::Squash]);
 
     let merge_updates_with_rebase_merges = World::start(rebase_only, |config| {
         config.update_method = Some(UpdateMethod::Merge);
     })
     .await;
-    let disallowed_merge_method = World::start(squash_only, |config| {
-        config.merge_method = Some(MergeMethod::Rebase);
-    })
-    .await;
 
     assert!(merge_updates_with_rebase_merges.is_ok());
-    assert!(disallowed_merge_method.is_ok());
 }
 
 /// Returns whether it succeeded and what it wrote to stderr. It gets a
@@ -98,6 +96,16 @@ async fn without_auto_merge_neither_the_merge_method_nor_update_branch_is_checke
 /// chooses, so that `serve`s run by tests at the same time don't claim the
 /// same socket or port.
 fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
+    let (status, stderr) = lw_with_status(path, args, env);
+    (status.success(), stderr)
+}
+
+/// As `lw`, but returns its exit status.
+fn lw_with_status(
+    path: &std::path::Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> (std::process::ExitStatus, String) {
     let dir = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(args)
@@ -110,7 +118,7 @@ fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, Str
         .output()
         .unwrap();
     (
-        output.status.success(),
+        output.status,
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
 }
@@ -192,6 +200,53 @@ fn serve_refuses_a_webhook_address_without_the_secret() {
 
     assert!(!succeeded, "{error}");
     assert!(error.contains("LINEWRIGHT_WEBHOOK_SECRET"), "{error}");
+}
+
+/// `serve` for `owner/name` with `args` before it, with nothing on the
+/// path; returns its exit status.
+fn serve_with_status(args: &[&str], env: &[(&str, &str)]) -> (std::process::ExitStatus, String) {
+    let empty = tempfile::tempdir().unwrap();
+    let mut args = [&["--repo", "owner/name"], args].concat();
+    args.push("serve");
+    lw_with_status(empty.path(), &args, env)
+}
+
+#[test]
+fn serve_refuses_ui_hosts_with_no_web_ui() {
+    let (flag, flag_error) =
+        serve_with_status(&["--ui-address", "", "--ui-hosts", "a.example"], &[]);
+    let (env, env_error) = serve_with_status(
+        &[],
+        &[
+            ("LINEWRIGHT_UI_ADDRESS", ""),
+            ("LINEWRIGHT_UI_HOSTS", "a.example"),
+        ],
+    );
+
+    assert_eq!(flag.code(), Some(2), "{flag_error}");
+    assert_eq!(env.code(), Some(1), "{env_error}");
+    for error in [flag_error, env_error] {
+        assert!(
+            error.contains("`ui-hosts` is set, but `ui-address` is empty"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn serve_refuses_a_merge_method_without_auto_merge() {
+    let (flag, flag_error) =
+        serve_with_status(&["--auto-merge=false", "--merge-method", "squash"], &[]);
+    let (env, env_error) = serve_with_status(&[], &[("LINEWRIGHT_MERGE_METHOD", "squash")]);
+
+    assert_eq!(flag.code(), Some(2), "{flag_error}");
+    assert_eq!(env.code(), Some(1), "{env_error}");
+    for error in [flag_error, env_error] {
+        assert!(
+            error.contains("`merge-method` is set, but `auto-merge` is off"),
+            "{error}"
+        );
+    }
 }
 
 #[test]

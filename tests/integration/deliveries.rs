@@ -641,7 +641,7 @@ async fn green_checks_on_linewrights_pull_request_mark_it_ready_on_the_delivery(
 #[tokio::test]
 async fn with_auto_merge_green_checks_on_linewrights_pull_request_merge_it_on_the_delivery() {
     for event in CI_EVENTS {
-        let mut world = World::with(|config| config.auto_merge = true).await;
+        let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
         let (ticket, pr) = world.ticket_in_review().await;
         let served = serve(world, NEVER).await;
 

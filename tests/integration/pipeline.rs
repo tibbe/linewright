@@ -2,7 +2,7 @@ use crate::common;
 
 use chrono::TimeDelta;
 use common::*;
-use linewright::domain::{Assignment, Issue, IssueEvent, PullState};
+use linewright::domain::{Assignment, AutoMerge, Issue, IssueEvent, PullState};
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
 use linewright::store::local::LocalStore;
@@ -4614,8 +4614,9 @@ async fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_befo
     use linewright::domain::{MergeMethod, PullState};
 
     let (mut world, pr, _) = merged_in_conflict(|config| {
-        config.auto_merge = true;
-        config.merge_method = Some(MergeMethod::Rebase);
+        config.auto_merge = Some(AutoMerge {
+            merge_method: Some(MergeMethod::Rebase),
+        });
     })
     .await;
     world.clock.advance(chrono::TimeDelta::minutes(6));
@@ -4658,8 +4659,9 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     use linewright::store::Store;
 
     let mut world = World::with(|config| {
-        config.auto_merge = true;
-        config.merge_method = Some(MergeMethod::Squash);
+        config.auto_merge = Some(AutoMerge {
+            merge_method: Some(MergeMethod::Squash),
+        });
     })
     .await;
     implement_script(&world);
@@ -4712,8 +4714,7 @@ async fn auto_merged(
     merge_method: Option<linewright::domain::MergeMethod>,
 ) -> World {
     let mut world = World::with_repository(repository, |config| {
-        config.auto_merge = true;
-        config.merge_method = merge_method;
+        config.auto_merge = Some(AutoMerge { merge_method });
     })
     .await;
     world.ticket_in_review().await;
@@ -4772,7 +4773,7 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_ac
  {
     use linewright::domain::{PullState, Requirement};
 
-    let mut world = World::with(|config| config.auto_merge = true).await;
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (ticket, pr) = world.ticket_in_review().await;
     world.store.block_merge(
         pr,
@@ -4784,7 +4785,7 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_ac
     world.clock.advance(chrono::TimeDelta::minutes(6));
     world.poll().await;
     world.poll().await;
-    world.restart(|config| config.auto_merge = true).await;
+    world.restart(|config| config.auto_merge = AUTO_MERGE).await;
     world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
@@ -4810,7 +4811,7 @@ async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_hold
  {
     use linewright::domain::Requirement;
 
-    let mut world = World::with(|config| config.auto_merge = true).await;
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (_, pr) = world.ticket_in_review().await;
     world.store.block_merge(
         pr,
@@ -4822,7 +4823,7 @@ async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_hold
     world.poll().await;
     std::fs::remove_file(world.dir.path().join("work/held-for-review.json")).unwrap();
 
-    world.restart(|config| config.auto_merge = true).await;
+    world.restart(|config| config.auto_merge = AUTO_MERGE).await;
     world.poll().await;
     world.poll().await;
 
@@ -4834,7 +4835,7 @@ async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_hold
  {
     use linewright::domain::Requirement;
 
-    let mut world = World::with(|config| config.auto_merge = true).await;
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (_, pr) = world.ticket_in_review().await;
     world.store.block_merge(
         pr,
@@ -4847,7 +4848,7 @@ async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_hold
     std::fs::remove_file(world.dir.path().join("work/held-for-review.json")).unwrap();
     world.store.pend_merge_state(pr);
 
-    world.restart(|config| config.auto_merge = true).await;
+    world.restart(|config| config.auto_merge = AUTO_MERGE).await;
     world.poll().await;
     world.store.work_out_merge_state(pr);
     world.poll().await;
@@ -4871,7 +4872,7 @@ async fn with_auto_merge_a_pull_request_github_blocks_while_linewright_is_stoppe
         }],
     );
 
-    world.restart(|config| config.auto_merge = true).await;
+    world.restart(|config| config.auto_merge = AUTO_MERGE).await;
     world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
@@ -4890,7 +4891,7 @@ async fn with_auto_merge_a_pull_request_github_blocks_while_linewright_is_stoppe
 async fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_approve() {
     use linewright::domain::PullState;
 
-    let mut world = World::with(|config| config.auto_merge = true).await;
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (ticket, pr) = world.ticket_in_review().await;
     world
         .store
@@ -4935,7 +4936,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
     use linewright::domain::PullState;
 
     let (log, _guard) = Log::capture();
-    let mut world = World::with(|config| config.auto_merge = true).await;
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (ticket, pr) = world.ticket_in_review().await;
     world.store.refuse_merges(
         pr,
@@ -4997,7 +4998,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
 async fn with_auto_merge_a_merge_that_succeeds_on_the_retry_leaves_no_handback_or_comment() {
     use linewright::domain::PullState;
 
-    let mut world = World::with(|config| config.auto_merge = true).await;
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (ticket, pr) = world.ticket_in_review().await;
     world
         .store

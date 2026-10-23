@@ -7,7 +7,7 @@ use chrono::TimeDelta;
 use clap::{Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::domain::{MergeMethod, Number, Repo, Timestamp, UpdateMethod};
+use crate::domain::{AutoMerge, MergeMethod, Number, Repo, Timestamp, UpdateMethod};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
 use crate::logs::Which;
@@ -307,8 +307,7 @@ pub struct Config {
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
     pub update_branch: Option<UpdateMethod>,
-    pub auto_merge: bool,
-    pub merge_method: Option<MergeMethod>,
+    pub auto_merge: Option<AutoMerge>,
     pub require_label: Option<String>,
     pub log_format: LogFormat,
 }
@@ -390,6 +389,8 @@ struct Feature {
 
 struct Features {
     webhooks: Feature,
+    ui: Feature,
+    auto_merge: Feature,
 }
 
 const FEATURES: Features = Features {
@@ -403,6 +404,19 @@ const FEATURES: Features = Features {
                 webhook::SECRET_VARIABLE
             )
         },
+    },
+    ui: Feature {
+        settings: &["ui-hosts"],
+        switches: &["ui-address"],
+        when_off: || {
+            "`ui-address` is empty: set `ui-address` to serve the web UI, or unset `ui-hosts`"
+                .into()
+        },
+    },
+    auto_merge: Feature {
+        settings: &["merge-method"],
+        switches: &["auto-merge"],
+        when_off: || "`auto-merge` is off: turn `auto-merge` on, or unset `merge-method`".into(),
     },
 };
 
@@ -502,16 +516,23 @@ impl Config {
                 ));
             }
         };
-        let merge_method = match get("merge-method") {
-            None => None,
-            Some(name) => Some(name.parse::<MergeMethod>().map_err(|()| {
+        refuse_while_off(&FEATURES.auto_merge, auto_merge)?;
+        let parse_merge_method = |name: String| {
+            name.parse::<MergeMethod>().map_err(|()| {
                 wrong(
                     "merge-method",
                     format!(
                         "the setting `merge-method` is {name:?}: it is `merge`, `squash` or `rebase`"
                     ),
                 )
-            })?),
+            })
+        };
+        let auto_merge = if !auto_merge {
+            None
+        } else {
+            Some(AutoMerge {
+                merge_method: get("merge-method").map(parse_merge_method).transpose()?,
+            })
         };
         let log_format = match get("log-format").as_deref() {
             None if on_terminal => LogFormat::Text,
@@ -550,20 +571,19 @@ impl Config {
             }
             None => None,
         };
-        // Checked with no web UI too, so that a wrong one is found before
-        // it is in use.
-        let ui_hosts = match get("ui-hosts").as_deref() {
-            None | Some("") => UiHosts::default(),
-            Some(names) => UiHosts::new(names.split(','))
-                .map_err(|e| wrong("ui-hosts", format!("the setting `ui-hosts` {e}")))?,
-        };
-        let ui = match value("ui-address", "127.0.0.1:8081").as_str() {
+        let ui_address = value("ui-address", "127.0.0.1:8081");
+        refuse_while_off(&FEATURES.ui, !ui_address.is_empty())?;
+        let ui = match ui_address.as_str() {
             "" => None,
             address => Some(web::Ui {
                 address: address
                     .parse()
                     .map_err(|e| not_one("ui-address", address, e))?,
-                hosts: ui_hosts,
+                hosts: match get("ui-hosts").as_deref() {
+                    None | Some("") => UiHosts::default(),
+                    Some(names) => UiHosts::new(names.split(','))
+                        .map_err(|e| wrong("ui-hosts", format!("the setting `ui-hosts` {e}")))?,
+                },
             }),
         };
         let session_env = get("session-env")
@@ -596,7 +616,6 @@ impl Config {
             ci_attempts: number("ci-attempts", "2")?,
             update_branch,
             auto_merge,
-            merge_method,
             require_label: get("require-label"),
             log_format,
         })

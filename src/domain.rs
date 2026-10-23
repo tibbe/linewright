@@ -1440,6 +1440,13 @@ impl std::str::FromStr for MergeMethod {
     }
 }
 
+/// Merging green pull requests, the `auto-merge` setting turned on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoMerge {
+    /// `None` follows the repository's settings.
+    pub merge_method: Option<MergeMethod>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeMethods(Vec<MergeMethod>);
 

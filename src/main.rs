@@ -734,7 +734,6 @@ fn factory_config(
         session_timeout: config.session_timeout,
         update_method: config.update_branch,
         auto_merge: config.auto_merge,
-        merge_method: config.merge_method,
         require_label: config.require_label.clone(),
         briefs,
         work_dir,

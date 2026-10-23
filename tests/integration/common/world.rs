@@ -5,7 +5,7 @@ use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
 use linewright::briefs::Briefs;
 use linewright::credentials::Credentials;
-use linewright::domain::{CheckState, Issue, Login, MergeMethod, MergeMethods, Number};
+use linewright::domain::{AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number};
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::WorkKind;
 use linewright::redaction::Redaction;
@@ -25,6 +25,9 @@ pub const LINEWRIGHT: &str = "factory";
 
 /// The label a factory requires when set to require one.
 pub const REQUIRED: &str = "linewright";
+
+/// Auto-merge on, by the repository's merge method.
+pub const AUTO_MERGE: Option<AutoMerge> = Some(AutoMerge { merge_method: None });
 
 /// The credentials of an environment holding `variables`.
 pub fn credentials_of(variables: &[(&str, &str)]) -> Credentials {
@@ -85,8 +88,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         result_retries: 1,
         session_timeout: std::time::Duration::from_mins(30),
         update_method: None,
-        auto_merge: false,
-        merge_method: None,
+        auto_merge: None,
         require_label: None,
         briefs: Briefs::shipped(),
         work_dir: work_dir.to_path_buf(),

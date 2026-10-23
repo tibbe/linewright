@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use clap::{CommandFactory, Parser};
 use linewright::config::{Cli, Config, LogFormat, ResolveError};
-use linewright::domain::MergeMethod;
+use linewright::domain::{AutoMerge, MergeMethod};
 use linewright::host::HostName;
 use linewright::session_env::SessionEnv;
 
@@ -154,6 +154,7 @@ fn a_ci_timeout_no_longer_than_the_grace_period_is_an_error() {
 
 #[test]
 fn auto_merge_is_off_by_default_and_a_bare_flag_turns_it_on() {
+    let on = Some(AutoMerge { merge_method: None });
     let off = resolve(&[], &[], None).unwrap();
     let flag = resolve(&["--auto-merge"], &[], None).unwrap();
     let env = resolve(&[], &[("LINEWRIGHT_AUTO_MERGE", "true")], None).unwrap();
@@ -161,35 +162,92 @@ fn auto_merge_is_off_by_default_and_a_bare_flag_turns_it_on() {
     let flag_over_file =
         resolve(&["--auto-merge=false"], &[], Some("auto-merge = true\n")).unwrap();
 
-    assert!(!off.auto_merge);
-    assert!(flag.auto_merge);
-    assert!(env.auto_merge);
-    assert!(file.auto_merge);
-    assert!(!flag_over_file.auto_merge);
+    assert_eq!(off.auto_merge, None);
+    assert_eq!(flag.auto_merge, on);
+    assert_eq!(env.auto_merge, on);
+    assert_eq!(file.auto_merge, on);
+    assert_eq!(flag_over_file.auto_merge, None);
 }
 
 #[test]
-fn the_merge_method_follows_the_repository_unless_set() {
-    let unset = resolve(&[], &[], None).unwrap();
-    let flag = resolve(&["--merge-method", "squash"], &[], None).unwrap();
-    let env = resolve(
-        &[],
-        &[("LINEWRIGHT_MERGE_METHOD", "rebase")],
-        Some("merge-method = \"merge\"\n"),
-    )
-    .unwrap();
+fn with_auto_merge_the_merge_method_follows_the_repository_unless_set() {
+    let merge_method = |args: &[&str], env: &[(&str, &str)], file| {
+        resolve(args, env, file)
+            .unwrap()
+            .auto_merge
+            .unwrap()
+            .merge_method
+    };
+    let on = ("LINEWRIGHT_AUTO_MERGE", "true");
 
-    assert_eq!(unset.merge_method, None);
-    assert_eq!(flag.merge_method, Some(MergeMethod::Squash));
-    assert_eq!(env.merge_method, Some(MergeMethod::Rebase));
+    assert_eq!(merge_method(&[], &[on], None), None);
+    assert_eq!(
+        merge_method(&["--merge-method", "squash"], &[on], None),
+        Some(MergeMethod::Squash)
+    );
+    assert_eq!(
+        merge_method(
+            &[],
+            &[on, ("LINEWRIGHT_MERGE_METHOD", "rebase")],
+            Some("merge-method = \"merge\"\n"),
+        ),
+        Some(MergeMethod::Rebase)
+    );
+    assert_eq!(
+        merge_method(&[], &[on], Some("merge-method = \"merge\"\n")),
+        Some(MergeMethod::Merge)
+    );
+}
+
+#[test]
+fn a_merge_method_without_auto_merge_is_an_error_naming_both() {
+    let flag = resolve(&["--merge-method", "squash"], &[], None).unwrap_err();
+    let env = resolve(&[], &[("LINEWRIGHT_MERGE_METHOD", "squash")], None).unwrap_err();
+    let file = resolve(&[], &[], Some("merge-method = \"squash\"\n")).unwrap_err();
+    let turned_off = resolve(
+        &["--auto-merge=false"],
+        &[],
+        Some("auto-merge = true\nmerge-method = \"squash\"\n"),
+    )
+    .unwrap_err();
+
+    for error in [flag, env, file, turned_off] {
+        assert_eq!(
+            error,
+            "the setting `merge-method` is set, but `auto-merge` is off: \
+             turn `auto-merge` on, or unset `merge-method`"
+        );
+    }
+}
+
+#[test]
+fn a_merge_method_without_auto_merge_is_blamed_on_the_command_line_only_when_a_flag_turned_it_off()
+{
+    let file = Some("merge-method = \"squash\"\n");
+
+    assert!(blames_the_command_line(&["--auto-merge=false"], &[], file));
+    assert!(!blames_the_command_line(
+        &["--merge-method", "squash"],
+        &[],
+        None
+    ));
+    assert!(!blames_the_command_line(
+        &[],
+        &[("LINEWRIGHT_AUTO_MERGE", "false")],
+        file
+    ));
 }
 
 #[test]
 fn a_bad_auto_merge_or_merge_method_is_an_error_naming_the_setting() {
     assert!(
-        resolve(&[], &[("LINEWRIGHT_MERGE_METHOD", "fast-forward")], None)
-            .unwrap_err()
-            .contains("merge-method")
+        resolve(
+            &["--auto-merge"],
+            &[("LINEWRIGHT_MERGE_METHOD", "fast-forward")],
+            None
+        )
+        .unwrap_err()
+        .contains("merge-method")
     );
     assert!(
         resolve(&[], &[], Some("auto-merge = \"yes\"\n"))
@@ -510,10 +568,35 @@ fn ui_hosts_empty_names_no_host() {
 }
 
 #[test]
-fn a_bad_ui_hosts_entry_is_an_error_even_with_no_web_ui() {
-    let error = resolve(&["--ui-address", "", "--ui-hosts", "a/b"], &[], None).unwrap_err();
+fn ui_hosts_with_no_web_ui_is_an_error_naming_both() {
+    let no_ui = [("LINEWRIGHT_UI_ADDRESS", "")];
+    let flag = resolve(&["--ui-address", "", "--ui-hosts", "a.example"], &[], None).unwrap_err();
+    let env = resolve(&[], &[no_ui[0], ("LINEWRIGHT_UI_HOSTS", "a.example")], None).unwrap_err();
+    let file = resolve(&[], &no_ui, Some("ui-hosts = [\"a.example\"]\n")).unwrap_err();
+    let empty_flag = resolve(&["--ui-hosts", ""], &no_ui, None).unwrap_err();
+    let empty_list = resolve(&[], &[], Some("ui-address = \"\"\nui-hosts = []\n")).unwrap_err();
+    // Not parsed with no web UI, so not refused as malformed.
+    let malformed = resolve(&["--ui-hosts", "a/b"], &no_ui, None).unwrap_err();
 
-    assert!(error.contains("ui-hosts"), "{error}");
+    for error in [flag, env, file, empty_flag, empty_list, malformed] {
+        assert_eq!(
+            error,
+            "the setting `ui-hosts` is set, but `ui-address` is empty: \
+             set `ui-address` to serve the web UI, or unset `ui-hosts`"
+        );
+    }
+}
+
+#[test]
+fn ui_hosts_with_no_web_ui_is_blamed_on_the_command_line_only_when_a_flag_emptied_ui_address() {
+    let hosts = [("LINEWRIGHT_UI_HOSTS", "a.example")];
+
+    assert!(blames_the_command_line(&["--ui-address", ""], &hosts, None));
+    assert!(!blames_the_command_line(
+        &["--ui-hosts", "a.example"],
+        &[("LINEWRIGHT_UI_ADDRESS", "")],
+        None
+    ));
 }
 
 #[test]
