@@ -178,6 +178,23 @@ fn an_item_in_review_waits_for_its_pull_request() {
 }
 
 #[test]
+fn an_item_in_review_whose_checks_all_passed_says_ci_is_green() {
+    let claimed = Issue {
+        assignees: vec![Login::new("factory")],
+        ..ticket(42, "Add invoices")
+    };
+    let view = view(
+        vec![closed_by(claimed, 43, "factory")],
+        vec![draft(43, 42, &[CheckState::Passed, CheckState::Passed])],
+    );
+
+    assert_eq!(
+        text(&view, 42)[2],
+        "state: in review: #43 (draft, CI green)"
+    );
+}
+
+#[test]
 fn an_item_with_the_maintainer_waits_for_their_label() {
     let handed_back = Issue {
         labels: vec!["ready-for-human".into()],
