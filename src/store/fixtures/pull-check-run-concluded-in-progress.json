@@ -1,0 +1,164 @@
+{
+  "assignees": {
+    "nodes": [
+      {
+        "login": "tibbe-bot"
+      }
+    ]
+  },
+  "author": {
+    "__typename": "User",
+    "login": "tibbe-bot"
+  },
+  "baseRefName": "main",
+  "body": "**Needs the maintainer's approval:** this PR changes user-facing documentation (`docs/user-guide.md`, the `needs-info` entry).\n\n## Summary\n\nThe wording for a `needs-info` item now follows the spec (`triage.md` *Outcomes* and *Who answers*, `repository.md`'s label table). The item waits on a fact only a person knows, and the people asked answer it, not the reporter.\n\n```diff\n # label::ALL (description of a needs-info label Linewright creates)\n-Its assessment waits on a fact from the reporter\n+Its assessment waits on a fact only a person knows\n\n # triage brief, step 4 Decide\n-Facts come before decisions: while the reporter still owes a fact, choose\n+Facts come before decisions: while a person still owes a fact only they\n+know, choose\n\n # status of a needs-info item (lw status, web item page)\n-ItemState::WaitingOnTheReporter  -> \"waiting on the reporter\"\n+ItemState::WaitingOnThePeopleAsked -> \"waiting on the people asked\"\n-Wait::Reporter  -> \"the reporter: labeled `needs-info`\"\n+Wait::PeopleAsked -> \"the people asked: labeled `needs-info`\"\n\n # docs/user-guide.md\n-`needs-info`: its assessment waits on a fact from the reporter.\n+`needs-info`: its assessment waits on a fact only a person knows.\n```\n\nThe board card still reads \"reporter asked\" (`CardLine::ReporterAsked`), because `design_system.md` specifies that text. `board.rs` changes only to use the renamed `ItemState` variant.\n\n`Wait` is serialized with kebab-case tags, so in the local API's JSON a `needs-info` wait now reads `{\"wait\": \"people-asked\"}` where it used to read `{\"wait\": \"reporter\"}`. No spec or doc describes these tags.\n\n## Evidence\n\n- **Before:** the updated tests failed: `startup::` (label descriptions), `web::item::` (\"state: waiting on the people asked\", \"waiting for: the people asked: labeled `needs-info`\") and `reconcile::` (`Wait::PeopleAsked`). The reconcile tests did not compile, because `Wait::PeopleAsked` did not exist yet.\n  **After:** `scripts/check` passes (fmt, markdown, compose, css, clippy, test, doc): 1043 tests run, 1043 passed.\n\n## Merge Danger\n\n**Door:** two-way\n\nAn existing `needs-info` label keeps its old description; only labels Linewright creates from now on get the new one, as `repository.md` specifies.\n\n**Blast Radius:** wording\n\nThis changes status text, one sentence in the triage brief, the description on new labels, and the local API's wait tag for `needs-info` (`reporter` becomes `people-asked`).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCloses #539",
+  "canBeRebased": true,
+  "closedAt": null,
+  "closingIssuesReferences": {
+    "nodes": [
+      {
+        "number": 539
+      }
+    ]
+  },
+  "comments": {
+    "nodes": []
+  },
+  "createdAt": "2026-10-23T10:28:04Z",
+  "headRefName": "539-describe-needs-info-as-waiting-on-a-fact",
+  "headRefOid": "4317d44e1f9be68bfcb56c23dc6c75b167afeaaa",
+  "isDraft": true,
+  "labels": {
+    "nodes": []
+  },
+  "mergeStateStatus": "BLOCKED",
+  "mergeable": "MERGEABLE",
+  "mergedAt": null,
+  "number": 543,
+  "reviewDecision": null,
+  "reviewRequests": {
+    "nodes": []
+  },
+  "reviewThreads": {
+    "nodes": []
+  },
+  "reviews": {
+    "nodes": []
+  },
+  "state": "OPEN",
+  "statusCheckRollup": {
+    "contexts": {
+      "nodes": [
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "markdown",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "compose",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "css",
+          "status": "IN_PROGRESS"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "changes",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "fmt",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "clippy",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "test (ubuntu-latest)",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "test (macos-15)",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": false,
+          "name": "doc",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SKIPPED",
+          "isRequired": false,
+          "name": "base-image",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SKIPPED",
+          "isRequired": false,
+          "name": "deploy-images",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SKIPPED",
+          "isRequired": false,
+          "name": "binaries",
+          "status": "COMPLETED"
+        },
+        {
+          "__typename": "CheckRun",
+          "conclusion": "SUCCESS",
+          "isRequired": true,
+          "name": "ci",
+          "status": "COMPLETED"
+        }
+      ]
+    }
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "AssignedEvent",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "createdAt": "2026-10-23T10:28:05Z"
+      }
+    ]
+  },
+  "title": "Describe needs-info as waiting on a fact only a person knows, from the people asked",
+  "updatedAt": "2026-10-23T10:28:05Z"
+}

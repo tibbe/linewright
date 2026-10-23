@@ -1664,6 +1664,10 @@ enum GqlContext {
 
 impl GqlContext {
     /// <https://docs.github.com/en/graphql/reference/checks#enum-checkconclusionstate>
+    ///
+    /// A check run's conclusion is its verdict, whatever its status says:
+    /// GitHub sometimes still reports a run that has concluded as
+    /// `IN_PROGRESS` (#549).
     fn check(&self) -> Check {
         match self {
             GqlContext::CheckRun {
@@ -1674,8 +1678,8 @@ impl GqlContext {
             } => Check {
                 name: name.clone(),
                 state: match (status.as_str(), conclusion.as_deref()) {
-                    ("COMPLETED", Some("SUCCESS" | "NEUTRAL" | "SKIPPED")) => CheckState::Passed,
-                    ("COMPLETED", _) => CheckState::Failed,
+                    (_, Some("SUCCESS" | "NEUTRAL" | "SKIPPED")) => CheckState::Passed,
+                    (_, Some(_)) | ("COMPLETED", None) => CheckState::Failed,
                     _ => CheckState::Pending,
                 },
             },
@@ -2939,6 +2943,67 @@ mod tests {
             Some(ReviewDecision::Approved)
         );
         assert_eq!(decision(Some(json!(null))), None);
+    }
+
+    /// `fixtures/pull-check-run-concluded-in-progress.json` is `PullFields`
+    /// as GitHub returned it for <https://github.com/tibbe/linewright/pull/543>,
+    /// whose `css` check run finished with a conclusion but is still
+    /// reported `IN_PROGRESS` (#549).
+    fn concluded_in_progress() -> Value {
+        serde_json::from_str(include_str!(
+            "fixtures/pull-check-run-concluded-in-progress.json"
+        ))
+        .unwrap()
+    }
+
+    /// `css`, the context `concluded_in_progress` reports `IN_PROGRESS`.
+    fn css(pr: &mut Value) -> &mut Value {
+        pr["statusCheckRollup"]["contexts"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|context| context["name"] == "css")
+            .unwrap()
+    }
+
+    #[test]
+    fn a_check_run_with_a_conclusion_is_finished_whatever_its_status() {
+        let css_state = |status: &str, conclusion: Value| {
+            let mut pr = concluded_in_progress();
+            css(&mut pr)["status"] = json!(status);
+            css(&mut pr)["conclusion"] = conclusion;
+            let pr: GqlPull = serde_json::from_value(pr).unwrap();
+            pr.into_pull(vec![], &BranchRules::default())
+                .checks
+                .into_iter()
+                .find(|check| check.name == "css")
+                .unwrap()
+                .state
+        };
+
+        assert_eq!(
+            css_state("IN_PROGRESS", json!("SUCCESS")),
+            CheckState::Passed
+        );
+        assert_eq!(
+            css_state("IN_PROGRESS", json!("FAILURE")),
+            CheckState::Failed
+        );
+        assert_eq!(css_state("IN_PROGRESS", json!(null)), CheckState::Pending);
+        assert_eq!(css_state("QUEUED", json!(null)), CheckState::Pending);
+        assert_eq!(css_state("COMPLETED", json!("SUCCESS")), CheckState::Passed);
+        assert_eq!(css_state("COMPLETED", json!("FAILURE")), CheckState::Failed);
+    }
+
+    #[test]
+    fn a_required_check_run_that_concluded_successfully_in_progress_is_not_missing() {
+        let pr: GqlPull = serde_json::from_value(concluded_in_progress()).unwrap();
+        let rules = BranchRules {
+            checks: vec!["css".into(), "ci".into()],
+            ..BranchRules::default()
+        };
+
+        assert_eq!(pr.requirements(&rules), []);
     }
 
     fn no_review_decision(requests: &Value) -> GqlPull {
