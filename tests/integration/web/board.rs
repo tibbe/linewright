@@ -1,6 +1,6 @@
 use super::*;
 
-/// #1 with the maintainer; #2 cut into #3, which waits on the reporter;
+/// #1 with the maintainer; #2 cut into #3, which waits on the people asked;
 /// and #4, closed.
 async fn with_a_board() -> World {
     let world = with_ticket().await;

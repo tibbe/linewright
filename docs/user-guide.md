@@ -21,7 +21,7 @@ the one applied last and removes the rest.
 
 - `needs-triage`: not yet assessed. Linewright triages it. Apply it to have an
   issue triaged again, such as with your answer.
-- `needs-info`: its assessment waits on a fact from the reporter. Linewright
+- `needs-info`: its assessment waits on a fact only a person knows. Linewright
   assigns the people it asks; a comment from anyone but Linewright replies.
 - `ready-for-agent`: decided: an agent could build it, so Linewright builds
   it. Apply it to have an issue built as it stands; remove it to stop the

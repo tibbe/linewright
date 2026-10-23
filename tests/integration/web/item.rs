@@ -283,8 +283,8 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
         without_last_read(item),
         [
             "#1: Do the thing",
-            "state: waiting on the reporter",
-            "waiting for: the reporter: labeled `needs-info`",
+            "state: waiting on the people asked",
+            "waiting for: the people asked: labeled `needs-info`",
         ]
     );
     web.stop().await;

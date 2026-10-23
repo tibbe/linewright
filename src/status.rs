@@ -201,7 +201,7 @@ pub enum ItemState {
     },
     WaitingForTriage,
     BeingTriaged,
-    WaitingOnTheReporter,
+    WaitingOnThePeopleAsked,
     WithTheMaintainer,
     InReview(InReview),
     InReviewElsewhere {
@@ -558,7 +558,7 @@ fn issue_state(
                 ItemState::BeingTriaged
             }
             Some(StatusLabel::NeedsTriage) => ItemState::WaitingForTriage,
-            Some(StatusLabel::NeedsInfo) => ItemState::WaitingOnTheReporter,
+            Some(StatusLabel::NeedsInfo) => ItemState::WaitingOnThePeopleAsked,
             Some(StatusLabel::ReadyForHuman) => ItemState::WithTheMaintainer,
             Some(StatusLabel::ReadyForAgent) => {
                 match (
@@ -819,7 +819,7 @@ pub(crate) fn describe(state: &ItemState) -> Phrase {
         } => format!("tracking issue, {tickets_closed}/{tickets} tickets closed").into(),
         ItemState::WaitingForTriage => "waiting for triage".into(),
         ItemState::BeingTriaged => "claimed: being triaged".into(),
-        ItemState::WaitingOnTheReporter => "waiting on the reporter".into(),
+        ItemState::WaitingOnThePeopleAsked => "waiting on the people asked".into(),
         ItemState::WithTheMaintainer => "with the maintainer".into(),
         ItemState::InReview(review) => review.describe(),
         ItemState::InReviewElsewhere {
@@ -862,7 +862,7 @@ pub(crate) fn describe_wait(wait: &Wait) -> Phrase {
         Wait::Tickets { open } => Phrase::from("its tickets: ")
             .then(Phrase::join(open.iter().copied().map(Phrase::from), ", "))
             .text(" open"),
-        Wait::Reporter => Phrase::from("the reporter: labeled ").code(label::NEEDS_INFO),
+        Wait::PeopleAsked => Phrase::from("the people asked: labeled ").code(label::NEEDS_INFO),
         Wait::Maintainer => Phrase::from("the maintainer: to label it ").then(Phrase::join(
             label::ANSWERS.map(|(answer, _)| Phrase::default().code(answer)),
             " or ",

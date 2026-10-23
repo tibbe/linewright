@@ -4310,14 +4310,14 @@ fn a_pull_request_waits_for_ci_while_its_checks_run_or_before_any_report() {
 }
 
 #[test]
-fn an_issue_labeled_for_the_maintainer_or_the_reporter_waits_for_them() {
+fn an_issue_labeled_for_the_maintainer_or_the_people_asked_waits_for_them() {
     let world = snapshot(vec![
         labeled(issue(1), label::READY_FOR_HUMAN),
         labeled(issue(2), label::NEEDS_INFO),
     ]);
 
     assert_eq!(waits_on(&world, 1), [Wait::Maintainer]);
-    assert_eq!(waits_on(&world, 2), [Wait::Reporter]);
+    assert_eq!(waits_on(&world, 2), [Wait::PeopleAsked]);
 }
 
 #[test]
@@ -4431,7 +4431,7 @@ fn an_issue_without_the_required_label_waits_for_the_maintainer_to_apply_it() {
         [
             (1, vec![required_label.clone()]),
             (2, vec![required_label.clone()]),
-            (3, vec![Wait::Reporter, required_label.clone()]),
+            (3, vec![Wait::PeopleAsked, required_label.clone()]),
             (4, vec![Wait::Maintainer, required_label]),
         ]
         .map(|(n, on)| (Number(n), on))

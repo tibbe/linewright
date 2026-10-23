@@ -196,7 +196,7 @@ pub mod label {
         (NEEDS_TRIAGE, "Not yet assessed"),
         (
             NEEDS_INFO,
-            "Its assessment waits on a fact from the reporter",
+            "Its assessment waits on a fact only a person knows",
         ),
         (READY_FOR_AGENT, "Decided: an agent could build it"),
         (READY_FOR_HUMAN, "Needs a person's decision or action"),

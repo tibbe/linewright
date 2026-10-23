@@ -540,7 +540,7 @@ pub enum Wait {
     Tickets {
         open: Vec<Number>,
     },
-    Reporter,
+    PeopleAsked,
     Maintainer,
     /// Linewright was unassigned from the item and is not assigned to it
     /// again. Applying `required_label`, when set, picks a spec change up
@@ -1252,7 +1252,7 @@ fn let_go_comment(unasked: Unasked, linewright: &Login) -> String {
 
 fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
     let handed_to = if issue.holds(StatusLabel::NeedsInfo) {
-        Some(Wait::Reporter)
+        Some(Wait::PeopleAsked)
     } else if issue.holds(StatusLabel::ReadyForHuman) {
         Some(Wait::Maintainer)
     } else {

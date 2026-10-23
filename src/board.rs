@@ -538,7 +538,7 @@ fn needs_a_person_line(
     let let_go = issue.is_some_and(|issue| let_go_of(issue, recorded, linewright));
     first([
         stalled.then_some(CardLine::Stalled),
-        matches!(state, ItemState::WaitingOnTheReporter).then_some(CardLine::ReporterAsked),
+        matches!(state, ItemState::WaitingOnThePeopleAsked).then_some(CardLine::ReporterAsked),
         (matches!(state, ItemState::WithTheMaintainer) && let_go).then_some(CardLine::HandedBack),
         matches!(state, ItemState::WithTheMaintainer).then_some(CardLine::DecisionNeeded),
     ])
@@ -836,7 +836,7 @@ fn column(state: &ItemState, run_in_flight: bool) -> Option<Column> {
             Column::Ready,
         ),
         (
-            matches!(state, S::WaitingOnTheReporter | S::WithTheMaintainer),
+            matches!(state, S::WaitingOnThePeopleAsked | S::WithTheMaintainer),
             Column::NeedsAPerson,
         ),
         (

@@ -548,7 +548,7 @@ async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() 
         .map(|name| world.store.label_description(name)),
         [
             "Not yet assessed",
-            "Its assessment waits on a fact from the reporter",
+            "Its assessment waits on a fact only a person knows",
             "Decided: an agent could build it",
             "Needs a person's decision or action",
         ]
