@@ -59,16 +59,16 @@ it.
 Linewright creates any of its labels that are missing at startup, except the
 required label, and never renames or deletes one.
 
-| label                                        | meaning                                           | set by                                           |
-| -------------------------------------------- | ------------------------------------------------- | ------------------------------------------------ |
-| `needs-triage`                               | not yet assessed                                  | reporter's issue template, maintainer, Linewright |
-| `needs-info`                                 | its assessment waits on a fact from the reporter  | Linewright, maintainer                           |
-| `ready-for-agent`                            | decided: an agent could build it                  | maintainer, Linewright                           |
-| `ready-for-human`                            | needs a person's decision or action               | Linewright, maintainer                           |
-| `bug`, `enhancement`                         | category, in repositories without issue types     | Linewright (triage), maintainer                  |
-| `linewright:designed`                        | designed, and cut into tickets where it needed cutting | Linewright                                  |
-| `linewright:stalled`                         | handed back in a stall                            | Linewright                                       |
-| the required label, named by `require-label` | Linewright may start work on this item            | maintainer, Linewright                           |
+| label                                        | meaning                                                | set by                                            |
+| -------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------- |
+| `needs-triage`                               | not yet assessed                                       | reporter's issue template, maintainer, Linewright |
+| `needs-info`                                 | its assessment waits on a fact only a person knows     | Linewright, maintainer                            |
+| `ready-for-agent`                            | decided: an agent could build it                       | maintainer, Linewright                            |
+| `ready-for-human`                            | needs a person's decision or action                    | Linewright, maintainer                            |
+| `bug`, `enhancement`                         | category, in repositories without issue types          | Linewright (triage), maintainer                   |
+| `linewright:designed`                        | designed, and cut into tickets where it needed cutting | Linewright                                        |
+| `linewright:stalled`                         | handed back in a stall                                 | Linewright                                        |
+| the required label, named by `require-label` | Linewright may start work on this item                 | maintainer, Linewright                            |
 
 - **Linewright's labels.** Labels only Linewright uses are prefixed
   `linewright:`. Each records what Linewright has done to an item, beside the

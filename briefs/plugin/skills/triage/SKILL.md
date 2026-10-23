@@ -27,6 +27,13 @@ are; you may build and run the code to verify a claim.
   not for an agent: a duplicate, already implemented, needs a spec change, or
   should be rejected. You flag; you never close or reject.
 
+Finding facts is your job, never the reporter's or the maintainer's. A fact
+you could observe by running something is not theirs to answer, and an issue
+that just needs engineering investigation is not `needs-info`. Ask for what
+only a person knows: what they saw, what they meant, a decision. Ask for a
+fact only with a stated, specific reason you could not reach it yourself, and
+only after driving it as far as it goes.
+
 ## Process
 
 1. **Gather context.** Read the issue and every comment. Parse earlier triage
@@ -45,11 +52,17 @@ are; you may build and run the code to verify a claim.
 2. **Categorize.** Choose exactly one category from your task's list: a bug
    when something is broken, otherwise the category for new features or
    improvements (or tasks, where the repository has that type).
-3. **Verify the claim.** For a bug, reproduce it from the reporter's steps; run
-   the relevant tests or commands. For a feature request, check whether the
-   behavior already exists. Note the result: confirmed (with the code path),
-   failed, or not enough detail to try (a strong `needs-info` signal). A
-   confirmed claim makes a much stronger brief.
+3. **Verify the claim.** For a bug, reproduce it yourself, with whatever your
+   environment gives you: the repository and its history, the tools and
+   credentials installed and configured, production where you have access.
+   Check what you have rather than assume, and follow the repository's agent
+   docs on what you can reach. If the reporter's input is out of reach (a
+   private file, production data, a recording), synthesize the trigger from
+   what the issue describes, with the same versions and settings as the code,
+   tighten conditions, or instrument until it fires. For a feature request,
+   check whether the behavior already exists. Note the result: confirmed (with
+   the code path), or failed, with what you tried. A confirmed claim makes a
+   much stronger brief.
 4. **Decide.** Weigh the issue against the spec. Work the spec already asks for,
    or that it leaves to the implementer and that is unambiguous, is
    `ready-for-agent`. An issue that asks for behavior the spec rules out, or
@@ -59,6 +72,7 @@ are; you may build and run the code to verify a claim.
    Facts come before decisions: while the reporter still owes a fact, choose
    `needs-info` and ask only for the missing facts, even when a maintainer's
    decision will follow, because that decision usually depends on the facts.
+   A fact you could find yourself is not owed.
    Sharpen fuzzy terms against `GLOSSARY.md` in your comment; don't edit it.
 5. **Write the comment** for the outcome. Don't add a disclaimer or say who
    wrote it: the comment is posted as Linewright.
@@ -111,8 +125,10 @@ What should happen once the work is done, including edge cases and errors.
 
 ## Needs-info notes
 
-Questions must be specific and actionable, not "please provide more info".
-Capture everything already established so the work isn't lost.
+Questions must be specific and actionable, not "please provide more info",
+and each says why only the person asked can answer it. Capture everything
+already established so the work isn't lost, and list what you tried, so they
+don't repeat it.
 
 ```markdown
 ## Triage Notes
@@ -121,9 +137,13 @@ Capture everything already established so the work isn't lost.
 
 - point 1
 
+**What we tried:**
+
+- what was tried, and why it fell short
+
 **What we still need from you (@login, for each person asked):**
 
-- question 1
+- question 1, and why only you can answer it
 ```
 
 ## Ready-for-human recommendations

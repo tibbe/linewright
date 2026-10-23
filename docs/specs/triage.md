@@ -23,19 +23,21 @@ brief an implementer works from.
 
 ## Outcomes
 
-The agent reads the issue and its comments, the codebase and the spec,
-categorizes, verifies the claim (reproduces a bug, runs the tests, checks
-whether the behavior already exists) and ends in one of three states.
+Triage establishes every fact it can reach itself: the agent reads the
+issue and its comments, the codebase and the spec, categorizes, verifies the
+claim (reproduces a bug, runs the tests, checks whether the behavior already
+exists) and ends in one of three states.
 
 | State             | Comment                                                                                                                                                                 |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ready-for-agent` | a triage brief: summary, current and desired behavior, acceptance criteria, out of scope                                                                                |
-| `needs-info`      | addressed to the reporter: what is established, what is still needed                                                                                                    |
+| `needs-info`      | addressed to the people asked: what is established, what was tried, what is still needed                                                                                |
 | `ready-for-human` | a recommendation: the questions a maintainer must answer, or why the issue is not for an agent (duplicate, already implemented, needs a spec change, should be rejected) |
 
-- **Facts before decisions.** While the reporter still owes a fact, the
-  outcome is `needs-info`, asking only for it, even if a maintainer's
-  decision will follow, because the decision usually depends on the facts.
+- **Facts before decisions.** A fact only a person knows, what they saw or
+  meant, makes the outcome `needs-info`, asking only for it, even if a
+  maintainer's decision will follow, because the decision usually depends on
+  the facts.
 - **Category.** The category is the repository's issue type (Bug, Feature,
   Task) where the repository has issue types, and the `bug` or `enhancement`
   label otherwise.
@@ -46,7 +48,7 @@ whether the behavior already exists) and ends in one of three states.
 
 The label says who must answer, and how.
 
-- **`needs-info`.** The reporter answers in the thread. Linewright assigns
+- **`needs-info`.** The people asked answer in the thread. Linewright assigns
   the people it asks, those GitHub lets it assign, and names them all in the
   comment. A reply, a comment from anyone other than Linewright posted after
   its question, puts the issue back to `needs-triage`.
@@ -59,7 +61,7 @@ The `triage` states of the issue lifecycle; both are labels.
 | State          | Event                                | Next              | Effect |
 | -------------- | ------------------------------------ | ----------------- | ------ |
 | —              | `needs-triage` applied               | `needs-triage`    |        |
-| `needs-triage` | reporter owes a fact                 | `needs-info`      |        |
+| `needs-triage` | a person owes a fact                 | `needs-info`      |        |
 | `needs-info`   | a person comments                    | `needs-triage`    |        |
 | `needs-triage` | triage ends in `ready-for-agent`     | `ready-for-agent` |        |
 | `needs-triage` | triage ends in `ready-for-human`     | `ready-for-human` |        |
