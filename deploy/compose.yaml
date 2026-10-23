@@ -44,7 +44,12 @@ services:
       - sccache:/var/cache/sccache
       - rustup:/usr/local/rustup
       - claude-config:/home/linewright/.claude
-    depends_on: [proxy]
+    depends_on:
+      proxy:
+        condition: service_started
+        # Replacing `proxy` first stops linewright, so that it drains while
+        # its runs can still reach the network (Compose v2.35 or later).
+        restart: true
     # Never on `npm-proxy`: the agents must not reach the reverse proxy.
     networks: [fenced]
 
@@ -55,6 +60,8 @@ services:
   webhook-relay:
     image: ghcr.io/tibbe/linewright-webhook-relay:${LINEWRIGHT_TAG:-main}
     command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:linewright:8080"]
+    # Replaced after linewright, so deliveries reach it while it drains.
+    depends_on: [linewright]
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -73,6 +80,8 @@ services:
   ui-relay:
     image: ghcr.io/tibbe/linewright-webhook-relay:${LINEWRIGHT_TAG:-main}
     command: ["TCP-LISTEN:8081,fork,reuseaddr", "TCP:linewright:8081"]
+    # Replaced after linewright, so the UI reaches it while it drains.
+    depends_on: [linewright]
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

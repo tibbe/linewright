@@ -112,10 +112,11 @@ From another machine, run each command in the host's clone:
 
 - Deploy another version: once CI has pushed its images, `git pull`, so
   `compose.yaml` matches them, and rerun step 3. For a commit other than the
-  latest on `main`, check it out and set `LINEWRIGHT_TAG=sha-...`. Docker
-  drains the old container before it starts the new one, so `up -d` returns
-  once the runs in flight have finished, up to `stop_grace_period`; `lw status`
-  shows them.
+  latest on `main`, check it out and set `LINEWRIGHT_TAG=sha-...`. `up -d`
+  drains the old `linewright` before it replaces anything `linewright` needs,
+  so its runs keep the network until they finish: it returns once they have,
+  up to `stop_grace_period`; `lw status` shows them. This takes Compose v2.35
+  or later.
 - The commit it runs, from its image's labels:
 
   ```sh
