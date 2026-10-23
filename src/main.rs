@@ -21,11 +21,12 @@ use linewright::runs::{self, Query, RepoWorkDir};
 use linewright::secrets::Secrets;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::transcript::{self, After, InFlight, Verbosity};
+use linewright::variable_names::VariableNames;
 use linewright::webhook::{Listener, Pending};
 use linewright::{COMMAND, COMMIT, VERSION};
 use linewright::{explain, status, web};
 use tokio::signal::unix::signal;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const HARNESS_PROGRAM: &str = "claude";
 
@@ -590,7 +591,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             let briefs = briefs(&config)?;
             let bash = require_bash()?;
             require_tool(HARNESS_PROGRAM).await?;
-            let sessions = SessionCredentials::new(SessionToken::Withheld);
+            let sessions = SessionCredentials::new(SessionToken::Withheld, &config.secrets)?;
             let harness = harness(&config, bash, &sessions);
             let factory_config = factory_config(
                 &config,
@@ -674,12 +675,18 @@ struct SessionCredentials {
 }
 
 impl SessionCredentials {
-    /// Reads the secrets to redact from Linewright's environment.
-    fn new(token: SessionToken) -> SessionCredentials {
-        SessionCredentials {
-            token,
-            secrets: Secrets::of(std::env::vars_os()),
+    /// Reads the secrets to redact from Linewright's environment, `names`
+    /// being the `secrets` setting, warning of those too short to redact.
+    fn new(token: SessionToken, names: &VariableNames) -> Result<SessionCredentials> {
+        let secrets = Secrets::of(names, std::env::vars_os()).map_err(|e| anyhow!(e))?;
+        for variable in secrets.short() {
+            warn!(
+                variable,
+                "this secret is 1 to 5 characters, so Linewright neither redacts it \
+                 nor refuses commits that hold it"
+            );
         }
+        Ok(SessionCredentials { token, secrets })
     }
 }
 
@@ -757,10 +764,10 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Res
     let bash = require_bash()?;
     require_tool(HARNESS_PROGRAM).await?;
     let token = token()?;
-    let sessions = SessionCredentials::new(SessionToken::new(
-        token.clone(),
-        std::env::var(SESSION_TOKEN_VARIABLE).ok(),
-    ));
+    let sessions = SessionCredentials::new(
+        SessionToken::new(token.clone(), std::env::var(SESSION_TOKEN_VARIABLE).ok()),
+        &config.secrets,
+    )?;
     let harness = harness(config, bash, &sessions);
     let github = connect(config, token).await?;
     let factory_config = factory_config(

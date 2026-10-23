@@ -727,7 +727,7 @@ async fn a_failed_sessions_reason_has_its_secrets_redacted() {
 async fn a_secret_that_holds_another_is_redacted_whole() {
     let dir = tempfile::tempdir().unwrap();
     let mut harness = harness_printing_a_secret(dir.path(), None);
-    harness.redaction = redaction_of(&[("GH_TOKEN", CREDENTIAL), ("GH_PREFIX_TOKEN", "ghp_")]);
+    harness.redaction = redaction_of(&[("GH_TOKEN", CREDENTIAL), ("GH_PREFIX_TOKEN", "ghp_s3")]);
 
     let error = harness
         .start(&triage_session(dir.path()))

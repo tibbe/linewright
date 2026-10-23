@@ -15,6 +15,7 @@ use linewright::spec_glob::SpecGlob;
 use linewright::status::{FailedPolls, Polling};
 use linewright::store::Store;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
+use linewright::variable_names::VariableNames;
 use linewright::webhook::Pending;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -32,13 +33,21 @@ pub const REQUIRED: &str = "linewright";
 /// Auto-merge on, by the repository's merge method.
 pub const AUTO_MERGE: Option<AutoMerge> = Some(AutoMerge { merge_method: None });
 
-/// The secrets of an environment holding `variables`.
+/// The secrets of an environment holding `variables`, each named in
+/// `secrets`.
 pub fn secrets_of(variables: &[(&str, &str)]) -> Secrets {
+    let names = VariableNames::new(
+        "secrets",
+        variables.iter().map(|(name, _)| name.to_string()),
+    )
+    .unwrap();
     Secrets::of(
+        &names,
         variables
             .iter()
             .map(|(name, value)| (name.into(), value.into())),
     )
+    .unwrap()
 }
 
 /// The redaction of an environment holding `variables`.

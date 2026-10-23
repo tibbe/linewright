@@ -3,9 +3,8 @@
 
 use std::ffi::OsString;
 
-use crate::store::github::{SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
+use crate::secrets::OWN_CREDENTIAL_VARIABLES;
 use crate::variable_names::{self, VariableNames, matches};
-use crate::webhook::SECRET_VARIABLE;
 
 const SETTING: &str = "session-env";
 
@@ -40,17 +39,10 @@ const TABLE: &[&str] = &[
     "CLAUDE_*",
 ];
 
-/// The variables Linewright reads its own GitHub tokens and webhook secret
-/// from, which `session-env` never passes.
-const NEVER_PASSED: [&str; 4] = [
-    TOKEN_VARIABLES[0],
-    TOKEN_VARIABLES[1],
-    SESSION_TOKEN_VARIABLE,
-    SECRET_VARIABLE,
-];
-
+/// Whether `name` is a variable Linewright reads its own GitHub tokens or
+/// webhook secret from, which `session-env` never passes.
 fn never_passed(name: &str) -> bool {
-    NEVER_PASSED.contains(&name)
+    OWN_CREDENTIAL_VARIABLES.contains(&name)
 }
 
 /// The `session-env` setting: the variables sessions are given beyond the
@@ -132,12 +124,6 @@ impl std::str::FromStr for SessionEnv {
     type Err = String;
 
     fn from_str(names: &str) -> Result<SessionEnv, String> {
-        SessionEnv::new(
-            names
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(String::from),
-        )
+        SessionEnv::new(variable_names::comma_separated(names))
     }
 }

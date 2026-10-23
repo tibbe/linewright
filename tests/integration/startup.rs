@@ -183,6 +183,75 @@ fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_g
     assert!(!log.contains("hunter2"), "{log}");
 }
 
+/// A path holding a Claude Code that would finish, `git` and `bash`, so
+/// that `once` gets as far as connecting to GitHub.
+fn path_to_start_on() -> tempfile::TempDir {
+    let bin = tempfile::tempdir().unwrap();
+    fake_claude(bin.path(), "Done.");
+    link_from_path(bin.path(), "git");
+    link_from_path(bin.path(), "bash");
+    bin
+}
+
+#[test]
+fn secrets_naming_a_variable_that_is_unset_or_empty_is_an_error_at_startup_naming_it() {
+    let bin = path_to_start_on();
+    for value in [None, Some("")] {
+        let mut env = vec![
+            ("GH_TOKEN", "linewright-token"),
+            ("LINEWRIGHT_SECRETS", "NPM_*,AWS_SECRET_ACCESS_KEY"),
+            ("NPM_TOKEN", "npm-token"),
+            // Fails the connection to GitHub at once, should startup get
+            // that far.
+            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+        ];
+        env.extend(value.map(|value| ("AWS_SECRET_ACCESS_KEY", value)));
+
+        let (succeeded, error) = lw(bin.path(), &["--repo", "owner/name", "once"], &env);
+
+        assert!(!succeeded, "{error}");
+        assert!(
+            error.contains(
+                "the setting `secrets` names `AWS_SECRET_ACCESS_KEY`, which is unset or empty: \
+                 set it, or take it out of `secrets`"
+            ),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn secrets_naming_a_prefix_no_variable_has_is_no_error_at_startup() {
+    let bin = path_to_start_on();
+
+    let (_, log) = lw(
+        bin.path(),
+        &["--repo", "owner/name", "once"],
+        &[
+            ("GH_TOKEN", "linewright-token"),
+            ("LINEWRIGHT_SECRETS", "UNSET_PREFIX_*"),
+            // Fails the connection to GitHub at once, after the secrets.
+            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+        ],
+    );
+
+    assert!(!log.contains("`secrets`"), "{log}");
+}
+
+#[test]
+fn status_is_not_affected_by_secrets_naming_an_unset_variable() {
+    let empty = tempfile::tempdir().unwrap();
+
+    let (_, error) = lw(
+        empty.path(),
+        &["--repo", "owner/name", "status"],
+        &[("LINEWRIGHT_SECRETS", "AWS_SECRET_ACCESS_KEY")],
+    );
+
+    assert!(error.contains("not running"), "{error}");
+    assert!(!error.contains("`secrets`"), "{error}");
+}
+
 #[test]
 fn serve_refuses_a_webhook_address_without_the_secret() {
     let empty = tempfile::tempdir().unwrap();

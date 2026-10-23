@@ -90,7 +90,7 @@ async fn assert_secret_kept_out(world: &World) {
 }
 
 fn reason(commit: &str) -> String {
-    format!("the commit `{commit}` adds the value of `NPM_TOKEN`, a credential, to `.npmrc`")
+    format!("the commit `{commit}` adds the value of `NPM_TOKEN`, a secret, to `.npmrc`")
 }
 
 #[tokio::test]
@@ -324,11 +324,45 @@ async fn a_secret_whose_value_spans_lines_is_found_whole() {
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
     assert!(
-        prompts[1].contains("adds the value of `DEPLOY_KEY`, a credential, to `deploy/key.pem`"),
+        prompts[1].contains("adds the value of `DEPLOY_KEY`, a secret, to `deploy/key.pem`"),
         "{}",
         prompts[1]
     );
     assert_eq!(world.store.pulls(), []);
+}
+
+#[tokio::test]
+async fn a_secret_of_1_to_5_characters_in_a_commit_is_pushed() {
+    let pin = "12345";
+    let mut world = World::with(|config| {
+        config.secrets = secrets_of(&[("PIN", pin)]);
+    })
+    .await;
+    world.harness.on(WorkKind::Implement, move |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("pin.txt", &format!("{pin}\n"))],
+            "Add the PIN",
+        );
+        Ok(json!({"outcome": "done", "pr_title": "PIN", "pr_body": "Adds the PIN."}).to_string())
+    });
+    world.store.open_issue(
+        "maintainer",
+        "PIN",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
+
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
+    let pulls = world.store.pulls();
+    assert_eq!(pulls.len(), 1);
+    let head_ref = world.store.snapshot_pull(pulls[0]).await.head_ref;
+    assert_eq!(
+        world.store.file(&head_ref, "pin.txt").await.unwrap(),
+        "12345\n"
+    );
 }
 
 /// Asserts that `comment` says the work so far was not kept for the
@@ -347,7 +381,7 @@ fn assert_says_not_kept(comment: &str, commit: Option<&str>) {
         assert_eq!(named, commit);
     }
     assert!(
-        rest.starts_with(" adds the value of `NPM_TOKEN`, a credential, to `.npmrc`."),
+        rest.starts_with(" adds the value of `NPM_TOKEN`, a secret, to `.npmrc`."),
         "{comment}"
     );
 }

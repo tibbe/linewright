@@ -1339,7 +1339,7 @@ fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
         Kept::Held(held) => info!(
             branch,
             variable = held.variable,
-            "the stopped run's work holds a credential; it is not kept"
+            "the stopped run's work holds a secret; it is not kept"
         ),
         Kept::Nothing | Kept::Pushed => {}
     }
@@ -1354,7 +1354,7 @@ fn kept_note(branch: &str, kept: &Kept, try_again: TryAgain) -> String {
         Kept::Pushed => format!("\n\nThe work so far is on the branch `{branch}`."),
         Kept::Held(held) => format!(
             "\n\nThe work so far was not kept: the commit `{}` adds the value of `{}`, a \
-             credential, to `{}`.",
+             secret, to `{}`.",
             held.commit, held.variable, held.file
         ),
         Kept::Protected(secrets) => protected_note(secrets),

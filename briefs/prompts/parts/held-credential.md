@@ -1,1 +1,1 @@
-the commit `{{commit}}` adds the value of `{{variable}}`, a credential, to `{{file}}`. Linewright pushes no commit that holds a credential, so take it out of every commit on the branch, for example by rewriting the commit that adds it: a later commit that removes it leaves it in the history.
+the commit `{{commit}}` adds the value of `{{variable}}`, a secret, to `{{file}}`. Linewright pushes no commit that holds a secret, so take it out of every commit on the branch, for example by rewriting the commit that adds it: a later commit that removes it leaves it in the history.

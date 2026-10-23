@@ -20,6 +20,16 @@ pub fn check(setting: &str, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The names in `names` separated by commas, the form of a setting such as
+/// `session-env` as a flag or variable.
+pub fn comma_separated(names: &str) -> impl Iterator<Item = String> {
+    names
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+}
+
 /// Variable names, each a prefix when it ends in `*`, and with no `*`
 /// elsewhere.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

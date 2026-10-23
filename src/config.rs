@@ -13,8 +13,10 @@ use crate::host::UiHosts;
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
+use crate::secrets;
 use crate::session_env::SessionEnv;
 use crate::spec_glob::SpecGlob;
+use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
 
@@ -250,6 +252,12 @@ pub struct Settings {
     /// names every variable with that prefix [default: none]
     #[arg(long, global = true, value_name = "NAMES")]
     pub session_env: Option<String>,
+    /// The variables of Linewright's environment whose values are secrets,
+    /// redacted and refused in commits, besides the ones Linewright reads a
+    /// credential from, comma-separated; a name ending in `*` names every
+    /// variable with that prefix [default: none]
+    #[arg(long, global = true, value_name = "NAMES")]
+    pub secrets: Option<String>,
     /// Each agent session's timeout [default: 60m]
     #[arg(long, global = true)]
     pub session_timeout: Option<String>,
@@ -302,6 +310,7 @@ pub struct Config {
     pub model: Option<String>,
     pub briefs: Option<PathBuf>,
     pub session_env: SessionEnv,
+    pub secrets: VariableNames,
     pub session_timeout: Duration,
     pub result_retries: u32,
     pub ci_grace: TimeDelta,
@@ -328,6 +337,7 @@ impl Settings {
             ("model", &self.model),
             ("briefs", &self.briefs),
             ("session-env", &self.session_env),
+            ("secrets", &self.secrets),
             ("session-timeout", &self.session_timeout),
             ("result-retries", &self.result_retries),
             ("ci-grace", &self.ci_grace),
@@ -347,12 +357,13 @@ impl Settings {
 
 /// The settings that are lists, and what each holds, which may be an array
 /// in the file.
-const LISTS: [(&str, &str); 2] = [
+const LISTS: [(&str, &str); 3] = [
     ("session-env", "a variable's name"),
+    ("secrets", "a variable's name"),
     ("ui-hosts", "a host name"),
 ];
 
-const KEYS: [&str; 22] = [
+const KEYS: [&str; 23] = [
     "repo",
     "poll-interval",
     "webhook-address",
@@ -365,6 +376,7 @@ const KEYS: [&str; 22] = [
     "model",
     "briefs",
     "session-env",
+    "secrets",
     "session-timeout",
     "result-retries",
     "ci-grace",
@@ -623,6 +635,11 @@ impl Config {
             .unwrap_or_default()
             .parse::<SessionEnv>()
             .map_err(|e| wrong("session-env", e))?;
+        let secrets = VariableNames::new(
+            secrets::SETTING,
+            variable_names::comma_separated(&get(secrets::SETTING).unwrap_or_default()),
+        )
+        .map_err(|e| wrong(secrets::SETTING, e))?;
         let (ci_grace, ci_timeout) = (delta("ci-grace", "5m")?, delta("ci-timeout", "6h")?);
         if ci_timeout <= ci_grace {
             return Err(blame(
@@ -642,6 +659,7 @@ impl Config {
             model: get("model"),
             briefs: get("briefs").map(PathBuf::from),
             session_env,
+            secrets,
             session_timeout: duration("session-timeout", "60m")?,
             result_retries: number("result-retries", "1")?,
             ci_grace,

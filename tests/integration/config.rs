@@ -6,6 +6,7 @@ use linewright::config::{Cli, Config, LogFormat, ResolveError};
 use linewright::domain::{AutoMerge, MergeMethod};
 use linewright::host::HostName;
 use linewright::session_env::SessionEnv;
+use linewright::variable_names::VariableNames;
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
     resolve_blaming(args, env, file).map_err(|e| e.to_string())
@@ -73,6 +74,7 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.log_format, LogFormat::Json, "not a terminal");
     assert!(config.work_dir.ends_with("linewright"));
     assert_eq!(config.session_env, SessionEnv::default());
+    assert_eq!(config.secrets, VariableNames::default());
 }
 
 #[test]
@@ -465,6 +467,54 @@ fn session_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
 #[test]
 fn help_lists_session_env_with_its_default() {
     let (help, line) = help_for("--session-env");
+    assert!(line.contains("[default: none]"), "{help}");
+}
+
+fn secrets(names: &[&str]) -> VariableNames {
+    VariableNames::new("secrets", names.iter().map(ToString::to_string)).unwrap()
+}
+
+#[test]
+fn secrets_is_a_flag_the_environment_or_the_file_naming_variables() {
+    let file = Some("secrets = [\"AWS_SECRET_ACCESS_KEY\", \"NPM_*\"]\n");
+    let env = [("LINEWRIGHT_SECRETS", "SENTRY_*,DATABASE_URL")];
+
+    let from_file = resolve(&[], &[], file).unwrap();
+    let from_env = resolve(&[], &env, file).unwrap();
+    let from_flag = resolve(&["--secrets", "SIGNING_KEY"], &env, file).unwrap();
+
+    assert_eq!(
+        from_file.secrets,
+        secrets(&["AWS_SECRET_ACCESS_KEY", "NPM_*"])
+    );
+    assert_eq!(from_env.secrets, secrets(&["SENTRY_*", "DATABASE_URL"]));
+    assert_eq!(from_flag.secrets, secrets(&["SIGNING_KEY"]));
+}
+
+#[test]
+fn secrets_naming_a_variable_that_is_unset_is_no_error_resolving_the_config() {
+    let config = resolve(&["--secrets", "AWS_SECRET_ACCESS_KEY"], &[], None);
+
+    assert!(config.is_ok());
+}
+
+#[test]
+fn secrets_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
+    for name in ["NPM_*_TOKEN", "*TOKEN"] {
+        let error = resolve(&["--secrets", &format!("NPM_TOKEN,{name}")], &[], None).unwrap_err();
+
+        assert!(
+            error.contains(&format!(
+                "the setting `secrets` names `{name}`: a `*` can only end a name"
+            )),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn help_lists_secrets_with_its_default() {
+    let (help, line) = help_for("--secrets");
     assert!(line.contains("[default: none]"), "{help}");
 }
 

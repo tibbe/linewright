@@ -1,5 +1,7 @@
 use crate::common;
 
+use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -158,6 +160,14 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
 /// Returns the fake's directory, which is also Claude Code's config
 /// directory.
 fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathBuf {
+    let bin = case_with_fake_claude(dir);
+    replay_with(dir, &bin, env);
+    bin
+}
+
+/// Makes a case in `dir` and a Claude Code that finds nothing to build,
+/// returning the fake's directory.
+fn case_with_fake_claude(dir: &Path) -> std::path::PathBuf {
     spec_change_case(dir, &[]);
     let bin = dir.join("bin");
     std::fs::create_dir(&bin).unwrap();
@@ -165,28 +175,34 @@ fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathB
         &bin,
         r#"{"outcome": "nothing-to-build", "reason": "Nothing to build."}"#,
     );
-    replay_with(dir, &bin, env);
     bin
 }
 
-/// Replays the case in `dir` with the Claude Code in `bin`.
-fn replay_with(dir: &Path, bin: &Path, env: &[(&str, &str)]) {
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+/// Replays the case in `dir` with the Claude Code in `bin`, returning what
+/// it logged.
+fn replay_with(dir: &Path, bin: &Path, env: &[(&str, &str)]) -> String {
+    let output = replay_output(dir, bin, env.iter().copied());
+    let log = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{log}");
+    log
+}
 
-    let output = Command::new(env!("CARGO_BIN_EXE_lw"))
+/// As `replay_with`, but returns how the replay ended, whether it
+/// succeeded or not.
+fn replay_output(
+    dir: &Path,
+    bin: &Path,
+    env: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+) -> std::process::Output {
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(["replay", "case", "--out", "out"])
         .current_dir(dir)
         .env("PATH", path)
         .env("CLAUDE_CONFIG_DIR", bin)
-        .envs(env.iter().copied())
+        .envs(env)
         .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+        .unwrap()
 }
 
 /// Each value holds `s3cr3t`, so that none is found in any form, escaped
@@ -262,23 +278,12 @@ fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted()
     );
 }
 
-#[test]
-fn a_replayed_session_leaves_redacted_every_variable_named_as_a_secret_and_no_other() {
-    let dir = tempfile::tempdir().unwrap();
-    spec_change_case(dir.path(), &[]);
-    let bin = dir.path().join("bin");
+/// Replays a session that says `saw`, with `env`, returning the pull
+/// request it leaves and what it logged.
+fn replay_saying(dir: &Path, env: &[(&str, &str)], saw: &str) -> (String, String) {
+    spec_change_case(dir, &[]);
+    let bin = dir.join("bin");
     std::fs::create_dir(&bin).unwrap();
-    let env = [
-        ("LINEWRIGHT_SESSION_ENV", "NPM_*"),
-        ("NPM_TOKEN", "npm-s3cr3t"),
-        ("DATABASE_PASSWORD", "db-s3cr3t"),
-        ("SIGNING_KEY", "signing-s3cr3t"),
-        ("NPM_REGISTRY", "registry.example.com"),
-        ("TOKEN_ISSUER", "issuer.example.com"),
-        ("EMPTY_SECRET", ""),
-    ];
-    let saw = "NPM_TOKEN=npm-s3cr3t DATABASE_PASSWORD=db-s3cr3t SIGNING_KEY=signing-s3cr3t \
-               NPM_REGISTRY=registry.example.com TOKEN_ISSUER=issuer.example.com EMPTY_SECRET=";
     let result = json!({"outcome": "nothing-to-build", "reason": format!("Saw {saw}")}).to_string();
     let result =
         json!({"type": "result", "subtype": "success", "is_error": false, "result": result});
@@ -286,22 +291,123 @@ fn a_replayed_session_leaves_redacted_every_variable_named_as_a_secret_and_no_ot
         json!({"type": "assistant", "message": {"content": [{"type": "text", "text": saw}]}});
     fake_claude_saying(&bin, &[said.clone(), result], &said, saw);
 
-    replay_with(dir.path(), &bin, &env);
+    let log = replay_with(dir, &bin, env);
 
-    for (path, contents) in files_under(&dir.path().join("out")) {
+    for (path, contents) in files_under(&dir.join("out")) {
         assert!(
             !contents.contains("s3cr3t"),
             "a secret in {}: {contents}",
             path.display()
         );
     }
-    let pull = std::fs::read_to_string(dir.path().join("out/pulls/1.md")).unwrap();
+    let pull = std::fs::read_to_string(dir.join("out/pulls/1.md")).unwrap();
+    (pull, log)
+}
+
+#[test]
+fn a_replayed_session_leaves_redacted_the_variables_secrets_names_and_none_that_only_look_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = [
+        ("LINEWRIGHT_SECRETS", "AWS_SECRET_ACCESS_KEY,NPM_*,UNSET_*"),
+        ("AWS_SECRET_ACCESS_KEY", "aws-s3cr3t"),
+        ("NPM_TOKEN", "npm-s3cr3t"),
+        ("NPM_REGISTRY", "registry-s3cr3t.example.com"),
+        ("NPM_EMPTY", ""),
+        ("DATABASE_PASSWORD", "database-password"),
+        ("SIGNING_KEY", "signing-key"),
+        ("WEBHOOK_SECRET", "webhook-secret"),
+        ("CI_TOKEN", "ci-token"),
+    ];
+    let saw = "AWS_SECRET_ACCESS_KEY=aws-s3cr3t NPM_TOKEN=npm-s3cr3t \
+               NPM_REGISTRY=registry-s3cr3t.example.com NPM_EMPTY= \
+               DATABASE_PASSWORD=database-password SIGNING_KEY=signing-key \
+               WEBHOOK_SECRET=webhook-secret CI_TOKEN=ci-token";
+
+    let (pull, _) = replay_saying(dir.path(), &env, saw);
+
     assert!(
         pull.contains(
-            "Saw NPM_TOKEN=[redacted] DATABASE_PASSWORD=[redacted] SIGNING_KEY=[redacted] \
-             NPM_REGISTRY=registry.example.com TOKEN_ISSUER=issuer.example.com EMPTY_SECRET="
+            "Saw AWS_SECRET_ACCESS_KEY=[redacted] NPM_TOKEN=[redacted] \
+             NPM_REGISTRY=[redacted] NPM_EMPTY= \
+             DATABASE_PASSWORD=database-password SIGNING_KEY=signing-key \
+             WEBHOOK_SECRET=webhook-secret CI_TOKEN=ci-token"
         ),
         "{pull}"
+    );
+}
+
+#[test]
+fn a_replayed_session_leaves_a_secret_of_1_to_5_characters_in_what_it_said_and_warns_of_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = [
+        ("LINEWRIGHT_SECRETS", "PIN,LONG_PIN"),
+        // Five characters in ten bytes.
+        ("PIN", "ééééé"),
+        ("LONG_PIN", "s3cr3t"),
+        ("ANTHROPIC_API_KEY", "12345"),
+    ];
+    let saw = "PIN=ééééé LONG_PIN=s3cr3t ANTHROPIC_API_KEY=12345";
+
+    let (pull, log) = replay_saying(dir.path(), &env, saw);
+
+    assert!(
+        pull.contains("Saw PIN=ééééé LONG_PIN=[redacted] ANTHROPIC_API_KEY=12345"),
+        "{pull}"
+    );
+    let warned: Vec<String> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|line| line["level"] == "WARN")
+        .filter_map(|line| line["fields"]["variable"].as_str().map(String::from))
+        .collect();
+    assert_eq!(warned, ["ANTHROPIC_API_KEY", "PIN"], "{log}");
+}
+
+#[test]
+fn a_replay_with_secrets_naming_an_unset_variable_runs_no_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = case_with_fake_claude(dir.path());
+
+    let output = replay_output(
+        dir.path(),
+        &bin,
+        [("LINEWRIGHT_SECRETS", "LINEWRIGHT_TEST_UNSET_SECRET")],
+    );
+
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{error}");
+    assert!(
+        error.contains(
+            "the setting `secrets` names `LINEWRIGHT_TEST_UNSET_SECRET`, which is unset or \
+             empty: set it, or take it out of `secrets`"
+        ),
+        "{error}"
+    );
+    assert!(!dir.path().join("out/sessions").exists());
+}
+
+#[test]
+fn a_replay_with_secrets_naming_a_variable_set_to_a_value_that_is_not_utf_8_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = case_with_fake_claude(dir.path());
+    let not_utf_8 = OsStr::from_bytes(b"s3cr3t\xff").to_os_string();
+
+    let output = replay_output(
+        dir.path(),
+        &bin,
+        [
+            (
+                OsString::from("LINEWRIGHT_SECRETS"),
+                OsString::from("BINARY_SECRET"),
+            ),
+            (OsString::from("BINARY_SECRET"), not_utf_8),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
