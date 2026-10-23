@@ -381,6 +381,7 @@ const KEYS: [&str; 22] = [
 /// error while it is off unless the setting is at its default
 /// (`docs/specs/operation.md`, Configuration, A feature's settings).
 struct Feature {
+    setting: &'static str,
     /// The settings that turn it on or off, which an error is blamed on.
     switches: &'static [&'static str],
     /// What is off and how to turn it on, after "is set, but".
@@ -396,6 +397,7 @@ struct Features {
 const FEATURES: Features = Features {
     // Turned on by the environment's secret, which no setting holds.
     webhooks: Feature {
+        setting: "webhook-address",
         switches: &[],
         when_off: || {
             format!(
@@ -405,6 +407,7 @@ const FEATURES: Features = Features {
         },
     },
     ui: Feature {
+        setting: "ui-hosts",
         switches: &["ui-address"],
         when_off: || {
             "`ui-address` is empty: set `ui-address` to serve the web UI, or unset `ui-hosts`"
@@ -412,10 +415,35 @@ const FEATURES: Features = Features {
         },
     },
     auto_merge: Feature {
+        setting: "merge-method",
         switches: &["auto-merge"],
         when_off: || "`auto-merge` is off: turn `auto-merge` on, or unset `merge-method`".into(),
     },
 };
+
+/// `setting`, `feature`'s setting parsed with `None` at its default, unless
+/// it is not at its default while `feature` is off.
+fn refuse_while_off<T>(
+    feature: &Feature,
+    on: bool,
+    setting: Option<T>,
+    blame: impl Fn(&[&str], anyhow::Error) -> ResolveError,
+) -> Result<Option<T>, ResolveError> {
+    match setting {
+        Some(_) if !on => Err(blame(
+            feature.switches,
+            anyhow!(
+                "the setting `{}` is set, but {}",
+                feature.setting,
+                (feature.when_off)()
+            ),
+        )),
+        setting => Ok(setting),
+    }
+}
+
+/// `webhook-address`'s default with the webhook secret set.
+const WEBHOOK_ADDRESS: &str = "0.0.0.0:8080";
 
 impl Config {
     pub fn required_repo(&self) -> Result<Repo> {
@@ -463,18 +491,6 @@ impl Config {
             )
         };
         let wrong = |key: &str, error: String| blame(&[key], anyhow!(error));
-        // `at_default` is whether the feature's setting `key`, parsed, is
-        // at its default.
-        let refuse_while_off = |feature: &Feature, on: bool, key: &str, at_default: bool| {
-            if on || at_default {
-                Ok(())
-            } else {
-                Err(blame(
-                    feature.switches,
-                    anyhow!("the setting `{key}` is set, but {}", (feature.when_off)()),
-                ))
-            }
-        };
         let value = |key: &str, default: &str| get(key).unwrap_or_else(|| default.to_string());
         let duration = |key: &str, default: &str| {
             let value = value(key, default);
@@ -523,12 +539,11 @@ impl Config {
             })
         };
         // The repository's own setting by default.
-        let merge_method = get("merge-method").map(parse_merge_method).transpose()?;
-        refuse_while_off(
+        let merge_method = refuse_while_off(
             &FEATURES.auto_merge,
             auto_merge,
-            "merge-method",
-            merge_method.is_none(),
+            get("merge-method").map(parse_merge_method).transpose()?,
+            blame,
         )?;
         let auto_merge = auto_merge.then_some(AutoMerge { merge_method });
         let log_format = match get("log-format").as_deref() {
@@ -555,45 +570,45 @@ impl Config {
                 .join("linewright"),
         };
         let secret = env(webhook::SECRET_VARIABLE).and_then(webhook::Secret::new);
-        // `0.0.0.0:8080` by default with the secret set, and none without
-        // it, so any address given is not at its default.
-        let webhook_address = get("webhook-address")
-            .map(|address| {
-                address
-                    .parse()
-                    .map_err(|e| not_one("webhook-address", &address, e))
-            })
-            .transpose()?;
-        refuse_while_off(
+        let parse_webhook_address = |address: &str| {
+            address
+                .parse()
+                .map_err(|e| not_one("webhook-address", address, e))
+        };
+        // `WEBHOOK_ADDRESS` by default with the secret set, and none
+        // without it, so any address given is not at its default.
+        let webhook_address = refuse_while_off(
             &FEATURES.webhooks,
             secret.is_some(),
-            "webhook-address",
-            webhook_address.is_none(),
+            get("webhook-address")
+                .map(|address| parse_webhook_address(&address))
+                .transpose()?,
+            blame,
         )?;
-        let webhooks = secret.map(|secret| Webhooks {
-            address: match webhook_address {
-                Some(address) => address,
-                None => "0.0.0.0:8080"
-                    .parse()
-                    .expect("the default webhook address parses"),
-            },
-            secret,
-        });
+        let webhooks = match secret {
+            Some(secret) => Some(Webhooks {
+                address: match webhook_address {
+                    Some(address) => address,
+                    None => parse_webhook_address(WEBHOOK_ADDRESS)?,
+                },
+                secret,
+            }),
+            None => None,
+        };
         let ui_address = value("ui-address", "127.0.0.1:8081");
         // No names is its default, `""` as a flag or variable and `[]` in
         // the file.
-        let ui_hosts = get("ui-hosts")
-            .filter(|names| !names.is_empty())
-            .map(|names| {
-                UiHosts::new(names.split(','))
-                    .map_err(|e| wrong("ui-hosts", format!("the setting `ui-hosts` {e}")))
-            })
-            .transpose()?;
-        refuse_while_off(
+        let ui_hosts = refuse_while_off(
             &FEATURES.ui,
             !ui_address.is_empty(),
-            "ui-hosts",
-            ui_hosts.is_none(),
+            get("ui-hosts")
+                .filter(|names| !names.is_empty())
+                .map(|names| {
+                    UiHosts::new(names.split(','))
+                        .map_err(|e| wrong("ui-hosts", format!("the setting `ui-hosts` {e}")))
+                })
+                .transpose()?,
+            blame,
         )?;
         let ui = match ui_address.as_str() {
             "" => None,

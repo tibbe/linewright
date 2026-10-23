@@ -234,6 +234,24 @@ fn serve_refuses_ui_hosts_with_no_web_ui() {
 }
 
 #[test]
+fn serve_takes_ui_hosts_naming_no_host_with_no_web_ui() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("linewright.toml");
+    std::fs::write(&config, "ui-hosts = []\n").unwrap();
+    let no_ui = ("LINEWRIGHT_UI_ADDRESS", "");
+    let errors = [
+        serve_with_status(&["--ui-address", "", "--ui-hosts", ""], &[]).1,
+        serve_with_status(&[], &[no_ui, ("LINEWRIGHT_UI_HOSTS", "")]).1,
+        serve_with_status(&["--config", config.to_str().unwrap()], &[no_ui]).1,
+    ];
+
+    // Past the settings, to what is missing from the empty path.
+    for error in errors {
+        assert!(error.contains("`git` is not on the path"), "{error}");
+    }
+}
+
+#[test]
 fn serve_refuses_a_merge_method_without_auto_merge() {
     let (flag, flag_error) =
         serve_with_status(&["--auto-merge=false", "--merge-method", "squash"], &[]);

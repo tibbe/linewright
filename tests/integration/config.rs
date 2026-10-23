@@ -342,7 +342,12 @@ fn a_webhook_address_that_is_not_a_host_and_port_is_an_error_naming_the_setting(
 #[test]
 fn a_webhook_address_without_the_secret_is_an_error_naming_the_secret() {
     let flag = resolve(&["--webhook-address", "127.0.0.1:9000"], &[], None).unwrap_err();
-    let env = resolve(&[], &[("LINEWRIGHT_WEBHOOK_ADDRESS", "0.0.0.0:8080")], None).unwrap_err();
+    let env = resolve(
+        &[],
+        &[("LINEWRIGHT_WEBHOOK_ADDRESS", "127.0.0.1:9000")],
+        None,
+    )
+    .unwrap_err();
     let file = resolve(&[], &[], Some("webhook-address = \"127.0.0.1:9000\"\n")).unwrap_err();
     // The default only with the secret set.
     let the_default = resolve(&["--webhook-address", "0.0.0.0:8080"], &[], None).unwrap_err();
@@ -384,7 +389,6 @@ fn help_for(flag: &str) -> (String, String) {
 #[test]
 fn help_lists_the_webhook_address_with_its_default() {
     let (help, line) = help_for("--webhook-address");
-    assert!(line.contains("0.0.0.0:8080"), "{help}");
     assert!(
         line.contains("[default: 0.0.0.0:8080 with `LINEWRIGHT_WEBHOOK_SECRET` set"),
         "{help}"
@@ -613,6 +617,15 @@ fn a_malformed_ui_hosts_with_no_web_ui_is_an_error_naming_what_is_wrong() {
     .unwrap_err();
 
     assert!(error.contains("names \"a/b\""), "{error}");
+}
+
+#[test]
+fn a_malformed_merge_method_or_webhook_address_for_a_feature_that_is_off_is_an_error_naming_it() {
+    let merge_method = resolve(&["--merge-method", "fast-forward"], &[], None).unwrap_err();
+    let webhook_address = resolve(&["--webhook-address", "8080"], &[], None).unwrap_err();
+
+    assert!(merge_method.contains("\"fast-forward\""), "{merge_method}");
+    assert!(webhook_address.contains("\"8080\""), "{webhook_address}");
 }
 
 #[test]
