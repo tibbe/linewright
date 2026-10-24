@@ -1533,6 +1533,7 @@ dependencies = [
  "humantime",
  "hyper",
  "hyper-util",
+ "percent-encoding",
  "reqwest",
  "rust-embed",
  "rustix",

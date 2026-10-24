@@ -50,6 +50,18 @@ pub fn secrets_of(variables: &[(&str, &str)]) -> Secrets {
     .unwrap()
 }
 
+/// The secrets of an environment holding `variables`, with no `secrets`
+/// setting.
+pub fn secrets_unnamed(variables: &[(&str, &str)]) -> Secrets {
+    Secrets::of(
+        &VariableNames::default(),
+        variables
+            .iter()
+            .map(|(name, value)| (name.into(), value.into())),
+    )
+    .unwrap()
+}
+
 /// The redaction of an environment holding `variables`.
 pub fn redaction_of(variables: &[(&str, &str)]) -> Redaction {
     secrets_of(variables).redaction().clone()

@@ -364,6 +364,37 @@ fn a_replayed_session_leaves_a_secret_of_1_to_5_characters_in_what_it_said_and_w
 }
 
 #[test]
+fn a_replayed_session_leaves_redacted_the_credentials_the_table_passes_unnamed() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = [
+        ("LINEWRIGHT_SESSION_ENV", "AWS_BEARER_TOKEN_BEDROCK"),
+        ("CLAUDE_CODE_OAUTH_TOKEN", "oauth-s3cr3t"),
+        ("ANTHROPIC_AUTH_TOKEN", "auth-s3cr3t"),
+        ("HTTPS_PROXY", "http://bot:p%40s3cr3t@proxy:3128"),
+        ("http_proxy", "http://bot:p%40s@proxy:3128"),
+        ("AWS_BEARER_TOKEN_BEDROCK", "bedrock-token"),
+    ];
+    let saw = "oauth-s3cr3t auth-s3cr3t http://bot:p%40s3cr3t@proxy:3128 p@s3cr3t \
+               bedrock-token";
+
+    let (pull, log) = replay_saying(dir.path(), &env, saw);
+
+    assert!(
+        pull.contains(
+            "Saw [redacted] [redacted] http://bot:[redacted]@proxy:3128 [redacted] bedrock-token"
+        ),
+        "{pull}"
+    );
+    let warned: Vec<String> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|line| line["level"] == "WARN")
+        .filter_map(|line| line["fields"]["variable"].as_str().map(String::from))
+        .collect();
+    assert_eq!(warned, ["http_proxy"], "{log}");
+}
+
+#[test]
 fn a_replay_with_secrets_naming_an_unset_variable_runs_no_session() {
     let dir = tempfile::tempdir().unwrap();
     let bin = case_with_fake_claude(dir.path());

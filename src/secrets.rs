@@ -1,11 +1,13 @@
 //! Linewright's secrets: the values of the variables it reads a credential
-//! from, and of those the `secrets` setting names
-//! (`docs/specs/architecture.md`, the redaction decision).
+//! from and of those the `secrets` setting names, and the credentials the
+//! table of sessions' variables passes (`docs/specs/architecture.md`, the
+//! redaction decision).
 
 use std::ffi::OsString;
 
 use crate::git::Addition;
 use crate::redaction::Redaction;
+use crate::session_env;
 use crate::store::github::{SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use crate::variable_names::VariableNames;
 use crate::webhook;
@@ -70,7 +72,9 @@ pub struct Secrets {
 
 impl Secrets {
     /// The secrets among `vars`, Linewright's environment as
-    /// [`std::env::vars_os`] gives it, `names` being the `secrets` setting.
+    /// [`std::env::vars_os`] gives it, `names` being the `secrets` setting,
+    /// and the credentials the table of sessions' variables passes, each
+    /// named by the variable it comes from.
     /// Empty values are skipped, as every text holds the empty string, and
     /// so are names or values that are not UTF-8, which no text Linewright
     /// handles holds as they are. A secret shorter than `SHORTEST`
@@ -94,19 +98,31 @@ impl Secrets {
                  set it, or take it out of `{SETTING}`"
             ));
         }
-        let all: Vec<Secret> = vars
+        let vars: Vec<(String, String)> = vars
             .into_iter()
             .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-            .filter(|(name, value)| {
-                !value.is_empty() && (reads_a_credential_from(name) || names.matches(name))
-            })
+            .collect();
+        let credentials_passed = session_env::credentials_passed(&vars);
+        let mut all: Vec<Secret> = vars
+            .into_iter()
+            .filter(|(name, _)| reads_a_credential_from(name) || names.matches(name))
+            .chain(
+                credentials_passed
+                    .into_iter()
+                    .map(|credential| (credential.variable, credential.value)),
+            )
+            .filter(|(_, value)| !value.is_empty())
             .map(|(name, value)| Secret { name, value })
             .collect();
+        // `ANTHROPIC_API_KEY` is both Linewright's credential and the
+        // harness's.
+        all.sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+        all.dedup();
         let (list, short): (Vec<Secret>, Vec<Secret>) = all
             .into_iter()
             .partition(|secret| secret.value.chars().count() >= SHORTEST);
         let mut short: Vec<String> = short.into_iter().map(|secret| secret.name).collect();
-        short.sort();
+        short.dedup();
         Ok(Secrets {
             redaction: Redaction::of(&list),
             list,

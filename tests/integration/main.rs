@@ -24,6 +24,7 @@ mod refresh;
 mod replay;
 mod required_label;
 mod runs;
+mod secrets;
 mod startup;
 mod status;
 mod transcript;

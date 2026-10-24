@@ -365,6 +365,40 @@ async fn a_secret_of_1_to_5_characters_in_a_commit_is_pushed() {
     );
 }
 
+#[tokio::test]
+async fn a_commit_holding_a_harness_credential_no_one_named_is_sent_back_naming_its_variable() {
+    let token = "sk-ant-oat01-s3cr3t";
+    let mut world = World::with(|config| {
+        config.secrets = secrets_unnamed(&[("CLAUDE_CODE_OAUTH_TOKEN", token)]);
+    })
+    .await;
+    world.harness.on(WorkKind::Implement, move |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("auth.txt", &format!("{token}\n"))],
+            "Add the token",
+        );
+        Ok(json!({"outcome": "done", "pr_title": "Token", "pr_body": "Adds it."}).to_string())
+    });
+    world.store.open_issue(
+        "maintainer",
+        "Token",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
+
+    world.poll().await;
+
+    let prompts = world.harness.prompts(WorkKind::Implement);
+    assert_eq!(prompts.len(), 2);
+    assert!(
+        prompts[1].contains("adds the value of `CLAUDE_CODE_OAUTH_TOKEN`, a secret, to `auth.txt`"),
+        "{}",
+        prompts[1]
+    );
+    assert_eq!(world.store.pulls(), []);
+}
+
 /// Asserts that `comment` says the work so far was not kept for the
 /// secret in `.npmrc`, naming the commit that holds it, which is
 /// `commit` when given.

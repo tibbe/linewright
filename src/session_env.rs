@@ -3,12 +3,16 @@
 
 use std::ffi::OsString;
 
+use percent_encoding::percent_decode_str;
+
+use crate::harness::claude::CREDENTIAL_VARIABLES;
 use crate::secrets::OWN_CREDENTIAL_VARIABLES;
 use crate::variable_names::{self, VariableNames, matches};
 
 const SETTING: &str = "session-env";
 
-/// The spec's table: every session is given these.
+/// The spec's table, but for `PROXY_VARIABLES`: every session is given
+/// these.
 const TABLE: &[&str] = &[
     "PATH",
     "HOME",
@@ -24,20 +28,88 @@ const TABLE: &[&str] = &[
     "XDG_CACHE_HOME",
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
     "NO_PROXY",
-    "ALL_PROXY",
-    "http_proxy",
-    "https_proxy",
     "no_proxy",
-    "all_proxy",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
     "NODE_EXTRA_CA_CERTS",
     "ANTHROPIC_*",
     "CLAUDE_*",
 ];
+
+/// The table's proxy variables that hold a URL, which may hold a password.
+/// `NO_PROXY` holds hosts and is in `TABLE`.
+const PROXY_VARIABLES: [&str; 6] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+];
+
+fn in_table(name: &str) -> bool {
+    TABLE
+        .iter()
+        .chain(&PROXY_VARIABLES)
+        .any(|pattern| matches(pattern, name))
+}
+
+/// A credential the table passes, and the variable it comes from.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Credential {
+    pub variable: String,
+    pub value: String,
+}
+
+/// The credentials the table passes among `environment`, each with the
+/// variable it comes from: the value of a variable the harness reads a
+/// credential from, and the password in a proxy variable's URL, as written
+/// and, when it differs and is UTF-8, percent-decoded.
+pub fn credentials_passed(environment: &[(String, String)]) -> Vec<Credential> {
+    let credential = |variable: &str, value: String| Credential {
+        variable: variable.to_string(),
+        value,
+    };
+    let mut credentials = Vec::new();
+    for (name, value) in environment {
+        if CREDENTIAL_VARIABLES.contains(&name.as_str()) {
+            credentials.push(credential(name, value.clone()));
+        } else if PROXY_VARIABLES.contains(&name.as_str())
+            && let Some(password) = proxy_password(value)
+        {
+            credentials.push(credential(name, password.to_string()));
+            if let Ok(decoded) = percent_decode_str(password).decode_utf8()
+                && decoded != password
+            {
+                credentials.push(credential(name, decoded.into_owned()));
+            }
+        }
+    }
+    credentials
+}
+
+/// The password in a proxy URL, as written. A URL without a scheme is
+/// read as `http://`, as curl and reqwest read it, and the userinfo ends
+/// at the authority's last `@`, as the WHATWG URL standard
+/// (<https://url.spec.whatwg.org/#authority-state>), and so Claude Code,
+/// reads it.
+fn proxy_password(url: &str) -> Option<&str> {
+    let rest = match url.split_once("://") {
+        Some((scheme, rest))
+            if scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c)) =>
+        {
+            rest
+        }
+        _ => url,
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let (userinfo, _) = authority.rsplit_once('@')?;
+    let (_, password) = userinfo.split_once(':')?;
+    Some(password)
+}
 
 /// Whether `name` is a variable Linewright reads its own GitHub tokens or
 /// webhook secret from, which `session-env` never passes.
@@ -95,8 +167,7 @@ impl SessionEnv {
     }
 
     fn passes(&self, name: &str) -> bool {
-        TABLE.iter().any(|pattern| matches(pattern, name))
-            || (!never_passed(name) && self.names.matches(name))
+        in_table(name) || (!never_passed(name) && self.names.matches(name))
     }
 
     /// `set_by_linewright` names the variables Linewright sets for sessions
@@ -125,5 +196,17 @@ impl std::str::FromStr for SessionEnv {
 
     fn from_str(names: &str) -> Result<SessionEnv, String> {
         SessionEnv::new(variable_names::comma_separated(names))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_table_passes_every_variable_the_harness_reads_a_credential_from() {
+        for name in CREDENTIAL_VARIABLES {
+            assert!(in_table(name), "{name}");
+        }
     }
 }

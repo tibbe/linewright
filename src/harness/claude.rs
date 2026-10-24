@@ -35,6 +35,19 @@ const SHELL: &str = "CLAUDE_CODE_SHELL";
 /// Unlike `DISABLE_AUTOUPDATER`, also blocks `claude update`. Docs:
 /// <https://code.claude.com/docs/en/env-vars>.
 const NO_UPDATES: &str = "DISABLE_UPDATES";
+/// The variables Claude Code reads a credential from, of those in the
+/// namespaces the table of sessions' variables passes. Docs:
+/// <https://code.claude.com/docs/en/env-vars>.
+pub const CREDENTIAL_VARIABLES: [&str; 8] = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_AWS_API_KEY",
+    "ANTHROPIC_FOUNDRY_API_KEY",
+    "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+    "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+];
 
 /// What Linewright sets for a session, over any variable of the same name
 /// `environment` gives it.
