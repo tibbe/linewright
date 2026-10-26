@@ -5,7 +5,7 @@ use std::ffi::OsString;
 
 use percent_encoding::percent_decode_str;
 
-use crate::harness::claude::CREDENTIAL_VARIABLES;
+use crate::harness::claude::{CREDENTIAL_VARIABLES, HEADER_VARIABLES};
 use crate::secrets::OWN_CREDENTIAL_VARIABLES;
 use crate::variable_names::{self, VariableNames, matches};
 
@@ -64,8 +64,10 @@ pub struct Credential {
 
 /// The credentials the table passes among `environment`, each with the
 /// variable it comes from: the value of a variable the harness reads a
-/// credential from, and the password in a proxy variable's URL, as written
-/// and, when it differs and is UTF-8, percent-decoded.
+/// credential from, the password in a proxy variable's URL, as written
+/// and, when it differs and is UTF-8, percent-decoded, and each header's
+/// value in a variable the harness reads request headers from, whole and,
+/// when it opens with a scheme, without it.
 pub fn credentials_passed(environment: &[(String, String)]) -> Vec<Credential> {
     let credential = |variable: &str, value: String| Credential {
         variable: variable.to_string(),
@@ -83,6 +85,13 @@ pub fn credentials_passed(environment: &[(String, String)]) -> Vec<Credential> {
                 && decoded != password
             {
                 credentials.push(credential(name, decoded.into_owned()));
+            }
+        } else if HEADER_VARIABLES.contains(&name.as_str()) {
+            for header_value in header_values(value) {
+                credentials.push(credential(name, header_value.to_string()));
+                if let Some(rest) = without_scheme(header_value) {
+                    credentials.push(credential(name, rest.to_string()));
+                }
             }
         }
     }
@@ -109,6 +118,30 @@ fn proxy_password(url: &str) -> Option<&str> {
     let (userinfo, _) = authority.rsplit_once('@')?;
     let (_, password) = userinfo.split_once(':')?;
     Some(password)
+}
+
+/// Each header's value in a variable the harness reads request headers
+/// from, read as Claude Code reads it: a header per line, ending in `\n`
+/// or `\r\n`, split at its first `:` and trimmed. Lines without a `:` or
+/// a name are skipped.
+fn header_values(headers: &str) -> impl Iterator<Item = &str> {
+    headers.lines().filter_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        (!name.trim().is_empty()).then(|| value.trim())
+    })
+}
+
+/// What a header value leaves without the scheme it opens with, if any: an
+/// RFC 9110 token, then one or more spaces, then the rest
+/// (<https://www.rfc-editor.org/rfc/rfc9110#section-11.4>).
+fn without_scheme(value: &str) -> Option<&str> {
+    let (scheme, rest) = value.split_once(' ')?;
+    let rest = rest.trim();
+    let token = !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c));
+    (token && !rest.is_empty()).then_some(rest)
 }
 
 /// Whether `name` is a variable Linewright reads its own GitHub tokens or
@@ -206,6 +239,13 @@ mod tests {
     #[test]
     fn the_table_passes_every_variable_the_harness_reads_a_credential_from() {
         for name in CREDENTIAL_VARIABLES {
+            assert!(in_table(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_table_passes_every_variable_the_harness_reads_request_headers_from() {
+        for name in HEADER_VARIABLES {
             assert!(in_table(name), "{name}");
         }
     }

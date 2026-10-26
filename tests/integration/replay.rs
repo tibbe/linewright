@@ -379,16 +379,21 @@ fn a_replayed_session_leaves_redacted_the_credentials_the_table_passes_unnamed()
         ("ANTHROPIC_AUTH_TOKEN", "auth-s3cr3t"),
         ("HTTPS_PROXY", "http://bot:p%40s3cr3t@proxy:3128"),
         ("http_proxy", "http://bot:p%40s@proxy:3128"),
+        (
+            "ANTHROPIC_CUSTOM_HEADERS",
+            "x-litellm-api-key: Bearer sk-abc123\nX-Team: dev",
+        ),
         ("AWS_BEARER_TOKEN_BEDROCK", "bedrock-token"),
     ];
     let saw = "oauth-s3cr3t auth-s3cr3t http://bot:p%40s3cr3t@proxy:3128 p@s3cr3t \
-               bedrock-token";
+               sk-abc123 dev bedrock-token";
 
     let (pull, log) = replay_saying(dir.path(), &env, saw);
 
     assert!(
         pull.contains(
-            "Saw [redacted] [redacted] http://bot:[redacted]@proxy:3128 [redacted] bedrock-token"
+            "Saw [redacted] [redacted] http://bot:[redacted]@proxy:3128 [redacted] \
+             [redacted] dev bedrock-token"
         ),
         "{pull}"
     );
@@ -398,7 +403,7 @@ fn a_replayed_session_leaves_redacted_the_credentials_the_table_passes_unnamed()
         .filter(|line| line["level"] == "WARN")
         .filter_map(|line| line["fields"]["variable"].as_str().map(String::from))
         .collect();
-    assert_eq!(warned, ["http_proxy"], "{log}");
+    assert_eq!(warned, ["ANTHROPIC_CUSTOM_HEADERS", "http_proxy"], "{log}");
 }
 
 #[test]

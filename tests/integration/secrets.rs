@@ -171,3 +171,68 @@ fn a_proxy_password_of_1_to_5_characters_is_set_aside_by_its_variable() {
     assert_eq!(secrets.short(), ["HTTPS_PROXY"]);
     assert_eq!(secrets.redaction().apply("p@s p%40s"), "p@s p%40s");
 }
+
+#[test]
+fn a_header_value_is_a_secret_whole_and_without_its_scheme() {
+    let env = [(
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "x-litellm-api-key: Bearer sk-abc123",
+    )];
+    assert_eq!(
+        redacted(&env, "<Bearer sk-abc123> <sk-abc123>"),
+        "<[redacted]> <[redacted]>"
+    );
+    assert_eq!(
+        held_in(&env, "Bearer sk-abc123").as_deref(),
+        Some("ANTHROPIC_CUSTOM_HEADERS")
+    );
+    assert_eq!(
+        held_in(&env, "sk-abc123").as_deref(),
+        Some("ANTHROPIC_CUSTOM_HEADERS")
+    );
+}
+
+#[test]
+fn every_header_s_value_is_a_secret_whatever_its_name() {
+    let env = [(
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "x-api-key: sk-abc123\r\nX-Route: https://gw.example.com:8080/a\n\
+         Authorization: Basic Ym90Omh1bnRlcjI=\n",
+    )];
+    for value in [
+        "sk-abc123",
+        "https://gw.example.com:8080/a",
+        "Basic Ym90Omh1bnRlcjI=",
+        "Ym90Omh1bnRlcjI=",
+    ] {
+        assert_eq!(redacted(&env, &format!("<{value}>")), "<[redacted]>");
+        assert_eq!(
+            held_in(&env, value).as_deref(),
+            Some("ANTHROPIC_CUSTOM_HEADERS"),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn header_names_and_lines_that_are_not_headers_are_not_secrets() {
+    let env = [(
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "x-litellm-api-key: Bearer sk-abc123\n\n  \nno colon on this line\n: nameless-value\n",
+    )];
+    let text = "x-litellm-api-key no colon on this line nameless-value";
+    assert_eq!(redacted(&env, text), text);
+    assert_eq!(held_in(&env, text), None);
+}
+
+#[test]
+fn a_header_value_of_1_to_5_characters_is_set_aside_by_its_variable() {
+    let env = [(
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "X-Team: dev\nx-api-key: sk-abc123",
+    )];
+    let secrets = secrets_unnamed(&env);
+    assert_eq!(secrets.short(), ["ANTHROPIC_CUSTOM_HEADERS"]);
+    assert_eq!(secrets.redaction().apply("dev"), "dev");
+    assert_eq!(held_in(&env, "dev"), None);
+}
