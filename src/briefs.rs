@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::layer::Layer;
 use crate::prompts::{self, Prompts, Readers};
-use crate::store::{Blob, Entry};
+use crate::store::Blob;
 
 /// The prompts a session is sent, each from the first layer that has it
 /// (docs/specs/operation.md, "Prompts"). Its skills are always Linewright's
@@ -105,32 +105,33 @@ const PLUGIN: [(&str, &str); 12] = [
 
 impl PromptLayer {
     /// The layer holding `files`, each by its path under the layer's root,
-    /// and those of them it cannot use: an entry that is not one of
-    /// Linewright's prompts, or a prompt that cannot be read as text. An
-    /// entry is skipped when its name, or that of a directory it is in,
-    /// starts with `.` (docs/specs/operation.md, "Prompts").
+    /// and those of them it cannot use: a file that is not one of
+    /// Linewright's prompts, or a prompt that cannot be read as text. A
+    /// file is skipped when it is hidden (docs/specs/operation.md,
+    /// "Prompts").
     pub fn parse(
         layer: Layer,
-        files: impl IntoIterator<Item = (String, Entry)>,
+        files: impl IntoIterator<Item = (String, Blob)>,
     ) -> (PromptLayer, Vec<Unusable>) {
         let mut parsed = PromptLayer {
             layer,
             files: BTreeMap::new(),
         };
         let mut unusable = Vec::new();
-        for (path, entry) in files {
+        for (path, blob) in files {
             if is_hidden(&path) {
                 continue;
             }
-            let (error, holds) = match (prompts::readers(&path), entry) {
-                (Some(readers), Entry::File(blob)) => match blob.text() {
+            let (error, holds) = match prompts::readers(&path) {
+                Some(readers) => match blob.text() {
                     Ok(text) => {
                         parsed.files.insert(path, text);
                         continue;
                     }
                     Err(error) => (error, readers),
                 },
-                _ => (NOT_A_PROMPT, Readers::Every),
+                // No stage is known to read it, so it could be meant for any.
+                None => (NOT_A_PROMPT, Readers::Every),
             };
             unusable.push(Unusable {
                 path,
@@ -148,7 +149,7 @@ const NOT_A_PROMPT: &str = "not one of Linewright's prompts";
 
 /// Whether any part of `path` names a hidden entry: one whose name starts
 /// with `.`.
-fn is_hidden(path: &str) -> bool {
+pub(crate) fn is_hidden(path: &str) -> bool {
     path.split('/').any(|name| name.starts_with('.'))
 }
 
@@ -243,7 +244,7 @@ impl OperatorPrompts {
                 let file = dir.join(&path);
                 let bytes = std::fs::read(&file)
                     .with_context(|| format!("reading the prompt {}", file.display()))?;
-                files.push((path, Entry::File(Blob::from_bytes(bytes))));
+                files.push((path, Blob::from_bytes(bytes)));
             }
         }
         let (layer, mut unusable) = PromptLayer::parse(Layer::Operator, files);

@@ -9,12 +9,14 @@ use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 use serde::{Deserialize, Serialize};
 
+use crate::briefs;
 use crate::domain::Timestamp;
 use crate::records;
+use crate::repo_files;
 use crate::store::Store;
 use crate::work_settings::Effort;
 
-pub const DIR: &str = ".linewright/automations";
+pub const DIR: &str = repo_files::linewright_path!("/automations");
 
 const DEFAULT_MAX_ISSUES: u32 = 3;
 
@@ -173,31 +175,55 @@ pub struct Unparsed {
     pub reason: String,
 }
 
-/// Fails only when the directory cannot be listed: a file that cannot be
-/// read is one that does not parse.
+/// Every file in [`DIR`], hidden ones aside, is an automation file
+/// (`docs/specs/automations.md`, A file that does not parse). Fails only
+/// when the directory cannot be listed or its files read: a file that cannot
+/// be read as text is one that does not parse.
 pub async fn read(store: &dyn Store, branch: &str) -> Result<AutomationFiles> {
-    let mut files = AutomationFiles::default();
-    for file in store.list_files(branch, DIR).await? {
-        let Some(name) = file.strip_suffix(".md").filter(|name| !name.contains('/')) else {
-            continue;
-        };
-        let parsed = async {
+    let (named, mut files) = sort(store.list_files(branch, DIR).await?);
+    let paths: Vec<String> = named.iter().map(|(path, _)| path.clone()).collect();
+    let mut blobs = store.read_files(branch, &paths).await?;
+    for (path, name) in named {
+        let blob = blobs.remove(&path);
+        let parsed = || {
             let name: AutomationName = name.parse().map_err(anyhow::Error::msg)?;
-            let text = store
-                .read_file(branch, &name.path())
-                .await?
-                .context("the file is gone")?;
+            let text = blob
+                .context("the file is gone")?
+                .text()
+                .map_err(anyhow::Error::msg)?;
             parse(&name, &text)
         };
-        match parsed.await {
+        match parsed() {
             Ok(automation) => files.parsed.push(automation),
             Err(e) => files.unparsed.push(Unparsed {
-                path: format!("{DIR}/{file}"),
+                path,
                 reason: format!("{e:#}"),
             }),
         }
     }
     Ok(files)
+}
+
+/// Sorts `listed`, the files under [`DIR`] by their paths under it, hidden
+/// ones aside, into those named as automations, each by its path in the
+/// repository and its name, and those that do not parse.
+fn sort(listed: Vec<String>) -> (Vec<(String, String)>, AutomationFiles) {
+    let mut named = Vec::new();
+    let mut files = AutomationFiles::default();
+    for file in listed {
+        if briefs::is_hidden(&file) {
+            continue;
+        }
+        let path = format!("{DIR}/{file}");
+        match file.strip_suffix(".md").filter(|name| !name.contains('/')) {
+            Some(name) => named.push((path, name.to_string())),
+            None => files.unparsed.push(Unparsed {
+                path,
+                reason: format!("an automation is a `.md` file directly in `{DIR}/`"),
+            }),
+        }
+    }
+    (named, files)
 }
 
 #[derive(Deserialize)]

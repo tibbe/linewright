@@ -2454,6 +2454,82 @@ async fn following_a_transcript_passes_through_a_proxy_unbuffered_unchanged_and_
 }
 
 #[tokio::test]
+async fn status_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights() {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(".linewright/prompts/implment.md", "Implement it.\n")],
+            "Tune the implementing",
+        )
+        .await
+        .unwrap();
+    let answering = Answering::start(world, false).await;
+
+    let output = answering.lw(&["status"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert!(
+        output.stdout.lines().any(|line| line
+            == "repository file Linewright cannot use: `.linewright/prompts/implment.md`: \
+                not one of Linewright's prompts"),
+        "{}",
+        output.stdout
+    );
+    answering.stop().await;
+}
+
+#[tokio::test]
+async fn status_shows_each_file_in_the_automations_that_is_not_an_automation_as_not_parsing() {
+    let world = with_ticket_and_automation().await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[
+                (".linewright/automations/notes.txt", "Notes.\n"),
+                (".linewright/automations/sub/x.md", "Look.\n"),
+                (".linewright/automations/.gitkeep", ""),
+            ],
+            "Keep notes",
+        )
+        .await
+        .unwrap();
+    let answering = Answering::start(world, false).await;
+
+    let output = answering.lw(&["status"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let unparsed: Vec<&str> = output
+        .stdout
+        .lines()
+        .filter(|line| line.contains("does not parse"))
+        .collect();
+    let rule = "an automation is a `.md` file directly in `.linewright/automations/`";
+    assert_eq!(
+        unparsed,
+        [
+            format!(".linewright/automations/notes.txt: does not parse: {rule}"),
+            format!(".linewright/automations/sub/x.md: does not parse: {rule}"),
+        ],
+        "{}",
+        output.stdout
+    );
+    assert!(
+        output
+            .stdout
+            .lines()
+            .any(|line| line.starts_with("automation weekly next run")),
+        "{}",
+        output.stdout
+    );
+    answering.stop().await;
+}
+
+#[tokio::test]
 async fn explain_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights() {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     let ticket = open_ticket(&world, "Gadgets");

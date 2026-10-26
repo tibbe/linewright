@@ -584,7 +584,7 @@ impl Factory {
             warn!(
                 path = file.path,
                 error = file.error,
-                "a file of the repository's cannot be used: the runs that read it wait"
+                "a file of the repository's cannot be used: the runs it holds wait"
             );
         }
         Ok(Arc::new(repo))

@@ -6,7 +6,7 @@ use linewright::domain::{
     Assignment, CheckState, IssueCloseReason, Login, MergeMethod, Number, Pull, ReviewState,
     Timestamp,
 };
-use linewright::store::{Blob, Entry, Store, Tree};
+use linewright::store::{Blob, Store};
 use std::collections::BTreeMap;
 
 async fn snapshot_pull(world: &World, pr: Number) -> Pull {
@@ -460,8 +460,7 @@ async fn a_pull_request_squashed_is_one_commit_titled_after_it() {
 }
 
 #[tokio::test]
-async fn the_files_asked_for_and_a_directorys_are_read_from_the_head_of_the_branch_as_deep_as_asked()
- {
+async fn the_files_asked_for_are_read_from_the_head_of_the_branch_leaving_out_paths_with_no_file() {
     let world = World::new().await;
     world
         .store
@@ -470,12 +469,8 @@ async fn the_files_asked_for_and_a_directorys_are_read_from_the_head_of_the_bran
             "main",
             &[
                 (".linewright/config.toml", "model = \"opus\"\n"),
-                (".linewright/automations/hourly.md", "Every hour.\n"),
                 (".linewright/prompts/triage.md", "Triage it.\n"),
-                (".linewright/prompts/.editorconfig", "root = true\n"),
                 (".linewright/prompts/parts/facts.md", "Facts.\n"),
-                (".linewright/prompts/parts/x/y.md", "Too deep.\n"),
-                (".linewright/prompts/parts/x/z/w.md", "Deeper.\n"),
             ],
             "Configure Linewright",
         )
@@ -486,75 +481,58 @@ async fn the_files_asked_for_and_a_directorys_are_read_from_the_head_of_the_bran
         .commit(
             "maintainer",
             "7-elsewhere",
-            &[
-                (".linewright/config.toml", "effort = \"low\"\n"),
-                (".linewright/prompts/design.md", "Design it.\n"),
-            ],
+            &[(".linewright/config.toml", "effort = \"low\"\n")],
             "Configure it elsewhere",
         )
         .await
         .unwrap();
-    let paths = [".linewright/config.toml", ".linewright/missing.toml"].map(String::from);
+    let paths = [
+        ".linewright/config.toml",
+        ".linewright/prompts/parts/facts.md",
+        ".linewright/prompts/design.md",
+        ".linewright/prompts/parts",
+    ]
+    .map(String::from);
 
-    let read = world
-        .store
-        .read_files("main", &paths, prompts_tree())
-        .await
-        .unwrap();
+    let files = world.store.read_files("main", &paths).await.unwrap();
 
     assert_eq!(
-        read.files,
-        BTreeMap::from([(
-            ".linewright/config.toml".to_string(),
-            Blob::Text("model = \"opus\"\n".into())
-        )])
-    );
-    let text = |text: &str| Entry::File(Blob::Text(text.into()));
-    assert_eq!(
-        read.entries,
+        files,
         BTreeMap::from([
-            (".editorconfig".to_string(), text("root = true\n")),
-            ("parts/facts.md".to_string(), text("Facts.\n")),
-            ("parts/x".to_string(), Entry::Unlisted),
-            ("triage.md".to_string(), text("Triage it.\n")),
+            (
+                ".linewright/config.toml".to_string(),
+                Blob::Text("model = \"opus\"\n".into())
+            ),
+            (
+                ".linewright/prompts/parts/facts.md".to_string(),
+                Blob::Text("Facts.\n".into())
+            ),
         ])
     );
-}
-
-fn prompts_tree() -> Tree<'static> {
-    Tree {
-        dir: ".linewright/prompts",
-        depth: 2,
-    }
 }
 
 #[tokio::test]
 async fn a_file_that_is_not_utf_8_text_is_read_as_binary() {
     let world = World::new().await;
+    let path = ".linewright/prompts/triage.md";
     world
         .store
         .commit_bytes(
             "maintainer",
             "main",
-            &[(
-                ".linewright/prompts/triage.md",
-                b"Triage \xff it.\n".as_slice(),
-            )],
+            &[(path, b"Triage \xff it.\n".as_slice())],
             "Add a prompt in Latin-1",
         )
         .await
         .unwrap();
 
-    let read = world
+    let files = world
         .store
-        .read_files("main", &[], prompts_tree())
+        .read_files("main", &[path.into()])
         .await
         .unwrap();
 
-    assert_eq!(
-        read.entries,
-        BTreeMap::from([("triage.md".to_string(), Entry::File(Blob::Binary))])
-    );
+    assert_eq!(files, BTreeMap::from([(path.to_string(), Blob::Binary)]));
 }
 
 #[tokio::test]

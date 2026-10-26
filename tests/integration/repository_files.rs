@@ -276,18 +276,32 @@ async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file()
 }
 
 #[tokio::test]
-async fn a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights_holds_every_run_until_it_is_removed()
+async fn a_file_under_linewright_that_is_not_one_of_linewrights_holds_every_run_until_it_is_removed()
  {
     for path in [
         ".linewright/prompts/implment.md",
         ".linewright/prompts/parts/x/y.md",
+        ".linewright/notes.txt",
+        // Where an earlier release kept the repository's prompts.
+        ".linewright/briefs/prompts/triage.md",
     ] {
         let mut world = World::new().await;
         implement(&world);
         triage_ready(&world);
-        commit_on(&world, "main", &[(path, "Implement it.\n")]).await;
+        world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+        commit_on(
+            &world,
+            "main",
+            &[
+                (path, "Implement it.\n"),
+                (".linewright/automations/hourly.md", HOURLY),
+            ],
+        )
+        .await;
         let ticket = open_ticket(&world, "Gadgets");
         let reported = open_for_triage(&world);
+        world.poll().await;
+        world.clock.advance(TimeDelta::hours(1));
 
         world.poll().await;
 
@@ -301,12 +315,17 @@ async fn a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights_holds_
             [] as [std::string::String; 0],
             "with {path}"
         );
+        assert_eq!(
+            world.harness.automation_prompts(),
+            [] as [std::string::String; 0],
+            "with {path}"
+        );
         assert!(!is_claimed(&world, ticket), "with {path}");
         assert!(!is_claimed(&world, reported), "with {path}");
 
         world
             .store
-            .remove("maintainer", "main", &[path], "Remove the stray prompt")
+            .remove("maintainer", "main", &[path], "Remove the stray file")
             .await
             .unwrap();
         world.poll().await;
@@ -321,23 +340,52 @@ async fn a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights_holds_
             1,
             "with {path}"
         );
+        assert_eq!(world.harness.automation_prompts().len(), 1, "with {path}");
     }
 }
 
 #[tokio::test]
-async fn a_hidden_file_in_the_repositorys_prompts_holds_nothing() {
+async fn a_hidden_file_under_linewright_holds_nothing() {
+    for path in [
+        ".linewright/prompts/.editorconfig",
+        ".linewright/.editorconfig",
+        ".linewright/.hidden/x",
+    ] {
+        let mut world = World::new().await;
+        triage_ready(&world);
+        commit_on(&world, "main", &[(path, "root = true\n")]).await;
+        let reported = open_for_triage(&world);
+
+        world.poll().await;
+
+        assert_eq!(
+            world.harness.prompts(WorkKind::Triage).len(),
+            1,
+            "with {path}"
+        );
+        assert!(is_claimed(&world, reported), "with {path}");
+    }
+}
+
+#[tokio::test]
+async fn a_file_in_the_automations_that_is_not_an_automation_does_not_parse_and_the_others_run() {
     let mut world = World::new().await;
-    triage_ready(&world);
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     commit_on(
         &world,
         "main",
-        &[(".linewright/prompts/.editorconfig", "root = true\n")],
+        &[
+            (".linewright/automations/hourly.md", HOURLY),
+            (".linewright/automations/notes.txt", "Notes.\n"),
+            (".linewright/automations/sub/x.md", HOURLY),
+            (".linewright/automations/.gitkeep", ""),
+        ],
     )
     .await;
-    let reported = open_for_triage(&world);
+    world.poll().await;
+    world.clock.advance(TimeDelta::hours(1));
 
     world.poll().await;
 
-    assert_eq!(world.harness.prompts(WorkKind::Triage).len(), 1);
-    assert!(is_claimed(&world, reported));
+    assert_eq!(world.harness.automation_prompts().len(), 1);
 }

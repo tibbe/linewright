@@ -314,32 +314,6 @@ impl Blob {
     }
 }
 
-/// A directory to list, and in its subdirectories how many levels down.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Tree<'a> {
-    pub dir: &'a str,
-    /// 1 lists only the entries directly in `dir`.
-    pub depth: usize,
-}
-
-/// An entry of a [`Tree`] listed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Entry {
-    File(Blob),
-    /// A directory at the last level listed, or a submodule, whose contents
-    /// were not read.
-    Unlisted,
-}
-
-/// What [`Store::read_files`] read.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Files {
-    /// Each file asked for, by its path.
-    pub files: BTreeMap<String, Blob>,
-    /// Each entry of the tree, by its path under the tree's directory.
-    pub entries: BTreeMap<String, Entry>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewIssue {
     pub title: String,
@@ -405,10 +379,9 @@ pub trait Store: Send + Sync {
     /// The contents of `path` at the head of `branch`, or `None` when it has
     /// no such file.
     async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>>;
-    /// At the head of `branch`, each file of `paths`, leaving out the paths
-    /// at which it has no file, and every entry of `tree`: none when it has
-    /// no such directory.
-    async fn read_files(&self, branch: &str, paths: &[String], tree: Tree<'_>) -> Result<Files>;
+    /// At the head of `branch`, each file of `paths` by its path, leaving out
+    /// the paths at which it has no file.
+    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>>;
     /// The path, relative to `dir`, of every file in the directory `dir` and
     /// its subdirectories at the head of `branch`, such as
     /// `prompts/parts/facts.md`: none when it has no such directory.

@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::{
-    AnyItem, Blob, Categories, Entry, Files, Identity, IssueRead, NewIssue, NewPull, PushError,
-    PushMode, RepoSettings, Store, Tree,
+    AnyItem, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
+    RepoSettings, Store,
 };
 use crate::clock::Clock;
 use crate::domain::{
@@ -1650,41 +1650,28 @@ impl Store for LocalStore {
         git::git(&repository, &["show", &object]).await.map(Some)
     }
 
-    async fn read_files(&self, branch: &str, paths: &[String], tree: Tree<'_>) -> Result<Files> {
+    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>> {
+        let mut read = BTreeMap::new();
+        if paths.is_empty() {
+            return Ok(read);
+        }
         let repository = self.repository();
-        let mut args = vec!["ls-tree", "-r", "-z", branch, "--", tree.dir];
+        let mut args = vec!["ls-tree", "-r", "-z", branch, "--"];
         args.extend(paths.iter().map(String::as_str));
         // Each entry is `<mode> <type> <object>\t<name>`
         // (<https://git-scm.com/docs/git-ls-tree#_output_format>).
         let listing = git::git(&repository, &args).await?;
-        let mut read = Files::default();
         for line in listing.split('\0') {
             let Some((meta, path)) = line.split_once('\t') else {
                 continue;
             };
             let mut meta = meta.split(' ');
-            let (Some(kind), Some(object)) = (meta.nth(1), meta.next()) else {
+            let (Some("blob"), Some(object)) = (meta.nth(1), meta.next()) else {
                 continue;
             };
-            let blob = async || {
+            if paths.iter().any(|asked| asked == path) {
                 let bytes = git::git_bytes(&repository, &["cat-file", "blob", object]).await?;
-                anyhow::Ok(Blob::from_bytes(bytes))
-            };
-            let under = path
-                .strip_prefix(tree.dir)
-                .and_then(|under| under.strip_prefix('/'));
-            if let Some(under) = under {
-                let names: Vec<&str> = under.split('/').collect();
-                let (at, entry) = if names.len() > tree.depth {
-                    (names[..tree.depth].join("/"), Entry::Unlisted)
-                } else if kind == "blob" {
-                    (under.to_string(), Entry::File(blob().await?))
-                } else {
-                    (under.to_string(), Entry::Unlisted)
-                };
-                read.entries.insert(at, entry);
-            } else if kind == "blob" && paths.iter().any(|asked| asked == path) {
-                read.files.insert(path.to_string(), blob().await?);
+                read.insert(path.to_string(), Blob::from_bytes(bytes));
             }
         }
         Ok(read)

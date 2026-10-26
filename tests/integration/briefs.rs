@@ -7,7 +7,7 @@ use linewright::git::BranchStart;
 use linewright::layer::Layer;
 use linewright::prompts::{self, Readers, Reads};
 use linewright::reconcile::WorkKind;
-use linewright::store::{Blob, Entry};
+use linewright::store::Blob;
 use linewright::work_settings::RunKind;
 
 /// The layer of `files`, each of which must be one of Linewright's prompts.
@@ -17,15 +17,11 @@ fn layer(layer: Layer, files: &[(&str, &str)]) -> PromptLayer {
     layer
 }
 
-fn listing(files: &[(&str, &str)]) -> Vec<(String, Entry)> {
+fn listing(files: &[(&str, &str)]) -> Vec<(String, Blob)> {
     files
         .iter()
-        .map(|(path, text)| (path.to_string(), file(Blob::Text(text.to_string()))))
+        .map(|(path, text)| (path.to_string(), Blob::Text(text.to_string())))
         .collect()
-}
-
-fn file(blob: Blob) -> Entry {
-    Entry::File(blob)
 }
 
 fn not_a_prompt(path: &str) -> Unusable {
@@ -122,12 +118,12 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
         ])
         .into_iter()
         .chain([
-            ("logo.png".to_string(), file(Blob::Binary)),
-            (".DS_Store".to_string(), file(Blob::Binary)),
-            ("parts/x".to_string(), Entry::Unlisted),
-            ("parts/.cache".to_string(), Entry::Unlisted),
-            // A directory or submodule at a prompt's path.
-            ("rework.md".to_string(), Entry::Unlisted),
+            ("logo.png".to_string(), Blob::Binary),
+            (".DS_Store".to_string(), Blob::Binary),
+            ("parts/x/y.md".to_string(), Blob::Text("Too deep.".into())),
+            ("parts/.cache/x".to_string(), Blob::Binary),
+            // A directory at a prompt's path.
+            ("rework.md/x".to_string(), Blob::Text("Ours.".into())),
         ]),
     );
 
@@ -141,10 +137,10 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
             not_a_prompt("README.md"),
             not_a_prompt("implment.md"),
             not_a_prompt("logo.png"),
-            not_a_prompt("parts/x"),
+            not_a_prompt("parts/x/y.md"),
             not_a_prompt("plugin/skills/tdd/SKILL.md"),
             not_a_prompt("prompts/implement.md"),
-            not_a_prompt("rework.md"),
+            not_a_prompt("rework.md/x"),
         ]
     );
 }
@@ -154,8 +150,8 @@ fn a_prompt_that_cannot_be_read_as_text_is_unusable() {
     let (layer, unusable) = PromptLayer::parse(
         Layer::Operator,
         [
-            ("triage.md".to_string(), file(Blob::Binary)),
-            ("design.md".to_string(), file(Blob::TooLarge)),
+            ("triage.md".to_string(), Blob::Binary),
+            ("design.md".to_string(), Blob::TooLarge),
         ],
     );
 
