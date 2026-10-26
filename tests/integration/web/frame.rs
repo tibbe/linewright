@@ -241,7 +241,7 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
         "{holds:?}"
     );
     assert!(
-        has_classes(select(&html, "#holds .alert")[0], &["alert-warning"]),
+        has_classes(select(&html, "#holds .alert")[0], &["alert-info"]),
         "{}",
         html.html()
     );
@@ -251,7 +251,7 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
         drain.label == "Drain"
             && drain.value.starts_with("started 2026-10-01 ")
             && !drain.value.contains("deadline")
-            && drain.tone.as_deref() == Some("badge-warning"),
+            && drain.tone.as_deref() == Some("badge-info"),
         "{facts:?}"
     );
     drop(agent);
@@ -278,6 +278,11 @@ async fn a_refused_delivery_is_a_hold_until_a_delivery_is_accepted() {
                 .is_some_and(|rest| rest.ends_with(" UTC, none accepted since"))
             && refused[0].1 == "/server",
         "{refused:?}"
+    );
+    assert!(
+        has_classes(select(&html, "#holds .alert")[0], &["alert-warning"]),
+        "{}",
+        html.html()
     );
 
     signed(&web.listener, "ping", "{}").await;

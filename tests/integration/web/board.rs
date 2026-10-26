@@ -391,7 +391,10 @@ async fn each_lane_is_a_surface_sunk_into_the_page_with_its_cards_raised_on_it()
     assert_eq!(cards.len(), 4);
     for card in cards {
         assert!(
-            has_classes(card, &["card", "bg-base-100"]) && lacks_classes(card, &["card-border"]),
+            has_classes(
+                card,
+                &["card", "bg-card", "border", "border-base-300", "shadow-sm"]
+            ),
             "{}",
             card.html()
         );

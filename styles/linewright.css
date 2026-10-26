@@ -15,8 +15,45 @@
 @source not "./daisyui.mjs";
 @source not "./daisyui-theme.mjs";
 
+/* daisyUI's components without its themes, which the two blocks below give
+   in full: each is daisyUI's built-in theme of that name, with which the
+   theme plugin fills in every variable a block does not set
+   (https://daisyui.com/docs/themes/#how-to-customize-an-existing-theme). */
 @plugin "./daisyui.mjs" {
-  themes: light --default, dark --prefersdark;
+  themes: false;
+}
+
+/* Linewright's own light and dark themes (docs/specs/web/design_system.md,
+   Colour scheme): daisyUI's `light` and `dark` with the Colour scheme's
+   roles, Page as `base-100`, Lane as `base-200`, Border as `base-300`, Text
+   as `base-content`, and Card, which is lighter than the Page and so is no
+   `base-*`, as `--card`. */
+@plugin "./daisyui-theme.mjs" {
+  name: "light";
+  default: true;
+  color-scheme: light;
+  --color-base-100: #f7f8fa;
+  --color-base-200: #eceef2;
+  --color-base-300: #d8dbe2;
+  --color-base-content: #1c2024;
+  --card: #ffffff;
+}
+
+@plugin "./daisyui-theme.mjs" {
+  name: "dark";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: #202226;
+  --color-base-200: #191a1d;
+  --color-base-300: #3d4047;
+  --color-base-content: #eceef2;
+  --card: #2d3035;
+}
+
+/* The Card colour as Tailwind's `bg-card`
+   (https://tailwindcss.com/docs/colors#using-a-custom-color). */
+@theme inline {
+  --color-card: var(--card);
 }
 
 @layer base {

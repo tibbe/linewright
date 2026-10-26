@@ -352,22 +352,11 @@ impl Hold {
     fn tone(&self) -> Tone {
         match self {
             Hold::UsageLimit { .. } => Tone::Cancelled,
-            Hold::Drain(_) | Hold::WebhooksRefused { .. } => Tone::InProgress,
+            Hold::Drain(_) => Tone::InProgress,
+            Hold::WebhooksRefused { .. } => Tone::Pending,
             Hold::PollsFailed(_) | Hold::UnparsedAutomation(_) | Hold::AutomationFailed { .. } => {
                 Tone::Failure
             }
-        }
-    }
-
-    /// Its alert's classes, in its tone's daisyUI colour: neutral is
-    /// daisyUI's alert with no colour of its own. Written whole, as
-    /// `Tone::colour` says why.
-    fn alert(&self) -> &'static str {
-        match self.tone() {
-            Tone::Cancelled => "alert",
-            Tone::InProgress | Tone::Pending => "alert alert-warning",
-            Tone::Failure => "alert alert-error",
-            Tone::Success => "alert alert-success",
         }
     }
 
@@ -425,7 +414,7 @@ impl Frame {
         let holds = Hold::of(linewright, read.automations.as_ref())
             .iter()
             .map(|hold| HoldShown {
-                alert: hold.alert(),
+                alert: hold.tone().alert(),
                 phrase: html(&hold.phrase()),
                 href: hold.href(),
             })

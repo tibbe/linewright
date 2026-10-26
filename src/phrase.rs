@@ -31,8 +31,21 @@ impl Tone {
         match self {
             Tone::Success => "badge-success",
             Tone::Failure => "badge-error",
-            Tone::InProgress | Tone::Pending => "badge-warning",
+            Tone::InProgress => "badge-info",
+            Tone::Pending => "badge-warning",
             Tone::Cancelled => "badge-neutral",
+        }
+    }
+
+    /// The classes of an alert in its colour: neutral is daisyUI's alert with
+    /// no colour of its own. Written whole, as `colour` says why.
+    pub fn alert(self) -> &'static str {
+        match self {
+            Tone::Success => "alert alert-success",
+            Tone::Failure => "alert alert-error",
+            Tone::InProgress => "alert alert-info",
+            Tone::Pending => "alert alert-warning",
+            Tone::Cancelled => "alert",
         }
     }
 }
@@ -192,23 +205,32 @@ mod tests {
     /// `docs/specs/web/design_system.md`, Status.
     #[test]
     fn each_tone_has_the_daisyui_colour_of_the_states_it_shows() {
-        let colours = [
+        let tones = [
             Tone::Success,
             Tone::Failure,
             Tone::InProgress,
             Tone::Pending,
             Tone::Cancelled,
-        ]
-        .map(Tone::colour);
+        ];
 
         assert_eq!(
-            colours,
+            tones.map(Tone::colour),
             [
                 "badge-success",
                 "badge-error",
-                "badge-warning",
+                "badge-info",
                 "badge-warning",
                 "badge-neutral",
+            ]
+        );
+        assert_eq!(
+            tones.map(Tone::alert),
+            [
+                "alert alert-success",
+                "alert alert-error",
+                "alert alert-info",
+                "alert alert-warning",
+                "alert",
             ]
         );
     }
