@@ -183,4 +183,5 @@ configured in layers.
 - **Configuration is layered**: flags, `LINEWRIGHT_*` environment variables, a
   TOML file, defaults, parsed once into one typed value.
 - **Credentials come from the environment only.**
-- **SIGQUIT drains and SIGTERM stops.**
+- **Signals from a supervisor.** SIGTERM drains
+  ([Stopping](operation.md#stopping)).

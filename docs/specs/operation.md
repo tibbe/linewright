@@ -49,15 +49,17 @@ The command is `lw`.
 which wastes no work; a stop, which keeps unfinished work; and an exit at
 once.
 
-| State    | Event                           | Next     | Effect                                                                              |
-| -------- | ------------------------------- | -------- | ----------------------------------------------------------------------------------- |
-| serving  | SIGQUIT or `drain`              | draining | claims no item and starts no run; exits once no run is in flight                    |
-| serving  | SIGINT (Ctrl-C) or SIGTERM      | stopping | cancels the runs in flight once the action in progress is done; exits once they end |
-| draining | SIGQUIT or `drain`              | draining | nothing more                                                                        |
-| draining | SIGINT, SIGTERM or the deadline | stopping | as from serving                                                                     |
-| stopping | SIGQUIT or `drain`              | stopping | nothing more                                                                        |
-| stopping | SIGINT or SIGTERM               | exited   | at once                                                                             |
+| State    | Event                                    | Next     | Effect                                                                              |
+| -------- | ---------------------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| serving  | SIGTERM, SIGINT (Ctrl-C) or `drain`      | draining | claims no item and starts no run; exits once no run is in flight                    |
+| serving  | SIGQUIT                                  | stopping | cancels the runs in flight once the action in progress is done; exits once they end |
+| draining | `drain`                                  | draining | nothing more                                                                        |
+| draining | SIGTERM, SIGINT, SIGQUIT or the deadline | stopping | as from serving                                                                     |
+| stopping | `drain`                                  | stopping | nothing more                                                                        |
+| stopping | SIGTERM, SIGINT or SIGQUIT               | exited   | at once                                                                             |
 
+- **Logging a signal.** `serve` logs the way a signal takes and that the
+  next signal takes the next one.
 - **Draining.** All else `serve` does goes on until it exits, polls and
   deliveries included, and it waits for every run in flight however long,
   one waiting out the usage limit included.
