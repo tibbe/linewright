@@ -140,14 +140,16 @@ async fn misdirected(State(hosts): State<UiHosts>, request: Request, next: Next)
 }
 
 /// Has the browser run only the scripts Linewright serves, and show only
-/// its own images and the repository owner's GitHub avatar, which
-/// `github.com` redirects to `avatars.githubusercontent.com`.
+/// its own images, the repository owner's GitHub avatar, which
+/// `github.com` redirects to `avatars.githubusercontent.com`, and `data:`
+/// images, which daisyUI's CSS draws some of its parts from (the tooltip's
+/// tail, the noise texture).
 async fn confined(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(
-            "default-src 'self'; img-src 'self' https://github.com https://avatars.githubusercontent.com",
+            "default-src 'self'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com",
         ),
     );
     response
