@@ -58,7 +58,9 @@ fn created() -> Timestamp {
 fn section(failures: &[CheckFailure], name: &str) -> String {
     let issue = issue();
     let ticket = Ticket::new(&issue, None, vec![], None);
+    let repo_name = "owner/widgets".parse().unwrap();
     let repo = Repo {
+        name: &repo_name,
         default_branch: "main",
         spec_glob: "docs/specs/**/*.md",
     };

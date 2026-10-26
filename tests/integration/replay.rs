@@ -125,13 +125,20 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     replay(
         &dir.path().join("case"),
         &out,
-        harness,
+        harness.clone(),
         Arc::new(FakeClock::new()),
         config(&out),
     )
     .await
     .unwrap();
 
+    for kind in [WorkKind::Design, WorkKind::Implement] {
+        let prompts = harness.prompts(kind);
+        assert_ne!(prompts.len(), 0, "no {kind:?} prompt");
+        for prompt in prompts {
+            assert!(prompt.contains("- Repository: `acme/widgets`"), "{prompt}");
+        }
+    }
     let read = |path: &str| std::fs::read_to_string(out.join(path)).unwrap();
     assert!(read("issues/2.md").starts_with("# #2 Spec change: Gadgets"));
     assert!(read("issues/3.md").contains("- Labels: linewright:designed, ready-for-agent"));

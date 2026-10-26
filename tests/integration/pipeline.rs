@@ -128,6 +128,80 @@ async fn triage_and_implement_tasks_say_to_keep_scratch_files_in_the_temporary_d
     }
 }
 
+/// The first-message prompts of every work kind, the design of an issue and
+/// of a spec change, and an automation's.
+async fn every_kind_of_first_message_prompt() -> Vec<(&'static str, Vec<String>)> {
+    let mut issue = with_issue_for_triage().await;
+    design_issues(&issue);
+    implement(&issue);
+    for _ in 0..3 {
+        issue.poll().await;
+    }
+    let pr = *issue
+        .store
+        .pulls()
+        .last()
+        .expect("a pull request was opened");
+    issue.rework_asked(pr);
+    issue.poll().await;
+
+    let mut spec_change = World::new().await;
+    tickets_script(&spec_change);
+    merge_spec_change(&spec_change).await;
+    spec_change.poll().await;
+
+    let mut failing = World::new().await;
+    let (_, failing_pr) = failing.ticket_in_review().await;
+    failing
+        .store
+        .set_checks(
+            failing_pr,
+            vec![check("test", CheckState::Failed, "failed")],
+        )
+        .await
+        .unwrap();
+    failing.harness.on(WorkKind::FixCi, |call| {
+        commit_in(&call.spec.dir, &[("src/fix.txt", "fix\n")], "Fix the test");
+        Ok(json!({"outcome": "done", "comment": "Fixed."}).to_string())
+    });
+    failing.poll().await;
+
+    let (mut moved, _) = moved_past(Repository::default(), None, true).await;
+    moved.poll().await;
+
+    let mut automated = World::new().await;
+    automated.hourly_by_schedule_then_by_hand().await;
+
+    vec![
+        ("triage", issue.harness.prompts(WorkKind::Triage)),
+        (
+            "design of an issue",
+            issue.harness.prompts(WorkKind::Design),
+        ),
+        ("implement", issue.harness.prompts(WorkKind::Implement)),
+        ("rework", issue.harness.prompts(WorkKind::Rework)),
+        (
+            "design of a spec change",
+            spec_change.harness.prompts(WorkKind::Design),
+        ),
+        ("fix-ci", failing.harness.prompts(WorkKind::FixCi)),
+        ("update", moved.harness.prompts(WorkKind::Update)),
+        ("automation", automated.harness.automation_prompts()),
+    ]
+}
+
+#[tokio::test]
+async fn every_first_message_prompt_names_the_repository() {
+    for (kind, prompts) in every_kind_of_first_message_prompt().await {
+        assert_ne!(prompts.len(), 0, "no {kind} prompt");
+        let first = &prompts[0];
+        assert!(
+            first.contains(&format!("- Repository: `{REPO}`")),
+            "{kind}: {first}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
     let mut world = World::new().await;

@@ -2053,6 +2053,7 @@ impl Store for GitHub {
         }
         #[derive(Deserialize)]
         struct Repo {
+            full_name: String,
             default_branch: String,
         }
         let repo: Repo = self.rest(Method::GET, &self.repo_path(""), None).await?;
@@ -2090,7 +2091,12 @@ impl Store for GitHub {
         } else {
             Categories::IssueTypes(types)
         };
+        let full_name = repo
+            .full_name
+            .parse()
+            .context("GitHub's full name of the repository")?;
         Ok(RepoSettings::new(
+            full_name,
             repo.default_branch,
             linear_history,
             allowed_merge_methods,

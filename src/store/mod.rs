@@ -10,7 +10,7 @@ use async_trait::async_trait;
 
 use crate::domain::{
     CheckFailure, ClosedItem, Issue, IssueCloseReason, Item, Login, MergeMethod, MergeMethods,
-    MergedPull, Number, Pull, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
+    MergedPull, Number, Pull, Repo, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
 };
 use crate::redaction::Redaction;
 
@@ -41,6 +41,7 @@ impl Categories {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepoSettings {
+    pub repo: Repo,
     pub default_branch: String,
     pub update_rule: UpdateRule,
     pub merge_method: MergeMethod,
@@ -50,6 +51,7 @@ pub struct RepoSettings {
 
 impl RepoSettings {
     pub fn new(
+        repo: Repo,
         default_branch: String,
         linear_history: bool,
         allowed_merge_methods: MergeMethods,
@@ -74,6 +76,7 @@ impl RepoSettings {
             (update_rule, first_allowed.unwrap_or(MergeMethod::Merge))
         };
         RepoSettings {
+            repo,
             default_branch,
             update_rule,
             merge_method,

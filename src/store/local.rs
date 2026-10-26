@@ -16,8 +16,8 @@ use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, MergeMethod,
     MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
-    Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread, TicketBranch,
-    TicketBranchName, Timestamp, closed_within, closing_references, label,
+    Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread,
+    TicketBranch, TicketBranchName, Timestamp, closed_within, closing_references, label,
 };
 use crate::git::{self, Merged};
 
@@ -26,6 +26,7 @@ mod history;
 use history::{MergeOf, NewCommit, Replayed};
 
 pub struct Seed {
+    pub repo: Repo,
     pub default_branch: String,
     pub linewright: Login,
     pub issue_types: Option<Vec<String>>,
@@ -40,6 +41,7 @@ pub struct LocalStore {
 }
 
 struct State {
+    repo: Repo,
     default_branch: String,
     linewright: Login,
     issue_types: Option<Vec<String>>,
@@ -162,6 +164,7 @@ impl LocalStore {
             root,
             clock,
             state: Mutex::new(State {
+                repo: seed.repo,
                 default_branch: seed.default_branch,
                 linewright: seed.linewright,
                 issue_types: seed.issue_types,
@@ -1355,6 +1358,7 @@ impl Store for LocalStore {
             None => Categories::Labels,
         };
         Ok(RepoSettings::new(
+            state.repo.clone(),
             state.default_branch.clone(),
             state.linear_history,
             state.allowed_merge_methods.clone(),

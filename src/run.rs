@@ -55,6 +55,7 @@ pub(crate) struct Shell {
 impl Shell {
     fn repo(&self) -> Repo<'_> {
         Repo {
+            name: &self.settings.repo,
             default_branch: &self.settings.default_branch,
             spec_glob: self.policy.spec_glob.pattern(),
         }

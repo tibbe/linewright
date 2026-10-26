@@ -258,6 +258,10 @@ pub async fn replay(
         LocalStore::create(
             out,
             Seed {
+                repo: case
+                    .repo
+                    .parse()
+                    .context("the case's `repo` is not `owner/name`")?,
                 default_branch: case.default_branch.clone(),
                 linewright: case.linewright.clone(),
                 issue_types: case.issue_types.clone(),

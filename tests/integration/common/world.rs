@@ -157,6 +157,7 @@ impl World {
             LocalStore::create(
                 &dir.path().join("store"),
                 Seed {
+                    repo: REPO.parse().unwrap(),
                     default_branch: "main".into(),
                     linewright: Login::new(LINEWRIGHT),
                     issue_types: None,

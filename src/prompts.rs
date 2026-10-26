@@ -7,6 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use crate::automation::Automation;
+use crate::domain;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Parent, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::Feedback;
@@ -15,6 +16,7 @@ use crate::spec_gap::FiledGaps;
 use crate::store::FoundSecrets;
 
 pub struct Repo<'a> {
+    pub name: &'a domain::Repo,
     pub default_branch: &'a str,
     pub spec_glob: &'a str,
 }
@@ -131,6 +133,7 @@ macro_rules! values {
 values!(
     /// The facts every first-message prompt shares, from `parts/facts.md`.
     Facts {
+        repo,
         default_branch,
         spec_glob
     }
@@ -434,6 +437,7 @@ impl Prompts {
 fn shared(prompts: &Prompts, repo: &Repo) -> Shared {
     Shared {
         facts: prompts.facts.fill(&Facts {
+            repo: repo.name.to_string(),
             default_branch: repo.default_branch.into(),
             spec_glob: repo.spec_glob.into(),
         }),
