@@ -1,13 +1,13 @@
 //! The only writer of the local store's history: every commit it makes to its
 //! repository and every ref it moves there.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-use super::url;
 use crate::domain::{MergeMethod, Number};
-use crate::git;
+use crate::git::{self, Merged};
 
 /// A commit to write on `branch`, which starts from the default branch when
 /// it doesn't exist yet.
@@ -113,7 +113,8 @@ pub struct MergeOf<'a> {
 
 /// Merges as GitHub merges
 /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>),
-/// returning the new tip of the branch merged into.
+/// in the object store as GitHub does, and returns the new tip of the branch
+/// merged into.
 pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
     let MergeOf {
         into,
@@ -124,57 +125,101 @@ pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
         title,
         pr,
     } = merge;
-    let remote_head = format!("origin/{head}");
-    match method {
+    let by = Signature::of(by);
+    let after = match method {
         MergeMethod::Merge => {
+            let tree = merged_tree(repo, before, head).await?;
             let message = format!("Merge pull request {pr} from {head}");
-            merge_in_clone(
-                repo,
-                into,
-                by,
-                &[&["merge", "--quiet", "--no-ff", "-m", &message, &remote_head]],
-            )
-            .await
+            commit_tree(repo, &tree, &[before, head], &message, &by, &by).await?
         }
         MergeMethod::Squash => {
+            let tree = merged_tree(repo, before, head).await?;
             let message = format!("{title} ({pr})");
-            merge_in_clone(
-                repo,
-                into,
-                by,
-                &[
-                    &["merge", "--quiet", "--squash", &remote_head],
-                    &["commit", "--quiet", "-m", &message],
-                ],
-            )
-            .await
+            commit_tree(repo, &tree, &[before], &message, &by, &by).await?
         }
         MergeMethod::Rebase => {
-            let Replayed::Onto(after) = replay(repo, into, head, by).await? else {
+            let Replayed::Onto(after) = replay(repo, before, head, by.name).await? else {
                 bail!("the commits of {head} don't rebase onto {into} without conflicts");
             };
-            move_ref(repo, into, &after, before).await?;
-            Ok(after)
+            after
         }
+    };
+    move_ref(repo, into, &after, before).await?;
+    Ok(after)
+}
+
+/// The tree that merges `head` into the commit `tip`, which must merge
+/// cleanly.
+async fn merged_tree(repo: &Path, tip: &str, head: &str) -> Result<String> {
+    match git::merge_tree(repo, None, tip, head).await? {
+        Merged::Clean(tree) => Ok(tree),
+        Merged::Conflicted(_) => bail!("{head} doesn't merge into {tip} without conflicts"),
     }
 }
 
-/// Runs `commands` in a clone of `into` with `by` as its identity, and
-/// pushes what they leave checked out to `into`, returning it.
-async fn merge_in_clone(repo: &Path, into: &str, by: &str, commands: &[&[&str]]) -> Result<String> {
-    let work = tempfile::tempdir()?;
-    let dir = work.path().join("clone");
-    git::clone(url(repo)?, &dir, into, &[]).await?;
-    git::set_identity(&dir, by, &format!("{by}@example.com")).await?;
-    for command in commands {
-        git::git(&dir, command).await?;
+/// Who authored or committed a commit, and when, if not now
+/// (<https://git-scm.com/docs/git-commit-tree#_commit_information>).
+struct Signature<'a> {
+    name: &'a str,
+    email: Cow<'a, str>,
+    date: Option<&'a str>,
+}
+
+impl<'a> Signature<'a> {
+    /// The local store's signature for the login `name`, now.
+    fn of(name: &'a str) -> Self {
+        Signature {
+            name,
+            email: Cow::Owned(format!("{name}@example.com")),
+            date: None,
+        }
     }
-    git::git(
-        &dir,
-        &["push", "--quiet", "origin", &format!("HEAD:{into}")],
-    )
-    .await?;
-    git::head(&dir).await
+
+    /// The environment that makes this `role`'s signature, `AUTHOR` or
+    /// `COMMITTER`.
+    fn env(&self, role: Role) -> Vec<(String, String)> {
+        let role = match role {
+            Role::Author => "AUTHOR",
+            Role::Committer => "COMMITTER",
+        };
+        let mut env = vec![
+            (format!("GIT_{role}_NAME"), self.name.to_string()),
+            (format!("GIT_{role}_EMAIL"), self.email.to_string()),
+        ];
+        env.extend(
+            self.date
+                .map(|date| (format!("GIT_{role}_DATE"), date.to_string())),
+        );
+        env
+    }
+}
+
+/// Which of a commit's two signatures a [`Signature`] is.
+#[derive(Clone, Copy)]
+enum Role {
+    Author,
+    Committer,
+}
+
+/// Writes a commit of `tree` with `parents`, returning it.
+async fn commit_tree(
+    repo: &Path,
+    tree: &str,
+    parents: &[&str],
+    message: &str,
+    author: &Signature<'_>,
+    committer: &Signature<'_>,
+) -> Result<String> {
+    let mut args = vec!["commit-tree", tree];
+    for parent in parents {
+        args.extend(["-p", parent]);
+    }
+    args.extend(["-F", "-"]);
+    let env = [author.env(Role::Author), committer.env(Role::Committer)].concat();
+    Ok(git::git_input(repo, &args, &env, message.as_bytes())
+        .await?
+        .trim()
+        .to_string())
 }
 
 /// Where replaying a branch's commits ended.
@@ -184,51 +229,105 @@ pub enum Replayed {
     Conflict,
 }
 
-/// Replays the commits of `head` onto `onto`, as `git rebase` replays them,
-/// with `committer` as their committer. The commits it writes are in `repo`,
-/// and it moves no ref there.
+/// A commit to replay, as `git log` gives it.
+struct Pick<'a> {
+    commit: &'a str,
+    tree: &'a str,
+    parent: &'a str,
+    author: Signature<'a>,
+    message: &'a str,
+}
+
+/// The fields of a [`Pick`], in `git log`'s format
+/// (<https://git-scm.com/docs/git-log#_pretty_formats>).
+const PICK_FORMAT: &str = "--format=%H%x00%T%x00%P%x00%an%x00%ae%x00%ad%x00%B";
+const PICK_FIELDS: usize = 7;
+
+/// The commits in `log`, as `git log -z` gives them in [`PICK_FORMAT`],
+/// to replay onto `onto`.
+fn picks<'a>(log: &'a str, onto: &str) -> Result<Vec<Pick<'a>>> {
+    let fields: Vec<&str> = log.split_terminator('\0').collect();
+    fields
+        .chunks(PICK_FIELDS)
+        .map(|pick| {
+            let &[commit, tree, parent, name, email, date, message] = pick else {
+                bail!("git log gave an incomplete commit: {pick:?}");
+            };
+            if parent.is_empty() {
+                bail!("{commit} is a root commit, which a rebase onto {onto} can't replay");
+            }
+            Ok(Pick {
+                commit,
+                tree,
+                parent,
+                author: Signature {
+                    name,
+                    email: Cow::Borrowed(email),
+                    date: Some(date),
+                },
+                message,
+            })
+        })
+        .collect()
+}
+
+/// Whether `pick`, which turned its parent's tree into its own, became
+/// empty when replayed onto a tip with `tip_tree` as `tree`: a commit that
+/// was empty to begin with is kept, as `git rebase` keeps it
+/// (<https://git-scm.com/docs/git-rebase#Documentation/git-rebase.txt---emptydropkeepstop>).
+fn becomes_empty(pick: &Pick, parent_tree: &str, tip_tree: &str, tree: &str) -> bool {
+    tree == tip_tree && pick.tree != parent_tree
+}
+
+/// Replays the commits of `head` onto `onto`, as `git rebase`'s merge
+/// backend replays them (<https://git-scm.com/docs/git-rebase#_behavioral_differences>),
+/// with `committer` as their committer: merge commits are dropped, and so are
+/// commits already upstream and commits that become empty. The commits it
+/// writes are in `repo`, and it moves no ref there.
 pub async fn replay(repo: &Path, onto: &str, head: &str, committer: &str) -> Result<Replayed> {
-    let work = tempfile::tempdir()?;
-    let dir = work.path().join("clone");
-    let target = dir.to_str().context("clone paths are UTF-8")?;
-    let name = format!("user.name={committer}");
-    let email = format!("user.email={committer}@example.com");
-    git::git(
-        work.path(),
+    let log = git::git(
+        repo,
         &[
-            "clone",
-            "--quiet",
-            "--no-tags",
-            "--branch",
-            head,
-            "--config",
-            &name,
-            "--config",
-            &email,
-            url(repo)?,
-            target,
+            "log",
+            "-z",
+            "--reverse",
+            "--no-merges",
+            "--cherry-pick",
+            "--right-only",
+            "--date=raw",
+            PICK_FORMAT,
+            &format!("{onto}...{head}"),
         ],
     )
     .await?;
-    // The clone holds only objects `repo` has, so the rebase can read from
-    // and write to `repo`'s own.
-    let objects = repo.join("objects");
-    let objects = objects
-        .to_str()
-        .context("the local store's path is UTF-8")?;
-    let env = [("GIT_OBJECT_DIRECTORY".to_string(), objects.to_string())];
-    let rebased = git::git_with(
-        &dir,
-        &["rebase", "--quiet", &format!("origin/{onto}")],
-        &env,
-    )
-    .await;
-    match rebased {
-        Ok(_) => Ok(Replayed::Onto(git::head(&dir).await?)),
-        // A rebase that stops on a conflict leaves its state behind.
-        Err(_) if dir.join(".git/rebase-merge").exists() => Ok(Replayed::Conflict),
-        Err(error) => Err(error),
+    let picks = picks(&log, onto)?;
+    // One rev-parse gives the tip's commit and tree and every parent's tree.
+    let mut revs = vec![
+        "rev-parse".to_string(),
+        format!("{onto}^{{commit}}"),
+        format!("{onto}^{{tree}}"),
+    ];
+    revs.extend(picks.iter().map(|pick| format!("{}^{{tree}}", pick.parent)));
+    let revs: Vec<&str> = revs.iter().map(String::as_str).collect();
+    let resolved = git::git(repo, &revs).await?;
+    let mut resolved = resolved.lines();
+    let (Some(tip), Some(tip_tree)) = (resolved.next(), resolved.next()) else {
+        bail!("git rev-parse didn't resolve {onto}");
+    };
+    let (mut tip, mut tip_tree) = (tip.to_string(), tip_tree.to_string());
+    let committer = Signature::of(committer);
+    for (pick, parent_tree) in picks.iter().zip(resolved) {
+        let tree = match git::merge_tree(repo, Some(pick.parent), &tip, pick.commit).await? {
+            Merged::Clean(tree) => tree,
+            Merged::Conflicted(_) => return Ok(Replayed::Conflict),
+        };
+        if becomes_empty(pick, parent_tree, &tip_tree, &tree) {
+            continue;
+        }
+        tip = commit_tree(repo, &tree, &[&tip], pick.message, &pick.author, &committer).await?;
+        tip_tree = tree;
     }
+    Ok(Replayed::Onto(tip))
 }
 
 /// Moves `branch` to `new`, provided it is at `old`.

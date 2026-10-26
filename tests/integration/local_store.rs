@@ -266,6 +266,37 @@ async fn closing_a_pull_request_moves_when_it_was_last_updated() {
 #[tokio::test]
 async fn a_pull_request_merged_by_rebase_puts_its_changes_on_the_default_branch() {
     let world = World::new().await;
+    let (pr, head) = behind_pull(&world).await;
+
+    world
+        .store
+        .merge(pr, &head, MergeMethod::Rebase)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        world.store.file("main", "src/thing.txt").await.unwrap(),
+        "thing\n"
+    );
+    assert_eq!(
+        world.store.file("main", "src/other.txt").await.unwrap(),
+        "other\n"
+    );
+}
+
+/// The last commit on `rev`, in `git log`'s `format`.
+fn store_log(world: &World, format: &str, rev: &str) -> String {
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", &format!("--format={format}"), rev])
+        .current_dir(world.store.repository())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// A pull request opened on a default branch that has moved on since.
+async fn behind_pull(world: &World) -> (Number, String) {
     let issue = world
         .store
         .open_issue("maintainer", "Do the thing", "Please.", &[]);
@@ -281,6 +312,14 @@ async fn a_pull_request_merged_by_rebase_puts_its_changes_on_the_default_branch(
         .await
         .unwrap();
     let head = world.store.snapshot_pull(pr).await.head_sha;
+    (pr, head)
+}
+
+#[tokio::test]
+async fn a_pull_request_merged_by_rebase_keeps_its_author_with_the_merger_as_committer() {
+    let world = World::new().await;
+    let (pr, head) = behind_pull(&world).await;
+    let authored = store_log(&world, "%an <%ae> %ad", &head);
 
     world
         .store
@@ -289,11 +328,132 @@ async fn a_pull_request_merged_by_rebase_puts_its_changes_on_the_default_branch(
         .unwrap();
 
     assert_eq!(
+        store_log(&world, "%an <%ae> %ad", "main"),
+        authored,
+        "the author, as the pull request's commit has it"
+    );
+    assert_eq!(
+        store_log(&world, "%cn %s%n%P", "main"),
+        format!(
+            "{LINEWRIGHT} Do the thing\n{}\n",
+            store_log(&world, "%H", "main~1").trim()
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_pull_request_merged_by_rebase_adds_no_commit_for_changes_already_on_the_default_branch()
+{
+    let world = World::new().await;
+    let issue = world
+        .store
+        .open_issue("maintainer", "Do the thing", "Please.", &[]);
+    let pr = world.persons_pull_closing(issue).await;
+    world
+        .store
+        .merge_change(
+            "maintainer",
+            "Do the thing and another",
+            "The same, and more.",
+            &[("src/thing.txt", "thing\n"), ("src/other.txt", "other\n")],
+        )
+        .await
+        .unwrap();
+    let before = store_log(&world, "%H", "main");
+    let head = world.store.snapshot_pull(pr).await.head_sha;
+
+    world
+        .store
+        .merge(pr, &head, MergeMethod::Rebase)
+        .await
+        .unwrap();
+
+    assert_eq!(store_log(&world, "%H", "main"), before);
+}
+
+#[tokio::test]
+async fn a_pull_request_merged_by_rebase_skips_a_change_the_default_branch_has_and_built_on() {
+    let world = World::new().await;
+    let issue = world
+        .store
+        .open_issue("maintainer", "Do the thing", "Please.", &[]);
+    let pr = world.persons_pull_closing(issue).await;
+    world
+        .store
+        .merge_change(
+            "maintainer",
+            "Do the thing too",
+            "The same change.",
+            &[("src/thing.txt", "thing\n")],
+        )
+        .await
+        .unwrap();
+    world
+        .store
+        .merge_change(
+            "maintainer",
+            "Do more of the thing",
+            "Builds on it.",
+            &[("src/thing.txt", "thing\nmore\n")],
+        )
+        .await
+        .unwrap();
+    let before = store_log(&world, "%H", "main");
+    let head = world.store.snapshot_pull(pr).await.head_sha;
+
+    world
+        .store
+        .merge(pr, &head, MergeMethod::Rebase)
+        .await
+        .unwrap();
+
+    assert_eq!(store_log(&world, "%H", "main"), before);
+}
+
+#[tokio::test]
+async fn a_pull_request_merged_with_a_merge_commit_has_both_tips_as_parents() {
+    let world = World::new().await;
+    let (pr, head) = behind_pull(&world).await;
+    let before = store_log(&world, "%H", "main");
+    let head_ref = world.store.snapshot_pull(pr).await.head_ref;
+
+    world
+        .store
+        .merge(pr, &head, MergeMethod::Merge)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store_log(&world, "%an %cn %s%n%P", "main"),
+        format!(
+            "{LINEWRIGHT} {LINEWRIGHT} Merge pull request {pr} from {head_ref}\n{} {head}\n",
+            before.trim()
+        )
+    );
+    assert_eq!(
         world.store.file("main", "src/thing.txt").await.unwrap(),
         "thing\n"
     );
+}
+
+#[tokio::test]
+async fn a_pull_request_squashed_is_one_commit_titled_after_it() {
+    let world = World::new().await;
+    let (pr, head) = behind_pull(&world).await;
+    let before = store_log(&world, "%H", "main");
+
+    world
+        .store
+        .merge(pr, &head, MergeMethod::Squash)
+        .await
+        .unwrap();
+
     assert_eq!(
-        world.store.file("main", "src/other.txt").await.unwrap(),
-        "other\n"
+        store_log(&world, "%an %cn %s%n%P", "main"),
+        format!("{LINEWRIGHT} {LINEWRIGHT} Do the thing ({pr})\n{before}")
+    );
+    assert_eq!(
+        world.store.file("main", "src/thing.txt").await.unwrap(),
+        "thing\n"
     );
 }
