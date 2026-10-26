@@ -6,25 +6,32 @@ two themes of its own.
 ## Colour scheme
 
 - The light theme, or the dark theme for a reader who prefers dark. Each is
-  daisyUI's `light` or `dark` theme with its surfaces and text as below.
+  daisyUI's `light` or `dark` theme with its surfaces and text as below, and
+  the web UI draws in no colour but these and the theme's own fills, each with
+  its content colour on it: a wash is one of them made translucent, and
+  shadows are daisyUI's.
+- **Surfaces and text** are steps of Radix Slate, but for a light Card, which
+  is white.
 
-| Role   | Light     | Dark      |
-| ------ | --------- | --------- |
-| Page   | `#f7f8fa` | `#202226` |
-| Lane   | `#eceef2` | `#191a1d` |
-| Card   | `#ffffff` | `#2d3035` |
-| Border | `#d8dbe2` | `#3d4047` |
-| Text   | `#1c2024` | `#eceef2` |
+| Role       | daisyUI        | Light: Slate step | Dark: Slate step |
+| ---------- | -------------- | ----------------- | ---------------- |
+| Page       | `base-100`     | 2                 | 3                |
+| Lane       | `base-200`     | 3                 | 2                |
+| Card       |                | white             | 5                |
+| Border     | `base-300`     | 6                 | 6                |
+| Muted text |                | 11                | 11               |
+| Text       | `base-content` | 12                | 12               |
 
 ## Status
 
-| Outcome or state                                              | daisyUI colour |
-| ------------------------------------------------------------- | -------------- |
-| done, merged, green                                           | `success`      |
-| failed, handed back, CI failing                               | `error`        |
-| waiting for a person or for something                         | `warning`      |
-| in flight, running                                            | `info`         |
-| cancelled, interrupted, usage limit, paused or queued, closed | `neutral`      |
+| Outcome or state                            | Colour     |
+| ------------------------------------------- | ---------- |
+| done, merged, green                         | `success`  |
+| failed, handed back, CI failing             | `error`    |
+| waiting for a person or for something       | `warning`  |
+| in flight, running                          | `info`     |
+| paused or queued                            | Muted text |
+| cancelled, interrupted, usage limit, closed | `neutral`  |
 
 ## Navigation
 
@@ -37,6 +44,8 @@ two themes of its own.
 ## Layout
 
 - **Text cut to fit** is shown whole in a daisyUI `tooltip`.
+- **On a lane or a card**, no daisyUI component that draws in `base-100`,
+  `base-200` or `base-300`, such as a button, an input or an alert.
 
 ## Board
 
