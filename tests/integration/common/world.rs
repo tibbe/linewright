@@ -458,28 +458,15 @@ impl Serving {
     }
 }
 
-/// A copy of the shipped briefs, with the prompt at `path` under `prompts/`
-/// changed by `edit`.
+/// A `briefs` directory holding only the shipped prompt at `path` under
+/// `prompts/`, changed by `edit`.
 pub fn briefs_with(path: &str, edit: impl FnOnce(String) -> String) -> tempfile::TempDir {
-    fn copy(from: &std::path::Path, to: &std::path::Path) {
-        for entry in std::fs::read_dir(from).unwrap() {
-            let entry = entry.unwrap();
-            let target = to.join(entry.file_name());
-            if entry.file_type().unwrap().is_dir() {
-                std::fs::create_dir_all(&target).unwrap();
-                copy(&entry.path(), &target);
-            } else {
-                std::fs::copy(entry.path(), target).unwrap();
-            }
-        }
-    }
+    let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("briefs/prompts")
+        .join(path);
     let dir = tempfile::tempdir().unwrap();
-    copy(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs"),
-        dir.path(),
-    );
     let prompt = dir.path().join("prompts").join(path);
-    let text = std::fs::read_to_string(&prompt).unwrap();
-    std::fs::write(prompt, edit(text)).unwrap();
+    std::fs::create_dir_all(prompt.parent().unwrap()).unwrap();
+    std::fs::write(prompt, edit(std::fs::read_to_string(shipped).unwrap())).unwrap();
     dir
 }

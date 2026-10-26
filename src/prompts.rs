@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt::{self, Write};
 use std::marker::PhantomData;
+use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
 
@@ -9,10 +10,11 @@ use crate::automation::Automation;
 use crate::domain;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Parent, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
-use crate::reconcile::Feedback;
+use crate::reconcile::{Feedback, WorkKind};
 use crate::secrets::Held;
 use crate::spec_gap::FiledGaps;
 use crate::store::FoundSecrets;
+use crate::work_settings::RunKind;
 
 pub struct Repo<'a> {
     pub name: &'a domain::Repo,
@@ -135,15 +137,26 @@ values!(
 values!(Triage: Shared {
     categories,
     issue,
-    category_choices,
-    author
+    output
 });
+values!(
+    /// Triage's result contract, from `outputs/triage.md`.
+    TriageOutput {
+        category_choices,
+        author
+    }
+);
 values!(Design: Shared {
     kind,
     item,
     filed_gaps,
-    cutting
+    cutting,
+    output
 });
+values!(
+    /// Design's result contract, from `outputs/design.md`.
+    DesignOutput { kind }
+);
 values!(SpecChange {
     default_branch,
     number,
@@ -156,7 +169,8 @@ values!(Implement: Shared {
     default_branch,
     branch,
     holding,
-    ticket
+    ticket,
+    output
 });
 values!(
     /// An update's, and the start of a rework's and a fix's.
@@ -167,7 +181,8 @@ values!(
         unfinished,
         conflict,
         description,
-        ticket
+        ticket,
+        output
     }
 );
 values!(Rework: PullRequest {
@@ -178,7 +193,8 @@ values!(FixCi: PullRequest { failures });
 values!(AutomationRun: Shared {
     max_issues,
     name,
-    instructions
+    instructions,
+    output
 });
 values!(DefaultBranch { default_branch });
 values!(ExistingBranch {
@@ -229,10 +245,14 @@ impl<V> fmt::Debug for Template<V> {
 }
 
 /// [`Reader::read`] for the template at `$path` under `briefs/prompts/`,
-/// which Linewright ships.
+/// which Linewright ships, sent to the runs `$readers`.
 macro_rules! template {
-    ($reader:expr, $path:literal) => {
-        $reader.read($path, include_str!(concat!("../briefs/prompts/", $path)))
+    ($reader:expr, $path:literal, $readers:expr) => {
+        $reader.read(
+            $path,
+            $readers,
+            include_str!(concat!("../briefs/prompts/", $path)),
+        )
     };
 }
 
@@ -362,6 +382,15 @@ pub struct Prompts {
     loose_ends: Template<LooseEnds>,
     usage_limit_reset: Template<NoValues>,
     late_feedback: Template<LateFeedback>,
+    /// Each first-message prompt's result contract, filled into its
+    /// `{{output}}` (docs/specs/operation.md, "Briefs").
+    triage_output: Template<TriageOutput>,
+    design_output: Template<DesignOutput>,
+    implement_output: Template<NoValues>,
+    rework_output: Template<NoValues>,
+    fix_ci_output: Template<NoValues>,
+    update_output: Template<NoValues>,
+    automation_output: Template<NoValues>,
 }
 
 impl Prompts {
@@ -374,61 +403,158 @@ impl Prompts {
         let mut reader = Reader {
             lookup,
             unusable: Vec::new(),
+            layout: Vec::new(),
         };
-        let prompts = Prompts {
-            facts: template!(reader, "parts/facts.md"),
-            triage: template!(reader, "triage.md"),
-            design: template!(reader, "design.md"),
-            spec_change: template!(reader, "parts/spec-change.md"),
-            cut_spec_change: template!(reader, "parts/cut-spec-change.md"),
-            cut_issue: template!(reader, "parts/cut-issue.md"),
-            implement: template!(reader, "implement.md"),
-            rework: template!(reader, "rework.md"),
-            fix_ci: template!(reader, "fix-ci.md"),
-            update: template!(reader, "update.md"),
-            automation: template!(reader, "automation.md"),
-            new_branch: template!(reader, "parts/new-branch.md"),
-            existing_branch: template!(reader, "parts/existing-branch.md"),
-            unfinished: template!(reader, "parts/unfinished.md"),
-            unfinished_or_discard: template!(reader, "parts/unfinished-or-discard.md"),
-            conflict_rebase: template!(reader, "parts/conflict-rebase.md"),
-            conflict_merge: template!(reader, "parts/conflict-merge.md"),
-            update_rebase: template!(reader, "parts/update-rebase.md"),
-            update_merge: template!(reader, "parts/update-merge.md"),
-            full_log: template!(reader, "parts/full-log.md"),
-            filed_gaps: template!(reader, "parts/filed-gaps.md"),
-            fold_unfinished: template!(reader, "parts/fold-unfinished.md"),
-            held_secret: template!(reader, "parts/held-credential.md"),
-            pushed_secret: template!(reader, "parts/pushed-secret.md"),
-            parse_error: template!(reader, "follow-ups/parse-error.md"),
-            loose_ends: template!(reader, "follow-ups/loose-ends.md"),
-            usage_limit_reset: template!(reader, "follow-ups/usage-limit-reset.md"),
-            late_feedback: template!(reader, "follow-ups/late-feedback.md"),
-        };
+        let prompts = Prompts::build(&mut reader);
         (prompts, reader.unusable)
+    }
+
+    /// The path under `prompts/` of every prompt and part, with the runs it
+    /// is sent to: the table that says which runs a file holds
+    /// (docs/specs/repository.md, "Linewright's files").
+    fn layout() -> &'static [(&'static str, Readers)] {
+        static LAYOUT: LazyLock<Vec<(&'static str, Readers)>> = LazyLock::new(|| {
+            let mut reader = Reader {
+                lookup: &mut |_| None,
+                unusable: Vec::new(),
+                layout: Vec::new(),
+            };
+            Prompts::build(&mut reader);
+            reader.layout
+        });
+        &LAYOUT
+    }
+
+    fn build(reader: &mut Reader) -> Prompts {
+        Prompts {
+            facts: template!(reader, "parts/facts.md", Readers::Every),
+            triage: template!(reader, "triage.md", TRIAGE),
+            design: template!(reader, "design.md", DESIGN),
+            spec_change: template!(reader, "parts/spec-change.md", DESIGN),
+            cut_spec_change: template!(reader, "parts/cut-spec-change.md", DESIGN),
+            cut_issue: template!(reader, "parts/cut-issue.md", DESIGN),
+            implement: template!(reader, "implement.md", IMPLEMENT),
+            rework: template!(reader, "rework.md", REWORK),
+            fix_ci: template!(reader, "fix-ci.md", FIX_CI),
+            update: template!(reader, "update.md", UPDATE),
+            automation: template!(reader, "automation.md", AUTOMATIONS),
+            new_branch: template!(reader, "parts/new-branch.md", IMPLEMENT),
+            existing_branch: template!(reader, "parts/existing-branch.md", IMPLEMENT),
+            unfinished: template!(reader, "parts/unfinished.md", PULL_WORK),
+            unfinished_or_discard: template!(reader, "parts/unfinished-or-discard.md", IMPLEMENT),
+            conflict_rebase: template!(reader, "parts/conflict-rebase.md", FIRST_UPDATE),
+            conflict_merge: template!(reader, "parts/conflict-merge.md", FIRST_UPDATE),
+            update_rebase: template!(reader, "parts/update-rebase.md", UPDATE),
+            update_merge: template!(reader, "parts/update-merge.md", UPDATE),
+            full_log: template!(reader, "parts/full-log.md", FIX_CI),
+            filed_gaps: template!(reader, "parts/filed-gaps.md", DESIGN_AND_BRANCH_WORK),
+            fold_unfinished: template!(reader, "parts/fold-unfinished.md", BRANCH_WORK),
+            held_secret: template!(reader, "parts/held-credential.md", BRANCH_WORK),
+            pushed_secret: template!(reader, "parts/pushed-secret.md", BRANCH_WORK),
+            parse_error: template!(reader, "follow-ups/parse-error.md", Readers::Every),
+            loose_ends: template!(reader, "follow-ups/loose-ends.md", BRANCH_WORK),
+            usage_limit_reset: template!(reader, "follow-ups/usage-limit-reset.md", Readers::Every),
+            late_feedback: template!(reader, "follow-ups/late-feedback.md", PULL_WORK),
+            triage_output: template!(reader, "outputs/triage.md", TRIAGE),
+            design_output: template!(reader, "outputs/design.md", DESIGN),
+            implement_output: template!(reader, "outputs/implement.md", IMPLEMENT),
+            rework_output: template!(reader, "outputs/rework.md", REWORK),
+            fix_ci_output: template!(reader, "outputs/fix-ci.md", FIX_CI),
+            update_output: template!(reader, "outputs/update.md", UPDATE),
+            automation_output: template!(reader, "outputs/automation.md", AUTOMATIONS),
+        }
     }
 
     /// The path under `prompts/` of every prompt and part.
     pub fn paths() -> Vec<&'static str> {
-        let mut paths = Vec::new();
-        Prompts::read(&mut |path| {
-            paths.push(path);
-            None
-        });
-        paths
+        Prompts::layout().iter().map(|(path, _)| *path).collect()
     }
 }
 
-/// Reads each template from its lookup.
+/// The runs the template at `path` under `prompts/` is sent to, or `None`
+/// for a path that is no template's.
+pub fn readers(path: &str) -> Option<Readers> {
+    Prompts::layout()
+        .iter()
+        .find_map(|(p, readers)| (*p == path).then_some(*readers))
+}
+
+/// Which runs a brief file is sent to, and so which runs a file that cannot
+/// be used holds (docs/specs/repository.md, "Linewright's files").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readers {
+    Every,
+    Only(&'static [Reads]),
+}
+
+/// A kind of run that reads a brief file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reads {
+    Stage(WorkKind),
+    Automations,
+}
+
+impl Readers {
+    pub fn read_by(self, run: &RunKind) -> bool {
+        match self {
+            Readers::Every => true,
+            Readers::Only(reads) => reads.iter().any(|reads| match (reads, run) {
+                (Reads::Stage(kind), RunKind::Stage(run)) => kind == run,
+                (Reads::Automations, RunKind::Automation(_)) => true,
+                _ => false,
+            }),
+        }
+    }
+}
+
+const TRIAGE: Readers = Readers::Only(&[Reads::Stage(WorkKind::Triage)]);
+const DESIGN: Readers = Readers::Only(&[Reads::Stage(WorkKind::Design)]);
+const IMPLEMENT: Readers = Readers::Only(&[Reads::Stage(WorkKind::Implement)]);
+const REWORK: Readers = Readers::Only(&[Reads::Stage(WorkKind::Rework)]);
+const FIX_CI: Readers = Readers::Only(&[Reads::Stage(WorkKind::FixCi)]);
+const UPDATE: Readers = Readers::Only(&[Reads::Stage(WorkKind::Update)]);
+const AUTOMATIONS: Readers = Readers::Only(&[Reads::Automations]);
+const PULL_WORK: Readers = Readers::Only(&[
+    Reads::Stage(WorkKind::Rework),
+    Reads::Stage(WorkKind::FixCi),
+    Reads::Stage(WorkKind::Update),
+]);
+/// The runs that work on a ticket's branch.
+const BRANCH_WORK: Readers = Readers::Only(&[
+    Reads::Stage(WorkKind::Implement),
+    Reads::Stage(WorkKind::Rework),
+    Reads::Stage(WorkKind::FixCi),
+    Reads::Stage(WorkKind::Update),
+]);
+const DESIGN_AND_BRANCH_WORK: Readers = Readers::Only(&[
+    Reads::Stage(WorkKind::Design),
+    Reads::Stage(WorkKind::Implement),
+    Reads::Stage(WorkKind::Rework),
+    Reads::Stage(WorkKind::FixCi),
+    Reads::Stage(WorkKind::Update),
+]);
+const FIRST_UPDATE: Readers = Readers::Only(&[
+    Reads::Stage(WorkKind::Rework),
+    Reads::Stage(WorkKind::FixCi),
+]);
+
+/// Reads each template from its lookup, noting the runs it is sent to.
 struct Reader<'l, 'a> {
     lookup: &'l mut dyn FnMut(&'static str) -> Option<&'a str>,
     unusable: Vec<(&'static str, anyhow::Error)>,
+    layout: Vec<(&'static str, Readers)>,
 }
 
 impl Reader<'_, '_> {
     /// The template at `path`, which ships as `shipped`. A part or a
     /// follow-up is used without its trailing newline.
-    fn read<V: Values>(&mut self, path: &'static str, shipped: &str) -> Template<V> {
+    fn read<V: Values>(
+        &mut self,
+        path: &'static str,
+        readers: Readers,
+        shipped: &str,
+    ) -> Template<V> {
+        self.layout.push((path, readers));
         let parse = |text: &str| {
             let text = if path.contains('/') {
                 text.trim_end()
@@ -470,12 +596,14 @@ pub fn triage(prompts: &Prompts, repo: &Repo, issue: &Issue, categories: &[Strin
             .collect::<Vec<_>>()
             .join(", "),
         issue: rendered.trim_end().into(),
-        category_choices: categories
-            .iter()
-            .map(|c| format!("\"{c}\""))
-            .collect::<Vec<_>>()
-            .join(" | "),
-        author: issue.author.to_string(),
+        output: prompts.triage_output.fill(&TriageOutput {
+            category_choices: categories
+                .iter()
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            author: issue.author.to_string(),
+        }),
     })
 }
 
@@ -515,6 +643,7 @@ pub fn design_spec_change(
         }),
         filed_gaps: render_filed_gaps(prompts, filed_gaps),
         cutting: prompts.cut_spec_change.fill(&NoValues {}),
+        output: design_output(prompts, DesignOf::SpecChange),
     })
 }
 
@@ -534,6 +663,13 @@ pub fn design_issue(
         item: item.trim_end().into(),
         filed_gaps: render_filed_gaps(prompts, filed_gaps),
         cutting: prompts.cut_issue.fill(&NoValues {}),
+        output: design_output(prompts, DesignOf::Issue),
+    })
+}
+
+fn design_output(prompts: &Prompts, of: DesignOf) -> String {
+    prompts.design_output.fill(&DesignOutput {
+        kind: of.noun().into(),
     })
 }
 
@@ -559,6 +695,7 @@ pub fn implement(
         branch: branch.into(),
         holding,
         ticket: render_ticket(prompts, ticket),
+        output: prompts.implement_output.fill(&NoValues {}),
     })
 }
 
@@ -570,7 +707,7 @@ pub fn pull_work(
     work: &PullTask,
     unfinished: Option<&UnfinishedCommits>,
 ) -> String {
-    let pull_request = |conflict: String| PullRequest {
+    let pull_request = |conflict: String, output: &Template<NoValues>| PullRequest {
         base: shared(prompts, repo),
         branch: pr.head_ref.clone(),
         pr: pr.number.to_string(),
@@ -579,6 +716,7 @@ pub fn pull_work(
         conflict,
         description: or_none(&pr.body).into(),
         ticket: render_ticket(prompts, ticket),
+        output: output.fill(&NoValues {}),
     };
     let first_update = |conflict: Option<&Conflict>| {
         conflict
@@ -589,21 +727,24 @@ pub fn pull_work(
         PullTask::Rework { feedback, conflict } => {
             let (feedback, conversation) = render_feedback(pr, feedback);
             prompts.rework.fill(&Rework {
-                base: pull_request(first_update(*conflict)),
+                base: pull_request(first_update(*conflict), &prompts.rework_output),
                 feedback,
                 conversation,
             })
         }
         PullTask::FixCi { failures, conflict } => prompts.fix_ci.fill(&FixCi {
-            base: pull_request(first_update(*conflict)),
+            base: pull_request(first_update(*conflict), &prompts.fix_ci_output),
             failures: render_failures(prompts, failures),
         }),
-        PullTask::Update(conflict) => prompts.update.fill(&pull_request(stopped(
-            &prompts.update_rebase,
-            &prompts.update_merge,
-            repo,
-            conflict,
-        ))),
+        PullTask::Update(conflict) => prompts.update.fill(&pull_request(
+            stopped(
+                &prompts.update_rebase,
+                &prompts.update_merge,
+                repo,
+                conflict,
+            ),
+            &prompts.update_output,
+        )),
     }
 }
 
@@ -651,6 +792,7 @@ pub fn automation(prompts: &Prompts, repo: &Repo, automation: &Automation) -> St
         max_issues: automation.max_issues.to_string(),
         name: automation.name.to_string(),
         instructions: or_none(&automation.instructions).into(),
+        output: prompts.automation_output.fill(&NoValues {}),
     })
 }
 

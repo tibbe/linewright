@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use crate::layer::Layer;
-use crate::prompts::Prompts;
+use crate::prompts::{self, Prompts, Readers};
 
 /// What a session works from, each file from the first layer that has it.
 #[derive(Clone, Debug)]
@@ -48,6 +48,8 @@ pub struct Resolved {
 pub struct OperatorBriefs {
     layer: BriefLayer,
     briefs: Arc<Briefs>,
+    /// The files in the `briefs` directory outside Linewright's layout.
+    unused: Vec<String>,
 }
 
 const PROMPTS_DIR: &str = "prompts/";
@@ -183,6 +185,19 @@ impl Briefs {
         }
     }
 
+    /// The runs the file at `path` under the briefs' root is sent to, or
+    /// `None` for a path outside Linewright's layout. Every run is given the
+    /// whole plugin.
+    pub fn readers(path: &str) -> Option<Readers> {
+        if let Some(prompt) = path.strip_prefix(PROMPTS_DIR) {
+            return prompts::readers(prompt);
+        }
+        PLUGIN
+            .iter()
+            .any(|(plugin, _)| plugin_path(plugin) == path)
+            .then_some(Readers::Every)
+    }
+
     /// The layer each file came from, by its path under the briefs' root.
     pub fn layers(&self) -> &BTreeMap<String, Layer> {
         &self.layers
@@ -200,15 +215,25 @@ impl Briefs {
 
 impl OperatorBriefs {
     /// The operator's layer, from the `briefs` directory, laid out as
-    /// `briefs/` is, if one is set. The directory holds every file, each of
-    /// which can be used.
+    /// `briefs/` is, if one is set: the files of Linewright's layout that it
+    /// holds, each of which must be usable.
     pub fn read(dir: Option<&Path>) -> Result<OperatorBriefs> {
         let mut layer = BriefLayer {
             layer: Layer::Operator,
             files: BTreeMap::new(),
         };
+        let mut unused = Vec::new();
         if let Some(dir) = dir {
-            layer.files = read_layout(dir)?;
+            let (used, outside): (Vec<String>, Vec<String>) = files_under(dir)?
+                .into_iter()
+                .partition(|path| Briefs::readers(path).is_some());
+            for path in used {
+                let file = dir.join(&path);
+                let text = std::fs::read_to_string(&file)
+                    .with_context(|| format!("reading the brief {}", file.display()))?;
+                layer.files.insert(path, text);
+            }
+            unused = outside;
         }
         let resolved = Briefs::resolve(&[&layer]);
         if let Some(unusable) = resolved.unusable.first() {
@@ -221,6 +246,7 @@ impl OperatorBriefs {
         Ok(OperatorBriefs {
             layer,
             briefs: Arc::new(resolved.briefs),
+            unused,
         })
     }
 
@@ -232,19 +258,33 @@ impl OperatorBriefs {
     pub fn briefs(&self) -> Arc<Briefs> {
         self.briefs.clone()
     }
+
+    /// The paths under the `briefs` directory of its files outside
+    /// Linewright's layout, which no session is given.
+    pub fn unused(&self) -> &[String] {
+        &self.unused
+    }
 }
 
-/// Every file of Linewright's briefs in `dir`, laid out as `briefs/` is.
-fn read_layout(dir: &Path) -> Result<BTreeMap<String, String>> {
-    PLUGIN
-        .iter()
-        .map(|(path, _)| plugin_path(path))
-        .chain(Prompts::paths().into_iter().map(prompt_path))
-        .map(|path| {
-            let file = dir.join(&path);
-            let text = std::fs::read_to_string(&file)
-                .with_context(|| format!("reading the brief {}", file.display()))?;
-            Ok((path, text))
-        })
-        .collect()
+/// The path under `dir` of every file in it and its subdirectories, in
+/// order, with `/` between the parts.
+fn files_under(dir: &Path) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    let mut dirs = vec![(dir.to_path_buf(), String::new())];
+    while let Some((at, prefix)) = dirs.pop() {
+        let entries = std::fs::read_dir(&at)
+            .with_context(|| format!("reading the briefs directory {}", at.display()))?;
+        for entry in entries {
+            let entry =
+                entry.with_context(|| format!("reading the briefs directory {}", at.display()))?;
+            let path = format!("{prefix}{}", entry.file_name().to_string_lossy());
+            if entry.path().is_dir() {
+                dirs.push((entry.path(), format!("{path}/")));
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
 }

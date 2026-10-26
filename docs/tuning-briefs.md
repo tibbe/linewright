@@ -2,8 +2,8 @@
 
 Each stage's agent works from a brief in [`briefs/`](../briefs/): the skills
 in `plugin/` and the prompts in `prompts/`, as its README describes. A
-`--briefs` directory is laid out the same way, with every file in it. To try a
-change against a real case:
+`--briefs` directory is laid out the same way and holds only the files it
+changes: the rest are Linewright's own. To try a change against a real case:
 
 ```sh
 lw capture owner/name#123 case/      # a spec change or an issue

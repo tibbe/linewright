@@ -252,7 +252,8 @@ pub struct Settings {
     /// can set its own [default: the harness's]
     #[arg(long, global = true)]
     pub effort: Option<String>,
-    /// A directory of briefs [default: the briefs Linewright ships]
+    /// A directory laid out as the briefs Linewright ships, each file in it
+    /// taken in place of Linewright's own [default: none]
     #[arg(long, global = true)]
     pub briefs: Option<String>,
     /// The variables of Linewright's environment that agent sessions are given

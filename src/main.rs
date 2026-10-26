@@ -729,9 +729,25 @@ fn environments(config: &Config, sessions: &SessionCredentials) -> Environments 
     split.environments
 }
 
-/// Read before anything else at startup, so a mistake in them is found at once.
+/// Read before anything else at startup, so a mistake in them is found at
+/// once. Logs which files they provide, and those of the `briefs` directory
+/// no session is given.
 fn briefs(config: &Config) -> Result<OperatorBriefs> {
-    OperatorBriefs::read(config.briefs.as_deref())
+    let briefs = OperatorBriefs::read(config.briefs.as_deref())?;
+    if config.briefs.is_some() {
+        let provided: Vec<&str> = briefs.layer().files.keys().map(String::as_str).collect();
+        info!(
+            files = provided.join(" "),
+            "the operator's briefs provide these files"
+        );
+    }
+    if !briefs.unused().is_empty() {
+        warn!(
+            files = briefs.unused().join(" "),
+            "these files in the `briefs` directory are not among Linewright's briefs, so are unused"
+        );
+    }
+    Ok(briefs)
 }
 
 fn factory_config(

@@ -1,11 +1,16 @@
 # Briefs
 
-What Linewright gives its agents, read at startup from the `briefs` setting
-(default: these, built into the binary):
+What Linewright gives its agents, built into the binary:
 
 - `plugin/`: the skills, a Claude Code plugin given to every session;
 - `prompts/`: what Linewright sends a session, from its first message to the
-  follow-ups, each with the result contract Linewright parses.
+  follow-ups, and the result contracts Linewright parses.
+
+The `briefs` setting names a directory laid out as this one, the operator's
+layer over these: each file in it is taken in place of the one here, and every
+file it lacks comes from here. Linewright logs at startup which files it takes
+from the directory, and which files in it are outside this layout and so are
+unused.
 
 ## `plugin/`
 
@@ -56,6 +61,10 @@ Linewright's own. Each prompt is the session's first message as sent, with a
 the default branch. The placeholders a prompt has are fixed: Linewright refuses
 to start with a prompt that lacks one or has one it doesn't know.
 
+Each first-message prompt's result contract, the JSON its session ends with, is
+a part of its own in `outputs/`, filled into the prompt's `{{output}}`. A prompt
+written over keeps `{{output}}`, and so keeps the contract Linewright reads.
+
 | file | sent to |
 |---|---|
 | `triage.md` | triage |
@@ -65,9 +74,13 @@ to start with a prompt that lacks one or has one it doesn't know.
 | `fix-ci.md` | CI fixes, likewise |
 | `update.md` | an update's conflict, likewise |
 | `automation.md` | automation runs |
+| `outputs/` | each prompt's result contract, filled into its `{{output}}`, such as `outputs/triage.md` into `triage.md` |
 | `parts/` | filled into the prompts above, such as a conflict's instructions |
 | `follow-ups/` | a session sent back to work, such as for a result that doesn't parse |
 
 A placeholder alone on its line that is filled with nothing takes the line, and
 the blank line after it, with it. A prompt's line breaks are the session's, so
 the prompts are not wrapped.
+
+Which runs read each file is declared beside the templates in
+[`src/prompts.rs`](../src/prompts.rs) (`readers`); every run reads the plugin.

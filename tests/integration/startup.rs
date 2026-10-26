@@ -866,26 +866,43 @@ fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
 }
 
 #[test]
-fn briefs_with_the_tickets_prompt_of_an_earlier_release_and_no_design_prompt_are_refused() {
-    let briefs = briefs_with("design.md", |text| text);
-    let prompts = briefs.path().join("prompts");
-    std::fs::rename(prompts.join("design.md"), prompts.join("tickets.md")).unwrap();
+fn startup_logs_the_files_the_operators_briefs_provide_and_those_unused() {
+    let briefs = briefs_with("implement.md", |text| text);
+    // An earlier release's prompt, which this one has no place for.
+    std::fs::write(briefs.path().join("prompts/tickets.md"), "Cut it.").unwrap();
 
-    let (succeeded, error) = lw(
+    let (succeeded, log) = lw(
         std::path::Path::new(""),
         &[
             "--repo",
             "owner/name",
             "--briefs",
             briefs.path().to_str().unwrap(),
+            "--log-format",
+            "json",
             "once",
         ],
         &[],
     );
 
-    assert!(!succeeded, "{error}");
-    assert!(error.contains("reading the brief"), "{error}");
-    assert!(error.contains("design.md"), "{error}");
+    assert!(!succeeded, "fails later, without `git`: {log}");
+    let logged = |message: &str| {
+        log.lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|line| line["fields"]["message"] == message)
+            .and_then(|line| line["fields"]["files"].as_str().map(String::from))
+            .unwrap_or_else(|| panic!("no {message:?} logged: {log}"))
+    };
+    assert_eq!(
+        logged("the operator's briefs provide these files"),
+        "prompts/implement.md"
+    );
+    assert_eq!(
+        logged(
+            "these files in the `briefs` directory are not among Linewright's briefs, so are unused"
+        ),
+        "prompts/tickets.md"
+    );
 }
 
 #[test]
