@@ -1,20 +1,30 @@
 # Linewright on the web: design system
 
-Linewright on the web follows daisyUI, with its components and themes
-unchanged.
+Linewright on the web follows daisyUI, with its components unchanged and
+two themes of its own.
 
 ## Colour scheme
 
-- The `light` theme, or `dark` for a reader who prefers dark.
+- The light theme, or the dark theme for a reader who prefers dark. Each is
+  daisyUI's `light` or `dark` theme with its surfaces and text as below.
+
+| Role   | Light     | Dark      |
+| ------ | --------- | --------- |
+| Page   | `#f7f8fa` | `#202226` |
+| Lane   | `#eceef2` | `#191a1d` |
+| Card   | `#ffffff` | `#2d3035` |
+| Border | `#d8dbe2` | `#3d4047` |
+| Text   | `#1c2024` | `#eceef2` |
 
 ## Status
 
-| Outcome or state                            | daisyUI colour |
-| ------------------------------------------- | -------------- |
-| done, merged, green                         | `success`      |
-| failed, handed back, CI failing             | `error`        |
-| in flight, running, waiting for something   | `warning`      |
-| cancelled, interrupted, usage limit, closed | `neutral`      |
+| Outcome or state                                              | daisyUI colour |
+| ------------------------------------------------------------- | -------------- |
+| done, merged, green                                           | `success`      |
+| failed, handed back, CI failing                               | `error`        |
+| waiting for a person or for something                         | `warning`      |
+| in flight, running                                            | `info`         |
+| cancelled, interrupted, usage limit, paused or queued, closed | `neutral`      |
 
 ## Navigation
 
@@ -32,9 +42,12 @@ unchanged.
 
 - The columns share the board's width, each at least 200px, and all six fit
   beside the navigation rail from 1440px wide.
-- **A lane** is a `base-200` box bordered `base-300`, with daisyUI's box
-  radius.
-- **A card** is a daisyUI `card` on `base-100`.
+- **A lane** is a box in the Lane colour with a hairline Border and daisyUI's
+  box radius. Its head is washed in its card status's colour, fading across
+  the lane, with the card status's icon before its line.
+- **A card** is a daisyUI `card` in the Card colour, with a hairline Border
+  and a small shadow. A card that shows a card status has a left edge
+  in its colour and its icon before its line. A card in Done is faded.
 
 ## Tables
 

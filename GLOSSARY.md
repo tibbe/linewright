@@ -115,6 +115,10 @@ _Avoid_: epic
 The board's row for one piece of work: a tracking issue with its tickets, or
 an item worked as one.
 
+**Card status**:
+How pressing what a board card's line reports is.
+_Avoid_: state, flag, priority
+
 **Managed**:
 Of an item: it is marked for Linewright and asks for a step of the pipeline,
 or Linewright has worked it.
