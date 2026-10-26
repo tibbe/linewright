@@ -114,3 +114,4 @@ flowchart LR
 Direction, not the first version:
 
 - Forges other than GitHub.
+- Accepting a file or setting under a name an earlier release used.

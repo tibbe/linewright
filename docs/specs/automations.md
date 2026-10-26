@@ -45,8 +45,9 @@ Look at the bugs fixed in the past week ...
 | `effort`      | the effort of its runs                  | `effort`          |
 | `max-issues`  | the most issues one run files           | 3                 |
 
-- **A file that does not parse.** It is logged and skipped; the other
-  automations run.
+- **A file that does not parse.** Every file in `.linewright/automations/`,
+  hidden files aside, is an automation file; one that does not parse is
+  logged and skipped, and the other automations run.
 - **`status`.** It shows each automation with its last and next run, and each
   file that does not parse.
 - **The trigger.** `on` is a schedule, the only kind for now.

@@ -115,8 +115,8 @@ operator's file, then default.
 - **A wrong value.** A setting whose value is not one it takes, such as an
   `effort` outside its levels or an unknown key in a stage's table, is an
   error: at startup in the operator's layers
-  ([Startup](repository.md#startup)), and a hold in the repository's file
-  ([Linewright's files](repository.md#linewrights-files)).
+  ([Startup](repository.md#startup)), and a file with an error in the
+  repository's ([Linewright's files](repository.md#linewrights-files)).
 - **A feature's settings.** A setting that only one feature uses is an error
   at startup when it is not at its default while that feature is off
   ([Startup](repository.md#startup)): `webhook-address` without the webhook
@@ -188,10 +188,9 @@ included.
   session ends with, is a part of its own filled into the prompt's
   `{{output}}` placeholder, so a prompt written over keeps the contract
   Linewright reads.
-- **Other files.** A file in a layer that is not one of Linewright's
-  prompts, hidden files aside, is an error: at startup in the operator's
-  layer ([Startup](repository.md#startup)), and a hold in the repository's
-  ([Linewright's files](repository.md#linewrights-files)).
+- **Other files.** A file in the operator's layer that is not one of
+  Linewright's prompts, hidden files aside, is an error at startup
+  ([Startup](repository.md#startup)).
 - **Logged at startup.** Linewright logs which files the operator's layer
   provides.
 

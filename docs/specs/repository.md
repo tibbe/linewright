@@ -66,12 +66,12 @@ in `prompts/` ([Prompts](operation.md#prompts)).
   then, so that a change takes effect once merged and every run on a branch
   works from the same files whatever the branch holds; the automation files
   are read at each poll instead ([Automations](automations.md)).
-- **A file with an error.** A file Linewright cannot use, such as a config
-  with an unknown key or a prompt whose placeholders are wrong, holds the
-  runs that would read it: a config every run, a prompt the runs it is sent
-  to. The items wait, and `status` and `explain` name the file and the
-  error, until the default branch fixes it. An automation file with an error
-  is skipped instead ([Automations](automations.md)).
+- **A file with an error.** A file under `.linewright/` that Linewright
+  cannot use holds the runs it could change. A file that is not one of
+  Linewright's, hidden files aside, could be meant for any run, so it holds
+  every one. The items wait, and `status` and `explain` name the file and
+  the error, until the default branch fixes it. An automation file with an
+  error is skipped instead ([Automations](automations.md)).
 
 ## Labels
 
