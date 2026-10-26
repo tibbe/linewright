@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::automation::Automation;
-use crate::briefs::Briefs;
+use crate::briefs::{Briefs, OperatorBriefs};
 use crate::clock::Clock;
 use crate::domain::{
     HandBackKind, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
@@ -34,17 +34,21 @@ use crate::store::{
 };
 use crate::tracking::{self, FiledTicket};
 use crate::transcript;
+use crate::work_settings::{self, Environments, RunKind, SessionSettings, WorkSettings};
 
 pub(crate) struct Shell {
     pub store: Arc<dyn Store>,
     pub harness: Arc<dyn Harness>,
     pub clock: Arc<dyn Clock>,
     pub policy: Policy,
-    pub briefs: Briefs,
+    /// The operator's settings for sessions, which each run resolves.
+    pub work: WorkSettings,
+    pub environments: Environments,
+    /// The operator's layer of the briefs.
+    pub operator_briefs: OperatorBriefs,
     pub identity: Identity,
     pub settings: RepoSettings,
     pub result_retries: u32,
-    pub session_timeout: std::time::Duration,
     pub work_dir: PathBuf,
     pub runs: Runs,
     pub waits_out_usage_limit: bool,
@@ -52,7 +56,25 @@ pub(crate) struct Shell {
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
 }
 
+/// What a run works from, resolved as it starts.
+pub(crate) struct RunWith {
+    pub briefs: Arc<Briefs>,
+    pub settings: SessionSettings,
+}
+
 impl Shell {
+    /// What a run of `of` works from if it starts now.
+    pub(crate) fn run_with(&self, of: RunKind) -> RunWith {
+        RunWith {
+            briefs: self.operator_briefs.briefs(),
+            settings: self.work.for_run(
+                of,
+                &work_settings::RepoSettings::default(),
+                &self.environments,
+            ),
+        }
+    }
+
     fn repo(&self) -> Repo<'_> {
         Repo {
             name: &self.settings.repo,
@@ -105,11 +127,14 @@ pub(crate) struct HandBack {
     pub(crate) log_tail: Option<String>,
 }
 
-struct Ctx {
-    as_of: Timestamp,
-    reworked: Option<Timestamp>,
-    cancel: CancellationToken,
-    run: Running,
+/// What a run works with, from its start to its end.
+pub(crate) struct Ctx {
+    pub(crate) with: RunWith,
+    /// The run takes feedback since this as having arrived after.
+    pub(crate) as_of: Timestamp,
+    pub(crate) reworked: Option<Timestamp>,
+    pub(crate) cancel: CancellationToken,
+    pub(crate) run: Running,
 }
 
 impl Failure {
@@ -215,21 +240,7 @@ fn refused_push(branch: &str, reason: &str, again: TryAgain) -> String {
     )
 }
 
-pub(crate) async fn run(
-    shell: Arc<Shell>,
-    work: Work,
-    snapshot: Arc<Snapshot>,
-    as_of: Timestamp,
-    reworked: Option<Timestamp>,
-    run: Running,
-    cancel: CancellationToken,
-) {
-    let ctx = Ctx {
-        as_of,
-        reworked,
-        cancel,
-        run,
-    };
+pub(crate) async fn run(shell: Arc<Shell>, work: Work, snapshot: Arc<Snapshot>, ctx: Ctx) {
     let ending = drive(&shell, &work, &snapshot, &ctx).await;
     ctx.run.end(shell.clock.now(), ending);
 }
@@ -537,7 +548,12 @@ struct Workspace {
 }
 
 impl Workspace {
-    async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace, Failure> {
+    async fn clone(
+        shell: &Shell,
+        ctx: &Ctx,
+        purpose: &Purpose,
+        branch: &str,
+    ) -> Result<Workspace, Failure> {
         let clones = shell.work_dir.join("clones");
         tokio::fs::create_dir_all(&clones)
             .await
@@ -559,7 +575,7 @@ impl Workspace {
             .context("creating a scratch directory")
             .map_err(infra)?;
         let plugin = temp.path().join("plugin");
-        shell
+        ctx.with
             .briefs
             .write_plugin(&plugin)
             .context("writing the briefs' plugin")
@@ -634,8 +650,8 @@ impl From<anyhow::Error> for Rejection {
 }
 
 /// Sends a result that does not parse back to the session with its `error`.
-fn parse_retry(shell: &Shell) -> impl Fn(String) -> Rejection + '_ {
-    |error| Rejection::Retry(prompts::parse_error(&shell.briefs.prompts, &error))
+fn parse_retry(ctx: &Ctx) -> impl Fn(String) -> Rejection + '_ {
+    |error| Rejection::Retry(prompts::parse_error(&ctx.with.briefs.prompts, &error))
 }
 
 async fn converse<T, F, Fut>(
@@ -716,12 +732,13 @@ fn send_back(
 /// saying the work was not kept.
 fn send_back_protected(
     shell: &Shell,
+    ctx: &Ctx,
     spec: &SessionSpec,
     turn: &Turn,
     secrets: &FoundSecrets,
     retries: &mut u32,
 ) -> Result<Step, Failure> {
-    let followup = prompts::pushed_secret(&shell.briefs.prompts, secrets);
+    let followup = prompts::pushed_secret(&ctx.with.briefs.prompts, secrets);
     send_back(shell, spec, turn, followup, retries).map_err(|f| f.noted(&protected_note(secrets)))
 }
 
@@ -798,7 +815,7 @@ async fn take_turn(
                 info!(subject, %resets_at, "usage limit reset; resuming the session");
                 step = Step::Resume {
                     session,
-                    prompt: prompts::usage_limit_reset(&shell.briefs.prompts),
+                    prompt: prompts::usage_limit_reset(&ctx.with.briefs.prompts),
                 };
             }
             None => info!(subject, %resets_at, "usage limit reset; taking the refused turn again"),
@@ -837,8 +854,8 @@ fn session_spec(
     purpose: Purpose,
     ws: &Workspace,
     prompt: String,
-    timeout: std::time::Duration,
 ) -> Result<SessionSpec, Failure> {
+    let settings = &ctx.with.settings;
     let now = shell.clock.now();
     let record = record_dir(shell, &purpose, now)?;
     ctx.run.session(&record);
@@ -849,7 +866,9 @@ fn session_spec(
         scratch: ws.scratch.clone(),
         plugin: ws.plugin.clone(),
         prompt,
-        deadline: tokio::time::Instant::now() + timeout,
+        model: settings.model.value.clone(),
+        environment: settings.environment.value.clone(),
+        deadline: tokio::time::Instant::now() + settings.session_timeout.value,
     })
 }
 
@@ -858,13 +877,13 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
         subject: Subject::Issue(issue.number),
         kind: WorkKind::Triage,
     };
-    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
+    let ws = Workspace::clone(shell, ctx, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
-    let prompt = prompts::triage(&shell.briefs.prompts, &shell.repo(), issue, &categories);
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
+    let prompt = prompts::triage(&ctx.with.briefs.prompts, &shell.repo(), issue, &categories);
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
     let categories = &categories;
     let (result, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        results::parse_triage(&message, categories).map_err(parse_retry(shell))
+        results::parse_triage(&message, categories).map_err(parse_retry(ctx))
     })
     .await?;
     // The session may end as the run is cancelled, too late to stop it.
@@ -943,10 +962,10 @@ async fn design_session<C: DeserializeOwned>(
         subject,
         kind: WorkKind::Design,
     };
-    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
+    let ws = Workspace::clone(shell, ctx, &purpose, &shell.settings.default_branch).await?;
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
     converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        results::parse::<DesignResult<C>>(&message).map_err(parse_retry(shell))
+        results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
     })
     .await
 }
@@ -990,7 +1009,7 @@ async fn design_spec_change(
         issues: &filed_issues,
     };
     let prompt = prompts::design_spec_change(
-        &shell.briefs.prompts,
+        &ctx.with.briefs.prompts,
         &shell.repo(),
         pr,
         &diff,
@@ -1042,7 +1061,12 @@ async fn design_issue(
         item: issue.number,
         issues: &filed_issues,
     };
-    let prompt = prompts::design_issue(&shell.briefs.prompts, &shell.repo(), issue, &filed_issues);
+    let prompt = prompts::design_issue(
+        &ctx.with.briefs.prompts,
+        &shell.repo(),
+        issue,
+        &filed_issues,
+    );
     let subject = Subject::Issue(issue.number);
     let (result, turn) = design_session::<IssueWork>(shell, ctx, subject, prompt).await?;
     match result {
@@ -1385,7 +1409,7 @@ async fn implement(
         subject: Subject::Issue(ticket.number()),
         kind: WorkKind::Implement,
     };
-    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
+    let ws = Workspace::clone(shell, ctx, &purpose, &shell.settings.default_branch).await?;
     // Where the run starts: docs/specs/implementation.md, "Working a
     // ticket". The clone, not the snapshot, says whether the branch exists: a
     // snapshot taken before an earlier run pushed it does not hold it.
@@ -1394,41 +1418,41 @@ async fn implement(
         .await
         .map_err(infra)?;
     let prompt = prompts::implement(
-        &shell.briefs.prompts,
+        &ctx.with.briefs.prompts,
         &shell.repo(),
         ticket,
         &branch,
         &start,
     );
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
     let (dir, base) = (&ws.dir, &upstream);
     let accept = |message: String| async move {
-        let result: ImplementResult = results::parse(&message).map_err(parse_retry(shell))?;
+        let result: ImplementResult = results::parse(&message).map_err(parse_retry(ctx))?;
         if !matches!(result, ImplementResult::Done { .. }) {
             return Ok(result);
         }
         if let Some(problem) = git::loose_ends(dir).await? {
             return Err(Rejection::Retry(prompts::loose_ends(
-                &shell.briefs.prompts,
+                &ctx.with.briefs.prompts,
                 &problem,
             )));
         }
         if git::commits_ahead(dir, base).await? == 0 {
             return Err(Rejection::Retry(prompts::loose_ends(
-                &shell.briefs.prompts,
+                &ctx.with.briefs.prompts,
                 "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
             )));
         }
         let unfinished = git::unfinished_commits(dir, base, "HEAD").await?;
         if let Some(unfinished) = unfinished {
             return Err(Rejection::Retry(prompts::fold_unfinished(
-                &shell.briefs.prompts,
+                &ctx.with.briefs.prompts,
                 &unfinished,
             )));
         }
         if let Some(held) = held_secret(shell, dir, &[base]).await? {
             return Err(Rejection::Retry(prompts::held_secret(
-                &shell.briefs.prompts,
+                &ctx.with.briefs.prompts,
                 &held,
             )));
         }
@@ -1452,7 +1476,7 @@ async fn implement(
         }
         match push(shell, &ws.dir, &branch, PushMode::Replace).await {
             Pushed::Protected(secrets) => {
-                step = send_back_protected(shell, &spec, &turn, &secrets, &mut retries)?;
+                step = send_back_protected(shell, ctx, &spec, &turn, &secrets, &mut retries)?;
             }
             other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
                 pushed(&branch, other, TryAgain::Relabel)?;
@@ -1631,7 +1655,7 @@ async fn pull_work(
     };
     let linewright = &shell.policy.linewright;
     let purpose = Purpose::Work { subject, kind };
-    let ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
+    let ws = Workspace::clone(shell, ctx, &purpose, &pr.head_ref).await?;
     let start = git::head(&ws.dir).await.map_err(infra)?;
     let default_branch = &shell.settings.default_branch;
     let policy = &shell.policy;
@@ -1678,42 +1702,42 @@ async fn pull_work(
         .await
         .map_err(infra)?;
     let prompt = prompts::pull_work(
-        &shell.briefs.prompts,
+        &ctx.with.briefs.prompts,
         &shell.repo(),
         ticket,
         pr,
         &pull_task,
         left_unfinished.as_ref(),
     );
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt, shell.session_timeout)?;
+    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
     let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
     let before = git::work_state(dir).await.map_err(infra)?;
     let (upstream, base) = (&upstream, start.as_str());
     let accept = |message: String, pr_threads: Vec<String>| async move {
-        let result: PullWorkResult = results::parse(&message).map_err(parse_retry(shell))?;
+        let result: PullWorkResult = results::parse(&message).map_err(parse_retry(ctx))?;
         let PullWorkResult::Done { replies, .. } = &result else {
             return Ok(result);
         };
         if let Some(problem) = git::loose_ends(dir).await? {
             return Err(Rejection::Retry(prompts::loose_ends(
-                &shell.briefs.prompts,
+                &ctx.with.briefs.prompts,
                 &problem,
             )));
         }
         if let Some(unfinished) = git::unfinished_commits(dir, upstream, "HEAD").await? {
             return Err(Rejection::Retry(prompts::fold_unfinished(
-                &shell.briefs.prompts,
+                &ctx.with.briefs.prompts,
                 &unfinished,
             )));
         }
         if let Some(held) = held_secret(shell, dir, &[base, upstream]).await? {
             return Err(Rejection::Retry(prompts::held_secret(
-                &shell.briefs.prompts,
+                &ctx.with.briefs.prompts,
                 &held,
             )));
         }
         if let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread)) {
-            return Err(parse_retry(shell)(format!(
+            return Err(parse_retry(ctx)(format!(
                 "`{}` is not a thread on the pull request",
                 unknown.thread
             )));
@@ -1757,7 +1781,7 @@ async fn pull_work(
                 shown_until = read_at;
                 feedback_authors.extend(feedback_people(&arrived, linewright));
                 threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
-                let followup = prompts::late_feedback(&shell.briefs.prompts, &pr_now, &arrived);
+                let followup = prompts::late_feedback(&ctx.with.briefs.prompts, &pr_now, &arrived);
                 let resume = Step::Resume {
                     session: turn.session.clone(),
                     prompt: followup,
@@ -1787,7 +1811,7 @@ async fn pull_work(
         }
         match push(shell, dir, &pr.head_ref, lease.clone()).await {
             Pushed::Protected(secrets) => {
-                step = send_back_protected(shell, &spec, &turn, &secrets, &mut retries)?;
+                step = send_back_protected(shell, ctx, &spec, &turn, &secrets, &mut retries)?;
             }
             other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
                 pushed(&pr.head_ref, other, TryAgain::Reassign)?;
@@ -1938,23 +1962,16 @@ pub(crate) enum AutomationEnd {
 pub(crate) async fn automation(
     shell: &Shell,
     automation: &Automation,
-    run: Running,
-    cancel: CancellationToken,
+    ctx: Ctx,
 ) -> Result<AutomationEnd> {
-    let ctx = Ctx {
-        as_of: shell.clock.now(),
-        reworked: None,
-        cancel,
-        run,
-    };
     let session = async {
         let purpose = Purpose::Automation(automation.name.clone());
-        let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-        let prompt = prompts::automation(&shell.briefs.prompts, &shell.repo(), automation);
-        let timeout = automation.timeout.unwrap_or(shell.session_timeout);
-        let mut spec = session_spec(shell, &ctx, purpose, &ws, prompt, timeout)?;
-        let (result, _) = converse(shell, &ctx, &mut spec, Step::Start, |message| async move {
-            results::parse(&message).map_err(parse_retry(shell))
+        let ws = Workspace::clone(shell, &ctx, &purpose, &shell.settings.default_branch).await?;
+        let prompt = prompts::automation(&ctx.with.briefs.prompts, &shell.repo(), automation);
+        let mut spec = session_spec(shell, &ctx, purpose, &ws, prompt)?;
+        let ctx = &ctx;
+        let (result, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
+            results::parse(&message).map_err(parse_retry(ctx))
         })
         .await?;
         record_automation(shell, automation, &result)

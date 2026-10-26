@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 
 use crate::api::{Publish, Served};
 use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
-use crate::briefs::Briefs;
+use crate::briefs::OperatorBriefs;
 use crate::clock::Clock;
 use crate::domain::{
     AutoMerge, IssueCloseReason, Item, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
@@ -33,6 +33,7 @@ use crate::status::{FailedPolls, Poll, Polling, Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::store::{IssueRead, Store};
 use crate::webhook::{self, Pending};
+use crate::work_settings::{Environments, RunKind, WorkSettings};
 
 #[derive(Clone, Debug)]
 pub struct FactoryConfig {
@@ -43,13 +44,17 @@ pub struct FactoryConfig {
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
     pub result_retries: u32,
-    pub session_timeout: std::time::Duration,
+    /// The operator's settings for sessions.
+    pub work: WorkSettings,
+    /// What sessions are given of Linewright's environment.
+    pub environments: Environments,
     /// `None` follows the repository's settings.
     pub update_method: Option<UpdateMethod>,
     /// `None` leaves green pull requests for review.
     pub auto_merge: Option<AutoMerge>,
     pub require_label: Option<String>,
-    pub briefs: Briefs,
+    /// The operator's layer of the briefs.
+    pub briefs: OperatorBriefs,
     pub work_dir: PathBuf,
     pub schedule_automations: bool,
     pub waits_out_usage_limit: bool,
@@ -254,11 +259,12 @@ impl Factory {
             store,
             harness,
             clock,
-            briefs: config.briefs,
+            work: config.work,
+            environments: config.environments,
+            operator_briefs: config.briefs,
             identity,
             settings,
             result_retries: config.result_retries,
-            session_timeout: config.session_timeout,
             runs: runs.clone(),
             work_dir: config.work_dir,
             waits_out_usage_limit: config.waits_out_usage_limit,
@@ -734,15 +740,16 @@ impl Factory {
                     Subject::Pull(pr) => self.memory.last_done(pr, WorkKind::Rework),
                     Subject::Issue(_) | Subject::SpecChange(_) => None,
                 };
-                let handle = self.runs.spawn(run::run(
-                    shell.clone(),
-                    work.clone(),
-                    snapshot.clone(),
-                    kept.as_of(work),
+                let ctx = run::Ctx {
+                    with: shell.run_with(RunKind::Stage(work.kind())),
+                    as_of: kept.as_of(work),
                     reworked,
-                    running,
-                    cancel.clone(),
-                ));
+                    cancel: cancel.clone(),
+                    run: running,
+                };
+                let handle =
+                    self.runs
+                        .spawn(run::run(shell.clone(), work.clone(), snapshot.clone(), ctx));
                 info!(run = id, subject = ?work.subject(), kind = ?work.kind(), "run started");
                 self.live.insert(
                     handle.id(),
@@ -986,7 +993,14 @@ async fn run_and_log(
 ) -> Result<()> {
     let name = &automation.name;
     info!(automation = %name, run = %running.id(), "automation run started");
-    match run::automation(shell, automation, running, cancel).await {
+    let ctx = run::Ctx {
+        with: shell.run_with(RunKind::Automation(automation)),
+        as_of: shell.clock.now(),
+        reworked: None,
+        cancel,
+        run: running,
+    };
+    match run::automation(shell, automation, ctx).await {
         Ok(AutomationEnd::Finished(result)) => {
             info!(automation = %name, summary = result.summary, "automation run finished");
             Ok(())

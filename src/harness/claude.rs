@@ -12,19 +12,15 @@ use super::{Harness, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::child;
 use crate::domain::Timestamp;
 use crate::redaction::Redaction;
-use crate::session_env::Given;
 use crate::store::github::TOKEN_VARIABLES;
 use crate::transcript::{self, StartedBy};
 
 pub struct ClaudeCode {
     pub program: String,
     pub bash: PathBuf,
-    pub model: Option<String>,
     /// `None` gives sessions none, whatever Linewright's own environment
     /// holds.
     pub github_token: Option<String>,
-    /// A session starts from these alone, and what Linewright sets itself.
-    pub environment: Given,
     /// Applied to all a session says before Linewright keeps or answers it.
     pub redaction: Redaction,
 }
@@ -54,7 +50,7 @@ pub const CREDENTIAL_VARIABLES: [&str; 8] = [
 pub const HEADER_VARIABLES: [&str; 1] = ["ANTHROPIC_CUSTOM_HEADERS"];
 
 /// What Linewright sets for a session, over any variable of the same name
-/// `environment` gives it.
+/// the session's `environment` gives it.
 fn set_for_session<'a>(
     scratch: &'a Path,
     bash: &'a Path,
@@ -296,7 +292,7 @@ impl ClaudeCode {
             .args(session.args())
             .current_dir(&spec.dir)
             .env_clear()
-            .envs(self.environment.iter())
+            .envs(spec.environment.iter())
             .envs(set_for_session(
                 &spec.scratch,
                 &self.bash,
@@ -305,7 +301,7 @@ impl ClaudeCode {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(model) = &self.model {
+        if let Some(model) = &spec.model {
             command.args(["--model", model]);
         }
         let mut child = command

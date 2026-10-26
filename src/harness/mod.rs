@@ -1,6 +1,7 @@
 pub mod claude;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,7 @@ use crate::automation::AutomationName;
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
+use crate::session_env::Given;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -26,6 +28,10 @@ pub struct SessionSpec {
     pub record: PathBuf,
     pub plugin: PathBuf,
     pub prompt: String,
+    /// `None` is the harness's choice.
+    pub model: Option<String>,
+    /// A session starts from these alone, and what the harness sets itself.
+    pub environment: Arc<Given>,
     /// When the session times out, across all its turns. A run that waits
     /// out the usage limit moves it on by the wait.
     pub deadline: tokio::time::Instant,

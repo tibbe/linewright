@@ -2,11 +2,15 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use clap::{CommandFactory, Parser};
+use linewright::automation;
 use linewright::config::{Cli, Config, LogFormat, ResolveError};
 use linewright::domain::{AutoMerge, MergeMethod};
 use linewright::host::HostName;
+use linewright::layer::{Layer, Sourced};
+use linewright::reconcile::WorkKind;
 use linewright::session_env::SessionEnv;
 use linewright::variable_names::VariableNames;
+use linewright::work_settings::{Environments, RepoSettings, RunKind, SessionSettings};
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
     resolve_blaming(args, env, file).map_err(|e| e.to_string())
@@ -39,6 +43,67 @@ fn resolve_blaming(
     )
 }
 
+/// What a triage run's sessions run with under `config`.
+fn session(config: &Config) -> SessionSettings {
+    config.work.for_run(
+        RunKind::Stage(WorkKind::Triage),
+        &RepoSettings::default(),
+        &Environments::default(),
+    )
+}
+
+#[test]
+fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewright_for_a_default()
+{
+    let from_flag = resolve(
+        &["--model", "opus"],
+        &[],
+        Some("session-timeout = \"10m\"\n"),
+    )
+    .unwrap();
+    let from_variable = resolve(&[], &[("LINEWRIGHT_SESSION_ENV", "CARGO_HOME")], None).unwrap();
+    let defaults = resolve(&[], &[], None).unwrap();
+
+    let flagged = session(&from_flag);
+    assert_eq!(
+        flagged.model,
+        Sourced::new(Some("opus".into()), Layer::Operator)
+    );
+    assert_eq!(
+        flagged.session_timeout,
+        Sourced::new(Duration::from_mins(10), Layer::Operator)
+    );
+    assert_eq!(flagged.environment.layer, Layer::Linewright);
+    assert_eq!(session(&from_variable).environment.layer, Layer::Operator);
+    let defaulted = session(&defaults);
+    assert_eq!(defaulted.model, Sourced::new(None, Layer::Linewright));
+    assert_eq!(
+        defaulted.session_timeout,
+        Sourced::new(Duration::from_hours(1), Layer::Linewright)
+    );
+}
+
+#[test]
+fn an_automations_timeout_comes_from_the_repository_before_the_operators_session_timeout() {
+    let config = resolve(&["--session-timeout", "10m"], &[], None).unwrap();
+    let automation = automation::parse(
+        &"weekly".parse().unwrap(),
+        "---\non:\n  schedule: \"0 9 * * 1\"\ntimeout: 5m\n---\nLook around.\n",
+    )
+    .unwrap();
+
+    let session = config.work.for_run(
+        RunKind::Automation(&automation),
+        &RepoSettings::default(),
+        &Environments::default(),
+    );
+
+    assert_eq!(
+        session.session_timeout,
+        Sourced::new(Duration::from_mins(5), Layer::Repository)
+    );
+}
+
 #[test]
 fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
     let file = "repo = \"acme/file\"\nmax-runs = 2\npoll-interval = \"5m\"\nci-attempts = 7\n";
@@ -53,7 +118,10 @@ fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
     assert_eq!(config.max_runs, 3);
     assert_eq!(config.poll_interval, Duration::from_mins(5));
     assert_eq!(config.ci_attempts, 7);
-    assert_eq!(config.session_timeout, Duration::from_hours(1));
+    assert_eq!(
+        session(&config).session_timeout.value,
+        Duration::from_hours(1)
+    );
     assert_eq!(config.spec_glob.pattern(), "docs/**/*.md");
 }
 
@@ -64,13 +132,16 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.poll_interval, Duration::from_mins(1));
     assert_eq!(config.spec_lookback, chrono::TimeDelta::days(7));
     assert_eq!(config.max_runs, 4);
-    assert_eq!(config.session_timeout, Duration::from_hours(1));
+    assert_eq!(
+        session(&config).session_timeout.value,
+        Duration::from_hours(1)
+    );
     assert_eq!(config.result_retries, 1);
     assert_eq!(config.ci_grace, chrono::TimeDelta::minutes(5));
     assert_eq!(config.ci_timeout, chrono::TimeDelta::hours(6));
     assert_eq!(config.ci_attempts, 2);
     assert_eq!(config.update_branch, None);
-    assert_eq!(config.model, None);
+    assert_eq!(session(&config).model.value, None);
     assert_eq!(config.log_format, LogFormat::Json, "not a terminal");
     assert!(config.work_dir.ends_with("linewright"));
     assert_eq!(config.session_env, SessionEnv::default());

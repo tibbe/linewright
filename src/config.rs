@@ -10,6 +10,7 @@ use crate::automation::AutomationName;
 use crate::domain::{AutoMerge, MergeMethod, Number, Repo, Timestamp, UpdateMethod};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
+use crate::layer::Layer;
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
@@ -19,6 +20,7 @@ use crate::spec_glob::SpecGlob;
 use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
+use crate::work_settings::{Partial, WorkSettings};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -307,11 +309,11 @@ pub struct Config {
     pub spec_lookback: TimeDelta,
     pub max_runs: usize,
     pub work_dir: PathBuf,
-    pub model: Option<String>,
+    /// `model` and `session-timeout`, and where `session-env` came from.
+    pub work: WorkSettings,
     pub briefs: Option<PathBuf>,
     pub session_env: SessionEnv,
     pub secrets: VariableNames,
-    pub session_timeout: Duration,
     pub result_retries: u32,
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
@@ -480,15 +482,13 @@ impl Config {
     ) -> Result<Config, ResolveError> {
         let file = read_file(settings.config.as_deref(), cwd)?;
         let flags = settings.flags();
-        let get = |key: &str| -> Option<String> {
+        // A flag, then a variable.
+        let flags_and_env = |key: &str| -> Option<String> {
             let variable = format!("LINEWRIGHT_{}", key.to_uppercase().replace('-', "_"));
-            flags
-                .get(key)
-                .copied()
-                .cloned()
-                .or_else(|| env(&variable))
-                .or_else(|| file.get(key).cloned())
+            flags.get(key).copied().cloned().or_else(|| env(&variable))
         };
+        let get =
+            |key: &str| -> Option<String> { flags_and_env(key).or_else(|| file.get(key).cloned()) };
         let blame = |keys: &[&str], error: anyhow::Error| {
             if keys.iter().any(|key| flags.contains_key(key)) {
                 ResolveError::CommandLine(error)
@@ -640,6 +640,35 @@ impl Config {
             variable_names::comma_separated(&get(secrets::SETTING).unwrap_or_default()),
         )
         .map_err(|e| wrong(secrets::SETTING, e))?;
+        let session_timeout = |set: Option<String>| {
+            set.map(|text| {
+                humantime::parse_duration(&text)
+                    .map_err(|e| not_one("session-timeout", &text, e.into()))
+            })
+            .transpose()
+        };
+        let timeout_over_file = flags_and_env("session-timeout");
+        // The file's is read only when no flag or variable sets one, as it
+        // could not win over them.
+        let timeout_in_file = match timeout_over_file {
+            Some(_) => None,
+            None => file.get("session-timeout").cloned(),
+        };
+        let work = WorkSettings {
+            flags_and_env: Partial {
+                model: flags_and_env("model"),
+                session_timeout: session_timeout(timeout_over_file)?,
+            },
+            file: Partial {
+                model: file.get("model").cloned(),
+                session_timeout: session_timeout(timeout_in_file)?,
+            },
+            session_env: if get("session-env").is_some() {
+                Layer::Operator
+            } else {
+                Layer::Linewright
+            },
+        };
         let (ci_grace, ci_timeout) = (delta("ci-grace", "5m")?, delta("ci-timeout", "6h")?);
         if ci_timeout <= ci_grace {
             return Err(blame(
@@ -656,11 +685,10 @@ impl Config {
             spec_lookback: delta("spec-lookback", "7d")?,
             max_runs: number("max-runs", "4")? as usize,
             work_dir,
-            model: get("model"),
+            work,
             briefs: get("briefs").map(PathBuf::from),
             session_env,
             secrets,
-            session_timeout: duration("session-timeout", "60m")?,
             result_retries: number("result-retries", "1")?,
             ci_grace,
             ci_timeout,

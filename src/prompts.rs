@@ -2,9 +2,8 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt::{self, Write};
 use std::marker::PhantomData;
-use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 
 use crate::automation::Automation;
 use crate::domain;
@@ -87,15 +86,6 @@ pub enum PullTask<'a> {
     /// Only bring the branch up to date: the session resolves the conflict
     /// the update stopped on.
     Update(&'a Conflict),
-}
-
-/// Where the prompts are read from.
-#[derive(Clone, Copy)]
-pub enum Source<'a> {
-    /// The prompts built into Linewright.
-    Shipped,
-    /// A directory laid out as `briefs/prompts/` is.
-    Dir(&'a Path),
 }
 
 /// The values a template's placeholders are filled with.
@@ -238,38 +228,15 @@ impl<V> fmt::Debug for Template<V> {
     }
 }
 
-/// [`Template::read`] for the template at `$path` under `briefs/prompts/`,
+/// [`Reader::read`] for the template at `$path` under `briefs/prompts/`,
 /// which Linewright ships.
 macro_rules! template {
-    ($source:expr, $path:literal) => {
-        Template::read(
-            $source,
-            $path,
-            include_str!(concat!("../briefs/prompts/", $path)),
-        )
+    ($reader:expr, $path:literal) => {
+        $reader.read($path, include_str!(concat!("../briefs/prompts/", $path)))
     };
 }
 
 impl<V: Values> Template<V> {
-    /// The template at `path` in `source`, which ships as `shipped`. A part
-    /// or a follow-up is used without its trailing newline.
-    fn read(source: Source, path: &str, shipped: &str) -> Result<Template<V>> {
-        let text = match source {
-            Source::Shipped => shipped.to_string(),
-            Source::Dir(dir) => {
-                let file = dir.join(path);
-                std::fs::read_to_string(&file)
-                    .with_context(|| format!("reading the brief {}", file.display()))?
-            }
-        };
-        let text = if path.contains('/') {
-            text.trim_end().to_string()
-        } else {
-            text
-        };
-        Template::parse(text).with_context(|| format!("reading the prompt {path}"))
-    }
-
     /// Fails unless `text`'s placeholders are exactly the values'.
     fn parse(text: String) -> Result<Template<V>> {
         let names = V::names();
@@ -398,37 +365,85 @@ pub struct Prompts {
 }
 
 impl Prompts {
-    pub fn read(source: Source) -> Result<Prompts> {
-        Ok(Prompts {
-            facts: template!(source, "parts/facts.md")?,
-            triage: template!(source, "triage.md")?,
-            design: template!(source, "design.md")?,
-            spec_change: template!(source, "parts/spec-change.md")?,
-            cut_spec_change: template!(source, "parts/cut-spec-change.md")?,
-            cut_issue: template!(source, "parts/cut-issue.md")?,
-            implement: template!(source, "implement.md")?,
-            rework: template!(source, "rework.md")?,
-            fix_ci: template!(source, "fix-ci.md")?,
-            update: template!(source, "update.md")?,
-            automation: template!(source, "automation.md")?,
-            new_branch: template!(source, "parts/new-branch.md")?,
-            existing_branch: template!(source, "parts/existing-branch.md")?,
-            unfinished: template!(source, "parts/unfinished.md")?,
-            unfinished_or_discard: template!(source, "parts/unfinished-or-discard.md")?,
-            conflict_rebase: template!(source, "parts/conflict-rebase.md")?,
-            conflict_merge: template!(source, "parts/conflict-merge.md")?,
-            update_rebase: template!(source, "parts/update-rebase.md")?,
-            update_merge: template!(source, "parts/update-merge.md")?,
-            full_log: template!(source, "parts/full-log.md")?,
-            filed_gaps: template!(source, "parts/filed-gaps.md")?,
-            fold_unfinished: template!(source, "parts/fold-unfinished.md")?,
-            held_secret: template!(source, "parts/held-credential.md")?,
-            pushed_secret: template!(source, "parts/pushed-secret.md")?,
-            parse_error: template!(source, "follow-ups/parse-error.md")?,
-            loose_ends: template!(source, "follow-ups/loose-ends.md")?,
-            usage_limit_reset: template!(source, "follow-ups/usage-limit-reset.md")?,
-            late_feedback: template!(source, "follow-ups/late-feedback.md")?,
-        })
+    /// The prompts, each from `lookup`'s text for its path under `prompts/`,
+    /// or the text Linewright ships where it has none, and the paths whose
+    /// text does not parse, with why, each of which takes the shipped text.
+    pub fn read<'a>(
+        lookup: &mut dyn FnMut(&'static str) -> Option<&'a str>,
+    ) -> (Prompts, Vec<(&'static str, anyhow::Error)>) {
+        let mut reader = Reader {
+            lookup,
+            unusable: Vec::new(),
+        };
+        let prompts = Prompts {
+            facts: template!(reader, "parts/facts.md"),
+            triage: template!(reader, "triage.md"),
+            design: template!(reader, "design.md"),
+            spec_change: template!(reader, "parts/spec-change.md"),
+            cut_spec_change: template!(reader, "parts/cut-spec-change.md"),
+            cut_issue: template!(reader, "parts/cut-issue.md"),
+            implement: template!(reader, "implement.md"),
+            rework: template!(reader, "rework.md"),
+            fix_ci: template!(reader, "fix-ci.md"),
+            update: template!(reader, "update.md"),
+            automation: template!(reader, "automation.md"),
+            new_branch: template!(reader, "parts/new-branch.md"),
+            existing_branch: template!(reader, "parts/existing-branch.md"),
+            unfinished: template!(reader, "parts/unfinished.md"),
+            unfinished_or_discard: template!(reader, "parts/unfinished-or-discard.md"),
+            conflict_rebase: template!(reader, "parts/conflict-rebase.md"),
+            conflict_merge: template!(reader, "parts/conflict-merge.md"),
+            update_rebase: template!(reader, "parts/update-rebase.md"),
+            update_merge: template!(reader, "parts/update-merge.md"),
+            full_log: template!(reader, "parts/full-log.md"),
+            filed_gaps: template!(reader, "parts/filed-gaps.md"),
+            fold_unfinished: template!(reader, "parts/fold-unfinished.md"),
+            held_secret: template!(reader, "parts/held-credential.md"),
+            pushed_secret: template!(reader, "parts/pushed-secret.md"),
+            parse_error: template!(reader, "follow-ups/parse-error.md"),
+            loose_ends: template!(reader, "follow-ups/loose-ends.md"),
+            usage_limit_reset: template!(reader, "follow-ups/usage-limit-reset.md"),
+            late_feedback: template!(reader, "follow-ups/late-feedback.md"),
+        };
+        (prompts, reader.unusable)
+    }
+
+    /// The path under `prompts/` of every prompt and part.
+    pub fn paths() -> Vec<&'static str> {
+        let mut paths = Vec::new();
+        Prompts::read(&mut |path| {
+            paths.push(path);
+            None
+        });
+        paths
+    }
+}
+
+/// Reads each template from its lookup.
+struct Reader<'l, 'a> {
+    lookup: &'l mut dyn FnMut(&'static str) -> Option<&'a str>,
+    unusable: Vec<(&'static str, anyhow::Error)>,
+}
+
+impl Reader<'_, '_> {
+    /// The template at `path`, which ships as `shipped`. A part or a
+    /// follow-up is used without its trailing newline.
+    fn read<V: Values>(&mut self, path: &'static str, shipped: &str) -> Template<V> {
+        let parse = |text: &str| {
+            let text = if path.contains('/') {
+                text.trim_end()
+            } else {
+                text
+            };
+            Template::parse(text.to_string())
+        };
+        if let Some(text) = (self.lookup)(path) {
+            match parse(text) {
+                Ok(template) => return template,
+                Err(error) => self.unusable.push((path, error)),
+            }
+        }
+        parse(shipped).expect("the shipped prompts have their values' placeholders")
     }
 }
 

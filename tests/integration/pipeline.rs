@@ -4460,7 +4460,9 @@ async fn an_operators_prompt_is_the_one_the_session_gets() {
     });
     let (mut world, _) = moved_past_with(
         Repository::default(),
-        |config| config.briefs = linewright::briefs::Briefs::load(briefs.path()).unwrap(),
+        |config| {
+            config.briefs = linewright::briefs::OperatorBriefs::read(Some(briefs.path())).unwrap();
+        },
         true,
     )
     .await;

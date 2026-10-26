@@ -1,6 +1,7 @@
 use crate::common;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use common::*;
 use linewright::domain::Number;
@@ -23,9 +24,7 @@ fn harness_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
     ClaudeCode {
         program: fake_claude_streaming(dir, events).to_str().unwrap().into(),
         bash: "/bin/bash".into(),
-        model: None,
         github_token: None,
-        environment: Given::default(),
         redaction: Redaction::default(),
     }
 }
@@ -81,6 +80,8 @@ fn triage_session(dir: &Path) -> SessionSpec {
         record: dir.to_path_buf(),
         plugin: dir.join("plugin"),
         prompt: "Triage #1.".into(),
+        model: None,
+        environment: Arc::new(Given::default()),
         deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(30),
     }
 }
@@ -92,9 +93,7 @@ async fn a_production_session_gets_linewrights_github_token() {
     let harness = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
-        model: None,
         github_token: Some("linewright-token".into()),
-        environment: Given::default(),
         redaction: Redaction::default(),
     };
 
@@ -144,15 +143,18 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() 
     ];
     let session_env =
         SessionEnv::new(["CARGO_*", "RUSTUP_HOME", "LINEWRIGHT_*"].map(String::from)).unwrap();
-    let mut harness = harness_without_token(dir.path());
-    harness.environment = session_env
-        .split(
-            linewrights.map(|(name, value)| (name.into(), value.into())),
-            &[],
-        )
-        .given;
+    let harness = harness_without_token(dir.path());
+    let mut session = triage_session(dir.path());
+    session.environment = Arc::new(
+        session_env
+            .split(
+                linewrights.map(|(name, value)| (name.into(), value.into())),
+                &[],
+            )
+            .given,
+    );
 
-    harness.start(&triage_session(dir.path())).await.unwrap();
+    harness.start(&session).await.unwrap();
 
     assert_eq!(
         session_variables(dir.path()),
@@ -248,6 +250,28 @@ async fn every_turn_reads_only_the_repositorys_configuration_and_keeps_no_memory
         .collect();
     let isolated = (Some("project,local".to_string()), json!(false), json!(true));
     assert_eq!(configuration, vec![isolated.clone(), isolated]);
+}
+
+#[tokio::test]
+async fn a_session_runs_on_its_model_and_without_one_on_the_harnesss_choice() {
+    let (chosen, unset) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut session = triage_session(chosen.path());
+    session.model = Some("opus".into());
+
+    harness_without_token(chosen.path())
+        .start(&session)
+        .await
+        .unwrap();
+    harness_without_token(unset.path())
+        .start(&triage_session(unset.path()))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        flag_value(&turn_args(chosen.path())[0], "--model"),
+        Some("opus")
+    );
+    assert_eq!(flag_value(&turn_args(unset.path())[0], "--model"), None);
 }
 
 #[tokio::test]
@@ -507,9 +531,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
     let harness = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
-        model: None,
         github_token: None,
-        environment: Given::default(),
         redaction: Redaction::default(),
     };
     let mut session = triage_session(dir.path());
@@ -617,9 +639,7 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
     let harness = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
-        model: None,
         github_token: None,
-        environment: Given::default(),
         redaction: Redaction::default(),
     };
     let spec = triage_session(dir.path());
@@ -653,9 +673,7 @@ fn harness_printing_a_secret(dir: &Path, last: Option<Value>) -> ClaudeCode {
     ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
-        model: None,
         github_token: None,
-        environment: Given::default(),
         redaction: redaction_of(&[("GH_TOKEN", CREDENTIAL)]),
     }
 }
@@ -761,9 +779,7 @@ async fn a_session_runs_in_a_process_group_of_its_own() {
     let harness = ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
-        model: None,
         github_token: None,
-        environment: Given::default(),
         redaction: Redaction::default(),
     };
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
-use linewright::briefs::Briefs;
+use linewright::briefs::OperatorBriefs;
 use linewright::domain::{
     AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, label,
 };
@@ -17,6 +17,7 @@ use linewright::store::Store;
 use linewright::store::local::{CheckRecord, LocalStore, Seed};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::Pending;
+use linewright::work_settings::{Environments, Partial, WorkSettings};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -113,11 +114,18 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
         result_retries: 1,
-        session_timeout: std::time::Duration::from_mins(30),
+        work: WorkSettings {
+            file: Partial {
+                session_timeout: Some(std::time::Duration::from_mins(30)),
+                ..Partial::default()
+            },
+            ..WorkSettings::default()
+        },
+        environments: Environments::default(),
         update_method: None,
         auto_merge: None,
         require_label: None,
-        briefs: Briefs::shipped(),
+        briefs: OperatorBriefs::read(None).unwrap(),
         work_dir: work_dir.to_path_buf(),
         schedule_automations: true,
         waits_out_usage_limit: false,

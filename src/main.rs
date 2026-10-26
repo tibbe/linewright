@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use linewright::api::{self, Api, EventId, Publish, RequestError, Resume, Sources, Unanswered};
-use linewright::briefs::Briefs;
+use linewright::briefs::OperatorBriefs;
 use linewright::case;
 use linewright::child;
 use linewright::clock::{Clock, SystemClock};
@@ -24,6 +24,7 @@ use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES}
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::{Listener, Pending};
+use linewright::work_settings::Environments;
 use linewright::{COMMAND, COMMIT, VERSION};
 use linewright::{explain, status, web};
 use tokio::signal::unix::signal;
@@ -593,10 +594,12 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             let bash = require_bash()?;
             require_tool(HARNESS_PROGRAM).await?;
             let sessions = SessionCredentials::new(SessionToken::Withheld, &config.secrets)?;
-            let harness = harness(&config, bash, &sessions);
+            let environments = environments(&config, &sessions);
+            let harness = harness(bash, &sessions);
             let factory_config = factory_config(
                 &config,
                 briefs,
+                environments,
                 out.clone(),
                 OnUsageLimit::End,
                 sessions,
@@ -691,41 +694,40 @@ impl SessionCredentials {
     }
 }
 
-/// Logs the names of the variables of Linewright's environment its sessions
-/// are not given, so that an operator whose build fails only in a session
-/// sees what to add to `session-env`.
-fn harness(config: &Config, bash: PathBuf, sessions: &SessionCredentials) -> ClaudeCode {
-    let github_token = sessions.token.given().map(str::to_string);
+fn harness(bash: PathBuf, sessions: &SessionCredentials) -> ClaudeCode {
+    ClaudeCode {
+        program: HARNESS_PROGRAM.into(),
+        bash,
+        github_token: sessions.token.given().map(str::to_string),
+        redaction: sessions.secrets.redaction().clone(),
+    }
+}
+
+/// What sessions are given of Linewright's environment. Logs the names of
+/// the variables they are not given, so that an operator whose build fails
+/// only in a session sees what to add to `session-env`.
+fn environments(config: &Config, sessions: &SessionCredentials) -> Environments {
     let split = config.session_env.split(
         std::env::vars_os(),
-        &ClaudeCode::variables_set_for_sessions(github_token.as_deref()),
+        &ClaudeCode::variables_set_for_sessions(sessions.token.given()),
     );
     info!(
         variables = split.withheld.join(" "),
         "agent sessions are not given these variables of Linewright's environment; \
          `session-env` names the ones they need"
     );
-    ClaudeCode {
-        program: HARNESS_PROGRAM.into(),
-        bash,
-        model: config.model.clone(),
-        github_token,
-        environment: split.given,
-        redaction: sessions.secrets.redaction().clone(),
-    }
+    Environments::new(split.given)
 }
 
 /// Read before anything else at startup, so a mistake in them is found at once.
-fn briefs(config: &Config) -> Result<Briefs> {
-    match &config.briefs {
-        Some(dir) => Briefs::load(dir),
-        None => Ok(Briefs::shipped()),
-    }
+fn briefs(config: &Config) -> Result<OperatorBriefs> {
+    OperatorBriefs::read(config.briefs.as_deref())
 }
 
 fn factory_config(
     config: &Config,
-    briefs: Briefs,
+    briefs: OperatorBriefs,
+    environments: Environments,
     work_dir: std::path::PathBuf,
     on_usage_limit: OnUsageLimit,
     sessions: SessionCredentials,
@@ -739,7 +741,8 @@ fn factory_config(
         ci_timeout: config.ci_timeout,
         ci_attempts: config.ci_attempts,
         result_retries: config.result_retries,
-        session_timeout: config.session_timeout,
+        work: config.work.clone(),
+        environments,
         update_method: config.update_branch,
         auto_merge: config.auto_merge,
         require_label: config.require_label.clone(),
@@ -769,11 +772,13 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Res
         SessionToken::new(token.clone(), std::env::var(SESSION_TOKEN_VARIABLE).ok()),
         &config.secrets,
     )?;
-    let harness = harness(config, bash, &sessions);
+    let environments = environments(config, &sessions);
+    let harness = harness(bash, &sessions);
     let github = connect(config, token).await?;
     let factory_config = factory_config(
         config,
         briefs,
+        environments,
         work_dir(config, &github),
         on_usage_limit,
         sessions,

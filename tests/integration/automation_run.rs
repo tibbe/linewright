@@ -79,7 +79,7 @@ async fn an_operators_automation_prompt_is_the_one_the_session_gets() {
         format!("Mind the schedule.\n\n{text}")
     });
     let world = World::with(|config| {
-        config.briefs = linewright::briefs::Briefs::load(briefs.path()).unwrap();
+        config.briefs = linewright::briefs::OperatorBriefs::read(Some(briefs.path())).unwrap();
     })
     .await;
     world
