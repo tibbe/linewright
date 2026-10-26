@@ -16,6 +16,11 @@ observes.
   the harness and the clock sit behind interfaces with a real and a fake
   implementation.
 
+## Testing
+
+Tests run real git. A fake builds its repository's history directly, so a test
+clones and pushes only where the code under test does.
+
 ## State
 
 State that people read or change (labels, assignees, pull requests, comments)
