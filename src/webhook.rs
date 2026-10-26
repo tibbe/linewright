@@ -164,7 +164,7 @@ pub struct Headers<'a> {
 
 /// <https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries>
 pub fn receive(secret: &Secret, headers: Headers, body: &[u8]) -> Result<Delivery, Refusal> {
-    use hmac::Mac;
+    use hmac::{KeyInit, Mac};
     let signature = headers.signature.ok_or(Refusal::NoSignature)?;
     let signature = signature
         .strip_prefix("sha256=")

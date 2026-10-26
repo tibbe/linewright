@@ -11,7 +11,7 @@ pub fn webhooks(address: &str) -> Webhooks {
 }
 
 pub fn signature(body: &str) -> String {
-    use hmac::Mac;
+    use hmac::{KeyInit, Mac};
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(SECRET.as_bytes()).unwrap();
     mac.update(body.as_bytes());
     format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
