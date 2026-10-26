@@ -263,25 +263,10 @@ impl Page {
 /// `nav_icon`.
 #[derive(Clone, Copy)]
 enum NavIcon {
-    Repo,
     Board,
     Runs,
     Automations,
     Server,
-}
-
-impl NavIcon {
-    /// Its classes. In the rail, the repository's owner's avatar stands in
-    /// for the repository's icon (`docs/specs/web/design_system.md`,
-    /// Navigation).
-    fn classes(self) -> &'static str {
-        match self {
-            NavIcon::Repo => "size-5 shrink-0 lg:max-2xl:hidden",
-            NavIcon::Board | NavIcon::Runs | NavIcon::Automations | NavIcon::Server => {
-                "size-5 shrink-0"
-            }
-        }
-    }
 }
 
 /// The frame every page has around its own regions

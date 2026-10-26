@@ -49,12 +49,12 @@
 <div class="drawer-side">
 <label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
 <nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
-{#- In the rail, the repository is its owner's GitHub avatar in place of
-    its icon, with its name in the page's tooltip
+{#- The repository is its owner's GitHub avatar beside its name, and in
+    the rail the avatar alone, with its name in the page's tooltip
     (`docs/specs/web/design_system.md`, Navigation). There the name is
     hidden text, so cut, the link's accessible name, and the avatar is
     decorative; in the sidebar the name is whole and no tip shows. -#}
-<a class="repo link link-hover flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut>{% call ui::nav_icon(crate::web::NavIcon::Repo) %}{% endcall %}<img class="hidden size-8 rounded-full lg:max-2xl:block" src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
+<a class="repo link link-hover flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut><div class="avatar"><div class="size-6 rounded-full lg:max-2xl:size-8"><img src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""></div></div><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
 <ul class="menu w-full p-0">
 {%- call nav_link("/", crate::web::NavIcon::Board, "Board") %}{% endcall %}
 {%- call nav_link("/runs", crate::web::NavIcon::Runs, "Runs") %}{% endcall %}

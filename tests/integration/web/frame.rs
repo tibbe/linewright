@@ -44,7 +44,8 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
             Some("https://github.com/owner/widgets")
         );
         assert_eq!(text(repo[0]), "owner/widgets");
-        assert_eq!(icons(repo[0]), 1, "{path}");
+        assert_eq!(icons(repo[0]), 0, "{path}");
+        assert_eq!(select_in(repo[0], "img").len(), 1, "{path}");
         let links: Vec<(String, String, usize)> = select(&html, ".drawer-side .menu a")
             .into_iter()
             .map(|a| (text(a), a.attr("href").unwrap().to_string(), icons(a)))
@@ -113,8 +114,23 @@ fn in_the_rail(element: ElementRef<'_>) -> Vec<&str> {
         .collect()
 }
 
+/// Whether `element`, or one of its ancestors below `within`, is hidden at
+/// some width.
+fn hidden_at_some_width(element: ElementRef<'_>, within: ElementRef<'_>) -> bool {
+    std::iter::successors(Some(element), |element| {
+        element.parent().and_then(ElementRef::wrap)
+    })
+    .take_while(|element| element.id() != within.id())
+    .any(|element| {
+        element
+            .value()
+            .classes()
+            .any(|class| class == "hidden" || class.ends_with(":hidden"))
+    })
+}
+
 #[tokio::test]
-async fn in_the_rail_the_repository_is_its_owners_avatar_with_its_name_as_a_tip_while_cut_and_hidden_text()
+async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the_avatar_with_its_name_as_a_tip_while_cut_and_hidden_text()
  {
     let web = Web::start(with_ticket().await).await;
 
@@ -133,19 +149,19 @@ async fn in_the_rail_the_repository_is_its_owners_avatar_with_its_name_as_a_tip_
     );
     assert_eq!(avatar.attr("alt"), Some(""), "the avatar is decorative");
     assert!(
-        has_classes(avatar, &["hidden"]) && in_the_rail(avatar).contains(&"block"),
-        "only the rail shows the avatar: {}",
-        avatar.html()
+        !hidden_at_some_width(avatar, repo),
+        "every width shows the avatar: {}",
+        repo.html()
     );
-    let icon = select_in(repo, "svg")[0];
-    assert!(in_the_rail(icon).contains(&"hidden"), "{}", icon.html());
+    assert_eq!(select_in(repo, "svg").len(), 0, "no icon: {}", repo.html());
     let names = select_in(repo, "span");
     assert_eq!(names.len(), 1, "{}", repo.html());
-    assert_eq!(text(names[0]), "owner/widgets");
+    let name = names[0];
+    assert_eq!(text(name), "owner/widgets");
     assert!(
-        in_the_rail(names[0]).contains(&"sr-only"),
-        "{}",
-        names[0].html()
+        in_the_rail(name).contains(&"sr-only") && !has_classes(name, &["sr-only"]),
+        "only the rail hides the name: {}",
+        name.html()
     );
     // The page's script shows the tip while the name is cut, which the
     // rail's `sr-only` does and the sidebar does not.
