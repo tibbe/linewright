@@ -3,8 +3,8 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
+use crate::child;
 use crate::domain::{UpdateMethod, UpdateRule};
 
 pub type GitEnv = [(String, String)];
@@ -19,7 +19,7 @@ pub async fn git_with(dir: &Path, args: &[&str], env: &GitEnv) -> Result<String>
 
 /// Runs git with `input` piped to its standard input.
 pub async fn git_input(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) -> Result<String> {
-    let mut child = Command::new("git")
+    let mut child = child::command("git")
         .args(args)
         .current_dir(dir)
         .envs(env.iter().map(|(k, v)| (k, v)))
@@ -27,7 +27,6 @@ pub async fn git_input(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) ->
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("running git {}", args.join(" ")))?;
     let mut stdin = child.stdin.take().context("git's stdin is piped")?;
@@ -338,11 +337,10 @@ pub(crate) async fn merge_tree(
     let mut args = vec!["merge-tree", "--write-tree"];
     args.extend(base.as_deref());
     args.extend([ours, theirs]);
-    let output = Command::new("git")
+    let output = child::command("git")
         .args(&args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .kill_on_drop(true)
         .output()
         .await
         .with_context(|| format!("running git {}", args.join(" ")))?;

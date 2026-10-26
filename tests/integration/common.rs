@@ -56,6 +56,8 @@
 //! - `refused_for_the_usage_limit`: a turn refused for the usage limit before it began.
 //! - `refused_part_way`: a turn refused for the usage limit part way through.
 //! - `refused_until`: a turn refused for a usage limit that resets at a given time.
+//! - `assert_in_a_process_group_of_its_own`: asserts a process group is not
+//!   the tests' own.
 //! - `rejected`: git's output for a push the remote rejected.
 //! - `fake_claude`: a stand-in `claude` program whose turns answer a message.
 //! - `fake_claude_streaming`: a stand-in `claude` program that streams events.

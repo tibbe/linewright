@@ -2001,9 +2001,9 @@ async fn drain_of_serve_already_draining_says_so_and_waits_for_it_to_exit(
 }
 
 #[tokio::test]
-async fn drain_of_serve_draining_after_sigquit_says_so_and_waits_for_it_to_exit() {
+async fn drain_of_serve_draining_after_sigterm_says_so_and_waits_for_it_to_exit() {
     drain_of_serve_already_draining_says_so_and_waits_for_it_to_exit(async |answering| {
-        answering.ends.on(Event::Signal(Signal::Quit));
+        answering.ends.on(Event::Signal(Signal::Terminate));
     })
     .await;
 }
@@ -2027,7 +2027,7 @@ async fn drain_of_serve_stopping_says_so_and_waits_for_it_to_exit() {
         runtime_dir,
         ..
     } = answering;
-    ends.on(Event::Signal(Signal::Terminate));
+    ends.on(Event::Signal(Signal::Quit));
     // Its runs cancelled, `serve` answers until it exits.
     within(STOPPING, "serving stops", serving.finished()).await;
     drop(agent);
@@ -2055,14 +2055,14 @@ async fn drain_without_serve_running_exits_3_saying_so() {
 }
 
 #[tokio::test]
-async fn status_shows_a_drain_from_drain_as_one_from_sigquit() {
+async fn status_shows_a_drain_from_drain_as_one_from_sigterm() {
     let from_drain = Answering::start(World::new().await, false).await;
-    let from_sigquit = Answering::start(World::new().await, false).await;
+    let from_sigterm = Answering::start(World::new().await, false).await;
 
     from_drain.lw(&["drain", "--no-wait"]).await;
-    from_sigquit.ends.on(Event::Signal(Signal::Quit));
+    from_sigterm.ends.on(Event::Signal(Signal::Terminate));
     let mut shown = vec![];
-    for answering in [&from_drain, &from_sigquit] {
+    for answering in [&from_drain, &from_sigterm] {
         let text = answering.lw(&["status"]).await.stdout;
         let json = answering.lw(&["status", "--json"]).await.stdout;
         let json: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2079,7 +2079,7 @@ async fn status_shows_a_drain_from_drain_as_one_from_sigquit() {
         assert_eq!(json["deadline"], serde_json::Value::Null, "{json}");
     }
     from_drain.stop().await;
-    from_sigquit.stop().await;
+    from_sigterm.stop().await;
 }
 
 #[tokio::test]
@@ -2292,7 +2292,7 @@ async fn a_later_drain_without_a_timeout_leaves_the_drain_with_no_deadline() {
 #[tokio::test]
 async fn a_drain_with_a_timeout_to_serve_already_stopping_sets_no_deadline() {
     let (_agent, answering) = triage_held().await;
-    answering.ends.on(Event::Signal(Signal::Terminate));
+    answering.ends.on(Event::Signal(Signal::Quit));
 
     let drained = answering
         .lw(&["drain", "--no-wait", "--timeout", "1h"])

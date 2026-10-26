@@ -1,7 +1,7 @@
 use crate::common;
 
-use common::at;
-use linewright::ending::{Ending, Event, Signal, Step, StopBy};
+use common::{Log, at};
+use linewright::ending::{Ending, Ends, Event, Signal, Step, StopBy};
 
 /// `docs/specs/operation.md`, "Stopping".
 #[test]
@@ -20,7 +20,8 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
         by: StopBy::Deadline,
     };
     let table = [
-        (Ending::Serving, quit, draining, Step::Drain),
+        (Ending::Serving, terminate, draining, Step::Drain),
+        (Ending::Serving, interrupt, draining, Step::Drain),
         (Ending::Serving, drain, draining, Step::Drain),
         (
             Ending::Serving,
@@ -28,10 +29,7 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
             draining_by(one),
             Step::Drain,
         ),
-        (Ending::Serving, interrupt, stopping, Step::Stop),
-        (Ending::Serving, terminate, stopping, Step::Stop),
-        (draining, quit, draining, Step::Nothing),
-        (draining_by(one), quit, draining_by(one), Step::Nothing),
+        (Ending::Serving, quit, stopping, Step::Stop),
         // The latest `drain` sets the deadline.
         (draining, drain, draining, Step::SetDeadline),
         (draining, drain_by(one), draining_by(one), Step::SetDeadline),
@@ -42,8 +40,9 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
             Step::SetDeadline,
         ),
         (draining_by(one), drain, draining, Step::SetDeadline),
-        (draining, interrupt, stopping, Step::Stop),
         (draining, terminate, stopping, Step::Stop),
+        (draining, interrupt, stopping, Step::Stop),
+        (draining, quit, stopping, Step::Stop),
         (draining_by(one), terminate, stopping, Step::Stop),
         (
             draining_by(one),
@@ -70,11 +69,11 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
             stopping,
             Step::PassedUnheeded,
         ),
-        (stopping, quit, stopping, Step::Nothing),
         (stopping, drain, stopping, Step::Nothing),
         (stopping, drain_by(one), stopping, Step::Nothing),
-        (stopping, interrupt, Ending::Exited, Step::Exit),
         (stopping, terminate, Ending::Exited, Step::Exit),
+        (stopping, interrupt, Ending::Exited, Step::Exit),
+        (stopping, quit, Ending::Exited, Step::Exit),
     ];
 
     for (state, event, next, step) in table {
@@ -86,4 +85,36 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
 fn an_exit_at_once_has_status_128_plus_the_signals_number() {
     assert_eq!(Signal::Interrupt.exit_status(), 130);
     assert_eq!(Signal::Terminate.exit_status(), 143);
+    assert_eq!(Signal::Quit.exit_status(), 131);
+}
+
+#[tokio::test]
+async fn each_way_a_signal_takes_is_logged_with_the_signal_and_what_the_next_signal_does() {
+    let (log, _guard) = Log::capture();
+    let ends = Ends::new();
+
+    ends.on(Event::Signal(Signal::Interrupt));
+    ends.on(Event::Signal(Signal::Quit));
+    ends.on(Event::Signal(Signal::Terminate));
+
+    let lines = log.lines("INFO");
+    let [drained, stopped, exited] = lines.as_slice() else {
+        panic!("{lines:?}");
+    };
+    assert!(
+        drained.contains(
+            "draining: exiting once no run is in flight; the next signal stops instead by=\"SIGINT\""
+        ),
+        "{drained}"
+    );
+    assert!(
+        stopped.contains(
+            "stopping after the action in progress; the next signal exits at once by=\"SIGQUIT\""
+        ),
+        "{stopped}"
+    );
+    assert!(
+        exited.contains("exiting at once, without waiting for the runs in flight by=\"SIGTERM\""),
+        "{exited}"
+    );
 }

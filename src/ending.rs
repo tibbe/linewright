@@ -105,13 +105,16 @@ impl Ending {
     pub fn on(self, event: Event) -> (Ending, Step) {
         use Signal::{Interrupt, Quit, Terminate};
         match (self, event) {
-            (Ending::Serving, Event::Signal(Quit)) => {
+            // Only serving tells signals apart: once ending has begun, any
+            // signal takes the next way.
+            (Ending::Serving, Event::Signal(Terminate | Interrupt)) => {
                 (Ending::Draining { deadline: None }, Step::Drain)
             }
             (Ending::Serving, Event::Drain { deadline }) => {
                 (Ending::Draining { deadline }, Step::Drain)
             }
-            (Ending::Serving | Ending::Draining { .. }, Event::Signal(Interrupt | Terminate)) => {
+            (Ending::Serving, Event::Signal(Quit))
+            | (Ending::Draining { .. }, Event::Signal(_)) => {
                 (Ending::Stopping { by: StopBy::Signal }, Step::Stop)
             }
             // The latest `drain` sets the deadline.
@@ -132,11 +135,11 @@ impl Ending {
                 Ending::Serving | Ending::Draining { .. } | Ending::Stopping { .. },
                 Event::Deadline(_),
             ) => (self, Step::PassedUnheeded),
-            (Ending::Draining { .. } | Ending::Stopping { .. }, Event::Signal(Quit))
-            | (Ending::Stopping { .. }, Event::Drain { .. }) => (self, Step::Nothing),
+            (Ending::Stopping { .. }, Event::Drain { .. }) => (self, Step::Nothing),
             // A process that has exited reads no more signals.
-            (Ending::Stopping { .. }, Event::Signal(Interrupt | Terminate))
-            | (Ending::Exited, _) => (Ending::Exited, Step::Exit),
+            (Ending::Stopping { .. }, Event::Signal(_)) | (Ending::Exited, _) => {
+                (Ending::Exited, Step::Exit)
+            }
         }
     }
 
@@ -208,7 +211,7 @@ impl Ends {
                     by,
                     deadline,
                     "draining: exiting once no run is in flight; \
-                     SIGINT or SIGTERM stops instead"
+                     the next signal stops instead"
                 );
                 self.draining.cancel();
             }
@@ -222,12 +225,16 @@ impl Ends {
                 info!(
                     by,
                     "stopping after the action in progress; \
-                     a second SIGINT or SIGTERM exits at once"
+                     the next signal exits at once"
                 );
                 self.stopping.cancel();
             }
             Step::Nothing => info!(by, "already ending; nothing more"),
-            Step::PassedUnheeded | Step::Exit => {}
+            Step::Exit => info!(
+                by,
+                "exiting at once, without waiting for the runs in flight"
+            ),
+            Step::PassedUnheeded => {}
         }
         (was, step)
     }

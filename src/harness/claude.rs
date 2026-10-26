@@ -7,9 +7,9 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
 
 use super::{Harness, SessionError, SessionSpec, Turn, UsageLimit};
+use crate::child;
 use crate::domain::Timestamp;
 use crate::redaction::Redaction;
 use crate::session_env::Given;
@@ -276,7 +276,7 @@ impl ClaudeCode {
     ) -> Result<Turn, SessionError> {
         // Claude Code matches `CLAUDE.md` files by their real path.
         let clone = std::fs::canonicalize(&spec.dir).unwrap_or_else(|_| spec.dir.clone());
-        let mut command = Command::new(&self.program);
+        let mut command = child::command(&self.program);
         command
             .args([
                 "-p",
@@ -300,8 +300,7 @@ impl ClaudeCode {
             ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .stderr(Stdio::piped());
         if let Some(model) = &self.model {
             command.args(["--model", model]);
         }

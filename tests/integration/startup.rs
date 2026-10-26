@@ -839,7 +839,7 @@ fn briefs_with_the_tickets_prompt_of_an_earlier_release_and_no_design_prompt_are
 }
 
 #[test]
-fn sigquit_while_serve_is_starting_ends_it_with_status_0() {
+fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signal_stops() {
     let bin = tempfile::tempdir().unwrap();
     link_from_path(bin.path(), "git");
     link_from_path(bin.path(), "bash");
@@ -853,15 +853,16 @@ fn sigquit_while_serve_is_starting_ends_it_with_status_0() {
         ),
     );
     let runtime_dir = tempfile::tempdir().unwrap();
+    let log = runtime_dir.path().join("serve.log");
     let mut serve = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
-        .args(["--repo", "owner/name", "serve"])
+        .args(["--repo", "owner/name", "--log-format", "json", "serve"])
         .current_dir(runtime_dir.path())
         .env("PATH", bin.path())
         .env("XDG_RUNTIME_DIR", runtime_dir.path())
         .env("GH_TOKEN", "token")
         .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
-        .stderr(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&log).unwrap())
         .spawn()
         .unwrap();
     let starting = std::time::Instant::now();
@@ -874,7 +875,7 @@ fn sigquit_while_serve_is_starting_ends_it_with_status_0() {
     }
 
     let sent = std::process::Command::new("kill")
-        .args(["-QUIT", &serve.id().to_string()])
+        .args(["-TERM", &serve.id().to_string()])
         .status()
         .unwrap();
 
@@ -891,4 +892,14 @@ fn sigquit_while_serve_is_starting_ends_it_with_status_0() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     };
     assert_eq!(status.code(), Some(0), "{status}");
+    let log = std::fs::read_to_string(&log).unwrap();
+    let drained = log
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|line| line["fields"]["by"] == "SIGTERM")
+        .unwrap_or_else(|| panic!("no line by SIGTERM in {log}"));
+    assert_eq!(
+        drained["fields"]["message"],
+        "draining: exiting once no run is in flight; the next signal stops instead"
+    );
 }

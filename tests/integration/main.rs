@@ -11,6 +11,7 @@ mod drain;
 mod ending;
 mod explain;
 mod fix_brief;
+mod git;
 mod harness;
 mod local_api;
 mod local_store;

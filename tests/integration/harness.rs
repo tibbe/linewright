@@ -740,3 +740,34 @@ async fn a_secret_that_holds_another_is_redacted_whole() {
     };
     assert_eq!(log_tail, "GH_TOKEN=[redacted]");
 }
+
+/// So the SIGINT a terminal sends `serve`'s process group on Ctrl-C, which
+/// drains, does not also end the sessions in flight.
+#[tokio::test]
+async fn a_session_runs_in_a_process_group_of_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("claude");
+    let group = dir.path().join("pgid.log");
+    write_program(
+        &program,
+        &format!(
+            "#!/bin/sh\n\
+             cat > /dev/null\n\
+             ps -o pgid= -p $$ > '{}'\n\
+             echo '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Done.\"}}'\n",
+            group.display()
+        ),
+    );
+    let harness = ClaudeCode {
+        program: program.to_str().unwrap().into(),
+        bash: "/bin/bash".into(),
+        model: None,
+        github_token: None,
+        environment: Given::default(),
+        redaction: Redaction::default(),
+    };
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_in_a_process_group_of_its_own(&std::fs::read_to_string(&group).unwrap());
+}

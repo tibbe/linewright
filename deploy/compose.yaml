@@ -15,7 +15,6 @@ services:
   linewright:
     image: ghcr.io/tibbe/linewright-self:${LINEWRIGHT_TAG:-main}
     restart: unless-stopped
-    stop_signal: SIGQUIT
     # Twice the default session-timeout.
     stop_grace_period: 2h
     env_file: .env

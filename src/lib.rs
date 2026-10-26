@@ -15,6 +15,7 @@ pub mod automation;
 pub mod board;
 pub mod briefs;
 pub mod case;
+pub mod child;
 pub mod clock;
 pub mod config;
 pub mod domain;

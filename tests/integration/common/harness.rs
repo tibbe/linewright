@@ -308,3 +308,15 @@ pub fn rejected(reason: &str) -> String {
 pub fn nothing_needs_doing() -> String {
     serde_json::json!({"summary": "Nothing needs doing.", "issues": []}).to_string()
 }
+
+/// Asserts that `group`, a process group as `ps -o pgid=` prints it, is not
+/// the tests' own.
+pub fn assert_in_a_process_group_of_its_own(group: &str) {
+    let output = Command::new("ps")
+        .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
+        .output()
+        .unwrap();
+    let own = String::from_utf8(output.stdout).unwrap();
+    assert_ne!(group.trim(), "");
+    assert_ne!(group.trim(), own.trim());
+}

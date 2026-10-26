@@ -9,6 +9,7 @@ use clap::Parser;
 use linewright::api::{self, Api, EventId, Publish, RequestError, Resume, Sources, Unanswered};
 use linewright::briefs::Briefs;
 use linewright::case;
+use linewright::child;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{AutomationCommand, Cli, Command, Config, LogFormat, ResolveError, Since};
 use linewright::domain::Number;
@@ -643,7 +644,7 @@ fn end_on(mut signals: Signals, ends: Ends) {
             if let (_, Step::Exit) = ends.on(Event::Signal(signal)) {
                 #[expect(
                     clippy::exit,
-                    reason = "a second signal exits at once, without stopping the runs in flight"
+                    reason = "a signal while stopping exits at once, without waiting for the runs in flight"
                 )]
                 std::process::exit(signal.exit_status());
             }
@@ -803,7 +804,7 @@ impl Signals {
     }
 
     /// Signals that arrive before the last one was read count as one, so two
-    /// sent back to back are a single stop.
+    /// sent back to back take a single way.
     async fn next(&mut self) -> Signal {
         tokio::select! {
             _ = self.quit.recv() => Signal::Quit,
@@ -814,7 +815,7 @@ impl Signals {
 }
 
 async fn require_tool(program: &str) -> Result<()> {
-    let found = tokio::process::Command::new(program)
+    let found = child::command(program)
         .arg("--version")
         .output()
         .await
