@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use chrono::TimeDelta;
@@ -13,7 +13,8 @@ use tracing::warn;
 use crate::automation::AutomationName;
 use crate::briefs::Briefs;
 use crate::domain::{Number, Repo, Timestamp};
-use crate::layer::Layer;
+use crate::harness::Reported;
+use crate::layer::{Layer, Source};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{DoneRun, OLD_DESIGN, WorkKind};
 use crate::records;
@@ -248,19 +249,59 @@ impl From<PathBuf> for SessionEntry {
 }
 
 /// What a session ran with: its model and effort as Linewright set them,
-/// and where each of its settings and prompt files came from.
+/// the model as the harness reported it ran, and where each of its settings
+/// and prompt files came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "KeptRan")]
 pub struct Ran {
     /// `None` is the harness's choice.
     pub model: Option<String>,
+    /// `None` until the harness reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_model: Option<String>,
     /// `None` is the harness's choice.
     pub effort: Option<Effort>,
     pub layers: Layers,
 }
 
+/// A [`Ran`] as a record holds it.
+#[derive(Deserialize)]
+struct KeptRan {
+    model: Option<String>,
+    #[serde(default)]
+    reported_model: Option<String>,
+    effort: Option<Effort>,
+    layers: Layers,
+}
+
+/// A record kept before the harness was a source gave a model or effort
+/// none set as Linewright's.
+impl From<KeptRan> for Ran {
+    fn from(kept: KeptRan) -> Ran {
+        let mut layers = kept.layers;
+        for (setting, set) in [
+            (Setting::Model, kept.model.is_some()),
+            (Setting::Effort, kept.effort.is_some()),
+        ] {
+            if let Some(source) = layers.settings.get_mut(&setting)
+                && !set
+                && *source == Source::Layer(Layer::Linewright)
+            {
+                *source = Source::Harness;
+            }
+        }
+        Ran {
+            model: kept.model,
+            reported_model: kept.reported_model,
+            effort: kept.effort,
+            layers,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Layers {
-    pub settings: BTreeMap<Setting, Layer>,
+    pub settings: BTreeMap<Setting, Source>,
     /// By the prompt's path under the prompts' root. A record kept before
     /// prompts were the only layered files has its paths under the briefs'
     /// root, such as `prompts/triage.md` and `plugin/skills/tdd/SKILL.md`.
@@ -271,13 +312,19 @@ pub struct Layers {
 impl Ran {
     pub fn new(settings: &SessionSettings, briefs: &Briefs) -> Ran {
         Ran {
-            model: settings.model.value.clone(),
-            effort: settings.effort.value,
+            model: settings.model_set(),
+            reported_model: None,
+            effort: settings.effort_set(),
             layers: Layers {
-                settings: settings.layers(),
+                settings: settings.sources(),
                 prompts: briefs.layers().clone(),
             },
         }
+    }
+
+    /// The model the harness reported the session ran, else the one set.
+    pub fn model_ran(&self) -> Option<&str> {
+        self.reported_model.as_deref().or(self.model.as_deref())
     }
 }
 
@@ -359,22 +406,24 @@ impl Runs {
         lock.try_lock()
             .with_context(|| format!("locking {}", lock_path.display()))?;
         let running = Running {
-            id: RunId { of: of.clone(), n },
-            path: lock_path.with_extension("json"),
+            kept: RunRecord {
+                id: RunId { of: of.clone(), n },
+                path: lock_path.with_extension("json"),
+                record: Arc::new(Mutex::new(Record {
+                    of,
+                    n,
+                    started_by,
+                    started_at: now,
+                    end: None,
+                    sessions: vec![],
+                    answered_until: None,
+                })),
+            },
             lock_path,
             work_dir: self.work_dir.clone(),
-            record: Mutex::new(Record {
-                of,
-                n,
-                started_by,
-                started_at: now,
-                end: None,
-                sessions: vec![],
-                answered_until: None,
-            }),
             _lock: lock,
         };
-        running.save()?;
+        running.kept.save()?;
         Ok(running)
     }
 
@@ -569,11 +618,10 @@ fn describe_of(of: &RunOf) -> Phrase {
 /// A run dropped without ending, as when its process dies, reads as
 /// interrupted.
 pub(crate) struct Running {
-    id: RunId,
-    path: PathBuf,
+    /// Shared with its sessions' [`SessionRecorder`]s.
+    kept: RunRecord,
     lock_path: PathBuf,
     work_dir: PathBuf,
-    record: Mutex<Record>,
     /// Locked while the run is in flight. The kernel releases the lock when
     /// the process ends however it ends.
     _lock: File,
@@ -581,51 +629,94 @@ pub(crate) struct Running {
 
 impl Running {
     pub fn id(&self) -> &RunId {
-        &self.id
+        &self.kept.id
     }
 
     pub fn in_flight(&self) -> InFlight {
         InFlight {
-            id: self.id.clone(),
-            started_at: self.record.lock().unwrap().started_at,
+            id: self.kept.id.clone(),
+            started_at: self.kept.record.lock().unwrap().started_at,
         }
     }
 
-    pub fn session(&self, dir: &Path, settings: &SessionSettings, briefs: &Briefs) {
+    /// Records a session, and gives what records what the harness reports
+    /// of it.
+    pub fn session(
+        &self,
+        dir: &Path,
+        settings: &SessionSettings,
+        briefs: &Briefs,
+    ) -> SessionRecorder {
         let dir = dir.strip_prefix(&self.work_dir).unwrap_or(dir);
-        self.record
-            .lock()
-            .unwrap()
-            .sessions
-            .push(RecordedSession::Ran {
+        let index = {
+            let mut record = self.kept.record.lock().unwrap();
+            record.sessions.push(RecordedSession::Ran {
                 dir: dir.to_path_buf(),
                 ran: Ran::new(settings, briefs),
             });
-        self.save_or_log();
+            record.sessions.len() - 1
+        };
+        self.kept.save_or_log();
+        SessionRecorder {
+            kept: self.kept.clone(),
+            index,
+        }
     }
 
     pub fn answered(&self, at: Timestamp) {
-        self.record.lock().unwrap().answered_until = Some(at);
-        self.save_or_log();
+        self.kept.record.lock().unwrap().answered_until = Some(at);
+        self.kept.save_or_log();
     }
 
     pub fn end(self, now: Timestamp, ending: Ending) {
-        self.record.lock().unwrap().end = Some(End { at: now, ending });
-        self.save_or_log();
+        self.kept.record.lock().unwrap().end = Some(End { at: now, ending });
+        self.kept.save_or_log();
         if let Err(e) = std::fs::remove_file(&self.lock_path) {
             warn!(path = %self.lock_path.display(), error = %e, "removing a run's lock failed");
         }
     }
+}
 
+/// A run's record, as it is while the run is in flight, and where it is
+/// saved.
+#[derive(Clone)]
+struct RunRecord {
+    id: RunId,
+    path: PathBuf,
+    record: Arc<Mutex<Record>>,
+}
+
+impl RunRecord {
+    /// Holds the record while it writes it, so that what one write saves
+    /// is never overwritten by an older copy.
     fn save(&self) -> Result<()> {
-        let record = self.record.lock().unwrap().clone();
-        records::save(&self.path, &record, "a run's record")
+        let record = self.record.lock().unwrap();
+        records::save(&self.path, &*record, "a run's record")
     }
 
     fn save_or_log(&self) {
         if let Err(e) = self.save() {
             warn!(run = %self.id, error = format!("{e:#}"), "recording the run failed");
         }
+    }
+}
+
+/// Records what the harness reports of one of a run's sessions.
+pub(crate) struct SessionRecorder {
+    kept: RunRecord,
+    /// The session's among the record's.
+    index: usize,
+}
+
+impl SessionRecorder {
+    /// The last report wins.
+    pub fn reported(&self, reported: Reported) {
+        if let RecordedSession::Ran { ran, .. } =
+            &mut self.kept.record.lock().unwrap().sessions[self.index]
+        {
+            ran.reported_model = Some(reported.model);
+        }
+        self.kept.save_or_log();
     }
 }
 
@@ -983,14 +1074,15 @@ pub fn render(listing: &Listing, colour: bool) -> String {
     text
 }
 
-/// A session's model and effort, as Linewright set them.
+/// A session's model, as the harness reported it ran or else as set, and
+/// its effort as set.
 pub(crate) fn describe_ran(ran: Option<&Ran>) -> String {
     let Some(ran) = ran else {
         return "model and effort not recorded".into();
     };
     format!(
         "model {}, effort {}",
-        ran.model.as_deref().unwrap_or(HARNESS_CHOICE),
+        ran.model_ran().unwrap_or(HARNESS_CHOICE),
         ran.effort.map_or(HARNESS_CHOICE, Effort::name)
     )
 }

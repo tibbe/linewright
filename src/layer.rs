@@ -38,3 +38,44 @@ impl<T> Sourced<T> {
         Sourced { value, layer }
     }
 }
+
+/// Where a session's setting came from: a layer, or, for a model or effort
+/// none set, the harness's choice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Source {
+    Layer(Layer),
+    Harness,
+}
+
+impl Source {
+    /// Whose a setting is, coming from here.
+    pub fn whose(self) -> &'static str {
+        match self {
+            Source::Layer(layer) => layer.whose(),
+            Source::Harness => "the harness's",
+        }
+    }
+}
+
+const HARNESS: &str = "harness";
+
+/// Flat, as a layer's name or `harness`.
+impl Serialize for Source {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Source::Layer(layer) => layer.serialize(serializer),
+            Source::Harness => serializer.serialize_str(HARNESS),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Source {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Source, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        if name == HARNESS {
+            return Ok(Source::Harness);
+        }
+        Layer::deserialize(serde::de::value::StrDeserializer::<D::Error>::new(&name))
+            .map(Source::Layer)
+    }
+}

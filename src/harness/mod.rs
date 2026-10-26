@@ -38,6 +38,35 @@ pub struct SessionSpec {
     /// When the session times out, across all its turns. A run that waits
     /// out the usage limit moves it on by the wait.
     pub deadline: tokio::time::Instant,
+    /// Told what the harness reports of the session as each turn runs, so
+    /// that a turn that never returns has still told it.
+    pub report: Reporter,
+}
+
+/// What the harness reports a session ran with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reported {
+    pub model: String,
+}
+
+/// Where the harness's reports of a session go.
+#[derive(Clone)]
+pub struct Reporter(Arc<dyn Fn(Reported) + Send + Sync>);
+
+impl Reporter {
+    pub fn new(report: impl Fn(Reported) + Send + Sync + 'static) -> Reporter {
+        Reporter(Arc::new(report))
+    }
+
+    pub fn report(&self, reported: Reported) {
+        (self.0)(reported);
+    }
+}
+
+impl std::fmt::Debug for Reporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Reporter")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

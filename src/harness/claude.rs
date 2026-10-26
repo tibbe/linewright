@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-use super::{Harness, SessionError, SessionSpec, Turn, UsageLimit};
+use super::{Harness, Reported, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::child;
 use crate::domain::Timestamp;
 use crate::redaction::Redaction;
@@ -363,6 +363,15 @@ impl ClaudeCode {
                     continue;
                 };
                 match event["type"].as_str() {
+                    // <https://code.claude.com/docs/en/agent-sdk/typescript#sdksystemmessage>
+                    Some("system")
+                        if event["subtype"] == "init"
+                            && let Some(model) = event["model"].as_str() =>
+                    {
+                        spec.report.report(Reported {
+                            model: model.to_string(),
+                        });
+                    }
                     Some("result") => result = serde_json::from_value::<ResultEvent>(event).ok(),
                     Some("rate_limit_event") => {
                         let event = serde_json::from_value::<RateLimitEvent>(event).ok();

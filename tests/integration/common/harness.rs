@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use linewright::domain::Timestamp;
-use linewright::harness::{Harness, Purpose, SessionError, SessionSpec, Turn, UsageLimit};
+use linewright::harness::{
+    Harness, Purpose, Reported, SessionError, SessionSpec, Turn, UsageLimit,
+};
 use linewright::reconcile::WorkKind;
 use serde_json::Value;
 
@@ -39,6 +41,9 @@ pub struct ScriptedHarness {
     started: std::sync::atomic::AtomicUsize,
     turn_time: Mutex<std::time::Duration>,
     held: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>,
+    /// The model each turn reports it runs, as the turn starts; `None`
+    /// reports none.
+    model: Mutex<Option<String>>,
 }
 
 /// The agent of a turn held open: it writes output each time it is told
@@ -73,6 +78,11 @@ impl ScriptedHarness {
         script: impl Fn(&Call) -> Result<String, SessionError> + Send + Sync + 'static,
     ) {
         self.scripts.lock().unwrap().insert(key, Arc::new(script));
+    }
+
+    /// Each turn from now on reports it runs `model`.
+    pub fn reports_model(&self, model: &str) {
+        *self.model.lock().unwrap() = Some(model.to_string());
     }
 
     pub fn takes(&self, time: std::time::Duration) {
@@ -111,6 +121,10 @@ impl ScriptedHarness {
         session: String,
         followup: Option<&str>,
     ) -> Result<Turn, SessionError> {
+        let model = self.model.lock().unwrap().clone();
+        if let Some(model) = model {
+            spec.report.report(Reported { model });
+        }
         let time = std::mem::take(&mut *self.turn_time.lock().unwrap());
         if !time.is_zero() {
             tokio::time::sleep(time).await;

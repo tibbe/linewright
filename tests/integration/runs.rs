@@ -110,13 +110,153 @@ async fn an_items_runs_as_json_give_where_each_setting_and_prompt_file_came_from
         session["layers"]["settings"],
         json!({
             "model": "operator",
-            "effort": "linewright",
+            "effort": "harness",
             "session-timeout": "operator",
             "session-env": "linewright",
         })
     );
     assert_eq!(session["layers"]["prompts"]["triage.md"], "linewright");
     assert_eq!(session["layers"]["prompts"].get("prompts/triage.md"), None);
+}
+
+/// A world whose triage sessions run with the operator's `set`, if any,
+/// on a harness that reports running `claude-opus-5-5`.
+async fn triage_reporting_opus(set: Option<&str>) -> (World, tempfile::TempDir) {
+    let work_dir = tempfile::tempdir().unwrap();
+    let mut world = World::with(|config| {
+        config.work_dir = work_dir.path().join(REPO);
+        config.work.flags_and_env.model = set.map(str::to_string);
+    })
+    .await;
+    world.harness.reports_model("claude-opus-5-5");
+    triage_ready(&world);
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    world.poll().await;
+    (world, work_dir)
+}
+
+#[tokio::test]
+async fn a_session_with_no_model_set_shows_the_model_the_harness_reported_and_the_harness_as_its_source()
+ {
+    let (_world, work_dir) = triage_reporting_opus(None).await;
+
+    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
+    let json = lw_in(work_dir.path(), &["runs", "1", "--json"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert_eq!(
+        output.stdout.lines().nth(1),
+        Some("  session 1: model claude-opus-5-5, effort the harness's choice"),
+        "{}",
+        output.stdout
+    );
+    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    let session = &answer["runs"][0]["sessions"][0];
+    assert_eq!(session["model"], serde_json::Value::Null);
+    assert_eq!(session["reported_model"], "claude-opus-5-5");
+    assert_eq!(session["effort"], serde_json::Value::Null);
+    assert_eq!(session["layers"]["settings"]["model"], "harness");
+    assert_eq!(session["layers"]["settings"]["effort"], "harness");
+}
+
+#[tokio::test]
+async fn a_session_shows_the_model_the_harness_reported_and_keeps_the_one_set() {
+    let (_world, work_dir) = triage_reporting_opus(Some("opus")).await;
+
+    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
+    let json = lw_in(work_dir.path(), &["runs", "1", "--json"]).await;
+
+    assert_eq!(
+        output.stdout.lines().nth(1),
+        Some("  session 1: model claude-opus-5-5, effort the harness's choice"),
+        "{}",
+        output.stdout
+    );
+    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    let session = &answer["runs"][0]["sessions"][0];
+    assert_eq!(session["model"], "opus");
+    assert_eq!(session["reported_model"], "claude-opus-5-5");
+    assert_eq!(session["layers"]["settings"]["model"], "operator");
+}
+
+#[tokio::test]
+async fn a_session_that_times_out_keeps_the_model_the_harness_reported() {
+    let (mut world, work_dir) = world_in_work_dir().await;
+    world.harness.reports_model("claude-opus-5-5");
+    world.harness.on(WorkKind::Triage, |_| {
+        Err(linewright::harness::SessionError::TimedOut {
+            log_tail: String::new(),
+        })
+    });
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    world.poll().await;
+
+    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
+
+    assert_eq!(
+        output.stdout.lines().nth(1),
+        Some("  session 1: model claude-opus-5-5, effort the harness's choice"),
+        "{}",
+        output.stdout
+    );
+}
+
+#[tokio::test]
+async fn a_run_recorded_before_the_harness_was_a_source_gives_it_as_an_unset_models_and_efforts() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let dir = work_dir.path().join(REPO).join("runs/items/5");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("triage-1.json"),
+        r#"{
+  "item": 5,
+  "stage": "triage",
+  "n": 1,
+  "started_at": "2026-10-14T12:00:00Z",
+  "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
+  "sessions": [{
+    "dir": "sessions/5/triage-1",
+    "model": null,
+    "effort": null,
+    "layers": {
+      "settings": {
+        "model": "linewright",
+        "effort": "linewright",
+        "session-timeout": "linewright",
+        "session-env": "linewright"
+      },
+      "prompts": {"triage.md": "linewright"}
+    }
+  }]
+}"#,
+    )
+    .unwrap();
+
+    let output = lw_in(work_dir.path(), &["runs", "5"]).await;
+    let json = lw_in(work_dir.path(), &["runs", "5", "--json"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert_eq!(
+        output.stdout.lines().nth(1),
+        Some("  session 1: model the harness's choice, effort the harness's choice"),
+        "{}",
+        output.stdout
+    );
+    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(
+        answer["runs"][0]["sessions"][0]["layers"]["settings"],
+        json!({
+            "model": "harness",
+            "effort": "harness",
+            "session-timeout": "linewright",
+            "session-env": "linewright",
+        })
+    );
+    assert_eq!(answer["runs"][0]["sessions"][0].get("reported_model"), None);
 }
 
 #[tokio::test]

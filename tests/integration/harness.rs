@@ -1,12 +1,12 @@
 use crate::common;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use common::*;
 use linewright::domain::Number;
 use linewright::harness::claude::ClaudeCode;
-use linewright::harness::{Harness, Purpose, SessionError, SessionSpec};
+use linewright::harness::{Harness, Purpose, Reported, Reporter, SessionError, SessionSpec};
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
 use linewright::session_env::{Given, SessionEnv};
@@ -85,7 +85,97 @@ fn triage_session(dir: &Path) -> SessionSpec {
         effort: None,
         environment: Arc::new(Given::default()),
         deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+        report: Reporter::new(|_| {}),
     }
+}
+
+/// What the harness reports of `session`, as it reports it.
+fn reports_of(session: &mut SessionSpec) -> Arc<Mutex<Vec<Reported>>> {
+    let reports = Arc::new(Mutex::new(vec![]));
+    let kept = reports.clone();
+    session.report = Reporter::new(move |reported| kept.lock().unwrap().push(reported));
+    reports
+}
+
+/// An `init` event as Claude Code streams it:
+/// <https://code.claude.com/docs/en/agent-sdk/typescript#sdksystemmessage>.
+fn init_naming(model: &str) -> Value {
+    json!({
+        "type": "system",
+        "subtype": "init",
+        "session_id": "0d5b1b8e-6a0c-4e0e-9f0e-4b3c6f1e2a7d",
+        "cwd": "/clone",
+        "tools": ["Bash", "Read", "Edit"],
+        "mcp_servers": [],
+        "model": model,
+        "permissionMode": "bypassPermissions",
+        "apiKeySource": "none",
+        "slash_commands": [],
+        "output_style": "default",
+    })
+}
+
+#[tokio::test]
+async fn a_session_reports_the_model_its_init_event_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(
+        dir.path(),
+        &[
+            init_naming("claude-opus-5-5"),
+            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
+        ],
+    );
+    let mut session = triage_session(dir.path());
+    session.model = Some("opus".into());
+    let reports = reports_of(&mut session);
+
+    harness.start(&session).await.unwrap();
+
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [Reported {
+            model: "claude-opus-5-5".into()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_session_that_times_out_has_reported_the_model_it_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("claude");
+    write_program(
+        &program,
+        &format!(
+            "#!/bin/sh\n\
+             cat > /dev/null\n\
+             echo '{}'\n\
+             echo '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"Still reading.\"}}]}}}}'\n\
+             exec sleep 30\n",
+            init_naming("claude-sonnet-5-5")
+        ),
+    );
+    let harness = ClaudeCode {
+        program: program.to_str().unwrap().into(),
+        bash: "/bin/bash".into(),
+        github_token: None,
+        redaction: Redaction::default(),
+    };
+    let mut session = triage_session(dir.path());
+    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
+    let reports = reports_of(&mut session);
+
+    let turn = tokio::spawn(async move { harness.start(&session).await });
+    until_said(dir.path(), "Still reading.").await;
+    tokio::time::pause();
+    let error = turn.await.unwrap().unwrap_err();
+
+    assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [Reported {
+            model: "claude-sonnet-5-5".into()
+        }]
+    );
 }
 
 #[tokio::test]

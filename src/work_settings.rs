@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::automation::Automation;
-use crate::layer::{Layer, Sourced};
+use crate::layer::{Layer, Source, Sourced};
 use crate::reconcile::WorkKind;
 use crate::session_env::{Given, SessionEnv};
 
@@ -234,22 +234,42 @@ impl fmt::Display for TimeoutSetting {
 #[derive(Clone, Debug)]
 pub struct SessionSettings {
     /// `None` is the harness's choice.
-    pub model: Sourced<Option<String>>,
+    pub model: Option<Sourced<String>>,
     /// `None` is the harness's choice.
-    pub effort: Sourced<Option<Effort>>,
+    pub effort: Option<Sourced<Effort>>,
     pub session_timeout: Sourced<Duration>,
     pub timeout_setting: TimeoutSetting,
     pub environment: Sourced<Arc<Given>>,
 }
 
 impl SessionSettings {
-    /// The layer each setting came from.
-    pub fn layers(&self) -> BTreeMap<Setting, Layer> {
+    /// The model set, `None` leaving it to the harness.
+    pub fn model_set(&self) -> Option<String> {
+        self.model.as_ref().map(|model| model.value.clone())
+    }
+
+    /// The effort set, `None` leaving it to the harness.
+    pub fn effort_set(&self) -> Option<Effort> {
+        self.effort.as_ref().map(|effort| effort.value)
+    }
+
+    /// Where each setting came from.
+    pub fn sources(&self) -> BTreeMap<Setting, Source> {
+        let set_or_harness = |layer: Option<Layer>| layer.map_or(Source::Harness, Source::Layer);
         BTreeMap::from([
-            (Setting::Model, self.model.layer),
-            (Setting::Effort, self.effort.layer),
-            (Setting::SessionTimeout, self.session_timeout.layer),
-            (Setting::SessionEnv, self.environment.layer),
+            (
+                Setting::Model,
+                set_or_harness(self.model.as_ref().map(|model| model.layer)),
+            ),
+            (
+                Setting::Effort,
+                set_or_harness(self.effort.as_ref().map(|effort| effort.layer)),
+            ),
+            (
+                Setting::SessionTimeout,
+                Source::Layer(self.session_timeout.layer),
+            ),
+            (Setting::SessionEnv, Source::Layer(self.environment.layer)),
         ])
     }
 }
@@ -331,13 +351,9 @@ impl WorkSettings {
             Rung::new(&self.file, Layer::Operator, TimeoutSetting::Pipeline),
         ];
         let model = first(&ladder, |partial| partial.model.clone())
-            .map_or(Sourced::new(None, Layer::Linewright), |(model, rung)| {
-                Sourced::new(Some(model), rung.layer)
-            });
+            .map(|(model, rung)| Sourced::new(model, rung.layer));
         let effort = first(&ladder, |partial| partial.effort)
-            .map_or(Sourced::new(None, Layer::Linewright), |(effort, rung)| {
-                Sourced::new(Some(effort), rung.layer)
-            });
+            .map(|(effort, rung)| Sourced::new(effort, rung.layer));
         let (session_timeout, timeout_setting) =
             match first(&ladder, |partial| partial.session_timeout) {
                 Some((timeout, rung)) => (Sourced::new(timeout, rung.layer), rung.timeout_setting),

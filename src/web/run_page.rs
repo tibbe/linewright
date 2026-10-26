@@ -24,7 +24,6 @@ use super::{
 };
 use crate::api::{EventId, Sources};
 use crate::domain::Timestamp;
-use crate::layer::Layer;
 use crate::logs::{Following, LogsError, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
@@ -274,24 +273,23 @@ fn ran_html(ran: Option<&Ran>) -> String {
     let Some(ran) = ran else {
         return said;
     };
-    let item = |class: &str, name: &str, layer: Layer| {
+    let item = |class: &str, name: &str, whose: &str| {
         format!(
-            r#"<li class="{class}">{}: {}</li>"#,
-            html::escape(name),
-            layer.whose()
+            r#"<li class="{class}">{}: {whose}</li>"#,
+            html::escape(name)
         )
     };
     let settings: String = ran
         .layers
         .settings
         .iter()
-        .map(|(setting, layer)| item("setting", setting.name(), *layer))
+        .map(|(setting, source)| item("setting", setting.name(), source.whose()))
         .collect();
     let prompts: String = ran
         .layers
         .prompts
         .iter()
-        .map(|(path, layer)| item("prompt", path, *layer))
+        .map(|(path, layer)| item("prompt", path, layer.whose()))
         .collect();
     format!(
         r#"{said}<div class="layers text-sm text-base-content/70"><ul class="ml-4">{settings}</ul><ul class="ml-4 font-mono">{prompts}</ul></div>"#

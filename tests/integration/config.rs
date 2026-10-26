@@ -70,11 +70,11 @@ fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_
     let implement = stage_session(&config, WorkKind::Implement);
     assert_eq!(
         implement.model,
-        Sourced::new(Some("opus".into()), Layer::Operator)
+        Some(Sourced::new("opus".into(), Layer::Operator))
     );
     assert_eq!(
         implement.effort,
-        Sourced::new(Some(Effort::Max), Layer::Operator)
+        Some(Sourced::new(Effort::Max, Layer::Operator))
     );
     assert_eq!(implement.session_timeout.value, Duration::from_hours(2));
     assert_eq!(
@@ -82,8 +82,11 @@ fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_
         TimeoutSetting::Stage(WorkKind::Implement)
     );
     let design = stage_session(&config, WorkKind::Design);
-    assert_eq!(design.model.value.as_deref(), Some("sonnet"));
-    assert_eq!(design.effort.value, Some(Effort::Low));
+    assert_eq!(
+        design.model.map(|model| model.value).as_deref(),
+        Some("sonnet")
+    );
+    assert_eq!(design.effort.map(|effort| effort.value), Some(Effort::Low));
     assert_eq!(design.session_timeout.value, Duration::from_mins(10));
     assert_eq!(design.timeout_setting, TimeoutSetting::Pipeline);
 }
@@ -98,8 +101,14 @@ fn a_stages_table_wins_over_the_whole_pipelines_flag() {
     .unwrap();
 
     let fix_ci = stage_session(&config, WorkKind::FixCi);
-    assert_eq!(fix_ci.model.value.as_deref(), Some("haiku"));
-    assert_eq!(fix_ci.effort.value, Some(Effort::Medium));
+    assert_eq!(
+        fix_ci.model.map(|model| model.value).as_deref(),
+        Some("haiku")
+    );
+    assert_eq!(
+        fix_ci.effort.map(|effort| effort.value),
+        Some(Effort::Medium)
+    );
     assert_eq!(fix_ci.session_timeout.value, Duration::from_mins(5));
 }
 
@@ -110,16 +119,13 @@ fn effort_is_a_flag_a_variable_or_a_key_and_unset_is_the_harnesss_choice() {
     };
     let file = Some("effort = \"low\"\n");
 
-    assert_eq!(
-        effort(&[], &[], None),
-        Sourced::new(None, Layer::Linewright)
-    );
+    assert_eq!(effort(&[], &[], None), None);
     assert_eq!(
         effort(&[], &[], file),
-        Sourced::new(Some(Effort::Low), Layer::Operator)
+        Some(Sourced::new(Effort::Low, Layer::Operator))
     );
     assert_eq!(
-        effort(&[], &[("LINEWRIGHT_EFFORT", "xhigh")], file).value,
+        effort(&[], &[("LINEWRIGHT_EFFORT", "xhigh")], file).map(|effort| effort.value),
         Some(Effort::Xhigh)
     );
     assert_eq!(
@@ -128,7 +134,7 @@ fn effort_is_a_flag_a_variable_or_a_key_and_unset_is_the_harnesss_choice() {
             &[("LINEWRIGHT_EFFORT", "xhigh")],
             file
         )
-        .value,
+        .map(|effort| effort.value),
         Some(Effort::High)
     );
 }
@@ -200,16 +206,16 @@ fn the_repositorys_file_ranks_below_the_operators_flags_and_variables_and_above_
     let design = repo_session(&config, repo, WorkKind::Design);
     assert_eq!(
         design.effort,
-        Sourced::new(Some(Effort::High), Layer::Repository)
+        Some(Sourced::new(Effort::High, Layer::Repository))
     );
     assert_eq!(
         design.model,
-        Sourced::new(Some("opus".into()), Layer::Operator)
+        Some(Sourced::new("opus".into(), Layer::Operator))
     );
     let triage = repo_session(&config, repo, WorkKind::Triage);
     assert_eq!(
         triage.effort,
-        Sourced::new(Some(Effort::Xhigh), Layer::Operator)
+        Some(Sourced::new(Effort::Xhigh, Layer::Operator))
     );
     assert_eq!(
         triage.session_timeout,
@@ -238,7 +244,7 @@ fn the_repositorys_stage_table_sets_its_stages_session_timeout() {
     );
     assert_eq!(
         implement.model,
-        Sourced::new(Some("opus".into()), Layer::Repository)
+        Some(Sourced::new("opus".into(), Layer::Repository))
     );
 }
 
@@ -346,11 +352,11 @@ fn an_automations_model_and_effort_come_before_the_whole_pipelines() {
 
     assert_eq!(
         session.model,
-        Sourced::new(Some("opus".into()), Layer::Repository)
+        Some(Sourced::new("opus".into(), Layer::Repository))
     );
     assert_eq!(
         session.effort,
-        Sourced::new(Some(Effort::Xhigh), Layer::Repository)
+        Some(Sourced::new(Effort::Xhigh, Layer::Repository))
     );
     assert_eq!(session.timeout_setting, TimeoutSetting::Pipeline);
 }
@@ -370,7 +376,7 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
     let flagged = session(&from_flag);
     assert_eq!(
         flagged.model,
-        Sourced::new(Some("opus".into()), Layer::Operator)
+        Some(Sourced::new("opus".into(), Layer::Operator))
     );
     assert_eq!(
         flagged.session_timeout,
@@ -379,7 +385,7 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
     assert_eq!(flagged.environment.layer, Layer::Linewright);
     assert_eq!(session(&from_variable).environment.layer, Layer::Operator);
     let defaulted = session(&defaults);
-    assert_eq!(defaulted.model, Sourced::new(None, Layer::Linewright));
+    assert_eq!(defaulted.model, None);
     assert_eq!(
         defaulted.session_timeout,
         Sourced::new(Duration::from_hours(1), Layer::Linewright)
@@ -445,7 +451,7 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.ci_timeout, chrono::TimeDelta::hours(6));
     assert_eq!(config.ci_attempts, 2);
     assert_eq!(config.update_branch, None);
-    assert_eq!(session(&config).model.value, None);
+    assert_eq!(session(&config).model, None);
     assert_eq!(config.log_format, LogFormat::Json, "not a terminal");
     assert!(config.work_dir.ends_with("linewright"));
     assert_eq!(config.session_env, SessionEnv::default());

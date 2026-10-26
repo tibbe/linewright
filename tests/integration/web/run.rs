@@ -90,8 +90,8 @@ async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_se
     assert_eq!(
         texts("#s1 .layers .setting"),
         [
-            "model: Linewright's own",
-            "effort: Linewright's own",
+            "model: the harness's",
+            "effort: the harness's",
             "session-timeout: the operator's",
             "session-env: Linewright's own",
         ]
