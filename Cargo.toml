@@ -65,7 +65,7 @@ humantime = "2"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 percent-encoding = "2.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rust-embed = { version = "8", features = ["include-exclude"] }
 rustix = { version = "1", features = ["process"] }
 serde = { version = "1", features = ["derive"] }
