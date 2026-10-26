@@ -2,7 +2,7 @@ use crate::common;
 
 use common::{NOW, assigning_linewright, at, ticket, unassigning_linewright, view};
 use linewright::board::{
-    Board, Card, CardLine, Column, Elapsed, Ended, Hold, LaneHead, Running, Stop, board,
+    Board, Card, CardLine, CardStatus, Column, Elapsed, Ended, Hold, LaneHead, Running, Stop, board,
 };
 use linewright::domain::*;
 use linewright::reconcile::WorkKind;
@@ -1554,4 +1554,292 @@ fn a_ready_card_linewright_was_unassigned_from_says_so_after_its_blocker_and_ass
             Some(CardLine::Unassigned),
         ]
     );
+}
+
+/// Each of `numbers` with its card's card status.
+fn statuses<const N: usize>(board: &Board, numbers: [u64; N]) -> [(u64, Option<CardStatus>); N] {
+    numbers.map(|n| (n, card(board, n).status()))
+}
+
+/// `docs/specs/design_system.md`, Cards: the Card status column of the table
+/// of lines, on the boards the tests of each line above set up.
+#[test]
+fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
+    use CardStatus::{Failed, InFlight, PausedOrQueued, WaitingForAPerson};
+    let needing = view(
+        vec![
+            labeled(1, &["ready-for-human", label::STALLED]),
+            labeled(2, &["needs-info"]),
+            labeled(3, &["ready-for-human"]),
+            labeled(4, &["ready-for-human"]),
+            labeled(5, &["needs-triage"]),
+        ],
+        vec![],
+    );
+    let handed_back = [recorded(
+        "3/implement-1",
+        "2026-10-01T10:00:00Z",
+        Ending::HandedBack,
+    )];
+    let unassigned = with_events(
+        ticket(4, "Let go"),
+        vec![
+            labeling("ready-for-agent", "2026-10-01T09:00:00Z"),
+            assigning_linewright("2026-10-01T10:00:00Z"),
+            unassigning_linewright("2026-10-01T11:00:00Z"),
+        ],
+    );
+    let ready = || {
+        let mut view = ready_view();
+        std::sync::Arc::make_mut(&mut view.snapshot)
+            .issues
+            .push(unassigned.clone());
+        view
+    };
+    let limited = View {
+        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        ..ready()
+    };
+    let draining = View {
+        memory: common::draining_since("2026-10-01T11:00:00Z"),
+        ..ready()
+    };
+    let full = View {
+        live: (11..=14).map(common::implementing).collect(),
+        ..ready()
+    };
+    let working = view(vec![assigned(ticket(1, "Implemented"))], vec![]);
+    let running = with_runs(working.clone(), &["1/implement-1"]);
+    let held = View {
+        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        ..working
+    };
+
+    assert_eq!(
+        statuses(&board(&needing, &handed_back, at(NOW)), [1, 2, 3, 4, 5]),
+        [
+            // Stalled.
+            (1, Some(Failed)),
+            // Asked.
+            (2, Some(WaitingForAPerson)),
+            // Handed back.
+            (3, Some(Failed)),
+            // Decision needed.
+            (4, Some(WaitingForAPerson)),
+            // Triage: nothing but the time.
+            (5, None),
+        ]
+    );
+    // Blocked, assigned to alice, nothing but the time, unassigned.
+    assert_eq!(
+        statuses(&board(&ready(), &[], at(NOW)), [1, 2, 3, 4]),
+        [(1, None), (2, None), (3, None), (4, None)]
+    );
+    for paused_or_queued in [limited, draining, full] {
+        assert_eq!(
+            statuses(&board(&paused_or_queued, &[], at(NOW)), [3]),
+            [(3, Some(PausedOrQueued))]
+        );
+    }
+    assert_eq!(
+        statuses(&board(&running, &[], at(NOW)), [1]),
+        [(1, Some(InFlight))]
+    );
+    assert_eq!(
+        statuses(&board(&held, &[], at(NOW)), [1]),
+        [(1, Some(PausedOrQueued))]
+    );
+}
+
+/// `docs/specs/design_system.md`, Cards: in review, a card's status is that
+/// of what stops it merging, the Card status column of its table, on an
+/// item's card or on the pull request's own.
+#[test]
+fn a_card_in_review_has_the_card_status_of_what_stops_it_merging() {
+    use CardStatus::{Failed, InFlight, WaitingForAPerson};
+    use CheckState::{Failed as Fails, Passed, Pending};
+    use Mergeability::{Behind, Clean, Conflicting};
+    use ReviewDecision::{Approved, ChangesRequested, ReviewRequired};
+    let issues = (1..=10)
+        .chain([40])
+        .map(|n| assigned(ticket(n, "Reviewed")))
+        .collect();
+    let decided = |pull: Pull, review_decision| Pull {
+        review_decision: Some(review_decision),
+        ..pull
+    };
+    let stalled = Pull {
+        labels: vec![label::STALLED.into()],
+        ..reviewed(41, 40, &[Passed], Clean, false)
+    };
+    let pulls = vec![
+        reviewed(11, 1, &[Fails, Pending], Conflicting, true),
+        reviewed(12, 2, &[Fails, Pending], Conflicting, true),
+        reviewed(13, 3, &[Passed, Pending], Conflicting, true),
+        reviewed(14, 4, &[Passed], Conflicting, true),
+        reviewed(15, 5, &[Passed], Behind, true),
+        decided(
+            reviewed(16, 6, &[Passed], Mergeability::Unknown, true),
+            ChangesRequested,
+        ),
+        reviewed(17, 7, &[Passed], Clean, false),
+        decided(reviewed(18, 8, &[Passed], Clean, false), ChangesRequested),
+        decided(reviewed(19, 9, &[Passed], Clean, false), ReviewRequired),
+        decided(reviewed(20, 10, &[Passed], Clean, false), Approved),
+        stalled,
+        // Pull requests closing no issue on the board, cards of their own.
+        pull(30, &[98], &[Fails]),
+        decided(pull(31, &[97], &[Passed]), Approved),
+    ];
+    let view = with_runs(view(issues, pulls), &["11/rework-1"]);
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        statuses(&board, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 40, 30, 31]),
+        [
+            // A run in flight.
+            (1, Some(InFlight)),
+            // Checks failed.
+            (2, Some(Failed)),
+            // Checks running.
+            (3, Some(InFlight)),
+            // Conflicts.
+            (4, Some(Failed)),
+            // Behind main.
+            (5, None),
+            // Draft.
+            (6, None),
+            // Nothing stops it.
+            (7, None),
+            // Changes requested.
+            (8, Some(WaitingForAPerson)),
+            // Review required.
+            (9, Some(WaitingForAPerson)),
+            // Approved.
+            (10, None),
+            // Stalled.
+            (40, Some(Failed)),
+            // Checks failed, on the pull request's own card.
+            (30, Some(Failed)),
+            // Approved, on the pull request's own card.
+            (31, None),
+        ]
+    );
+}
+
+#[test]
+fn a_card_in_done_has_no_card_status() {
+    let mut closed_pull = closed_issue(30, "2026-09-29T12:00:00Z", None);
+    closed_pull.kind = ClosedKind::Pull {
+        closes: vec![Number(99)],
+    };
+    let view = with_merged(
+        with_closed(
+            view(vec![], vec![]),
+            vec![
+                closed_issue(1, "2026-09-28T12:00:00Z", Some(11)),
+                closed_issue(2, "2026-09-28T13:00:00Z", None),
+                closed_as(3, IssueCloseReason::Completed),
+                closed_pull,
+            ],
+        ),
+        vec![
+            merged(11, &[1], "factory", "2026-09-28T12:00:00Z"),
+            merged(40, &[98], "factory", "2026-09-30T12:00:00Z"),
+            spec_change(5, &[label::DESIGNED]),
+        ],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        statuses(&board, [1, 2, 3, 5, 30, 40]),
+        [
+            (1, None),
+            (2, None),
+            (3, None),
+            (5, None),
+            (30, None),
+            (40, None)
+        ]
+    );
+}
+
+/// The most pressing card of the lane headed #`head`: its number and card
+/// status.
+fn most_pressing(board: &Board, head: u64) -> Option<(u64, CardStatus)> {
+    let lane = board
+        .lanes
+        .iter()
+        .find(|lane| lane.head.number() == Number(head))
+        .expect("a lane");
+    lane.most_pressing()
+        .map(|(card, status)| (card.number.0, status))
+}
+
+/// Tracking issue #10 of spec change #9, with `tickets` cut from it.
+fn tracking_lane(tickets: Vec<Issue>, pulls: Vec<Pull>) -> View {
+    let numbers: Vec<(u64, bool)> = tickets.iter().map(|t| (t.number.0, true)).collect();
+    let mut issues = vec![tracking_issue(10, 9, &numbers)];
+    issues.extend(tickets.into_iter().map(|t| cut_from(t, 10, 9)));
+    with_merged(
+        view(issues, pulls),
+        vec![spec_change(9, &[label::DESIGNED])],
+    )
+}
+
+#[test]
+fn a_lanes_most_pressing_card_has_the_most_pressing_card_status_of_its_cards() {
+    let view = tracking_lane(
+        vec![
+            labeled(11, &["needs-info"]),
+            assigned(ticket(12, "Failing")),
+        ],
+        vec![pull(20, &[12], &[CheckState::Failed])],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(most_pressing(&board, 10), Some((12, CardStatus::Failed)));
+}
+
+#[test]
+fn of_cards_as_pressing_the_lanes_most_pressing_is_the_leftmost_then_the_lowest_numbered() {
+    let columns = tracking_lane(
+        vec![
+            assigned(ticket(12, "Failing")),
+            labeled(13, &["ready-for-human", label::STALLED]),
+        ],
+        vec![pull(20, &[12], &[CheckState::Failed])],
+    );
+    let numbers = tracking_lane(
+        vec![
+            assigned(ticket(12, "Failing")),
+            assigned(ticket(14, "Failing too")),
+        ],
+        vec![
+            pull(20, &[14], &[CheckState::Failed]),
+            pull(21, &[12], &[CheckState::Failed]),
+        ],
+    );
+
+    assert_eq!(
+        most_pressing(&board(&columns, &[], at(NOW)), 10),
+        Some((13, CardStatus::Failed))
+    );
+    assert_eq!(
+        most_pressing(&board(&numbers, &[], at(NOW)), 10),
+        Some((12, CardStatus::Failed))
+    );
+}
+
+#[test]
+fn a_finished_lane_has_no_card_status() {
+    let view = with_closed(
+        view(vec![tracking_issue(30, 29, &[(31, false)])], vec![]),
+        vec![closed_ticket(31, 30, "2026-09-30T12:00:00Z")],
+    );
+
+    assert_eq!(most_pressing(&board(&view, &[], at(NOW)), 30), None);
 }

@@ -1,15 +1,20 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
+{#- The classes of a card or a lane head that shows a card status in
+    `tone`, which the stylesheet's rules for it read. -#}
+{%- macro toned(tone) -%}
+{%- if let Some(tone) = tone %} toned {{ tone.accent() }}{% endif -%}
+{%- endmacro -%}
 {%- macro cells(lane) -%}
 <div class="grid grid-cols-(--columns) gap-2">
 {%- for cell in lane.cells %}
 <ul class="cell flex flex-col gap-2" aria-label="{{ cell.column }}">
 {%- for card in cell.cards %}
-<li class="card card-sm border border-base-300 bg-card shadow-sm">
+<li class="card card-sm border border-base-300 bg-card shadow-sm{% call toned(card.tone) %}{% endcall %}{% if card.quiet %} opacity-75{% endif %}">
 <div class="card-body gap-1">
 <h3 class="card-title line-clamp-2 text-sm" data-tip-cut>{% if card.pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ card.heading|safe }}</h3>
 {%- if let Some(line) = card.line %}
-<p class="line text-base-content/70">{{ line|safe }}</p>
+<p class="line text-base-content/70">{% if let Some(tone) = card.tone %}{% call ui::icon(tone) %}{% endcall %}{% endif %}{{ line|safe }}</p>
 {%- endif %}
 </div>
 </li>
@@ -24,7 +29,7 @@
     each side so that it can stay there inside its lane, and whole in the
     page's tooltip while it is cut (`docs/specs/design_system.md`, Layout). -#}
 {%- macro lane_head(lane) -%}
-<span class="sticky left-(--lane-inset) inline-block max-w-[calc(100cqw-2*var(--lane-inset))] truncate align-top" data-tip-cut>{{ lane.head|safe }}</span>
+<span class="sticky left-(--lane-inset) inline-block max-w-[calc(100cqw-2*var(--lane-inset))] truncate align-top" data-tip-cut>{{ lane.head|safe }}{% if let Some(status) = lane.status %} — {% call ui::icon(status.tone) %}{% endcall %}{{ status.line|safe }}{% endif %}</span>
 {%- endmacro -%}
 {%- block main -%}
 <section id="board" class="scroll-box @container">
@@ -56,7 +61,7 @@
 </div>
 {%- for lane in board.unfinished %}
 <section class="lane mt-3 rounded-box border border-base-300 bg-base-200 px-(--lane-padding) pb-(--lane-padding)" id="{{ lane.id }}">
-<h2 class="lane-head">{% call lane_head(lane) %}{% endcall %}</h2>
+<h2 class="lane-head{% call toned(lane.tone()) %}{% endcall %}">{% call lane_head(lane) %}{% endcall %}</h2>
 {%- call cells(lane) %}{% endcall %}
 </section>
 {%- endfor %}
@@ -65,7 +70,7 @@
 <summary class="cursor-pointer font-semibold">{{ board.finished_count() }}</summary>
 {%- for lane in board.finished %}
 <details class="lane mt-2 rounded-box border border-base-300 bg-base-200 px-(--lane-padding) pb-(--lane-padding)" id="{{ lane.id }}">
-<summary class="lane-head cursor-pointer">{% call lane_head(lane) %}{% endcall %}</summary>
+<summary class="lane-head cursor-pointer{% call toned(lane.tone()) %}{% endcall %}">{% call lane_head(lane) %}{% endcall %}</summary>
 {%- call cells(lane) %}{% endcall %}
 </details>
 {%- endfor %}

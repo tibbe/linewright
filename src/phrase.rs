@@ -19,6 +19,7 @@ pub enum Tone {
     InProgress,
     Pending,
     Cancelled,
+    Paused,
 }
 
 impl Tone {
@@ -33,7 +34,20 @@ impl Tone {
             Tone::Failure => "badge-error",
             Tone::InProgress => "badge-info",
             Tone::Pending => "badge-warning",
-            Tone::Cancelled => "badge-neutral",
+            Tone::Cancelled | Tone::Paused => "badge-neutral",
+        }
+    }
+
+    /// The class that sets `--tone` to its daisyUI colour, which the
+    /// stylesheet's rules for a toned element read. Written whole, as
+    /// `colour` says why.
+    pub fn accent(self) -> &'static str {
+        match self {
+            Tone::Success => "[--tone:var(--color-success)]",
+            Tone::Failure => "[--tone:var(--color-error)]",
+            Tone::InProgress => "[--tone:var(--color-info)]",
+            Tone::Pending => "[--tone:var(--color-warning)]",
+            Tone::Cancelled | Tone::Paused => "[--tone:var(--color-neutral)]",
         }
     }
 
@@ -45,7 +59,7 @@ impl Tone {
             Tone::Failure => "alert alert-error",
             Tone::InProgress => "alert alert-info",
             Tone::Pending => "alert alert-warning",
-            Tone::Cancelled => "alert",
+            Tone::Cancelled | Tone::Paused => "alert",
         }
     }
 }
@@ -211,6 +225,7 @@ mod tests {
             Tone::InProgress,
             Tone::Pending,
             Tone::Cancelled,
+            Tone::Paused,
         ];
 
         assert_eq!(
@@ -221,6 +236,7 @@ mod tests {
                 "badge-info",
                 "badge-warning",
                 "badge-neutral",
+                "badge-neutral",
             ]
         );
         assert_eq!(
@@ -230,6 +246,7 @@ mod tests {
                 "alert alert-error",
                 "alert alert-info",
                 "alert alert-warning",
+                "alert",
                 "alert",
             ]
         );

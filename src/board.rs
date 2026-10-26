@@ -88,6 +88,23 @@ impl Lane {
             .max()
     }
 
+    /// Its most pressing card and that card's status
+    /// (`docs/specs/design_system.md`, The board, A lane's card status): of
+    /// the cards with the most pressing status, the first by column and then
+    /// by number, as `min_by_key` keeps the first of equals.
+    pub fn most_pressing(&self) -> Option<(&Card, CardStatus)> {
+        Column::ALL
+            .into_iter()
+            .flat_map(|column| self.cards(column))
+            .filter_map(|card| Some((card, card.status()?)))
+            .min_by_key(|&(_, status)| status)
+    }
+
+    /// Whether `card` is the item the lane is the work of.
+    pub fn is_own_item(&self, card: &Card) -> bool {
+        matches!(self.head, LaneHead::Item { number, .. } if number == card.number)
+    }
+
     fn of(head: LaneHead) -> Lane {
         Lane {
             head,
@@ -176,6 +193,11 @@ impl Card {
         }
     }
 
+    /// Its card status, that of its line.
+    pub fn status(&self) -> Option<CardStatus> {
+        self.line.as_ref().and_then(CardLine::status)
+    }
+
     /// The card in Done of an item that ended as `ended` at `closed_at`.
     fn ended(
         number: Number,
@@ -233,6 +255,36 @@ pub enum CardLine {
     },
 }
 
+impl CardLine {
+    /// Its card status (`docs/specs/design_system.md`, Cards, Card status),
+    /// none where the table gives none.
+    pub fn status(&self) -> Option<CardStatus> {
+        match self {
+            CardLine::Stalled | CardLine::HandedBack => Some(CardStatus::Failed),
+            CardLine::Asked(_) | CardLine::DecisionNeeded => Some(CardStatus::WaitingForAPerson),
+            CardLine::Paused(_) | CardLine::Queued => Some(CardStatus::PausedOrQueued),
+            CardLine::Running(_) => Some(CardStatus::InFlight),
+            CardLine::Review { stops, .. } => stops.as_ref().and_then(Stop::status),
+            CardLine::MergeStop(stop) => stop.status(),
+            CardLine::BlockedBy(_)
+            | CardLine::AssignedTo(_)
+            | CardLine::Unassigned
+            | CardLine::Ended { .. } => None,
+        }
+    }
+}
+
+/// How pressing what a card's line reports is (`GLOSSARY.md`, **Card
+/// status**; `docs/specs/design_system.md`, Cards), most pressing first, so
+/// that the least is the most pressing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CardStatus {
+    Failed,
+    WaitingForAPerson,
+    InFlight,
+    PausedOrQueued,
+}
+
 /// What holds back a run that would start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hold {
@@ -280,6 +332,21 @@ pub enum Stop {
     Draft,
     /// Its review decision, whatever it is.
     Review(ReviewDecision),
+}
+
+impl Stop {
+    /// Its card status, as the table of what stops a merge gives it
+    /// (`docs/specs/design_system.md`, Cards).
+    pub fn status(&self) -> Option<CardStatus> {
+        match self {
+            Stop::Stalled | Stop::ChecksFailed | Stop::Conflicts => Some(CardStatus::Failed),
+            Stop::Running(_) | Stop::ChecksRunning => Some(CardStatus::InFlight),
+            Stop::Review(ReviewDecision::ChangesRequested | ReviewDecision::ReviewRequired) => {
+                Some(CardStatus::WaitingForAPerson)
+            }
+            Stop::Behind { .. } | Stop::Draft | Stop::Review(ReviewDecision::Approved) => None,
+        }
+    }
 }
 
 /// How an item in Done ended.

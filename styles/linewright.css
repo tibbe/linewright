@@ -96,6 +96,29 @@
     @apply sticky top-(--column-heads) z-10 min-h-(--lane-head) bg-base-200 pt-2 font-semibold;
   }
 
+  /* A card status on the board (docs/specs/web/design_system.md, Board):
+     a card's left edge and a lane head's wash in its colour, fading across
+     the lane, and its icon in its colour, each reading `--tone`, which the
+     element's `Tone::accent` class sets (templates/board.html). The edge is
+     an inset shadow, which the card's `shadow-sm` draws with its own, as
+     its `border` utilities would override a border here. The head keeps
+     its lane's colour under the wash, as it needs while stuck. */
+  .board .card.toned {
+    @apply inset-shadow-[3px_0_0_var(--tone)];
+  }
+
+  .board .lane-head.toned {
+    background-image: linear-gradient(
+      to right,
+      color-mix(in oklab, var(--tone) 16%, transparent),
+      transparent 60%
+    );
+  }
+
+  .board .toned svg.icon {
+    @apply mr-1 inline-block align-[-0.125em] text-(--tone);
+  }
+
   .transcript .entry:target > .line,
   .transcript .entry:target > details > summary {
     @apply bg-warning/20;

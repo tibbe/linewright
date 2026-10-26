@@ -12,10 +12,10 @@ use super::html::{self, Html};
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
 use crate::board::{
-    Board, Card, CardLine, Column, Elapsed, Ended, Hold, Lane, LaneHead, Running, Stop,
+    Board, Card, CardLine, CardStatus, Column, Elapsed, Ended, Hold, Lane, LaneHead, Running, Stop,
 };
 use crate::domain::{IssueCloseReason, ReviewDecision};
-use crate::phrase::Phrase;
+use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
 
 /// The board (`docs/specs/design_system.md`, The board), ready for the page.
@@ -33,7 +33,16 @@ struct LaneShown {
     /// The tracking issue and its tickets closed of total, or the item; and
     /// when it finished, if it did.
     head: Html,
+    /// Its card status, if it has one (`docs/specs/design_system.md`, The
+    /// board, A lane's card status).
+    status: Option<StatusShown>,
     cells: Vec<CellShown>,
+}
+
+/// A lane's card status: its most pressing card's tone and line.
+struct StatusShown {
+    tone: Tone,
+    line: Html,
 }
 
 struct CellShown {
@@ -46,7 +55,11 @@ struct CardShown {
     heading: Html,
     /// Whether it carries the pull request icon.
     pull_request: bool,
+    /// The tone of its card status, if it has one.
+    tone: Option<Tone>,
     line: Option<Html>,
+    /// Whether it is in Done, which is quieter than the rest.
+    quiet: bool,
 }
 
 impl BoardShown {
@@ -93,9 +106,22 @@ impl LaneShown {
                 .then(&html::time(at)),
             None => head,
         };
+        let status = lane.most_pressing().map(|(card, status)| {
+            let line = card_line(card).unwrap_or_default();
+            let line = if lane.is_own_item(card) {
+                line
+            } else {
+                Phrase::default().item(card.number).text(" · ").then(line)
+            };
+            StatusShown {
+                tone: tone(status),
+                line: html::phrase(&line, repo),
+            }
+        });
         LaneShown {
             id: format!("lane-{}", lane.head.number().0),
             head,
+            status,
             cells: Column::ALL
                 .into_iter()
                 .map(|column| CellShown {
@@ -103,11 +129,18 @@ impl LaneShown {
                     cards: lane
                         .cards(column)
                         .iter()
-                        .map(|card| CardShown::of(card, repo))
+                        .map(|card| CardShown::of(card, column, repo))
                         .collect(),
                 })
                 .collect(),
         }
+    }
+}
+
+impl LaneShown {
+    /// The tone of its card status, if it has one.
+    fn tone(&self) -> Option<Tone> {
+        self.status.as_ref().map(|status| status.tone)
     }
 }
 
@@ -120,18 +153,35 @@ fn counted(n: usize, thing: &str) -> String {
 }
 
 impl CardShown {
-    fn of(card: &Card, repo: &str) -> CardShown {
-        let line = card.line.as_ref().map(worded);
-        let entered = card.entered.map(|at| Phrase::default().time(at));
-        let line = match (line, entered) {
-            (Some(line), Some(entered)) => Some(line.text(" · ").then(entered)),
-            (line, entered) => line.or(entered),
-        };
+    fn of(card: &Card, column: Column, repo: &str) -> CardShown {
         CardShown {
             heading: html::titled(card.number, &card.title, repo),
             pull_request: card.pull_request,
-            line: line.map(|line| html::phrase(&line, repo)),
+            tone: card.status().map(tone),
+            line: card_line(card).map(|line| html::phrase(&line, repo)),
+            quiet: column == Column::Done,
         }
+    }
+}
+
+/// The line under `card`'s title, ending with when it entered its column
+/// where it says so.
+fn card_line(card: &Card) -> Option<Phrase> {
+    let line = card.line.as_ref().map(worded);
+    let entered = card.entered.map(|at| Phrase::default().time(at));
+    match (line, entered) {
+        (Some(line), Some(entered)) => Some(line.text(" · ").then(entered)),
+        (line, entered) => line.or(entered),
+    }
+}
+
+/// The tone `status` shows in (`docs/specs/web/design_system.md`, Status).
+fn tone(status: CardStatus) -> Tone {
+    match status {
+        CardStatus::Failed => Tone::Failure,
+        CardStatus::WaitingForAPerson => Tone::Pending,
+        CardStatus::InFlight => Tone::InProgress,
+        CardStatus::PausedOrQueued => Tone::Paused,
     }
 }
 

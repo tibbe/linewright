@@ -18,6 +18,8 @@
 <circle cx="8" cy="8" r="6.75" stroke-dasharray="2.5 2"/>
 {%- when Tone::Cancelled -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M3.25 12.75l9.5-9.5"/>
+{%- when Tone::Paused -%}
+<circle cx="8" cy="8" r="6.75"/><path d="M6.5 5.5v5M9.5 5.5v5"/>
 {%- endmatch -%}
 </svg>
 {%- endmacro -%}

@@ -76,11 +76,12 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         shown,
         [
             vec![
-                "#2: Big thing — 0/1 tickets closed".to_string(),
+                "#2: Big thing — 0/1 tickets closed — #3 · asked alice · 2026-10-01 12:00:SS UTC"
+                    .to_string(),
                 "Needs a person: #3: Part one | asked alice · 2026-10-01 12:00:SS UTC".to_string(),
             ],
             vec![
-                "#1: Do the thing".to_string(),
+                "#1: Do the thing — decision needed · 2026-10-01 12:00:SS UTC".to_string(),
                 "Needs a person: #1: Do the thing | decision needed · 2026-10-01 12:00:SS UTC"
                     .to_string(),
             ],
@@ -259,11 +260,12 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         shown,
         [
             vec![
-                "#2: Big thing — 0/1 tickets closed".to_string(),
+                "#2: Big thing — 0/1 tickets closed — #3 · asked alice · 2026-10-01 12:00:SS UTC"
+                    .to_string(),
                 "Needs a person: #3: Part one | asked alice · 2026-10-01 12:00:SS UTC".to_string(),
             ],
             vec![
-                "#1: Do the thing".to_string(),
+                "#1: Do the thing — decision needed · 2026-10-01 12:00:SS UTC".to_string(),
                 "Needs a person: #1: Do the thing | decision needed · 2026-10-01 12:00:SS UTC"
                     .to_string(),
             ],
@@ -399,6 +401,98 @@ async fn each_lane_is_a_surface_sunk_into_the_page_with_its_cards_raised_on_it()
             card.html()
         );
     }
+    web.stop().await;
+}
+
+/// `docs/specs/web/design_system.md`, Status: waiting for a person is
+/// `warning`.
+const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
+
+#[tokio::test]
+async fn a_lane_head_ends_with_its_most_pressing_cards_line_and_icon_in_that_card_statuss_colour() {
+    let web = Web::start(with_a_finished_lane().await).await;
+
+    let html = web.page("/").await;
+
+    let icon = |element: ElementRef| {
+        select_in(element, "svg.icon")
+            .into_iter()
+            .map(|icon| icon.html())
+            .collect::<Vec<_>>()
+    };
+    let asked = select(&html, "#board .card")
+        .into_iter()
+        .find(|card| text(*card).contains("Part one"))
+        .unwrap();
+    for head in [
+        select(&html, "#lane-2 .lane-head")[0],
+        select(&html, "#lane-1 .lane-head")[0],
+    ] {
+        assert!(
+            has_classes(head, &["toned", WAITING_FOR_A_PERSON]),
+            "{}",
+            head.html()
+        );
+        assert_eq!(icon(head).len(), 1, "{}", head.html());
+        assert_eq!(icon(head), icon(asked), "{}", head.html());
+    }
+    for finished in ["#lane-5 .lane-head", "#lane-4 .lane-head"] {
+        let head = select(&html, finished)[0];
+        assert!(lacks_classes(head, &["toned"]), "{}", head.html());
+        assert_eq!(icon(head), Vec::<String>::new(), "{}", head.html());
+    }
+    assert_no_status_by_colour_alone(&html);
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn a_card_with_a_card_status_shows_it_and_a_card_in_done_is_faded() {
+    let world = with_a_finished_lane().await;
+    let blocker = world.store.open_issue(
+        "maintainer",
+        "Blocker",
+        "First.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    let blocked = world.store.open_issue(
+        "maintainer",
+        "Blocked",
+        "After.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.store.add_blocked_by(blocked, blocker).await.unwrap();
+    let web = Web::start(world).await;
+
+    let html = web
+        .eventually_page("/", |html| {
+            text(select(html, "#board")[0]).contains("blocked by")
+        })
+        .await;
+
+    let mut cards: Vec<(String, bool, bool, usize, bool)> = select(&html, "#board .card")
+        .into_iter()
+        .map(|card| {
+            let title = text(select_in(card, "h3")[0]);
+            let toned = has_classes(card, &["toned"]);
+            let waiting = has_classes(card, &[WAITING_FOR_A_PERSON]);
+            // Before its line.
+            let icons = select_in(card, ".line > svg.icon:first-child").len();
+            let faded = has_classes(card, &["opacity-75"]);
+            (title, toned, waiting, icons, faded)
+        })
+        .collect();
+    cards.retain(|(title, ..)| !title.contains("Blocker"));
+    cards.sort();
+    assert_eq!(
+        cards,
+        [
+            ("#1: Do the thing".to_string(), true, true, 1, false),
+            ("#3: Part one".to_string(), true, true, 1, false),
+            ("#4: Old idea".to_string(), false, false, 0, true),
+            ("#6: Only part".to_string(), false, false, 0, true),
+            ("#8: Blocked".to_string(), false, false, 0, false),
+        ]
+    );
     web.stop().await;
 }
 
