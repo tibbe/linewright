@@ -95,10 +95,10 @@ when `ui-address` is empty.
 
 ### Navigation
 
-| Part        | Holds                                                     |
-| ----------- | --------------------------------------------------------- |
-| name  | the repository's name, linking to it on GitHub            |
-| links | the board, the runs, the automations and the server pages |
+| Part       | Holds                                                                                   |
+| ---------- | --------------------------------------------------------------------------------------- |
+| repository | the avatar of the GitHub account that owns it, beside its name, linking to it on GitHub |
+| links      | the board, the runs, the automations and the server pages                               |
 
 ### Holds and problems
 

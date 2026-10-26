@@ -21,8 +21,7 @@ unchanged.
 - **Navigation** is a sidebar at the left. Where the page does not fit
   beside it, it is a rail of the links' icons and labels; narrower still, a
   menu behind a button.
-- **In the rail**, the repository is its owner's GitHub avatar, with its
-  name in a daisyUI `tooltip`.
+- **In the rail**, the repository's name is in a daisyUI `tooltip`.
 - **A hold or a problem** is a daisyUI alert across the top of the page.
 
 ## Layout
