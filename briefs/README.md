@@ -6,11 +6,13 @@ What Linewright gives its agents, built into the binary:
 - `prompts/`: what Linewright sends a session, from its first message to the
   follow-ups, and the result contracts Linewright parses.
 
-The `briefs` setting names a directory laid out as this one, the operator's
-layer over these: each file in it is taken in place of the one here, and every
-file it lacks comes from here. Linewright logs at startup which files it takes
-from the directory, and which files in it are outside this layout and so are
-unused.
+The skills are always these. The `prompts` setting names a directory laid out
+as `prompts/` is, the operator's layer over it: each file in it is taken in
+place of the one here, and every file it lacks comes from here. Linewright logs
+at startup which files it takes from the directory. A file in it that is not
+one of the prompts here, such as a misspelt `implment.md`, stops Linewright at
+startup with an error naming it; hidden files, whose name or directory's name
+starts with `.`, are skipped.
 
 ## `plugin/`
 
@@ -83,4 +85,5 @@ the blank line after it, with it. A prompt's line breaks are the session's, so
 the prompts are not wrapped.
 
 Which runs read each file is declared beside the templates in
-[`src/prompts.rs`](../src/prompts.rs) (`readers`); every run reads the plugin.
+[`src/prompts.rs`](../src/prompts.rs) (`readers`); every run is given the
+plugin.

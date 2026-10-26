@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::automation::Automation;
-use crate::briefs::{Briefs, OperatorBriefs};
+use crate::briefs::{Briefs, OperatorPrompts};
 use crate::clock::Clock;
 use crate::domain::{
     HandBackKind, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
@@ -45,8 +45,8 @@ pub(crate) struct Shell {
     /// The operator's settings for sessions, which each run resolves.
     pub work: WorkSettings,
     pub environments: Environments,
-    /// The operator's layer of the briefs.
-    pub operator_briefs: OperatorBriefs,
+    /// The operator's layer of the prompts.
+    pub operator_prompts: OperatorPrompts,
     pub identity: Identity,
     pub settings: RepoSettings,
     pub result_retries: u32,
@@ -546,12 +546,7 @@ struct Workspace {
 }
 
 impl Workspace {
-    async fn clone(
-        shell: &Shell,
-        ctx: &Ctx,
-        purpose: &Purpose,
-        branch: &str,
-    ) -> Result<Workspace, Failure> {
+    async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace, Failure> {
         let clones = shell.work_dir.join("clones");
         tokio::fs::create_dir_all(&clones)
             .await
@@ -573,10 +568,8 @@ impl Workspace {
             .context("creating a scratch directory")
             .map_err(infra)?;
         let plugin = temp.path().join("plugin");
-        ctx.with
-            .briefs
-            .write_plugin(&plugin)
-            .context("writing the briefs' plugin")
+        Briefs::write_plugin(&plugin)
+            .context("writing Linewright's plugin")
             .map_err(infra)?;
         Ok(Workspace {
             _temp: temp,
@@ -867,7 +860,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
         subject: Subject::Issue(issue.number),
         kind: WorkKind::Triage,
     };
-    let ws = Workspace::clone(shell, ctx, &purpose, &shell.settings.default_branch).await?;
+    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
     let prompt = prompts::triage(&ctx.with.briefs.prompts, &shell.repo(), issue, &categories);
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
@@ -952,7 +945,7 @@ async fn design_session<C: DeserializeOwned>(
         subject,
         kind: WorkKind::Design,
     };
-    let ws = Workspace::clone(shell, ctx, &purpose, &shell.settings.default_branch).await?;
+    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
     converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
@@ -1399,7 +1392,7 @@ async fn implement(
         subject: Subject::Issue(ticket.number()),
         kind: WorkKind::Implement,
     };
-    let ws = Workspace::clone(shell, ctx, &purpose, &shell.settings.default_branch).await?;
+    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     // Where the run starts: docs/specs/implementation.md, "Working a
     // ticket". The clone, not the snapshot, says whether the branch exists: a
     // snapshot taken before an earlier run pushed it does not hold it.
@@ -1645,7 +1638,7 @@ async fn pull_work(
     };
     let linewright = &shell.policy.linewright;
     let purpose = Purpose::Work { subject, kind };
-    let ws = Workspace::clone(shell, ctx, &purpose, &pr.head_ref).await?;
+    let ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
     let start = git::head(&ws.dir).await.map_err(infra)?;
     let default_branch = &shell.settings.default_branch;
     let policy = &shell.policy;
@@ -1956,7 +1949,7 @@ pub(crate) async fn automation(
 ) -> Result<AutomationEnd> {
     let session = async {
         let purpose = Purpose::Automation(automation.name.clone());
-        let ws = Workspace::clone(shell, &ctx, &purpose, &shell.settings.default_branch).await?;
+        let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
         let prompt = prompts::automation(&ctx.with.briefs.prompts, &shell.repo(), automation);
         let mut spec = session_spec(shell, &ctx, purpose, &ws, prompt)?;
         let ctx = &ctx;

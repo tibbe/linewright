@@ -39,7 +39,7 @@
 //!   - `drain`, `stop`, `kill`: drains, stops or aborts it.
 //!   - `has_ended`, `ended`, `finished`: whether it has ended, and waits for
 //!     it to end of its own accord, or however long that takes.
-//! - `briefs_with`: a copy of the shipped briefs with one prompt edited.
+//! - `prompts_with`: a `prompts` directory with one shipped prompt edited.
 //!
 //! # `harness`: the scripted agent
 //!

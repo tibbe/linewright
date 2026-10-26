@@ -77,7 +77,7 @@ fn cut(shown: &[String], chars: usize) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_settings_and_briefs_came_from()
+async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_settings_and_prompts_came_from()
  {
     let (_web, html) = run_page_of_implemented().await;
 
@@ -96,10 +96,10 @@ async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_se
             "session-env: Linewright's own",
         ]
     );
-    let briefs = texts("#s1 .layers .brief");
+    let prompts = texts("#s1 .layers .prompt");
     assert!(
-        briefs.contains(&"prompts/implement.md: Linewright's own".to_string()),
-        "{briefs:?}"
+        prompts.contains(&"implement.md: Linewright's own".to_string()),
+        "{prompts:?}"
     );
 }
 

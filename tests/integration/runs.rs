@@ -96,7 +96,7 @@ async fn an_items_runs_show_each_sessions_model_and_effort() {
 }
 
 #[tokio::test]
-async fn an_items_runs_as_json_give_where_each_setting_and_brief_file_came_from() {
+async fn an_items_runs_as_json_give_where_each_setting_and_prompt_file_came_from() {
     let (_world, work_dir) = triage_on_opus().await;
 
     let output = lw_in(work_dir.path(), &["runs", "1", "--json"]).await;
@@ -115,14 +115,8 @@ async fn an_items_runs_as_json_give_where_each_setting_and_brief_file_came_from(
             "session-env": "linewright",
         })
     );
-    assert_eq!(
-        session["layers"]["briefs"]["prompts/triage.md"],
-        "linewright"
-    );
-    assert_eq!(
-        session["layers"]["briefs"]["plugin/skills/tdd/SKILL.md"],
-        "linewright"
-    );
+    assert_eq!(session["layers"]["prompts"]["triage.md"], "linewright");
+    assert_eq!(session["layers"]["prompts"].get("prompts/triage.md"), None);
 }
 
 #[tokio::test]
@@ -979,4 +973,80 @@ async fn a_spec_changes_runs_recorded_as_tickets_by_the_previous_version_are_des
     let ids = [2, 1].map(|n| format!("{}/design-{n}", pr.0));
     assert_eq!(run_ids(&output.stdout), ids, "{}", output.stdout);
     assert_eq!(tickets.code, Some(2), "{}", tickets.stderr);
+}
+
+#[tokio::test]
+async fn an_operators_prompt_is_sent_and_recorded_as_the_operators() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let operators = prompts_with("follow-ups/parse-error.md", |text| {
+        format!("The operator's follow-up.\n\n{text}")
+    });
+    let mut world = World::with(|config| {
+        config.work_dir = work_dir.path().join(REPO);
+        config.prompts = linewright::briefs::OperatorPrompts::read(Some(operators.path())).unwrap();
+    })
+    .await;
+    world
+        .harness
+        .on(WorkKind::Triage, |_| Ok("I think it's a bug.".into()));
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    world.poll().await;
+
+    let output = lw_in(work_dir.path(), &["runs", "1", "--json"]).await;
+
+    let sent = world.harness.prompts(WorkKind::Triage);
+    assert_eq!(sent.len(), 2);
+    assert!(
+        sent[1].starts_with("The operator's follow-up.\n\n"),
+        "{}",
+        sent[1]
+    );
+    let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    let prompts = &answer["runs"][0]["sessions"][0]["layers"]["prompts"];
+    assert_eq!(prompts["follow-ups/parse-error.md"], "operator");
+    assert_eq!(prompts["triage.md"], "linewright");
+}
+
+#[tokio::test]
+async fn a_run_recorded_when_skills_came_in_layers_shows_its_layers_as_kept() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let dir = work_dir.path().join(REPO).join("runs/items/5");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("rework-1.json"),
+        r#"{
+  "item": 5,
+  "stage": "rework",
+  "n": 1,
+  "started_at": "2026-10-14T12:00:00Z",
+  "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
+  "sessions": [{
+    "dir": "sessions/5/rework-1",
+    "model": "opus",
+    "effort": null,
+    "layers": {
+      "settings": {"model": "operator", "effort": "linewright"},
+      "briefs": {
+        "prompts/rework.md": "operator",
+        "plugin/skills/tdd/SKILL.md": "linewright"
+      }
+    }
+  }]
+}"#,
+    )
+    .unwrap();
+
+    let output = lw_in(work_dir.path(), &["runs", "5", "--json"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(
+        answer["runs"][0]["sessions"][0]["layers"]["prompts"],
+        json!({
+            "prompts/rework.md": "operator",
+            "plugin/skills/tdd/SKILL.md": "linewright",
+        })
+    );
 }

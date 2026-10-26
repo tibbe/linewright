@@ -252,10 +252,10 @@ pub struct Settings {
     /// can set its own [default: the harness's]
     #[arg(long, global = true)]
     pub effort: Option<String>,
-    /// A directory laid out as the briefs Linewright ships, each file in it
+    /// A directory laid out as the prompts Linewright ships, each file in it
     /// taken in place of Linewright's own [default: none]
     #[arg(long, global = true)]
-    pub briefs: Option<String>,
+    pub prompts: Option<String>,
     /// The variables of Linewright's environment that agent sessions are given
     /// besides the ones they always get, comma-separated; a name ending in `*`
     /// names every variable with that prefix; a stage's table in the config
@@ -321,7 +321,7 @@ pub struct Config {
     /// `model`, `effort`, `session-timeout` and the stages' tables, and
     /// where `session-env` came from.
     pub work: WorkSettings,
-    pub briefs: Option<PathBuf>,
+    pub prompts: Option<PathBuf>,
     pub session_env: SessionEnv,
     pub secrets: VariableNames,
     pub result_retries: u32,
@@ -348,7 +348,7 @@ impl Settings {
             ("work-dir", &self.work_dir),
             ("model", &self.model),
             ("effort", &self.effort),
-            ("briefs", &self.briefs),
+            ("prompts", &self.prompts),
             ("session-env", &self.session_env),
             ("secrets", &self.secrets),
             ("session-timeout", &self.session_timeout),
@@ -388,7 +388,7 @@ const KEYS: [&str; 24] = [
     "work-dir",
     "model",
     "effort",
-    "briefs",
+    "prompts",
     "session-env",
     "secrets",
     "session-timeout",
@@ -714,7 +714,7 @@ impl Config {
             max_runs: number("max-runs", "4")? as usize,
             work_dir,
             work,
-            briefs: get("briefs").map(PathBuf::from),
+            prompts: get("prompts").map(PathBuf::from),
             session_env,
             secrets,
             result_retries: number("result-retries", "1")?,

@@ -1,5 +1,5 @@
 //! Linewright's files in the repository: its settings for the work and its
-//! briefs, read from the default branch as a run starts
+//! prompts, read from the default branch as a run starts
 //! (`docs/specs/repository.md`, Linewright's files).
 
 use std::collections::BTreeMap;
@@ -8,17 +8,18 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::briefs::{BriefLayer, Briefs, OperatorBriefs};
+use crate::briefs::{Briefs, OperatorPrompts, PromptLayer};
 use crate::layer::Layer;
-use crate::prompts::Readers;
+use crate::prompts::{self, Prompts, Readers};
 use crate::store::{Blob, Store};
 use crate::work_settings::{RepoSettings, RunKind};
 
 /// The repository's file (`docs/specs/operation.md`, The repository's file).
 pub const CONFIG: &str = ".linewright/config.toml";
 
-/// The repository's layer of the briefs, laid out as `briefs/` is.
-pub const BRIEFS: &str = ".linewright/briefs/";
+/// The root of the repository's layer of the prompts, laid out as
+/// `briefs/prompts/` is.
+pub const PROMPTS: &str = ".linewright/briefs/prompts/";
 
 /// A file of the repository's Linewright cannot use, and why.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,8 +50,8 @@ pub fn holding<'a>(unusable: &'a [Unusable], run: &RunKind) -> Vec<&'a FileError
 #[derive(Clone, Debug)]
 pub struct RepoLayer {
     pub settings: RepoSettings,
-    /// The briefs, each file from the repository's layer, the operator's or
-    /// Linewright's own.
+    /// The briefs, each prompt from the repository's layer, the operator's
+    /// or Linewright's own.
     pub briefs: Arc<Briefs>,
     pub unusable: Vec<Unusable>,
 }
@@ -60,22 +61,19 @@ impl RepoLayer {
     pub async fn read(
         store: &dyn Store,
         branch: &str,
-        operator: &OperatorBriefs,
+        operator: &OperatorPrompts,
     ) -> Result<RepoLayer> {
         let files = store.read_files(branch, &paths()).await?;
         Ok(RepoLayer::parse(files, operator))
     }
 
     /// The layer the repository's `files`, by their paths in it, make over
-    /// the operator's briefs. A file that cannot be used holds the runs that
+    /// the operator's prompts. A file that cannot be used holds the runs that
     /// read it, and the next layer's stands in for every other run.
-    pub fn parse(files: BTreeMap<String, Blob>, operator: &OperatorBriefs) -> RepoLayer {
+    pub fn parse(files: BTreeMap<String, Blob>, operator: &OperatorPrompts) -> RepoLayer {
         let mut unusable = Vec::new();
         let mut settings = RepoSettings::default();
-        let mut layer = BriefLayer {
-            layer: Layer::Repository,
-            files: BTreeMap::new(),
-        };
+        let mut layer_files = Vec::new();
         for (path, blob) in files {
             let text = match blob {
                 Blob::Text(text) => Ok(text),
@@ -94,36 +92,34 @@ impl RepoLayer {
                 }
                 continue;
             }
-            let Some(brief) = path.strip_prefix(BRIEFS) else {
-                continue;
-            };
-            let Some(holds) = Briefs::readers(brief) else {
+            let Some(prompt) = path.strip_prefix(PROMPTS) else {
                 continue;
             };
             match text {
-                Ok(text) => {
-                    layer.files.insert(brief.to_string(), text);
-                }
+                Ok(text) => layer_files.push((prompt.to_string(), text.into_bytes())),
                 Err(error) => unusable.push(Unusable {
+                    holds: prompts::readers(prompt).unwrap_or(Readers::Every),
                     file: FileError { path, error },
-                    holds,
                 }),
             }
         }
-        let briefs = if layer.files.is_empty() {
+        let (layer, parsed) = PromptLayer::parse(Layer::Repository, layer_files);
+        let briefs = if layer.files.is_empty() && parsed.is_empty() {
             operator.briefs()
         } else {
             let resolved = Briefs::resolve(&[&layer, operator.layer()]);
-            unusable.extend(resolved.unusable.into_iter().map(|file| {
-                Unusable {
-                    holds: Briefs::readers(&file.path)
-                        .expect("only a file of Linewright's layout is resolved"),
-                    file: FileError {
-                        path: format!("{BRIEFS}{}", file.path),
-                        error: file.error,
-                    },
-                }
-            }));
+            unusable.extend(
+                parsed
+                    .into_iter()
+                    .chain(resolved.unusable)
+                    .map(|file| Unusable {
+                        holds: prompts::readers(&file.path).unwrap_or(Readers::Every),
+                        file: FileError {
+                            path: format!("{PROMPTS}{}", file.path),
+                            error: file.error,
+                        },
+                    }),
+            );
             Arc::new(resolved.briefs)
         };
         unusable.sort_by(|a, b| a.file.path.cmp(&b.file.path));
@@ -136,9 +132,13 @@ impl RepoLayer {
 }
 
 /// The path in the repository of each of Linewright's files that runs read:
-/// its config and every file of the briefs' layout.
+/// its config and every one of Linewright's prompts.
 fn paths() -> Vec<String> {
     std::iter::once(CONFIG.to_string())
-        .chain(Briefs::paths().map(|path| format!("{BRIEFS}{path}")))
+        .chain(
+            Prompts::paths()
+                .into_iter()
+                .map(|path| format!("{PROMPTS}{path}")),
+        )
         .collect()
 }

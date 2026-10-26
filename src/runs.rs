@@ -248,7 +248,7 @@ impl From<PathBuf> for SessionEntry {
 }
 
 /// What a session ran with: its model and effort as Linewright set them,
-/// and where each of its settings and brief files came from.
+/// and where each of its settings and prompt files came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ran {
     /// `None` is the harness's choice.
@@ -261,8 +261,11 @@ pub struct Ran {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Layers {
     pub settings: BTreeMap<Setting, Layer>,
-    /// By the file's path under the briefs' root.
-    pub briefs: BTreeMap<String, Layer>,
+    /// By the prompt's path under the prompts' root. A record kept before
+    /// prompts were the only layered files has its paths under the briefs'
+    /// root, such as `prompts/triage.md` and `plugin/skills/tdd/SKILL.md`.
+    #[serde(alias = "briefs")]
+    pub prompts: BTreeMap<String, Layer>,
 }
 
 impl Ran {
@@ -272,7 +275,7 @@ impl Ran {
             effort: settings.effort.value,
             layers: Layers {
                 settings: settings.layers(),
-                briefs: briefs.layers().clone(),
+                prompts: briefs.layers().clone(),
             },
         }
     }

@@ -1,22 +1,22 @@
-//! Where a setting or a brief file comes from (`GLOSSARY.md`, **Layer**).
+//! Where a setting or a prompt file comes from (`GLOSSARY.md`, **Layer**).
 
 use serde::{Deserialize, Serialize};
 
-/// The sources a setting or a brief file can come from, first the one that
+/// The sources a setting or a prompt file can come from, first the one that
 /// wins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Layer {
     /// The repository's files, such as an automation's front matter.
     Repository,
-    /// The operator's flags, environment variables, config file and briefs.
+    /// The operator's flags, environment variables, config file and prompts.
     Operator,
-    /// Linewright's defaults and the briefs it ships.
+    /// Linewright's defaults and the prompts it ships.
     Linewright,
 }
 
 impl Layer {
-    /// Whose a setting or a brief file is, coming from this layer.
+    /// Whose a setting or a prompt file is, coming from this layer.
     pub fn whose(self) -> &'static str {
         match self {
             Layer::Repository => "the repository's",

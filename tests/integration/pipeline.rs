@@ -4516,13 +4516,14 @@ async fn an_update_run_is_given_the_update_alone_without_a_skill_to_work_by() {
 
 #[tokio::test]
 async fn an_operators_prompt_is_the_one_the_session_gets() {
-    let briefs = briefs_with("update.md", |text| {
+    let operators = prompts_with("update.md", |text| {
         format!("Use the repository's own skill.\n\n{text}")
     });
     let (mut world, _) = moved_past_with(
         Repository::default(),
         |config| {
-            config.briefs = linewright::briefs::OperatorBriefs::read(Some(briefs.path())).unwrap();
+            config.prompts =
+                linewright::briefs::OperatorPrompts::read(Some(operators.path())).unwrap();
         },
         true,
     )

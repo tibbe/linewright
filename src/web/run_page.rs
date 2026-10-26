@@ -264,7 +264,7 @@ impl RunView {
     }
 }
 
-/// A session's model and effort, and where each of its settings and brief
+/// A session's model and effort, and where each of its settings and prompt
 /// files came from.
 fn ran_html(ran: Option<&Ran>) -> String {
     let said = format!(
@@ -287,14 +287,14 @@ fn ran_html(ran: Option<&Ran>) -> String {
         .iter()
         .map(|(setting, layer)| item("setting", setting.name(), *layer))
         .collect();
-    let briefs: String = ran
+    let prompts: String = ran
         .layers
-        .briefs
+        .prompts
         .iter()
-        .map(|(path, layer)| item("brief", path, *layer))
+        .map(|(path, layer)| item("prompt", path, *layer))
         .collect();
     format!(
-        r#"{said}<div class="layers text-sm text-base-content/70"><ul class="ml-4">{settings}</ul><ul class="ml-4 font-mono">{briefs}</ul></div>"#
+        r#"{said}<div class="layers text-sm text-base-content/70"><ul class="ml-4">{settings}</ul><ul class="ml-4 font-mono">{prompts}</ul></div>"#
     )
 }
 

@@ -5,23 +5,23 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use crate::layer::Layer;
-use crate::prompts::{self, Prompts, Readers};
+use crate::prompts::{self, Prompts};
 
-/// What a session works from, each file from the first layer that has it.
+/// The prompts a session is sent, each from the first layer that has it
+/// (docs/specs/operation.md, "Prompts"). Its skills are always Linewright's
+/// own, which [`Briefs::write_plugin`] writes.
 #[derive(Clone, Debug)]
 pub struct Briefs {
-    /// The Claude Code plugin given to every session, from `plugin/`.
-    pub plugin: Vec<(&'static str, String)>,
-    /// What Linewright sends sessions, from `prompts/`.
     pub prompts: Prompts,
-    /// The layer of each file, by its path under the briefs' root.
+    /// The layer of each prompt, by its path under the prompts' root.
     layers: BTreeMap<String, Layer>,
 }
 
-/// One layer of the briefs: each file it has, by its path under the
-/// briefs' root, such as `prompts/implement.md`.
+/// One layer of the prompts: each of Linewright's prompts it has, by its
+/// path under the prompts' root, such as `parts/facts.md`. Built only by
+/// [`PromptLayer::parse`], which looks at every file the layer holds.
 #[derive(Clone, Debug)]
-pub struct BriefLayer {
+pub struct PromptLayer {
     pub layer: Layer,
     pub files: BTreeMap<String, String>,
 }
@@ -34,36 +34,23 @@ pub struct Unusable {
     pub error: String,
 }
 
-/// The briefs resolved from layers, and the files in them that could not be
-/// used, for each of which the next layer's file stands in.
+/// The briefs resolved from layers, and the prompts in them that could not
+/// be used, for each of which the next layer's file stands in.
 #[derive(Clone, Debug)]
 pub struct Resolved {
     pub briefs: Briefs,
     pub unusable: Vec<Unusable>,
 }
 
-/// The operator's layer of the briefs, each of whose files can be used,
+/// The operator's layer of the prompts, each of whose files can be used,
 /// and the briefs it makes over Linewright's.
 #[derive(Clone, Debug)]
-pub struct OperatorBriefs {
-    layer: BriefLayer,
+pub struct OperatorPrompts {
+    layer: PromptLayer,
     briefs: Arc<Briefs>,
-    /// The files in the `briefs` directory outside Linewright's layout.
-    unused: Vec<String>,
 }
 
-const PROMPTS_DIR: &str = "prompts/";
-
-/// The path under the briefs' root of the plugin's file at `path`.
-fn plugin_path(path: &str) -> String {
-    format!("plugin/{path}")
-}
-
-/// The path under the briefs' root of the prompt at `path`.
-fn prompt_path(path: &str) -> String {
-    format!("{PROMPTS_DIR}{path}")
-}
-
+/// The skills every session is given, as a Claude Code plugin.
 const PLUGIN: [(&str, &str); 12] = [
     (
         ".claude-plugin/plugin.json",
@@ -112,35 +99,70 @@ const PLUGIN: [(&str, &str); 12] = [
     ),
 ];
 
+impl PromptLayer {
+    /// The layer holding `files`, each by its path under the layer's root,
+    /// and those of them it cannot use: a file that is not one of
+    /// Linewright's prompts, or a prompt that is not UTF-8. A file is
+    /// skipped when its name, or that of a directory it is in, starts with
+    /// `.` (docs/specs/operation.md, "Prompts").
+    pub fn parse(
+        layer: Layer,
+        files: impl IntoIterator<Item = (String, Vec<u8>)>,
+    ) -> (PromptLayer, Vec<Unusable>) {
+        let mut parsed = PromptLayer {
+            layer,
+            files: BTreeMap::new(),
+        };
+        let mut unusable = Vec::new();
+        for (path, bytes) in files {
+            if is_hidden(&path) {
+                continue;
+            }
+            let error = if prompts::readers(&path).is_none() {
+                NOT_A_PROMPT
+            } else {
+                match String::from_utf8(bytes) {
+                    Ok(text) => {
+                        parsed.files.insert(path, text);
+                        continue;
+                    }
+                    Err(_) => "it is not UTF-8 text",
+                }
+            };
+            unusable.push(Unusable {
+                path,
+                layer,
+                error: error.into(),
+            });
+        }
+        unusable.sort_by(|a, b| a.path.cmp(&b.path));
+        (parsed, unusable)
+    }
+}
+
+const NOT_A_PROMPT: &str = "not one of Linewright's prompts";
+
+/// Whether any part of `path` names a hidden entry: one whose name starts
+/// with `.`.
+fn is_hidden(path: &str) -> bool {
+    path.split('/').any(|name| name.starts_with('.'))
+}
+
 impl Briefs {
     pub fn shipped() -> Briefs {
         Briefs::resolve(&[]).briefs
     }
 
-    /// Takes each file from the first of `layers` that has it and whose
-    /// file can be used, or else from the briefs Linewright ships.
-    pub fn resolve(layers: &[&BriefLayer]) -> Resolved {
-        let mut layers_of = BTreeMap::new();
-        let plugin = PLUGIN
-            .iter()
-            .map(|(path, shipped)| {
-                let key = plugin_path(path);
-                let (layer, text) = layers
-                    .iter()
-                    .find_map(|layer| Some((layer.layer, layer.files.get(&key)?.as_str())))
-                    .unwrap_or((Layer::Linewright, shipped));
-                layers_of.insert(key, layer);
-                (*path, text.to_string())
-            })
-            .collect();
+    /// Takes each prompt from the first of `layers` that has it and whose
+    /// file can be used, or else from the prompts Linewright ships.
+    pub fn resolve(layers: &[&PromptLayer]) -> Resolved {
         // Each path's layers that have it, the one in use first.
-        let mut candidates: BTreeMap<&str, Vec<&BriefLayer>> = Prompts::paths()
+        let mut candidates: BTreeMap<&str, Vec<&PromptLayer>> = Prompts::paths()
             .into_iter()
             .map(|path| {
-                let key = prompt_path(path);
                 let having = layers
                     .iter()
-                    .filter(|layer| layer.files.contains_key(&key))
+                    .filter(|layer| layer.files.contains_key(path))
                     .copied()
                     .collect();
                 (path, having)
@@ -152,7 +174,7 @@ impl Briefs {
         let prompts = loop {
             let (prompts, failed) = Prompts::read(&mut |path| {
                 let layer = candidates.get(path)?.first()?;
-                layer.files.get(&prompt_path(path)).map(String::as_str)
+                layer.files.get(path).map(String::as_str)
             });
             if failed.is_empty() {
                 break prompts;
@@ -163,21 +185,23 @@ impl Briefs {
                     .expect("only a path with a layer's file fails");
                 let layer = having.remove(0);
                 unusable.push(Unusable {
-                    path: prompt_path(path),
+                    path: path.to_string(),
                     layer: layer.layer,
                     error: format!("{error:#}"),
                 });
             }
         };
-        for (path, having) in candidates {
-            let layer = having
-                .first()
-                .map_or(Layer::Linewright, |layer| layer.layer);
-            layers_of.insert(prompt_path(path), layer);
-        }
+        let layers_of = candidates
+            .into_iter()
+            .map(|(path, having)| {
+                let layer = having
+                    .first()
+                    .map_or(Layer::Linewright, |layer| layer.layer);
+                (path.to_string(), layer)
+            })
+            .collect();
         Resolved {
             briefs: Briefs {
-                plugin,
                 prompts,
                 layers: layers_of,
             },
@@ -185,35 +209,14 @@ impl Briefs {
         }
     }
 
-    /// The runs the file at `path` under the briefs' root is sent to, or
-    /// `None` for a path outside Linewright's layout. Every run is given the
-    /// whole plugin.
-    pub fn readers(path: &str) -> Option<Readers> {
-        if let Some(prompt) = path.strip_prefix(PROMPTS_DIR) {
-            return prompts::readers(prompt);
-        }
-        PLUGIN
-            .iter()
-            .any(|(plugin, _)| plugin_path(plugin) == path)
-            .then_some(Readers::Every)
-    }
-
-    /// The path under the briefs' root of every file of Linewright's
-    /// layout.
-    pub fn paths() -> impl Iterator<Item = String> {
-        PLUGIN
-            .iter()
-            .map(|(path, _)| plugin_path(path))
-            .chain(Prompts::paths().into_iter().map(prompt_path))
-    }
-
-    /// The layer each file came from, by its path under the briefs' root.
+    /// The layer each prompt came from, by its path under the prompts' root.
     pub fn layers(&self) -> &BTreeMap<String, Layer> {
         &self.layers
     }
 
-    pub fn write_plugin(&self, dir: &Path) -> std::io::Result<()> {
-        for (path, text) in &self.plugin {
+    /// Writes Linewright's skills, the same for every session, to `dir`.
+    pub fn write_plugin(dir: &Path) -> std::io::Result<()> {
+        for (path, text) in PLUGIN {
             let path = dir.join(path);
             std::fs::create_dir_all(path.parent().expect("plugin files sit in a directory"))?;
             std::fs::write(path, text)?;
@@ -222,44 +225,45 @@ impl Briefs {
     }
 }
 
-impl OperatorBriefs {
-    /// The operator's layer, from the `briefs` directory, laid out as
-    /// `briefs/` is, if one is set: the files of Linewright's layout that it
-    /// holds, each of which must be usable.
-    pub fn read(dir: Option<&Path>) -> Result<OperatorBriefs> {
-        let mut layer = BriefLayer {
-            layer: Layer::Operator,
-            files: BTreeMap::new(),
-        };
-        let mut unused = Vec::new();
+impl OperatorPrompts {
+    /// The operator's layer, from the `prompts` directory, laid out as
+    /// Linewright's own prompts are, if one is set. Every file it holds,
+    /// hidden ones aside, must be one of Linewright's prompts and usable;
+    /// the error names each that is not.
+    pub fn read(dir: Option<&Path>) -> Result<OperatorPrompts> {
+        let mut files = Vec::new();
         if let Some(dir) = dir {
-            let (used, outside): (Vec<String>, Vec<String>) = files_under(dir)?
-                .into_iter()
-                .partition(|path| Briefs::readers(path).is_some());
-            for path in used {
+            for path in files_under(dir)? {
                 let file = dir.join(&path);
-                let text = std::fs::read_to_string(&file)
-                    .with_context(|| format!("reading the brief {}", file.display()))?;
-                layer.files.insert(path, text);
+                let bytes = std::fs::read(&file)
+                    .with_context(|| format!("reading the prompt {}", file.display()))?;
+                files.push((path, bytes));
             }
-            unused = outside;
         }
+        let (layer, mut unusable) = PromptLayer::parse(Layer::Operator, files);
         let resolved = Briefs::resolve(&[&layer]);
-        if let Some(unusable) = resolved.unusable.first() {
-            let prompt = unusable
-                .path
-                .strip_prefix(PROMPTS_DIR)
-                .unwrap_or(&unusable.path);
-            return Err(anyhow!("reading the prompt {prompt}: {}", unusable.error));
+        unusable.extend(resolved.unusable);
+        if let Some(dir) = dir
+            && !unusable.is_empty()
+        {
+            unusable.sort_by(|a, b| a.path.cmp(&b.path));
+            let named: Vec<String> = unusable
+                .iter()
+                .map(|unusable| format!("- {}: {}", unusable.path, unusable.error))
+                .collect();
+            return Err(anyhow!(
+                "the `prompts` directory {} holds files Linewright cannot use:\n{}",
+                dir.display(),
+                named.join("\n")
+            ));
         }
-        Ok(OperatorBriefs {
+        Ok(OperatorPrompts {
             layer,
             briefs: Arc::new(resolved.briefs),
-            unused,
         })
     }
 
-    pub fn layer(&self) -> &BriefLayer {
+    pub fn layer(&self) -> &PromptLayer {
         &self.layer
     }
 
@@ -267,26 +271,26 @@ impl OperatorBriefs {
     pub fn briefs(&self) -> Arc<Briefs> {
         self.briefs.clone()
     }
-
-    /// The paths under the `briefs` directory of its files outside
-    /// Linewright's layout, which no session is given.
-    pub fn unused(&self) -> &[String] {
-        &self.unused
-    }
 }
 
 /// The path under `dir` of every file in it and its subdirectories, in
-/// order, with `/` between the parts.
+/// order, with `/` between the parts, leaving out hidden entries and what
+/// is under them.
 fn files_under(dir: &Path) -> Result<Vec<String>> {
     let mut files = Vec::new();
     let mut dirs = vec![(dir.to_path_buf(), String::new())];
     while let Some((at, prefix)) = dirs.pop() {
         let entries = std::fs::read_dir(&at)
-            .with_context(|| format!("reading the briefs directory {}", at.display()))?;
+            .with_context(|| format!("reading the prompts directory {}", at.display()))?;
         for entry in entries {
             let entry =
-                entry.with_context(|| format!("reading the briefs directory {}", at.display()))?;
-            let path = format!("{prefix}{}", entry.file_name().to_string_lossy());
+                entry.with_context(|| format!("reading the prompts directory {}", at.display()))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // Not descending into a hidden directory, such as `.git/`.
+            if is_hidden(&name) {
+                continue;
+            }
+            let path = format!("{prefix}{name}");
             if entry.path().is_dir() {
                 dirs.push((entry.path(), format!("{path}/")));
             } else {

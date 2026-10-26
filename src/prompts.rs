@@ -383,7 +383,7 @@ pub struct Prompts {
     usage_limit_reset: Template<NoValues>,
     late_feedback: Template<LateFeedback>,
     /// Each first-message prompt's result contract, filled into its
-    /// `{{output}}` (docs/specs/operation.md, "Briefs").
+    /// `{{output}}` (docs/specs/operation.md, "Prompts").
     triage_output: Template<TriageOutput>,
     design_output: Template<DesignOutput>,
     implement_output: Template<NoValues>,
@@ -394,7 +394,7 @@ pub struct Prompts {
 }
 
 impl Prompts {
-    /// The prompts, each from `lookup`'s text for its path under `prompts/`,
+    /// The prompts, each from `lookup`'s text for its path under the prompts' root,
     /// or the text Linewright ships where it has none, and the paths whose
     /// text does not parse, with why, each of which takes the shipped text.
     pub fn read<'a>(
@@ -409,7 +409,7 @@ impl Prompts {
         (prompts, reader.unusable)
     }
 
-    /// The path under `prompts/` of every prompt and part, with the runs it
+    /// The path under the prompts' root of every prompt and part, with the runs it
     /// is sent to: the table that says which runs a file holds
     /// (docs/specs/repository.md, "Linewright's files").
     fn layout() -> &'static [(&'static str, Readers)] {
@@ -465,13 +465,13 @@ impl Prompts {
         }
     }
 
-    /// The path under `prompts/` of every prompt and part.
+    /// The path under the prompts' root of every prompt and part.
     pub fn paths() -> Vec<&'static str> {
         Prompts::layout().iter().map(|(path, _)| *path).collect()
     }
 }
 
-/// The runs the template at `path` under `prompts/` is sent to, or `None`
+/// The runs the template at `path` under the prompts' root is sent to, or `None`
 /// for a path that is no template's.
 pub fn readers(path: &str) -> Option<Readers> {
     Prompts::layout()

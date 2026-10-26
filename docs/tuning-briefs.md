@@ -2,12 +2,15 @@
 
 Each stage's agent works from a brief in [`briefs/`](../briefs/): the skills
 in `plugin/` and the prompts in `prompts/`, as its README describes. A
-`--briefs` directory is laid out the same way and holds only the files it
-changes: the rest are Linewright's own. To try a change against a real case:
+`--prompts` directory is laid out as `prompts/` is, such as `implement.md` and
+`parts/facts.md`, and holds only the prompts it changes: the rest are
+Linewright's own. Any other file in it is an error. The skills are built in, so
+a change to one is tried by editing `briefs/plugin/` and rebuilding. To try a
+change to a prompt against a real case:
 
 ```sh
 lw capture owner/name#123 case/      # a spec change or an issue
-lw --briefs briefs/ replay case/ --out run-1/
+lw --prompts briefs/prompts/ replay case/ --out run-1/
 ```
 
 `run-1/` holds the issues and pull requests the run produced (`issues/`,

@@ -471,6 +471,24 @@ fn a_bad_value_or_an_unknown_key_is_an_error_naming_the_setting() {
     );
 }
 
+#[test]
+fn the_operators_layer_of_prompts_is_the_prompts_setting_from_a_flag_variable_or_the_file() {
+    let from_flag = resolve(&["--prompts", "flag/"], &[], None).unwrap();
+    let from_env = resolve(&[], &[("LINEWRIGHT_PROMPTS", "env/")], None).unwrap();
+    let from_file = resolve(&[], &[], Some("prompts = \"file/\"\n")).unwrap();
+
+    assert_eq!(from_flag.prompts, Some("flag/".into()));
+    assert_eq!(from_env.prompts, Some("env/".into()));
+    assert_eq!(from_file.prompts, Some("file/".into()));
+}
+
+#[test]
+fn the_earlier_briefs_key_is_an_unknown_setting() {
+    let error = resolve(&[], &[], Some("briefs = \"mine/\"\n")).unwrap_err();
+
+    assert!(error.contains("an unknown setting `briefs`"), "{error}");
+}
+
 fn blames_the_command_line(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> bool {
     match resolve_blaming(args, env, file) {
         Err(ResolveError::CommandLine(_)) => true,

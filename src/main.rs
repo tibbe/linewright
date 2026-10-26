@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use linewright::api::{self, Api, EventId, Publish, RequestError, Resume, Sources, Unanswered};
-use linewright::briefs::OperatorBriefs;
+use linewright::briefs::OperatorPrompts;
 use linewright::case;
 use linewright::child;
 use linewright::clock::{Clock, SystemClock};
@@ -590,7 +590,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             case: case_dir,
             out,
         } => {
-            let briefs = briefs(&config)?;
+            let prompts = prompts(&config)?;
             let bash = require_bash()?;
             require_tool(HARNESS_PROGRAM).await?;
             let sessions = SessionCredentials::new(SessionToken::Withheld, &config.secrets)?;
@@ -598,7 +598,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             let harness = harness(bash, &sessions);
             let factory_config = factory_config(
                 &config,
-                briefs,
+                prompts,
                 environments,
                 out.clone(),
                 OnUsageLimit::End,
@@ -730,29 +730,22 @@ fn environments(config: &Config, sessions: &SessionCredentials) -> Environments 
 }
 
 /// Read before anything else at startup, so a mistake in them is found at
-/// once. Logs which files they provide, and those of the `briefs` directory
-/// no session is given.
-fn briefs(config: &Config) -> Result<OperatorBriefs> {
-    let briefs = OperatorBriefs::read(config.briefs.as_deref())?;
-    if config.briefs.is_some() {
-        let provided: Vec<&str> = briefs.layer().files.keys().map(String::as_str).collect();
+/// once. Logs which files they provide.
+fn prompts(config: &Config) -> Result<OperatorPrompts> {
+    let prompts = OperatorPrompts::read(config.prompts.as_deref())?;
+    if config.prompts.is_some() {
+        let provided: Vec<&str> = prompts.layer().files.keys().map(String::as_str).collect();
         info!(
             files = provided.join(" "),
-            "the operator's briefs provide these files"
+            "the operator's prompts provide these files"
         );
     }
-    if !briefs.unused().is_empty() {
-        warn!(
-            files = briefs.unused().join(" "),
-            "these files in the `briefs` directory are not among Linewright's briefs, so are unused"
-        );
-    }
-    Ok(briefs)
+    Ok(prompts)
 }
 
 fn factory_config(
     config: &Config,
-    briefs: OperatorBriefs,
+    prompts: OperatorPrompts,
     environments: Environments,
     work_dir: std::path::PathBuf,
     on_usage_limit: OnUsageLimit,
@@ -772,7 +765,7 @@ fn factory_config(
         update_method: config.update_branch,
         auto_merge: config.auto_merge,
         require_label: config.require_label.clone(),
-        briefs,
+        prompts,
         work_dir,
         schedule_automations: true,
         waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
@@ -789,7 +782,7 @@ enum OnUsageLimit {
 }
 
 async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Result<Factory> {
-    let briefs = briefs(config)?;
+    let prompts = prompts(config)?;
     require_tool("git").await?;
     let bash = require_bash()?;
     require_tool(HARNESS_PROGRAM).await?;
@@ -803,7 +796,7 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Res
     let github = connect(config, token).await?;
     let factory_config = factory_config(
         config,
-        briefs,
+        prompts,
         environments,
         work_dir(config, &github),
         on_usage_limit,

@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 
 use crate::api::{Publish, Served};
 use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
-use crate::briefs::OperatorBriefs;
+use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
 use crate::domain::{
     AutoMerge, IssueCloseReason, Item, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
@@ -54,8 +54,8 @@ pub struct FactoryConfig {
     /// `None` leaves green pull requests for review.
     pub auto_merge: Option<AutoMerge>,
     pub require_label: Option<String>,
-    /// The operator's layer of the briefs.
-    pub briefs: OperatorBriefs,
+    /// The operator's layer of the prompts.
+    pub prompts: OperatorPrompts,
     pub work_dir: PathBuf,
     pub schedule_automations: bool,
     pub waits_out_usage_limit: bool,
@@ -265,7 +265,7 @@ impl Factory {
             clock,
             work: config.work,
             environments: config.environments,
-            operator_briefs: config.briefs,
+            operator_prompts: config.prompts,
             identity,
             settings,
             result_retries: config.result_retries,
@@ -576,7 +576,7 @@ impl Factory {
         let repo = RepoLayer::read(
             shell.store.as_ref(),
             &shell.settings.default_branch,
-            &shell.operator_briefs,
+            &shell.operator_prompts,
         )
         .await
         .context("reading Linewright's files in the repository")?;

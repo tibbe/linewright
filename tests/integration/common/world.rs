@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
-use linewright::briefs::OperatorBriefs;
+use linewright::briefs::OperatorPrompts;
 use linewright::domain::{
     AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, label,
 };
@@ -125,7 +125,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         update_method: None,
         auto_merge: None,
         require_label: None,
-        briefs: OperatorBriefs::read(None).unwrap(),
+        prompts: OperatorPrompts::read(None).unwrap(),
         work_dir: work_dir.to_path_buf(),
         schedule_automations: true,
         waits_out_usage_limit: false,
@@ -458,14 +458,14 @@ impl Serving {
     }
 }
 
-/// A `briefs` directory holding only the shipped prompt at `path` under
-/// `prompts/`, changed by `edit`.
-pub fn briefs_with(path: &str, edit: impl FnOnce(String) -> String) -> tempfile::TempDir {
+/// A `prompts` directory holding only the shipped prompt at `path`, changed
+/// by `edit`.
+pub fn prompts_with(path: &str, edit: impl FnOnce(String) -> String) -> tempfile::TempDir {
     let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("briefs/prompts")
         .join(path);
     let dir = tempfile::tempdir().unwrap();
-    let prompt = dir.path().join("prompts").join(path);
+    let prompt = dir.path().join(path);
     std::fs::create_dir_all(prompt.parent().unwrap()).unwrap();
     std::fs::write(prompt, edit(std::fs::read_to_string(shipped).unwrap())).unwrap();
     dir
