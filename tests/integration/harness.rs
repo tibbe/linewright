@@ -406,6 +406,7 @@ fn rejected() -> Value {
         "resetsAt": 1_791_877_800,
         "rateLimitType": "five_hour",
         "overageStatus": "rejected",
+        "overageDisabledReason": "out_of_credits",
         "isUsingOverage": false,
     })
 }
