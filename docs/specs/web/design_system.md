@@ -8,8 +8,8 @@ two themes of its own.
 - The light theme, or the dark theme for a reader who prefers dark. Each is
   daisyUI's `light` or `dark` theme with its surfaces and text as below, and
   the web UI draws in no colour but these and the theme's own fills, each with
-  its content colour on it: a wash is one of them made translucent, and
-  shadows are daisyUI's.
+  its content colour on it: a wash is one of them made translucent behind
+  what it washes, never text, and shadows are daisyUI's.
 - **Surfaces and text** are steps of Radix Slate, but for a light Card, which
   is white.
 
@@ -21,6 +21,8 @@ two themes of its own.
 | Border     | `base-300`     | 6                 | 6                |
 | Muted text |                | 11                | 11               |
 | Text       | `base-content` | 12                | 12               |
+
+- **Secondary text** is in Muted text.
 
 ## Status
 

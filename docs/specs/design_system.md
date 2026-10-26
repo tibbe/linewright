@@ -64,6 +64,12 @@
   page, until the pointer leaves it or focus moves. Text cut to fit is shown
   whole this way.
 
+## Type
+
+- Secondary text, text that qualifies the text it sits beside, such as a
+  card's line under its title or a time beside a transcript entry, is
+  quieter than it.
+
 ## Colour scheme
 
 - Light or dark follows the reader's preference.
