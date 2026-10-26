@@ -50,7 +50,7 @@ askama = "0.16"
 askama_web = { version = "0.16", features = ["axum-0.8"] }
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "query", "tokio"] }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 croner = "4"
