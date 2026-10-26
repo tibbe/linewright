@@ -175,6 +175,8 @@ image the operator builds with those in it.
 
 - **TLS.** Linewright listens over plain HTTP; TLS, where wanted, is a
   reverse proxy's in front.
+- **Certificate authorities.** Linewright trusts the host's certificate
+  authorities, and only those.
 - **Behind a proxy.** Event streams ask a reverse proxy in front to pass each
   event on as it is sent, unchanged, and to keep no copy, and send something
   at least every 15 seconds, so that the proxy never closes one as idle.
