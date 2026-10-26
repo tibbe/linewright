@@ -556,3 +556,39 @@ async fn a_file_that_is_not_utf_8_text_is_read_as_binary() {
         BTreeMap::from([("triage.md".to_string(), Entry::File(Blob::Binary))])
     );
 }
+
+#[tokio::test]
+async fn every_file_under_a_directory_is_listed_by_its_path_under_it() {
+    let world = World::new().await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[
+                (".linewright/config.toml", "model = \"opus\"\n"),
+                (".linewright/prompts/triage.md", "Triage it.\n"),
+                (".linewright/prompts/parts/facts.md", "Facts.\n"),
+                ("README.md", "Read me.\n"),
+            ],
+            "Configure Linewright",
+        )
+        .await
+        .unwrap();
+
+    let mut files = world.store.list_files("main", ".linewright").await.unwrap();
+    files.sort();
+
+    assert_eq!(
+        files,
+        ["config.toml", "prompts/parts/facts.md", "prompts/triage.md"]
+    );
+    assert_eq!(
+        world
+            .store
+            .list_files("main", ".linewright/automations")
+            .await
+            .unwrap(),
+        Vec::<String>::new()
+    );
+}

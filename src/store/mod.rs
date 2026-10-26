@@ -409,8 +409,9 @@ pub trait Store: Send + Sync {
     /// at which it has no file, and every entry of `tree`: none when it has
     /// no such directory.
     async fn read_files(&self, branch: &str, paths: &[String], tree: Tree<'_>) -> Result<Files>;
-    /// The names of the files directly in the directory `dir` at the head of
-    /// `branch`: none when it has no such directory.
+    /// The path, relative to `dir`, of every file in the directory `dir` and
+    /// its subdirectories at the head of `branch`, such as
+    /// `prompts/parts/facts.md`: none when it has no such directory.
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;

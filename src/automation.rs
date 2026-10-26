@@ -178,7 +178,7 @@ pub struct Unparsed {
 pub async fn read(store: &dyn Store, branch: &str) -> Result<AutomationFiles> {
     let mut files = AutomationFiles::default();
     for file in store.list_files(branch, DIR).await? {
-        let Some(name) = file.strip_suffix(".md") else {
+        let Some(name) = file.strip_suffix(".md").filter(|name| !name.contains('/')) else {
             continue;
         };
         let parsed = async {

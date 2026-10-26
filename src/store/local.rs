@@ -1701,12 +1701,15 @@ impl Store for LocalStore {
         }
         // Each entry is `<mode> <type> <object>\t<name>`
         // (<https://git-scm.com/docs/git-ls-tree#_output_format>).
-        let listing = git::git(&repository, &["ls-tree", "-z", &object]).await?;
+        let prefix = format!("{dir}/");
+        let listing =
+            git::git(&repository, &["ls-tree", "-r", "-z", branch, "--", &prefix]).await?;
         Ok(listing
             .split('\0')
             .filter_map(|entry| {
-                let (meta, name) = entry.split_once('\t')?;
-                (meta.split(' ').nth(1) == Some("blob")).then(|| name.to_string())
+                let (meta, path) = entry.split_once('\t')?;
+                let path = path.strip_prefix(&prefix)?;
+                (meta.split(' ').nth(1) == Some("blob")).then(|| path.to_string())
             })
             .collect())
     }

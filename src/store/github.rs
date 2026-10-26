@@ -1039,6 +1039,52 @@ impl GqlRef {
     }
 }
 
+/// The path, under the repository, of every entry under `dir` at the head of
+/// `branch` (<https://docs.github.com/en/rest/git/trees#get-a-tree>), the
+/// tree named in git's `<rev>:<path>` form.
+fn tree_path(branch: &str, dir: &str) -> String {
+    format!(
+        "/git/trees/{}?recursive=1",
+        percent_encode(&format!("{branch}:{dir}"))
+    )
+}
+
+#[derive(Deserialize)]
+struct GitTree {
+    tree: Vec<GitTreeEntry>,
+    truncated: bool,
+}
+
+#[derive(Deserialize)]
+struct GitTreeEntry {
+    path: String,
+    #[serde(rename = "type")]
+    kind: TreeEntryKind,
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum TreeEntryKind {
+    Blob,
+    /// A tree or a submodule's commit.
+    #[serde(other)]
+    Other,
+}
+
+/// The path of each file in `tree`. A truncated tree is an error, not a
+/// partial list, so that no file under it goes unseen.
+fn files_listed(tree: GitTree) -> Result<Vec<String>> {
+    if tree.truncated {
+        bail!("the tree is too large for GitHub to list whole");
+    }
+    Ok(tree
+        .tree
+        .into_iter()
+        .filter(|e| e.kind == TreeEntryKind::Blob)
+        .map(|e| e.path)
+        .collect())
+}
+
 /// A branch GitHub does not have is deleted already; GitHub answers 422 for
 /// it, as it does for a branch it refuses to delete
 /// (<https://docs.github.com/en/rest/git/refs#delete-a-reference>).
@@ -2663,34 +2709,21 @@ impl Store for GitHub {
     }
 
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {
-        #[derive(Deserialize)]
-        struct Entry {
-            name: String,
-            #[serde(rename = "type")]
-            kind: String,
-        }
-        let dir_segments: Vec<String> = dir.split('/').map(percent_encode).collect();
-        let resource = self.repo_path(&format!(
-            "/contents/{}?ref={}",
-            dir_segments.join("/"),
-            percent_encode(branch)
-        ));
+        let resource = self.repo_path(&tree_path(branch, dir));
         let response = self.send(Method::GET, &resource, None).await?;
         let status = response.status();
-        if status == StatusCode::NOT_FOUND {
+        // GitHub answers 404 for a branch or path it does not have, and 422
+        // for a path that is not a tree.
+        if status == StatusCode::NOT_FOUND || status == StatusCode::UNPROCESSABLE_ENTITY {
             return Ok(vec![]);
         }
         let text = response.text().await?;
         if !status.is_success() {
             bail!("listing {dir} on {branch}: {status}: {text}");
         }
-        let entries: Vec<Entry> = serde_json::from_str(&text)
-            .with_context(|| format!("listing {dir} on {branch}: not a directory"))?;
-        Ok(entries
-            .into_iter()
-            .filter(|e| e.kind == "file")
-            .map(|e| e.name)
-            .collect())
+        let tree = serde_json::from_str(&text)
+            .with_context(|| format!("listing {dir} on {branch}: not a tree"))?;
+        files_listed(tree).with_context(|| format!("listing {dir} on {branch}"))
     }
 
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()> {
@@ -3949,6 +3982,45 @@ mod tests {
             panic!("{:?}", read.entries);
         };
         assert!(svg.starts_with("<?xml"), "{svg}");
+    }
+
+    /// As GitHub documents getting a tree
+    /// (<https://docs.github.com/en/rest/git/trees#get-a-tree>):
+    /// `GET /repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1`, the tree
+    /// named as `BRANCH:DIR`, one percent-encoded path segment.
+    #[test]
+    fn a_directory_is_listed_from_its_tree_at_the_head_of_the_branch() {
+        assert_eq!(
+            tree_path("7-a/b", ".linewright/automations"),
+            "/git/trees/7-a%2Fb%3A.linewright%2Fautomations?recursive=1"
+        );
+    }
+
+    /// `fixtures/linewright-tree.json` is what GitHub returned for
+    /// `main:.linewright` on <https://github.com/tibbe/linewright>.
+    #[test]
+    fn a_tree_lists_each_file_under_it_by_its_path_leaving_out_its_subtrees() {
+        let tree = serde_json::from_str(include_str!("fixtures/linewright-tree.json")).unwrap();
+
+        assert_eq!(
+            files_listed(tree).unwrap(),
+            [
+                "automations/dependencies.md",
+                "automations/image-tools.md",
+                "automations/rust-toolchain.md",
+            ]
+        );
+    }
+
+    /// `fixtures/linux-tree-truncated.json` is what GitHub returned for
+    /// `master` on <https://github.com/torvalds/linux>, cut here to its first
+    /// three entries.
+    #[test]
+    fn a_tree_too_large_for_github_to_list_whole_is_an_error() {
+        let tree =
+            serde_json::from_str(include_str!("fixtures/linux-tree-truncated.json")).unwrap();
+
+        assert!(files_listed(tree).is_err());
     }
 
     /// `fixtures/repository-files.json` is what GitHub returned for that

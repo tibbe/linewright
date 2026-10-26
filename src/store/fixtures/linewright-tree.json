@@ -1,0 +1,38 @@
+{
+  "sha": "06c658512c53d1e5f433a1a4c9cb8f9da8fa990f",
+  "url": "https://api.github.com/repos/tibbe/linewright/git/trees/06c658512c53d1e5f433a1a4c9cb8f9da8fa990f",
+  "tree": [
+    {
+      "path": "automations",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "5d87f27ba3eb872e9e80e6f8c0e759140824d2b0",
+      "url": "https://api.github.com/repos/tibbe/linewright/git/trees/5d87f27ba3eb872e9e80e6f8c0e759140824d2b0"
+    },
+    {
+      "path": "automations/dependencies.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5e4c42606d17df238196d8baa869dc55711e9d78",
+      "size": 1758,
+      "url": "https://api.github.com/repos/tibbe/linewright/git/blobs/5e4c42606d17df238196d8baa869dc55711e9d78"
+    },
+    {
+      "path": "automations/image-tools.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6390c78267aacbf4bf826eb04eba7ab6017abd54",
+      "size": 1651,
+      "url": "https://api.github.com/repos/tibbe/linewright/git/blobs/6390c78267aacbf4bf826eb04eba7ab6017abd54"
+    },
+    {
+      "path": "automations/rust-toolchain.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "822f8774b329b2d8bd6608dd291634068ffcefcd",
+      "size": 826,
+      "url": "https://api.github.com/repos/tibbe/linewright/git/blobs/822f8774b329b2d8bd6608dd291634068ffcefcd"
+    }
+  ],
+  "truncated": false
+}
