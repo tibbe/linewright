@@ -23,10 +23,11 @@ pub enum Tone {
 }
 
 impl Tone {
-    /// The daisyUI colour it shows in, as the class of a badge in it: a badge
-    /// gives each colour its own colour of text, which reads on it in either
-    /// theme. Written whole, since Tailwind finds the classes the stylesheet
-    /// needs by scanning the sources' text
+    /// The colour it shows in, as the classes of a badge in it: a badge gives
+    /// each daisyUI colour its own colour of text, which reads on it in either
+    /// theme, while Muted text, a text colour with no content colour of its
+    /// own, is an outline badge, with no fill. Written whole, since Tailwind
+    /// finds the classes the stylesheet needs by scanning the sources' text
     /// (<https://tailwindcss.com/docs/detecting-classes-in-source-files>).
     pub fn colour(self) -> &'static str {
         match self {
@@ -34,11 +35,12 @@ impl Tone {
             Tone::Failure => "badge-error",
             Tone::InProgress => "badge-info",
             Tone::Pending => "badge-warning",
-            Tone::Cancelled | Tone::Paused => "badge-neutral",
+            Tone::Cancelled => "badge-neutral",
+            Tone::Paused => "badge-outline [--badge-color:var(--color-muted)]",
         }
     }
 
-    /// The class that sets `--tone` to its daisyUI colour, which the
+    /// The class that sets `--tone` to its colour, which the
     /// stylesheet's rules for a toned element read. Written whole, as
     /// `colour` says why.
     pub fn accent(self) -> &'static str {
@@ -47,19 +49,22 @@ impl Tone {
             Tone::Failure => "[--tone:var(--color-error)]",
             Tone::InProgress => "[--tone:var(--color-info)]",
             Tone::Pending => "[--tone:var(--color-warning)]",
-            Tone::Cancelled | Tone::Paused => "[--tone:var(--color-neutral)]",
+            Tone::Cancelled => "[--tone:var(--color-neutral)]",
+            Tone::Paused => "[--tone:var(--color-muted)]",
         }
     }
 
     /// The classes of an alert in its colour: neutral is daisyUI's alert with
-    /// no colour of its own. Written whole, as `colour` says why.
+    /// no colour of its own, and Muted text, with no content colour, is an
+    /// outline alert. Written whole, as `colour` says why.
     pub fn alert(self) -> &'static str {
         match self {
             Tone::Success => "alert alert-success",
             Tone::Failure => "alert alert-error",
             Tone::InProgress => "alert alert-info",
             Tone::Pending => "alert alert-warning",
-            Tone::Cancelled | Tone::Paused => "alert",
+            Tone::Cancelled => "alert",
+            Tone::Paused => "alert alert-outline [--alert-color:var(--color-muted)]",
         }
     }
 }
@@ -216,9 +221,10 @@ fn write_duration(f: &mut fmt::Formatter<'_>, seconds: u64) -> fmt::Result {
 mod tests {
     use super::*;
 
-    /// `docs/specs/web/design_system.md`, Status.
+    /// `docs/specs/web/design_system.md`, Status: paused or queued is Muted
+    /// text, cancelled `neutral`.
     #[test]
-    fn each_tone_has_the_daisyui_colour_of_the_states_it_shows() {
+    fn each_tone_has_the_colour_of_the_states_it_shows() {
         let tones = [
             Tone::Success,
             Tone::Failure,
@@ -236,7 +242,18 @@ mod tests {
                 "badge-info",
                 "badge-warning",
                 "badge-neutral",
-                "badge-neutral",
+                "badge-outline [--badge-color:var(--color-muted)]",
+            ]
+        );
+        assert_eq!(
+            tones.map(Tone::accent),
+            [
+                "[--tone:var(--color-success)]",
+                "[--tone:var(--color-error)]",
+                "[--tone:var(--color-info)]",
+                "[--tone:var(--color-warning)]",
+                "[--tone:var(--color-neutral)]",
+                "[--tone:var(--color-muted)]",
             ]
         );
         assert_eq!(
@@ -247,7 +264,7 @@ mod tests {
                 "alert alert-info",
                 "alert alert-warning",
                 "alert",
-                "alert",
+                "alert alert-outline [--alert-color:var(--color-muted)]",
             ]
         );
     }

@@ -546,6 +546,10 @@ async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label()
     assert!(facts[3].value.starts_with("2026-10-01 "), "{:?}", facts[3]);
     assert_eq!(labelled(&facts[4..]), [("Webhook deliveries refused", "0")]);
     assert!(facts.iter().all(|fact| fact.tone.is_none()), "{facts:?}");
+    // On the Page, as every table is, not in a box in the Lane colour.
+    let tables = classes(&html, "#server table");
+    assert_eq!(tables.len(), 1, "{tables:?}");
+    assert!(!tables[0].contains(&"bg-base-200"), "{tables:?}");
     // The times are `<time>` elements, which the page's script shows past
     // ones relative and future ones absolute.
     assert_eq!(select(&html, "#server time[datetime]").len(), 4);

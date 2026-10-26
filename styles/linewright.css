@@ -27,33 +27,40 @@
    Colour scheme): daisyUI's `light` and `dark` with the Colour scheme's
    roles, Page as `base-100`, Lane as `base-200`, Border as `base-300`, Text
    as `base-content`, and Card, which is lighter than the Page and so is no
-   `base-*`, as `--card`. */
+   `base-*`, as `--card`, and Muted text as `--muted`. Each is a step of
+   Radix Slate
+   (https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale),
+   copied from `@radix-ui/colors`' `slate.css` and `slate-dark.css`. */
 @plugin "./daisyui-theme.mjs" {
   name: "light";
   default: true;
   color-scheme: light;
-  --color-base-100: #f7f8fa;
-  --color-base-200: #eceef2;
-  --color-base-300: #d8dbe2;
-  --color-base-content: #1c2024;
-  --card: #ffffff;
+  --color-base-100: #f9f9fb; /* Slate 2 */
+  --color-base-200: #f0f0f3; /* Slate 3 */
+  --color-base-300: #d9d9e0; /* Slate 6 */
+  --color-base-content: #1c2024; /* Slate 12 */
+  --card: #ffffff; /* white */
+  --muted: #60646c; /* Slate 11 */
 }
 
 @plugin "./daisyui-theme.mjs" {
   name: "dark";
   prefersdark: true;
   color-scheme: dark;
-  --color-base-100: #202226;
-  --color-base-200: #191a1d;
-  --color-base-300: #3d4047;
-  --color-base-content: #eceef2;
-  --card: #2d3035;
+  --color-base-100: #212225; /* Slate dark 3 */
+  --color-base-200: #18191b; /* Slate dark 2 */
+  --color-base-300: #363a3f; /* Slate dark 6 */
+  --color-base-content: #edeef0; /* Slate dark 12 */
+  --card: #2e3135; /* Slate dark 5 */
+  --muted: #b0b4ba; /* Slate dark 11 */
 }
 
-/* The Card colour as Tailwind's `bg-card`
+/* The Card colour as Tailwind's `bg-card`, and Muted text as `text-muted`
+   and `var(--color-muted)`
    (https://tailwindcss.com/docs/colors#using-a-custom-color). */
 @theme inline {
   --color-card: var(--card);
+  --color-muted: var(--muted);
 }
 
 @layer base {

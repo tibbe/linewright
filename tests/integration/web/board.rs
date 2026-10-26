@@ -404,6 +404,14 @@ async fn each_lane_is_a_surface_sunk_into_the_page_with_its_cards_raised_on_it()
     web.stop().await;
 }
 
+/// The icons `element` holds, as their markup.
+fn icons(element: ElementRef) -> Vec<String> {
+    select_in(element, "svg.icon")
+        .into_iter()
+        .map(|icon| icon.html())
+        .collect()
+}
+
 /// `docs/specs/web/design_system.md`, Status: waiting for a person is
 /// `warning`.
 const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
@@ -414,12 +422,6 @@ async fn a_lane_head_ends_with_its_most_pressing_cards_line_and_icon_in_that_car
 
     let html = web.page("/").await;
 
-    let icon = |element: ElementRef| {
-        select_in(element, "svg.icon")
-            .into_iter()
-            .map(|icon| icon.html())
-            .collect::<Vec<_>>()
-    };
     let asked = select(&html, "#board .card")
         .into_iter()
         .find(|card| text(*card).contains("Part one"))
@@ -433,14 +435,63 @@ async fn a_lane_head_ends_with_its_most_pressing_cards_line_and_icon_in_that_car
             "{}",
             head.html()
         );
-        assert_eq!(icon(head).len(), 1, "{}", head.html());
-        assert_eq!(icon(head), icon(asked), "{}", head.html());
+        assert_eq!(icons(head).len(), 1, "{}", head.html());
+        assert_eq!(icons(head), icons(asked), "{}", head.html());
     }
     for finished in ["#lane-5 .lane-head", "#lane-4 .lane-head"] {
         let head = select(&html, finished)[0];
         assert!(lacks_classes(head, &["toned"]), "{}", head.html());
-        assert_eq!(icon(head), Vec::<String>::new(), "{}", head.html());
+        assert_eq!(icons(head), Vec::<String>::new(), "{}", head.html());
     }
+    assert_no_status_by_colour_alone(&html);
+    web.stop().await;
+}
+
+/// `docs/specs/web/design_system.md`, Status: paused or queued is Muted
+/// text.
+const PAUSED_OR_QUEUED: &str = "[--tone:var(--color-muted)]";
+
+#[tokio::test]
+async fn a_card_paused_for_the_usage_limit_and_its_lanes_head_show_it_in_muted_text() {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world
+        .harness
+        .on(WorkKind::Implement, |_| refused_for_the_usage_limit());
+    let web = Web::start(world).await;
+
+    let html = web
+        .eventually_page("/", |html| {
+            text(select(html, "#board")[0]).contains("paused for the usage limit")
+        })
+        .await;
+
+    let cards = select(&html, "#board .card");
+    assert_eq!(cards.len(), 1);
+    let card = cards[0];
+    assert!(
+        has_classes(card, &["toned", PAUSED_OR_QUEUED]),
+        "{}",
+        card.html()
+    );
+    assert_eq!(
+        select_in(card, ".line > svg.icon:first-child").len(),
+        1,
+        "{}",
+        card.html()
+    );
+    let head = select(&html, "#board .lane-head")[0];
+    assert!(
+        has_classes(head, &["toned", PAUSED_OR_QUEUED]),
+        "{}",
+        head.html()
+    );
+    assert_eq!(icons(head), icons(card), "{}", head.html());
     assert_no_status_by_colour_alone(&html);
     web.stop().await;
 }
