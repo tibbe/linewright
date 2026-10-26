@@ -83,6 +83,11 @@ struct Viewer {
 
 impl GitHub {
     pub async fn connect(repo: &Repo, token: String) -> Result<GitHub> {
+        // Follows "Certificate authorities" in docs/specs/operation.md:
+        // reqwest's `rustls` feature verifies through the platform's
+        // verifier, which reads the host's store alone. A feature or call
+        // that adds roots, such as `webpki-roots`, `tls_certs_merge` or
+        // `add_root_certificate`, would break it.
         let http = reqwest::Client::builder()
             .user_agent("linewright")
             .build()?;
