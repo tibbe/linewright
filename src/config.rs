@@ -20,7 +20,7 @@ use crate::spec_glob::SpecGlob;
 use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
-use crate::work_settings::{Partial, WorkSettings};
+use crate::work_settings::{Effort, Partial, StageTable, WorkSettings};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -243,15 +243,22 @@ pub struct Settings {
     /// Where clones and session transcripts go [default: linewright/ under the user's data directory]
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
-    /// The model for every stage [default: the harness's]
+    /// The model for every stage; a stage's table in the config file,
+    /// `[stage.NAME]`, can set its own [default: the harness's]
     #[arg(long, global = true)]
     pub model: Option<String>,
+    /// How hard the agent thinks: `low`, `medium`, `high`, `xhigh` or `max`,
+    /// for every stage; a stage's table in the config file, `[stage.NAME]`,
+    /// can set its own [default: the harness's]
+    #[arg(long, global = true)]
+    pub effort: Option<String>,
     /// A directory of briefs [default: the briefs Linewright ships]
     #[arg(long, global = true)]
     pub briefs: Option<String>,
     /// The variables of Linewright's environment that agent sessions are given
     /// besides the ones they always get, comma-separated; a name ending in `*`
-    /// names every variable with that prefix [default: none]
+    /// names every variable with that prefix; a stage's table in the config
+    /// file, `[stage.NAME]`, can add names for its sessions [default: none]
     #[arg(long, global = true, value_name = "NAMES")]
     pub session_env: Option<String>,
     /// The variables of Linewright's environment whose values are secrets,
@@ -260,7 +267,8 @@ pub struct Settings {
     /// variable with that prefix [default: none]
     #[arg(long, global = true, value_name = "NAMES")]
     pub secrets: Option<String>,
-    /// Each agent session's timeout [default: 60m]
+    /// Each agent session's timeout; a stage's table in the config file,
+    /// `[stage.NAME]`, can set its own [default: 60m]
     #[arg(long, global = true)]
     pub session_timeout: Option<String>,
     /// How often an unparseable result goes back to its session [default: 1]
@@ -309,7 +317,8 @@ pub struct Config {
     pub spec_lookback: TimeDelta,
     pub max_runs: usize,
     pub work_dir: PathBuf,
-    /// `model` and `session-timeout`, and where `session-env` came from.
+    /// `model`, `effort`, `session-timeout` and the stages' tables, and
+    /// where `session-env` came from.
     pub work: WorkSettings,
     pub briefs: Option<PathBuf>,
     pub session_env: SessionEnv,
@@ -337,6 +346,7 @@ impl Settings {
             ("max-runs", &self.max_runs),
             ("work-dir", &self.work_dir),
             ("model", &self.model),
+            ("effort", &self.effort),
             ("briefs", &self.briefs),
             ("session-env", &self.session_env),
             ("secrets", &self.secrets),
@@ -365,7 +375,7 @@ const LISTS: [(&str, &str); 3] = [
     ("ui-hosts", "a host name"),
 ];
 
-const KEYS: [&str; 23] = [
+const KEYS: [&str; 24] = [
     "repo",
     "poll-interval",
     "webhook-address",
@@ -376,6 +386,7 @@ const KEYS: [&str; 23] = [
     "max-runs",
     "work-dir",
     "model",
+    "effort",
     "briefs",
     "session-env",
     "secrets",
@@ -480,7 +491,11 @@ impl Config {
         env: &dyn Fn(&str) -> Option<String>,
         on_terminal: bool,
     ) -> Result<Config, ResolveError> {
-        let file = read_file(settings.config.as_deref(), cwd)?;
+        let FileSettings {
+            path,
+            top: file,
+            stages,
+        } = read_file(settings.config.as_deref(), cwd)?;
         let flags = settings.flags();
         // A flag, then a variable.
         let flags_and_env = |key: &str| -> Option<String> {
@@ -496,13 +511,22 @@ impl Config {
                 ResolveError::Elsewhere(error)
             }
         };
+        // A wrong value the file gave names the file.
+        let in_the_file = |key: &str, error: anyhow::Error| {
+            if flags_and_env(key).is_none() && file.contains_key(key) {
+                error.context(path.display().to_string())
+            } else {
+                error
+            }
+        };
+        let refused = |key: &str, error: anyhow::Error| blame(&[key], in_the_file(key, error));
         let not_one = |key: &str, value: &str, error: anyhow::Error| {
-            blame(
-                &[key],
+            refused(
+                key,
                 error.context(format!("the setting `{key}` is {value:?}")),
             )
         };
-        let wrong = |key: &str, error: String| blame(&[key], anyhow!(error));
+        let wrong = |key: &str, error: String| refused(key, anyhow!(error));
         let value = |key: &str, default: &str| get(key).unwrap_or_else(|| default.to_string());
         let duration = |key: &str, default: &str| {
             let value = value(key, default);
@@ -641,28 +665,31 @@ impl Config {
         )
         .map_err(|e| wrong(secrets::SETTING, e))?;
         let session_timeout = |set: Option<String>| {
-            set.map(|text| {
-                humantime::parse_duration(&text)
-                    .map_err(|e| not_one("session-timeout", &text, e.into()))
-            })
-            .transpose()
+            set.map(|text| session_timeout(&text).map_err(|e| refused("session-timeout", e)))
+                .transpose()
         };
-        let timeout_over_file = flags_and_env("session-timeout");
+        let effort = |set: Option<String>| {
+            set.map(|text| effort(&text).map_err(|e| refused("effort", e)))
+                .transpose()
+        };
         // The file's is read only when no flag or variable sets one, as it
         // could not win over them.
-        let timeout_in_file = match timeout_over_file {
+        let in_file = |key: &str| match flags_and_env(key) {
             Some(_) => None,
-            None => file.get("session-timeout").cloned(),
+            None => file.get(key).cloned(),
         };
         let work = WorkSettings {
             flags_and_env: Partial {
                 model: flags_and_env("model"),
-                session_timeout: session_timeout(timeout_over_file)?,
+                effort: effort(flags_and_env("effort"))?,
+                session_timeout: session_timeout(flags_and_env("session-timeout"))?,
             },
             file: Partial {
                 model: file.get("model").cloned(),
-                session_timeout: session_timeout(timeout_in_file)?,
+                effort: effort(in_file("effort"))?,
+                session_timeout: session_timeout(in_file("session-timeout"))?,
             },
+            stages,
             session_env: if get("session-env").is_some() {
                 Layer::Operator
             } else {
@@ -711,17 +738,27 @@ pub enum ResolveError {
     Elsewhere(anyhow::Error),
 }
 
-fn read_file(
-    explicit: Option<&Path>,
-    cwd: &Path,
-) -> Result<BTreeMap<String, String>, ResolveError> {
+/// The operator's config file.
+struct FileSettings {
+    path: PathBuf,
+    /// Each value in the form its flag takes.
+    top: BTreeMap<String, String>,
+    /// The `[stage.NAME]` tables.
+    stages: BTreeMap<WorkKind, StageTable>,
+}
+
+fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<FileSettings, ResolveError> {
     let path = explicit
         .map(Path::to_path_buf)
         .unwrap_or_else(|| cwd.join("linewright.toml"));
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if explicit.is_none() && e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(BTreeMap::new());
+            return Ok(FileSettings {
+                path,
+                top: BTreeMap::new(),
+                stages: BTreeMap::new(),
+            });
         }
         Err(e) => {
             let error = anyhow!(e).context(format!("reading {}", path.display()));
@@ -734,45 +771,109 @@ fn read_file(
     settings_in(&path, &text).map_err(ResolveError::Elsewhere)
 }
 
-fn settings_in(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
+/// The key of the stages' tables.
+const STAGE: &str = "stage";
+
+/// The keys of a stage's table (`docs/specs/operation.md`, Stage settings).
+const STAGE_KEYS: [&str; 4] = ["model", "effort", "session-timeout", "session-env"];
+
+fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
     let table: toml::Table = text
         .parse()
         .with_context(|| format!("parsing {}", path.display()))?;
-    table
+    let mut settings = FileSettings {
+        path: path.to_path_buf(),
+        top: BTreeMap::new(),
+        stages: BTreeMap::new(),
+    };
+    for (key, value) in table {
+        if key == STAGE {
+            settings.stages = stage_tables(path, value)?;
+            continue;
+        }
+        if !KEYS.contains(&key.as_str()) {
+            bail!("{} has an unknown setting `{key}`", path.display());
+        }
+        let value = setting_value(&key, value).with_context(|| format!("{}", path.display()))?;
+        settings.top.insert(key, value);
+    }
+    Ok(settings)
+}
+
+/// `[stage.NAME]` tables, each holding only `STAGE_KEYS`. An error names
+/// `path` and the table.
+fn stage_tables(path: &Path, stages: toml::Value) -> Result<BTreeMap<WorkKind, StageTable>> {
+    let toml::Value::Table(stages) = stages else {
+        bail!(
+            "{}: `{STAGE}` is {stages}, not a table of stages such as `[{STAGE}.implement]`",
+            path.display()
+        );
+    };
+    stages
         .into_iter()
-        .map(|(key, value)| {
-            if !KEYS.contains(&key.as_str()) {
-                bail!("{} has an unknown setting `{key}`", path.display());
-            }
-            let value = match value {
-                toml::Value::String(s) => s,
-                toml::Value::Integer(i) => i.to_string(),
-                toml::Value::Boolean(b) => b.to_string(),
-                // In the form its flag takes, separated by commas.
-                toml::Value::Array(entries) if let Some(holds) = list_holds(&key) => entries
-                    .into_iter()
-                    .map(|entry| match entry.as_str() {
-                        Some(entry) if !entry.is_empty() && !entry.contains(',') => {
-                            Ok(entry.to_string())
-                        }
-                        Some(_) | None => bail!(
-                            "{}: the setting `{key}` holds {entry}, not {holds}",
-                            path.display()
-                        ),
-                    })
-                    .collect::<Result<Vec<_>>>()?
-                    .join(","),
-                other @ (toml::Value::Float(_)
-                | toml::Value::Datetime(_)
-                | toml::Value::Array(_)
-                | toml::Value::Table(_)) => bail!(
-                    "{}: the setting `{key}` is {other}, not a string, number or boolean",
-                    path.display()
-                ),
+        .map(|(name, table)| {
+            let at = format!("{}: `[{STAGE}.{name}]`", path.display());
+            let stage: WorkKind = name.parse().map_err(|e| anyhow!("{at}: {e}"))?;
+            let toml::Value::Table(table) = table else {
+                bail!("{at} is {table}, not a table");
             };
-            Ok((key, value))
+            let mut parsed = StageTable::default();
+            for (key, value) in table {
+                let text = setting_value(&key, value).context(at.clone())?;
+                let settings = &mut parsed.settings;
+                match key.as_str() {
+                    "model" => settings.model = Some(text),
+                    "effort" => settings.effort = Some(effort(&text).context(at.clone())?),
+                    "session-timeout" => {
+                        settings.session_timeout =
+                            Some(session_timeout(&text).context(at.clone())?);
+                    }
+                    "session-env" => {
+                        parsed.session_env =
+                            Some(text.parse().map_err(|e: String| anyhow!("{at}: {e}"))?);
+                    }
+                    _ => bail!(
+                        "{at} has an unknown setting `{key}`: a stage's table holds `{}`",
+                        STAGE_KEYS.join("`, `")
+                    ),
+                }
+            }
+            Ok((stage, parsed))
         })
         .collect()
+}
+
+fn effort(text: &str) -> Result<Effort> {
+    text.parse().map_err(|e: String| anyhow!("the setting {e}"))
+}
+
+fn session_timeout(text: &str) -> Result<Duration> {
+    humantime::parse_duration(text)
+        .with_context(|| format!("the setting `session-timeout` is {text:?}"))
+}
+
+/// `value` in the form `key`'s flag takes.
+fn setting_value(key: &str, value: toml::Value) -> Result<String> {
+    Ok(match value {
+        toml::Value::String(s) => s,
+        toml::Value::Integer(i) => i.to_string(),
+        toml::Value::Boolean(b) => b.to_string(),
+        // In the form its flag takes, separated by commas.
+        toml::Value::Array(entries) if let Some(holds) = list_holds(key) => entries
+            .into_iter()
+            .map(|entry| match entry.as_str() {
+                Some(entry) if !entry.is_empty() && !entry.contains(',') => Ok(entry.to_string()),
+                Some(_) | None => bail!("the setting `{key}` holds {entry}, not {holds}"),
+            })
+            .collect::<Result<Vec<_>>>()?
+            .join(","),
+        other @ (toml::Value::Float(_)
+        | toml::Value::Datetime(_)
+        | toml::Value::Array(_)
+        | toml::Value::Table(_)) => {
+            bail!("the setting `{key}` is {other}, not a string, number or boolean")
+        }
+    })
 }
 
 /// What the list setting `key` holds, `None` when it is not a list.

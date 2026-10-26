@@ -14,6 +14,7 @@ use crate::domain::Timestamp;
 use crate::redaction::Redaction;
 use crate::store::github::TOKEN_VARIABLES;
 use crate::transcript::{self, StartedBy};
+use crate::work_settings::Effort;
 
 pub struct ClaudeCode {
     pub program: String,
@@ -28,6 +29,9 @@ pub struct ClaudeCode {
 const TEMPORARY_DIRECTORY: &str = "TMPDIR";
 /// Docs: <https://code.claude.com/docs/en/settings#environment-variables>.
 const SHELL: &str = "CLAUDE_CODE_SHELL";
+/// Ranked above every other choice of effort, `--effort` and the settings
+/// included: <https://code.claude.com/docs/en/model-config#adjust-effort-level>.
+const EFFORT: &str = "CLAUDE_CODE_EFFORT_LEVEL";
 /// Unlike `DISABLE_AUTOUPDATER`, also blocks `claude update`. Docs:
 /// <https://code.claude.com/docs/en/env-vars>.
 const NO_UPDATES: &str = "DISABLE_UPDATES";
@@ -55,6 +59,7 @@ fn set_for_session<'a>(
     scratch: &'a Path,
     bash: &'a Path,
     github_token: Option<&'a str>,
+    effort: Option<Effort>,
 ) -> Vec<(&'static str, &'a OsStr)> {
     let mut variables = vec![
         (TEMPORARY_DIRECTORY, scratch.as_os_str()),
@@ -67,6 +72,9 @@ fn set_for_session<'a>(
     ];
     if let Some(token) = github_token {
         variables.extend(TOKEN_VARIABLES.map(|variable| (variable, OsStr::new(token))));
+    }
+    if let Some(effort) = effort {
+        variables.push((EFFORT, OsStr::new(effort.name())));
     }
     variables
 }
@@ -131,7 +139,12 @@ impl RateLimitEvent {
 /// <https://code.claude.com/docs/en/permissions>. A `Skill(name)` deny rule
 /// leaves the skill listed, so skills are turned off in `skillOverrides`:
 /// <https://code.claude.com/docs/en/skills>.
-fn isolation_args(clone: &Path) -> [String; 4] {
+///
+/// A model or effort set for the session goes in the settings too, so that
+/// the repository's cannot choose another:
+/// <https://code.claude.com/docs/en/model-config>. `effortLevel` does not
+/// take `max`, which `--effort` and the variable set alone.
+fn isolation_args(clone: &Path, model: Option<&str>, effort: Option<Effort>) -> [String; 4] {
     let mut excludes = Vec::new();
     for dir in clone.ancestors().skip(1) {
         let pattern = escape_glob(dir.to_string_lossy().trim_end_matches('/'));
@@ -141,7 +154,7 @@ fn isolation_args(clone: &Path) -> [String; 4] {
             excludes.push(format!("{pattern}/.claude/**"));
         }
     }
-    let settings = serde_json::json!({
+    let mut settings = serde_json::json!({
         "autoMemoryEnabled": false,
         "disableClaudeAiConnectors": true,
         "claudeMdExcludes": excludes,
@@ -152,6 +165,12 @@ fn isolation_args(clone: &Path) -> [String; 4] {
         "skillOverrides": BTreeMap::from(UNUSED_SKILLS.map(|skill| (skill, "off"))),
         "permissions": { "deny": UNUSED_TOOLS },
     });
+    if let Some(model) = model {
+        settings["model"] = model.into();
+    }
+    if let Some(effort) = effort.filter(|&effort| effort != Effort::Max) {
+        settings["effortLevel"] = effort.name().into();
+    }
     [
         "--setting-sources".into(),
         "project,local".into(),
@@ -247,7 +266,7 @@ impl Log {
 impl ClaudeCode {
     /// The variables Linewright sets for a session given `github_token`.
     pub fn variables_set_for_sessions(github_token: Option<&str>) -> Vec<&'static str> {
-        set_for_session(Path::new(""), Path::new(""), github_token)
+        set_for_session(Path::new(""), Path::new(""), github_token, None)
             .into_iter()
             .map(|(name, _)| name)
             .collect()
@@ -286,7 +305,7 @@ impl ClaudeCode {
                 "--permission-mode",
                 "bypassPermissions",
             ])
-            .args(isolation_args(&clone))
+            .args(isolation_args(&clone, spec.model.as_deref(), spec.effort))
             .arg("--plugin-dir")
             .arg(&spec.plugin)
             .args(session.args())
@@ -297,12 +316,16 @@ impl ClaudeCode {
                 &spec.scratch,
                 &self.bash,
                 self.github_token.as_deref(),
+                spec.effort,
             ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(model) = &spec.model {
             command.args(["--model", model]);
+        }
+        if let Some(effort) = spec.effort {
+            command.args(["--effort", effort.name()]);
         }
         let mut child = command
             .spawn()

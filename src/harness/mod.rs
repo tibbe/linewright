@@ -11,6 +11,7 @@ use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
 use crate::session_env::Given;
+use crate::work_settings::Effort;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -30,6 +31,8 @@ pub struct SessionSpec {
     pub prompt: String,
     /// `None` is the harness's choice.
     pub model: Option<String>,
+    /// `None` is the harness's choice.
+    pub effort: Option<Effort>,
     /// A session starts from these alone, and what the harness sets itself.
     pub environment: Arc<Given>,
     /// When the session times out, across all its turns. A run that waits

@@ -55,6 +55,19 @@ impl VariableNames {
         self.patterns.iter().any(|pattern| matches(pattern, name))
     }
 
+    /// These names and `more`'s.
+    #[must_use]
+    pub fn and(&self, more: &VariableNames) -> VariableNames {
+        VariableNames {
+            patterns: self
+                .patterns
+                .iter()
+                .chain(&more.patterns)
+                .cloned()
+                .collect(),
+        }
+    }
+
     /// The names that are not prefixes.
     pub fn exact(&self) -> impl Iterator<Item = &str> {
         self.patterns

@@ -183,6 +183,56 @@ fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_g
     assert!(!log.contains("hunter2"), "{log}");
 }
 
+#[test]
+fn startup_logs_the_variables_a_stages_table_gives_its_sessions() {
+    let bin = path_to_start_on();
+    let config = tempfile::tempdir().unwrap();
+    let file = config.path().join("linewright.toml");
+    std::fs::write(&file, "[stage.implement]\nsession-env = [\"DEPLOY_KEY\"]\n").unwrap();
+
+    let (_, log) = lw(
+        bin.path(),
+        &[
+            "--repo",
+            "owner/name",
+            "--log-format",
+            "json",
+            "--config",
+            file.to_str().unwrap(),
+            "once",
+        ],
+        &[
+            ("GH_TOKEN", "linewright-token"),
+            ("DEPLOY_KEY", "hunter2"),
+            ("MY_SECRET", "hunter3"),
+            // Fails the connection to GitHub at once, after the log.
+            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+        ],
+    );
+
+    let logged: Vec<serde_json::Value> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .filter(|line: &serde_json::Value| line["fields"]["variables"].is_string())
+        .collect();
+    let withheld = logged[0]["fields"]["variables"].as_str().unwrap();
+    assert!(
+        withheld.split(' ').any(|name| name == "DEPLOY_KEY"),
+        "{log}"
+    );
+    let staged: Vec<(&str, &str)> = logged[1..]
+        .iter()
+        .map(|line| {
+            (
+                line["fields"]["stage"].as_str().unwrap(),
+                line["fields"]["variables"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(staged, [("implement", "DEPLOY_KEY")], "{log}");
+    assert!(!log.contains("hunter2"), "{log}");
+}
+
 /// A path holding a Claude Code that would finish, `git` and `bash`, so
 /// that `once` gets as far as connecting to GitHub.
 fn path_to_start_on() -> tempfile::TempDir {

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::Timestamp;
 use crate::records;
 use crate::store::Store;
+use crate::work_settings::Effort;
 
 pub const DIR: &str = ".linewright/automations";
 
@@ -23,6 +24,10 @@ pub struct Automation {
     pub schedule: Schedule,
     /// `None` is the `session-timeout` setting.
     pub timeout: Option<Duration>,
+    /// `None` is the `model` setting.
+    pub model: Option<String>,
+    /// `None` is the `effort` setting.
+    pub effort: Option<Effort>,
     pub max_issues: u32,
     pub instructions: String,
 }
@@ -200,6 +205,8 @@ pub async fn read(store: &dyn Store, branch: &str) -> Result<AutomationFiles> {
 struct FrontMatter {
     on: Trigger,
     timeout: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
     max_issues: Option<u32>,
 }
 
@@ -221,10 +228,16 @@ pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
                 .with_context(|| format!("`timeout` is {t:?}, not a duration such as 60m"))
         })
         .transpose()?;
+    let effort = front
+        .effort
+        .map(|e| e.parse::<Effort>().map_err(anyhow::Error::msg))
+        .transpose()?;
     Ok(Automation {
         name: name.clone(),
         schedule: Schedule::parse(&front.on.schedule)?,
         timeout,
+        model: front.model,
+        effort,
         max_issues: front.max_issues.unwrap_or(DEFAULT_MAX_ISSUES),
         instructions: body.to_string(),
     })

@@ -604,15 +604,6 @@ pub fn purpose_name(purpose: &Purpose) -> String {
     }
 }
 
-/// A timeout bounds what a run costs, so a timed-out run is not retried:
-/// its hand-back names the setting that would give the next run longer.
-fn timeout_setting(purpose: &Purpose) -> &'static str {
-    match purpose {
-        Purpose::Work { .. } => "`session-timeout`",
-        Purpose::Automation(_) => "the automation's `timeout`",
-    }
-}
-
 fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBuf, Failure> {
     let parent = shell.work_dir.join("sessions").join(purpose_name(purpose));
     std::fs::create_dir_all(&parent)
@@ -784,7 +775,7 @@ async fn take_turn(
                     reason: format!(
                         "The session ended unexpectedly: {e}. The work may need cutting \
                          smaller, or {} may need to be longer.",
-                        timeout_setting(&spec.purpose)
+                        ctx.with.settings.timeout_setting
                     ),
                     log_tail: Some(scrub(log_tail, &spec.dir)),
                 }));
@@ -867,6 +858,7 @@ fn session_spec(
         plugin: ws.plugin.clone(),
         prompt,
         model: settings.model.value.clone(),
+        effort: settings.effort.value,
         environment: settings.environment.value.clone(),
         deadline: tokio::time::Instant::now() + settings.session_timeout.value,
     })

@@ -199,6 +199,14 @@ impl SessionEnv {
         })
     }
 
+    /// These names and `more`'s.
+    #[must_use]
+    pub fn and(&self, more: &SessionEnv) -> SessionEnv {
+        SessionEnv {
+            names: self.names.and(&more.names),
+        }
+    }
+
     fn passes(&self, name: &str) -> bool {
         in_table(name) || (!never_passed(name) && self.names.matches(name))
     }

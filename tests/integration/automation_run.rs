@@ -8,6 +8,7 @@ use common::*;
 use linewright::config::Cli;
 use linewright::harness::SessionError;
 use linewright::reconcile::WorkKind;
+use linewright::work_settings::Effort;
 use serde_json::json;
 
 const WEEKLY: &str = "---
@@ -337,6 +338,34 @@ async fn time_given(text: &str) -> Duration {
         .await
         .unwrap();
     left.lock().unwrap().expect("the session ran")
+}
+
+#[tokio::test]
+async fn an_automations_model_and_effort_reach_its_session() {
+    let world = with_automation(
+        "weekly",
+        "---\non:\n  schedule: \"0 6 * * 1\"\nmodel: opus\neffort: low\n---\nLook.\n",
+    )
+    .await;
+    let given = Arc::new(Mutex::new(None));
+    world.harness.on_automation({
+        let given = given.clone();
+        move |call| {
+            *given.lock().unwrap() = Some((call.spec.model.clone(), call.spec.effort));
+            Ok(nothing_needs_doing())
+        }
+    });
+
+    world
+        .factory
+        .run_automation(&"weekly".parse().unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        given.lock().unwrap().clone(),
+        Some((Some("opus".to_string()), Some(Effort::Low)))
+    );
 }
 
 #[tokio::test]

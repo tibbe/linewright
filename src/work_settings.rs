@@ -1,23 +1,87 @@
 //! What a session runs with: the settings a run takes when it starts, each
 //! from the first layer that sets it (`docs/specs/operation.md`,
-//! Configuration).
+//! Configuration and Stage settings).
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::automation::Automation;
 use crate::layer::{Layer, Sourced};
 use crate::reconcile::WorkKind;
-use crate::session_env::Given;
+use crate::session_env::{Given, SessionEnv};
 
 /// `session-timeout`'s default.
 pub const SESSION_TIMEOUT: Duration = Duration::from_mins(60);
+
+/// How hard the harness thinks: the `effort` setting's levels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl Effort {
+    pub const ALL: [Effort; 5] = [
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::Xhigh,
+        Effort::Max,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::Xhigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
+}
+
+/// The error names the setting and the levels it takes.
+impl std::str::FromStr for Effort {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<Effort, String> {
+        Effort::ALL
+            .into_iter()
+            .find(|effort| effort.name() == name)
+            .ok_or_else(|| {
+                let levels = Effort::ALL.map(|effort| format!("`{effort}`"));
+                let (last, rest) = levels.split_last().expect("there are levels");
+                format!("`effort` is {name:?}: it is {} or {last}", rest.join(", "))
+            })
+    }
+}
+
+impl fmt::Display for Effort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
 
 /// The settings one layer sets, `None` where it sets none.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Partial {
     pub model: Option<String>,
+    pub effort: Option<Effort>,
     pub session_timeout: Option<Duration>,
+}
+
+/// A stage's table in the operator's file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StageTable {
+    pub settings: Partial,
+    /// The names it adds to the whole pipeline's `session-env`.
+    pub session_env: Option<SessionEnv>,
 }
 
 /// The operator's settings for sessions, each of its layers kept apart so
@@ -28,7 +92,9 @@ pub struct WorkSettings {
     /// The operator's config file, but for the settings `flags_and_env`
     /// sets, which it could never win over.
     pub file: Partial,
-    /// The layer `session-env` came from.
+    /// The operator's file's `[stage.NAME]` tables.
+    pub stages: BTreeMap<WorkKind, StageTable>,
+    /// The layer the whole pipeline's `session-env` came from.
     pub session_env: Layer,
 }
 
@@ -37,6 +103,7 @@ impl Default for WorkSettings {
         WorkSettings {
             flags_and_env: Partial::default(),
             file: Partial::default(),
+            stages: BTreeMap::new(),
             session_env: Layer::Linewright,
         }
     }
@@ -46,6 +113,7 @@ impl Default for WorkSettings {
 #[derive(Clone, Debug, Default)]
 pub struct RepoSettings {
     top: Partial,
+    stages: BTreeMap<WorkKind, Partial>,
 }
 
 /// What a run is, as far as its settings go.
@@ -59,12 +127,42 @@ pub enum RunKind<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct Environments {
     pipeline: Arc<Given>,
+    /// The stages whose tables add to `session-env`.
+    stages: BTreeMap<WorkKind, Arc<Given>>,
 }
 
-impl Environments {
-    pub fn new(pipeline: Given) -> Environments {
-        Environments {
-            pipeline: Arc::new(pipeline),
+/// Linewright's environment, split by what each stage's sessions are given.
+#[derive(Debug, Default)]
+pub struct Split {
+    pub environments: Environments,
+    /// The names of the variables the whole pipeline's sessions are not
+    /// given, sorted, but for those Linewright sets for sessions itself.
+    pub withheld: Vec<String>,
+    /// Of `withheld`, the names each stage's table gives its sessions.
+    pub added: BTreeMap<WorkKind, Vec<String>>,
+}
+
+/// The setting a session's timeout came from. A timeout bounds what a run
+/// costs, so a timed-out run is not retried: its hand-back names the setting
+/// that would give the next run longer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeoutSetting {
+    /// The automation's `timeout`.
+    Automation,
+    /// `session-timeout` in the stage's table.
+    Stage(WorkKind),
+    /// The whole pipeline's `session-timeout`.
+    Pipeline,
+}
+
+impl fmt::Display for TimeoutSetting {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TimeoutSetting::Automation => f.write_str("the automation's `timeout`"),
+            TimeoutSetting::Stage(stage) => {
+                write!(f, "`session-timeout` in `[stage.{}]`", stage.name())
+            }
+            TimeoutSetting::Pipeline => f.write_str("`session-timeout`"),
         }
     }
 }
@@ -74,48 +172,161 @@ impl Environments {
 pub struct SessionSettings {
     /// `None` is the harness's choice.
     pub model: Sourced<Option<String>>,
+    /// `None` is the harness's choice.
+    pub effort: Sourced<Option<Effort>>,
     pub session_timeout: Sourced<Duration>,
+    pub timeout_setting: TimeoutSetting,
     pub environment: Sourced<Arc<Given>>,
+}
+
+/// One layer's settings for a run.
+#[derive(Clone, Copy)]
+struct Rung<'a> {
+    settings: &'a Partial,
+    layer: Layer,
+    /// What a timeout from here is.
+    timeout_setting: TimeoutSetting,
+}
+
+impl<'a> Rung<'a> {
+    fn new(settings: &'a Partial, layer: Layer, timeout_setting: TimeoutSetting) -> Rung<'a> {
+        Rung {
+            settings,
+            layer,
+            timeout_setting,
+        }
+    }
+}
+
+/// The first value `get` finds on `ladder`, and the rung it found it on.
+fn first<'a, T>(
+    ladder: &[Rung<'a>],
+    get: impl Fn(&'a Partial) -> Option<T>,
+) -> Option<(T, Rung<'a>)> {
+    ladder
+        .iter()
+        .find_map(|&rung| Some((get(rung.settings)?, rung)))
 }
 
 impl WorkSettings {
     /// A setting takes the first value set among: the automation's front
-    /// matter, the flags and environment, the repository's file, the
-    /// operator's file, and the default.
+    /// matter, the repository's stage table, the operator's stage table,
+    /// the flags and environment, the repository's file, the operator's
+    /// file, and the default.
     pub fn for_run(
         &self,
         of: RunKind,
         repo: &RepoSettings,
         environments: &Environments,
     ) -> SessionSettings {
-        let front_matter = match of {
-            RunKind::Automation(automation) => Partial {
-                model: None,
-                session_timeout: automation.timeout,
-            },
-            RunKind::Stage(_) => Partial::default(),
+        let none = Partial::default();
+        let (front_matter, stage) = match of {
+            RunKind::Automation(automation) => (
+                Partial {
+                    model: automation.model.clone(),
+                    effort: automation.effort,
+                    session_timeout: automation.timeout,
+                },
+                None,
+            ),
+            RunKind::Stage(stage) => (Partial::default(), Some(stage)),
         };
+        let table = stage.and_then(|stage| self.stages.get(&stage));
+        let stage_setting = stage.map_or(TimeoutSetting::Pipeline, TimeoutSetting::Stage);
         let ladder = [
-            (&front_matter, Layer::Repository),
-            (&self.flags_and_env, Layer::Operator),
-            (&repo.top, Layer::Repository),
-            (&self.file, Layer::Operator),
+            Rung::new(&front_matter, Layer::Repository, TimeoutSetting::Automation),
+            Rung::new(
+                stage
+                    .and_then(|stage| repo.stages.get(&stage))
+                    .unwrap_or(&none),
+                Layer::Repository,
+                stage_setting,
+            ),
+            Rung::new(
+                table.map_or(&none, |table| &table.settings),
+                Layer::Operator,
+                stage_setting,
+            ),
+            Rung::new(
+                &self.flags_and_env,
+                Layer::Operator,
+                TimeoutSetting::Pipeline,
+            ),
+            Rung::new(&repo.top, Layer::Repository, TimeoutSetting::Pipeline),
+            Rung::new(&self.file, Layer::Operator, TimeoutSetting::Pipeline),
         ];
-        let model = ladder
-            .iter()
-            .find_map(|(partial, layer)| {
-                let model = partial.model.clone()?;
-                Some(Sourced::new(Some(model), *layer))
-            })
-            .unwrap_or(Sourced::new(None, Layer::Linewright));
-        let session_timeout = ladder
-            .iter()
-            .find_map(|(partial, layer)| Some(Sourced::new(partial.session_timeout?, *layer)))
-            .unwrap_or(Sourced::new(SESSION_TIMEOUT, Layer::Linewright));
+        let model = first(&ladder, |partial| partial.model.clone())
+            .map_or(Sourced::new(None, Layer::Linewright), |(model, rung)| {
+                Sourced::new(Some(model), rung.layer)
+            });
+        let effort = first(&ladder, |partial| partial.effort)
+            .map_or(Sourced::new(None, Layer::Linewright), |(effort, rung)| {
+                Sourced::new(Some(effort), rung.layer)
+            });
+        let (session_timeout, timeout_setting) =
+            match first(&ladder, |partial| partial.session_timeout) {
+                Some((timeout, rung)) => (Sourced::new(timeout, rung.layer), rung.timeout_setting),
+                None => (
+                    Sourced::new(SESSION_TIMEOUT, Layer::Linewright),
+                    TimeoutSetting::Pipeline,
+                ),
+            };
+        let staged_environment = stage.and_then(|stage| environments.stages.get(&stage));
+        let environment_layer = match table.and_then(|table| table.session_env.as_ref()) {
+            Some(_) => Layer::Operator,
+            None => self.session_env,
+        };
         SessionSettings {
             model,
+            effort,
             session_timeout,
-            environment: Sourced::new(environments.pipeline.clone(), self.session_env),
+            timeout_setting,
+            environment: Sourced::new(
+                staged_environment.unwrap_or(&environments.pipeline).clone(),
+                environment_layer,
+            ),
+        }
+    }
+
+    /// Splits `environment` by what each stage's sessions are given: the
+    /// whole pipeline's `session_env`, and the names its table adds.
+    /// `set_by_linewright` names the variables Linewright sets for sessions
+    /// itself, which are not withheld.
+    pub fn environments(
+        &self,
+        session_env: &SessionEnv,
+        environment: impl IntoIterator<Item = (OsString, OsString)>,
+        set_by_linewright: &[&str],
+    ) -> Split {
+        let environment: Vec<(OsString, OsString)> = environment.into_iter().collect();
+        let pipeline = session_env.split(environment.iter().cloned(), set_by_linewright);
+        let mut stages = BTreeMap::new();
+        let mut added = BTreeMap::new();
+        for (&stage, table) in &self.stages {
+            let Some(more) = &table.session_env else {
+                continue;
+            };
+            let split = session_env
+                .and(more)
+                .split(environment.iter().cloned(), set_by_linewright);
+            added.insert(
+                stage,
+                pipeline
+                    .withheld
+                    .iter()
+                    .filter(|name| !split.withheld.contains(name))
+                    .cloned()
+                    .collect(),
+            );
+            stages.insert(stage, Arc::new(split.given));
+        }
+        Split {
+            environments: Environments {
+                pipeline: Arc::new(pipeline.given),
+                stages,
+            },
+            withheld: pipeline.withheld,
+            added,
         }
     }
 }

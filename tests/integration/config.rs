@@ -10,7 +10,9 @@ use linewright::layer::{Layer, Sourced};
 use linewright::reconcile::WorkKind;
 use linewright::session_env::SessionEnv;
 use linewright::variable_names::VariableNames;
-use linewright::work_settings::{Environments, RepoSettings, RunKind, SessionSettings};
+use linewright::work_settings::{
+    Effort, Environments, RepoSettings, RunKind, SessionSettings, TimeoutSetting,
+};
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
     resolve_blaming(args, env, file).map_err(|e| e.to_string())
@@ -45,11 +47,207 @@ fn resolve_blaming(
 
 /// What a triage run's sessions run with under `config`.
 fn session(config: &Config) -> SessionSettings {
+    stage_session(config, WorkKind::Triage)
+}
+
+/// What a `stage` run's sessions run with under `config`.
+fn stage_session(config: &Config, stage: WorkKind) -> SessionSettings {
     config.work.for_run(
-        RunKind::Stage(WorkKind::Triage),
+        RunKind::Stage(stage),
         &RepoSettings::default(),
         &Environments::default(),
     )
+}
+
+#[test]
+fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_for_that_stage_only()
+ {
+    let file = "model = \"sonnet\"\neffort = \"low\"\nsession-timeout = \"10m\"\n\n\
+                [stage.implement]\nmodel = \"opus\"\neffort = \"max\"\nsession-timeout = \"2h\"\n";
+
+    let config = resolve(&[], &[], Some(file)).unwrap();
+
+    let implement = stage_session(&config, WorkKind::Implement);
+    assert_eq!(
+        implement.model,
+        Sourced::new(Some("opus".into()), Layer::Operator)
+    );
+    assert_eq!(
+        implement.effort,
+        Sourced::new(Some(Effort::Max), Layer::Operator)
+    );
+    assert_eq!(implement.session_timeout.value, Duration::from_hours(2));
+    assert_eq!(
+        implement.timeout_setting,
+        TimeoutSetting::Stage(WorkKind::Implement)
+    );
+    let design = stage_session(&config, WorkKind::Design);
+    assert_eq!(design.model.value.as_deref(), Some("sonnet"));
+    assert_eq!(design.effort.value, Some(Effort::Low));
+    assert_eq!(design.session_timeout.value, Duration::from_mins(10));
+    assert_eq!(design.timeout_setting, TimeoutSetting::Pipeline);
+}
+
+#[test]
+fn a_stages_table_wins_over_the_whole_pipelines_flag() {
+    let config = resolve(
+        &["--model", "sonnet", "--effort", "high"],
+        &[("LINEWRIGHT_SESSION_TIMEOUT", "10m")],
+        Some("[stage.fix-ci]\nmodel = \"haiku\"\neffort = \"medium\"\nsession-timeout = \"5m\"\n"),
+    )
+    .unwrap();
+
+    let fix_ci = stage_session(&config, WorkKind::FixCi);
+    assert_eq!(fix_ci.model.value.as_deref(), Some("haiku"));
+    assert_eq!(fix_ci.effort.value, Some(Effort::Medium));
+    assert_eq!(fix_ci.session_timeout.value, Duration::from_mins(5));
+}
+
+#[test]
+fn effort_is_a_flag_a_variable_or_a_key_and_unset_is_the_harnesss_choice() {
+    let effort = |args: &[&str], env: &[(&str, &str)], file| {
+        session(&resolve(args, env, file).unwrap()).effort
+    };
+    let file = Some("effort = \"low\"\n");
+
+    assert_eq!(
+        effort(&[], &[], None),
+        Sourced::new(None, Layer::Linewright)
+    );
+    assert_eq!(
+        effort(&[], &[], file),
+        Sourced::new(Some(Effort::Low), Layer::Operator)
+    );
+    assert_eq!(
+        effort(&[], &[("LINEWRIGHT_EFFORT", "xhigh")], file).value,
+        Some(Effort::Xhigh)
+    );
+    assert_eq!(
+        effort(
+            &["--effort", "high"],
+            &[("LINEWRIGHT_EFFORT", "xhigh")],
+            file
+        )
+        .value,
+        Some(Effort::High)
+    );
+}
+
+#[test]
+fn an_effort_outside_its_levels_is_an_error_naming_the_setting_and_the_file_that_gave_it() {
+    let in_file = resolve(&[], &[], Some("effort = \"huge\"\n")).unwrap_err();
+
+    assert!(in_file.contains("linewright.toml"), "{in_file}");
+    for error in [
+        resolve(&["--effort", "huge"], &[], None).unwrap_err(),
+        resolve(&[], &[("LINEWRIGHT_EFFORT", "huge")], None).unwrap_err(),
+        in_file,
+    ] {
+        assert!(error.contains("`effort`"), "{error}");
+        assert!(
+            error.contains("`low`, `medium`, `high`, `xhigh` or `max`"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_mistake_in_a_stages_table_is_an_error_naming_the_file_and_the_key() {
+    for (file, key) in [
+        ("[stage.deploy]\nmodel = \"opus\"\n", "deploy"),
+        ("[stage.implement]\nmax-runs = 2\n", "max-runs"),
+        ("[stage.implement]\neffort = \"huge\"\n", "effort"),
+        (
+            "[stage.implement]\nsession-timeout = \"long\"\n",
+            "session-timeout",
+        ),
+        (
+            "[stage.implement]\nsession-env = [\"GH_TOKEN\"]\n",
+            "session-env",
+        ),
+        ("stage = \"implement\"\n", "stage"),
+    ] {
+        let error = resolve(&[], &[], Some(file)).unwrap_err();
+
+        assert!(error.contains("linewright.toml"), "{file}: {error}");
+        assert!(error.contains(key), "{file}: {error}");
+        assert!(!blames_the_command_line(&[], &[], Some(file)), "{file}");
+    }
+}
+
+#[test]
+fn a_stage_has_no_flag() {
+    assert!(Cli::try_parse_from(["lw", "--stage.implement.model", "opus", "status"]).is_err());
+}
+
+#[test]
+fn a_stages_session_env_adds_its_names_to_the_whole_pipelines_for_that_stage_only() {
+    let config = resolve(
+        &[],
+        &[],
+        Some(
+            "session-env = [\"CARGO_HOME\"]\n\n[stage.implement]\nsession-env = [\"DEPLOY_KEY\"]\n",
+        ),
+    )
+    .unwrap();
+    let environment = [
+        ("CARGO_HOME", "/cargo"),
+        ("DEPLOY_KEY", "k"),
+        ("OTHER", "o"),
+    ]
+    .map(|(name, value)| (name.into(), value.into()));
+
+    let split = config
+        .work
+        .environments(&config.session_env, environment, &[]);
+
+    let given = |stage| -> Vec<String> {
+        config
+            .work
+            .for_run(
+                RunKind::Stage(stage),
+                &RepoSettings::default(),
+                &split.environments,
+            )
+            .environment
+            .value
+            .iter()
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect()
+    };
+    assert_eq!(given(WorkKind::Implement), ["CARGO_HOME", "DEPLOY_KEY"]);
+    assert_eq!(given(WorkKind::Rework), ["CARGO_HOME"]);
+    assert_eq!(split.withheld, ["DEPLOY_KEY", "OTHER"]);
+    assert_eq!(
+        split.added,
+        [(WorkKind::Implement, vec!["DEPLOY_KEY".to_string()])].into()
+    );
+}
+
+#[test]
+fn an_automations_model_and_effort_come_before_the_whole_pipelines() {
+    let config = resolve(&["--model", "sonnet", "--effort", "low"], &[], None).unwrap();
+    let automation = automation::parse(
+        &"weekly".parse().unwrap(),
+        "---\non:\n  schedule: \"0 9 * * 1\"\nmodel: opus\neffort: xhigh\n---\nLook around.\n",
+    )
+    .unwrap();
+
+    let session = config.work.for_run(
+        RunKind::Automation(&automation),
+        &RepoSettings::default(),
+        &Environments::default(),
+    );
+
+    assert_eq!(
+        session.model,
+        Sourced::new(Some("opus".into()), Layer::Repository)
+    );
+    assert_eq!(
+        session.effort,
+        Sourced::new(Some(Effort::Xhigh), Layer::Repository)
+    );
+    assert_eq!(session.timeout_setting, TimeoutSetting::Pipeline);
 }
 
 #[test]
@@ -102,6 +300,7 @@ fn an_automations_timeout_comes_from_the_repository_before_the_operators_session
         session.session_timeout,
         Sourced::new(Duration::from_mins(5), Layer::Repository)
     );
+    assert_eq!(session.timeout_setting, TimeoutSetting::Automation);
 }
 
 #[test]

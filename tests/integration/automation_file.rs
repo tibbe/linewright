@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use linewright::automation::{Automation, AutomationName, parse};
+use linewright::work_settings::Effort;
 
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
@@ -134,4 +135,33 @@ fn a_timeout_that_is_not_a_duration_does_not_parse() {
     let error = error("---\non:\n  schedule: \"0 6 * * 1\"\ntimeout: soon\n---\nLook.\n");
 
     assert!(error.contains("`timeout` is \"soon\""), "{error}");
+}
+
+#[test]
+fn an_automation_names_its_model_and_effort_or_takes_the_whole_pipelines() {
+    let chosen = parse(
+        &name("weekly"),
+        "---\non:\n  schedule: \"0 6 * * 1\"\nmodel: opus\neffort: high\n---\nLook.\n",
+    )
+    .unwrap();
+    let unset = parse(
+        &name("weekly"),
+        "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
+    )
+    .unwrap();
+
+    assert_eq!(chosen.model.as_deref(), Some("opus"));
+    assert_eq!(chosen.effort, Some(Effort::High));
+    assert_eq!((unset.model, unset.effort), (None, None));
+}
+
+#[test]
+fn an_effort_outside_its_levels_does_not_parse() {
+    let error = error("---\non:\n  schedule: \"0 6 * * 1\"\neffort: huge\n---\nLook.\n");
+
+    assert!(error.contains("`effort` is \"huge\""), "{error}");
+    assert!(
+        error.contains("`low`, `medium`, `high`, `xhigh` or `max`"),
+        "{error}"
+    );
 }

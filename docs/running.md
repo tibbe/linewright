@@ -34,6 +34,32 @@ automation in `.linewright/automations/NAME.md` once, now.
 Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
 in `linewright.toml`; `lw --help` lists them with their defaults.
 
+### Stage settings
+
+`model`, `effort` (`low`, `medium`, `high`, `xhigh` or `max`) and
+`session-timeout` are for the whole pipeline, and a stage's table in
+`linewright.toml` can set its own for its sessions. Without a `model` or
+`effort`, Claude Code chooses. A stage's `session-env` adds its names to the
+whole pipeline's for that stage's sessions only. The stages are `triage`,
+`design`, `implement`, `rework`, `fix-ci` and `update`; their tables have no
+flags or variables.
+
+```toml
+model = "sonnet"
+effort = "medium"
+
+[stage.implement]
+model = "opus"
+effort = "high"
+session-timeout = "2h"
+session-env = ["DEPLOY_KEY"]
+```
+
+A model or effort Linewright sets wins over `ANTHROPIC_MODEL`,
+`CLAUDE_CODE_EFFORT_LEVEL` and the repository's Claude Code settings. An
+automation's `model` and `effort` in its front matter win over the whole
+pipeline's for its runs.
+
 ## The container image
 
 The `Dockerfile` builds the base image, `ghcr.io/tibbe/linewright`: `lw`,
@@ -96,8 +122,8 @@ those prefixes, such as `DISABLE_TELEMETRY`, are part of the rest: name them
 too, or set them in a
 [managed settings file](https://code.claude.com/docs/en/managed-settings),
 which sessions read. At startup Linewright logs the names of the variables it
-keeps from sessions, so a build that fails only in a session shows there what
-to add.
+keeps from sessions, and which of those each stage's table gives its sessions,
+so a build that fails only in a session shows there what to add.
 
 Credentials your agents need for other services, such as a cloud account or a
 database, go in `session-env` too, and every session gets them. Name the

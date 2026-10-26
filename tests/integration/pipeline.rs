@@ -6,6 +6,7 @@ use linewright::domain::{Assignment, AutoMerge, Issue, IssueEvent, PullState};
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
 use linewright::store::local::LocalStore;
+use linewright::work_settings::{Effort, Partial, StageTable};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -1862,6 +1863,66 @@ async fn a_ticket_whose_session_times_out_is_handed_back_once_saying_to_cut_the_
     let comment = last_comment(&issue);
     assert!(comment.starts_with(TIMED_OUT), "{comment}");
     assert!(comment.contains("Still reading the spec."), "{comment}");
+}
+
+#[tokio::test]
+async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is_named_in_the_hand_back()
+ {
+    let mut world = World::with(|config| {
+        config.work.flags_and_env.model = Some("sonnet".into());
+        config.work.stages.insert(
+            WorkKind::Implement,
+            StageTable {
+                settings: Partial {
+                    model: Some("opus".into()),
+                    effort: Some(Effort::Xhigh),
+                    session_timeout: Some(std::time::Duration::from_mins(90)),
+                },
+                session_env: None,
+            },
+        );
+    })
+    .await;
+    let given = Arc::new(Mutex::new(None));
+    world.harness.on(WorkKind::Implement, {
+        let given = given.clone();
+        move |call| {
+            *given.lock().unwrap() = Some((
+                call.spec.model.clone(),
+                call.spec.effort,
+                call.spec.deadline - tokio::time::Instant::now(),
+            ));
+            Err(linewright::harness::SessionError::TimedOut {
+                log_tail: String::new(),
+            })
+        }
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
+
+    world.poll().await;
+
+    let (model, effort, left) = given.lock().unwrap().clone().expect("implement ran");
+    assert_eq!(
+        (model.as_deref(), effort),
+        (Some("opus"), Some(Effort::Xhigh))
+    );
+    assert!(
+        left > std::time::Duration::from_mins(89) && left <= std::time::Duration::from_mins(90),
+        "{left:?}"
+    );
+    let comment = last_comment(&world.issue(ticket)).to_string();
+    assert!(
+        comment.starts_with(
+            "The session ended unexpectedly: it timed out. The work may need cutting smaller, \
+             or `session-timeout` in `[stage.implement]` may need to be longer."
+        ),
+        "{comment}"
+    );
 }
 
 #[tokio::test]

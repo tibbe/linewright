@@ -11,6 +11,7 @@ use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
 use linewright::session_env::{Given, SessionEnv};
 use linewright::transcript::{Prompt, What};
+use linewright::work_settings::Effort;
 use serde_json::{Value, json};
 
 fn harness_without_token(dir: &Path) -> ClaudeCode {
@@ -81,6 +82,7 @@ fn triage_session(dir: &Path) -> SessionSpec {
         plugin: dir.join("plugin"),
         prompt: "Triage #1.".into(),
         model: None,
+        effort: None,
         environment: Arc::new(Given::default()),
         deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(30),
     }
@@ -252,26 +254,105 @@ async fn every_turn_reads_only_the_repositorys_configuration_and_keeps_no_memory
     assert_eq!(configuration, vec![isolated.clone(), isolated]);
 }
 
-#[tokio::test]
-async fn a_session_runs_on_its_model_and_without_one_on_the_harnesss_choice() {
-    let (chosen, unset) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    let mut session = triage_session(chosen.path());
-    session.model = Some("opus".into());
+/// A session whose environment chooses a model and effort of its own.
+fn session_choosing_in_its_environment(dir: &Path) -> SessionSpec {
+    let mut session = triage_session(dir);
+    session.environment = Arc::new(
+        SessionEnv::default()
+            .split(
+                [
+                    ("ANTHROPIC_MODEL", "haiku"),
+                    ("CLAUDE_CODE_EFFORT_LEVEL", "low"),
+                ]
+                .map(|(name, value)| (name.into(), value.into())),
+                &[],
+            )
+            .given,
+    );
+    session
+}
 
-    harness_without_token(chosen.path())
+fn session_variable<'a>(env: &'a str, name: &str) -> Option<&'a str> {
+    env.lines()
+        .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+}
+
+#[tokio::test]
+async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_choosing_in_its_environment(dir.path());
+    session.model = Some("opus".into());
+    session.effort = Some(Effort::High);
+    let harness = harness_without_token(dir.path());
+
+    let turn = harness.start(&session).await.unwrap();
+    harness
+        .resume(&session, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    for args in turn_args(dir.path()) {
+        assert_eq!(flag_value(&args, "--model"), Some("opus"));
+        assert_eq!(flag_value(&args, "--effort"), Some("high"));
+        // The settings Linewright passes outrank the repository's.
+        let passed = settings(&args);
+        assert_eq!(
+            (&passed["model"], &passed["effortLevel"]),
+            (&json!("opus"), &json!("high"))
+        );
+    }
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    // The harness ranks the variable above every other choice of effort.
+    assert_eq!(
+        session_variable(&env, "CLAUDE_CODE_EFFORT_LEVEL"),
+        Some("high")
+    );
+}
+
+#[tokio::test]
+async fn an_effort_of_max_is_set_but_not_in_the_settings_which_do_not_take_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = triage_session(dir.path());
+    session.effort = Some(Effort::Max);
+
+    harness_without_token(dir.path())
         .start(&session)
         .await
         .unwrap();
-    harness_without_token(unset.path())
-        .start(&triage_session(unset.path()))
+
+    let args = &turn_args(dir.path())[0];
+    assert_eq!(flag_value(args, "--effort"), Some("max"));
+    assert_eq!(settings(args)["effortLevel"], Value::Null);
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(
+        session_variable(&env, "CLAUDE_CODE_EFFORT_LEVEL"),
+        Some("max")
+    );
+}
+
+#[tokio::test]
+async fn without_a_model_or_effort_a_session_runs_on_the_harnesss_choice() {
+    let dir = tempfile::tempdir().unwrap();
+
+    harness_without_token(dir.path())
+        .start(&session_choosing_in_its_environment(dir.path()))
         .await
         .unwrap();
 
+    let args = &turn_args(dir.path())[0];
+    assert_eq!(flag_value(args, "--model"), None);
+    assert_eq!(flag_value(args, "--effort"), None);
+    let passed = settings(args);
     assert_eq!(
-        flag_value(&turn_args(chosen.path())[0], "--model"),
-        Some("opus")
+        (&passed["model"], &passed["effortLevel"]),
+        (&Value::Null, &Value::Null)
     );
-    assert_eq!(flag_value(&turn_args(unset.path())[0], "--model"), None);
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(
+        session_variable(&env, "CLAUDE_CODE_EFFORT_LEVEL"),
+        Some("low")
+    );
+    assert_eq!(session_variable(&env, "ANTHROPIC_MODEL"), Some("haiku"));
 }
 
 #[tokio::test]

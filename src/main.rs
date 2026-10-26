@@ -705,9 +705,11 @@ fn harness(bash: PathBuf, sessions: &SessionCredentials) -> ClaudeCode {
 
 /// What sessions are given of Linewright's environment. Logs the names of
 /// the variables they are not given, so that an operator whose build fails
-/// only in a session sees what to add to `session-env`.
+/// only in a session sees what to add to `session-env`, and of those, what
+/// each stage's table gives its sessions.
 fn environments(config: &Config, sessions: &SessionCredentials) -> Environments {
-    let split = config.session_env.split(
+    let split = config.work.environments(
+        &config.session_env,
         std::env::vars_os(),
         &ClaudeCode::variables_set_for_sessions(sessions.token.given()),
     );
@@ -716,7 +718,15 @@ fn environments(config: &Config, sessions: &SessionCredentials) -> Environments 
         "agent sessions are not given these variables of Linewright's environment; \
          `session-env` names the ones they need"
     );
-    Environments::new(split.given)
+    for (stage, added) in &split.added {
+        info!(
+            stage = stage.name(),
+            variables = added.join(" "),
+            "of those, the stage's sessions are given these, which `session-env` in its \
+             table names"
+        );
+    }
+    split.environments
 }
 
 /// Read before anything else at startup, so a mistake in them is found at once.
