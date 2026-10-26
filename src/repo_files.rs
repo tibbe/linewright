@@ -2,7 +2,6 @@
 //! prompts, read from the default branch as a run starts
 //! (`docs/specs/repository.md`, Linewright's files).
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -10,16 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::briefs::{Briefs, OperatorPrompts, PromptLayer};
 use crate::layer::Layer;
-use crate::prompts::{self, Prompts, Readers};
-use crate::store::{Blob, Store};
+use crate::prompts::{Prompts, Readers};
+use crate::store::{Files, Store, Tree};
 use crate::work_settings::{RepoSettings, RunKind};
 
 /// The repository's file (`docs/specs/operation.md`, The repository's file).
 pub const CONFIG: &str = ".linewright/config.toml";
 
-/// The root of the repository's layer of the prompts, laid out as
-/// `briefs/prompts/` is.
-pub const PROMPTS: &str = ".linewright/briefs/prompts/";
+/// The repository's layer of the prompts, laid out as `briefs/prompts/` is.
+pub const PROMPTS: &str = ".linewright/prompts";
 
 /// A file of the repository's Linewright cannot use, and why.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,47 +61,41 @@ impl RepoLayer {
         branch: &str,
         operator: &OperatorPrompts,
     ) -> Result<RepoLayer> {
-        let files = store.read_files(branch, &paths()).await?;
+        let tree = Tree {
+            dir: PROMPTS,
+            depth: prompts_depth(),
+        };
+        let files = store
+            .read_files(branch, &[CONFIG.to_string()], tree)
+            .await?;
         Ok(RepoLayer::parse(files, operator))
     }
 
-    /// The layer the repository's `files`, by their paths in it, make over
-    /// the operator's prompts. A file that cannot be used holds the runs that
-    /// read it, and the next layer's stands in for every other run.
-    pub fn parse(files: BTreeMap<String, Blob>, operator: &OperatorPrompts) -> RepoLayer {
+    /// The layer the repository's `files` make over the operator's prompts,
+    /// its config among `files.files` and its prompts in `files.entries`. A
+    /// file that cannot be used holds the runs that read it, and the next
+    /// layer's stands in for every other run; one that is not one of
+    /// Linewright's prompts holds every run.
+    pub fn parse(mut files: Files, operator: &OperatorPrompts) -> RepoLayer {
         let mut unusable = Vec::new();
         let mut settings = RepoSettings::default();
-        let mut layer_files = Vec::new();
-        for (path, blob) in files {
-            let text = match blob {
-                Blob::Text(text) => Ok(text),
-                Blob::Binary => Err("it is not UTF-8 text".to_string()),
-                Blob::TooLarge => Err("it is too large to read".to_string()),
-            };
-            if path == CONFIG {
-                match text.and_then(|text| {
-                    RepoSettings::parse(&text).map_err(|error| format!("{error:#}"))
-                }) {
-                    Ok(parsed) => settings = parsed,
-                    Err(error) => unusable.push(Unusable {
-                        file: FileError { path, error },
-                        holds: Readers::Every,
-                    }),
-                }
-                continue;
-            }
-            let Some(prompt) = path.strip_prefix(PROMPTS) else {
-                continue;
-            };
-            match text {
-                Ok(text) => layer_files.push((prompt.to_string(), text.into_bytes())),
+        if let Some(config) = files.files.remove(CONFIG) {
+            let parsed = config
+                .text()
+                .map_err(str::to_string)
+                .and_then(|text| RepoSettings::parse(&text).map_err(|error| format!("{error:#}")));
+            match parsed {
+                Ok(parsed) => settings = parsed,
                 Err(error) => unusable.push(Unusable {
-                    holds: prompts::readers(prompt).unwrap_or(Readers::Every),
-                    file: FileError { path, error },
+                    file: FileError {
+                        path: CONFIG.to_string(),
+                        error,
+                    },
+                    holds: Readers::Every,
                 }),
             }
         }
-        let (layer, parsed) = PromptLayer::parse(Layer::Repository, layer_files);
+        let (layer, parsed) = PromptLayer::parse(Layer::Repository, files.entries);
         let briefs = if layer.files.is_empty() && parsed.is_empty() {
             operator.briefs()
         } else {
@@ -113,9 +105,9 @@ impl RepoLayer {
                     .into_iter()
                     .chain(resolved.unusable)
                     .map(|file| Unusable {
-                        holds: prompts::readers(&file.path).unwrap_or(Readers::Every),
+                        holds: file.holds,
                         file: FileError {
-                            path: format!("{PROMPTS}{}", file.path),
+                            path: format!("{PROMPTS}/{}", file.path),
                             error: file.error,
                         },
                     }),
@@ -131,14 +123,12 @@ impl RepoLayer {
     }
 }
 
-/// The path in the repository of each of Linewright's files that runs read:
-/// its config and every one of Linewright's prompts.
-fn paths() -> Vec<String> {
-    std::iter::once(CONFIG.to_string())
-        .chain(
-            Prompts::paths()
-                .into_iter()
-                .map(|path| format!("{PROMPTS}{path}")),
-        )
-        .collect()
+/// How many levels down Linewright's prompts go: anything deeper is not one
+/// of them by its path alone.
+fn prompts_depth() -> usize {
+    Prompts::paths()
+        .into_iter()
+        .map(|path| path.split('/').count())
+        .max()
+        .expect("Linewright ships prompts")
 }

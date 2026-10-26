@@ -298,6 +298,48 @@ pub enum Blob {
     TooLarge,
 }
 
+impl Blob {
+    /// The file holding `bytes`.
+    pub fn from_bytes(bytes: Vec<u8>) -> Blob {
+        String::from_utf8(bytes).map_or(Blob::Binary, Blob::Text)
+    }
+
+    /// The file's text, or why it cannot be read as text.
+    pub fn text(self) -> Result<String, &'static str> {
+        match self {
+            Blob::Text(text) => Ok(text),
+            Blob::Binary => Err("it is not UTF-8 text"),
+            Blob::TooLarge => Err("it is too large to read"),
+        }
+    }
+}
+
+/// A directory to list, and in its subdirectories how many levels down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tree<'a> {
+    pub dir: &'a str,
+    /// 1 lists only the entries directly in `dir`.
+    pub depth: usize,
+}
+
+/// An entry of a [`Tree`] listed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Entry {
+    File(Blob),
+    /// A directory at the last level listed, or a submodule, whose contents
+    /// were not read.
+    Unlisted,
+}
+
+/// What [`Store::read_files`] read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Files {
+    /// Each file asked for, by its path.
+    pub files: BTreeMap<String, Blob>,
+    /// Each entry of the tree, by its path under the tree's directory.
+    pub entries: BTreeMap<String, Entry>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewIssue {
     pub title: String,
@@ -363,9 +405,10 @@ pub trait Store: Send + Sync {
     /// The contents of `path` at the head of `branch`, or `None` when it has
     /// no such file.
     async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>>;
-    /// Each file of `paths` at the head of `branch`, by its path, leaving out
-    /// the paths at which it has no file.
-    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>>;
+    /// At the head of `branch`, each file of `paths`, leaving out the paths
+    /// at which it has no file, and every entry of `tree`: none when it has
+    /// no such directory.
+    async fn read_files(&self, branch: &str, paths: &[String], tree: Tree<'_>) -> Result<Files>;
     /// The names of the files directly in the directory `dir` at the head of
     /// `branch`: none when it has no such directory.
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;

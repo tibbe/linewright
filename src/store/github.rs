@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    AnyItem, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
-    RepoSettings, Store,
+    AnyItem, Blob, Categories, Entry, Files, Identity, IssueRead, NewIssue, NewPull, PushError,
+    PushMode, RepoSettings, Store, Tree,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
@@ -826,21 +826,74 @@ struct GqlResponse<T> {
     errors: Vec<Value>,
 }
 
-/// A blob as `files_query` reads it: an object that is not a blob, such as
-/// a directory, has none of its fields.
+/// An object as `files_query` reads it: a blob has its text fields, a tree
+/// listed has its entries, and any other object, such as a tree at the last
+/// level listed, has none of them.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GqlBlob {
+struct GqlObject {
     text: Option<String>,
     #[serde(default)]
     is_binary: Option<bool>,
     #[serde(default)]
     is_truncated: Option<bool>,
+    entries: Option<Vec<GqlEntry>>,
 }
 
-/// The query that reads the files of `paths` at the head of `branch` at
-/// once, the one at `paths[i]` under the alias `fi`, and its variables.
-fn files_query(owner: &str, name: &str, branch: &str, paths: &[String]) -> (String, Value) {
+/// An entry of a tree (<https://docs.github.com/en/graphql/reference/objects#treeentry>).
+#[derive(Deserialize)]
+struct GqlEntry {
+    name: String,
+    object: Option<GqlObject>,
+}
+
+impl GqlObject {
+    /// The file this object is, or `None` when it is not a blob.
+    fn blob(self) -> Option<Blob> {
+        match self {
+            GqlObject {
+                is_truncated: Some(true),
+                ..
+            } => Some(Blob::TooLarge),
+            GqlObject {
+                is_binary: Some(true),
+                ..
+            } => Some(Blob::Binary),
+            GqlObject {
+                text: Some(text), ..
+            } => Some(Blob::Text(text)),
+            GqlObject {
+                is_binary: Some(false),
+                ..
+            } => Some(Blob::TooLarge),
+            GqlObject { .. } => None,
+        }
+    }
+}
+
+const BLOB_FIELDS: &str = "... on Blob { text isBinary isTruncated }";
+
+/// The fields of a tree listed `depth` levels down, each level's blobs with
+/// their text.
+fn tree_fields(depth: usize) -> String {
+    let below = if depth > 1 {
+        format!(" ... on Tree {{ {} }}", tree_fields(depth - 1))
+    } else {
+        String::new()
+    };
+    format!("entries {{ name object {{ {BLOB_FIELDS}{below} }} }}")
+}
+
+/// The query that reads, at the head of `branch`, the files of `paths`, the
+/// one at `paths[i]` under the alias `fi`, and `tree` under `d`, at once,
+/// and its variables.
+fn files_query(
+    owner: &str,
+    name: &str,
+    branch: &str,
+    paths: &[String],
+    tree: Tree<'_>,
+) -> (String, Value) {
     let aliases: Vec<String> = (0..paths.len()).map(|i| format!("f{i}")).collect();
     let declared: String = aliases
         .iter()
@@ -848,49 +901,63 @@ fn files_query(owner: &str, name: &str, branch: &str, paths: &[String]) -> (Stri
         .collect();
     let objects: String = aliases
         .iter()
-        .map(|alias| {
-            format!(
-                "\n    {alias}: object(expression: ${alias}) {{ ... on Blob {{ text isBinary isTruncated }} }}"
-            )
-        })
+        .map(|alias| format!("\n    {alias}: object(expression: ${alias}) {{ {BLOB_FIELDS} }}"))
         .collect();
-    let query = format!(
-        "query($owner: String!, $name: String!{declared}) {{\n  repository(owner: $owner, name: $name) {{{objects}\n  }}\n}}"
+    let listing = format!(
+        "\n    d: object(expression: $d) {{ ... on Tree {{ {} }} }}",
+        tree_fields(tree.depth)
     );
-    let mut variables = json!({"owner": owner, "name": name});
+    let query = format!(
+        "query($owner: String!, $name: String!{declared}, $d: String!) {{\n  repository(owner: $owner, name: $name) {{{objects}{listing}\n  }}\n}}"
+    );
+    let mut variables =
+        json!({"owner": owner, "name": name, "d": format!("{branch}:{}", tree.dir)});
     for (alias, path) in aliases.iter().zip(paths) {
         variables[alias] = json!(format!("{branch}:{path}"));
     }
     (query, variables)
 }
 
-/// The files `files_query` read for `paths`, by path.
-fn files_read(
-    mut objects: BTreeMap<String, Option<GqlBlob>>,
-    paths: &[String],
-) -> BTreeMap<String, Blob> {
-    paths
+/// What `files_query` read for `paths` and its tree.
+fn files_read(mut objects: BTreeMap<String, Option<GqlObject>>, paths: &[String]) -> Files {
+    let files = paths
         .iter()
         .enumerate()
         .filter_map(|(i, path)| {
-            let blob = objects.remove(&format!("f{i}")).flatten()?;
-            let read = match blob {
-                GqlBlob {
-                    is_truncated: Some(true),
-                    ..
-                } => Blob::TooLarge,
-                GqlBlob {
-                    is_binary: Some(true),
-                    ..
-                } => Blob::Binary,
-                GqlBlob {
-                    text: Some(text), ..
-                } => Blob::Text(text),
-                GqlBlob { .. } => return None,
-            };
-            Some((path.clone(), read))
+            let blob = objects.remove(&format!("f{i}")).flatten()?.blob()?;
+            Some((path.clone(), blob))
         })
-        .collect()
+        .collect();
+    let mut entries = BTreeMap::new();
+    if let Some(GqlObject {
+        entries: Some(listed),
+        ..
+    }) = objects.remove("d").flatten()
+    {
+        entries_read(listed, "", &mut entries);
+    }
+    Files { files, entries }
+}
+
+/// Adds each of `listed`, by its path under the tree's directory after
+/// `prefix`, to `entries`, and those of the trees among them that were
+/// listed. Any other entry that is not a blob is [`Entry::Unlisted`].
+fn entries_read(listed: Vec<GqlEntry>, prefix: &str, entries: &mut BTreeMap<String, Entry>) {
+    for entry in listed {
+        let path = format!("{prefix}{}", entry.name);
+        match entry.object {
+            Some(GqlObject {
+                entries: Some(below),
+                ..
+            }) => entries_read(below, &format!("{path}/"), entries),
+            object => {
+                let read = object
+                    .and_then(GqlObject::blob)
+                    .map_or(Entry::Unlisted, Entry::File);
+                entries.insert(path, read);
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -2588,12 +2655,9 @@ impl Store for GitHub {
             .with_context(|| format!("{path} on {branch} is not UTF-8"))
     }
 
-    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>> {
-        if paths.is_empty() {
-            return Ok(BTreeMap::new());
-        }
-        let (query, variables) = files_query(&self.owner, &self.name, branch, paths);
-        let data: RepoData<BTreeMap<String, Option<GqlBlob>>> =
+    async fn read_files(&self, branch: &str, paths: &[String], tree: Tree<'_>) -> Result<Files> {
+        let (query, variables) = files_query(&self.owner, &self.name, branch, paths, tree);
+        let data: RepoData<BTreeMap<String, Option<GqlObject>>> =
             self.graphql(&query, variables).await?;
         Ok(files_read(data.repository, paths))
     }
@@ -3798,26 +3862,34 @@ mod tests {
 
     /// One alias per path, each asking for the blob at `BRANCH:PATH`
     /// (<https://docs.github.com/en/graphql/reference/objects#repository>,
-    /// `object`), the expression a variable of its own.
+    /// `object`), the expression a variable of its own, and one for the
+    /// directory, its tree's entries nested as deep as asked
+    /// (<https://docs.github.com/en/graphql/reference/objects#tree>).
     #[test]
-    fn files_are_read_in_one_query_with_an_alias_per_path() {
-        let paths = [
-            ".linewright/config.toml",
-            ".linewright/briefs/prompts/triage.md",
-        ]
-        .map(String::from);
+    fn files_and_a_directory_are_read_in_one_query_the_directory_as_deep_as_asked() {
+        let paths = [".linewright/config.toml".to_string()];
 
-        let (query, variables) = files_query("tibbe", "linewright", "main", &paths);
+        let (query, variables) = files_query(
+            "tibbe",
+            "linewright",
+            "main",
+            &paths,
+            Tree {
+                dir: ".linewright/prompts",
+                depth: 2,
+            },
+        );
 
         let compact: String = query.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(
-            compact.starts_with(
-                "query($owner: String!, $name: String!, $f0: String!, $f1: String!) { \
-                 repository(owner: $owner, name: $name) { \
-                 f0: object(expression: $f0) { ... on Blob { text isBinary isTruncated } } \
-                 f1: object(expression: $f1) { ... on Blob { text isBinary isTruncated } } } }"
-            ),
-            "{compact}"
+        assert_eq!(
+            compact,
+            "query($owner: String!, $name: String!, $f0: String!, $d: String!) { \
+             repository(owner: $owner, name: $name) { \
+             f0: object(expression: $f0) { ... on Blob { text isBinary isTruncated } } \
+             d: object(expression: $d) { ... on Tree { entries { name object { \
+             ... on Blob { text isBinary isTruncated } \
+             ... on Tree { entries { name object { \
+             ... on Blob { text isBinary isTruncated } } } } } } } } } }"
         );
         assert_eq!(
             variables,
@@ -3825,9 +3897,58 @@ mod tests {
                 "owner": "tibbe",
                 "name": "linewright",
                 "f0": "main:.linewright/config.toml",
-                "f1": "main:.linewright/briefs/prompts/triage.md",
+                "d": "main:.linewright/prompts",
             })
         );
+    }
+
+    /// `fixtures/repository-tree.json` is what GitHub returned for that
+    /// query on this repository at `d9b7bc3`, asking for a path with no
+    /// file and the directory `briefs/plugin` two levels down.
+    #[test]
+    fn a_directorys_files_are_read_by_path_and_its_directories_at_the_last_level_unlisted() {
+        let read = files_read(
+            files_response(include_str!("fixtures/repository-tree.json")),
+            &["none".to_string()],
+        );
+
+        assert_eq!(read.files, BTreeMap::new());
+        assert_eq!(
+            read.entries.keys().collect::<Vec<_>>(),
+            [
+                ".claude-plugin/plugin.json",
+                "LICENSE",
+                "skills/code-review",
+                "skills/implement",
+                "skills/pr",
+                "skills/software-design",
+                "skills/tdd",
+                "skills/to-tickets",
+                "skills/triage",
+            ]
+        );
+        assert_eq!(read.entries["skills/tdd"], Entry::Unlisted);
+        let Entry::File(Blob::Text(manifest)) = &read.entries[".claude-plugin/plugin.json"] else {
+            panic!("{:?}", read.entries);
+        };
+        assert!(manifest.contains("\"name\": \"linewright\""), "{manifest}");
+    }
+
+    /// `fixtures/repository-tree-binary.json` is what GitHub returned for
+    /// that query on <https://github.com/rust-lang/rust> at `846e51f`,
+    /// asking for the directory `src/librustdoc/html/static/images`.
+    #[test]
+    fn a_binary_file_in_a_directory_is_read_as_binary() {
+        let read = files_read(
+            files_response(include_str!("fixtures/repository-tree-binary.json")),
+            &["none".to_string()],
+        );
+
+        assert_eq!(read.entries["favicon-32x32.png"], Entry::File(Blob::Binary));
+        let Entry::File(Blob::Text(svg)) = &read.entries["favicon.svg"] else {
+            panic!("{:?}", read.entries);
+        };
+        assert!(svg.starts_with("<?xml"), "{svg}");
     }
 
     /// `fixtures/repository-files.json` is what GitHub returned for that
@@ -3845,7 +3966,8 @@ mod tests {
         let files = files_read(
             files_response(include_str!("fixtures/repository-files.json")),
             &paths,
-        );
+        )
+        .files;
 
         assert_eq!(
             files.keys().collect::<Vec<_>>(),
@@ -3871,13 +3993,14 @@ mod tests {
         let files = files_read(
             files_response(include_str!("fixtures/repository-file-truncated.json")),
             &paths,
-        );
+        )
+        .files;
 
         assert_eq!(files, BTreeMap::from([(paths[0].clone(), Blob::TooLarge)]));
     }
 
-    fn files_response(recorded: &str) -> BTreeMap<String, Option<GqlBlob>> {
-        let response: GqlResponse<RepoData<BTreeMap<String, Option<GqlBlob>>>> =
+    fn files_response(recorded: &str) -> BTreeMap<String, Option<GqlObject>> {
+        let response: GqlResponse<RepoData<BTreeMap<String, Option<GqlObject>>>> =
             serde_json::from_str(recorded).unwrap();
         response.data.unwrap().repository
     }

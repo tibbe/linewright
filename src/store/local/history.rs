@@ -17,6 +17,8 @@ pub struct NewCommit<'a> {
     pub author: &'a str,
     pub message: &'a str,
     pub files: &'a [(&'a str, &'a [u8])],
+    /// The paths of the files the commit removes.
+    pub removed: &'a [&'a str],
 }
 
 /// Writes `commit` and moves its branch to it, returning the commit.
@@ -68,6 +70,9 @@ fn fast_import_stream(commit: &NewCommit<'_>, parent: Option<&str>) -> Vec<u8> {
     for (path, contents) in commit.files {
         stream.extend(format!("M 100644 inline {}\n", quote_path(path)).bytes());
         add_data(&mut stream, contents);
+    }
+    for path in commit.removed {
+        stream.extend(format!("D {}\n", quote_path(path)).bytes());
     }
     stream.extend(b"\nget-mark :1\n");
     stream

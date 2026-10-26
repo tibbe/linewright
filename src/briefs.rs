@@ -5,7 +5,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use crate::layer::Layer;
-use crate::prompts::{self, Prompts};
+use crate::prompts::{self, Prompts, Readers};
+use crate::store::{Blob, Entry};
 
 /// The prompts a session is sent, each from the first layer that has it
 /// (docs/specs/operation.md, "Prompts"). Its skills are always Linewright's
@@ -32,6 +33,9 @@ pub struct Unusable {
     pub path: String,
     pub layer: Layer,
     pub error: String,
+    /// The runs that would read it: every run for a file that is not one of
+    /// Linewright's prompts, as no stage is known to read it.
+    pub holds: Readers,
 }
 
 /// The briefs resolved from layers, and the prompts in them that could not
@@ -101,38 +105,38 @@ const PLUGIN: [(&str, &str); 12] = [
 
 impl PromptLayer {
     /// The layer holding `files`, each by its path under the layer's root,
-    /// and those of them it cannot use: a file that is not one of
-    /// Linewright's prompts, or a prompt that is not UTF-8. A file is
-    /// skipped when its name, or that of a directory it is in, starts with
-    /// `.` (docs/specs/operation.md, "Prompts").
+    /// and those of them it cannot use: an entry that is not one of
+    /// Linewright's prompts, or a prompt that cannot be read as text. An
+    /// entry is skipped when its name, or that of a directory it is in,
+    /// starts with `.` (docs/specs/operation.md, "Prompts").
     pub fn parse(
         layer: Layer,
-        files: impl IntoIterator<Item = (String, Vec<u8>)>,
+        files: impl IntoIterator<Item = (String, Entry)>,
     ) -> (PromptLayer, Vec<Unusable>) {
         let mut parsed = PromptLayer {
             layer,
             files: BTreeMap::new(),
         };
         let mut unusable = Vec::new();
-        for (path, bytes) in files {
+        for (path, entry) in files {
             if is_hidden(&path) {
                 continue;
             }
-            let error = if prompts::readers(&path).is_none() {
-                NOT_A_PROMPT
-            } else {
-                match String::from_utf8(bytes) {
+            let (error, holds) = match (prompts::readers(&path), entry) {
+                (Some(readers), Entry::File(blob)) => match blob.text() {
                     Ok(text) => {
                         parsed.files.insert(path, text);
                         continue;
                     }
-                    Err(_) => "it is not UTF-8 text",
-                }
+                    Err(error) => (error, readers),
+                },
+                _ => (NOT_A_PROMPT, Readers::Every),
             };
             unusable.push(Unusable {
                 path,
                 layer,
                 error: error.into(),
+                holds,
             });
         }
         unusable.sort_by(|a, b| a.path.cmp(&b.path));
@@ -188,6 +192,8 @@ impl Briefs {
                     path: path.to_string(),
                     layer: layer.layer,
                     error: format!("{error:#}"),
+                    holds: prompts::readers(path)
+                        .expect("only one of Linewright's prompts is read"),
                 });
             }
         };
@@ -237,7 +243,7 @@ impl OperatorPrompts {
                 let file = dir.join(&path);
                 let bytes = std::fs::read(&file)
                     .with_context(|| format!("reading the prompt {}", file.display()))?;
-                files.push((path, bytes));
+                files.push((path, Entry::File(Blob::from_bytes(bytes))));
             }
         }
         let (layer, mut unusable) = PromptLayer::parse(Layer::Operator, files);

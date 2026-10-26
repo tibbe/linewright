@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::{
-    AnyItem, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
-    RepoSettings, Store,
+    AnyItem, Blob, Categories, Entry, Files, Identity, IssueRead, NewIssue, NewPull, PushError,
+    PushMode, RepoSettings, Store, Tree,
 };
 use crate::clock::Clock;
 use crate::domain::{
@@ -222,6 +222,28 @@ impl LocalStore {
         files: &[(&str, &[u8])],
         message: &str,
     ) -> Result<String> {
+        self.write_commit(author, branch, files, &[], message).await
+    }
+
+    /// Commits the removal of the files at `paths` on `branch`.
+    pub async fn remove(
+        &self,
+        author: &str,
+        branch: &str,
+        paths: &[&str],
+        message: &str,
+    ) -> Result<String> {
+        self.write_commit(author, branch, &[], paths, message).await
+    }
+
+    async fn write_commit(
+        &self,
+        author: &str,
+        branch: &str,
+        files: &[(&str, &[u8])],
+        removed: &[&str],
+        message: &str,
+    ) -> Result<String> {
         let default_branch = self.state().default_branch.clone();
         let commit = history::write_commit(
             &self.repository(),
@@ -231,6 +253,7 @@ impl LocalStore {
                 author,
                 message,
                 files,
+                removed,
             },
         )
         .await?;
@@ -1627,29 +1650,44 @@ impl Store for LocalStore {
         git::git(&repository, &["show", &object]).await.map(Some)
     }
 
-    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>> {
+    async fn read_files(&self, branch: &str, paths: &[String], tree: Tree<'_>) -> Result<Files> {
         let repository = self.repository();
-        let mut args = vec!["ls-tree", "-r", "-z", branch, "--"];
+        let mut args = vec!["ls-tree", "-r", "-z", branch, "--", tree.dir];
         args.extend(paths.iter().map(String::as_str));
         // Each entry is `<mode> <type> <object>\t<name>`
         // (<https://git-scm.com/docs/git-ls-tree#_output_format>).
         let listing = git::git(&repository, &args).await?;
-        let mut files = BTreeMap::new();
-        for entry in listing.split('\0') {
-            let Some((meta, path)) = entry.split_once('\t') else {
+        let mut read = Files::default();
+        for line in listing.split('\0') {
+            let Some((meta, path)) = line.split_once('\t') else {
                 continue;
             };
             let mut meta = meta.split(' ');
-            let (Some("blob"), Some(object)) = (meta.nth(1), meta.next()) else {
+            let (Some(kind), Some(object)) = (meta.nth(1), meta.next()) else {
                 continue;
             };
-            if paths.iter().any(|asked| asked == path) {
+            let blob = async || {
                 let bytes = git::git_bytes(&repository, &["cat-file", "blob", object]).await?;
-                let blob = String::from_utf8(bytes).map_or(Blob::Binary, Blob::Text);
-                files.insert(path.to_string(), blob);
+                anyhow::Ok(Blob::from_bytes(bytes))
+            };
+            let under = path
+                .strip_prefix(tree.dir)
+                .and_then(|under| under.strip_prefix('/'));
+            if let Some(under) = under {
+                let names: Vec<&str> = under.split('/').collect();
+                let (at, entry) = if names.len() > tree.depth {
+                    (names[..tree.depth].join("/"), Entry::Unlisted)
+                } else if kind == "blob" {
+                    (under.to_string(), Entry::File(blob().await?))
+                } else {
+                    (under.to_string(), Entry::Unlisted)
+                };
+                read.entries.insert(at, entry);
+            } else if kind == "blob" && paths.iter().any(|asked| asked == path) {
+                read.files.insert(path.to_string(), blob().await?);
             }
         }
-        Ok(files)
+        Ok(read)
     }
 
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {

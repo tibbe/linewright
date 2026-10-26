@@ -126,7 +126,7 @@ async fn the_repositorys_triage_prompt_is_sent_to_triage_runs() {
     commit_on(
         &world,
         "main",
-        &[(".linewright/briefs/prompts/triage.md", &prompt)],
+        &[(".linewright/prompts/triage.md", &prompt)],
     )
     .await;
 
@@ -148,7 +148,7 @@ async fn a_run_on_another_branch_is_sent_the_prompts_of_the_default_branch() {
     commit_on(
         &world,
         "main",
-        &[(".linewright/briefs/prompts/rework.md", &prompt("Main's"))],
+        &[(".linewright/prompts/rework.md", &prompt("Main's"))],
     )
     .await;
     let (_, pr) = world.ticket_in_review().await;
@@ -156,10 +156,7 @@ async fn a_run_on_another_branch_is_sent_the_prompts_of_the_default_branch() {
     commit_on(
         &world,
         &branch,
-        &[(
-            ".linewright/briefs/prompts/rework.md",
-            &prompt("The branch's"),
-        )],
+        &[(".linewright/prompts/rework.md", &prompt("The branch's"))],
     )
     .await;
     world.rework_asked(pr);
@@ -225,7 +222,7 @@ async fn a_repositorys_prompt_with_a_wrong_placeholder_holds_only_the_runs_it_is
         &world,
         "main",
         &[(
-            ".linewright/briefs/prompts/triage.md",
+            ".linewright/prompts/triage.md",
             "Triage {{the_issue}}.\n\n{{output}}\n",
         )],
     )
@@ -254,7 +251,7 @@ async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file()
         &[
             (".linewright/automations/hourly.md", HOURLY),
             (
-                ".linewright/briefs/prompts/automation.md",
+                ".linewright/prompts/automation.md",
                 "Do {{instructions}} {{nope}}\n",
             ),
         ],
@@ -269,11 +266,78 @@ async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file()
 
     let error = format!("{error:#}");
     assert!(
-        error.contains(".linewright/briefs/prompts/automation.md"),
+        error.contains(".linewright/prompts/automation.md"),
         "{error}"
     );
     assert_eq!(
         world.harness.automation_prompts(),
         [] as [std::string::String; 0]
     );
+}
+
+#[tokio::test]
+async fn a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights_holds_every_run_until_it_is_removed()
+ {
+    for path in [
+        ".linewright/prompts/implment.md",
+        ".linewright/prompts/parts/x/y.md",
+    ] {
+        let mut world = World::new().await;
+        implement(&world);
+        triage_ready(&world);
+        commit_on(&world, "main", &[(path, "Implement it.\n")]).await;
+        let ticket = open_ticket(&world, "Gadgets");
+        let reported = open_for_triage(&world);
+
+        world.poll().await;
+
+        assert_eq!(
+            world.harness.prompts(WorkKind::Implement),
+            [] as [std::string::String; 0],
+            "with {path}"
+        );
+        assert_eq!(
+            world.harness.prompts(WorkKind::Triage),
+            [] as [std::string::String; 0],
+            "with {path}"
+        );
+        assert!(!is_claimed(&world, ticket), "with {path}");
+        assert!(!is_claimed(&world, reported), "with {path}");
+
+        world
+            .store
+            .remove("maintainer", "main", &[path], "Remove the stray prompt")
+            .await
+            .unwrap();
+        world.poll().await;
+
+        assert_eq!(
+            world.harness.prompts(WorkKind::Implement).len(),
+            1,
+            "with {path}"
+        );
+        assert_eq!(
+            world.harness.prompts(WorkKind::Triage).len(),
+            1,
+            "with {path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_hidden_file_in_the_repositorys_prompts_holds_nothing() {
+    let mut world = World::new().await;
+    triage_ready(&world);
+    commit_on(
+        &world,
+        "main",
+        &[(".linewright/prompts/.editorconfig", "root = true\n")],
+    )
+    .await;
+    let reported = open_for_triage(&world);
+
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Triage).len(), 1);
+    assert!(is_claimed(&world, reported));
 }

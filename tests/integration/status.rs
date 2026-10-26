@@ -198,7 +198,7 @@ fn with_unusable_files() -> View {
                 "the setting `max-runs` is the operator's",
             ),
             unusable(
-                ".linewright/briefs/prompts/implement.md",
+                ".linewright/prompts/implement.md",
                 "the prompt has no `{{output}}`",
             ),
         ],
@@ -215,10 +215,10 @@ fn each_file_of_the_repositorys_linewright_cannot_use_is_shown_with_its_error_af
         lines[3..],
         [
             "usage limit: in force until 2026-10-01 14:30:00 UTC",
-            "repository file Linewright cannot use: `.linewright/briefs/prompts/implement.md`: \
-             the prompt has no `{{output}}`",
             "repository file Linewright cannot use: `.linewright/config.toml`: the setting \
              `max-runs` is the operator's",
+            "repository file Linewright cannot use: `.linewright/prompts/implement.md`: \
+             the prompt has no `{{output}}`",
             "drain: under way since 2026-10-01 12:00:20 UTC",
             "runs in flight: 0 of 4",
         ]
@@ -253,12 +253,12 @@ fn the_files_of_the_repositorys_linewright_cannot_use_are_in_the_json_and_a_clie
         json["linewright"]["unusable_files"],
         serde_json::json!([
             {
-                "path": ".linewright/briefs/prompts/implement.md",
-                "error": "the prompt has no `{{output}}`",
-            },
-            {
                 "path": ".linewright/config.toml",
                 "error": "the setting `max-runs` is the operator's",
+            },
+            {
+                "path": ".linewright/prompts/implement.md",
+                "error": "the prompt has no `{{output}}`",
             },
         ])
     );

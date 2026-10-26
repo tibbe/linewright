@@ -5,8 +5,9 @@ use crate::common;
 use linewright::briefs::{Briefs, OperatorPrompts, PromptLayer, Unusable};
 use linewright::git::BranchStart;
 use linewright::layer::Layer;
-use linewright::prompts;
+use linewright::prompts::{self, Readers, Reads};
 use linewright::reconcile::WorkKind;
+use linewright::store::{Blob, Entry};
 use linewright::work_settings::RunKind;
 
 /// The layer of `files`, each of which must be one of Linewright's prompts.
@@ -16,11 +17,15 @@ fn layer(layer: Layer, files: &[(&str, &str)]) -> PromptLayer {
     layer
 }
 
-fn listing(files: &[(&str, &str)]) -> Vec<(String, Vec<u8>)> {
+fn listing(files: &[(&str, &str)]) -> Vec<(String, Entry)> {
     files
         .iter()
-        .map(|(path, text)| (path.to_string(), text.as_bytes().to_vec()))
+        .map(|(path, text)| (path.to_string(), file(Blob::Text(text.to_string()))))
         .collect()
+}
+
+fn file(blob: Blob) -> Entry {
+    Entry::File(blob)
 }
 
 fn not_a_prompt(path: &str) -> Unusable {
@@ -28,6 +33,7 @@ fn not_a_prompt(path: &str) -> Unusable {
         path: path.into(),
         layer: Layer::Repository,
         error: "not one of Linewright's prompts".into(),
+        holds: Readers::Every,
     }
 }
 
@@ -87,6 +93,7 @@ fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
             path: "follow-ups/parse-error.md".into(),
             layer: Layer::Repository,
             error: "it lacks the placeholders `{{error}}`".into(),
+            holds: Readers::Every,
         }]
     );
     assert_eq!(
@@ -112,6 +119,15 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
             (".git/HEAD", "ref: refs/heads/main"),
             ("parts/.facts.md.swp", "An editor's."),
             ("follow-ups/parse-error.md", "Ours: {{error}}"),
+        ])
+        .into_iter()
+        .chain([
+            ("logo.png".to_string(), file(Blob::Binary)),
+            (".DS_Store".to_string(), file(Blob::Binary)),
+            ("parts/x".to_string(), Entry::Unlisted),
+            ("parts/.cache".to_string(), Entry::Unlisted),
+            // A directory or submodule at a prompt's path.
+            ("rework.md".to_string(), Entry::Unlisted),
         ]),
     );
 
@@ -124,27 +140,42 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
         [
             not_a_prompt("README.md"),
             not_a_prompt("implment.md"),
+            not_a_prompt("logo.png"),
+            not_a_prompt("parts/x"),
             not_a_prompt("plugin/skills/tdd/SKILL.md"),
             not_a_prompt("prompts/implement.md"),
+            not_a_prompt("rework.md"),
         ]
     );
 }
 
 #[test]
-fn a_prompt_that_is_not_utf_8_is_unusable() {
+fn a_prompt_that_cannot_be_read_as_text_is_unusable() {
     let (layer, unusable) = PromptLayer::parse(
         Layer::Operator,
-        [("triage.md".to_string(), vec![0xff, 0xfe, b'h', b'i'])],
+        [
+            ("triage.md".to_string(), file(Blob::Binary)),
+            ("design.md".to_string(), file(Blob::TooLarge)),
+        ],
     );
 
     assert!(layer.files.is_empty());
     assert_eq!(
         unusable,
-        [Unusable {
-            path: "triage.md".into(),
-            layer: Layer::Operator,
-            error: "it is not UTF-8 text".into(),
-        }]
+        [
+            Unusable {
+                path: "design.md".into(),
+                layer: Layer::Operator,
+                error: "it is too large to read".into(),
+                holds: Readers::Only(&[Reads::Stage(WorkKind::Design)]),
+            },
+            Unusable {
+                path: "triage.md".into(),
+                layer: Layer::Operator,
+                error: "it is not UTF-8 text".into(),
+                holds: Readers::Only(&[Reads::Stage(WorkKind::Triage)]),
+            },
+        ]
     );
 }
 
