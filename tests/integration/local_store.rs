@@ -97,6 +97,29 @@ async fn branches_whose_names_differ_only_in_case_are_kept_apart() {
     }
 }
 
+#[tokio::test]
+async fn a_commit_keeps_files_whose_paths_need_quoting_in_git() {
+    let world = World::new().await;
+    let paths = [
+        "\"quoted\".txt",
+        "new\nline.txt",
+        "back\\slash.txt",
+        "with space.txt",
+        "naïve.txt",
+    ];
+    let files: Vec<(&str, &str)> = paths.iter().map(|path| (*path, "kept\n")).collect();
+
+    world
+        .store
+        .commit(LINEWRIGHT, "1-paths", &files, "Paths")
+        .await
+        .unwrap();
+
+    for path in paths {
+        assert_eq!(world.store.file("1-paths", path).await.unwrap(), "kept\n");
+    }
+}
+
 /// When the snapshot says GitHub last updated the issue #`number`, open or
 /// closed.
 async fn updated_at(world: &World, number: Number) -> Timestamp {

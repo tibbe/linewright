@@ -21,49 +21,82 @@ pub struct NewCommit<'a> {
 
 /// Writes `commit` and moves its branch to it, returning the commit.
 pub async fn write_commit(repo: &Path, commit: NewCommit<'_>) -> Result<String> {
-    let NewCommit {
-        branch,
-        default_branch,
-        author,
-        message,
-        files,
-    } = commit;
-    let work = tempfile::tempdir()?;
-    let dir = work.path().join("clone");
-    let url = url(repo)?;
-    let empty = git::git(repo, &["rev-parse", "--verify", "--quiet", default_branch])
-        .await
-        .is_err();
-    if empty {
-        git::git(work.path(), &["init", "--quiet", "-b", branch, "clone"]).await?;
-        git::git(&dir, &["remote", "add", "origin", url]).await?;
-    } else {
-        let has_branch = git::git(repo, &["rev-parse", "--verify", "--quiet", branch])
-            .await
-            .is_ok();
-        git::clone(
-            url,
-            &dir,
-            if has_branch { branch } else { default_branch },
-            &[],
-        )
-        .await?;
-        git::create_branch(&dir, branch).await?;
-    }
-    git::set_identity(&dir, author, &format!("{author}@example.com")).await?;
-    for (path, contents) in files {
-        let path = dir.join(path);
-        tokio::fs::create_dir_all(path.parent().expect("files live in a directory")).await?;
-        tokio::fs::write(&path, contents).await?;
-    }
-    git::git(&dir, &["add", "--all"]).await?;
-    git::git(&dir, &["commit", "--quiet", "-m", message]).await?;
-    git::git(
-        &dir,
-        &["push", "--quiet", "origin", &format!("HEAD:{branch}")],
+    let branch = branch_ref(commit.branch);
+    let default_branch = branch_ref(commit.default_branch);
+    // One process for both tips: `rev-parse --verify` takes one revision.
+    // A pattern also matches the refs below it, so only exact names count.
+    let tips = git::git(
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            &branch,
+            &default_branch,
+        ],
     )
     .await?;
-    git::head(&dir).await
+    let tip = |refname: &str| {
+        tips.lines()
+            .find_map(|line| line.strip_prefix(refname)?.strip_prefix(' '))
+    };
+    let parent = tip(&branch).or_else(|| tip(&default_branch));
+    // Without `--force`, fast-import refuses to move the branch other than
+    // forward, as a push would.
+    let id = git::git_input(
+        repo,
+        &["fast-import", "--quiet", "--date-format=now"],
+        &[],
+        &fast_import_stream(&commit, parent),
+    )
+    .await?;
+    Ok(id.trim_end().to_string())
+}
+
+/// The `git fast-import` stream
+/// (<https://git-scm.com/docs/git-fast-import>) that writes `commit` on top
+/// of `parent` and prints it.
+fn fast_import_stream(commit: &NewCommit<'_>, parent: Option<&str>) -> Vec<u8> {
+    let mut stream = Vec::new();
+    let author = commit.author;
+    let identity = format!("{author} <{author}@example.com> now");
+    stream.extend(format!("commit {}\nmark :1\n", branch_ref(commit.branch)).bytes());
+    stream.extend(format!("author {identity}\ncommitter {identity}\n").bytes());
+    add_data(&mut stream, commit.message);
+    if let Some(parent) = parent {
+        stream.extend(format!("from {parent}\n").bytes());
+    }
+    for (path, contents) in commit.files {
+        stream.extend(format!("M 100644 inline {}\n", quote_path(path)).bytes());
+        add_data(&mut stream, contents);
+    }
+    stream.extend(b"\nget-mark :1\n");
+    stream
+}
+
+/// Adds a fast-import `data` command carrying `data` to `stream`.
+fn add_data(stream: &mut Vec<u8>, data: &str) {
+    stream.extend(format!("data {}\n", data.len()).bytes());
+    stream.extend(data.bytes());
+    stream.push(b'\n');
+}
+
+/// `path` quoted where fast-import requires it
+/// (<https://git-scm.com/docs/git-fast-import#_modify>), and otherwise as is.
+fn quote_path(path: &str) -> String {
+    if !path.starts_with('"') && !path.contains('\n') {
+        return path.to_string();
+    }
+    let mut quoted = String::from('"');
+    for c in path.chars() {
+        match c {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// A merge of pull request `pr`, from branch `head` into branch `into` at
@@ -200,15 +233,13 @@ pub async fn replay(repo: &Path, onto: &str, head: &str, committer: &str) -> Res
 
 /// Moves `branch` to `new`, provided it is at `old`.
 pub async fn move_ref(repo: &Path, branch: &str, new: &str, old: &str) -> Result<()> {
-    let refname = format!("refs/heads/{branch}");
-    git::git(repo, &["update-ref", &refname, new, old]).await?;
+    git::git(repo, &["update-ref", &branch_ref(branch), new, old]).await?;
     Ok(())
 }
 
 /// Deletes `branch`, which succeeds when there is no such branch.
 pub async fn delete_branch(repo: &Path, branch: &str) -> Result<()> {
-    let refname = format!("refs/heads/{branch}");
-    git::git(repo, &["update-ref", "-d", &refname]).await?;
+    git::git(repo, &["update-ref", "-d", &branch_ref(branch)]).await?;
     Ok(())
 }
 
@@ -222,7 +253,11 @@ pub async fn import_bundle(
 ) -> Result<()> {
     let bundle = bundle.to_str().context("bundle paths are UTF-8")?;
     git::git(repo, &["fetch", "--quiet", bundle, "refs/*:refs/case/*"]).await?;
-    let refname = format!("refs/heads/{default_branch}");
-    git::git(repo, &["update-ref", &refname, base]).await?;
+    git::git(repo, &["update-ref", &branch_ref(default_branch), base]).await?;
     Ok(())
+}
+
+/// The ref of `branch`.
+fn branch_ref(branch: &str) -> String {
+    format!("refs/heads/{branch}")
 }

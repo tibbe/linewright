@@ -82,7 +82,7 @@ pub async fn head(dir: &Path) -> Result<String> {
     Ok(git(dir, &["rev-parse", "HEAD"]).await?.trim().to_string())
 }
 
-pub async fn create_branch(dir: &Path, branch: &str) -> Result<()> {
+async fn create_branch(dir: &Path, branch: &str) -> Result<()> {
     git(dir, &["checkout", "--quiet", "-B", branch]).await?;
     Ok(())
 }
