@@ -397,6 +397,74 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
     web.stop().await;
 }
 
+#[tokio::test]
+async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to_the_server_page_until_the_default_branch_fixes_it()
+ {
+    let world = with_ticket().await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(".linewright/config.toml", "max-runs = 9\n")],
+            "Configure Linewright",
+        )
+        .await
+        .unwrap();
+    let web = Web::polling(world, Duration::from_millis(200)).await;
+    let error = "the setting `max-runs` is the operator's: the repository's file holds \
+                 `model`, `effort`, `session-timeout`";
+
+    let html = web
+        .eventually_page("/", |html| !holds(html).is_empty())
+        .await;
+
+    assert_eq!(
+        holds(&html),
+        [(
+            format!("repository file Linewright cannot use: `.linewright/config.toml`: {error}"),
+            "/server".to_string(),
+        )]
+    );
+    assert!(
+        has_classes(select(&html, "#holds .alert")[0], &["alert-error"]),
+        "{}",
+        html.html()
+    );
+    let facts = server_facts(&web.page("/server").await);
+    assert_eq!(
+        facts.get(2),
+        Some(&ServerFact {
+            label: "Repository file".into(),
+            value: format!("`.linewright/config.toml`: {error}"),
+            tone: Some("badge-error".into()),
+        }),
+        "{facts:?}"
+    );
+
+    web.store
+        .commit(
+            "maintainer",
+            "main",
+            &[(".linewright/config.toml", "model = \"opus\"\n")],
+            "Fix Linewright's config",
+        )
+        .await
+        .unwrap();
+
+    let fixed = web
+        .eventually_page("/server", |page| holds(page).is_empty())
+        .await;
+    let fixed_facts = server_facts(&fixed);
+    assert!(
+        !fixed_facts
+            .iter()
+            .any(|fact| fact.label == "Repository file"),
+        "{fixed_facts:?}"
+    );
+    web.stop().await;
+}
+
 /// A fact of the server page, as a reader reads it, with the colour of
 /// the tone its label shows in, if it has one.
 #[derive(Debug, PartialEq, Eq)]

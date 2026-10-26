@@ -112,6 +112,10 @@ pub struct Linewright {
     pub failed_polls: Option<FailedPolls>,
     /// Set only while a usage limit is in force.
     pub usage_limit_resets_at: Option<Timestamp>,
+    /// The files of the repository's Linewright cannot use, by path.
+    /// Absent from the answers of a `serve` that does not read them.
+    #[serde(default)]
+    pub unusable_files: Vec<FileError>,
     /// Set only while a drain is under way.
     pub drain: Option<DrainShown>,
     pub runs_in_flight: usize,
@@ -376,6 +380,7 @@ pub fn status(
             .and_then(|v| v.memory.usage_limit)
             .map(|limit| limit.resets_at)
             .filter(|resets_at| now < *resets_at),
+        unusable_files: view.map_or_else(Vec::new, unusable_files),
         drain: view
             .and_then(|v| v.memory.drain)
             .map(|Drain { since }| DrainShown {
@@ -428,6 +433,17 @@ pub fn status(
         automations,
         unparsed_automations,
     }
+}
+
+/// The files of `view`'s repository Linewright cannot use, by path.
+fn unusable_files(view: &View) -> Vec<FileError> {
+    let mut files: Vec<FileError> = view
+        .unusable
+        .iter()
+        .map(|unusable| unusable.file.clone())
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files
 }
 
 /// Where `automation`'s schedule stands, counted from its last scheduled run.
@@ -675,6 +691,7 @@ pub(crate) enum LinewrightFact<'a> {
     UsageLimit {
         resets_at: Timestamp,
     },
+    UnusableFile(&'a FileError),
     Drain(DrainShown),
     RunsInFlight {
         runs: usize,
@@ -693,14 +710,21 @@ impl Linewright {
             self.failed_polls.as_ref().map(LinewrightFact::FailedPolls),
             self.usage_limit_resets_at
                 .map(|resets_at| LinewrightFact::UsageLimit { resets_at }),
+        ]
+        .into_iter()
+        .chain(
+            self.unusable_files
+                .iter()
+                .map(|file| Some(LinewrightFact::UnusableFile(file))),
+        )
+        .chain([
             self.drain.map(LinewrightFact::Drain),
             Some(LinewrightFact::RunsInFlight {
                 runs: self.runs_in_flight,
                 max_runs: self.max_runs,
             }),
             self.webhooks.map(LinewrightFact::Webhooks),
-        ]
-        .into_iter()
+        ])
         .flatten()
         .collect()
     }
@@ -723,6 +747,7 @@ pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
             ],
             LinewrightFact::FailedPolls(failed) => vec![Fact::Problem(polls_failed(failed))],
             LinewrightFact::UsageLimit { resets_at } => vec![Fact::Warning(usage_limit(resets_at))],
+            LinewrightFact::UnusableFile(file) => vec![Fact::Problem(unusable_file(file))],
             LinewrightFact::Drain(drain) => vec![Fact::Warning(drain_under_way(drain))],
             LinewrightFact::RunsInFlight { runs, max_runs } => vec![Fact::Plain(
                 format!("runs in flight: {runs} of {max_runs}").into(),
@@ -766,6 +791,18 @@ pub(crate) fn polls_failed_since(failed: &FailedPolls) -> Phrase {
 
 pub(crate) fn usage_limit(resets_at: Timestamp) -> Phrase {
     Phrase::from("usage limit: in force until ").time(resets_at)
+}
+
+/// A file of the repository's Linewright cannot use, and its error.
+pub(crate) fn unusable_file(file: &FileError) -> Phrase {
+    Phrase::from("repository file Linewright cannot use: ").then(file_error(file))
+}
+
+/// A file's path and its error.
+pub(crate) fn file_error(file: &FileError) -> Phrase {
+    Phrase::default()
+        .code(file.path.clone())
+        .text(format!(": {}", file.error))
 }
 
 pub(crate) fn drain_under_way(drain: DrainShown) -> Phrase {

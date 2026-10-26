@@ -8,7 +8,9 @@ use common::{
 };
 use linewright::automation::{AutomationFiles, LastScheduledRuns, Unparsed};
 use linewright::domain::*;
+use linewright::prompts::Readers;
 use linewright::reconcile::{LiveRun, Memory, Subject, WorkKind};
+use linewright::repo_files::{FileError, Unusable};
 use linewright::runs::{Ending, Recorded, Started, StartedBy, State};
 use std::num::NonZeroU64;
 
@@ -172,6 +174,104 @@ fn a_drain_under_way_is_shown_with_since_when_after_the_usage_limit() {
             "runs in flight: 0 of 4",
         ]
     );
+}
+
+fn unusable(path: &str, error: &str) -> Unusable {
+    Unusable {
+        file: FileError {
+            path: path.into(),
+            error: error.into(),
+        },
+        holds: Readers::Every,
+    }
+}
+
+fn with_unusable_files() -> View {
+    View {
+        memory: Memory {
+            usage_limit: limited_until("2026-10-01T14:30:00Z").usage_limit,
+            ..draining_since("2026-10-01T12:00:20Z")
+        },
+        unusable: vec![
+            unusable(
+                ".linewright/config.toml",
+                "the setting `max-runs` is the operator's",
+            ),
+            unusable(
+                ".linewright/briefs/prompts/implement.md",
+                "the prompt has no `{{output}}`",
+            ),
+        ],
+        ..view(vec![])
+    }
+}
+
+#[test]
+fn each_file_of_the_repositorys_linewright_cannot_use_is_shown_with_its_error_after_the_usage_limit()
+ {
+    let lines = text(Some(&with_unusable_files()), "2026-10-01T12:00:30Z");
+
+    assert_eq!(
+        lines[3..],
+        [
+            "usage limit: in force until 2026-10-01 14:30:00 UTC",
+            "repository file Linewright cannot use: `.linewright/briefs/prompts/implement.md`: \
+             the prompt has no `{{output}}`",
+            "repository file Linewright cannot use: `.linewright/config.toml`: the setting \
+             `max-runs` is the operator's",
+            "drain: under way since 2026-10-01 12:00:20 UTC",
+            "runs in flight: 0 of 4",
+        ]
+    );
+}
+
+#[test]
+fn a_repository_whose_files_linewright_can_use_shows_none() {
+    let lines = text(Some(&view(vec![])), "2026-10-01T12:00:30Z");
+
+    assert!(
+        !lines.iter().any(|line| line.contains("repository file")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn the_files_of_the_repositorys_linewright_cannot_use_are_in_the_json_and_a_client_reads_an_answer_without_them()
+ {
+    let answer = status(
+        &serving(),
+        None,
+        None,
+        Some(&with_unusable_files()),
+        &[],
+        None,
+        at("2026-10-01T12:00:30Z"),
+    );
+    let mut json = serde_json::to_value(&answer).unwrap();
+
+    assert_eq!(
+        json["linewright"]["unusable_files"],
+        serde_json::json!([
+            {
+                "path": ".linewright/briefs/prompts/implement.md",
+                "error": "the prompt has no `{{output}}`",
+            },
+            {
+                "path": ".linewright/config.toml",
+                "error": "the setting `max-runs` is the operator's",
+            },
+        ])
+    );
+    assert_eq!(
+        serde_json::from_value::<Status>(json.clone()).unwrap(),
+        answer
+    );
+    json["linewright"]
+        .as_object_mut()
+        .unwrap()
+        .remove("unusable_files");
+    let read: Status = serde_json::from_value(json).unwrap();
+    assert_eq!(read.linewright.unusable_files, []);
 }
 
 #[test]
@@ -824,6 +924,7 @@ fn the_json_names_each_fact() {
                 },
                 "failed_polls": null,
                 "usage_limit_resets_at": null,
+                "unusable_files": [],
                 "drain": null,
                 "runs_in_flight": 2,
                 "max_runs": 4,

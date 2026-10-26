@@ -39,6 +39,7 @@ use crate::domain::{Repo, Timestamp};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 use crate::phrase::{Phrase, Tone};
+use crate::repo_files::FileError;
 use crate::runs::{Outcome, RunId};
 use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
 
@@ -290,6 +291,8 @@ enum Hold {
     /// Polls failed, with none succeeded since.
     PollsFailed(FailedPolls),
     UnparsedAutomation(UnparsedAutomation),
+    /// A file of the repository's Linewright cannot use.
+    UnusableFile(FileError),
     /// An automation whose last run failed.
     AutomationFailed {
         name: String,
@@ -313,6 +316,10 @@ impl Hold {
             .into_iter()
             .flat_map(|automations| &automations.unparsed)
             .map(|file| Hold::UnparsedAutomation(file.clone()));
+        let unusable = linewright
+            .unusable_files
+            .iter()
+            .map(|file| Hold::UnusableFile(file.clone()));
         let failed = automations
             .into_iter()
             .flat_map(|automations| &automations.rows)
@@ -328,6 +335,7 @@ impl Hold {
             .into_iter()
             .flatten()
             .chain(unparsed)
+            .chain(unusable)
             .chain(failed)
             .collect()
     }
@@ -341,6 +349,7 @@ impl Hold {
                 .time(*last_refused)
                 .text(", none accepted since"),
             Hold::UnparsedAutomation(file) => status::does_not_parse(file),
+            Hold::UnusableFile(file) => status::unusable_file(file),
             Hold::AutomationFailed { name, run, outcome } => {
                 format!("automation {name}: last run {run} {}", outcome.word()).into()
             }
@@ -354,9 +363,10 @@ impl Hold {
             Hold::UsageLimit { .. } => Tone::Cancelled,
             Hold::Drain(_) => Tone::InProgress,
             Hold::WebhooksRefused { .. } => Tone::Pending,
-            Hold::PollsFailed(_) | Hold::UnparsedAutomation(_) | Hold::AutomationFailed { .. } => {
-                Tone::Failure
-            }
+            Hold::PollsFailed(_)
+            | Hold::UnparsedAutomation(_)
+            | Hold::UnusableFile(_)
+            | Hold::AutomationFailed { .. } => Tone::Failure,
         }
     }
 
@@ -366,7 +376,8 @@ impl Hold {
             Hold::PollsFailed(_)
             | Hold::UsageLimit { .. }
             | Hold::Drain(_)
-            | Hold::WebhooksRefused { .. } => "/server".into(),
+            | Hold::WebhooksRefused { .. }
+            | Hold::UnusableFile(_) => "/server".into(),
             Hold::UnparsedAutomation(_) => "/automations".into(),
             Hold::AutomationFailed { run, .. } => run_path(run),
         }

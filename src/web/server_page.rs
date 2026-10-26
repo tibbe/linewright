@@ -15,7 +15,7 @@ use super::html::{self, Html};
 use super::{Frame, Hold, Page, Read, events, frame_regions, render};
 use crate::api::Sources;
 use crate::phrase::{Phrase, Tone};
-use crate::status::{FailedPolls, Linewright, LinewrightFact, PollsShown};
+use crate::status::{self, FailedPolls, Linewright, LinewrightFact, PollsShown};
 
 #[derive(Template, WebTemplate)]
 #[template(path = "server.html")]
@@ -68,6 +68,11 @@ fn facts(linewright: &Linewright) -> Vec<ServerFact<Phrase>> {
                 Hold::UsageLimit { resets_at },
                 "Usage limit",
                 Phrase::from("in force until ").time(resets_at),
+            )],
+            LinewrightFact::UnusableFile(file) => vec![held(
+                Hold::UnusableFile(file.clone()),
+                "Repository file",
+                status::file_error(file),
             )],
             LinewrightFact::Drain(drain) => {
                 let value = Phrase::from("started ").time(drain.since);
@@ -173,6 +178,7 @@ mod tests {
     use std::num::NonZeroU64;
 
     use super::*;
+    use crate::repo_files::FileError;
     use crate::status::DrainShown;
     use crate::webhook::Received;
 
@@ -194,6 +200,7 @@ mod tests {
             polls: None,
             failed_polls: None,
             usage_limit_resets_at: None,
+            unusable_files: vec![],
             drain: None,
             runs_in_flight: 1,
             max_runs: 4,
@@ -228,6 +235,10 @@ mod tests {
                 last_error: "taking a snapshot: GitHub is down".into(),
             }),
             usage_limit_resets_at: Some(at("2026-10-01T15:00:00Z")),
+            unusable_files: vec![FileError {
+                path: ".linewright/config.toml".into(),
+                error: "the setting `max-runs` is the operator's".into(),
+            }],
             drain: Some(DrainShown {
                 since: at("2026-10-01T12:32:00Z"),
                 deadline: Some(at("2026-10-01T14:32:00Z")),
@@ -260,6 +271,11 @@ mod tests {
                     "Usage limit",
                     "in force until 2026-10-01 15:00:00 UTC".into(),
                     Some(Tone::Cancelled)
+                ),
+                (
+                    "Repository file",
+                    "`.linewright/config.toml`: the setting `max-runs` is the operator's".into(),
+                    Some(Tone::Failure)
                 ),
                 (
                     "Drain",
