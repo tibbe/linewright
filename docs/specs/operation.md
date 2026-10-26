@@ -153,9 +153,14 @@ settings that the rules under [Running](#running) need, such as the shell.
   variable.
 - **Linewright's own win.** A variable Linewright sets itself replaces one of
   the same name the table or `session-env` passes.
-- **Credentials passed.** The credentials the table passes are the values of
-  the variables the harness reads one from, and the password in a proxy
-  variable's URL, both as written in the URL and percent-decoded.
+- **Credentials passed.** The credentials the table passes are those its
+  variables hold, where each variable's format puts them:
+
+  | variables                                    | the credentials                                                                                                  |
+  | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+  | those the harness reads a credential from    | the value                                                                                                        |
+  | the proxy variables                          | the password in the URL, both as written and percent-decoded                                                     |
+  | those the harness reads request headers from | each header's value, both whole and, when it opens with a scheme, without it, as in `Authorization: Bearer …` |
 - **Never passed.** `session-env` never passes Linewright's GitHub tokens or
   the webhook secret: a pattern skips them, and naming one is an error at
   startup.
