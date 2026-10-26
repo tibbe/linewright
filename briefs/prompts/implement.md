@@ -2,9 +2,7 @@
 
 Implement the ticket below on its branch.
 
-- Default branch: `{{default_branch}}`
-- Spec: the tracked files matching `{{spec_glob}}`
-- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
+{{facts}}
 - Branch: `{{branch}}`, {{holding}} The fixed point for review is `origin/{{default_branch}}`.
 
 {{ticket}}

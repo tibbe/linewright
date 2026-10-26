@@ -2,9 +2,7 @@
 
 Make the failing checks below pass on the pull request. You may read GitHub but must not write to it or push: Linewright pushes your commits and posts what your result says.
 
-- Default branch: `{{default_branch}}`
-- Spec: the tracked files matching `{{spec_glob}}`
-- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
+{{facts}}
 - Branch: `{{branch}}`, the head of pull request {{pr}} "{{pr_title}}".{{unfinished}}
 
 ### Failing CI

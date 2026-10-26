@@ -1,0 +1,3 @@
+- Default branch: `{{default_branch}}`
+- Spec: the tracked files matching `{{spec_glob}}`
+- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.

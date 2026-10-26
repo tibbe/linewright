@@ -128,17 +128,24 @@ macro_rules! values {
     };
 }
 
-values!(Facts {
-    default_branch,
-    spec_glob
-});
-values!(Triage: Facts {
+values!(
+    /// The facts every first-message prompt shares, from `parts/facts.md`.
+    Facts {
+        default_branch,
+        spec_glob
+    }
+);
+values!(
+    /// The base of every first-message prompt.
+    Shared { facts }
+);
+values!(Triage: Shared {
     categories,
     issue,
     category_choices,
     author
 });
-values!(Design: Facts {
+values!(Design: Shared {
     kind,
     item,
     filed_gaps,
@@ -152,14 +159,15 @@ values!(SpecChange {
     body,
     spec_diff
 });
-values!(Implement: Facts {
+values!(Implement: Shared {
+    default_branch,
     branch,
     holding,
     ticket
 });
 values!(
     /// An update's, and the start of a rework's and a fix's.
-    PullRequest: Facts {
+    PullRequest: Shared {
         branch,
         pr,
         pr_title,
@@ -174,7 +182,7 @@ values!(Rework: PullRequest {
     conversation
 });
 values!(FixCi: PullRequest { failures });
-values!(AutomationRun: Facts {
+values!(AutomationRun: Shared {
     max_issues,
     name,
     instructions
@@ -204,15 +212,6 @@ values!(LateFeedback {
     feedback,
     conversation
 });
-
-impl Facts {
-    fn of(repo: &Repo) -> Facts {
-        Facts {
-            default_branch: repo.default_branch.into(),
-            spec_glob: repo.spec_glob.into(),
-        }
-    }
-}
 
 /// A prompt, or a part of one, from `briefs/prompts/`: Markdown with a
 /// `{{name}}` placeholder for each of the values `V`.
@@ -365,6 +364,7 @@ fn braced(names: &[&str]) -> String {
 /// The prompts Linewright sends sessions, and the parts it builds them from.
 #[derive(Clone, Debug)]
 pub struct Prompts {
+    facts: Template<Facts>,
     triage: Template<Triage>,
     design: Template<Design>,
     spec_change: Template<SpecChange>,
@@ -397,6 +397,7 @@ pub struct Prompts {
 impl Prompts {
     pub fn read(source: Source) -> Result<Prompts> {
         Ok(Prompts {
+            facts: template!(source, "parts/facts.md")?,
             triage: template!(source, "triage.md")?,
             design: template!(source, "design.md")?,
             spec_change: template!(source, "parts/spec-change.md")?,
@@ -428,11 +429,22 @@ impl Prompts {
     }
 }
 
+/// The values every first-message prompt shares, its facts filled from
+/// `parts/facts.md`.
+fn shared(prompts: &Prompts, repo: &Repo) -> Shared {
+    Shared {
+        facts: prompts.facts.fill(&Facts {
+            default_branch: repo.default_branch.into(),
+            spec_glob: repo.spec_glob.into(),
+        }),
+    }
+}
+
 pub fn triage(prompts: &Prompts, repo: &Repo, issue: &Issue, categories: &[String]) -> String {
     let mut rendered = String::new();
     write_issue(&mut rendered, "The issue", issue);
     prompts.triage.fill(&Triage {
-        base: Facts::of(repo),
+        base: shared(prompts, repo),
         categories: categories
             .iter()
             .map(|c| format!("`{c}`"))
@@ -472,7 +484,7 @@ pub fn design_spec_change(
     filed_gaps: &[&Issue],
 ) -> String {
     prompts.design.fill(&Design {
-        base: Facts::of(repo),
+        base: shared(prompts, repo),
         kind: DesignOf::SpecChange.noun().into(),
         item: prompts.spec_change.fill(&SpecChange {
             default_branch: repo.default_branch.into(),
@@ -498,7 +510,7 @@ pub fn design_issue(
     let mut item = String::new();
     write_issue(&mut item, "The issue", issue);
     prompts.design.fill(&Design {
-        base: Facts::of(repo),
+        base: shared(prompts, repo),
         kind: DesignOf::Issue.noun().into(),
         item: item.trim_end().into(),
         filed_gaps: render_filed_gaps(prompts, filed_gaps),
@@ -523,7 +535,8 @@ pub fn implement(
         }),
     };
     prompts.implement.fill(&Implement {
-        base: Facts::of(repo),
+        base: shared(prompts, repo),
+        default_branch: repo.default_branch.into(),
         branch: branch.into(),
         holding,
         ticket: render_ticket(prompts, ticket),
@@ -539,7 +552,7 @@ pub fn pull_work(
     unfinished: Option<&UnfinishedCommits>,
 ) -> String {
     let pull_request = |conflict: String| PullRequest {
-        base: Facts::of(repo),
+        base: shared(prompts, repo),
         branch: pr.head_ref.clone(),
         pr: pr.number.to_string(),
         pr_title: pr.title.clone(),
@@ -615,7 +628,7 @@ fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedC
 
 pub fn automation(prompts: &Prompts, repo: &Repo, automation: &Automation) -> String {
     prompts.automation.fill(&AutomationRun {
-        base: Facts::of(repo),
+        base: shared(prompts, repo),
         max_issues: automation.max_issues.to_string(),
         name: automation.name.to_string(),
         instructions: or_none(&automation.instructions).into(),
