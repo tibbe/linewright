@@ -9,6 +9,7 @@ use linewright::reconcile::WorkKind;
 use linewright::runs::{
     self, Ending, Listing, NoRuns, Query, Recorded, RunId, RunOf, Runs, Started, StartedBy, State,
 };
+use linewright::work_settings::{Partial, StageTable};
 use serde_json::json;
 
 fn triage_ready(world: &World) {
@@ -46,6 +47,119 @@ async fn a_triage_run_is_listed_under_its_run_id_with_its_outcome() {
 fn triage_again(world: &World, issue: linewright::domain::Number) {
     world.store.unlabel_as(issue, "ready-for-agent").unwrap();
     world.store.label_as(issue, "needs-triage").unwrap();
+}
+
+/// A world whose triage sessions run with the operator's `opus`, leaving
+/// effort to the harness.
+async fn triage_on_opus() -> (World, tempfile::TempDir) {
+    let work_dir = tempfile::tempdir().unwrap();
+    let mut world = World::with(|config| {
+        config.work_dir = work_dir.path().join(REPO);
+        config.work.stages.insert(
+            WorkKind::Triage,
+            StageTable {
+                settings: Partial {
+                    model: Some("opus".into()),
+                    ..Partial::default()
+                },
+                session_env: None,
+            },
+        );
+    })
+    .await;
+    triage_ready(&world);
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    world.poll().await;
+    (world, work_dir)
+}
+
+#[tokio::test]
+async fn an_items_runs_show_each_sessions_model_and_effort() {
+    let (_world, work_dir) = triage_on_opus().await;
+
+    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let lines: Vec<&str> = output.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{}", output.stdout);
+    assert!(
+        lines[0].starts_with("1/triage-1: done"),
+        "{}",
+        output.stdout
+    );
+    assert_eq!(
+        lines[1],
+        "  session 1: model opus, effort the harness's choice"
+    );
+}
+
+#[tokio::test]
+async fn an_items_runs_as_json_give_where_each_setting_and_brief_file_came_from() {
+    let (_world, work_dir) = triage_on_opus().await;
+
+    let output = lw_in(work_dir.path(), &["runs", "1", "--json"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    let session = &answer["runs"][0]["sessions"][0];
+    assert_eq!(session["model"], "opus");
+    assert_eq!(session["effort"], serde_json::Value::Null);
+    assert_eq!(
+        session["layers"]["settings"],
+        json!({
+            "model": "operator",
+            "effort": "linewright",
+            "session-timeout": "operator",
+            "session-env": "linewright",
+        })
+    );
+    assert_eq!(
+        session["layers"]["briefs"]["prompts/triage.md"],
+        "linewright"
+    );
+    assert_eq!(
+        session["layers"]["briefs"]["plugin/skills/tdd/SKILL.md"],
+        "linewright"
+    );
+}
+
+#[tokio::test]
+async fn the_whole_list_of_runs_leaves_their_sessions_out() {
+    let (_world, work_dir) = triage_on_opus().await;
+
+    let output = lw_in(work_dir.path(), &["runs"]).await;
+    let json = lw_in(work_dir.path(), &["runs", "--json"]).await;
+
+    assert_eq!(output.stdout.lines().count(), 1, "{}", output.stdout);
+    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(answer["runs"][0].get("sessions"), None);
+}
+
+#[tokio::test]
+async fn what_a_runs_sessions_ran_with_is_kept_across_a_restart() {
+    let (mut world, work_dir) = triage_on_opus().await;
+
+    let config = common::config(&work_dir.path().join(REPO));
+    world.factory = linewright::factory::Factory::start(
+        world.store.clone(),
+        world.harness.clone(),
+        world.clock.clone(),
+        config,
+    )
+    .await
+    .unwrap();
+    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let lines: Vec<&str> = output.stdout.lines().collect();
+    assert_eq!(
+        lines[1..],
+        ["  session 1: model opus, effort the harness's choice"],
+        "{}",
+        output.stdout
+    );
 }
 
 #[tokio::test]
@@ -474,6 +588,36 @@ async fn a_run_recorded_before_runs_kept_their_pull_request_is_listed() {
     );
 }
 
+#[tokio::test]
+async fn a_run_recorded_before_sessions_kept_what_they_ran_with_lists_none_of_it() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let dir = work_dir.path().join(REPO).join("runs/items/5");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("rework-1.json"),
+        r#"{
+  "item": 5,
+  "stage": "rework",
+  "n": 1,
+  "started_at": "2026-10-14T12:00:00Z",
+  "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
+  "sessions": ["sessions/5/rework-1"]
+}"#,
+    )
+    .unwrap();
+
+    let output = lw_in(work_dir.path(), &["runs", "5"]).await;
+    let json = lw_in(work_dir.path(), &["runs", "5", "--json"]).await;
+
+    assert_eq!(
+        output.stdout,
+        "5/rework-1: done — #5 rework, started 2026-10-14 12:00:00 UTC, ran 1m\n\
+         \x20 session 1: model and effort not recorded\n"
+    );
+    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(answer["runs"][0]["sessions"], json!([null]));
+}
+
 fn ended(of: RunOf, n: u32, by: Option<StartedBy>, start: &str) -> Recorded {
     Recorded::new(
         Started::new(RunId { of, n }, by).unwrap(),
@@ -710,14 +854,14 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
     let no_stage = lw_in(dir, &["runs", "--stage", "review"]).await;
 
     let lines: Vec<&str> = limited.stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{}{}", limited.stdout, limited.stderr);
+    assert_eq!(lines.len(), 3, "{}{}", limited.stdout, limited.stderr);
     assert!(
         lines[0].starts_with("1/triage-2: done"),
         "{}",
         limited.stdout
     );
     assert_eq!(
-        lines[1],
+        lines[2],
         "left out: 1 earlier run; show them with --limit 2"
     );
     assert_eq!((later.code, later.stdout.as_str()), (Some(0), ""));

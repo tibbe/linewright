@@ -849,7 +849,7 @@ fn session_spec(
     let settings = &ctx.with.settings;
     let now = shell.clock.now();
     let record = record_dir(shell, &purpose, now)?;
-    ctx.run.session(&record);
+    ctx.run.session(&record, settings, &ctx.with.briefs);
     Ok(SessionSpec {
         record,
         purpose,

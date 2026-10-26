@@ -15,6 +15,17 @@ pub enum Layer {
     Linewright,
 }
 
+impl Layer {
+    /// Whose a setting or a brief file is, coming from this layer.
+    pub fn whose(self) -> &'static str {
+        match self {
+            Layer::Repository => "the repository's",
+            Layer::Operator => "the operator's",
+            Layer::Linewright => "Linewright's own",
+        }
+    }
+}
+
 /// A value and the layer it came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sourced<T> {

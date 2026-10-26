@@ -19,7 +19,7 @@ fn run(id: &str, start: &str, sessions: usize) -> Recorded {
             ending: Ending::Done,
         },
         (0..sessions)
-            .map(|n| PathBuf::from(format!("sessions/{id}/{n}")))
+            .map(|n| PathBuf::from(format!("sessions/{id}/{n}")).into())
             .collect(),
         None,
     )
@@ -255,6 +255,34 @@ async fn logs_shows_the_items_latest_run_compact() {
         "{}",
         output.stdout
     );
+}
+
+#[tokio::test]
+async fn a_run_recorded_before_sessions_kept_what_they_ran_with_still_shows_its_transcript() {
+    let (_world, work_dir) = implemented_as_recorded().await;
+    let before = lw_in(work_dir.path(), &["logs", "1"]).await;
+    // Its sessions as bare directories, as records kept them before.
+    let path = work_dir
+        .path()
+        .join(REPO)
+        .join("runs/items/1/implement-1.json");
+    let mut record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let sessions = record["sessions"].as_array_mut().unwrap();
+    for session in sessions.iter_mut() {
+        *session = session["dir"].clone();
+    }
+    assert!(
+        sessions.iter().all(serde_json::Value::is_string),
+        "{record}"
+    );
+    std::fs::write(&path, record.to_string()).unwrap();
+
+    let after = lw_in(work_dir.path(), &["logs", "1"]).await;
+
+    assert_eq!(after.code, Some(0), "{}", after.stderr);
+    assert_eq!(after.stdout, before.stdout);
+    assert!(after.stdout.lines().count() > 2, "{}", after.stdout);
 }
 
 /// `docs/specs/monitoring.md`, logs, Lines; `docs/specs/design_system.md`,

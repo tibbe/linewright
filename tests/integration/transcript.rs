@@ -11,6 +11,7 @@ fn recorded() -> SessionRecord {
         .concat(),
         brief: Some("/linewright:implement\n\n# Your task\n\nShip gh.\n".into()),
         followups: vec!["Your answer did not parse as the result.\n\nSend it again.\n".into()],
+        ran: None,
     }
 }
 

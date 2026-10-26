@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::Number;
-use crate::runs::{self, Recorded, RepoWorkDir, RunId, Runs, State};
+use crate::runs::{self, Ran, Recorded, RepoWorkDir, RunId, Runs, SessionEntry, State};
 use crate::transcript::{
     self, After, FollowedLine, Follower, InFlight, ReadTo, SessionRecord, Transcript, Verbosity,
 };
@@ -132,9 +132,13 @@ pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsE
     let mut records = run
         .sessions
         .iter()
-        .map(|dir| {
-            SessionRecord::read(dir)
-                .with_context(|| format!("reading the session in {}", dir.display()))
+        .map(|SessionEntry { dir, ran }| {
+            let record = SessionRecord::read(dir)
+                .with_context(|| format!("reading the session in {}", dir.display()))?;
+            Ok(SessionRecord {
+                ran: ran.clone(),
+                ..record
+            })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     // Of a run in flight, its last session's whole lines, so that following
@@ -230,6 +234,12 @@ impl Following {
         &self.run
     }
 
+    /// What session `session`, numbered from 1, ran with, as of the records
+    /// last read: `None` for a session recorded before Linewright kept it.
+    pub fn ran(&self, session: usize) -> Option<&Ran> {
+        self.sessions.get(session.checked_sub(1)?)?.ran.as_ref()
+    }
+
     /// The next lines to show, each with where it was made, once there are
     /// some or the run has ended; `None` once it has and every line has
     /// been given.
@@ -261,9 +271,12 @@ impl Following {
             .read_run(&self.run)
             .with_context(|| format!("reading the record of {}", self.run))?;
         self.ended = recorded.state != State::InFlight;
-        for (i, dir) in recorded.sessions.iter().enumerate() {
+        for (i, SessionEntry { dir, ran }) in recorded.sessions.iter().enumerate() {
             if i == self.sessions.len() {
-                self.sessions.push(SessionRecord::default());
+                self.sessions.push(SessionRecord {
+                    ran: ran.clone(),
+                    ..SessionRecord::default()
+                });
             }
             self.sessions[i]
                 .read_more(dir)

@@ -24,9 +24,10 @@ use super::{
 };
 use crate::api::{EventId, Sources};
 use crate::domain::Timestamp;
+use crate::layer::Layer;
 use crate::logs::{Following, LogsError, Which};
 use crate::phrase::Tone;
-use crate::runs::RunId;
+use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
     self, EntryLine, FollowedLine, Header, Line, Made, Stamped, ToolLine, Under, Verbosity,
 };
@@ -74,6 +75,8 @@ struct RunView {
 struct SessionView {
     number: usize,
     started_at: Option<Timestamp>,
+    /// `None` for a session recorded before Linewright kept it.
+    ran: Option<Ran>,
     /// In the order they first appeared, so that each keeps its anchor
     /// however the transcript is read: the `k`th is `s{number}-e{k}`.
     entries: Vec<EntryView>,
@@ -111,8 +114,8 @@ impl RunView {
     }
 
     /// Takes the next line of the transcript, giving what it changes on the
-    /// page.
-    fn apply_line(&mut self, line: &Line) -> Vec<Patch> {
+    /// page, from `following`, which made it.
+    fn apply_line(&mut self, line: &Line, following: &Following) -> Vec<Patch> {
         match line {
             Line::Header(Header::Run { run, sessions }) => {
                 self.sessions_started = Some(*sessions);
@@ -132,6 +135,7 @@ impl RunView {
                 self.sessions.push(SessionView {
                     number: *session,
                     started_at: *started_at,
+                    ran: following.ran(*session).cloned(),
                     entries: vec![],
                     own: vec![],
                     calls: HashMap::new(),
@@ -243,8 +247,9 @@ impl RunView {
             .filter(|&&i| shown(&session.entries[i].what, self.verbose))
             .map(|&i| entry_html(session, i, self.verbose))
             .collect();
+        let ran = ran_html(session.ran.as_ref());
         format!(
-            r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2><ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
+            r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2>{ran}<ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
         )
     }
 
@@ -257,6 +262,40 @@ impl RunView {
             .collect();
         format!(r#"{}<div id="sessions">{sessions}</div>"#, self.heading())
     }
+}
+
+/// A session's model and effort, and where each of its settings and brief
+/// files came from.
+fn ran_html(ran: Option<&Ran>) -> String {
+    let said = format!(
+        r#"<p class="ran text-sm text-base-content/70">{}</p>"#,
+        html::escape(&runs::describe_ran(ran))
+    );
+    let Some(ran) = ran else {
+        return said;
+    };
+    let item = |class: &str, name: &str, layer: Layer| {
+        format!(
+            r#"<li class="{class}">{}: {}</li>"#,
+            html::escape(name),
+            layer.whose()
+        )
+    };
+    let settings: String = ran
+        .layers
+        .settings
+        .iter()
+        .map(|(setting, layer)| item("setting", setting.name(), *layer))
+        .collect();
+    let briefs: String = ran
+        .layers
+        .briefs
+        .iter()
+        .map(|(path, layer)| item("brief", path, *layer))
+        .collect();
+    format!(
+        r#"{said}<div class="layers text-sm text-base-content/70"><ul class="ml-4">{settings}</ul><ul class="ml-4 font-mono">{briefs}</ul></div>"#
+    )
 }
 
 /// What a call's account changes: its line and its result, leaving its fold
@@ -552,7 +591,7 @@ fn read(sources: &Sources, id: RunId, verbose: bool) -> Result<(String, Option<F
     let lines = following.read().map_err(LogsError::Other)?;
     let mut view = RunView::new(id.clone(), &sources.work_dir.repo, verbose);
     for FollowedLine { line, .. } in &lines {
-        view.apply_line(line);
+        view.apply_line(line, &following);
     }
     let follow = (!following.ended()).then(|| match lines.last() {
         Some(last) => Follow::After(EventId {
@@ -622,7 +661,7 @@ impl FollowedTranscript {
     fn events(&mut self, lines: &[FollowedLine]) -> Vec<Event> {
         let mut events = vec![];
         for FollowedLine { made, line } in lines {
-            let patches = self.view.apply_line(line);
+            let patches = self.view.apply_line(line, &self.following);
             if self.after.is_some_and(|after| *made <= after) || patches.is_empty() {
                 continue;
             }

@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
@@ -10,11 +11,14 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::automation::AutomationName;
+use crate::briefs::Briefs;
 use crate::domain::{Number, Repo, Timestamp};
+use crate::layer::Layer;
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{DoneRun, OLD_DESIGN, WorkKind};
 use crate::records;
 use crate::status::Paint;
+use crate::work_settings::{Effort, SessionSettings, Setting};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -210,10 +214,68 @@ struct Record {
     started_by: Option<StartedBy>,
     started_at: Timestamp,
     end: Option<End>,
-    /// Relative to the work directory.
-    sessions: Vec<PathBuf>,
+    sessions: Vec<RecordedSession>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     answered_until: Option<Timestamp>,
+}
+
+/// A session as its run's record keeps it, its directory relative to the
+/// work directory.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum RecordedSession {
+    Ran {
+        dir: PathBuf,
+        #[serde(flatten)]
+        ran: Ran,
+    },
+    /// As records kept before they kept what a session ran with.
+    Dir(PathBuf),
+}
+
+/// A session of a run: where its records are, and what it ran with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionEntry {
+    pub dir: PathBuf,
+    /// `None` for a session recorded before Linewright kept it.
+    pub ran: Option<Ran>,
+}
+
+impl From<PathBuf> for SessionEntry {
+    fn from(dir: PathBuf) -> SessionEntry {
+        SessionEntry { dir, ran: None }
+    }
+}
+
+/// What a session ran with: its model and effort as Linewright set them,
+/// and where each of its settings and brief files came from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ran {
+    /// `None` is the harness's choice.
+    pub model: Option<String>,
+    /// `None` is the harness's choice.
+    pub effort: Option<Effort>,
+    pub layers: Layers,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Layers {
+    pub settings: BTreeMap<Setting, Layer>,
+    /// By the file's path under the briefs' root.
+    pub briefs: BTreeMap<String, Layer>,
+}
+
+impl Ran {
+    pub fn new(settings: &SessionSettings, briefs: &Briefs) -> Ran {
+        Ran {
+            model: settings.model.value.clone(),
+            effort: settings.effort.value,
+            layers: Layers {
+                settings: settings.layers(),
+                briefs: briefs.layers().clone(),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -526,9 +588,16 @@ impl Running {
         }
     }
 
-    pub fn session(&self, dir: &Path) {
+    pub fn session(&self, dir: &Path, settings: &SessionSettings, briefs: &Briefs) {
         let dir = dir.strip_prefix(&self.work_dir).unwrap_or(dir);
-        self.record.lock().unwrap().sessions.push(dir.to_path_buf());
+        self.record
+            .lock()
+            .unwrap()
+            .sessions
+            .push(RecordedSession::Ran {
+                dir: dir.to_path_buf(),
+                ran: Ran::new(settings, briefs),
+            });
         self.save_or_log();
     }
 
@@ -565,7 +634,7 @@ pub struct Recorded {
     pub started_at: Timestamp,
     pub state: State,
     /// In the order it started them.
-    pub sessions: Vec<PathBuf>,
+    pub sessions: Vec<SessionEntry>,
     /// For a rework, when it last read the feedback it answered.
     pub answered_until: Option<Timestamp>,
 }
@@ -582,7 +651,7 @@ impl Recorded {
         started: Started,
         started_at: Timestamp,
         state: State,
-        sessions: Vec<PathBuf>,
+        sessions: Vec<SessionEntry>,
         answered_until: Option<Timestamp>,
     ) -> Recorded {
         Recorded {
@@ -618,8 +687,14 @@ impl Recorded {
             state,
             record
                 .sessions
-                .iter()
-                .map(|dir| work_dir.join(dir))
+                .into_iter()
+                .map(|session| match session {
+                    RecordedSession::Ran { dir, ran } => SessionEntry {
+                        dir: work_dir.join(dir),
+                        ran: Some(ran),
+                    },
+                    RecordedSession::Dir(dir) => work_dir.join(dir).into(),
+                })
                 .collect(),
             record.answered_until,
         ))
@@ -673,6 +748,9 @@ pub struct Run {
     started_by: Option<StartedBy>,
     pub started_at: Timestamp,
     pub outcome: Outcome,
+    /// What each of its sessions ran with, in a list of one item's runs:
+    /// `None` for a session recorded before Linewright kept it.
+    pub sessions: Option<Vec<Option<Ran>>>,
 }
 
 impl Run {
@@ -701,6 +779,8 @@ struct RunAnswer {
     started_at: Timestamp,
     duration_seconds: Option<i64>,
     outcome: OutcomeName,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sessions: Option<Vec<Option<Ran>>>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -733,6 +813,7 @@ impl From<Run> for RunAnswer {
             started_at: run.started_at,
             duration_seconds,
             outcome,
+            sessions: run.sessions,
         }
     }
 }
@@ -763,6 +844,7 @@ impl TryFrom<RunAnswer> for Run {
             started_by,
             started_at: answer.started_at,
             outcome,
+            sessions: answer.sessions,
         })
     }
 }
@@ -818,8 +900,15 @@ pub fn list(recorded: Vec<Recorded>, query: &Query, now: Timestamp) -> Result<Li
         .limit
         .map_or(0, |limit| runs.len().saturating_sub(limit));
     runs.truncate(runs.len() - left_out);
+    let with_sessions = query.item.is_some();
     Ok(Listing {
-        runs: runs.into_iter().map(|run| run.at(now)).collect(),
+        runs: runs
+            .into_iter()
+            .map(|run| {
+                let sessions = with_sessions.then(|| run.ran());
+                run.listed(now, sessions)
+            })
+            .collect(),
         left_out,
     })
 }
@@ -835,7 +924,21 @@ fn newest_first(a: &Recorded, b: &Recorded) -> Ordering {
 }
 
 impl Recorded {
+    /// As a list of runs shows it, without its sessions.
     pub(crate) fn at(self, now: Timestamp) -> Run {
+        self.listed(now, None)
+    }
+
+    /// What each of its sessions ran with, `None` for one recorded before
+    /// Linewright kept it.
+    pub fn ran(&self) -> Vec<Option<Ran>> {
+        self.sessions
+            .iter()
+            .map(|session| session.ran.clone())
+            .collect()
+    }
+
+    fn listed(self, now: Timestamp, sessions: Option<Vec<Option<Ran>>>) -> Run {
         let seconds = |until: Timestamp| (until - self.started_at).num_seconds();
         let outcome = match self.state {
             State::Ended { at, ending } => Outcome::Ended {
@@ -852,6 +955,7 @@ impl Recorded {
             started_by: self.started_by,
             started_at: self.started_at,
             outcome,
+            sessions,
         }
     }
 }
@@ -861,6 +965,9 @@ pub fn render(listing: &Listing, colour: bool) -> String {
     let mut text = String::new();
     for run in &listing.runs {
         let _ = writeln!(text, "{}", render_run(run, paint));
+        for (i, ran) in run.sessions.iter().flatten().enumerate() {
+            let _ = writeln!(text, "  session {}: {}", i + 1, describe_ran(ran.as_ref()));
+        }
     }
     if listing.left_out > 0 {
         let shown = listing.runs.len() + listing.left_out;
@@ -872,6 +979,21 @@ pub fn render(listing: &Listing, colour: bool) -> String {
     }
     text
 }
+
+/// A session's model and effort, as Linewright set them.
+pub(crate) fn describe_ran(ran: Option<&Ran>) -> String {
+    let Some(ran) = ran else {
+        return "model and effort not recorded".into();
+    };
+    format!(
+        "model {}, effort {}",
+        ran.model.as_deref().unwrap_or(HARNESS_CHOICE),
+        ran.effort.map_or(HARNESS_CHOICE, Effort::name)
+    )
+}
+
+/// A model or effort Linewright left unset.
+pub(crate) const HARNESS_CHOICE: &str = "the harness's choice";
 
 pub(crate) fn render_left_out(left_out: usize, how: &str) -> String {
     format!("left out: {}", left_out_phrase(left_out, how))

@@ -8,6 +8,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::automation::Automation;
 use crate::layer::{Layer, Sourced};
 use crate::reconcile::WorkKind;
@@ -17,7 +19,8 @@ use crate::session_env::{Given, SessionEnv};
 pub const SESSION_TIMEOUT: Duration = Duration::from_mins(60);
 
 /// How hard the harness thinks: the `effort` setting's levels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Effort {
     Low,
     Medium,
@@ -65,6 +68,60 @@ impl std::str::FromStr for Effort {
 impl fmt::Display for Effort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+/// The settings a stage can set: the keys of its table
+/// (`docs/specs/operation.md`, Stage settings).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Setting {
+    Model,
+    Effort,
+    SessionTimeout,
+    SessionEnv,
+}
+
+impl Setting {
+    pub const ALL: [Setting; 4] = [
+        Setting::Model,
+        Setting::Effort,
+        Setting::SessionTimeout,
+        Setting::SessionEnv,
+    ];
+
+    /// Its key in a config file.
+    pub fn name(self) -> &'static str {
+        match self {
+            Setting::Model => "model",
+            Setting::Effort => "effort",
+            Setting::SessionTimeout => "session-timeout",
+            Setting::SessionEnv => "session-env",
+        }
+    }
+}
+
+impl std::str::FromStr for Setting {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<Setting, String> {
+        Setting::ALL
+            .into_iter()
+            .find(|setting| setting.name() == name)
+            .ok_or_else(|| format!("{name:?} is not a stage's setting"))
+    }
+}
+
+impl Serialize for Setting {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+
+impl<'de> Deserialize<'de> for Setting {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Setting, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -177,6 +234,18 @@ pub struct SessionSettings {
     pub session_timeout: Sourced<Duration>,
     pub timeout_setting: TimeoutSetting,
     pub environment: Sourced<Arc<Given>>,
+}
+
+impl SessionSettings {
+    /// The layer each setting came from.
+    pub fn layers(&self) -> BTreeMap<Setting, Layer> {
+        BTreeMap::from([
+            (Setting::Model, self.model.layer),
+            (Setting::Effort, self.effort.layer),
+            (Setting::SessionTimeout, self.session_timeout.layer),
+            (Setting::SessionEnv, self.environment.layer),
+        ])
+    }
 }
 
 /// One layer's settings for a run.

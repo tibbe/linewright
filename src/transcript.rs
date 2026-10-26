@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
-use crate::runs::Started;
+use crate::runs::{Ran, Started};
 use crate::status::Paint;
 
 pub const OUTPUT: &str = "output.jsonl";
@@ -59,6 +59,9 @@ pub struct SessionRecord {
     pub output: String,
     pub brief: Option<String>,
     pub followups: Vec<String>,
+    /// What the session ran with, from its run's record: `None` for a
+    /// session recorded before Linewright kept it.
+    pub ran: Option<Ran>,
 }
 
 impl SessionRecord {

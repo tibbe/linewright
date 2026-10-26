@@ -76,6 +76,33 @@ fn cut(shown: &[String], chars: usize) -> Vec<String> {
         .collect()
 }
 
+#[tokio::test]
+async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_settings_and_briefs_came_from()
+ {
+    let (_web, html) = run_page_of_implemented().await;
+
+    let texts =
+        |selector: &str| -> Vec<String> { select(&html, selector).into_iter().map(text).collect() };
+    assert_eq!(
+        texts("#s1 .ran"),
+        ["model the harness's choice, effort the harness's choice"]
+    );
+    assert_eq!(
+        texts("#s1 .layers .setting"),
+        [
+            "model: Linewright's own",
+            "effort: Linewright's own",
+            "session-timeout: the operator's",
+            "session-env: Linewright's own",
+        ]
+    );
+    let briefs = texts("#s1 .layers .brief");
+    assert!(
+        briefs.contains(&"prompts/implement.md: Linewright's own".to_string()),
+        "{briefs:?}"
+    );
+}
+
 /// `docs/specs/monitoring.md`, logs, Lines; `docs/specs/design_system.md`,
 /// Time, Durations.
 #[tokio::test]

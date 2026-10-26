@@ -20,7 +20,7 @@ use crate::spec_glob::SpecGlob;
 use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
-use crate::work_settings::{Effort, Partial, StageTable, WorkSettings};
+use crate::work_settings::{Effort, Partial, Setting, StageTable, WorkSettings};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -775,9 +775,6 @@ fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<FileSettings, Resolv
 /// The key of the stages' tables.
 const STAGE: &str = "stage";
 
-/// The keys of a stage's table (`docs/specs/operation.md`, Stage settings).
-const STAGE_KEYS: [&str; 4] = ["model", "effort", "session-timeout", "session-env"];
-
 fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
     let table: toml::Table = text
         .parse()
@@ -801,7 +798,7 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
     Ok(settings)
 }
 
-/// `[stage.NAME]` tables, each holding only `STAGE_KEYS`. An error names
+/// `[stage.NAME]` tables, each holding only [`Setting`]s. An error names
 /// `path` and the table.
 fn stage_tables(path: &Path, stages: toml::Value) -> Result<BTreeMap<WorkKind, StageTable>> {
     let toml::Value::Table(stages) = stages else {
@@ -822,21 +819,24 @@ fn stage_tables(path: &Path, stages: toml::Value) -> Result<BTreeMap<WorkKind, S
             for (key, value) in table {
                 let text = setting_value(&key, value).context(at.clone())?;
                 let settings = &mut parsed.settings;
-                match key.as_str() {
-                    "model" => settings.model = Some(text),
-                    "effort" => settings.effort = Some(effort(&text).context(at.clone())?),
-                    "session-timeout" => {
+                let Ok(setting) = key.parse::<Setting>() else {
+                    let keys = Setting::ALL.map(Setting::name);
+                    bail!(
+                        "{at} has an unknown setting `{key}`: a stage's table holds `{}`",
+                        keys.join("`, `")
+                    );
+                };
+                match setting {
+                    Setting::Model => settings.model = Some(text),
+                    Setting::Effort => settings.effort = Some(effort(&text).context(at.clone())?),
+                    Setting::SessionTimeout => {
                         settings.session_timeout =
                             Some(session_timeout(&text).context(at.clone())?);
                     }
-                    "session-env" => {
+                    Setting::SessionEnv => {
                         parsed.session_env =
                             Some(text.parse().map_err(|e: String| anyhow!("{at}: {e}"))?);
                     }
-                    _ => bail!(
-                        "{at} has an unknown setting `{key}`: a stage's table holds `{}`",
-                        STAGE_KEYS.join("`, `")
-                    ),
                 }
             }
             Ok((stage, parsed))
