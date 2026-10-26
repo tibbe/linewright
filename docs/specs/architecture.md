@@ -13,7 +13,7 @@ observes.
 - **Rust, with GitHub's REST and GraphQL APIs in-process.**
 - **Functional core, imperative shell.** The reconcile step is a pure function
   from a snapshot, the live runs and the clock to a list of actions. The store,
-  git, the harness and the clock sit behind interfaces with a real and a fake
+  the harness and the clock sit behind interfaces with a real and a fake
   implementation.
 
 ## State
