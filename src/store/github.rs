@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    AnyItem, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode, RepoSettings,
-    Store,
+    AnyItem, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
+    RepoSettings, Store,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
@@ -824,6 +824,73 @@ struct GqlResponse<T> {
     data: Option<T>,
     #[serde(default)]
     errors: Vec<Value>,
+}
+
+/// A blob as `files_query` reads it: an object that is not a blob, such as
+/// a directory, has none of its fields.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlBlob {
+    text: Option<String>,
+    #[serde(default)]
+    is_binary: Option<bool>,
+    #[serde(default)]
+    is_truncated: Option<bool>,
+}
+
+/// The query that reads the files of `paths` at the head of `branch` at
+/// once, the one at `paths[i]` under the alias `fi`, and its variables.
+fn files_query(owner: &str, name: &str, branch: &str, paths: &[String]) -> (String, Value) {
+    let aliases: Vec<String> = (0..paths.len()).map(|i| format!("f{i}")).collect();
+    let declared: String = aliases
+        .iter()
+        .map(|alias| format!(", ${alias}: String!"))
+        .collect();
+    let objects: String = aliases
+        .iter()
+        .map(|alias| {
+            format!(
+                "\n    {alias}: object(expression: ${alias}) {{ ... on Blob {{ text isBinary isTruncated }} }}"
+            )
+        })
+        .collect();
+    let query = format!(
+        "query($owner: String!, $name: String!{declared}) {{\n  repository(owner: $owner, name: $name) {{{objects}\n  }}\n}}"
+    );
+    let mut variables = json!({"owner": owner, "name": name});
+    for (alias, path) in aliases.iter().zip(paths) {
+        variables[alias] = json!(format!("{branch}:{path}"));
+    }
+    (query, variables)
+}
+
+/// The files `files_query` read for `paths`, by path.
+fn files_read(
+    mut objects: BTreeMap<String, Option<GqlBlob>>,
+    paths: &[String],
+) -> BTreeMap<String, Blob> {
+    paths
+        .iter()
+        .enumerate()
+        .filter_map(|(i, path)| {
+            let blob = objects.remove(&format!("f{i}")).flatten()?;
+            let read = match blob {
+                GqlBlob {
+                    is_truncated: Some(true),
+                    ..
+                } => Blob::TooLarge,
+                GqlBlob {
+                    is_binary: Some(true),
+                    ..
+                } => Blob::Binary,
+                GqlBlob {
+                    text: Some(text), ..
+                } => Blob::Text(text),
+                GqlBlob { .. } => return None,
+            };
+            Some((path.clone(), read))
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -2521,6 +2588,16 @@ impl Store for GitHub {
             .with_context(|| format!("{path} on {branch} is not UTF-8"))
     }
 
+    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>> {
+        if paths.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let (query, variables) = files_query(&self.owner, &self.name, branch, paths);
+        let data: RepoData<BTreeMap<String, Option<GqlBlob>>> =
+            self.graphql(&query, variables).await?;
+        Ok(files_read(data.repository, paths))
+    }
+
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {
         #[derive(Deserialize)]
         struct Entry {
@@ -3717,5 +3794,91 @@ mod tests {
         assert_eq!(method, Method::PATCH);
         assert_eq!(path, "/labels/linewright%3Astalled");
         assert_eq!(body, json!({"description": "Handed back in a stall"}));
+    }
+
+    /// One alias per path, each asking for the blob at `BRANCH:PATH`
+    /// (<https://docs.github.com/en/graphql/reference/objects#repository>,
+    /// `object`), the expression a variable of its own.
+    #[test]
+    fn files_are_read_in_one_query_with_an_alias_per_path() {
+        let paths = [
+            ".linewright/config.toml",
+            ".linewright/briefs/prompts/triage.md",
+        ]
+        .map(String::from);
+
+        let (query, variables) = files_query("tibbe", "linewright", "main", &paths);
+
+        let compact: String = query.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            compact.starts_with(
+                "query($owner: String!, $name: String!, $f0: String!, $f1: String!) { \
+                 repository(owner: $owner, name: $name) { \
+                 f0: object(expression: $f0) { ... on Blob { text isBinary isTruncated } } \
+                 f1: object(expression: $f1) { ... on Blob { text isBinary isTruncated } } } }"
+            ),
+            "{compact}"
+        );
+        assert_eq!(
+            variables,
+            json!({
+                "owner": "tibbe",
+                "name": "linewright",
+                "f0": "main:.linewright/config.toml",
+                "f1": "main:.linewright/briefs/prompts/triage.md",
+            })
+        );
+    }
+
+    /// `fixtures/repository-files.json` is what GitHub returned for that
+    /// query on <https://github.com/rust-lang/rust>, asking for a PNG
+    /// image, a path with no file, a directory and the script `x`.
+    #[test]
+    fn files_read_are_by_path_with_binary_ones_marked_and_paths_with_no_file_left_out() {
+        let paths = [
+            "src/librustdoc/html/static/images/favicon-32x32.png",
+            ".linewright/config.toml",
+            "src/librustdoc",
+            "x",
+        ]
+        .map(String::from);
+        let files = files_read(
+            files_response(include_str!("fixtures/repository-files.json")),
+            &paths,
+        );
+
+        assert_eq!(
+            files.keys().collect::<Vec<_>>(),
+            ["src/librustdoc/html/static/images/favicon-32x32.png", "x"]
+        );
+        assert_eq!(
+            files["src/librustdoc/html/static/images/favicon-32x32.png"],
+            Blob::Binary
+        );
+        let Blob::Text(x) = &files["x"] else {
+            panic!("{:?}", files["x"]);
+        };
+        assert!(x.starts_with("#!/bin/sh\n"), "{x}");
+    }
+
+    /// `fixtures/repository-file-truncated.json` is what GitHub returned for
+    /// that query on <https://github.com/torvalds/linux>, asking for
+    /// `MAINTAINERS` (951 kB), its text cut here to its first line.
+    #[test]
+    fn a_file_too_large_for_github_to_give_whole_is_read_as_too_large() {
+        let paths = ["MAINTAINERS".to_string()];
+
+        let files = files_read(
+            files_response(include_str!("fixtures/repository-file-truncated.json")),
+            &paths,
+        );
+
+        assert_eq!(files, BTreeMap::from([(paths[0].clone(), Blob::TooLarge)]));
+    }
+
+    fn files_response(recorded: &str) -> BTreeMap<String, Option<GqlBlob>> {
+        let response: GqlResponse<RepoData<BTreeMap<String, Option<GqlBlob>>>> =
+            serde_json::from_str(recorded).unwrap();
+        response.data.unwrap().repository
     }
 }

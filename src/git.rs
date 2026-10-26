@@ -17,8 +17,18 @@ pub async fn git_with(dir: &Path, args: &[&str], env: &GitEnv) -> Result<String>
     git_input(dir, args, env, &[]).await
 }
 
+/// git's output as it wrote it, which need not be text.
+pub async fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    git_output(dir, args, &[], &[]).await
+}
+
 /// Runs git with `input` piped to its standard input.
 pub async fn git_input(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) -> Result<String> {
+    let output = git_output(dir, args, env, input).await?;
+    Ok(String::from_utf8_lossy(&output).into_owned())
+}
+
+async fn git_output(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) -> Result<Vec<u8>> {
     let mut child = child::command("git")
         .args(args)
         .current_dir(dir)
@@ -47,7 +57,7 @@ pub async fn git_input(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) ->
         );
     }
     written.with_context(|| format!("writing to git {}", args.join(" ")))?;
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(output.stdout)
 }
 
 pub async fn clone(url: &str, dir: &Path, branch: &str, env: &GitEnv) -> Result<()> {

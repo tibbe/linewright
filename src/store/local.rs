@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::{
-    AnyItem, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode, RepoSettings,
-    Store,
+    AnyItem, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
+    RepoSettings, Store,
 };
 use crate::clock::Clock;
 use crate::domain::{
@@ -205,6 +205,21 @@ impl LocalStore {
         author: &str,
         branch: &str,
         files: &[(&str, &str)],
+        message: &str,
+    ) -> Result<String> {
+        let files: Vec<(&str, &[u8])> = files
+            .iter()
+            .map(|(path, text)| (*path, text.as_bytes()))
+            .collect();
+        self.commit_bytes(author, branch, &files, message).await
+    }
+
+    /// As [`LocalStore::commit`], with files that need not be text.
+    pub async fn commit_bytes(
+        &self,
+        author: &str,
+        branch: &str,
+        files: &[(&str, &[u8])],
         message: &str,
     ) -> Result<String> {
         let default_branch = self.state().default_branch.clone();
@@ -1610,6 +1625,31 @@ impl Store for LocalStore {
             return Ok(None);
         }
         git::git(&repository, &["show", &object]).await.map(Some)
+    }
+
+    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>> {
+        let repository = self.repository();
+        let mut args = vec!["ls-tree", "-r", "-z", branch, "--"];
+        args.extend(paths.iter().map(String::as_str));
+        // Each entry is `<mode> <type> <object>\t<name>`
+        // (<https://git-scm.com/docs/git-ls-tree#_output_format>).
+        let listing = git::git(&repository, &args).await?;
+        let mut files = BTreeMap::new();
+        for entry in listing.split('\0') {
+            let Some((meta, path)) = entry.split_once('\t') else {
+                continue;
+            };
+            let mut meta = meta.split(' ');
+            let (Some("blob"), Some(object)) = (meta.nth(1), meta.next()) else {
+                continue;
+            };
+            if paths.iter().any(|asked| asked == path) {
+                let bytes = git::git_bytes(&repository, &["cat-file", "blob", object]).await?;
+                let blob = String::from_utf8(bytes).map_or(Blob::Binary, Blob::Text);
+                files.insert(path.to_string(), blob);
+            }
+        }
+        Ok(files)
     }
 
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {

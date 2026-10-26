@@ -36,6 +36,7 @@ pub mod prompts;
 pub mod reconcile;
 mod records;
 pub mod redaction;
+pub mod repo_files;
 pub mod results;
 pub mod run;
 pub mod runs;

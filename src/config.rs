@@ -20,7 +20,7 @@ use crate::spec_glob::SpecGlob;
 use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
-use crate::work_settings::{Effort, Partial, Setting, StageTable, WorkSettings};
+use crate::work_settings::{Effort, Partial, RepoSettings, Setting, StageTable, WorkSettings};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -775,6 +775,63 @@ fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<FileSettings, Resolv
 /// The key of the stages' tables.
 const STAGE: &str = "stage";
 
+/// The settings of the repository's file, at its top level and in its
+/// stages' tables (`docs/specs/operation.md`, The repository's file).
+const REPOSITORY_SETTINGS: [Setting; 3] =
+    [Setting::Model, Setting::Effort, Setting::SessionTimeout];
+
+/// Whose config file a table is in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Owner {
+    Operator,
+    Repository,
+}
+
+impl Owner {
+    /// The setting `key` names in a stage's table, `at`, in this owner's
+    /// file.
+    fn stage_setting(self, key: &str, at: &str) -> Result<Setting> {
+        match self {
+            Owner::Repository => repository_setting(key, at),
+            Owner::Operator => key.parse().map_err(|_| {
+                let keys = Setting::ALL.map(Setting::name);
+                anyhow!(
+                    "{at} has an unknown setting `{key}`: a stage's table holds `{}`",
+                    keys.join("`, `")
+                )
+            }),
+        }
+    }
+}
+
+/// The setting `key` names in the repository's file, `at` naming where. An
+/// error says when the key is the operator's.
+fn repository_setting(key: &str, at: &str) -> Result<Setting> {
+    if let Some(setting) = REPOSITORY_SETTINGS.into_iter().find(|s| s.name() == key) {
+        return Ok(setting);
+    }
+    let keys = REPOSITORY_SETTINGS.map(Setting::name);
+    let holds = format!("{at} holds `{}`", keys.join("`, `"));
+    if KEYS.contains(&key) {
+        bail!("the setting `{key}` is the operator's: {holds}");
+    }
+    bail!("{at} has an unknown setting `{key}`: {holds}")
+}
+
+/// Sets `setting` in `table` to `text`.
+fn set(table: &mut StageTable, setting: Setting, text: &str) -> Result<()> {
+    let settings = &mut table.settings;
+    match setting {
+        Setting::Model => settings.model = Some(text.to_string()),
+        Setting::Effort => settings.effort = Some(effort(text)?),
+        Setting::SessionTimeout => settings.session_timeout = Some(session_timeout(text)?),
+        Setting::SessionEnv => {
+            table.session_env = Some(text.parse().map_err(|e: String| anyhow!(e))?);
+        }
+    }
+    Ok(())
+}
+
 fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
     let table: toml::Table = text
         .parse()
@@ -786,7 +843,8 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
     };
     for (key, value) in table {
         if key == STAGE {
-            settings.stages = stage_tables(path, value)?;
+            settings.stages =
+                stage_tables(value, Owner::Operator).with_context(|| path.display().to_string())?;
             continue;
         }
         if !KEYS.contains(&key.as_str()) {
@@ -798,46 +856,46 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
     Ok(settings)
 }
 
-/// `[stage.NAME]` tables, each holding only [`Setting`]s. An error names
-/// `path` and the table.
-fn stage_tables(path: &Path, stages: toml::Value) -> Result<BTreeMap<WorkKind, StageTable>> {
+impl RepoSettings {
+    /// The repository's `.linewright/config.toml`. An error names the key
+    /// at fault, and says so when the key is the operator's.
+    pub fn parse(file: &str) -> Result<RepoSettings> {
+        let keys: toml::Table = file.parse().context("it does not parse")?;
+        let mut top = StageTable::default();
+        let mut stages = BTreeMap::new();
+        for (key, value) in keys {
+            if key == STAGE {
+                stages = stage_tables(value, Owner::Repository)?
+                    .into_iter()
+                    .map(|(stage, table)| (stage, table.settings))
+                    .collect();
+                continue;
+            }
+            let setting = repository_setting(&key, "the repository's file")?;
+            set(&mut top, setting, &setting_value(&key, value)?)?;
+        }
+        Ok(RepoSettings::new(top.settings, stages))
+    }
+}
+
+/// `[stage.NAME]` tables in `owner`'s file. An error names the table.
+fn stage_tables(stages: toml::Value, owner: Owner) -> Result<BTreeMap<WorkKind, StageTable>> {
     let toml::Value::Table(stages) = stages else {
-        bail!(
-            "{}: `{STAGE}` is {stages}, not a table of stages such as `[{STAGE}.implement]`",
-            path.display()
-        );
+        bail!("`{STAGE}` is {stages}, not a table of stages such as `[{STAGE}.implement]`");
     };
     stages
         .into_iter()
         .map(|(name, table)| {
-            let at = format!("{}: `[{STAGE}.{name}]`", path.display());
+            let at = format!("`[{STAGE}.{name}]`");
             let stage: WorkKind = name.parse().map_err(|e| anyhow!("{at}: {e}"))?;
             let toml::Value::Table(table) = table else {
                 bail!("{at} is {table}, not a table");
             };
             let mut parsed = StageTable::default();
             for (key, value) in table {
+                let setting = owner.stage_setting(&key, &at)?;
                 let text = setting_value(&key, value).context(at.clone())?;
-                let settings = &mut parsed.settings;
-                let Ok(setting) = key.parse::<Setting>() else {
-                    let keys = Setting::ALL.map(Setting::name);
-                    bail!(
-                        "{at} has an unknown setting `{key}`: a stage's table holds `{}`",
-                        keys.join("`, `")
-                    );
-                };
-                match setting {
-                    Setting::Model => settings.model = Some(text),
-                    Setting::Effort => settings.effort = Some(effort(&text).context(at.clone())?),
-                    Setting::SessionTimeout => {
-                        settings.session_timeout =
-                            Some(session_timeout(&text).context(at.clone())?);
-                    }
-                    Setting::SessionEnv => {
-                        parsed.session_env =
-                            Some(text.parse().map_err(|e: String| anyhow!("{at}: {e}"))?);
-                    }
-                }
+                set(&mut parsed, setting, &text).context(at.clone())?;
             }
             Ok((stage, parsed))
         })

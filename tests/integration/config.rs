@@ -175,6 +175,111 @@ fn a_mistake_in_a_stages_table_is_an_error_naming_the_file_and_the_key() {
     }
 }
 
+/// What a `stage` run's sessions run with under `config` and the
+/// repository's file `repo`.
+fn repo_session(config: &Config, repo: &str, stage: WorkKind) -> SessionSettings {
+    config.work.for_run(
+        RunKind::Stage(stage),
+        &RepoSettings::parse(repo).unwrap(),
+        &Environments::default(),
+    )
+}
+
+#[test]
+fn the_repositorys_file_ranks_below_the_operators_flags_and_variables_and_above_the_operators_file()
+{
+    let repo = "model = \"sonnet\"\neffort = \"medium\"\nsession-timeout = \"20m\"\n\n\
+                [stage.design]\neffort = \"high\"\n";
+    let config = resolve(
+        &["--model", "opus", "--effort", "xhigh"],
+        &[],
+        Some("model = \"haiku\"\nsession-timeout = \"10m\"\n\n[stage.design]\neffort = \"max\"\n"),
+    )
+    .unwrap();
+
+    let design = repo_session(&config, repo, WorkKind::Design);
+    assert_eq!(
+        design.effort,
+        Sourced::new(Some(Effort::High), Layer::Repository)
+    );
+    assert_eq!(
+        design.model,
+        Sourced::new(Some("opus".into()), Layer::Operator)
+    );
+    let triage = repo_session(&config, repo, WorkKind::Triage);
+    assert_eq!(
+        triage.effort,
+        Sourced::new(Some(Effort::Xhigh), Layer::Operator)
+    );
+    assert_eq!(
+        triage.session_timeout,
+        Sourced::new(Duration::from_mins(20), Layer::Repository)
+    );
+    assert_eq!(triage.timeout_setting, TimeoutSetting::Pipeline);
+}
+
+#[test]
+fn the_repositorys_stage_table_sets_its_stages_session_timeout() {
+    let config = resolve(&[], &[], None).unwrap();
+
+    let implement = repo_session(
+        &config,
+        "[stage.implement]\nsession-timeout = \"2h\"\nmodel = \"opus\"\n",
+        WorkKind::Implement,
+    );
+
+    assert_eq!(
+        implement.session_timeout,
+        Sourced::new(Duration::from_hours(2), Layer::Repository)
+    );
+    assert_eq!(
+        implement.timeout_setting,
+        TimeoutSetting::Stage(WorkKind::Implement)
+    );
+    assert_eq!(
+        implement.model,
+        Sourced::new(Some("opus".into()), Layer::Repository)
+    );
+}
+
+#[test]
+fn a_key_of_the_operators_in_the_repositorys_file_is_an_error_saying_it_is_the_operators() {
+    for (file, key) in [
+        ("session-env = [\"GH_TOKEN\"]\n", "session-env"),
+        ("max-runs = 9\n", "max-runs"),
+        ("secrets = \"KEY\"\n", "secrets"),
+        (
+            "[stage.implement]\nsession-env = [\"DEPLOY_KEY\"]\n",
+            "session-env",
+        ),
+    ] {
+        let error = format!("{:#}", RepoSettings::parse(file).unwrap_err());
+
+        assert!(error.contains(&format!("`{key}`")), "{file}: {error}");
+        assert!(error.contains("operator's"), "{file}: {error}");
+    }
+}
+
+#[test]
+fn a_mistake_in_the_repositorys_file_is_an_error_naming_the_key() {
+    for (file, named) in [
+        ("colour = \"blue\"\n", "`colour`"),
+        ("[stage.deploy]\nmodel = \"opus\"\n", "deploy"),
+        ("effort = \"huge\"\n", "`effort`"),
+        (
+            "[stage.design]\nsession-timeout = \"long\"\n",
+            "`session-timeout`",
+        ),
+        ("model = [\"opus\"]\n", "`model`"),
+        ("model = \"opus\n", "does not parse"),
+    ] {
+        let error = format!("{:#}", RepoSettings::parse(file).unwrap_err());
+
+        assert!(error.contains(named), "{file}: {error}");
+        assert!(!error.contains("operator's"), "{file}: {error}");
+    }
+}
+
 #[test]
 fn a_stage_has_no_flag() {
     assert!(Cli::try_parse_from(["lw", "--stage.implement.model", "opus", "status"]).is_err());

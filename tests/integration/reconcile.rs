@@ -5,7 +5,9 @@ use chrono::{DateTime, TimeDelta, Utc};
 use linewright::automation::{Automation, LastScheduledRuns};
 use linewright::domain::*;
 use linewright::harness::UsageLimit;
+use linewright::prompts::{self, Readers};
 use linewright::reconcile::*;
+use linewright::repo_files::{FileError, Unusable};
 
 fn t(minute: i64) -> Timestamp {
     DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
@@ -59,6 +61,7 @@ fn decide(snapshot: &Snapshot) -> Vec<Action> {
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     )
 }
 
@@ -432,7 +435,8 @@ fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![
             Action::Cancel {
@@ -470,7 +474,8 @@ fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_l
                     &Memory::default(),
                     &Automations::default(),
                     t(10),
-                    &policy()
+                    &policy(),
+                    &[]
                 ),
                 vec![
                     Action::Cancel {
@@ -838,7 +843,8 @@ fn a_ready_for_human_label_on_a_spec_change_stops_nothing() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![]
     );
@@ -860,7 +866,8 @@ fn a_cut_that_ended_since_the_snapshot_is_neither_started_again_nor_cancelled() 
             &memory,
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![]
     );
@@ -905,7 +912,8 @@ fn unassigning_linewright_from_a_spec_change_cancels_its_cut() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![Action::Cancel {
             subject: Subject::SpecChange(Number(5)),
@@ -965,7 +973,8 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![]
     );
@@ -1098,7 +1107,8 @@ fn a_ticket_with_a_live_run_is_left_to_it() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![]
     );
@@ -1153,7 +1163,8 @@ fn an_issue_being_designed_is_left_to_its_design() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![]
     );
@@ -1174,7 +1185,8 @@ fn an_issues_design_starts_before_an_implementation() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy
+            &policy,
+            &[]
         ),
         vec![design(2)]
     );
@@ -1198,6 +1210,7 @@ fn an_issues_design_is_cancelled_as_its_implementation_would_be() {
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     )
     .into_iter()
     .filter_map(|a| {
@@ -1321,7 +1334,8 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![
             claim(3),
@@ -1360,6 +1374,7 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     )
     .into_iter()
     .filter_map(|a| {
@@ -1396,6 +1411,7 @@ fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_linewright_is_un
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     )
     .into_iter()
     .filter_map(|a| {
@@ -1473,6 +1489,7 @@ fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
             &Automations::default(),
             t(10),
             &policy(),
+            &[],
         ),
         vec![Action::Claim {
             item: Item::Pull(Number(20)),
@@ -1638,6 +1655,7 @@ fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     );
 
     assert_eq!(deleted_branches(actions), Vec::<String>::new());
@@ -1675,7 +1693,8 @@ fn a_design_run_is_cancelled_when_its_spec_change_is_labeled_before_the_design_l
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![Action::Cancel {
             subject: Subject::SpecChange(Number(5)),
@@ -1702,7 +1721,8 @@ fn a_design_run_is_cancelled_when_its_spec_change_is_labeled_designed() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &policy()
+            &policy(),
+            &[]
         )
         .as_slice(),
         [Action::Cancel {
@@ -1769,6 +1789,7 @@ fn at(world: &Snapshot, minute: i64) -> Vec<Action> {
         &Automations::default(),
         t(minute),
         &policy(),
+        &[],
     )
 }
 
@@ -1821,6 +1842,7 @@ fn deciding_at(world: &Snapshot, memory: &Memory, policy: &Policy, minute: i64) 
         &Automations::default(),
         t(minute),
         policy,
+        &[],
     )
 }
 
@@ -1951,6 +1973,7 @@ fn a_stalled_ticket_claimed_but_held_back_by_the_drain_keeps_its_stall() {
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     );
 
     assert_eq!(actions, vec![]);
@@ -2052,6 +2075,7 @@ fn the_ci_timeout_hand_back_says_the_timeout_to_its_two_largest_units() {
         &Automations::default(),
         t(4 * 60),
         &policy,
+        &[],
     );
 
     assert!(
@@ -3087,6 +3111,7 @@ fn an_issue_being_cut_waits_for_its_design_and_neither_closes_nor_discards() {
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     );
 
     assert_eq!(decided.actions, []);
@@ -3119,6 +3144,7 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_desi
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     );
 
     assert_eq!(
@@ -3264,6 +3290,7 @@ fn scheduled(automations: &Automations, minute: i64) -> Vec<Action> {
         automations,
         t(minute),
         &policy(),
+        &[],
     )
 }
 
@@ -3344,11 +3371,27 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
     let quieter = snapshot(vec![claimed(ticket(8)), claimed(ticket(9))]);
 
     assert_eq!(
-        reconcile(&world, &busy, &Memory::default(), &due, t(70), &policy()),
+        reconcile(
+            &world,
+            &busy,
+            &Memory::default(),
+            &due,
+            t(70),
+            &policy(),
+            &[]
+        ),
         vec![implement(1)]
     );
     assert_eq!(
-        reconcile(&quieter, &busy, &Memory::default(), &due, t(70), &policy()),
+        reconcile(
+            &quieter,
+            &busy,
+            &Memory::default(),
+            &due,
+            t(70),
+            &policy(),
+            &[]
+        ),
         vec![
             Action::RunAutomation(Box::new(hourly("b"))),
             Action::RecordLastScheduledRuns(last_scheduled_runs(&[
@@ -3373,7 +3416,8 @@ fn an_automation_seen_for_the_first_time_is_recorded_even_with_no_room() {
             &Memory::default(),
             &world,
             t(70),
-            &policy()
+            &policy(),
+            &[]
         ),
         vec![Action::RecordLastScheduledRuns(last_scheduled_runs(&[(
             "hourly", 70
@@ -3557,6 +3601,7 @@ fn removing_the_required_label_cancels_no_run_in_flight() {
         &Automations::default(),
         t(10),
         &requiring_label(),
+        &[],
     );
 
     assert_eq!(actions, vec![]);
@@ -3640,7 +3685,8 @@ fn removing_the_required_label_does_not_cancel_a_cut_under_way() {
             &Memory::default(),
             &Automations::default(),
             t(10),
-            &requiring_label()
+            &requiring_label(),
+            &[]
         ),
         vec![]
     );
@@ -3715,7 +3761,7 @@ fn under_usage_limit(resets_at: i64) -> Vec<Action> {
         ..policy()
     };
     let memory = under_usage_limit_until(resets_at);
-    reconcile(&world, &live, &memory, &automations, t(70), &policy)
+    reconcile(&world, &live, &memory, &automations, t(70), &policy, &[])
 }
 
 fn sessionless_actions() -> Vec<Action> {
@@ -3810,6 +3856,7 @@ fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
             &Automations::default(),
             t(10),
             &merging_by(MergeMethod::Merge),
+            &[],
         ),
         vec![merge(20, true)]
     );
@@ -3831,7 +3878,15 @@ fn while_draining_no_run_starts_and_no_item_is_claimed_but_other_actions_are_tak
         ..policy()
     };
 
-    let actions = reconcile(&world, &live, &draining(), &automations, t(70), &policy);
+    let actions = reconcile(
+        &world,
+        &live,
+        &draining(),
+        &automations,
+        t(70),
+        &policy,
+        &[],
+    );
 
     let (handed_back, others) = pull_hand_backs_apart(actions);
     assert_eq!(others, sessionless_actions());
@@ -3853,6 +3908,7 @@ fn while_draining_a_pull_request_never_assigned_is_not_claimed_and_waits_for_the
         &Automations::default(),
         t(70),
         &policy(),
+        &[],
     );
 
     assert_eq!(decided.actions, vec![]);
@@ -3931,6 +3987,7 @@ fn while_draining_a_green_pull_request_is_merged_still() {
             &Automations::default(),
             t(10),
             &merging_by(MergeMethod::Merge),
+            &[],
         ),
         vec![merge(20, true)]
     );
@@ -3984,6 +4041,7 @@ fn waits(
         &Automations::default(),
         t(minute),
         policy,
+        &[],
     )
     .waits
 }
@@ -4113,6 +4171,7 @@ fn decided(world: &Snapshot) -> Decisions {
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     )
 }
 
@@ -4572,6 +4631,7 @@ fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_no
         &Automations::default(),
         t(10),
         &policy(),
+        &[],
     );
 
     assert_eq!(
@@ -4627,7 +4687,8 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
                 &Memory::default(),
                 &Automations::default(),
                 t(10),
-                &policy()
+                &policy(),
+                &[]
             ),
             let_go_of
         );
@@ -4833,10 +4894,89 @@ fn a_triage_run_is_cancelled_when_linewright_is_unassigned_and_not_otherwise() {
             &Automations::default(),
             t(10),
             &policy(),
+            &[],
         ),
         vec![Action::Cancel {
             subject: Subject::Issue(Number(1)),
             reason: format!("{LINEWRIGHT} was unassigned from #1"),
         }]
+    );
+}
+
+#[test]
+fn a_file_of_the_repositorys_that_cannot_be_used_holds_only_the_runs_that_read_it() {
+    let world = snapshot(vec![
+        labeled(issue(1), label::NEEDS_TRIAGE),
+        common::ticket(2, "Gadgets"),
+    ]);
+    let broken = Unusable {
+        file: FileError {
+            path: ".linewright/briefs/prompts/implement.md".into(),
+            error: "the prompt has no `{{output}}`".into(),
+        },
+        holds: prompts::readers("implement.md").unwrap(),
+    };
+
+    let decided = decisions(
+        &world,
+        &[],
+        &Memory::default(),
+        &Automations::default(),
+        t(10),
+        &policy(),
+        &[broken],
+    );
+
+    assert_eq!(decided.actions, [claim(1), triage(1)]);
+    assert_eq!(
+        decided.waits.get(&Number(2)),
+        Some(&vec![Wait::RepositoryFile(FileError {
+            path: ".linewright/briefs/prompts/implement.md".into(),
+            error: "the prompt has no `{{output}}`".into(),
+        })])
+    );
+}
+
+#[test]
+fn a_config_of_the_repositorys_that_cannot_be_used_holds_every_run_and_leaves_automations_due() {
+    let world = snapshot(vec![labeled(issue(1), label::NEEDS_TRIAGE)]);
+    let mut last_scheduled_runs = LastScheduledRuns::default();
+    last_scheduled_runs.record(&"hourly".parse().unwrap(), t(-60));
+    let automations = Automations {
+        defined: vec![
+            linewright::automation::parse(
+                &"hourly".parse().unwrap(),
+                "---\non:\n  schedule: \"0 * * * *\"\n---\nLook.\n",
+            )
+            .unwrap(),
+        ],
+        last_scheduled_runs,
+        in_flight: vec![],
+    };
+    let broken = Unusable {
+        file: FileError {
+            path: ".linewright/config.toml".into(),
+            error: "the setting `max-runs` is the operator's".into(),
+        },
+        holds: Readers::Every,
+    };
+
+    let decided = decisions(
+        &world,
+        &[],
+        &Memory::default(),
+        &automations,
+        t(10),
+        &policy(),
+        &[broken],
+    );
+
+    assert_eq!(decided.actions, []);
+    assert_eq!(
+        decided.waits.get(&Number(1)),
+        Some(&vec![Wait::RepositoryFile(FileError {
+            path: ".linewright/config.toml".into(),
+            error: "the setting `max-runs` is the operator's".into(),
+        })])
     );
 }

@@ -198,6 +198,15 @@ impl Briefs {
             .then_some(Readers::Every)
     }
 
+    /// The path under the briefs' root of every file of Linewright's
+    /// layout.
+    pub fn paths() -> impl Iterator<Item = String> {
+        PLUGIN
+            .iter()
+            .map(|(path, _)| plugin_path(path))
+            .chain(Prompts::paths().into_iter().map(prompt_path))
+    }
+
     /// The layer each file came from, by its path under the briefs' root.
     pub fn layers(&self) -> &BTreeMap<String, Layer> {
         &self.layers

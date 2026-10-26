@@ -169,5 +169,6 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
         in_flight: vec![],
         automations: AutomationFiles::default(),
         last_scheduled_runs: LastScheduledRuns::default(),
+        unusable: vec![],
     }
 }

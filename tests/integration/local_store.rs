@@ -6,7 +6,8 @@ use linewright::domain::{
     Assignment, CheckState, IssueCloseReason, Login, MergeMethod, Number, Pull, ReviewState,
     Timestamp,
 };
-use linewright::store::Store;
+use linewright::store::{Blob, Store};
+use std::collections::BTreeMap;
 
 async fn snapshot_pull(world: &World, pr: Number) -> Pull {
     let snapshot = world.store.snapshot(Timestamp::MIN_UTC).await.unwrap();
@@ -456,4 +457,80 @@ async fn a_pull_request_squashed_is_one_commit_titled_after_it() {
         world.store.file("main", "src/thing.txt").await.unwrap(),
         "thing\n"
     );
+}
+
+#[tokio::test]
+async fn the_files_asked_for_are_read_from_the_head_of_the_branch_leaving_out_those_it_lacks() {
+    let world = World::new().await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[
+                (".linewright/config.toml", "model = \"opus\"\n"),
+                (".linewright/briefs/prompts/triage.md", "Triage it.\n"),
+                (".linewright/briefs/prompts/parts/facts.md", "Facts.\n"),
+            ],
+            "Configure Linewright",
+        )
+        .await
+        .unwrap();
+    world
+        .store
+        .commit(
+            "maintainer",
+            "7-elsewhere",
+            &[(".linewright/config.toml", "effort = \"low\"\n")],
+            "Configure it elsewhere",
+        )
+        .await
+        .unwrap();
+    let paths = [
+        ".linewright/config.toml",
+        ".linewright/briefs/prompts/triage.md",
+        ".linewright/briefs/prompts/design.md",
+        ".linewright/briefs/prompts/parts",
+    ]
+    .map(String::from);
+
+    let files = world.store.read_files("main", &paths).await.unwrap();
+
+    assert_eq!(
+        files,
+        BTreeMap::from([
+            (
+                ".linewright/config.toml".to_string(),
+                Blob::Text("model = \"opus\"\n".into())
+            ),
+            (
+                ".linewright/briefs/prompts/triage.md".to_string(),
+                Blob::Text("Triage it.\n".into())
+            ),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn a_file_that_is_not_utf_8_text_is_read_as_binary() {
+    let world = World::new().await;
+    let path = ".linewright/briefs/prompts/triage.md";
+    world
+        .store
+        .commit_bytes(
+            "maintainer",
+            "main",
+            &[(path, b"Triage \xff it.\n".as_slice())],
+            "Add a prompt in Latin-1",
+        )
+        .await
+        .unwrap();
+
+    let files = world
+        .store
+        .read_files("main", &[path.into()])
+        .await
+        .unwrap();
+
+    assert_eq!(files, BTreeMap::from([(path.to_string(), Blob::Binary)]));
 }

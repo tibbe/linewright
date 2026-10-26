@@ -173,6 +173,12 @@ pub struct RepoSettings {
     stages: BTreeMap<WorkKind, Partial>,
 }
 
+impl RepoSettings {
+    pub(crate) fn new(top: Partial, stages: BTreeMap<WorkKind, Partial>) -> RepoSettings {
+        RepoSettings { top, stages }
+    }
+}
+
 /// What a run is, as far as its settings go.
 #[derive(Clone, Copy, Debug)]
 pub enum RunKind<'a> {

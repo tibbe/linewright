@@ -25,6 +25,7 @@ mod reconcile;
 mod refresh;
 mod rendered_prompts;
 mod replay;
+mod repository_files;
 mod required_label;
 mod runs;
 mod secrets;

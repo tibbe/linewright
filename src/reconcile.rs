@@ -15,7 +15,9 @@ use crate::domain::{
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
 use crate::phrase::Phrase;
+use crate::repo_files::{FileError, Unusable, holding};
 use crate::spec_glob::SpecGlob;
+use crate::work_settings::RunKind;
 
 #[derive(Clone, Debug)]
 pub struct Policy {
@@ -564,6 +566,9 @@ pub enum Wait {
         pull_request: Number,
         requires: Vec<Requirement>,
     },
+    /// A file of the repository's that Linewright cannot use and the run
+    /// would read.
+    RepositoryFile(FileError),
 }
 
 impl Wait {
@@ -607,10 +612,13 @@ pub fn reconcile(
     automations: &Automations,
     now: Timestamp,
     policy: &Policy,
+    unusable: &[Unusable],
 ) -> Vec<Action> {
-    decisions(snapshot, live, memory, automations, now, policy).actions
+    decisions(snapshot, live, memory, automations, now, policy, unusable).actions
 }
 
+/// `unusable` are the files of the repository's Linewright cannot use,
+/// which hold the runs that would read them.
 pub fn decisions(
     snapshot: &Snapshot,
     live: &[LiveRun],
@@ -618,6 +626,7 @@ pub fn decisions(
     automations: &Automations,
     now: Timestamp,
     policy: &Policy,
+    unusable: &[Unusable],
 ) -> Decisions {
     let in_flight = live.len() + automations.in_flight.len();
     let usage_limit = memory.usage_limit.filter(|_| memory.holds_starts(now));
@@ -636,6 +645,7 @@ pub fn decisions(
     let mut plan = Plan {
         now,
         held,
+        unusable,
         actions: vec![],
         starts: vec![],
         waits: BTreeMap::new(),
@@ -861,7 +871,9 @@ pub fn decisions(
 
     let (mut decisions, room) = plan.into_decisions(room);
     decisions.actions = clearing_stalls(snapshot, decisions.actions, &policy.linewright);
-    decisions.actions.extend(schedule(automations, now, room));
+    decisions
+        .actions
+        .extend(schedule(automations, now, room, unusable));
     decisions
 }
 
@@ -978,7 +990,14 @@ pub fn next_run(automation: &Automation, last_scheduled_run: Timestamp, now: Tim
     }
 }
 
-fn schedule(automations: &Automations, now: Timestamp, room: usize) -> Vec<Action> {
+/// An automation held by a file in `unusable` stays due, to run once the
+/// file is fixed.
+fn schedule(
+    automations: &Automations,
+    now: Timestamp,
+    room: usize,
+    unusable: &[Unusable],
+) -> Vec<Action> {
     let mut last_scheduled_runs = automations.last_scheduled_runs.clone();
     let mut due = vec![];
     for automation in &automations.defined {
@@ -987,7 +1006,8 @@ fn schedule(automations: &Automations, now: Timestamp, room: usize) -> Vec<Actio
             continue;
         };
         let running = automations.in_flight.contains(&automation.name);
-        if next_run(automation, last_scheduled_run, now) == NextRun::Due && !running {
+        let held = !holding(unusable, &RunKind::Automation(automation)).is_empty();
+        if next_run(automation, last_scheduled_run, now) == NextRun::Due && !running && !held {
             due.push(automation);
         }
     }
@@ -1063,10 +1083,12 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
     }
 }
 
-struct Plan {
+struct Plan<'a> {
     now: Timestamp,
     /// What holds back the starts beyond the room for them.
     held: Held,
+    /// The repository's files that hold the runs that would read them.
+    unusable: &'a [Unusable],
     actions: Vec<Action>,
     starts: Vec<Start>,
     waits: BTreeMap<Number, Vec<Wait>>,
@@ -1085,7 +1107,7 @@ struct Start {
     work: Work,
 }
 
-impl Plan {
+impl Plan<'_> {
     fn act(&mut self, action: Action) {
         self.actions.push(action);
     }
@@ -1114,7 +1136,7 @@ impl Plan {
     }
 
     fn start(&mut self, work: Work) {
-        self.starts.push(Start {
+        self.push_start(Start {
             claim: None,
             rebase: None,
             work,
@@ -1122,7 +1144,7 @@ impl Plan {
     }
 
     fn claim_and_start(&mut self, item: Item, work: Work) {
-        self.starts.push(Start {
+        self.push_start(Start {
             claim: Some(item),
             rebase: None,
             work,
@@ -1130,11 +1152,25 @@ impl Plan {
     }
 
     fn start_rebase(&mut self, work: Work, rebase: TriedRebase) {
-        self.starts.push(Start {
+        self.push_start(Start {
             claim: None,
             rebase: Some(rebase),
             work,
         });
+    }
+
+    /// A start that a file in `unusable` holds is neither claimed nor
+    /// started, and its item waits for the file.
+    fn push_start(&mut self, start: Start) {
+        let waits: Vec<Wait> = holding(self.unusable, &RunKind::Stage(start.work.kind()))
+            .into_iter()
+            .map(|file| Wait::RepositoryFile(file.clone()))
+            .collect();
+        if waits.is_empty() {
+            self.starts.push(start);
+        } else {
+            self.wait_all(start.work.subject().number(), waits);
+        }
     }
 
     /// Also returns the room left.

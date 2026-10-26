@@ -3,6 +3,7 @@ mod job_log;
 pub mod local;
 pub mod rate_limit;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -287,6 +288,16 @@ impl AnyItem {
     }
 }
 
+/// A file's contents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Blob {
+    Text(String),
+    /// Not UTF-8 text.
+    Binary,
+    /// Too large for the store to give.
+    TooLarge,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewIssue {
     pub title: String,
@@ -352,6 +363,9 @@ pub trait Store: Send + Sync {
     /// The contents of `path` at the head of `branch`, or `None` when it has
     /// no such file.
     async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>>;
+    /// Each file of `paths` at the head of `branch`, by its path, leaving out
+    /// the paths at which it has no file.
+    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>>;
     /// The names of the files directly in the directory `dir` at the head of
     /// `branch`: none when it has no such directory.
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;

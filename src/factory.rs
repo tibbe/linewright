@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::TimeDelta;
 use tokio::task::{Id, JoinSet};
 use tokio::time::Instant;
@@ -25,6 +25,7 @@ use crate::reconcile::{
     Action, Automations, CutItem, Discard, DoneRun, Drain, FailedMerge, LiveRun, Memory, Policy,
     Subject, Work, WorkKind, held_back_by_drain, hold_note, reconcile,
 };
+use crate::repo_files::{RepoLayer, Unusable, holding};
 use crate::run::{self, AutomationEnd, Shell};
 use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::secrets::Secrets;
@@ -164,6 +165,9 @@ struct Kept {
     snapshot: Arc<Snapshot>,
     taken_at: Timestamp,
     read_at: HashMap<Item, Timestamp>,
+    /// Linewright's files in the repository, as the last reconcile read
+    /// them: the runs it starts work from them.
+    repo: Arc<RepoLayer>,
 }
 
 impl Kept {
@@ -318,12 +322,14 @@ impl Factory {
             .snapshot(now - shell.policy.spec_lookback)
             .await
             .context("taking a snapshot")?;
+        let repo = self.read_repo_files().await?;
         self.memory.ended_cuts.clear();
         self.written.clear();
         let kept = Kept {
             snapshot: Arc::new(snapshot),
             taken_at: now,
             read_at: HashMap::new(),
+            repo,
         };
         let defined = self.automations().await;
         Ok(self.reconcile(kept, defined, now).await)
@@ -360,6 +366,7 @@ impl Factory {
         read.extend(read_all(snapshot, shell, others, window_opened).await?);
         kept.read_at
             .extend(read.into_iter().map(|item| (item, now)));
+        kept.repo = self.read_repo_files().await?;
         self.written.clear();
         Ok(self.reconcile(kept, vec![], now).await)
     }
@@ -484,6 +491,7 @@ impl Factory {
             in_flight,
             automations: self.automation_files.clone(),
             last_scheduled_runs: self.last_scheduled_runs.clone(),
+            unusable: kept.repo.unusable.clone(),
         })
     }
 
@@ -535,6 +543,7 @@ impl Factory {
             &automations,
             now,
             &self.shell.policy,
+            &kept.repo.unusable,
         );
         let mut planned_draining = self.memory.drain.is_some();
         let mut next = 0;
@@ -560,6 +569,27 @@ impl Factory {
         actions
     }
 
+    /// Linewright's files on the default branch as they are now, each that
+    /// cannot be used logged.
+    async fn read_repo_files(&self) -> Result<Arc<RepoLayer>> {
+        let shell = &self.shell;
+        let repo = RepoLayer::read(
+            shell.store.as_ref(),
+            &shell.settings.default_branch,
+            &shell.operator_briefs,
+        )
+        .await
+        .context("reading Linewright's files in the repository")?;
+        for Unusable { file, .. } in &repo.unusable {
+            warn!(
+                path = file.path,
+                error = file.error,
+                "a file of the repository's cannot be used: the runs that read it wait"
+            );
+        }
+        Ok(Arc::new(repo))
+    }
+
     pub async fn run_automation(&self, name: &AutomationName) -> Result<()> {
         let shell = &self.shell;
         let branch = &shell.settings.default_branch;
@@ -574,8 +604,18 @@ impl Factory {
             })?;
         let automation =
             automation::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
+        let repo = self.read_repo_files().await?;
+        if let Some(file) = holding(&repo.unusable, &RunKind::Automation(&automation)).first() {
+            bail!(
+                "the automation `{name}` cannot run until the default branch fixes {}, which \
+                 Linewright cannot use: {}",
+                file.path,
+                file.error
+            );
+        }
         run_and_log(
             shell,
+            &repo,
             &automation,
             begin_automation(shell, name, StartedBy::Hand)?,
             self.ends.stopping(),
@@ -741,7 +781,7 @@ impl Factory {
                     Subject::Issue(_) | Subject::SpecChange(_) => None,
                 };
                 let ctx = run::Ctx {
-                    with: shell.run_with(RunKind::Stage(work.kind())),
+                    with: shell.run_with(&kept.repo, RunKind::Stage(work.kind())),
                     as_of: kept.as_of(work),
                     reworked,
                     cancel: cancel.clone(),
@@ -940,11 +980,12 @@ impl Factory {
                 let in_flight = running.in_flight();
                 let cancel = CancellationToken::new();
                 let shell = self.shell.clone();
+                let repo = kept.repo.clone();
                 let handle = self.runs.spawn({
                     let (automation, cancel) = (automation.clone(), cancel.clone());
                     // A run that fails is logged; there is nothing to hand back.
                     async move {
-                        let _ = run_and_log(&shell, &automation, running, cancel).await;
+                        let _ = run_and_log(&shell, &repo, &automation, running, cancel).await;
                     }
                 });
                 self.live.insert(
@@ -987,6 +1028,7 @@ fn begin_automation(
 
 async fn run_and_log(
     shell: &Shell,
+    repo: &RepoLayer,
     automation: &Automation,
     running: runs::Running,
     cancel: CancellationToken,
@@ -994,7 +1036,7 @@ async fn run_and_log(
     let name = &automation.name;
     info!(automation = %name, run = %running.id(), "automation run started");
     let ctx = run::Ctx {
-        with: shell.run_with(RunKind::Automation(automation)),
+        with: shell.run_with(repo, RunKind::Automation(automation)),
         as_of: shell.clock.now(),
         reworked: None,
         cancel,

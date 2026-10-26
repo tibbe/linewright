@@ -15,6 +15,7 @@ use crate::reconcile::{
     Automations, Decisions, Drain, LiveRun, Memory, NextRun, NotSpecChange, Policy, Relabel,
     SpecChange, Wait, decisions, next_run, open_pull_for, spec_change, worked_pulls,
 };
+use crate::repo_files::{FileError, Unusable};
 use crate::runs::{
     InFlight, Recorded, RunId, RunInFlight, RunOf, StartedBy, describe_start, last_of_automation,
 };
@@ -42,6 +43,9 @@ pub struct View {
     pub in_flight: Vec<InFlight>,
     pub automations: AutomationFiles,
     pub last_scheduled_runs: LastScheduledRuns,
+    /// The files of the repository's Linewright cannot use, as the last
+    /// reconcile read them.
+    pub unusable: Vec<Unusable>,
 }
 
 impl View {
@@ -58,6 +62,7 @@ impl View {
             &automations,
             now,
             &self.policy,
+            &self.unusable,
         )
     }
 
@@ -915,6 +920,11 @@ pub(crate) fn describe_wait(wait: &Wait) -> Phrase {
                 .text(", before ")
                 .item(*pull_request)
                 .text(" merges")
+        }
+        Wait::RepositoryFile(FileError { path, error }) => {
+            Phrase::from("the default branch to fix ")
+                .code(path.clone())
+                .text(format!(", which Linewright cannot use: {error}"))
         }
     }
 }

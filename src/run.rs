@@ -21,6 +21,7 @@ use crate::prompts::{self, DesignOf, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
+use crate::repo_files::RepoLayer;
 use crate::results::{
     self, AutomationIssueLabel, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork,
     PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
@@ -34,7 +35,7 @@ use crate::store::{
 };
 use crate::tracking::{self, FiledTicket};
 use crate::transcript;
-use crate::work_settings::{self, Environments, RunKind, SessionSettings, WorkSettings};
+use crate::work_settings::{Environments, RunKind, SessionSettings, WorkSettings};
 
 pub(crate) struct Shell {
     pub store: Arc<dyn Store>,
@@ -63,15 +64,12 @@ pub(crate) struct RunWith {
 }
 
 impl Shell {
-    /// What a run of `of` works from if it starts now.
-    pub(crate) fn run_with(&self, of: RunKind) -> RunWith {
+    /// What a run of `of` works from if it starts now, with the
+    /// repository's files as `repo` holds them.
+    pub(crate) fn run_with(&self, repo: &RepoLayer, of: RunKind) -> RunWith {
         RunWith {
-            briefs: self.operator_briefs.briefs(),
-            settings: self.work.for_run(
-                of,
-                &work_settings::RepoSettings::default(),
-                &self.environments,
-            ),
+            briefs: repo.briefs.clone(),
+            settings: self.work.for_run(of, &repo.settings, &self.environments),
         }
     }
 

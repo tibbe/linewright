@@ -2452,3 +2452,33 @@ async fn following_a_transcript_passes_through_a_proxy_unbuffered_unchanged_and_
     drop(agent);
     answering.stop().await;
 }
+
+#[tokio::test]
+async fn explain_names_the_file_of_the_repositorys_a_ticket_waits_for_and_its_error() {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    let ticket = open_ticket(&world, "Gadgets");
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(".linewright/config.toml", "max-runs = 9\n")],
+            "Configure Linewright",
+        )
+        .await
+        .unwrap();
+    let answering = Answering::start(world, false).await;
+
+    let output = answering.lw(&["explain", &ticket.0.to_string()]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert!(
+        output.stdout.lines().any(|line| line
+            == "waiting for: the default branch to fix `.linewright/config.toml`, which \
+                Linewright cannot use: the setting `max-runs` is the operator's: the \
+                repository's file holds `model`, `effort`, `session-timeout`"),
+        "{}",
+        output.stdout
+    );
+    answering.stop().await;
+}

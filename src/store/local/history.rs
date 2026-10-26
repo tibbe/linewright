@@ -16,7 +16,7 @@ pub struct NewCommit<'a> {
     pub default_branch: &'a str,
     pub author: &'a str,
     pub message: &'a str,
-    pub files: &'a [(&'a str, &'a str)],
+    pub files: &'a [(&'a str, &'a [u8])],
 }
 
 /// Writes `commit` and moves its branch to it, returning the commit.
@@ -61,7 +61,7 @@ fn fast_import_stream(commit: &NewCommit<'_>, parent: Option<&str>) -> Vec<u8> {
     let identity = format!("{author} <{author}@example.com> now");
     stream.extend(format!("commit {}\nmark :1\n", branch_ref(commit.branch)).bytes());
     stream.extend(format!("author {identity}\ncommitter {identity}\n").bytes());
-    add_data(&mut stream, commit.message);
+    add_data(&mut stream, commit.message.as_bytes());
     if let Some(parent) = parent {
         stream.extend(format!("from {parent}\n").bytes());
     }
@@ -74,9 +74,9 @@ fn fast_import_stream(commit: &NewCommit<'_>, parent: Option<&str>) -> Vec<u8> {
 }
 
 /// Adds a fast-import `data` command carrying `data` to `stream`.
-fn add_data(stream: &mut Vec<u8>, data: &str) {
+fn add_data(stream: &mut Vec<u8>, data: &[u8]) {
     stream.extend(format!("data {}\n", data.len()).bytes());
-    stream.extend(data.bytes());
+    stream.extend(data);
     stream.push(b'\n');
 }
 
