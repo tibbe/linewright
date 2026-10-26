@@ -22,6 +22,7 @@ mod pipeline;
 mod push_protection;
 mod rate_limit;
 mod reconcile;
+mod rendered_prompts;
 mod refresh;
 mod replay;
 mod required_label;
