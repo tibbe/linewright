@@ -58,5 +58,5 @@ seeded from the case.
 
 ## Briefs
 
-Briefs are files Linewright reads at startup from the `briefs` directory
-setting, so a change needs no rebuild.
+The `briefs` directory setting is the operator's layer of the briefs
+([Briefs](operation.md#briefs)), so a change needs no rebuild.

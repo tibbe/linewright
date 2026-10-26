@@ -78,10 +78,12 @@ once.
 
 ## Configuration
 
-Every setting is a flag, an environment variable (`LINEWRIGHT_<FLAG>`) or a
-key in a TOML config file (`--config`, default `linewright.toml` in the
-working directory), with precedence flag, then environment, then file, then
-default.
+Every setting is a key in the operator's TOML config file (`--config`,
+default `linewright.toml` in the working directory) and, but for a stage's, a
+flag or an environment variable (`LINEWRIGHT_<FLAG>`); some are also keys in
+the repository's file ([The repository's file](#the-repositorys-file)).
+Precedence: flag, then environment, then the repository's file, then the
+operator's file, then default.
 
 | setting                                      | default                                     |
 | -------------------------------------------- | ------------------------------------------- |
@@ -94,8 +96,9 @@ default.
 | `spec-lookback`                              | 7d                                          |
 | `max-runs`                                   | 4                                           |
 | `work-dir`                                   | `linewright/` under the user's data directory |
-| `model`                                      | one model for every stage                   |
-| `briefs` (a directory)                       | the briefs Linewright ships                 |
+| `model`                                      | the harness's choice                        |
+| `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | the harness's choice                  |
+| `briefs` (the operator's layer, [Briefs](#briefs)) | none                                  |
 | `session-env` (variable names)               | none                                        |
 | `secrets` (variable names)                   | none                                        |
 | `session-timeout`                            | 60m                                         |
@@ -109,11 +112,18 @@ default.
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
+- **A wrong value.** A setting whose value is not one it takes, such as an
+  `effort` outside its levels or an unknown key in a stage's table, is an
+  error: at startup in the operator's layers
+  ([Startup](repository.md#startup)), and a hold in the repository's file
+  ([Linewright's files](repository.md#linewrights-files)).
 - **A feature's settings.** A setting that only one feature uses is an error
   at startup when it is not at its default while that feature is off
   ([Startup](repository.md#startup)): `webhook-address` without the webhook
   secret, `ui-hosts` with `ui-address` empty, `merge-method` without
   `auto-merge`.
+- **Model and effort.** A model or effort set for a session wins over what
+  the session's environment and the harness's own settings say.
 - **Credentials.** They are the environment variables their tools already
   use, so an existing setup is picked up: `GITHUB_TOKEN` or `GH_TOKEN` as
   `gh` reads them, and `ANTHROPIC_API_KEY`. The webhook secret has no such
@@ -129,6 +139,57 @@ default.
   3339 (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC
   (`2026-10-14`), and a duration as the settings' defaults write one, such as
   `90s`, `30m`, `6h` or `7d`.
+
+## Stage settings
+
+A stage's sessions take the whole-pipeline settings, except where the
+stage's own table sets them.
+
+| setting           | in a stage's table                   |
+| ----------------- | ------------------------------------ |
+| `model`           | replaces the whole pipeline's        |
+| `effort`          | replaces the whole pipeline's        |
+| `session-timeout` | replaces the whole pipeline's        |
+| `session-env`     | adds its names to the whole pipeline's |
+
+- **The tables.** A stage's settings are a table in a config file,
+  `[stage.NAME]` with the stage's name under [Runs](runs.md), such as
+  `[stage.implement]`, with the settings above as its keys. A stage's
+  settings have no flag or variable.
+- **Combining.** A setting's value is a stage's table's where any layer sets
+  one, else the whole pipeline's, each by the layers' precedence
+  ([Configuration](#configuration)). A list holds every name set at any
+  layer.
+
+## The repository's file
+
+The repository configures the work its agents do in `.linewright/config.toml`
+on its default branch, the same TOML as the operator's file.
+
+- **Its keys.** `model`, `effort` and `session-timeout`, for the whole
+  pipeline and in stage tables. Any other key is an error: the deployment's
+  settings are the operator's, and so are `session-env` and `secrets`,
+  because they hand out what Linewright's environment holds.
+- **When it is read, and a file with an error.** As for every file of
+  Linewright's in the repository
+  ([Linewright's files](repository.md#linewrights-files)).
+
+## Briefs
+
+A session's briefs come in three layers, each a directory laid out as the
+briefs Linewright ships: the repository's `.linewright/briefs/`, the
+operator's `briefs` directory and Linewright's own. Each file is taken from
+the first layer that has it, the parts that carry the result contract
+included.
+
+- **Placeholders.** A prompt's placeholders are fixed: Linewright refuses a
+  prompt that lacks one or holds one it doesn't know.
+- **The result contract.** Each prompt's result contract, the output its
+  session ends with, is a part of its own filled into the prompt's
+  `{{output}}` placeholder, so a prompt written over keeps the contract
+  Linewright reads.
+- **Logged at startup.** Linewright logs which files the operator's layer
+  provides.
 
 ## Sessions' environment
 
@@ -200,7 +261,12 @@ image the operator builds with those in it.
 ## Out of scope
 
 - One container per run, instead of agents as processes beside the manager.
-- Giving some sessions credentials that others don't, such as only triage's.
+- Caps on what the repository's file may set, such as the models it may
+  choose.
+- The repository's file naming the variables a stage's sessions get, even
+  from those the operator's `session-env` names.
+- The settings the pipeline reads between runs, such as `auto-merge` or
+  `max-runs`, in the repository's file.
 - Keeping sessions from, or redacting, credentials stored where Linewright's
   user can read them, such as `~/.config/gh/hosts.yml`, `~/.aws/credentials`
   or the harness's own login. A container, or a user of its own that holds no

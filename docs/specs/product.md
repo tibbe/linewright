@@ -113,5 +113,4 @@ flowchart LR
 
 Direction, not the first version:
 
-- Per-repository overrides of the agents' briefs.
 - Forges other than GitHub.

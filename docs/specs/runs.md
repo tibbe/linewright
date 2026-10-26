@@ -99,7 +99,9 @@ A run ends in one of these outcomes, each with its name in JSON.
   pushes nothing either.
 - **Restarts.** A restart leaves the runs in flight interrupted.
 - **Kept.** Runs are kept across restarts, with their outcomes and their
-  sessions' transcripts.
+  sessions' transcripts, and with each session's model and effort and where
+  each of its settings and brief files came from: the repository, the
+  operator or Linewright's own.
 
 ## Usage limit
 

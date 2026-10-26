@@ -43,19 +43,20 @@ lives in the store and nowhere else.
 
 ## Agent sessions
 
-The harness is Claude Code. Each stage's agent works in one headless session,
-and what it does depends only on its brief, the repository and what it reads
+The harness is Claude Code. Each run's agent works in headless sessions, and
+what it does depends only on its brief, the repository and what it reads
 during the session.
 
-- **One session per stage**, each in its own clone, without permission prompts,
-  behind one harness interface. The model is configuration.
+- **Each session is in its own clone**, without permission prompts, behind
+  one harness interface. The model and effort are configuration, set for the
+  session; its sub-agents' the harness settles.
 - **Isolation.** Sessions running at once cannot disturb each other, and a
   session never depends on what an earlier session left behind or on the host's
   user-level setup. Isolation is of what sessions can observe of each other, not
   of where they run.
-- **Briefs are files read at startup**: the skills ([Skills](#skills)) and
-  the prompts Linewright sends a session, each a template holding its task
-  and result contract.
+- **Briefs are files, in layers** ([Briefs](operation.md#briefs)): the
+  skills ([Skills](#skills)) and the prompts Linewright sends a session, each
+  a template holding its task and result contract.
 - **A session's skills and tools.** A session or sub-agent has Linewright's
   skills and the repository's own, and only the tools its work needs.
 - **No person takes part in a session.** A decision an original skill puts to a
@@ -180,8 +181,9 @@ configured in layers.
 - **The base image.** A published base image (`lw`, the harness, and the tools
   coding agents expect, such as `git`, `gh`, `jq`, `python3` and `ripgrep`) is
   the starting point for the operator's image.
-- **Configuration is layered**: flags, `LINEWRIGHT_*` environment variables, a
-  TOML file, defaults, parsed once into one typed value.
+- **Configuration is layered**: the operator's flags, `LINEWRIGHT_*`
+  environment variables and TOML file, the repository's TOML file, and
+  defaults. The operator's layers are parsed once into one typed value.
 - **Credentials come from the environment only.**
 - **Signals from a supervisor.** SIGTERM drains
   ([Stopping](operation.md#stopping)).

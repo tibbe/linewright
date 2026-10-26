@@ -41,6 +41,11 @@ _Avoid_: conversation, task
 The record of everything a session said and did.
 _Avoid_: trace, session log, trajectory
 
+**Brief**:
+What a session works from: the prompts it is sent, with its task and result
+contract, and its skills.
+_Avoid_: system prompt, task description, playbook, template
+
 ### Work
 
 **Item**:
@@ -122,6 +127,12 @@ a stated reset time.
 _Avoid_: rate limit, session limit, quota
 
 ### Operation
+
+**Layer**:
+One of the sources a setting or a brief file can come from, ranked so that
+the first that has it wins: the repository's, the operator's or Linewright's
+own.
+_Avoid_: scope, level, tier, source, overlay, override, drop-in
 
 **Drain**:
 The ending of `serve` that begins no new work and lets the runs in flight

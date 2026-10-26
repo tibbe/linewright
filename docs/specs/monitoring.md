@@ -63,6 +63,7 @@ order:
 | the last poll and the next                     | always                 |
 | the polls failed since the last that succeeded, with the last error | while there are any |
 | the usage limit and when it resets             | while one is in force  |
+| a file of the repository's Linewright cannot use, and its error ([Linewright's files](repository.md#linewrights-files)) | while there is one |
 | the drain, since when, and its deadline if set | while one is under way |
 | the runs in flight out of `max-runs`           | always                 |
 | the time of the last webhook delivery accepted | with webhooks on       |
@@ -93,7 +94,9 @@ order:
 `runs` lists every run, newest first, including runs that started no session:
 its run ID, item, stage, start, duration and outcome.
 
-- **One item.** `runs N` lists #N's.
+- **One item.** `runs N` lists #N's, each with its sessions' model and
+  effort; `--json` also gives where each setting and brief file came from,
+  as the record holds it ([Runs](runs.md#ending)).
 - **Narrowing.** `--stage`, `--since` and `--limit` narrow the list.
   `--since` keeps the runs that started at or after a time, or a duration
   ago.

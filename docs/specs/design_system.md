@@ -109,6 +109,7 @@ when `ui-address` is empty.
 | a webhook delivery refused since the last one accepted | the server page |
 | a poll that failed since the last that succeeded | the server page |
 | an automation file that does not parse   | the automations page |
+| a file of the repository's Linewright cannot use | the server page |
 | an automation whose last run failed      | that run         |
 
 ### The board
@@ -224,7 +225,8 @@ A list of runs is a table with a row per run, newest first.
 
 ### The run page
 
-The run page shows a run's transcript as `logs` shows it.
+The run page shows a run's transcript as `logs` shows it, under each
+session's model and effort and where its settings and brief files came from.
 
 - **Folding.** A tool call's line opens on click to the tool's full input and
   result; a call that failed starts open. A sub-agent's work starts folded to
@@ -257,6 +259,7 @@ The server page shows the facts about Linewright itself.
 | the last poll and the next                                      | always                 |
 | the polls failed since the last that succeeded, with the last error | while there are any |
 | the usage limit and when it resets                              | while one is in force  |
+| a file of the repository's Linewright cannot use, and its error | while there is one     |
 | the drain, since when, and its deadline if set                  | while one is under way |
 | the runs in flight out of `max-runs`                            | always                 |
 | the time of the last webhook delivery accepted                  | with webhooks on       |

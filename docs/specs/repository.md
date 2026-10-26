@@ -54,6 +54,25 @@ it.
   setup does not, and sessions keep no memory of their own: what later
   sessions should know belongs in the repository.
 
+## Linewright's files
+
+The repository holds, under `.linewright/` on its default branch, what it
+tells Linewright: its automations in `automations/`
+([Automations](automations.md)), its settings for the work in `config.toml`
+([The repository's file](operation.md#the-repositorys-file)) and its briefs
+in `briefs/` ([Briefs](operation.md#briefs)).
+
+- **When they are read.** As a run starts, from the default branch as it is
+  then, so that a change takes effect once merged and every run on a branch
+  works from the same files whatever the branch holds; the automation files
+  are read at each poll instead ([Automations](automations.md)).
+- **A file with an error.** A file Linewright cannot use, such as a config
+  with an unknown key or a prompt whose placeholders are wrong, holds the
+  runs that would read it: a config every run, a prompt the runs it is sent
+  to. The items wait, and `status` and `explain` name the file and the
+  error, until the default branch fixes it. An automation file with an error
+  is skipped instead ([Automations](automations.md)).
+
 ## Labels
 
 Linewright creates any of its labels that are missing at startup, except the
@@ -174,9 +193,11 @@ Linewright exits with an error at startup when it cannot work.
   set, can read it; with `--auto-merge`, the repository allows the merge
   method and the update method keeps the branch mergeable with it
   (`update-branch` `merge` cannot keep a branch rebase-mergeable); with
-  webhooks on, `serve` can listen on `webhook-address`; every setting of a
-  feature that is off is at its default
-  ([Configuration](operation.md#configuration)); and, unless `ui-address` is
-  empty, `serve` can listen on it.
+  webhooks on, `serve` can listen on `webhook-address`; every setting's
+  value is one it takes, and every setting of a feature that is off is at
+  its default ([Configuration](operation.md#configuration)); every prompt in
+  the operator's briefs has its placeholders
+  ([Briefs](operation.md#briefs)); and, unless `ui-address` is empty,
+  `serve` can listen on it.
 - **One Linewright per repository.** A `serve` started for a repository whose
   `serve` already runs on the same host exits with an error saying so.
