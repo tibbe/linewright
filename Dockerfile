@@ -51,7 +51,7 @@ FROM debian:${DEBIAN_RELEASE}-slim AS runtime
 RUN --mount=type=bind,from=tools,source=/gh.deb,target=/tmp/gh.deb \
     apt-get update \
     && apt-get install -y --no-install-recommends \
-        bash ca-certificates git python3 tini /tmp/gh.deb \
+        bash ca-certificates git jq python3 ripgrep tini /tmp/gh.deb \
     && rm -rf /var/lib/apt/lists/*
 COPY --link --from=tools /claude /usr/local/bin/claude
 # Fails the build when a pin did not take effect.

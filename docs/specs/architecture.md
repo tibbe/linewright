@@ -173,8 +173,8 @@ Linewright runs on a host or in a container the operator builds, and is
 configured in layers.
 
 - **The base image.** A published base image (`lw`, the harness, and the tools
-  coding agents expect: `git`, `gh`, `python3`) is the starting point for
-  the operator's image.
+  coding agents expect, such as `git`, `gh`, `jq`, `python3` and `ripgrep`) is
+  the starting point for the operator's image.
 - **Configuration is layered**: flags, `LINEWRIGHT_*` environment variables, a
   TOML file, defaults, parsed once into one typed value.
 - **Credentials come from the environment only.**

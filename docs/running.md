@@ -37,8 +37,8 @@ in `linewright.toml`; `lw --help` lists them with their defaults.
 ## The container image
 
 The `Dockerfile` builds the base image, `ghcr.io/tibbe/linewright`: `lw`,
-Claude Code, `git`, `gh` and `python3` on Debian, without Node.js. Build your
-own image from it with your project's toolchain added.
+Claude Code, `git`, `gh`, `jq`, `python3` and `ripgrep` on Debian, without
+Node.js. Build your own image from it with your project's toolchain added.
 
 The image is published for `linux/amd64` and `linux/arm64` under one tag,
 which pulls the host's architecture. If your image downloads tools built for
