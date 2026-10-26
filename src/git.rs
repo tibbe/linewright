@@ -1,6 +1,8 @@
 use std::path::Path;
+use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::domain::{UpdateMethod, UpdateRule};
@@ -12,15 +14,32 @@ pub async fn git(dir: &Path, args: &[&str]) -> Result<String> {
 }
 
 pub async fn git_with(dir: &Path, args: &[&str], env: &GitEnv) -> Result<String> {
-    let output = Command::new("git")
+    git_input(dir, args, env, &[]).await
+}
+
+/// Runs git with `input` piped to its standard input.
+pub async fn git_input(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) -> Result<String> {
+    let mut child = Command::new("git")
         .args(args)
         .current_dir(dir)
         .envs(env.iter().map(|(k, v)| (k, v)))
         .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .output()
-        .await
+        .spawn()
         .with_context(|| format!("running git {}", args.join(" ")))?;
+    let mut stdin = child.stdin.take().context("git's stdin is piped")?;
+    let (written, output) = tokio::join!(
+        async move {
+            let written = stdin.write_all(input).await;
+            drop(stdin);
+            written
+        },
+        child.wait_with_output()
+    );
+    let output = output.with_context(|| format!("running git {}", args.join(" ")))?;
     if !output.status.success() {
         bail!(
             "git {} failed: {}",
@@ -28,6 +47,7 @@ pub async fn git_with(dir: &Path, args: &[&str], env: &GitEnv) -> Result<String>
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
+    written.with_context(|| format!("writing to git {}", args.join(" ")))?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -169,16 +189,6 @@ async fn update_with(dir: &Path, upstream: &str, method: UpdateMethod) -> Result
     }
 }
 
-pub async fn changed_files(dir: &Path, base: &str) -> Result<Vec<String>> {
-    Ok(
-        git(dir, &["diff", "--name-only", &format!("{base}...HEAD")])
-            .await?
-            .lines()
-            .map(str::to_string)
-            .collect(),
-    )
-}
-
 pub async fn commits_ahead(dir: &Path, base: &str) -> Result<usize> {
     Ok(git(dir, &["rev-list", "--count", &format!("{base}..HEAD")])
         .await?
@@ -278,7 +288,9 @@ impl InProgress {
             Backend::Apply => read("original-commit").await?.trim().to_string(),
         };
         let ours = git(dir, &["commit-tree", work, "-p", "HEAD", "-m", "Work"]).await?;
-        let tree = merge_trees(dir, &replayed, ours.trim(), &original).await?;
+        let tree = match merge_tree(dir, Some(&replayed), ours.trim(), &original).await? {
+            Merged::Clean(tree) | Merged::Conflicted(tree) => tree,
+        };
         Ok((original, tree))
     }
 
@@ -305,31 +317,50 @@ fn last_replayed(done: &str) -> Option<&str> {
     })
 }
 
-/// The tree that merges `theirs` into `ours` as of `base`, conflicts marked
-/// in the files.
-async fn merge_trees(dir: &Path, base: &str, ours: &str, theirs: &str) -> Result<String> {
-    let base = format!("--merge-base={base}");
-    let args = ["merge-tree", "--write-tree", &base, ours, theirs];
+/// The tree a merge writes, as it writes it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Merged {
+    Clean(String),
+    /// The tree with the conflicts marked in the files.
+    Conflicted(String),
+}
+
+/// The tree that merges `theirs` into `ours` as of `base`, or of their merge
+/// base when there is none
+/// (<https://git-scm.com/docs/git-merge-tree>).
+pub(crate) async fn merge_tree(
+    dir: &Path,
+    base: Option<&str>,
+    ours: &str,
+    theirs: &str,
+) -> Result<Merged> {
+    let base = base.map(|base| format!("--merge-base={base}"));
+    let mut args = vec!["merge-tree", "--write-tree"];
+    args.extend(base.as_deref());
+    args.extend([ours, theirs]);
     let output = Command::new("git")
-        .args(args)
+        .args(&args)
         .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .kill_on_drop(true)
         .output()
         .await
         .with_context(|| format!("running git {}", args.join(" ")))?;
     // Exit status 1 is a merge with conflicts, whose tree comes first all the
     // same.
-    if !matches!(output.status.code(), Some(0 | 1)) {
-        bail!(
+    let merged: fn(String) -> Merged = match output.status.code() {
+        Some(0) => Merged::Clean,
+        Some(1) => Merged::Conflicted,
+        _ => bail!(
             "git {} failed: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
+        ),
+    };
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .next()
-        .map(str::to_string)
+        .map(|tree| merged(tree.to_string()))
         .context("git merge-tree wrote no tree")
 }
 

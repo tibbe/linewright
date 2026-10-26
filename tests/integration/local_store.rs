@@ -3,7 +3,8 @@ use crate::common;
 use common::*;
 use linewright::clock::Clock;
 use linewright::domain::{
-    Assignment, CheckState, IssueCloseReason, Login, Number, Pull, ReviewState, Timestamp,
+    Assignment, CheckState, IssueCloseReason, Login, MergeMethod, Number, Pull, ReviewState,
+    Timestamp,
 };
 use linewright::store::Store;
 
@@ -237,4 +238,39 @@ async fn closing_a_pull_request_moves_when_it_was_last_updated() {
     world.store.close_pull_as(pr).unwrap();
 
     assert!(world.store.snapshot_pull(pr).await.updated_at > before);
+}
+
+#[tokio::test]
+async fn a_pull_request_merged_by_rebase_puts_its_changes_on_the_default_branch() {
+    let world = World::new().await;
+    let issue = world
+        .store
+        .open_issue("maintainer", "Do the thing", "Please.", &[]);
+    let pr = world.persons_pull_closing(issue).await;
+    world
+        .store
+        .merge_change(
+            "maintainer",
+            "Do another thing",
+            "Elsewhere.",
+            &[("src/other.txt", "other\n")],
+        )
+        .await
+        .unwrap();
+    let head = world.store.snapshot_pull(pr).await.head_sha;
+
+    world
+        .store
+        .merge(pr, &head, MergeMethod::Rebase)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        world.store.file("main", "src/thing.txt").await.unwrap(),
+        "thing\n"
+    );
+    assert_eq!(
+        world.store.file("main", "src/other.txt").await.unwrap(),
+        "other\n"
+    );
 }

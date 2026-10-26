@@ -19,7 +19,11 @@ use crate::domain::{
     Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread, TicketBranch,
     TicketBranchName, Timestamp, closed_within, closing_references, label,
 };
-use crate::git;
+use crate::git::{self, Merged};
+
+mod history;
+
+use history::{MergeOf, NewCommit, Replayed};
 
 pub struct Seed {
     pub default_branch: String,
@@ -200,50 +204,20 @@ impl LocalStore {
         files: &[(&str, &str)],
         message: &str,
     ) -> Result<String> {
-        let work = tempfile::tempdir()?;
-        let dir = work.path().join("clone");
         let default_branch = self.state().default_branch.clone();
-        let url = self.url();
-        let empty = git::git(
+        let commit = history::write_commit(
             &self.repository(),
-            &["rev-parse", "--verify", "--quiet", &default_branch],
-        )
-        .await
-        .is_err();
-        if empty {
-            git::git(work.path(), &["init", "--quiet", "-b", branch, "clone"]).await?;
-            git::git(&dir, &["remote", "add", "origin", &url]).await?;
-        } else {
-            let has_branch = git::git(
-                &self.repository(),
-                &["rev-parse", "--verify", "--quiet", branch],
-            )
-            .await
-            .is_ok();
-            git::clone(
-                &url,
-                &dir,
-                if has_branch { branch } else { &default_branch },
-                &[],
-            )
-            .await?;
-            git::create_branch(&dir, branch).await?;
-        }
-        git::set_identity(&dir, author, &format!("{author}@example.com")).await?;
-        for (path, contents) in files {
-            let path = dir.join(path);
-            tokio::fs::create_dir_all(path.parent().expect("files live in a directory")).await?;
-            tokio::fs::write(&path, contents).await?;
-        }
-        git::git(&dir, &["add", "--all"]).await?;
-        git::git(&dir, &["commit", "--quiet", "-m", message]).await?;
-        git::git(
-            &dir,
-            &["push", "--quiet", "origin", &format!("HEAD:{branch}")],
+            NewCommit {
+                branch,
+                default_branch: &default_branch,
+                author,
+                message,
+                files,
+            },
         )
         .await?;
         self.record_push(branch, &Login::new(author));
-        git::head(&dir).await
+        Ok(commit)
     }
 
     pub fn open_issue(&self, author: &str, title: &str, body: &str, labels: &[&str]) -> Number {
@@ -348,19 +322,8 @@ impl LocalStore {
 
     pub async fn import_bundle(&self, bundle: &Path, base: &str) -> Result<()> {
         let bundle = bundle.canonicalize()?;
-        let bundle = bundle.to_str().context("bundle paths are UTF-8")?;
-        git::git(
-            &self.repository(),
-            &["fetch", "--quiet", bundle, "refs/*:refs/case/*"],
-        )
-        .await?;
         let default_branch = self.state().default_branch.clone();
-        git::git(
-            &self.repository(),
-            &["update-ref", &format!("refs/heads/{default_branch}"), base],
-        )
-        .await?;
-        Ok(())
+        history::import_bundle(&self.repository(), &bundle, &default_branch, base).await
     }
 
     /// `merged` is a commit already in the repository.
@@ -373,23 +336,8 @@ impl LocalStore {
     ) -> Result<Number> {
         let default_branch = self.state().default_branch.clone();
         let before = self.rev(&default_branch).await?;
-        let files: Vec<String> = git::git(
-            &self.repository(),
-            &["diff", "--name-only", &before, merged],
-        )
-        .await?
-        .lines()
-        .map(str::to_string)
-        .collect();
-        git::git(
-            &self.repository(),
-            &[
-                "update-ref",
-                &format!("refs/heads/{default_branch}"),
-                merged,
-            ],
-        )
-        .await?;
+        let files = self.changed_files(&before, merged).await?;
+        history::move_ref(&self.repository(), &default_branch, merged, &before).await?;
         let now = self.now();
         let mut state = self.state();
         let number = state.take_number();
@@ -417,15 +365,7 @@ impl LocalStore {
         let default_branch = self.state().default_branch.clone();
         let before = self.rev(&default_branch).await?;
         let after = self.commit(author, &branch, files, title).await?;
-        git::git(
-            &self.repository(),
-            &[
-                "update-ref",
-                &format!("refs/heads/{default_branch}"),
-                &after,
-            ],
-        )
-        .await?;
+        history::move_ref(&self.repository(), &default_branch, &after, &before).await?;
         let now = self.now();
         let mut state = self.state();
         let number = state.take_number();
@@ -459,42 +399,21 @@ impl LocalStore {
             )
         };
         let before = self.rev(&default_branch).await?;
-        let work = tempfile::tempdir()?;
-        let dir = work.path().join("clone");
-        git::clone(&self.url(), &dir, &default_branch, &[]).await?;
-        git::set_identity(&dir, by, &format!("{by}@example.com")).await?;
-        let head = format!("origin/{head_ref}");
-        match method {
-            MergeMethod::Merge => {
-                let message = format!("Merge pull request {pr} from {head_ref}");
-                git::git(
-                    &dir,
-                    &["merge", "--quiet", "--no-ff", "-m", &message, &head],
-                )
-                .await?;
-            }
-            MergeMethod::Squash => {
-                git::git(&dir, &["merge", "--quiet", "--squash", &head]).await?;
-                let message = format!("{title} ({pr})");
-                git::git(&dir, &["commit", "--quiet", "-m", &message]).await?;
-            }
-            MergeMethod::Rebase => {
-                git::git(&dir, &["checkout", "--quiet", "-B", "rebased", &head]).await?;
-                git::git(&dir, &["rebase", "--quiet", &default_branch]).await?;
-            }
-        }
-        git::git(
-            &dir,
-            &[
-                "push",
-                "--quiet",
-                "origin",
-                &format!("HEAD:{default_branch}"),
-            ],
+        let repo = self.repository();
+        let after = history::merge(
+            &repo,
+            MergeOf {
+                into: &default_branch,
+                before: &before,
+                head: &head_ref,
+                method,
+                by,
+                title: &title,
+                pr,
+            },
         )
         .await?;
-        let after = git::head(&dir).await?;
-        let files = git::changed_files(&dir, &before).await?;
+        let files = self.changed_files(&before, &after).await?;
         let now = self.now();
         let mut state = self.state();
         let record = state.pull_written(pr, now)?;
@@ -799,15 +718,21 @@ impl LocalStore {
         Ok(())
     }
 
-    fn url(&self) -> String {
-        self.repository().to_string_lossy().into_owned()
-    }
-
     async fn rev(&self, rev: &str) -> Result<String> {
         Ok(git::git(&self.repository(), &["rev-parse", rev])
             .await?
             .trim()
             .to_string())
+    }
+
+    async fn changed_files(&self, before: &str, after: &str) -> Result<Vec<String>> {
+        Ok(
+            git::git(&self.repository(), &["diff", "--name-only", before, after])
+                .await?
+                .lines()
+                .map(str::to_string)
+                .collect(),
+        )
     }
 
     fn record_push(&self, branch: &str, by: &Login) {
@@ -957,12 +882,12 @@ impl LocalStore {
         {
             return Ok(Mergeability::Clean);
         }
-        let merges = git::git(&repo, &["merge-tree", "--write-tree", default_branch, head]).await;
-        Ok(if merges.is_ok() {
-            Mergeability::Behind
-        } else {
-            Mergeability::Conflicting
-        })
+        Ok(
+            match git::merge_tree(&repo, None, default_branch, head).await? {
+                Merged::Clean(_) => Mergeability::Behind,
+                Merged::Conflicted(_) => Mergeability::Conflicting,
+            },
+        )
     }
 
     /// Whether the commits of `head` replay onto the default branch without
@@ -981,21 +906,18 @@ impl LocalStore {
         if up_to_date && merges.trim() == "0" {
             return Ok(Rebaseability::Rebaseable);
         }
-        let work = tempfile::tempdir()?;
-        let dir = work.path().join("clone");
-        git::clone(&self.url(), &dir, head, &[]).await?;
-        git::set_identity(&dir, "rebaser", "rebaser@example.com").await?;
-        let rebased = git::git(
-            &dir,
-            &["rebase", "--quiet", &format!("origin/{default_branch}")],
+        Ok(
+            match history::replay(&repo, default_branch, head, "rebaser").await? {
+                Replayed::Onto(_) => Rebaseability::Rebaseable,
+                Replayed::Conflict => Rebaseability::NotRebaseable,
+            },
         )
-        .await;
-        Ok(if rebased.is_ok() {
-            Rebaseability::Rebaseable
-        } else {
-            Rebaseability::NotRebaseable
-        })
     }
+}
+
+/// The URL of the local store's repository at `repo`.
+fn url(repo: &Path) -> Result<&str> {
+    repo.to_str().context("the local store's path is UTF-8")
 }
 
 impl State {
@@ -1708,7 +1630,7 @@ impl Store for LocalStore {
     }
 
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()> {
-        git::clone(&self.url(), dir, branch, &[]).await
+        git::clone(url(&self.repository())?, dir, branch, &[]).await
     }
 
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
@@ -1735,10 +1657,7 @@ impl Store for LocalStore {
     }
 
     async fn delete_branch(&self, branch: &str) -> Result<()> {
-        // Deleting a ref the repository lacks succeeds.
-        let refname = format!("refs/heads/{branch}");
-        git::git(&self.repository(), &["update-ref", "-d", &refname]).await?;
-        Ok(())
+        history::delete_branch(&self.repository(), branch).await
     }
 
     async fn add_label(&self, number: Number, label: &str) -> Result<()> {
