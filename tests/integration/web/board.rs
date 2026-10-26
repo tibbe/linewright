@@ -496,6 +496,18 @@ async fn a_card_paused_for_the_usage_limit_and_its_lanes_head_show_it_in_muted_t
     web.stop().await;
 }
 
+/// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
+/// Muted text.
+#[tokio::test]
+async fn a_cards_line_under_its_title_is_in_muted_text() {
+    let web = Web::start(with_a_board().await).await;
+
+    let html = web.page("/").await;
+
+    assert_in_muted_text(&html, "#board .card .line");
+    web.stop().await;
+}
+
 #[tokio::test]
 async fn a_card_with_a_card_status_shows_it_and_a_card_in_done_is_faded() {
     let world = with_a_finished_lane().await;

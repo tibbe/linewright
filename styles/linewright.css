@@ -131,7 +131,8 @@
     @apply bg-warning/20;
   }
 
+  /* Secondary text (docs/specs/web/design_system.md, Colour scheme). */
   .transcript :is(.thinking, .context, .event, .other, .brief) .text {
-    @apply text-base-content/60;
+    @apply text-muted;
   }
 }

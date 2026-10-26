@@ -103,6 +103,19 @@ async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_se
     );
 }
 
+/// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
+/// Muted text.
+#[tokio::test]
+async fn the_run_page_shows_a_sessions_ran_with_line_its_layers_and_each_entrys_time_in_muted_text()
+{
+    let (web, html) = run_page_of_implemented().await;
+
+    for selector in ["#s1 .ran", "#s1 .layers", "#transcript a.at"] {
+        assert_in_muted_text(&html, selector);
+    }
+    web.stop().await;
+}
+
 /// `docs/specs/monitoring.md`, logs, Lines; `docs/specs/design_system.md`,
 /// Time, Durations.
 #[tokio::test]

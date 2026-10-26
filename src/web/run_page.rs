@@ -267,7 +267,7 @@ impl RunView {
 /// files came from.
 fn ran_html(ran: Option<&Ran>) -> String {
     let said = format!(
-        r#"<p class="ran text-sm text-base-content/70">{}</p>"#,
+        r#"<p class="ran text-sm text-muted">{}</p>"#,
         html::escape(&runs::describe_ran(ran))
     );
     let Some(ran) = ran else {
@@ -292,7 +292,7 @@ fn ran_html(ran: Option<&Ran>) -> String {
         .map(|(path, layer)| item("prompt", path, layer.whose()))
         .collect();
     format!(
-        r#"{said}<div class="layers text-sm text-base-content/70"><ul class="ml-4">{settings}</ul><ul class="ml-4 font-mono">{prompts}</ul></div>"#
+        r#"{said}<div class="layers text-sm text-muted"><ul class="ml-4">{settings}</ul><ul class="ml-4 font-mono">{prompts}</ul></div>"#
     )
 }
 
@@ -379,7 +379,7 @@ fn stamp_html(id: &str, stamp: StampView) -> String {
         format!(r#" data-tip="{}""#, html::utc(at))
     });
     format!(
-        r##"<a class="at inline-block min-w-[4em] text-right text-base-content/60" href="#{id}"{tip}>{elapsed}</a>"##
+        r##"<a class="at inline-block min-w-[4em] text-right text-muted" href="#{id}"{tip}>{elapsed}</a>"##
     )
 }
 

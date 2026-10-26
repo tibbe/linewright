@@ -210,6 +210,25 @@ fn has_classes(element: ElementRef, classes: &[&str]) -> bool {
     })
 }
 
+/// Asserts that `selector` selects something in `html`, all of it in Muted
+/// text and in no translucent text colour: `docs/specs/web/design_system.md`,
+/// Colour scheme: secondary text is in Muted text, and a wash is never text.
+fn assert_in_muted_text(html: &Html, selector: &str) {
+    let selected = select(html, selector);
+    assert!(!selected.is_empty(), "{selector}");
+    for element in selected {
+        assert!(
+            has_classes(element, &["text-muted"])
+                && !element
+                    .value()
+                    .classes()
+                    .any(|class| class.starts_with("text-") && class.contains('/')),
+            "{}",
+            element.html()
+        );
+    }
+}
+
 /// Classes that would grow cut text in place on hover or on focus, moving
 /// what is around it.
 fn grows_in_place(element: ElementRef<'_>) -> Vec<&str> {
