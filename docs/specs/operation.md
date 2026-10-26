@@ -98,7 +98,7 @@ operator's file, then default.
 | `work-dir`                                   | `linewright/` under the user's data directory |
 | `model`                                      | the harness's choice                        |
 | `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | the harness's choice                  |
-| `briefs` (the operator's layer, [Briefs](#briefs)) | none                                  |
+| `prompts` (the operator's layer, [Prompts](#prompts)) | none                               |
 | `session-env` (variable names)               | none                                        |
 | `secrets` (variable names)                   | none                                        |
 | `session-timeout`                            | 60m                                         |
@@ -174,11 +174,11 @@ on its default branch, the same TOML as the operator's file.
   Linewright's in the repository
   ([Linewright's files](repository.md#linewrights-files)).
 
-## Briefs
+## Prompts
 
-A session's briefs come in three layers, each a directory laid out as the
-briefs Linewright ships: the repository's `.linewright/briefs/`, the
-operator's `briefs` directory and Linewright's own. Each file is taken from
+A session's prompts come in three layers, each a directory laid out as the
+prompts Linewright ships: the repository's `.linewright/prompts/`, the
+operator's `prompts` directory and Linewright's own. Each file is taken from
 the first layer that has it, the parts that carry the result contract
 included.
 
@@ -188,6 +188,10 @@ included.
   session ends with, is a part of its own filled into the prompt's
   `{{output}}` placeholder, so a prompt written over keeps the contract
   Linewright reads.
+- **Other files.** A file in a layer that is not one of Linewright's
+  prompts, hidden files aside, is an error: at startup in the operator's
+  layer ([Startup](repository.md#startup)), and a hold in the repository's
+  ([Linewright's files](repository.md#linewrights-files)).
 - **Logged at startup.** Linewright logs which files the operator's layer
   provides.
 
@@ -267,6 +271,8 @@ image the operator builds with those in it.
   from those the operator's `session-env` names.
 - The settings the pipeline reads between runs, such as `auto-merge` or
   `max-runs`, in the repository's file.
+- Layers of skills: the repository or the operator replacing Linewright's
+  skills.
 - Keeping sessions from, or redacting, credentials stored where Linewright's
   user can read them, such as `~/.config/gh/hosts.yml`, `~/.aws/credentials`
   or the harness's own login. A container, or a user of its own that holds no

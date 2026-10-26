@@ -95,7 +95,7 @@ order:
 its run ID, item, stage, start, duration and outcome.
 
 - **One item.** `runs N` lists #N's, each with its sessions' model and
-  effort; `--json` also gives where each setting and brief file came from,
+  effort; `--json` also gives where each setting and prompt file came from,
   as the record holds it ([Runs](runs.md#ending)).
 - **Narrowing.** `--stage`, `--since` and `--limit` narrow the list.
   `--since` keeps the runs that started at or after a time, or a duration

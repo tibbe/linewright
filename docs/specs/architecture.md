@@ -54,9 +54,8 @@ during the session.
   session never depends on what an earlier session left behind or on the host's
   user-level setup. Isolation is of what sessions can observe of each other, not
   of where they run.
-- **Briefs are files, in layers** ([Briefs](operation.md#briefs)): the
-  skills ([Skills](#skills)) and the prompts Linewright sends a session, each
-  a template holding its task and result contract.
+- **Briefs are files**: the skills ([Skills](#skills)) and the prompts, the
+  prompts in layers ([Prompts](operation.md#prompts)).
 - **A session's skills and tools.** A session or sub-agent has Linewright's
   skills and the repository's own, and only the tools its work needs.
 - **No person takes part in a session.** A decision an original skill puts to a

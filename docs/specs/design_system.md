@@ -226,7 +226,7 @@ A list of runs is a table with a row per run, newest first.
 ### The run page
 
 The run page shows a run's transcript as `logs` shows it, under each
-session's model and effort and where its settings and brief files came from.
+session's model and effort and where its settings and prompt files came from.
 
 - **Folding.** A tool call's line opens on click to the tool's full input and
   result; a call that failed starts open. A sub-agent's work starts folded to

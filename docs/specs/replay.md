@@ -18,7 +18,7 @@ what the factory makes of it now, until it does better.
    with GitHub out of the loop, so that a change to a brief is tried in minutes.
 3. As an operator, I want a replay's whole output as files, so that a coding
    agent can read it, judge it and change the briefs.
-4. As an operator, I want to edit the briefs between runs without rebuilding
+4. As an operator, I want to edit the prompts between runs without rebuilding
    Linewright, so that iterating is editing a file.
 
 ## Cases
@@ -55,8 +55,3 @@ seeded from the case.
   replay agents get no GitHub credentials, so a session reads no newer state
   than the case and cannot touch the repository. Automations, whose agents read
   GitHub, are not captured or replayed.
-
-## Briefs
-
-The `briefs` directory setting is the operator's layer of the briefs
-([Briefs](operation.md#briefs)), so a change needs no rebuild.
