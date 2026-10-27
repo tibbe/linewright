@@ -979,11 +979,14 @@ fn request_error(e: hyper::Error, doing: &'static str) -> RequestError {
     RequestError::failed(anyhow::Error::new(e).context(doing), hung_up)
 }
 
+/// Writing to a socket the peer has shut fails with `ENOTCONN` on macOS,
+/// where Linux gives `EPIPE`.
 fn hung_up(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),
         std::io::ErrorKind::ConnectionReset
             | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::NotConnected
             | std::io::ErrorKind::UnexpectedEof
     )
 }
