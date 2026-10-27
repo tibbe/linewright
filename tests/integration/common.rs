@@ -23,6 +23,7 @@
 //! - `Repository`: the repository settings a `World` starts with; `allowing`
 //!   some merge methods.
 //! - `config`: the factory config a `World` starts with.
+//! - `ended_runs`: how each of a world's runs ended.
 //! - `labels`: an issue's labels, sorted.
 //! - `last_comment`: the body of an issue's last comment.
 //! - `last_pull_comment`: the body of a pull request's last comment.
@@ -32,6 +33,9 @@
 //! - `with_issue_for_triage`: a world, its work dir `REPO`'s, holding an issue
 //!   needing triage that each triage answers is ready for an agent.
 //! - `open_ticket`: opens a ticket, ready for an agent and designed.
+//! - `triage_paused_after_removing_needs_triage`: an issue needing triage,
+//!   its triage paused once it removes `needs-triage`, and `TRIAGE_BRIEF`,
+//!   the comment it posts.
 //! - `HOURLY`: an automation file that runs on the hour; the fake clock starts
 //!   at 12:00.
 //! - `Serving`: a factory serving in the background.

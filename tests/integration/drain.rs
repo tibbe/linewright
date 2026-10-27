@@ -67,20 +67,6 @@ impl Served {
     }
 }
 
-fn ended_runs(world: &World) -> Vec<Ending> {
-    Runs::new(&world.dir.path().join("work"))
-        .read()
-        .unwrap()
-        .into_iter()
-        .map(|recorded| match recorded.state {
-            State::Ended { ending, .. } => ending,
-            state @ (State::InFlight | State::Interrupted) => {
-                panic!("a run is not over: {state:?}")
-            }
-        })
-        .collect()
-}
-
 fn info_with(log: &Log, phrase: &str) -> Vec<String> {
     log.lines("INFO")
         .into_iter()
@@ -219,5 +205,37 @@ async fn a_stop_while_draining_cancels_the_runs_in_flight() {
             }]
         ),
         "{ended:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_stop_while_a_run_records_its_outcome_waits_for_it_to_record_all_of_it() {
+    let (log, _guard) = Log::capture();
+    let world = World::new().await;
+    let (issue, mut paused) = triage_paused_after_removing_needs_triage(&world);
+    let served = Served::start(world).await;
+    paused.reached().await;
+
+    let stop = tokio::spawn(served.serving.stop());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let stopped_before_release = stop.is_finished();
+    paused.release();
+
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), stop)
+            .await
+            .expect("serving stops")
+            .unwrap(),
+        ServeEnd::Stop
+    );
+    assert!(!stopped_before_release);
+    let triaged = served.world.issue(issue);
+    assert_eq!(labels(&triaged), ["bug", "ready-for-agent"]);
+    assert_eq!(last_comment(&triaged), TRIAGE_BRIEF);
+    assert_eq!(ended_runs(&served.world), [Ending::Done]);
+    assert!(
+        !info_with(&log, "the run is recording its outcome; left to finish").is_empty(),
+        "{}",
+        log.text()
     );
 }

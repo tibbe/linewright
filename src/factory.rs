@@ -26,7 +26,7 @@ use crate::reconcile::{
     Subject, Work, WorkKind, held_back_by_drain, hold_note, reconcile,
 };
 use crate::repo_files::{RepoLayer, Unusable, holding};
-use crate::run::{self, AutomationEnd, Shell};
+use crate::run::{self, AutomationEnd, Cancellation, Shell};
 use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::secrets::Secrets;
 use crate::spec_glob::SpecGlob;
@@ -116,7 +116,19 @@ enum Running {
 struct LiveEntry {
     running: Running,
     in_flight: runs::InFlight,
-    cancel: CancellationToken,
+    cancel: Cancellation,
+}
+
+impl LiveEntry {
+    /// Cancels the run, unless it is recording its outcome.
+    fn cancel(&self) {
+        if !self.cancel.cancel() {
+            info!(
+                run = %self.in_flight.id,
+                "the run is recording its outcome; left to finish"
+            );
+        }
+    }
 }
 
 /// Why [`Factory::serve`] returned.
@@ -613,14 +625,25 @@ impl Factory {
                 file.error
             );
         }
-        run_and_log(
+        let cancel = Cancellation::default();
+        let run = run_and_log(
             shell,
             &repo,
             &automation,
             begin_automation(shell, name, StartedBy::Hand)?,
-            self.ends.stopping(),
-        )
-        .await
+            cancel.clone(),
+        );
+        // A stop cancels the run, unless it is recording its outcome.
+        let stopping = self.ends.stopping();
+        let stop = async {
+            stopping.cancelled().await;
+            cancel.cancel();
+            std::future::pending().await
+        };
+        tokio::select! {
+            ended = run => ended,
+            never = stop => never,
+        }
         .with_context(|| format!("the run of the automation `{name}` failed"))
     }
 
@@ -664,7 +687,7 @@ impl Factory {
 
     pub async fn stop(mut self) {
         for entry in self.live.values() {
-            entry.cancel.cancel();
+            entry.cancel();
         }
         self.settle().await;
     }
@@ -775,7 +798,7 @@ impl Factory {
                 )?;
                 let id = running.id().to_string();
                 let in_flight = running.in_flight();
-                let cancel = CancellationToken::new();
+                let cancel = Cancellation::default();
                 let reworked = match work.subject() {
                     Subject::Pull(pr) => self.memory.last_done(pr, WorkKind::Rework),
                     Subject::Issue(_) | Subject::SpecChange(_) => None,
@@ -807,7 +830,7 @@ impl Factory {
                 for entry in self.live.values() {
                     if matches!(&entry.running, Running::Work(run) if run.subject == *subject) {
                         info!(subject = ?subject, reason, "cancelling run");
-                        entry.cancel.cancel();
+                        entry.cancel();
                     }
                 }
             }
@@ -978,7 +1001,7 @@ impl Factory {
             Action::RunAutomation(automation) => {
                 let running = begin_automation(&self.shell, &automation.name, StartedBy::Schedule)?;
                 let in_flight = running.in_flight();
-                let cancel = CancellationToken::new();
+                let cancel = Cancellation::default();
                 let shell = self.shell.clone();
                 let repo = kept.repo.clone();
                 let handle = self.runs.spawn({
@@ -1031,7 +1054,7 @@ async fn run_and_log(
     repo: &RepoLayer,
     automation: &Automation,
     running: runs::Running,
-    cancel: CancellationToken,
+    cancel: Cancellation,
 ) -> Result<()> {
     let name = &automation.name;
     info!(automation = %name, run = %running.id(), "automation run started");

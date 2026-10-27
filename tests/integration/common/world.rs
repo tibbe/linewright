@@ -10,11 +10,12 @@ use linewright::domain::{
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::WorkKind;
 use linewright::redaction::Redaction;
+use linewright::runs::{Ending, Runs, State};
 use linewright::secrets::Secrets;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{FailedPolls, Polling};
 use linewright::store::Store;
-use linewright::store::local::{CheckRecord, LocalStore, Seed};
+use linewright::store::local::{CheckRecord, LocalStore, Paused, Seed, Write};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::Pending;
 use linewright::work_settings::{Environments, Partial, WorkSettings};
@@ -233,6 +234,21 @@ impl World {
     }
 }
 
+/// How each of `world`'s runs ended, failing if one is not over.
+pub fn ended_runs(world: &World) -> Vec<Ending> {
+    Runs::new(&world.dir.path().join("work"))
+        .read()
+        .unwrap()
+        .into_iter()
+        .map(|recorded| match recorded.state {
+            State::Ended { ending, .. } => ending,
+            state @ (State::InFlight | State::Interrupted) => {
+                panic!("a run is not over: {state:?}")
+            }
+        })
+        .collect()
+}
+
 pub fn labels(issue: &Issue) -> Vec<&str> {
     let mut labels: Vec<&str> = issue.labels.iter().map(String::as_str).collect();
     labels.sort_unstable();
@@ -303,6 +319,34 @@ pub async fn with_issue_for_triage() -> World {
         .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
     world
 }
+
+/// Opens an issue needing triage, which each triage answers is a bug ready
+/// for an agent, briefed with `TRIAGE_BRIEF`, and pauses its triage once it
+/// removes `needs-triage`.
+pub fn triage_paused_after_removing_needs_triage(world: &World) -> (Number, Paused) {
+    world.harness.on(WorkKind::Triage, |_| {
+        Ok(serde_json::json!({
+            "outcome": "ready-for-agent",
+            "category": "bug",
+            "comment": TRIAGE_BRIEF
+        })
+        .to_string())
+    });
+    let issue = world.store.open_issue(
+        "reporter",
+        "Crash on empty widget",
+        "It crashes.",
+        &["needs-triage"],
+    );
+    let paused = world.store.pause_after(Write::RemoveLabel {
+        number: issue,
+        label: "needs-triage".into(),
+    });
+    (issue, paused)
+}
+
+/// The comment `triage_paused_after_removing_needs_triage`'s triage posts.
+pub const TRIAGE_BRIEF: &str = "## Agent Brief\n\n**Summary:** Empty widgets crash.";
 
 /// Opens a ticket titled `title`, ready for an agent and designed.
 pub fn open_ticket(world: &World, title: &str) -> Number {

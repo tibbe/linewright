@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -131,8 +131,78 @@ pub(crate) struct Ctx {
     /// The run takes feedback since this as having arrived after.
     pub(crate) as_of: Timestamp,
     pub(crate) reworked: Option<Timestamp>,
-    pub(crate) cancel: CancellationToken,
+    pub(crate) cancel: Cancellation,
     pub(crate) run: Running,
+}
+
+impl Ctx {
+    /// Begins recording the run's outcome, which a cancel can no longer stop,
+    /// unless the run was cancelled before.
+    fn commit(&self) -> Result<(), Failure> {
+        self.cancel.commit()
+    }
+}
+
+/// A run's cancellation, which only a run in session takes: a cancelled run
+/// posts nothing more (docs/specs/runs.md, "Cancelling"), and one that has
+/// begun recording its outcome records all of it.
+#[derive(Clone, Default)]
+pub(crate) struct Cancellation(Arc<Cancel>);
+
+#[derive(Default)]
+struct Cancel {
+    /// Fired once the phase is cancelled, for what the run awaits.
+    token: CancellationToken,
+    phase: Mutex<Phase>,
+}
+
+#[derive(Clone, Copy, Default)]
+enum Phase {
+    #[default]
+    InSession,
+    Recording,
+    Cancelled,
+}
+
+impl Cancellation {
+    /// Cancels the run unless it has begun recording its outcome, and
+    /// returns whether the run is cancelled.
+    pub(crate) fn cancel(&self) -> bool {
+        let mut phase = self.phase();
+        match *phase {
+            Phase::InSession => {
+                *phase = Phase::Cancelled;
+                self.0.token.cancel();
+                true
+            }
+            Phase::Recording => false,
+            Phase::Cancelled => true,
+        }
+    }
+
+    /// Begins recording the outcome, unless the run was cancelled first.
+    fn commit(&self) -> Result<(), Failure> {
+        let mut phase = self.phase();
+        match *phase {
+            Phase::InSession | Phase::Recording => {
+                *phase = Phase::Recording;
+                Ok(())
+            }
+            Phase::Cancelled => Err(Failure::Cancelled),
+        }
+    }
+
+    async fn cancelled(&self) {
+        self.0.token.cancelled().await;
+    }
+
+    fn phase(&self) -> std::sync::MutexGuard<'_, Phase> {
+        // A phase is set whole, so one a panic left is still sound.
+        self.0
+            .phase
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 impl Failure {
@@ -286,7 +356,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             Err(Failure::HandBack(hand_back)) => break hand_back,
         }
     };
-    if ctx.cancel.is_cancelled() {
+    if ctx.commit().is_err() {
         info!(subject = ?subject, reason = hand_back.reason, "run cancelled; not handed back");
         return Ending::Cancelled;
     }
@@ -871,9 +941,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     })
     .await?;
     // The session may end as the run is cancelled, too late to stop it.
-    if ctx.cancel.is_cancelled() {
-        return Err(Failure::Cancelled);
-    }
+    ctx.commit()?;
     record_triage(shell, issue, result).await.map_err(apply)
 }
 
@@ -935,7 +1003,8 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     Ok(())
 }
 
-/// Runs a design session on `subject`, sent `prompt`.
+/// Runs a design session on `subject`, sent `prompt`, and begins recording
+/// its outcome.
 async fn design_session<C: DeserializeOwned>(
     shell: &Shell,
     ctx: &Ctx,
@@ -948,10 +1017,12 @@ async fn design_session<C: DeserializeOwned>(
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
-    converse(shell, ctx, &mut spec, Step::Start, |message| async move {
+    let answered = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
     })
-    .await
+    .await?;
+    ctx.commit()?;
+    Ok(answered)
 }
 
 /// A design blocked on `question` files its spec gaps and hands its item
@@ -1475,6 +1546,7 @@ async fn implement(
             pr_body,
             spec_gaps,
         } => {
+            ctx.commit()?;
             let pr = store
                 .open_pull(NewPull {
                     head: branch.clone(),
@@ -1509,6 +1581,7 @@ async fn implement(
             spec_gaps,
         } => {
             let kept = keep().await;
+            ctx.commit()?;
             file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
@@ -1619,6 +1692,7 @@ async fn push_update(
     let lease = PushMode::Lease {
         expected: start.to_string(),
     };
+    ctx.commit()?;
     let outcome = push(shell, dir, &pr.head_ref, lease).await;
     pushed(&pr.head_ref, outcome, TryAgain::Reassign)
 }
@@ -1810,6 +1884,7 @@ async fn pull_work(
             replies,
             spec_gaps,
         } => {
+            ctx.commit()?;
             if let Some(body) = pr_body {
                 store
                     .edit_body(pr.number, &closing(&body, &pr_now.closes))
@@ -1833,6 +1908,7 @@ async fn pull_work(
             spec_gaps,
         } => {
             let kept = keep().await;
+            ctx.commit()?;
             file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
@@ -1958,6 +2034,7 @@ pub(crate) async fn automation(
             results::parse(&message).map_err(parse_retry(ctx))
         })
         .await?;
+        ctx.commit()?;
         record_automation(shell, automation, &result)
             .await
             .map_err(apply)?;
@@ -2031,4 +2108,30 @@ async fn record_automation(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cancel_before_the_commit_wins_and_the_commit_then_fails() {
+        let cancellation = Cancellation::default();
+
+        assert!(cancellation.cancel());
+
+        assert!(matches!(cancellation.commit(), Err(Failure::Cancelled)));
+        assert!(cancellation.0.token.is_cancelled());
+    }
+
+    #[test]
+    fn a_commit_before_the_cancel_wins_and_the_cancel_then_fails() {
+        let cancellation = Cancellation::default();
+
+        assert!(cancellation.commit().is_ok());
+
+        assert!(!cancellation.cancel());
+        assert!(!cancellation.0.token.is_cancelled());
+        assert!(cancellation.commit().is_ok());
+    }
 }

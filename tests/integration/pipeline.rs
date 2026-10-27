@@ -5,7 +5,7 @@ use common::*;
 use linewright::domain::{Assignment, AutoMerge, Issue, IssueEvent, PullState};
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
-use linewright::store::local::{LocalStore, Write};
+use linewright::store::local::{LocalStore, Paused, Write};
 use linewright::work_settings::{Effort, Partial, StageTable};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -42,24 +42,7 @@ async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
 #[tokio::test]
 async fn a_triage_run_paused_after_removing_needs_triage_ends_labeled_once_released() {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Triage, |_| {
-        Ok(json!({
-            "outcome": "ready-for-agent",
-            "category": "bug",
-            "comment": "## Agent Brief\n\n**Summary:** Empty widgets crash."
-        })
-        .to_string())
-    });
-    let issue = world.store.open_issue(
-        "reporter",
-        "Crash on empty widget",
-        "It crashes.",
-        &["needs-triage"],
-    );
-    let mut paused = world.store.pause_after(Write::RemoveLabel {
-        number: issue,
-        label: "needs-triage".into(),
-    });
+    let (issue, mut paused) = triage_paused_after_removing_needs_triage(&world);
 
     world.factory.cycle().await.unwrap();
     paused.reached().await;
@@ -68,6 +51,80 @@ async fn a_triage_run_paused_after_removing_needs_triage_ends_labeled_once_relea
     world.factory.settle().await;
 
     assert_eq!(labels(&world.issue(issue)), ["bug", "ready-for-agent"]);
+}
+
+#[tokio::test]
+async fn a_run_cancelled_after_its_session_answers_and_before_it_writes_posts_nothing() {
+    let mut world = World::new().await;
+    implement(&world);
+    let ticket = open_ticket(&world, "Gadgets");
+    let mut paused = world.store.pause_after(Write::Push {
+        branch: format!("{}-gadgets", ticket.0),
+    });
+    world.factory.cycle().await.unwrap();
+    paused.reached().await;
+
+    world
+        .store
+        .unassign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.factory.cycle().await.unwrap();
+    paused.release();
+    world.factory.settle().await;
+
+    assert_eq!(world.store.pulls(), []);
+    assert_eq!(world.issue(ticket).comments, []);
+    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Cancelled]);
+}
+
+/// Starts triaging an issue, pauses the run once it removes `needs-triage`,
+/// and has a poll cancel the run for it. Returns the issue and the paused
+/// write.
+async fn triage_cancelled_while_recording(world: &mut World) -> (Number, Paused) {
+    let (issue, mut paused) = triage_paused_after_removing_needs_triage(world);
+    world.factory.cycle().await.unwrap();
+    paused.reached().await;
+    world.factory.cycle().await.unwrap();
+    (issue, paused)
+}
+
+#[tokio::test]
+async fn a_triage_run_cancelled_while_it_records_its_result_records_all_of_it() {
+    let (log, _guard) = Log::capture();
+    let mut world = World::new().await;
+    let (issue, paused) = triage_cancelled_while_recording(&mut world).await;
+
+    paused.release();
+    world.factory.settle().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["bug", "ready-for-agent"]);
+    assert_eq!(last_comment(&issue), TRIAGE_BRIEF);
+    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
+    assert!(
+        log.text()
+            .contains("the run is recording its outcome; left to finish"),
+        "{}",
+        log.text()
+    );
+}
+
+#[tokio::test]
+async fn a_run_whose_recording_fails_after_a_cancel_arrived_is_handed_back() {
+    let mut world = World::new().await;
+    let (issue, paused) = triage_cancelled_while_recording(&mut world).await;
+
+    paused.fail();
+    world.factory.settle().await;
+
+    let issue = world.issue(issue);
+    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
+    assert!(
+        last_comment(&issue).starts_with("Recording the run's outcome failed: "),
+        "{}",
+        last_comment(&issue)
+    );
+    assert_eq!(ended_runs(&world), [linewright::runs::Ending::HandedBack]);
 }
 
 /// Triages two issues in one poll with sessions that each draft a comment in

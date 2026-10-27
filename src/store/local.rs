@@ -76,20 +76,29 @@ pub enum Write {
     AssignPeople { number: Number },
     Comment { number: Number },
     OpenPull { head: String },
+    Push { branch: String },
 }
 
 /// The store's end of a [`Paused`].
 struct Pause {
     after: Write,
     reached: oneshot::Sender<()>,
-    released: oneshot::Receiver<()>,
+    released: oneshot::Receiver<Released>,
+}
+
+/// How a [`Paused`] store call returns once released.
+enum Released {
+    Ok,
+    /// With an error, the write still applied, as when GitHub's answer to a
+    /// write is lost.
+    Failed,
 }
 
 /// A store call paused after a write, from [`LocalStore::pause_after`].
 /// Dropping it releases the call.
 pub struct Paused {
     reached: oneshot::Receiver<()>,
-    release: oneshot::Sender<()>,
+    release: oneshot::Sender<Released>,
 }
 
 impl Paused {
@@ -104,7 +113,12 @@ impl Paused {
     pub fn release(self) {
         // The call is gone only if the store was dropped, and then there is
         // nothing to release.
-        let _ = self.release.send(());
+        let _ = self.release.send(Released::Ok);
+    }
+
+    /// Lets the paused store call return an error, its write applied.
+    pub fn fail(self) {
+        let _ = self.release.send(Released::Failed);
     }
 }
 
@@ -608,8 +622,9 @@ impl LocalStore {
         }
     }
 
-    /// Waits for the pause set on `write`, if any, to be released.
-    async fn paused(&self, write: Write) {
+    /// Waits for the pause set on `write`, if any, to be released, and fails
+    /// if it is released failing.
+    async fn paused(&self, write: Write) -> Result<()> {
         let pause = {
             let mut state = self.state();
             match state.pause.take() {
@@ -620,10 +635,14 @@ impl LocalStore {
                 }
             }
         };
-        if let Some(pause) = pause {
-            let _ = pause.reached.send(());
-            // A dropped `Paused` releases the call as well.
-            let _ = pause.released.await;
+        let Some(pause) = pause else {
+            return Ok(());
+        };
+        let _ = pause.reached.send(());
+        // A dropped `Paused` releases the call as well.
+        match pause.released.await {
+            Ok(Released::Failed) => bail!("the store call failed after {:?}", pause.after),
+            Ok(Released::Ok) | Err(_) => Ok(()),
         }
     }
 
@@ -1806,7 +1825,11 @@ impl Store for LocalStore {
         git::git(dir, &args).await.map_err(PushError::from_git)?;
         let linewright = self.state().linewright.clone();
         self.record_push(branch, &linewright);
-        Ok(())
+        self.paused(Write::Push {
+            branch: branch.into(),
+        })
+        .await
+        .map_err(PushError::Failed)
     }
 
     async fn delete_branch(&self, branch: &str) -> Result<()> {
@@ -1833,7 +1856,7 @@ impl Store for LocalStore {
             number,
             label: label.into(),
         })
-        .await;
+        .await?;
         Ok(())
     }
 
@@ -1844,7 +1867,7 @@ impl Store for LocalStore {
             number,
             label: label.into(),
         })
-        .await;
+        .await?;
         Ok(())
     }
 
@@ -1862,7 +1885,7 @@ impl Store for LocalStore {
             let linewright = state.linewright.clone();
             state.unassign(number, &linewright, &linewright, now)?;
         }
-        self.paused(Write::Unassign { number }).await;
+        self.paused(Write::Unassign { number }).await?;
         Ok(())
     }
 
@@ -1880,7 +1903,7 @@ impl Store for LocalStore {
                 }
             }
         }
-        self.paused(Write::AssignPeople { number: issue }).await;
+        self.paused(Write::AssignPeople { number: issue }).await?;
         Ok(refused)
     }
 
@@ -1901,7 +1924,7 @@ impl Store for LocalStore {
         if let Some(then) = then {
             then();
         }
-        self.paused(Write::Comment { number }).await;
+        self.paused(Write::Comment { number }).await?;
         Ok(())
     }
 
@@ -1967,7 +1990,7 @@ impl Store for LocalStore {
             );
             number
         };
-        self.paused(Write::OpenPull { head: pull.head }).await;
+        self.paused(Write::OpenPull { head: pull.head }).await?;
         Ok(number)
     }
 
