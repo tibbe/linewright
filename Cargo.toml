@@ -1,6 +1,6 @@
 [package]
 name = "linewright"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "A spec-driven software factory: a server that turns spec changes and issues into reviewed, green pull requests."
 license = "MIT"
