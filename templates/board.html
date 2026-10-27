@@ -6,7 +6,7 @@
 {%- if let Some(tone) = tone %} toned {{ tone.accent() }}{% endif -%}
 {%- endmacro -%}
 {%- macro cells(lane) -%}
-<div class="grid grid-cols-(--columns) gap-2">
+<div class="grid grid-cols-(--columns) gap-2 px-(--lane-padding)">
 {%- for cell in lane.cells %}
 <ul class="cell flex flex-col gap-2" aria-label="{{ cell.column }}">
 {%- for card in cell.cards %}
@@ -48,19 +48,22 @@
     six columns and the five `gap-2` gaps between them, and the lane's
     inset on each side, so that the lane heads span the cells under them.
     Each lane and its cards are as `docs/specs/web/design_system.md`,
-    Board, has them. `--lane-inset` is the distance from a lane box's outer
-    edge to its cells, its padding and its border, and the column heads are
-    inset by it, so that they stay over the cells. The lane has no top
-    padding, as its head's own gives the space above its text, and no
-    `overflow`, which would stop its head sticking. -#}
-<div class="board min-w-[calc(6*200px+5*--spacing(2)+2*var(--lane-inset))] [--column-heads:2rem] [--columns:repeat(6,minmax(200px,1fr))] [--lane-head:2.5rem] [--lane-padding:--spacing(2)] [--lane-inset:calc(var(--lane-padding)+1px)]">
+    Board, has them. The lane pads only its bottom: its head and its cells
+    each pad their own sides by `--lane-padding`, so that the head fills the
+    lane from border to border. `--lane-inset` is the distance from a lane
+    box's outer edge to its head's text and its cells, that padding and the
+    lane's border, and the column heads are inset by it, so that they stay
+    over the cells. The lane has no top padding, as its head's own gives the
+    space above its text, and no `overflow`, which would stop its head
+    sticking. -#}
+<div class="board min-w-[calc(6*200px+5*--spacing(2)+2*var(--lane-inset))] [--column-heads:2rem] [--columns:repeat(6,minmax(200px,1fr))] [--lane-head:2.5rem] [--lane-padding:--spacing(2)] [--lane-border:1px] [--lane-inset:calc(var(--lane-padding)+var(--lane-border))]">
 <div class="sticky top-0 z-20 grid h-(--column-heads) grid-cols-(--columns) items-center gap-2 bg-base-100 px-(--lane-inset)">
 {%- for column in board.columns %}
 <h2 class="column font-semibold">{{ column }}</h2>
 {%- endfor %}
 </div>
 {%- for lane in board.unfinished %}
-<section class="lane mt-3 rounded-box border border-base-300 bg-base-200 px-(--lane-padding) pb-(--lane-padding)" id="{{ lane.id }}">
+<section class="lane mt-3 rounded-box border-(length:--lane-border) border-base-300 bg-base-200 pb-(--lane-padding)" id="{{ lane.id }}">
 <h2 class="lane-head{% call toned(lane.tone()) %}{% endcall %}">{% call lane_head(lane) %}{% endcall %}</h2>
 {%- call cells(lane) %}{% endcall %}
 </section>
@@ -69,7 +72,7 @@
 <details id="finished" class="mt-3 border-t border-base-300 pt-2">
 <summary class="cursor-pointer font-semibold">{{ board.finished_count() }}</summary>
 {%- for lane in board.finished %}
-<details class="lane mt-2 rounded-box border border-base-300 bg-base-200 px-(--lane-padding) pb-(--lane-padding)" id="{{ lane.id }}">
+<details class="lane mt-2 rounded-box border-(length:--lane-border) border-base-300 bg-base-200 pb-(--lane-padding)" id="{{ lane.id }}">
 <summary class="lane-head cursor-pointer{% call toned(lane.tone()) %}{% endcall %}">{% call lane_head(lane) %}{% endcall %}</summary>
 {%- call cells(lane) %}{% endcall %}
 </details>

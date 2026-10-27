@@ -98,9 +98,15 @@
 
   /* A lane's head, unfinished or finished, sticky under the board's column
      heads while the reader is in its lane, in its lane's colour so that it
-     reads as part of it while stuck (templates/board.html). */
+     reads as part of it while stuck (templates/board.html). It fills its
+     lane from border to border, padding its own sides as the lane's cells
+     do, and its top corners follow the lane's, the lane's radius less its
+     border. While it is stuck partway down its lane, those corners uncover
+     nothing, as their radius, `--radius-box` less `--lane-border`, is less
+     than the cells' inset from the lane's border, `--lane-padding`: check
+     this when any of them changes. */
   .board .lane-head {
-    @apply sticky top-(--column-heads) z-10 min-h-(--lane-head) bg-base-200 pt-2 font-semibold;
+    @apply sticky top-(--column-heads) z-10 min-h-(--lane-head) rounded-t-[calc(var(--radius-box)-var(--lane-border))] bg-base-200 px-(--lane-padding) pt-2 font-semibold;
   }
 
   /* A card status on the board (docs/specs/web/design_system.md, Board):

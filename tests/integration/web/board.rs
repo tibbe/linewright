@@ -380,7 +380,12 @@ async fn each_lane_is_a_surface_sunk_into_the_page_with_its_cards_raised_on_it()
         assert!(
             has_classes(
                 lane,
-                &["bg-base-200", "border", "border-base-300", "rounded-box"]
+                &[
+                    "bg-base-200",
+                    "border-(length:--lane-border)",
+                    "border-base-300",
+                    "rounded-box"
+                ]
             ),
             "{}",
             lane.html()
