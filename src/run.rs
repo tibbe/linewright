@@ -600,45 +600,53 @@ pub(crate) async fn hand_back(
 /// Its own design goes with it, so that the next attempt designs it again.
 async fn hand_back_issue(shell: &Shell, issue: &Issue, hand_back: &HandBack) -> Result<()> {
     let n = issue.number;
+    shell.store.comment(n, &with_log(hand_back)).await?;
     let asks = Asks {
         designed: (!issue.was_cut(&shell.policy.linewright)).then_some(Designed::Remove),
         stall: stalls(hand_back),
         status: Some(StatusTo::Set(StatusLabel::ReadyForHuman)),
         unassign: true,
     };
-    ask(&*shell.store, n, &asks).await?;
-    shell.store.comment(n, &with_log(hand_back)).await
+    ask(&*shell.store, n, &asks).await
 }
 
 async fn hand_back_pull(shell: &Shell, pr: Number, hand_back: &HandBack) -> Result<()> {
-    let asks = Asks {
-        stall: stalls(hand_back),
-        unassign: true,
-        ..Asks::default()
-    };
-    ask(&*shell.store, pr, &asks).await?;
-    let body = format!(
-        "{}\n\nAssign @{} to this pull request again to try again.",
-        with_log(hand_back),
-        shell.policy.linewright
-    );
-    shell.store.comment(pr, &body).await
+    hand_back_pr(shell, pr, hand_back, "try again", None).await
 }
 
 async fn hand_back_spec_change(shell: &Shell, pr: Number, hand_back: &HandBack) -> Result<()> {
+    hand_back_pr(
+        shell,
+        pr,
+        hand_back,
+        "design it again",
+        Some(Designed::Remove),
+    )
+    .await
+}
+
+/// Hands back the pull request `pr`, telling whoever reads it that
+/// assigning Linewright again will `try_again`.
+async fn hand_back_pr(
+    shell: &Shell,
+    pr: Number,
+    hand_back: &HandBack,
+    try_again: &str,
+    designed: Option<Designed>,
+) -> Result<()> {
+    let body = format!(
+        "{}\n\nAssign @{} to this pull request again to {try_again}.",
+        with_log(hand_back),
+        shell.policy.linewright
+    );
+    shell.store.comment(pr, &body).await?;
     let asks = Asks {
-        designed: Some(Designed::Remove),
+        designed,
         stall: stalls(hand_back),
         unassign: true,
         ..Asks::default()
     };
-    ask(&*shell.store, pr, &asks).await?;
-    let body = format!(
-        "{}\n\nAssign @{} to this pull request again to design it again.",
-        with_log(hand_back),
-        shell.policy.linewright
-    );
-    shell.store.comment(pr, &body).await
+    ask(&*shell.store, pr, &asks).await
 }
 
 /// Whether `hand_back` labels its item a stall. The label goes on while
@@ -1611,6 +1619,12 @@ async fn implement(
             spec_gaps,
         } => {
             ctx.commit()?;
+            // Opening the pull request puts the ticket in review, which
+            // changes what it asks for, so the gaps go first
+            // (docs/specs/runs.md, "Recording the outcome").
+            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
+                .await
+                .map_err(apply)?;
             let pr = store
                 .open_pull(NewPull {
                     head: branch.clone(),
@@ -1636,9 +1650,7 @@ async fn implement(
                 pr = pr.0,
                 "opened draft pull request"
             );
-            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
-                .await
-                .map_err(apply)
+            Ok(())
         }
         ImplementResult::Blocked {
             question,

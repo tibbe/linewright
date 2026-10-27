@@ -2076,16 +2076,6 @@ async fn merge_spec_change(world: &World) -> Number {
         .unwrap()
 }
 
-async fn spec_change_assignees(world: &World, pr: Number) -> Vec<Login> {
-    world
-        .store
-        .merged_pull(pr, linewright::domain::Timestamp::MIN_UTC)
-        .await
-        .unwrap()
-        .expect("a merged pull request")
-        .assignees
-}
-
 /// A design that cuts one ticket.
 fn one_ticket() -> serde_json::Value {
     json!({

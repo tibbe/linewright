@@ -5,7 +5,7 @@ use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
 use linewright::briefs::OperatorPrompts;
 use linewright::domain::{
-    AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, label,
+    AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp, label,
 };
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::WorkKind;
@@ -268,6 +268,17 @@ pub async fn last_pull_comment(world: &World, pr: Number) -> String {
         .pop()
         .expect("the pull request has a comment")
         .body
+}
+
+/// Who is assigned to the merged pull request `pr`, such as a spec change.
+pub async fn spec_change_assignees(world: &World, pr: Number) -> Vec<Login> {
+    world
+        .store
+        .merged_pull(pr, Timestamp::MIN_UTC)
+        .await
+        .unwrap()
+        .expect("a merged pull request")
+        .assignees
 }
 
 pub fn check(name: &str, state: CheckState, log: &str) -> CheckRecord {
