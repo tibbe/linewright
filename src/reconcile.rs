@@ -394,10 +394,10 @@ pub enum Action {
         issue: Number,
         comment: Option<String>,
     },
+    /// Label an issue `to` in place of its other status labels.
     Relabel {
         issue: Number,
-        remove: String,
-        add: String,
+        to: StatusLabel,
     },
     /// Unassign the people Linewright asked a `needs-info` question, once
     /// the issue's label asks for Linewright's work again.
@@ -831,8 +831,7 @@ pub fn decisions(
         if replied {
             plan.act(Action::Relabel {
                 issue: issue.number,
-                remove: label::NEEDS_INFO.into(),
-                add: label::NEEDS_TRIAGE.into(),
+                to: StatusLabel::NeedsTriage,
             });
         }
         if let Err(unasked) = asked

@@ -23,6 +23,7 @@ mod pipeline;
 mod push_protection;
 mod rate_limit;
 mod reconcile;
+mod recording;
 mod refresh;
 mod rendered_prompts;
 mod replay;

@@ -522,6 +522,63 @@ fn stopped(pr: &Pull, linewright: &Login) -> Option<PullStop> {
     Some(stop)
 }
 
+/// The writes that change what an item asks for, which a run makes last
+/// (docs/specs/runs.md, "Recording the outcome"), made by [`ask`].
+#[derive(Default)]
+pub(crate) struct Asks {
+    pub designed: Option<Designed>,
+    /// Label the item [`label::STALLED`].
+    pub stall: bool,
+    pub status: Option<StatusTo>,
+    /// Unassign Linewright from the item.
+    pub unassign: bool,
+}
+
+/// Whether the item is to carry [`label::DESIGNED`].
+pub(crate) enum Designed {
+    Add,
+    Remove,
+}
+
+pub(crate) enum StatusTo {
+    /// Hold this status label and no other.
+    Set(StatusLabel),
+    /// Hold no status label, as a tracking issue does.
+    Clear,
+}
+
+/// Makes `asks`' writes on `number` in the order docs/specs/runs.md,
+/// "Recording the outcome", asks for: `linewright:designed`, the stall, the
+/// new status label, the removal of the others, the unassignment.
+pub(crate) async fn ask(store: &dyn Store, number: Number, asks: &Asks) -> Result<()> {
+    match asks.designed {
+        Some(Designed::Add) => store.add_label(number, label::DESIGNED).await?,
+        Some(Designed::Remove) => store.remove_label(number, label::DESIGNED).await?,
+        None => {}
+    }
+    if asks.stall {
+        store.add_label(number, label::STALLED).await?;
+    }
+    match asks.status {
+        Some(StatusTo::Set(status)) => {
+            store.add_label(number, status.label()).await?;
+            for other in StatusLabel::ALL.into_iter().filter(|s| *s != status) {
+                store.remove_label(number, other.label()).await?;
+            }
+        }
+        Some(StatusTo::Clear) => {
+            for status in StatusLabel::ALL {
+                store.remove_label(number, status.label()).await?;
+            }
+        }
+        None => {}
+    }
+    if asks.unassign {
+        store.unassign(number).await?;
+    }
+    Ok(())
+}
+
 /// `snapshot` holds the issue handed back, if it is one, as it was read.
 pub(crate) async fn hand_back(
     shell: &Shell,
@@ -542,27 +599,24 @@ pub(crate) async fn hand_back(
 
 /// Its own design goes with it, so that the next attempt designs it again.
 async fn hand_back_issue(shell: &Shell, issue: &Issue, hand_back: &HandBack) -> Result<()> {
-    let store = &shell.store;
     let n = issue.number;
-    if !issue.was_cut(&shell.policy.linewright) {
-        store.remove_label(n, label::DESIGNED).await?;
-    }
-    for state in StatusLabel::ALL
-        .map(StatusLabel::label)
-        .into_iter()
-        .filter(|l| *l != label::READY_FOR_HUMAN)
-    {
-        store.remove_label(n, state).await?;
-    }
-    store.add_label(n, label::READY_FOR_HUMAN).await?;
-    store.unassign(n).await?;
-    mark_stall(shell, n, hand_back.kind).await?;
-    store.comment(n, &with_log(hand_back)).await
+    let asks = Asks {
+        designed: (!issue.was_cut(&shell.policy.linewright)).then_some(Designed::Remove),
+        stall: stalls(hand_back),
+        status: Some(StatusTo::Set(StatusLabel::ReadyForHuman)),
+        unassign: true,
+    };
+    ask(&*shell.store, n, &asks).await?;
+    shell.store.comment(n, &with_log(hand_back)).await
 }
 
 async fn hand_back_pull(shell: &Shell, pr: Number, hand_back: &HandBack) -> Result<()> {
-    shell.store.unassign(pr).await?;
-    mark_stall(shell, pr, hand_back.kind).await?;
+    let asks = Asks {
+        stall: stalls(hand_back),
+        unassign: true,
+        ..Asks::default()
+    };
+    ask(&*shell.store, pr, &asks).await?;
     let body = format!(
         "{}\n\nAssign @{} to this pull request again to try again.",
         with_log(hand_back),
@@ -572,9 +626,13 @@ async fn hand_back_pull(shell: &Shell, pr: Number, hand_back: &HandBack) -> Resu
 }
 
 async fn hand_back_spec_change(shell: &Shell, pr: Number, hand_back: &HandBack) -> Result<()> {
-    shell.store.remove_label(pr, label::DESIGNED).await?;
-    shell.store.unassign(pr).await?;
-    mark_stall(shell, pr, hand_back.kind).await?;
+    let asks = Asks {
+        designed: Some(Designed::Remove),
+        stall: stalls(hand_back),
+        unassign: true,
+        ..Asks::default()
+    };
+    ask(&*shell.store, pr, &asks).await?;
     let body = format!(
         "{}\n\nAssign @{} to this pull request again to design it again.",
         with_log(hand_back),
@@ -583,13 +641,15 @@ async fn hand_back_spec_change(shell: &Shell, pr: Number, hand_back: &HandBack) 
     shell.store.comment(pr, &body).await
 }
 
-/// Labels the item handed back a stall, once Linewright is unassigned from
-/// it, so that a stop between the two never leaves an item it is assigned to
-/// labeled, for the label's clearing to take off.
-async fn mark_stall(shell: &Shell, number: Number, kind: HandBackKind) -> Result<()> {
-    match kind {
-        HandBackKind::Stall => shell.store.add_label(number, label::STALLED).await,
-        HandBackKind::Decision => Ok(()),
+/// Whether `hand_back` labels its item a stall. The label goes on while
+/// Linewright is still assigned: an item left so by a stop asks for the
+/// work it stalled on, and the stall is cleared as it is worked again,
+/// unless the item is let go of instead (docs/specs/repository.md,
+/// "Stalls").
+fn stalls(hand_back: &HandBack) -> bool {
+    match hand_back.kind {
+        HandBackKind::Stall => true,
+        HandBackKind::Decision => false,
     }
 }
 
@@ -948,7 +1008,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
     let (state, body) = match &result.outcome {
-        TriageOutcome::ReadyForAgent => (label::READY_FOR_AGENT, result.comment),
+        TriageOutcome::ReadyForAgent => (StatusLabel::ReadyForAgent, result.comment),
         TriageOutcome::NeedsInfo { ask } => {
             let people = issue.people_asked(ask, &shell.policy.linewright);
             let refused = store.assign_people(issue.number, &people).await?;
@@ -959,10 +1019,13 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
                     "GitHub refused to assign people asked"
                 );
             }
-            (label::NEEDS_INFO, addressed_to(&people, &result.comment))
+            (
+                StatusLabel::NeedsInfo,
+                addressed_to(&people, &result.comment),
+            )
         }
         TriageOutcome::ReadyForHuman => (
-            label::READY_FOR_HUMAN,
+            StatusLabel::ReadyForHuman,
             format!(
                 "{}\n\nAnswer with a label: {}. A comment alone starts nothing.",
                 result.comment,
@@ -975,13 +1038,6 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     // Posted before the labeling, so that a stop between the two leaves no
     // status label without the comment it stands on.
     store.comment(issue.number, &body).await?;
-    for other in StatusLabel::ALL
-        .map(StatusLabel::label)
-        .into_iter()
-        .filter(|l| *l != state)
-    {
-        store.remove_label(issue.number, other).await?;
-    }
     match &shell.settings.categories {
         Categories::IssueTypes(_) => store.set_issue_type(issue.number, &result.category).await?,
         Categories::Labels => {
@@ -996,11 +1052,12 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
             store.add_label(issue.number, &result.category).await?;
         }
     }
-    store.add_label(issue.number, state).await?;
-    if !result.outcome.asks_for_linewright() {
-        store.unassign(issue.number).await?;
-    }
-    Ok(())
+    let asks = Asks {
+        status: Some(StatusTo::Set(state)),
+        unassign: !result.outcome.asks_for_linewright(),
+        ..Asks::default()
+    };
+    ask(&**store, issue.number, &asks).await
 }
 
 /// Runs a design session on `subject`, sent `prompt`, and begins recording
@@ -1148,18 +1205,21 @@ async fn design_issue(
             file_spec_gaps(shell, &spec_gaps, &filed_gaps)
                 .await
                 .map_err(apply)?;
-            // Before letting go, so that a design stopped before it is made
-            // again.
-            store.add_label(n, label::DESIGNED).await.map_err(apply)?;
-            if let IssueWork::Cut(_) = cut {
+            let asks = match cut {
+                IssueWork::AsItIs => Asks {
+                    designed: Some(Designed::Add),
+                    ..Asks::default()
+                },
                 // A tracking issue carries no status label, and is worked
                 // through its tickets.
-                for status in StatusLabel::ALL {
-                    store.remove_label(n, status.label()).await.map_err(apply)?;
-                }
-                store.unassign(n).await.map_err(apply)?;
-            }
-            Ok(())
+                IssueWork::Cut(_) => Asks {
+                    designed: Some(Designed::Add),
+                    status: Some(StatusTo::Clear),
+                    unassign: true,
+                    ..Asks::default()
+                },
+            };
+            ask(&**store, n, &asks).await.map_err(apply)
         }
         DesignResult::NothingToBuild { reason } => Err(Failure::HandBack(HandBack {
             kind: HandBackKind::Decision,
@@ -1193,10 +1253,12 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
 /// The label goes on last, so that a design stopped before it is discarded
 /// and made again (docs/specs/design.md, "Discarding a cut").
 async fn mark_designed(shell: &Shell, pr: &MergedPull) -> Result<()> {
-    // Labeled before unassigning, so that a stop between the two leaves the
-    // spec change designed rather than handed back.
-    shell.store.add_label(pr.number, label::DESIGNED).await?;
-    shell.store.unassign(pr.number).await
+    let asks = Asks {
+        designed: Some(Designed::Add),
+        unassign: true,
+        ..Asks::default()
+    };
+    ask(&*shell.store, pr.number, &asks).await
 }
 
 /// Files the tickets under a tracking issue, and records the design on it
@@ -1285,11 +1347,13 @@ async fn publish_cut(
     // A stop before then leaves the item undesigned, and its cut is discarded
     // with these tickets, ready or not (docs/specs/design.md, "Discarding a
     // cut").
+    let asks = Asks {
+        designed: Some(Designed::Add),
+        status: Some(StatusTo::Set(StatusLabel::ReadyForAgent)),
+        ..Asks::default()
+    };
     for ticket in tickets {
-        store.add_label(ticket.number, label::DESIGNED).await?;
-        store
-            .add_label(ticket.number, label::READY_FOR_AGENT)
-            .await?;
+        ask(&**store, ticket.number, &asks).await?;
     }
     Ok(())
 }

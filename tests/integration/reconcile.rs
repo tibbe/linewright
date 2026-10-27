@@ -100,8 +100,7 @@ fn a_reply_to_needs_info_sends_the_issue_back_to_triage() {
         vec![
             Action::Relabel {
                 issue: Number(1),
-                remove: label::NEEDS_INFO.into(),
-                add: label::NEEDS_TRIAGE.into(),
+                to: StatusLabel::NeedsTriage,
             },
             claim(1),
             triage(1),
@@ -141,8 +140,7 @@ fn a_reply_unassigns_the_people_linewright_asked_then_it_claims_the_issue_to_tri
             unassign_asked(1, &["reporter", "tester"]),
             Action::Relabel {
                 issue: Number(1),
-                remove: label::NEEDS_INFO.into(),
-                add: label::NEEDS_TRIAGE.into(),
+                to: StatusLabel::NeedsTriage,
             },
             claim(1),
             triage(1),
@@ -164,8 +162,7 @@ fn a_reply_leaves_a_person_someone_else_assigned_and_triage_waits_for_them() {
             unassign_asked(1, &["reporter"]),
             Action::Relabel {
                 issue: Number(1),
-                remove: label::NEEDS_INFO.into(),
-                add: label::NEEDS_TRIAGE.into(),
+                to: StatusLabel::NeedsTriage,
             },
         ]
     );
@@ -189,8 +186,7 @@ fn a_reply_leaves_a_person_linewright_asked_whom_someone_else_had_assigned() {
         decide(&snapshot(vec![asked])),
         vec![Action::Relabel {
             issue: Number(1),
-            remove: label::NEEDS_INFO.into(),
-            add: label::NEEDS_TRIAGE.into(),
+            to: StatusLabel::NeedsTriage,
         }]
     );
 }
@@ -305,8 +301,7 @@ fn a_reply_to_a_question_opening_with_the_old_marker_line_sends_the_issue_back_t
         vec![
             Action::Relabel {
                 issue: Number(1),
-                remove: label::NEEDS_INFO.into(),
-                add: label::NEEDS_TRIAGE.into(),
+                to: StatusLabel::NeedsTriage,
             },
             claim(1),
             triage(1),
@@ -3545,8 +3540,7 @@ fn with_a_required_label_only_a_labeled_issue_answered_after_a_triage_question_i
         vec![
             Action::Relabel {
                 issue: Number(2),
-                remove: label::NEEDS_INFO.into(),
-                add: label::NEEDS_TRIAGE.into(),
+                to: StatusLabel::NeedsTriage,
             },
             claim(2),
             triage(2),
@@ -3860,8 +3854,7 @@ fn sessionless_actions() -> Vec<Action> {
         Action::MarkReady { pr: Number(21) },
         Action::Relabel {
             issue: Number(1),
-            remove: label::NEEDS_INFO.into(),
-            add: label::NEEDS_TRIAGE.into(),
+            to: StatusLabel::NeedsTriage,
         },
         Action::CloseTracking { issue: Number(9) },
         let_go(13),
@@ -4957,8 +4950,7 @@ fn a_reply_to_needs_info_after_linewright_let_go_claims_the_issue_to_triage_it_a
         vec![
             Action::Relabel {
                 issue: Number(1),
-                remove: label::NEEDS_INFO.into(),
-                add: label::NEEDS_TRIAGE.into(),
+                to: StatusLabel::NeedsTriage,
             },
             claim(1),
             triage(1),

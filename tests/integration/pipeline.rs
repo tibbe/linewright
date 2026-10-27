@@ -46,7 +46,7 @@ async fn a_triage_run_paused_after_removing_needs_triage_ends_labeled_once_relea
 
     world.factory.cycle().await.unwrap();
     paused.reached().await;
-    assert_eq!(labels(&world.issue(issue)), Vec::<&str>::new());
+    assert_eq!(labels(&world.issue(issue)), ["bug", "ready-for-agent"]);
     paused.release();
     world.factory.settle().await;
 
@@ -118,7 +118,10 @@ async fn a_run_whose_recording_fails_after_a_cancel_arrived_is_handed_back() {
     world.factory.settle().await;
 
     let issue = world.issue(issue);
-    assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
+    assert_eq!(
+        labels(&issue),
+        ["bug", "linewright:stalled", "ready-for-human"]
+    );
     assert!(
         last_comment(&issue).starts_with("Recording the run's outcome failed: "),
         "{}",

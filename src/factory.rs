@@ -850,10 +850,13 @@ impl Factory {
                 }
                 store.unassign(*issue).await?;
             }
-            Action::Relabel { issue, remove, add } => {
-                info!(issue = issue.0, remove, add, "relabeling");
-                store.remove_label(*issue, remove).await?;
-                store.add_label(*issue, add).await?;
+            Action::Relabel { issue, to } => {
+                info!(issue = issue.0, %to, "relabeling");
+                let asks = run::Asks {
+                    status: Some(run::StatusTo::Set(*to)),
+                    ..run::Asks::default()
+                };
+                run::ask(&**store, *issue, &asks).await?;
             }
             Action::UnassignAsked { issue, assignees } => {
                 info!(issue = issue.0, ?assignees, "unassigning the people asked");
