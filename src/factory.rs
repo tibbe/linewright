@@ -120,12 +120,12 @@ struct LiveEntry {
 }
 
 impl LiveEntry {
-    /// Cancels the run, unless it is recording its outcome.
+    /// Cancels the run, unless it is applying its result.
     fn cancel(&self) {
         if !self.cancel.cancel() {
             info!(
                 run = %self.in_flight.id,
-                "the run is recording its outcome; left to finish"
+                "the run is applying its result; left to finish"
             );
         }
     }
@@ -633,7 +633,7 @@ impl Factory {
             begin_automation(shell, name, StartedBy::Hand)?,
             cancel.clone(),
         );
-        // A stop cancels the run, unless it is recording its outcome.
+        // A stop cancels the run, unless it is applying its result.
         let stopping = self.ends.stopping();
         let stop = async {
             stopping.cancelled().await;

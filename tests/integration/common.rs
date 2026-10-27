@@ -38,6 +38,7 @@
 //!   the comment it posts.
 //! - `gated`: holds each session of a kind of work open until its `Gate`
 //!   releases it; the `Gate` tells when one has `begun`.
+//! - `gate`: a `Gate` and the `Gatepost` a session's script `wait`s at.
 //! - `HOURLY`: an automation file that runs on the hour; the fake clock starts
 //!   at 12:00.
 //! - `Serving`: a factory serving in the background.

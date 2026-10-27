@@ -234,7 +234,7 @@ async fn a_stop_while_a_run_records_its_outcome_waits_for_it_to_record_all_of_it
     assert_eq!(last_comment(&triaged), TRIAGE_BRIEF);
     assert_eq!(ended_runs(&served.world), [Ending::Done]);
     assert!(
-        !info_with(&log, "the run is recording its outcome; left to finish").is_empty(),
+        !info_with(&log, "the run is applying its result; left to finish").is_empty(),
         "{}",
         log.text()
     );

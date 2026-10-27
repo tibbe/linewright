@@ -1,6 +1,6 @@
 //! A run's writes that change what its item asks for are its last, and a
 //! new status label goes on before the old one comes off
-//! (`docs/specs/runs.md`, "Recording the outcome"): paused part way through
+//! (`docs/specs/architecture.md`, State, "Writes"): paused part way through
 //! them, the item still asks for the run's work.
 
 use crate::common;

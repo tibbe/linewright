@@ -135,17 +135,10 @@ pub(crate) struct Ctx {
     pub(crate) run: Running,
 }
 
-impl Ctx {
-    /// Begins recording the run's outcome, which a cancel can no longer stop,
-    /// unless the run was cancelled before.
-    fn commit(&self) -> Result<(), Failure> {
-        self.cancel.commit()
-    }
-}
-
 /// A run's cancellation, which only a run in session takes: a cancelled run
 /// posts nothing more (docs/specs/runs.md, "Cancelling"), and one that has
-/// begun recording its outcome records all of it.
+/// begun applying its result applies all of it, unless none of it was applied
+/// and it goes back to its session.
 #[derive(Clone, Default)]
 pub(crate) struct Cancellation(Arc<Cancel>);
 
@@ -160,13 +153,17 @@ struct Cancel {
 enum Phase {
     #[default]
     InSession,
-    Recording,
+    /// Applying its result; `stop` holds a cancel that came meanwhile.
+    Applying {
+        stop: bool,
+    },
     Cancelled,
 }
 
 impl Cancellation {
-    /// Cancels the run unless it has begun recording its outcome, and
-    /// returns whether the run is cancelled.
+    /// Cancels the run unless it is applying its result, and returns whether
+    /// the run is cancelled. A cancel while applying is kept for
+    /// [`Self::back_to_session`].
     pub(crate) fn cancel(&self) -> bool {
         let mut phase = self.phase();
         match *phase {
@@ -175,20 +172,41 @@ impl Cancellation {
                 self.0.token.cancel();
                 true
             }
-            Phase::Recording => false,
+            Phase::Applying { .. } => {
+                *phase = Phase::Applying { stop: true };
+                false
+            }
             Phase::Cancelled => true,
         }
     }
 
-    /// Begins recording the outcome, unless the run was cancelled first.
-    fn commit(&self) -> Result<(), Failure> {
+    /// Begins applying the result, unless the run was cancelled first.
+    fn begin_applying(&self) -> Result<(), Failure> {
         let mut phase = self.phase();
         match *phase {
-            Phase::InSession | Phase::Recording => {
-                *phase = Phase::Recording;
+            Phase::InSession => {
+                *phase = Phase::Applying { stop: false };
                 Ok(())
             }
+            Phase::Applying { .. } => Ok(()),
             Phase::Cancelled => Err(Failure::Cancelled),
+        }
+    }
+
+    /// Returns to the session, nothing of the result applied: the run is
+    /// cancelled then if a cancel came while it was applying.
+    fn back_to_session(&self) -> Result<(), Failure> {
+        let mut phase = self.phase();
+        match *phase {
+            Phase::InSession | Phase::Applying { stop: false } => {
+                *phase = Phase::InSession;
+                Ok(())
+            }
+            Phase::Applying { stop: true } | Phase::Cancelled => {
+                *phase = Phase::Cancelled;
+                self.0.token.cancel();
+                Err(Failure::Cancelled)
+            }
         }
     }
 
@@ -288,6 +306,31 @@ fn pushed(branch: &str, pushed: Pushed, again: TryAgain) -> Result<(), Failure> 
     }
 }
 
+/// Pushes a session's finished result to `branch`, which begins applying
+/// it, and returns the secrets GitHub's push protection refused the push
+/// over, if it did: then none of the result was applied, and the run is back
+/// in its session. A push GitHub refuses for a missing permission is handed
+/// back with how to `again`.
+async fn push_result(
+    shell: &Shell,
+    ctx: &Ctx,
+    dir: &Path,
+    branch: &str,
+    mode: PushMode,
+    again: TryAgain,
+) -> Result<Option<FoundSecrets>, Failure> {
+    ctx.cancel.begin_applying()?;
+    match push(shell, dir, branch, mode).await {
+        Pushed::Protected(secrets) => {
+            ctx.cancel.back_to_session()?;
+            Ok(Some(secrets))
+        }
+        other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
+            pushed(branch, other, again).map(|()| None)
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum TryAgain {
     Relabel,
@@ -324,6 +367,13 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             }
             Err(Failure::Infrastructure { error: e, .. }) if !retried => {
                 let error = shell.secrets.redaction().apply(&format!("{e:#}"));
+                // The retry is a new session, so a cancel can stop it again,
+                // and one that came while the attempt applied its result
+                // stops it now.
+                if ctx.cancel.back_to_session().is_err() {
+                    info!(subject = ?subject, error, "run cancelled; not retried");
+                    return Ending::Cancelled;
+                }
                 warn!(subject = ?subject, error, "infrastructure failure; retrying once");
                 retried = true;
             }
@@ -356,7 +406,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             Err(Failure::HandBack(hand_back)) => break hand_back,
         }
     };
-    if ctx.commit().is_err() {
+    if ctx.cancel.begin_applying().is_err() {
         info!(subject = ?subject, reason = hand_back.reason, "run cancelled; not handed back");
         return Ending::Cancelled;
     }
@@ -523,7 +573,7 @@ fn stopped(pr: &Pull, linewright: &Login) -> Option<PullStop> {
 }
 
 /// The writes that change what an item asks for, which a run makes last
-/// (docs/specs/runs.md, "Recording the outcome"), made by [`ask`].
+/// (docs/specs/architecture.md, State, "Writes"), made by [`ask`].
 #[derive(Default)]
 pub(crate) struct Asks {
     pub designed: Option<Designed>,
@@ -547,8 +597,8 @@ pub(crate) enum StatusTo {
     Clear,
 }
 
-/// Makes `asks`' writes on `number` in the order docs/specs/runs.md,
-/// "Recording the outcome", asks for: `linewright:designed`, the stall, the
+/// Makes `asks`' writes on `number` in the order docs/specs/architecture.md,
+/// State, "Writes", asks for: `linewright:designed`, the stall, the
 /// new status label, the removal of the others, the unassignment.
 pub(crate) async fn ask(store: &dyn Store, number: Number, asks: &Asks) -> Result<()> {
     match asks.designed {
@@ -1009,7 +1059,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     })
     .await?;
     // The session may end as the run is cancelled, too late to stop it.
-    ctx.commit()?;
+    ctx.cancel.begin_applying()?;
     record_triage(shell, issue, result).await.map_err(apply)
 }
 
@@ -1068,8 +1118,8 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     ask(&**store, issue.number, &asks).await
 }
 
-/// Runs a design session on `subject`, sent `prompt`, and begins recording
-/// its outcome.
+/// Runs a design session on `subject`, sent `prompt`, and begins applying
+/// its result.
 async fn design_session<C: DeserializeOwned>(
     shell: &Shell,
     ctx: &Ctx,
@@ -1086,7 +1136,7 @@ async fn design_session<C: DeserializeOwned>(
         results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
     })
     .await?;
-    ctx.commit()?;
+    ctx.cancel.begin_applying()?;
     Ok(answered)
 }
 
@@ -1601,14 +1651,24 @@ async fn implement(
         if !matches!(result, ImplementResult::Done { .. }) {
             break (result, turn);
         }
-        match push(shell, &ws.dir, &branch, PushMode::Replace).await {
-            Pushed::Protected(secrets) => {
+        let pushing = push_result(
+            shell,
+            ctx,
+            &ws.dir,
+            &branch,
+            PushMode::Replace,
+            TryAgain::Relabel,
+        );
+        match pushing.await {
+            Err(Failure::Cancelled) => {
+                keep().await;
+                return Err(Failure::Cancelled);
+            }
+            Err(failure) => return Err(failure),
+            Ok(Some(secrets)) => {
                 step = send_back_protected(shell, ctx, &spec, &turn, &secrets, &mut retries)?;
             }
-            other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
-                pushed(&branch, other, TryAgain::Relabel)?;
-                break (result, turn);
-            }
+            Ok(None) => break (result, turn),
         }
     };
     let store = &shell.store;
@@ -1618,10 +1678,10 @@ async fn implement(
             pr_body,
             spec_gaps,
         } => {
-            ctx.commit()?;
+            ctx.cancel.begin_applying()?;
             // Opening the pull request puts the ticket in review, which
             // changes what it asks for, so the gaps go first
-            // (docs/specs/runs.md, "Recording the outcome").
+            // (docs/specs/architecture.md, State, "Writes").
             file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(apply)?;
@@ -1657,7 +1717,7 @@ async fn implement(
             spec_gaps,
         } => {
             let kept = keep().await;
-            ctx.commit()?;
+            ctx.cancel.begin_applying()?;
             file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
@@ -1768,7 +1828,7 @@ async fn push_update(
     let lease = PushMode::Lease {
         expected: start.to_string(),
     };
-    ctx.commit()?;
+    ctx.cancel.begin_applying()?;
     let outcome = push(shell, dir, &pr.head_ref, lease).await;
     pushed(&pr.head_ref, outcome, TryAgain::Reassign)
 }
@@ -1943,14 +2003,24 @@ async fn pull_work(
         {
             break (result, turn, pr_now, read_at);
         }
-        match push(shell, dir, &pr.head_ref, lease.clone()).await {
-            Pushed::Protected(secrets) => {
+        let pushing = push_result(
+            shell,
+            ctx,
+            dir,
+            &pr.head_ref,
+            lease.clone(),
+            TryAgain::Reassign,
+        );
+        match pushing.await {
+            Err(Failure::Cancelled) => {
+                keep().await;
+                return Err(Failure::Cancelled);
+            }
+            Err(failure) => return Err(failure),
+            Ok(Some(secrets)) => {
                 step = send_back_protected(shell, ctx, &spec, &turn, &secrets, &mut retries)?;
             }
-            other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
-                pushed(&pr.head_ref, other, TryAgain::Reassign)?;
-                break (result, turn, pr_now, read_at);
-            }
+            Ok(None) => break (result, turn, pr_now, read_at),
         }
     };
     match result {
@@ -1960,7 +2030,7 @@ async fn pull_work(
             replies,
             spec_gaps,
         } => {
-            ctx.commit()?;
+            ctx.cancel.begin_applying()?;
             if let Some(body) = pr_body {
                 store
                     .edit_body(pr.number, &closing(&body, &pr_now.closes))
@@ -1984,7 +2054,7 @@ async fn pull_work(
             spec_gaps,
         } => {
             let kept = keep().await;
-            ctx.commit()?;
+            ctx.cancel.begin_applying()?;
             file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
@@ -2110,7 +2180,7 @@ pub(crate) async fn automation(
             results::parse(&message).map_err(parse_retry(ctx))
         })
         .await?;
-        ctx.commit()?;
+        ctx.cancel.begin_applying()?;
         record_automation(shell, automation, &result)
             .await
             .map_err(apply)?;
@@ -2191,23 +2261,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cancel_before_the_commit_wins_and_the_commit_then_fails() {
+    fn a_cancel_before_applying_cancels_and_applying_then_fails() {
         let cancellation = Cancellation::default();
 
         assert!(cancellation.cancel());
 
-        assert!(matches!(cancellation.commit(), Err(Failure::Cancelled)));
+        assert!(matches!(
+            cancellation.begin_applying(),
+            Err(Failure::Cancelled)
+        ));
         assert!(cancellation.0.token.is_cancelled());
     }
 
     #[test]
-    fn a_commit_before_the_cancel_wins_and_the_cancel_then_fails() {
+    fn a_cancel_while_applying_does_not_stop_the_run() {
         let cancellation = Cancellation::default();
 
-        assert!(cancellation.commit().is_ok());
+        assert!(cancellation.begin_applying().is_ok());
 
         assert!(!cancellation.cancel());
         assert!(!cancellation.0.token.is_cancelled());
-        assert!(cancellation.commit().is_ok());
+        assert!(cancellation.begin_applying().is_ok());
+    }
+
+    #[test]
+    fn back_in_session_with_no_cancel_meanwhile_the_run_can_be_cancelled_again() {
+        let cancellation = Cancellation::default();
+        cancellation.begin_applying().ok();
+
+        assert!(cancellation.back_to_session().is_ok());
+
+        assert!(cancellation.cancel());
+        assert!(cancellation.0.token.is_cancelled());
+    }
+
+    #[test]
+    fn back_in_session_after_a_cancel_while_applying_the_run_is_cancelled() {
+        let cancellation = Cancellation::default();
+        cancellation.begin_applying().ok();
+        cancellation.cancel();
+
+        assert!(matches!(
+            cancellation.back_to_session(),
+            Err(Failure::Cancelled)
+        ));
+
+        assert!(cancellation.0.token.is_cancelled());
+        assert!(cancellation.cancel());
+    }
+
+    #[test]
+    fn applying_again_after_being_cancelled_fails() {
+        let cancellation = Cancellation::default();
+        cancellation.begin_applying().ok();
+        cancellation.cancel();
+        cancellation.back_to_session().ok();
+
+        assert!(matches!(
+            cancellation.begin_applying(),
+            Err(Failure::Cancelled)
+        ));
     }
 }

@@ -313,7 +313,7 @@ pub fn design_issues(world: &World) {
     });
 }
 
-/// A session held open until released, from [`gated`].
+/// A session held open until released, from [`gate`] or [`gated`].
 pub struct Gate {
     release: std::sync::mpsc::Sender<()>,
     begun: tokio::sync::mpsc::UnboundedReceiver<()>,
@@ -325,24 +325,46 @@ impl Gate {
         self.begun.recv().await.unwrap();
     }
 
-    /// Ends the session, as failed.
+    /// Lets the session go on; under [`gated`], it ends as failed.
     pub fn release(&self) {
         self.release.send(()).unwrap();
     }
 }
 
+/// The session's end of a [`Gate`], from [`gate`].
+pub struct Gatepost {
+    begin: tokio::sync::mpsc::UnboundedSender<()>,
+    released: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl Gatepost {
+    /// Says the session has begun, and waits until its [`Gate`] releases it.
+    pub fn wait(&self) {
+        let _ = self.begin.send(());
+        self.released.lock().unwrap().recv().unwrap();
+    }
+}
+
+/// A [`Gate`] and the [`Gatepost`] a session's script waits at for it.
+pub fn gate() -> (Gate, Gatepost) {
+    let (release, released) = std::sync::mpsc::channel();
+    let (begin, begun) = tokio::sync::mpsc::unbounded_channel();
+    let post = Gatepost {
+        begin,
+        released: std::sync::Mutex::new(released),
+    };
+    (Gate { release, begun }, post)
+}
+
 /// Holds each session of `kind` open until the returned [`Gate`] releases
 /// it.
 pub fn gated(world: &World, kind: WorkKind) -> Gate {
-    let (release, released) = std::sync::mpsc::channel();
-    let released = std::sync::Mutex::new(released);
-    let (begin, begun) = tokio::sync::mpsc::unbounded_channel();
+    let (gate, post) = gate();
     world.harness.on(kind, move |_| {
-        let _ = begin.send(());
-        released.lock().unwrap().recv().unwrap();
+        post.wait();
         failed_session("released")
     });
-    Gate { release, begun }
+    gate
 }
 
 /// A world whose work dir is `REPO`'s, holding an issue that needs triage,

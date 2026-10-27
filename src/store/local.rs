@@ -1808,6 +1808,12 @@ impl Store for LocalStore {
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
         let refused = self.state().pushes_refused.clone();
         if let Some(output) = refused {
+            // A refused push pauses as well, before GitHub's refusal returns.
+            self.paused(Write::Push {
+                branch: branch.into(),
+            })
+            .await
+            .map_err(PushError::Failed)?;
             return Err(PushError::from_git(anyhow::anyhow!(
                 "git push failed: {output}"
             )));

@@ -7,6 +7,8 @@ use crate::common;
 use common::*;
 use linewright::domain::CheckState;
 use linewright::reconcile::WorkKind;
+use linewright::runs::Ending;
+use linewright::store::local::Write;
 use serde_json::json;
 use std::path::Path;
 
@@ -307,4 +309,86 @@ async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_
         "{comment}"
     );
     assert_eq!(world.store.pulls(), []);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_implement_run_whose_push_github_refuses_over_a_secret_can_be_cancelled_while_its_session_runs_again()
+ {
+    let mut world = World::new().await;
+    let store = world.store.clone();
+    let (mut gate, post) = gate();
+    world.harness.on(WorkKind::Implement, move |call| {
+        let dir = &call.spec.dir;
+        if call.followup.is_none() {
+            commit_token(dir);
+            store.refuse_pushes(REFUSAL);
+        } else {
+            post.wait();
+            take_token_out(dir);
+            store.accept_pushes();
+        }
+        Ok(
+            json!({"outcome": "done", "pr_title": "Configure", "pr_body": "Configures."})
+                .to_string(),
+        )
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Configure",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.factory.cycle().await.unwrap();
+    gate.begun().await;
+
+    world
+        .store
+        .unassign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.factory.cycle().await.unwrap();
+    gate.release();
+    world.factory.settle().await;
+
+    assert_eq!(world.store.pulls(), []);
+    assert_eq!(world.issue(ticket).comments, []);
+    assert_eq!(ended_runs(&world), [Ending::Cancelled]);
+}
+
+#[tokio::test]
+async fn a_cancel_during_a_push_github_then_refuses_over_a_secret_ends_the_run_without_resuming_its_session()
+ {
+    let mut world = World::new().await;
+    let store = world.store.clone();
+    world.harness.on(WorkKind::Implement, move |call| {
+        commit_token(&call.spec.dir);
+        store.refuse_pushes(REFUSAL);
+        Ok(
+            json!({"outcome": "done", "pr_title": "Configure", "pr_body": "Configures."})
+                .to_string(),
+        )
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Configure",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    let mut paused = world.store.pause_after(Write::Push {
+        branch: format!("{}-configure", ticket.0),
+    });
+    world.factory.cycle().await.unwrap();
+    paused.reached().await;
+
+    world
+        .store
+        .unassign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.factory.cycle().await.unwrap();
+    paused.release();
+    world.factory.settle().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
+    assert_eq!(world.store.pulls(), []);
+    assert_eq!(world.issue(ticket).comments, []);
+    assert_eq!(ended_runs(&world), [Ending::Cancelled]);
 }

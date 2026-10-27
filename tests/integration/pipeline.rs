@@ -54,7 +54,7 @@ async fn a_triage_run_paused_after_removing_needs_triage_ends_labeled_once_relea
 }
 
 #[tokio::test]
-async fn a_run_cancelled_after_its_session_answers_and_before_it_writes_posts_nothing() {
+async fn a_cancel_after_an_implement_run_begins_pushing_its_result_does_not_stop_it() {
     let mut world = World::new().await;
     implement(&world);
     let ticket = open_ticket(&world, "Gadgets");
@@ -70,6 +70,166 @@ async fn a_run_cancelled_after_its_session_answers_and_before_it_writes_posts_no
         .unwrap();
     world.factory.cycle().await.unwrap();
     paused.release();
+    world.factory.settle().await;
+
+    assert_eq!(world.store.pulls().len(), 1);
+    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_implement_run_cancelled_as_its_session_answers_keeps_its_work_and_posts_nothing() {
+    let mut world = World::new().await;
+    let (mut gate, post) = gate();
+    world.harness.on(WorkKind::Implement, move |call| {
+        commit_in(&call.spec.dir, &[("src/gadgets.txt", "done\n")], "Do it");
+        post.wait();
+        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
+    });
+    let ticket = open_ticket(&world, "Gadgets");
+    world.factory.cycle().await.unwrap();
+    gate.begun().await;
+
+    world
+        .store
+        .unassign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.factory.cycle().await.unwrap();
+    gate.release();
+    world.factory.settle().await;
+
+    assert_eq!(world.store.pulls(), []);
+    assert_eq!(world.issue(ticket).comments, []);
+    assert_eq!(
+        world
+            .store
+            .file(&format!("{}-gadgets", ticket.0), "src/gadgets.txt")
+            .await
+            .unwrap(),
+        "done\n"
+    );
+    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Cancelled]);
+}
+
+#[tokio::test]
+async fn a_cancel_after_a_rework_begins_pushing_its_result_does_not_stop_it() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    let head_ref = world.store.snapshot_pull(pr).await.head_ref;
+    let mut paused = world.store.pause_after(Write::Push {
+        branch: head_ref.clone(),
+    });
+    world.factory.cycle().await.unwrap();
+    paused.reached().await;
+
+    world
+        .store
+        .unassign_as("maintainer", pr, LINEWRIGHT)
+        .unwrap();
+    world.factory.cycle().await.unwrap();
+    paused.release();
+    world.factory.settle().await;
+
+    assert_eq!(last_pull_comment(&world, pr).await, "Renamed.");
+    assert_eq!(
+        world
+            .store
+            .file(&head_ref, "src/renamed.txt")
+            .await
+            .unwrap(),
+        "renamed\n"
+    );
+    let mut ended = ended_runs(&world);
+    ended.sort_by_key(|ending| format!("{ending:?}"));
+    assert_eq!(
+        ended,
+        [
+            linewright::runs::Ending::Done,
+            linewright::runs::Ending::Done
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rework_cancelled_before_its_push_by_its_pull_request_closing_pushes_and_posts_nothing() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Rename it.")
+        .unwrap();
+    let (mut gate, post) = gate();
+    world.harness.on(WorkKind::Rework, move |call| {
+        commit_in(
+            &call.spec.dir,
+            &[("src/renamed.txt", "renamed\n")],
+            "Rename",
+        );
+        post.wait();
+        Ok(json!({"outcome": "done", "comment": "Renamed."}).to_string())
+    });
+    let head_ref = world.store.snapshot_pull(pr).await.head_ref;
+    world.factory.cycle().await.unwrap();
+    gate.begun().await;
+
+    world.store.close_pull_as(pr).unwrap();
+    world.factory.cycle().await.unwrap();
+    gate.release();
+    world.factory.settle().await;
+
+    assert!(
+        world
+            .store
+            .file(&head_ref, "src/renamed.txt")
+            .await
+            .is_err()
+    );
+    assert_ne!(last_pull_comment(&world, pr).await, "Renamed.");
+    let mut ended = ended_runs(&world);
+    ended.sort_by_key(|ending| format!("{ending:?}"));
+    assert_eq!(
+        ended,
+        [
+            linewright::runs::Ending::Cancelled,
+            linewright::runs::Ending::Done
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_attempt_retried_after_an_infrastructure_failure_can_be_cancelled_during_its_new_session()
+ {
+    let mut world = World::new().await;
+    let (mut gate, post) = gate();
+    let sessions = std::sync::atomic::AtomicUsize::new(0);
+    world.harness.on(WorkKind::Implement, move |call| {
+        if sessions.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0 {
+            post.wait();
+        }
+        let file = call.spec.dir.join("src/gadgets.txt");
+        let done = std::fs::read_to_string(&file).unwrap_or_default();
+        commit_in(
+            &call.spec.dir,
+            &[("src/gadgets.txt", &format!("{done}done\n"))],
+            "Do it",
+        );
+        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
+    });
+    let ticket = open_ticket(&world, "Gadgets");
+    let mut paused = world.store.pause_after(Write::Push {
+        branch: format!("{}-gadgets", ticket.0),
+    });
+    world.factory.cycle().await.unwrap();
+    paused.reached().await;
+    paused.fail();
+    gate.begun().await;
+
+    world
+        .store
+        .unassign_as("maintainer", ticket, LINEWRIGHT)
+        .unwrap();
+    world.factory.cycle().await.unwrap();
+    gate.release();
     world.factory.settle().await;
 
     assert_eq!(world.store.pulls(), []);
@@ -103,7 +263,7 @@ async fn a_triage_run_cancelled_while_it_records_its_result_records_all_of_it() 
     assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
     assert!(
         log.text()
-            .contains("the run is recording its outcome; left to finish"),
+            .contains("the run is applying its result; left to finish"),
         "{}",
         log.text()
     );
