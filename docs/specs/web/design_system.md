@@ -60,6 +60,11 @@ two themes of its own.
   and a small shadow. A card that shows a card status has a left edge
   in its colour and its icon before its line. A card in Done is faded.
 
+## Facts
+
+- **The facts** are drawn as a card is, their labels in a column of their
+  own.
+
 ## Tables
 
 - **A table** is a daisyUI `table`, its column heads pinned.

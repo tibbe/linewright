@@ -115,28 +115,14 @@ its run ID, item, stage, start, duration and outcome.
 that started a session.
 
 - **Another run.** `--run ID` picks another run.
-- **As the agent shows it.** `logs` shows a session as the agent itself shows
-  it, as far as text that only ever grows allows, and `logs --json` gives
-  what the agent gives about it, following the agent's own JSON output. The
-  rules below settle where that leaves a choice.
-- **Sessions and turns.** The transcript shows each of the run's sessions in
-  order, and marks each turn after the first with the follow-up that started
-  it.
-- **Lines.** Each line starts with the time since its session started, as
-  h:mm:ss with the hours left out under an hour, such as `2:10` or
-  `1:02:10`, not as a duration is shown, so that the lines align. The
-  agent's messages show in full. Each tool call shows on one line: the tool,
-  its main argument and a short account of its result, such as the lines
-  read, the exit status or, for a sub-agent, the count of its tool calls and
-  how long it ran, or `running` while the call has not returned. A
-  sub-agent's work shows indented under the call that started it.
-- **`--verbose`.** It shows everything the transcript holds, including the
-  agent's thinking, each tool's full input and result, and the brief and
-  follow-ups.
-- **`--follow`.** It shows the transcript so far, then each entry as it
-  happens, and ends when the run ends. A tool call shows once it is made, and
-  again with its account, at the time, once it returns or ends in the
-  background.
+- **The transcripts.** `logs` shows the run's transcripts as
+  [Transcripts](design_system.md#transcripts) says, as far as text that only
+  ever grows allows, with a sub-agent's work indented under the call that
+  started it. `logs --json` gives what the agent gives about them, following
+  the agent's own JSON output.
+- **`--verbose`.** It shows the transcripts in full.
+- **`--follow`.** It shows the transcripts so far, then follows them, and ends
+  when the run ends.
 - **No session.** For a run that started no session, `logs` says so.
 
 ## Output

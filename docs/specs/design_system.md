@@ -56,6 +56,34 @@
 - As the reader scrolls, a table's column heads stay at the top.
 - A title in a table is on one line.
 
+## Facts
+
+- A page's facts about one thing are a list of labels, each with its value
+  beside it.
+- A status among the facts is its icon and its words in its colour, with
+  nothing behind them.
+
+## Transcripts
+
+- **Sessions and turns.** A run's transcripts show in the order of its
+  sessions, each as the agent itself shows it where the rules below leave a
+  choice, marking each turn after the first with the follow-up that started
+  it.
+- **Times.** Each entry starts with the time since its session started, as
+  h:mm:ss with the hours left out under an hour, such as `2:10` or
+  `1:02:10`, not as a duration is shown, so that the entries align.
+- **Entries.** The agent's messages show in full. Each tool call shows on one
+  line: the tool, its main argument and a short account of its result, such
+  as the lines read, the exit status or, for a sub-agent, the count of its
+  tool calls and how long it ran, or `running` while the call has not
+  returned. A sub-agent's work shows under the call that started it.
+- **In full.** A transcript in full shows everything it holds, including the
+  agent's thinking, each tool's full input and result, and the brief and
+  follow-ups.
+- **Followed.** A followed transcript shows each entry as it happens. A tool
+  call shows once it is made, and again with its account, at the time, once
+  it returns or ends in the background.
+
 ## Layout
 
 - Content wider than the page scrolls sideways on its own, not the page with
@@ -67,8 +95,8 @@
 ## Type
 
 - Secondary text, text that qualifies the text it sits beside, such as a
-  card's line under its title or a time beside a transcript entry, is
-  quieter than it.
+  card's line under its title, a fact's label or a time beside a transcript
+  entry, is quieter than it.
 
 ## Colour scheme
 
@@ -76,16 +104,16 @@
 
 ## The web UI
 
-`serve` serves a web UI for the maintainers: the facts the monitoring
-commands show ([Monitoring](monitoring.md)), chosen and laid out for
-someone scanning a page, in the UI's own words rather than a command's.
+`serve` serves a web UI for the maintainers, where they follow Linewright
+and its work ([Monitoring](monitoring.md)), laid out for someone scanning a
+page.
 
 | Page        | Path           | Shows                                                       |
 | ----------- | -------------- | ----------------------------------------------------------- |
 | board       | `/`            | the managed items as cards ([The board](#the-board))        |
-| item        | `/items/N`     | where #N stands, what it waits for and its runs ([Lists of runs](#lists-of-runs)) |
+| item        | `/items/N`     | where #N stands, what it waits for, the items it relates to and its runs ([The item page](#the-item-page)) |
 | runs        | `/runs`        | every run ([Lists of runs](#lists-of-runs))                 |
-| run         | `/runs/ID`     | what `logs` shows of run ID ([The run page](#the-run-page))  |
+| run         | `/runs/ID`     | run ID's transcripts ([The run page](#the-run-page))         |
 | automations | `/automations` | the automations ([The automations page](#the-automations-page)) |
 | server      | `/server`      | the facts about Linewright itself ([The server page](#the-server-page)) |
 
@@ -216,6 +244,28 @@ What stops a pull request merging, in the order the line picks from:
 | "draft"                                                   | it is a draft                              |  |
 | "changes requested", "review required" or "approved"      | the review decision, as GitHub words it    | waiting for a person, but none for "approved" |
 
+### The item page
+
+The item page shows #N's heading, then its facts ([Facts](#facts)) in the
+order below, then its runs ([Lists of runs](#lists-of-runs)).
+
+- **Heading.** #N's number and title as on its card, and under them when
+  `serve` last read #N, such as "as of 2 minutes ago".
+- **Its card.** For an item shown on another's card, such as a pull request
+  on the card of the issue it closes, the card it would have on its own.
+- **Related items.** An item a fact lists is shown as its card is, with its
+  card status's icon in place of its line.
+
+| Fact           | Holds                                                                                                                                  | Shown                          |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| State          | #N's column, then its card's line, with its card status ([Cards](#cards)); for a tracking issue, its lane head's line, with the lane's card status; for an item Linewright leaves, "Left alone", then what keeps it out, such as "closed" or "labeled none of `needs-triage`, …" | always                         |
+| Waiting for    | each thing Linewright waits for before it acts on #N next, one per line, naming what ends it, such as "the usage limit, until 14:30", in plain text | while it waits for any         |
+| Tracking issue | a ticket's tracking issue, or the tracking issue cut from a spec change                                                                | while there is one             |
+| Tickets        | a tracking issue's tickets, with how many are closed of the total, such as "3 of 5 closed"                                             | while it has any               |
+| Spec change    | the pull request of the spec change a tracking issue tracks                                                                            | while there is one             |
+| Pull requests  | the open or merged pull requests that close #N                                                                                         | while there are any            |
+| Closes         | the issues a pull request closes                                                                                                       | while there are any            |
+
 ### Lists of runs
 
 A list of runs is a table with a row per run, newest first.
@@ -239,14 +289,15 @@ A list of runs is a table with a row per run, newest first.
 
 ### The run page
 
-The run page shows a run's transcript as `logs` shows it, under each
-session's model and effort and where its settings and prompt files came from.
+The run page shows the run's transcripts ([Transcripts](#transcripts)), each
+under its session's model and effort and where its settings and prompt files
+came from.
 
 - **Folding.** A tool call's line opens on click to the tool's full input and
   result; a call that failed starts open. A sub-agent's work starts folded to
   the line of the call that started it, with the count of its entries.
-- **Verbose.** A switch, set once for the page, shows what `logs --verbose`
-  shows, with everything open.
+- **Verbose.** A switch, set once for the page, shows the transcripts in full,
+  with everything open.
 - **Following.** A run in flight is followed. The page stays at the bottom
   until the reader scrolls up, and then offers to jump to the latest entry.
 - **Permalinks.** Each entry has a link of its own.
@@ -265,7 +316,7 @@ row per automation.
 
 ### The server page
 
-The server page shows the facts about Linewright itself.
+The server page shows the facts about Linewright itself ([Facts](#facts)).
 
 | Fact                                                            | Shown                  |
 | --------------------------------------------------------------- | ---------------------- |
