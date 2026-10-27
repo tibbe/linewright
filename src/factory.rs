@@ -1226,38 +1226,11 @@ async fn read_issue_into(
 }
 
 /// The items `action` changes in the store, beyond what the runs it starts
-/// write.
+/// write: deleting a ticket's branch leaves the ticket as it was.
 fn written(action: &Action, snapshot: &Snapshot) -> Vec<Item> {
-    match action {
-        Action::Claim { item } => vec![*item],
-        Action::LetGo { issue, .. }
-        | Action::Relabel { issue, .. }
-        | Action::UnassignAsked { issue, .. }
-        | Action::RemoveStatusLabel { issue, .. }
-        | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
-        Action::DiscardCut(discard) => discard
-            .tickets
-            .iter()
-            .copied()
-            .chain([discard.item.parent()])
-            .map(Item::Issue)
-            .chain(discard.all_pulls().map(Item::Pull))
-            .collect(),
-        Action::Merge { pr, .. } => snapshot
-            .pull(*pr)
-            .into_iter()
-            .flat_map(|p| p.closes.iter().map(|issue| Item::Issue(*issue)))
-            .chain([Item::Pull(*pr)])
-            .collect(),
-        Action::MarkReady { pr }
-        | Action::MarkReadyForMergeState { pr }
-        | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
-        Action::HandBack { item, .. } | Action::ClearStall { item } => vec![*item],
-        Action::Start(_)
-        | Action::Cancel { .. }
-        | Action::RememberRebase(_)
-        | Action::DeleteBranch { .. }
-        | Action::RecordLastScheduledRuns(_)
-        | Action::RunAutomation(_) => vec![],
+    if matches!(action, Action::Start(_) | Action::DeleteBranch { .. }) {
+        vec![]
+    } else {
+        action.items(snapshot)
     }
 }

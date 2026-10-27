@@ -452,6 +452,44 @@ pub enum Action {
     RunAutomation(Box<Automation>),
 }
 
+impl Action {
+    /// The items it writes or starts work on.
+    pub fn items(&self, snapshot: &Snapshot) -> Vec<Item> {
+        match self {
+            Action::Start(work) => vec![work.starts_from()],
+            Action::Claim { item } => vec![*item],
+            Action::LetGo { issue, .. }
+            | Action::Relabel { issue, .. }
+            | Action::UnassignAsked { issue, .. }
+            | Action::RemoveStatusLabel { issue, .. }
+            | Action::CloseTracking { issue } => vec![Item::Issue(*issue)],
+            Action::DiscardCut(discard) => discard
+                .tickets
+                .iter()
+                .copied()
+                .chain([discard.item.parent()])
+                .map(Item::Issue)
+                .chain(discard.all_pulls().map(Item::Pull))
+                .collect(),
+            Action::Merge { pr, .. } => snapshot
+                .pull(*pr)
+                .into_iter()
+                .flat_map(|p| p.closes.iter().map(|issue| Item::Issue(*issue)))
+                .chain([Item::Pull(*pr)])
+                .collect(),
+            Action::MarkReady { pr }
+            | Action::MarkReadyForMergeState { pr }
+            | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
+            Action::HandBack { item, .. } | Action::ClearStall { item } => vec![*item],
+            Action::DeleteBranch { branch } => vec![Item::Issue(branch.issue())],
+            Action::Cancel { .. }
+            | Action::RememberRebase(_)
+            | Action::RecordLastScheduledRuns(_)
+            | Action::RunAutomation(_) => vec![],
+        }
+    }
+}
+
 /// Close `peoples_pulls`, then `tickets`, of a cut of `item` without the
 /// designed label, as not planned, then `pulls`, leaving the item to be
 /// designed again (docs/specs/design.md, "Discarding a cut").

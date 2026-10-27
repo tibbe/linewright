@@ -4980,3 +4980,53 @@ fn a_config_of_the_repositorys_that_cannot_be_used_holds_every_run_and_leaves_au
         })])
     );
 }
+
+#[test]
+fn starting_a_spec_change_design_touches_the_spec_change() {
+    let action = Action::Start(Work::DesignSpecChange { pr: Number(20) });
+
+    assert_eq!(action.items(&snapshot(vec![])), vec![Item::Pull(Number(20))]);
+}
+
+#[test]
+fn merging_a_pull_request_touches_it_and_the_issues_it_closes() {
+    let world = in_review(pull(20, 2));
+
+    assert_eq!(
+        merge(20, false).items(&world),
+        vec![Item::Issue(Number(2)), Item::Pull(Number(20))]
+    );
+}
+
+#[test]
+fn discarding_a_cut_touches_its_tickets_its_tracking_issue_and_its_pull_requests() {
+    let action = Action::DiscardCut(Discard {
+        item: CutItem::SpecChange {
+            pr: Number(10),
+            tracking: Number(11),
+        },
+        peoples_pulls: vec![Number(30)],
+        tickets: vec![Number(12), Number(13)],
+        pulls: vec![Number(31)],
+    });
+
+    assert_eq!(
+        action.items(&snapshot(vec![])),
+        vec![
+            Item::Issue(Number(12)),
+            Item::Issue(Number(13)),
+            Item::Issue(Number(11)),
+            Item::Pull(Number(30)),
+            Item::Pull(Number(31)),
+        ]
+    );
+}
+
+#[test]
+fn deleting_a_ticket_branch_touches_its_ticket() {
+    let action = Action::DeleteBranch {
+        branch: TicketBranchName::parse("42-add-a-thing").unwrap(),
+    };
+
+    assert_eq!(action.items(&snapshot(vec![])), vec![Item::Issue(Number(42))]);
+}
