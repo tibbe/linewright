@@ -4,6 +4,7 @@
 mod automations_page;
 mod board_page;
 mod cards;
+mod facts;
 mod html;
 mod item_page;
 mod run_page;

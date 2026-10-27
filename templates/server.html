@@ -3,22 +3,6 @@
 {%- block main -%}
 <section id="server">
 <h1>Server</h1>
-<table class="table w-auto">
-<tbody>
-{%- for fact in facts %}
-<tr>
-<th>
-{%- match fact.tone -%}
-{%- when Some(tone) -%}
-{% call ui::status(tone, fact.label) %}{% endcall %}
-{%- when None -%}
-{{ fact.label }}
-{%- endmatch -%}
-</th>
-<td>{{ fact.value|safe }}</td>
-</tr>
-{%- endfor %}
-</tbody>
-</table>
+{% call ui::facts(facts) %}{% endcall %}
 </section>
 {%- endblock -%}

@@ -11,7 +11,8 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
-use super::html::{self, Html};
+use super::facts::{Fact, Piece};
+use super::html;
 use super::{Frame, Hold, Page, Read, events, frame_regions, render};
 use crate::api::Sources;
 use crate::phrase::{Phrase, Tone};
@@ -22,34 +23,29 @@ use crate::status::{self, FailedPolls, Linewright, LinewrightFact, PollsShown};
 struct ServerPage {
     page: Page,
     frame: Frame,
-    facts: Vec<ServerFact<Html>>,
+    facts: Vec<Fact>,
 }
 
 #[derive(Template)]
 #[template(path = "server.html", block = "main")]
 struct ServerRegion<'a> {
-    facts: &'a [ServerFact<Html>],
+    facts: &'a [Fact],
 }
 
-/// A fact about Linewright itself as the page words it: what it is about,
-/// what is so of it, and, for a hold or a problem, its tone.
-struct ServerFact<Value> {
-    label: &'static str,
-    value: Value,
-    tone: Option<Tone>,
-}
-
-/// The facts as the page words them, past times standing alone, as the
-/// page's script shows them relative.
-fn facts(linewright: &Linewright) -> Vec<ServerFact<Phrase>> {
-    let fact = |label, value| ServerFact {
+/// The facts about Linewright itself as the page words them, each on a
+/// line, past times standing alone, as the page's script shows them
+/// relative. A hold's or a problem's value shows in its tone.
+fn facts(linewright: &Linewright) -> Vec<Fact<Phrase>> {
+    let fact = |label, value| Fact {
         label,
-        value,
-        tone: None,
+        lines: vec![vec![Piece::Text(value)]],
     };
-    let held = |hold: Hold, label, value| ServerFact {
-        tone: Some(hold.tone()),
-        ..fact(label, value)
+    let held = |hold: Hold, label, words| Fact {
+        label,
+        lines: vec![vec![Piece::Status {
+            tone: hold.tone(),
+            words,
+        }]],
     };
     linewright
         .facts()
@@ -132,16 +128,12 @@ fn failed_polls(failed: &FailedPolls) -> Phrase {
 }
 
 /// The frame and the facts, from one answer of `status`.
-fn shown(sources: &Sources) -> (Frame, Vec<ServerFact<Html>>) {
+fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
     let read = Read::of(sources);
     let repo = &sources.work_dir.repo;
     let facts = facts(&read.linewright)
         .into_iter()
-        .map(|fact| ServerFact {
-            label: fact.label,
-            value: html::phrase(&fact.value, repo),
-            tone: fact.tone,
-        })
+        .map(|fact| fact.map(|phrase| html::phrase(&phrase, repo)))
         .collect();
     (Frame::of_read(sources, &read), facts)
 }
@@ -186,11 +178,23 @@ mod tests {
         time.parse().unwrap()
     }
 
-    /// Each fact as label, value as the commands print its times, and tone.
+    /// Each fact as label, value as the commands print its times, and the
+    /// tone it shows in, for a fact of one line that is all text or one
+    /// status.
     fn worded(linewright: &Linewright) -> Vec<(&'static str, String, Option<Tone>)> {
         facts(linewright)
             .into_iter()
-            .map(|fact| (fact.label, fact.value.to_string(), fact.tone))
+            .map(|fact| {
+                let (value, tone) = match &fact.lines[..] {
+                    [line] => match &line[..] {
+                        [Piece::Text(text)] => (text.to_string(), None),
+                        [Piece::Status { tone, words }] => (words.to_string(), Some(*tone)),
+                        _ => panic!("a line of more than one piece"),
+                    },
+                    _ => panic!("a fact of more than one line"),
+                };
+                (fact.label, value, tone)
+            })
             .collect()
     }
 

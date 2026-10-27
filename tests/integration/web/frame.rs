@@ -205,16 +205,40 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
     for path in ["/", "/runs", "/server"] {
         assert_eq!(holds(&web.page(path).await), held, "{path}");
     }
-    let facts = server_facts(&web.page("/server").await);
+    let server = web.page("/server").await;
+    let facts = server_facts(&server);
     assert_eq!(
         facts.get(2),
         Some(&ServerFact {
             label: "Usage limit".into(),
             value: "in force until 2026-10-13 07:50:00 UTC".into(),
-            tone: Some("badge-neutral".into()),
+            tone: Some("neutral".into()),
         }),
         "{facts:?}"
     );
+    // `docs/specs/design_system.md`, Facts and Type: the facts are labels
+    // in Muted text beside their values, drawn as a card is, and a hold's
+    // status is its icon and words in its colour, with no badge behind it.
+    assert_eq!(
+        select(&server, "#server dl.card").len(),
+        1,
+        "{}",
+        server.html()
+    );
+    assert_in_muted_text(&server, "#server dt");
+    let usage_limit = select(&server, "#server dd")[2];
+    assert_eq!(
+        select_in(usage_limit, ".status-text svg.icon").len(),
+        1,
+        "{}",
+        usage_limit.html()
+    );
+    assert!(
+        select(&server, "#server dl.card .badge").is_empty(),
+        "{}",
+        server.html()
+    );
+    assert_no_status_by_colour_alone(&server);
     web.stop().await;
 }
 
@@ -251,7 +275,7 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
         drain.label == "Drain"
             && drain.value.starts_with("started 2026-10-01 ")
             && !drain.value.contains("deadline")
-            && drain.tone.as_deref() == Some("badge-info"),
+            && drain.tone.as_deref() == Some("info"),
         "{facts:?}"
     );
     drop(agent);
@@ -369,7 +393,7 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
         .iter()
         .find(|fact| fact.label == "Failed polls")
         .unwrap_or_else(|| panic!("{facts:?}"));
-    assert_eq!(failed.tone.as_deref(), Some("badge-error"), "{facts:?}");
+    assert_eq!(failed.tone.as_deref(), Some("error"), "{facts:?}");
     // The count, when the first and the last failed, and the last's error.
     let shape = |value: &str| match value.split_once(", the first 2026-10-01 ") {
         Some((count, rest)) => {
@@ -437,7 +461,7 @@ async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to
         Some(&ServerFact {
             label: "Repository file".into(),
             value: format!("`.linewright/config.toml`: {error}"),
-            tone: Some("badge-error".into()),
+            tone: Some("error".into()),
         }),
         "{facts:?}"
     );
@@ -465,8 +489,8 @@ async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to
     web.stop().await;
 }
 
-/// A fact of the server page, as a reader reads it, with the colour of
-/// the tone its label shows in, if it has one.
+/// A fact of the server page, as a reader reads it, with the colour of its
+/// value's status, such as `error`, if it shows one.
 #[derive(Debug, PartialEq, Eq)]
 struct ServerFact {
     label: String,
@@ -476,20 +500,26 @@ struct ServerFact {
 
 /// The server page's facts, in order.
 fn server_facts(html: &Html) -> Vec<ServerFact> {
-    select(html, "#server tr")
+    let labels = select(html, "#server dl > dt");
+    let values = select(html, "#server dl > dd");
+    assert_eq!(labels.len(), values.len(), "{}", html.html());
+    labels
         .into_iter()
-        .map(|row| {
-            let label = select_in(row, "th")[0];
-            ServerFact {
-                label: text(label),
-                value: text(select_in(row, "td")[0]),
-                tone: select_in(label, ".tone").first().and_then(|tone| {
-                    tone.value()
-                        .classes()
-                        .find(|class| class.starts_with("badge-") && *class != "badge-sm")
-                        .map(str::to_string)
-                }),
-            }
+        .zip(values)
+        .map(|(label, value)| ServerFact {
+            label: text(label),
+            value: text(value),
+            tone: select_in(value, ".status-text").first().and_then(|status| {
+                status
+                    .value()
+                    .classes()
+                    .find_map(|class| {
+                        class
+                            .strip_prefix("[--tone:var(--color-")
+                            .and_then(|colour| colour.strip_suffix(")]"))
+                    })
+                    .map(str::to_string)
+            }),
         })
         .collect()
 }
@@ -546,10 +576,22 @@ async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label()
     assert!(facts[3].value.starts_with("2026-10-01 "), "{:?}", facts[3]);
     assert_eq!(labelled(&facts[4..]), [("Webhook deliveries refused", "0")]);
     assert!(facts.iter().all(|fact| fact.tone.is_none()), "{facts:?}");
-    // On the Page, as every table is, not in a box in the Lane colour.
-    let tables = classes(&html, "#server table");
-    assert_eq!(tables.len(), 1, "{tables:?}");
-    assert!(!tables[0].contains(&"bg-base-200"), "{tables:?}");
+    // `docs/specs/web/design_system.md`, Facts: drawn as a card is.
+    let cards = classes(&html, "#server dl.card");
+    assert!(
+        cards.len() == 1
+            && [
+                "card-sm",
+                "border",
+                "border-base-300",
+                "bg-card",
+                "shadow-sm"
+            ]
+            .iter()
+            .all(|class| cards[0].contains(class)),
+        "{cards:?}"
+    );
+    assert!(select(&html, "#server table").is_empty(), "{}", html.html());
     // The times are `<time>` elements, which the page's script shows past
     // ones relative and future ones absolute.
     assert_eq!(select(&html, "#server time[datetime]").len(), 4);

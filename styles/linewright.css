@@ -76,8 +76,8 @@
 /* What daisyUI has no component for: the scroll box of a page that fills
    the viewport (templates/layout.html), the tail of the page's tooltip, the
    link to an item on GitHub beside the link to its page, the board's lane
-   heads, and the run page's transcript, which the server writes as `logs`
-   shows it. */
+   heads, a status among a page's facts, and the run page's transcript,
+   which the server writes as `logs` shows it. */
 @layer components {
   .scroll-box {
     @apply min-h-0 flex-1 overflow-auto;
@@ -129,7 +129,19 @@
   }
 
   .board .toned svg.icon {
-    @apply mr-1 inline-block align-[-0.125em] text-(--tone);
+    @apply text-(--tone);
+  }
+
+  /* A status among a page's facts (docs/specs/design_system.md, Facts):
+     its icon and words in the colour of `--tone`, which its `Tone::accent`
+     class sets (templates/macros.html, `status_text`). */
+  .status-text {
+    @apply text-(--tone);
+  }
+
+  /* A status's icon, before its words on the board and among the facts. */
+  :is(.board .toned, .status-text) svg.icon {
+    @apply mr-1 inline-block align-[-0.125em];
   }
 
   .transcript .entry:target > .line,

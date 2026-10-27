@@ -5,6 +5,45 @@
 <span class="tone badge badge-sm h-auto min-h-5 {{ tone.colour() }}">{% call icon(tone) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
+{#- A status among a page's facts (`docs/specs/design_system.md`, Facts):
+    the tone's icon and its words in its colour, with nothing behind them.
+    The stylesheet colours both from the `--tone` its accent sets. -#}
+{%- macro status_text(tone, words) -%}
+<span class="status-text {{ tone.accent() }}">{% call icon(tone) %}{% endcall %}<span>{{ words|safe }}</span></span>
+{%- endmacro -%}
+
+{#- A page's facts (`docs/specs/web/design_system.md`, Facts), drawn as a
+    board card is, their labels in a column of their own in Muted text, and
+    each line of a value a block of its own. The labels and values are the
+    cells of the card's grid, so it pads itself in place of a `card-body`. -#}
+{%- macro facts(facts) -%}
+<dl class="{% call card_look() %}{% endcall %} grid w-fit grid-cols-[max-content_1fr] gap-x-6 gap-y-2 p-4">
+{%- for fact in facts %}
+<dt class="text-muted">{{ fact.label }}</dt>
+<dd>
+{%- for line in fact.lines -%}
+<div>
+{%- for piece in line -%}
+{%- match piece -%}
+{%- when crate::web::facts::Piece::Text(text) -%}
+{{ text|safe }}
+{%- when crate::web::facts::Piece::Status { tone, words } -%}
+{% call status_text(tone, words) %}{% endcall %}
+{%- endmatch -%}
+{%- endfor -%}
+</div>
+{%- endfor -%}
+</dd>
+{%- endfor %}
+</dl>
+{%- endmacro -%}
+
+{#- The classes of a board card's look (`docs/specs/web/design_system.md`,
+    Board), which the facts share (Facts). -#}
+{%- macro card_look() -%}
+card card-sm border border-base-300 bg-card shadow-sm
+{%- endmacro -%}
+
 {%- macro icon(tone) -%}
 <svg class="icon size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
 {%- match tone -%}

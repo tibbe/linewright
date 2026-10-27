@@ -10,7 +10,7 @@
 {%- for cell in lane.cells %}
 <ul class="cell flex flex-col gap-2" aria-label="{{ cell.column }}">
 {%- for card in cell.cards %}
-<li class="card card-sm border border-base-300 bg-card shadow-sm{% call toned(card.tone) %}{% endcall %}{% if card.quiet %} opacity-75{% endif %}">
+<li class="{% call ui::card_look() %}{% endcall %}{% call toned(card.tone) %}{% endcall %}{% if card.quiet %} opacity-75{% endif %}">
 <div class="card-body gap-1">
 <h3 class="card-title line-clamp-2 text-sm" data-tip-cut>{% if card.pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ card.heading|safe }}</h3>
 {%- if let Some(line) = card.line %}
