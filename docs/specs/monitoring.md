@@ -107,7 +107,7 @@ its run ID, item, stage, start, duration and outcome.
   `duration_seconds` is null.
 - **Run ID.** A run ID is `<item>/<stage>-<n>`, the `n`th run of that stage
   on that item, such as `43/rework-2`, or `<automation>/<n>` for an automation's
-  runs, with the stages under [Runs](runs.md).
+  runs, with the stages under [Runs](runs.md). It is opaque.
 
 ## logs
 

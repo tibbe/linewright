@@ -292,6 +292,9 @@ The run page shows the run's transcripts ([Transcripts](#transcripts)), each
 under its session's model and effort and where its settings and prompt files
 came from.
 
+- **Heading.** The run ID, then ", by hand" for an automation's run by hand
+  and "(it started no session)" for a run that ended without one, and under
+  them the run's item as in the Item column of [Lists of runs](#lists-of-runs).
 - **Folding.** A tool call's line opens on click to the tool's full input and
   result; a call that failed starts open. A sub-agent's work starts folded to
   the line of the call that started it, with the count of its entries.
