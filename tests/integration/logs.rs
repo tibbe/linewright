@@ -285,8 +285,7 @@ async fn a_run_recorded_before_sessions_kept_what_they_ran_with_still_shows_its_
     assert!(after.stdout.lines().count() > 2, "{}", after.stdout);
 }
 
-/// `docs/specs/monitoring.md`, logs, Lines; `docs/specs/design_system.md`,
-/// Time, Durations.
+/// `docs/specs/design_system.md`, Transcripts; Time, Durations.
 #[tokio::test]
 async fn logs_shows_how_long_a_sub_agent_ran_as_a_duration_and_each_line_at_its_time() {
     let (_world, work_dir) = implemented_by(implement_with_a_sub_agent_of_3h_2m_9s).await;

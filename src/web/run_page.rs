@@ -1,6 +1,6 @@
 //! The run page (`docs/specs/design_system.md`, The run page): a run's
-//! transcript as `logs` shows it, each tool call folded to its line, and
-//! followed while the run is in flight.
+//! transcripts (Transcripts), in full with Verbose, each tool call folded to
+//! its line, and followed while the run is in flight.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -93,7 +93,7 @@ struct EntryView {
 }
 
 /// When an entry happened, kept from its first line: a call's later line
-/// gives its account, not its time, as `logs` shows it.
+/// gives its account, not its time, as a transcript shows it.
 #[derive(Clone, Copy)]
 struct StampView {
     at: Option<Timestamp>,
@@ -318,8 +318,8 @@ fn account_patches(session: &SessionView, i: usize, call: &ToolLine, verbose: bo
     ]
 }
 
-/// Whether the page shows an entry: as `logs` shows it, or with `verbose`
-/// as `logs --verbose` does.
+/// Whether the page shows an entry: as a transcript shows it, or with
+/// `verbose` as a transcript in full does.
 fn shown(what: &EntryLine, verbose: bool) -> bool {
     match what {
         EntryLine::Message { .. } | EntryLine::FollowUp { .. } | EntryLine::Tool(_) => true,
@@ -431,7 +431,7 @@ fn call_line_html(session: &SessionView, i: usize, call: &ToolLine) -> String {
     )
 }
 
-/// A call's full input and result, as `logs --verbose` shows them.
+/// A call's full input and result, as a transcript in full shows them.
 fn io_html(id: &str, call: &ToolLine) -> String {
     let pretty = |value: &Value| serde_json::to_string_pretty(value).unwrap_or_default();
     let mut io = String::new();
@@ -526,7 +526,7 @@ impl std::fmt::Display for Follow {
 
 #[derive(Deserialize)]
 pub(super) struct RunQuery {
-    /// Set for the page: what `logs --verbose` shows, everything open.
+    /// Set for the page: the transcripts in full, everything open.
     verbose: Option<String>,
     /// For the page's stream, while the run is in flight.
     follow: Option<Follow>,

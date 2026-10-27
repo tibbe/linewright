@@ -941,8 +941,8 @@ impl Follower {
                 followed.show(self.verbosity, &mut shown);
             }
             followed.bytes_read += complete.len();
-            // A session that ended having shown nothing shows as `logs`
-            // shows it: its header alone.
+            // A session that ended having shown nothing shows as a
+            // transcript shows it: its header alone.
             if whole {
                 followed.open(&mut shown);
             }

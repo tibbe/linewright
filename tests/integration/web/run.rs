@@ -117,8 +117,7 @@ async fn the_run_page_shows_a_sessions_ran_with_line_its_layers_and_each_entrys_
     web.stop().await;
 }
 
-/// `docs/specs/monitoring.md`, logs, Lines; `docs/specs/design_system.md`,
-/// Time, Durations.
+/// `docs/specs/design_system.md`, Transcripts; Time, Durations.
 #[tokio::test]
 async fn the_run_page_shows_how_long_a_sub_agent_ran_as_a_duration() {
     let (_web, html) =
