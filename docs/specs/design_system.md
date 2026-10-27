@@ -20,8 +20,9 @@
 - A hold on Linewright's work, such as a usage limit, or a problem no item
   shows, is shown on every page while it lasts, linking to the page that
   tells more.
-- Every item or pull request named on a page links to its page and to
-  GitHub.
+- Every item or pull request named on a page is named by its number, and
+  its title where Linewright knows it, except in a card's line, which names
+  it by its number alone, and links to its page and to GitHub.
 
 ## Time
 
@@ -60,8 +61,9 @@
 
 - A page's facts about one thing are a list of labels, each with its value
   beside it.
-- A status among the facts is its icon and its words in its colour, with
-  nothing behind them.
+- A label is words alone, with no icon or colour. A status among the facts
+  is in the value: its icon and its words in its colour, with nothing behind
+  them.
 
 ## Transcripts
 
@@ -258,7 +260,7 @@ order below, then its runs ([Lists of runs](#lists-of-runs)).
 
 | Fact           | Holds                                                                                                                                  | Shown                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| State          | #N's column, then its card's line, with its card status ([Cards](#cards)); for a tracking issue, its lane head's line, with the lane's card status; for an item Linewright leaves, "Left alone", then what keeps it out, such as "closed" or "labeled none of `needs-triage`, …" | always                         |
+| State          | #N's column, then its card's line, with its card status ([Cards](#cards)); for a tracking issue, "Tracking", then, while its lane is unfinished, its lane head's line, with the lane's card status; once it is finished, when it finished, such as "Tracking · finished 2 days ago"; for an item the board does not show, "Left alone", then what keeps it out, such as "closed" or "labeled none of `needs-triage`, …" | always                         |
 | Waiting for    | each thing Linewright waits for before it acts on #N next, one per line, naming what ends it, such as "the usage limit, until 14:30", in plain text | while it waits for any         |
 | Tracking issue | a ticket's tracking issue, or the tracking issue cut from a spec change                                                                | while there is one             |
 | Tickets        | a tracking issue's tickets, with how many are closed of the total, such as "3 of 5 closed"                                             | while it has any               |
@@ -274,7 +276,7 @@ A list of runs is a table with a row per run, newest first.
 | -------- | ---------------------------------------------------------------------------------------------------------------------- |
 | Outcome  | the run's outcome                                                                                                      |
 | Run      | the run ID, linking to the run page                                                                                    |
-| Item     | the item's number, and its title where Linewright knows it; for an automation's run, "automation" and its name, linking to the automations page |
+| Item     | the item; for an automation's run, "automation" and its name, linking to the automations page |
 | Stage    | the run's stage                                                                                                        |
 | Started  | when the run started, with an automation's run by hand marked there                                                    |
 | Duration | the run's duration                                                                                                     |

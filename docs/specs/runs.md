@@ -94,9 +94,10 @@ A run ends in one of these outcomes, each with its name in JSON.
   unfinished commit into its own commits. Work that holds a secret is
   not pushed.
 - **Recording the outcome.** The writes that change what the run's item asks
-  for, such as its status label, are the last a run makes, so that until
-  they land the item still asks for the run's work; a new status label is
-  added before the old one is removed.
+  for, such as its status label, are the last a run makes, but for its
+  pushes, which are its work and come before them, so that until they land
+  the item still asks for the run's work; a new status label is added before
+  the old one is removed.
 - **One writer.** While a run is in flight, Linewright changes nothing on
   the items the run writes. What a person changed meanwhile is acted on once
   the run ends, unless the run takes it up itself, as rework does with
