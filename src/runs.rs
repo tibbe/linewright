@@ -1135,7 +1135,8 @@ impl Outcome {
         match self {
             Outcome::Ended { ending, .. } => match ending {
                 Ending::Done => Tone::Success,
-                Ending::HandedBack | Ending::Failed => Tone::Failure,
+                Ending::Failed => Tone::Failure,
+                Ending::HandedBack => Tone::Pending,
                 Ending::Cancelled | Ending::UsageLimit => Tone::Cancelled,
             },
             Outcome::InFlight { .. } => Tone::InProgress,
@@ -1149,8 +1150,8 @@ pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
     let outcome = match run.outcome {
         Outcome::Ended { ending, .. } => match ending {
             Ending::Done | Ending::Cancelled => word.into(),
-            Ending::HandedBack | Ending::Failed => paint.red(word),
-            Ending::UsageLimit => paint.yellow(word),
+            Ending::Failed => paint.red(word),
+            Ending::HandedBack | Ending::UsageLimit => paint.yellow(word),
         },
         Outcome::InFlight { .. } => paint.bold(word),
         Outcome::Interrupted => paint.yellow(word),

@@ -1,7 +1,7 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
-{#- The classes of a card or a lane head that shows a card status in
-    `tone`, which the stylesheet's rules for it read. -#}
+{#- The classes of a card that shows a card status in `tone`, which the
+    stylesheet's rules for it read. -#}
 {%- macro toned(tone) -%}
 {%- if let Some(tone) = tone %} toned {{ tone.accent() }}{% endif -%}
 {%- endmacro -%}
@@ -29,7 +29,7 @@
     each side so that it can stay there inside its lane, and whole in the
     page's tooltip while it is cut (`docs/specs/design_system.md`, Layout). -#}
 {%- macro lane_head(lane) -%}
-<span class="sticky left-(--lane-inset) inline-block max-w-[calc(100cqw-2*var(--lane-inset))] truncate align-top" data-tip-cut>{{ lane.head|safe }}{% if let Some(status) = lane.status %} — {% call ui::icon(status.tone) %}{% endcall %}{{ status.line|safe }}{% endif %}</span>
+<span class="sticky left-(--lane-inset) inline-block max-w-[calc(100cqw-2*var(--lane-inset))] truncate align-top" data-tip-cut>{{ lane.head|safe }}</span>
 {%- endmacro -%}
 {%- block main -%}
 <section id="board" class="scroll-box @container">
@@ -64,7 +64,7 @@
 </div>
 {%- for lane in board.unfinished %}
 <section class="lane mt-3 rounded-box border-(length:--lane-border) border-base-300 bg-base-200 pb-(--lane-padding)" id="{{ lane.id }}">
-<h2 class="lane-head{% call toned(lane.tone()) %}{% endcall %}">{% call lane_head(lane) %}{% endcall %}</h2>
+<h2 class="lane-head">{% call lane_head(lane) %}{% endcall %}</h2>
 {%- call cells(lane) %}{% endcall %}
 </section>
 {%- endfor %}
@@ -73,7 +73,7 @@
 <summary class="cursor-pointer font-semibold">{{ board.finished_count() }}</summary>
 {%- for lane in board.finished %}
 <details class="lane mt-2 rounded-box border-(length:--lane-border) border-base-300 bg-base-200 pb-(--lane-padding)" id="{{ lane.id }}">
-<summary class="lane-head cursor-pointer{% call toned(lane.tone()) %}{% endcall %}">{% call lane_head(lane) %}{% endcall %}</summary>
+<summary class="lane-head cursor-pointer">{% call lane_head(lane) %}{% endcall %}</summary>
 {%- call cells(lane) %}{% endcall %}
 </details>
 {%- endfor %}

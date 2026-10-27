@@ -3,7 +3,7 @@
 //! and the items it relates to, from what `explain` answers of it, the view
 //! it answered from and that view's board.
 
-use crate::board::{Board, Card, CardStatus, Column, Lane};
+use crate::board::{Board, Card, CardStatus, Column, LaneHeading};
 use crate::domain::{ClosedKind, Number, PullState, SubIssue, Timestamp, Tracks};
 use crate::explain::{Answer, ChildRole, LeftAloneItem, ParentRole};
 use crate::reconcile::Wait;
@@ -32,24 +32,28 @@ pub struct ItemFacts {
 pub enum StateFact {
     /// Its card, or the card it would have on its own, and its column.
     Card { column: Column, card: Card },
-    /// A tracking issue's lane, whose head's line and card status it takes.
-    Lane(Lane),
-    /// A tracking issue with no lane, none of its tickets being on the
-    /// board.
-    Tracking,
+    /// A tracking issue, and when its lane finished, if it has a lane and
+    /// it finished.
+    Tracking { finished: Option<Timestamp> },
     /// Linewright leaves it, and why.
     LeftAlone(LeftAloneItem),
 }
 
-/// An item a fact lists, shown as its card is.
+/// An item a fact lists (`docs/specs/design_system.md`, The item page,
+/// Related items).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Related {
-    pub number: Number,
-    /// `None` where the snapshot does not hold it.
-    pub title: Option<String>,
-    pub pull_request: bool,
-    /// Its card's status, or for a tracking issue its lane's.
-    pub status: Option<CardStatus>,
+pub enum Related {
+    /// An item shown as its card is, with its card status; or a tracking
+    /// issue heading no lane, by its number and title alone.
+    Card {
+        number: Number,
+        /// `None` where the snapshot does not hold it.
+        title: Option<String>,
+        pull_request: bool,
+        status: Option<CardStatus>,
+    },
+    /// A tracking issue heading a lane, shown as that lane's head.
+    LaneHead(LaneHeading),
 }
 
 /// A tracking issue's tickets.
@@ -65,18 +69,17 @@ pub struct Tickets {
 pub fn item_facts(answer: &Answer, view: &View, board: &Board) -> ItemFacts {
     let number = answer.number();
     let related = |item: Number, pull_request: bool| {
+        if let Some(lane) = board.lane_headed_by(item) {
+            return Related::LaneHead(lane.heading());
+        }
         let card = board.card(item).map(|(_, card)| card);
-        let lane = board
-            .lane_headed_by(item)
-            .and_then(|lane| lane.most_pressing())
-            .map(|(_, status)| status);
-        Related {
+        Related::Card {
             number: item,
             title: card
                 .map(|card| card.title.clone())
                 .or_else(|| view.snapshot.title(item).map(str::to_string)),
             pull_request,
-            status: card.and_then(Card::status).or(lane),
+            status: card.and_then(Card::status),
         }
     };
     let family = answer.family();
@@ -128,13 +131,15 @@ pub fn item_facts(answer: &Answer, view: &View, board: &Board) -> ItemFacts {
             card: card.clone(),
         }
     } else if let Some(lane) = lane {
-        StateFact::Lane(lane.clone())
+        StateFact::Tracking {
+            finished: lane.finished(),
+        }
     } else {
         match answer {
             Answer::LeftAlone(left_alone) => StateFact::LeftAlone(left_alone.item.clone()),
             // Of the items Linewright manages, only a tracking issue has no
-            // card.
-            Answer::Managed(_) => StateFact::Tracking,
+            // card, and with none of its tickets on the board, no lane.
+            Answer::Managed(_) => StateFact::Tracking { finished: None },
         }
     };
     ItemFacts {

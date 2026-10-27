@@ -1,16 +1,18 @@
-//! A card's words (`docs/specs/design_system.md`, Cards), shared by every
-//! page that shows a card's line or status.
+//! A card's words (`docs/specs/design_system.md`, Cards), and a lane's head
+//! (The board), shared by every page that shows a card's line or status or
+//! a lane's head.
 
 use super::html::{self, Html};
 use super::names::Names;
-use crate::board::{Card, CardLine, CardStatus, Elapsed, Ended, Hold, Lane, Running, Stop};
+use crate::board::{
+    Card, CardLine, CardStatus, Elapsed, Ended, Hold, LaneHead, LaneHeading, Running, Stop,
+};
 use crate::domain::{IssueCloseReason, ReviewDecision};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
 
 /// A card's line, the one place a page names items by their number alone
-/// (`docs/specs/design_system.md`, Navigation). Made only by [`card_line`]
-/// and [`lane_line`].
+/// (`docs/specs/design_system.md`, Navigation). Made only by [`card_line`].
 pub(super) struct Line(Phrase);
 
 impl Line {
@@ -35,19 +37,28 @@ fn card_phrase(card: &Card) -> Option<Phrase> {
     }
 }
 
-/// The line `lane`'s head ends with and its tone, if it has a card status
-/// (`docs/specs/design_system.md`, The board, A lane's card status): its
-/// most pressing card's line, after the card's number where the card is not
-/// the lane's own item.
-pub(super) fn lane_line(lane: &Lane) -> Option<(Tone, Line)> {
-    let (card, status) = lane.most_pressing()?;
-    let line = card_phrase(card).unwrap_or_default();
-    let line = if lane.is_own_item(card) {
-        line
-    } else {
-        Phrase::default().item(card.number).text(" · ").then(line)
+/// A lane's head (`docs/specs/design_system.md`, The board, Lanes and
+/// Finished lanes): the tracking issue's number and title and its tickets
+/// closed of total, or the item's number and title; then when it finished,
+/// if it did.
+pub(super) fn lane_head(heading: &LaneHeading, repo: &str) -> Html {
+    let head = match &heading.head {
+        LaneHead::Tracking {
+            number,
+            title,
+            tickets_closed,
+            tickets,
+        } => html::titled(*number, title, repo).then(&html::escape(&format!(
+            " — {tickets_closed}/{tickets} tickets closed"
+        ))),
+        LaneHead::Item { number, title } => html::titled(*number, title, repo),
     };
-    Some((tone(status), Line(line)))
+    match heading.finished {
+        Some(at) => head
+            .then(&html::escape(" — finished "))
+            .then(&html::time(at)),
+        None => head,
+    }
 }
 
 /// The tone `status` shows in (`docs/specs/web/design_system.md`, Status).

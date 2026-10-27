@@ -473,23 +473,46 @@ async fn with_a_lane() -> World {
     world
 }
 
+/// `docs/specs/design_system.md`, The item page: a tracking issue's State is
+/// "Tracking", with no status of its lane's own (Out of scope).
 #[tokio::test]
-async fn a_tracking_issues_state_is_tracking_then_its_lane_heads_line() {
+async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
     let web = Web::start(with_a_lane().await).await;
 
     let html = web.page("/items/2").await;
 
-    let state = fact(&item_facts(&html), "State").to_string();
-    assert!(
-        state.starts_with("Tracking · #3 · decision needed · 2026-"),
-        "{state}"
-    );
+    assert_eq!(fact(&item_facts(&html), "State"), "Tracking");
     let value = select(&html, "#item dd")[0];
+    assert!(select_in(value, "svg").is_empty(), "{}", value.html());
+    web.stop().await;
+}
+
+/// `docs/specs/design_system.md`, The item page, Related items: a tracking
+/// issue is shown as its lane head is, with no card status's icon.
+#[tokio::test]
+async fn a_tickets_tracking_issue_is_shown_as_its_lane_head_is() {
+    let web = Web::start(with_a_lane().await).await;
+
+    let board = web.page("/").await;
+    let html = web.page("/items/3").await;
+
+    let head = text(select(&board, "#lane-2 .lane-head")[0]);
+    assert_eq!(head, "#2: Big thing — 0/1 tickets closed");
+    let facts = item_facts(&html);
+    assert_eq!(fact(&facts, "Tracking issue"), head);
+    let at = facts
+        .iter()
+        .position(|(label, _)| label == "Tracking issue")
+        .unwrap();
+    let value = select(&html, "#item dd")[at];
+    assert!(select_in(value, "svg").is_empty(), "{}", value.html());
+    let links: Vec<&str> = select_in(value, "a")
+        .into_iter()
+        .filter_map(|a| a.attr("href"))
+        .collect();
     assert_eq!(
-        select_in(value, ".status-text svg.icon").len(),
-        1,
-        "{}",
-        value.html()
+        links,
+        ["/items/2", "https://github.com/owner/widgets/issues/2"]
     );
     web.stop().await;
 }

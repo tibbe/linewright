@@ -76,12 +76,11 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         shown,
         [
             vec![
-                "#2: Big thing — 0/1 tickets closed — #3 · asked alice · 2026-10-01 12:00:SS UTC"
-                    .to_string(),
+                "#2: Big thing — 0/1 tickets closed".to_string(),
                 "Needs a person: #3: Part one | asked alice · 2026-10-01 12:00:SS UTC".to_string(),
             ],
             vec![
-                "#1: Do the thing — decision needed · 2026-10-01 12:00:SS UTC".to_string(),
+                "#1: Do the thing".to_string(),
                 "Needs a person: #1: Do the thing | decision needed · 2026-10-01 12:00:SS UTC"
                     .to_string(),
             ],
@@ -260,12 +259,11 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         shown,
         [
             vec![
-                "#2: Big thing — 0/1 tickets closed — #3 · asked alice · 2026-10-01 12:00:SS UTC"
-                    .to_string(),
+                "#2: Big thing — 0/1 tickets closed".to_string(),
                 "Needs a person: #3: Part one | asked alice · 2026-10-01 12:00:SS UTC".to_string(),
             ],
             vec![
-                "#1: Do the thing — decision needed · 2026-10-01 12:00:SS UTC".to_string(),
+                "#1: Do the thing".to_string(),
                 "Needs a person: #1: Do the thing | decision needed · 2026-10-01 12:00:SS UTC"
                     .to_string(),
             ],
@@ -421,34 +419,29 @@ fn icons(element: ElementRef) -> Vec<String> {
 /// `warning`.
 const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
 
+/// `docs/specs/design_system.md`, The board, Lanes: a lane's head is its
+/// number and title, with its tickets closed of total and when it finished,
+/// and no status of its own (Out of scope); `docs/specs/web/design_system.md`,
+/// Board: a bar in the Lane colour.
 #[tokio::test]
-async fn a_lane_head_ends_with_its_most_pressing_cards_line_and_icon_in_that_card_statuss_colour() {
+async fn a_lane_head_shows_no_status_of_its_own() {
     let web = Web::start(with_a_finished_lane().await).await;
 
     let html = web.page("/").await;
 
-    let asked = select(&html, "#board .card")
-        .into_iter()
-        .find(|card| text(*card).contains("Part one"))
-        .unwrap();
-    for head in [
-        select(&html, "#lane-2 .lane-head")[0],
-        select(&html, "#lane-1 .lane-head")[0],
-    ] {
+    let heads = select(&html, "#board .lane-head");
+    assert_eq!(heads.len(), 4);
+    for head in heads {
         assert!(
-            has_classes(head, &["toned", WAITING_FOR_A_PERSON]),
+            !head
+                .value()
+                .classes()
+                .any(|class| class == "toned" || class.starts_with("[--tone:")),
             "{}",
             head.html()
         );
-        assert_eq!(icons(head).len(), 1, "{}", head.html());
-        assert_eq!(icons(head), icons(asked), "{}", head.html());
-    }
-    for finished in ["#lane-5 .lane-head", "#lane-4 .lane-head"] {
-        let head = select(&html, finished)[0];
-        assert!(lacks_classes(head, &["toned"]), "{}", head.html());
         assert_eq!(icons(head), Vec::<String>::new(), "{}", head.html());
     }
-    assert_no_status_by_colour_alone(&html);
     web.stop().await;
 }
 
@@ -457,7 +450,7 @@ async fn a_lane_head_ends_with_its_most_pressing_cards_line_and_icon_in_that_car
 const PAUSED_OR_QUEUED: &str = "[--tone:var(--color-muted)]";
 
 #[tokio::test]
-async fn a_card_paused_for_the_usage_limit_and_its_lanes_head_show_it_in_muted_text() {
+async fn a_card_paused_for_the_usage_limit_shows_it_in_muted_text() {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     world.store.open_issue(
         "maintainer",
@@ -490,13 +483,6 @@ async fn a_card_paused_for_the_usage_limit_and_its_lanes_head_show_it_in_muted_t
         "{}",
         card.html()
     );
-    let head = select(&html, "#board .lane-head")[0];
-    assert!(
-        has_classes(head, &["toned", PAUSED_OR_QUEUED]),
-        "{}",
-        head.html()
-    );
-    assert_eq!(icons(head), icons(card), "{}", head.html());
     assert_no_status_by_colour_alone(&html);
     web.stop().await;
 }
@@ -660,6 +646,15 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
             ),
             false
         )]
+    );
+    // `docs/specs/design_system.md`, Cards: handed back is waiting for a
+    // person.
+    let board = web.page("/").await;
+    let card = select(&board, "#board .card")[0];
+    assert!(
+        has_classes(card, &["toned", WAITING_FOR_A_PERSON]),
+        "{}",
+        card.html()
     );
     web.stop().await;
 }

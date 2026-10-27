@@ -1623,7 +1623,7 @@ fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
             // Asked.
             (2, Some(WaitingForAPerson)),
             // Handed back.
-            (3, Some(Failed)),
+            (3, Some(WaitingForAPerson)),
             // Decision needed.
             (4, Some(WaitingForAPerson)),
             // Triage: nothing but the time.
@@ -1764,82 +1764,4 @@ fn a_card_in_done_has_no_card_status() {
             (40, None)
         ]
     );
-}
-
-/// The most pressing card of the lane headed #`head`: its number and card
-/// status.
-fn most_pressing(board: &Board, head: u64) -> Option<(u64, CardStatus)> {
-    let lane = board
-        .lanes
-        .iter()
-        .find(|lane| lane.head.number() == Number(head))
-        .expect("a lane");
-    lane.most_pressing()
-        .map(|(card, status)| (card.number.0, status))
-}
-
-/// Tracking issue #10 of spec change #9, with `tickets` cut from it.
-fn tracking_lane(tickets: Vec<Issue>, pulls: Vec<Pull>) -> View {
-    let numbers: Vec<(u64, bool)> = tickets.iter().map(|t| (t.number.0, true)).collect();
-    let mut issues = vec![tracking_issue(10, 9, &numbers)];
-    issues.extend(tickets.into_iter().map(|t| cut_from(t, 10, 9)));
-    with_merged(
-        view(issues, pulls),
-        vec![spec_change(9, &[label::DESIGNED])],
-    )
-}
-
-#[test]
-fn a_lanes_most_pressing_card_has_the_most_pressing_card_status_of_its_cards() {
-    let view = tracking_lane(
-        vec![
-            labeled(11, &["needs-info"]),
-            assigned(ticket(12, "Failing")),
-        ],
-        vec![pull(20, &[12], &[CheckState::Failed])],
-    );
-
-    let board = board(&view, &[], at(NOW));
-
-    assert_eq!(most_pressing(&board, 10), Some((12, CardStatus::Failed)));
-}
-
-#[test]
-fn of_cards_as_pressing_the_lanes_most_pressing_is_the_leftmost_then_the_lowest_numbered() {
-    let columns = tracking_lane(
-        vec![
-            assigned(ticket(12, "Failing")),
-            labeled(13, &["ready-for-human", label::STALLED]),
-        ],
-        vec![pull(20, &[12], &[CheckState::Failed])],
-    );
-    let numbers = tracking_lane(
-        vec![
-            assigned(ticket(12, "Failing")),
-            assigned(ticket(14, "Failing too")),
-        ],
-        vec![
-            pull(20, &[14], &[CheckState::Failed]),
-            pull(21, &[12], &[CheckState::Failed]),
-        ],
-    );
-
-    assert_eq!(
-        most_pressing(&board(&columns, &[], at(NOW)), 10),
-        Some((13, CardStatus::Failed))
-    );
-    assert_eq!(
-        most_pressing(&board(&numbers, &[], at(NOW)), 10),
-        Some((12, CardStatus::Failed))
-    );
-}
-
-#[test]
-fn a_finished_lane_has_no_card_status() {
-    let view = with_closed(
-        view(vec![tracking_issue(30, 29, &[(31, false)])], vec![]),
-        vec![closed_ticket(31, 30, "2026-09-30T12:00:00Z")],
-    );
-
-    assert_eq!(most_pressing(&board(&view, &[], at(NOW)), 30), None);
 }

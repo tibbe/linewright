@@ -4,7 +4,7 @@
 use crate::common;
 
 use common::{NOW, at, sub_issue, ticket, view};
-use linewright::board::{CardLine, CardStatus, Column, Stop, board};
+use linewright::board::{CardLine, CardStatus, Column, LaneHead, Stop, board};
 use linewright::domain::*;
 use linewright::explain::{LeftAloneIssue, LeftAloneItem, explain, explain_fresh, fresh_view};
 use linewright::item_facts::{ItemFacts, Related, StateFact, item_facts};
@@ -56,12 +56,20 @@ fn cut_from(issue: Issue, tracking: u64, spec_change: u64) -> Issue {
 }
 
 fn related(number: u64, title: &str, pull_request: bool, status: Option<CardStatus>) -> Related {
-    Related {
+    Related::Card {
         number: Number(number),
         title: Some(title.into()),
         pull_request,
         status,
     }
+}
+
+/// What the lane `related` is shown as the head of is the work of.
+fn lane_head(related: Option<&Related>) -> &LaneHead {
+    let Some(Related::LaneHead(heading)) = related else {
+        panic!("no lane head: {related:?}");
+    };
+    &heading.head
 }
 
 /// Its column and its card's line.
@@ -97,8 +105,13 @@ fn a_ticket_in_ready_blocked_by_another_is_in_ready_saying_so_under_its_tracking
         (Column::Ready, Some(CardLine::BlockedBy(Number(2))))
     );
     assert_eq!(
-        facts.tracking_issue,
-        Some(related(20, "Tracking 20", false, None))
+        lane_head(facts.tracking_issue.as_ref()),
+        &LaneHead::Tracking {
+            number: Number(20),
+            title: "Tracking 20".into(),
+            tickets_closed: 0,
+            tickets: 2,
+        }
     );
     assert_eq!(facts.tickets, None);
     assert_eq!(facts.spec_change, None);
@@ -259,25 +272,13 @@ fn tracking_five() -> View {
     view
 }
 
+/// `docs/specs/design_system.md`, The item page: an unfinished tracking
+/// issue's State is "Tracking" alone.
 #[test]
-fn a_tracking_issue_has_its_lanes_line_and_status_and_its_tickets_closed_of_total() {
+fn a_tracking_issue_is_tracking_and_has_its_tickets_closed_of_total() {
     let facts = facts_of(&tracking_five(), 20);
 
-    let StateFact::Lane(lane) = &facts.state else {
-        panic!("no lane: {:?}", facts.state);
-    };
-    let (card, status) = lane.most_pressing().expect("a card status");
-    assert_eq!(card.number, Number(4));
-    assert_eq!(
-        card.line,
-        Some(CardLine::Review {
-            pull_request: Number(10),
-            author: None,
-            stops: Some(Stop::ChecksFailed),
-        })
-    );
-    assert_eq!(status, CardStatus::Failed);
-    assert_eq!(lane.finished(), None);
+    assert_eq!(facts.state, StateFact::Tracking { finished: None });
     let tickets = facts.tickets.expect("tickets");
     assert_eq!(tickets.closed, 3);
     assert_eq!(
@@ -285,7 +286,7 @@ fn a_tracking_issue_has_its_lanes_line_and_status_and_its_tickets_closed_of_tota
         [
             related(1, "Ticket 1", false, None),
             related(2, "Ticket 2", false, None),
-            Related {
+            Related::Card {
                 number: Number(3),
                 title: None,
                 pull_request: false,
@@ -313,10 +314,58 @@ fn a_merged_spec_change_names_the_tracking_issue_cut_from_it() {
     let facts = facts_read(&view, &read);
 
     assert_eq!(
-        facts.tracking_issue,
-        Some(related(20, "Tracking 20", false, Some(CardStatus::Failed)))
+        lane_head(facts.tracking_issue.as_ref()),
+        &LaneHead::Tracking {
+            number: Number(20),
+            title: "Tracking 20".into(),
+            tickets_closed: 3,
+            tickets: 5,
+        }
     );
     assert!(facts.pull_request);
+}
+
+#[test]
+fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_closed() {
+    let mut view = view(
+        vec![tracking_issue(20, 15, &[(1, false), (2, false)])],
+        vec![],
+    );
+    let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
+    snapshot.closed = vec![
+        closed_ticket(1, "2026-09-29T12:00:00Z"),
+        closed_ticket(2, "2026-09-30T12:00:00Z"),
+    ];
+    snapshot.merged = vec![spec_change(15)];
+
+    let facts = facts_of(&view, 20);
+
+    assert_eq!(
+        facts.state,
+        StateFact::Tracking {
+            finished: Some(at("2026-09-30T12:00:00Z"))
+        }
+    );
+}
+
+/// `docs/specs/design_system.md`, The item page, Related items: a tracking
+/// issue heading no lane has no lane head to be shown as, so it is shown by
+/// its number and title, with no card status.
+#[test]
+fn a_tracking_issue_heading_no_lane_is_related_by_its_number_and_title_alone() {
+    let mut view = view(vec![tracking_issue(20, 15, &[])], vec![]);
+    std::sync::Arc::make_mut(&mut view.snapshot).merged = vec![spec_change(15)];
+    let read = AnyItem::Merged {
+        pull: Box::new(spec_change(15)),
+        tracking_issues: vec![Number(20)],
+    };
+
+    let facts = facts_read(&view, &read);
+
+    assert_eq!(
+        facts.tracking_issue,
+        Some(related(20, "Tracking 20", false, None))
+    );
 }
 
 #[test]
@@ -368,7 +417,14 @@ fn an_item_left_out_of_the_view_lists_the_open_or_merged_pull_requests_closing_i
         &AnyItem::LeftOutIssue(Box::new(left_out)),
     );
 
-    let numbers: Vec<Number> = facts.pull_requests.iter().map(|pull| pull.number).collect();
+    let numbers: Vec<Number> = facts
+        .pull_requests
+        .iter()
+        .map(|pull| match pull {
+            Related::Card { number, .. } => *number,
+            Related::LaneHead(heading) => panic!("a lane head: {heading:?}"),
+        })
+        .collect();
     assert_eq!(numbers, [Number(30), Number(32)]);
 }
 

@@ -304,3 +304,33 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
     assert_eq!(select(&html, "[title]").len(), 0);
     web.stop().await;
 }
+
+/// `docs/specs/web/design_system.md`, Status: handed back is `warning`.
+#[tokio::test]
+async fn the_runs_and_item_pages_show_a_handed_back_runs_outcome_in_warning() {
+    let mut world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world.harness.on(WorkKind::Implement, |_| {
+        Ok(serde_json::json!({"outcome": "gave-up", "reason": "It cannot be done."}).to_string())
+    });
+    world.store.open_issue(
+        "maintainer",
+        "Do it",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.poll().await;
+    let web = Web::start(world).await;
+    let handed_back = |html: &Html| has_run(&runs_shown(html), "handed back", "1/implement-1");
+
+    for page in ["/runs", "/items/1"] {
+        let html = web.eventually_page(page, handed_back).await;
+
+        let badges: Vec<String> = select(&html, "#runs .tone.badge-warning")
+            .into_iter()
+            .map(text)
+            .collect();
+        assert_eq!(badges, ["handed back"], "{page}");
+        assert_no_status_by_colour_alone(&html);
+    }
+    web.stop().await;
+}

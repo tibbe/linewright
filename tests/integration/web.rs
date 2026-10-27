@@ -212,7 +212,8 @@ fn has_classes(element: ElementRef, classes: &[&str]) -> bool {
 
 /// Asserts that `selector` selects something in `html`, all of it in Muted
 /// text and in no translucent text colour: `docs/specs/web/design_system.md`,
-/// Colour scheme: secondary text is in Muted text, and a wash is never text.
+/// Colour scheme: secondary text is in Muted text, and the web UI draws in
+/// no colour but its own.
 fn assert_in_muted_text(html: &Html, selector: &str) {
     let selected = select(html, selector);
     assert!(!selected.is_empty(), "{selector}");

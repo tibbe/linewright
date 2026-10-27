@@ -114,21 +114,12 @@ impl Lane {
             .max()
     }
 
-    /// Its most pressing card and that card's status
-    /// (`docs/specs/design_system.md`, The board, A lane's card status): of
-    /// the cards with the most pressing status, the first by column and then
-    /// by number, as `min_by_key` keeps the first of equals.
-    pub fn most_pressing(&self) -> Option<(&Card, CardStatus)> {
-        Column::ALL
-            .into_iter()
-            .flat_map(|column| self.cards(column))
-            .filter_map(|card| Some((card, card.status()?)))
-            .min_by_key(|&(_, status)| status)
-    }
-
-    /// Whether `card` is the item the lane is the work of.
-    pub fn is_own_item(&self, card: &Card) -> bool {
-        matches!(self.head, LaneHead::Item { number, .. } if number == card.number)
+    /// What its head shows.
+    pub fn heading(&self) -> LaneHeading {
+        LaneHeading {
+            head: self.head.clone(),
+            finished: self.finished(),
+        }
     }
 
     fn of(head: LaneHead) -> Lane {
@@ -174,6 +165,15 @@ pub enum LaneHead {
     /// pull request, or a pull request of Linewright's that closes no issue
     /// on the board.
     Item { number: Number, title: String },
+}
+
+/// What a lane's head shows (`docs/specs/design_system.md`, The board,
+/// Lanes and Finished lanes).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaneHeading {
+    pub head: LaneHead,
+    /// When its last card closed, if the lane is finished.
+    pub finished: Option<Timestamp>,
 }
 
 impl LaneHead {
@@ -286,8 +286,10 @@ impl CardLine {
     /// none where the table gives none.
     pub fn status(&self) -> Option<CardStatus> {
         match self {
-            CardLine::Stalled | CardLine::HandedBack => Some(CardStatus::Failed),
-            CardLine::Asked(_) | CardLine::DecisionNeeded => Some(CardStatus::WaitingForAPerson),
+            CardLine::Stalled => Some(CardStatus::Failed),
+            CardLine::Asked(_) | CardLine::HandedBack | CardLine::DecisionNeeded => {
+                Some(CardStatus::WaitingForAPerson)
+            }
             CardLine::Paused(_) | CardLine::Queued => Some(CardStatus::PausedOrQueued),
             CardLine::Running(_) => Some(CardStatus::InFlight),
             CardLine::Review { stops, .. } => stops.as_ref().and_then(Stop::status),

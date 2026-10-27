@@ -8,12 +8,12 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
-use super::cards::{card_line, lane_line, tone};
+use super::cards::{card_line, lane_head, tone};
 use super::html::{self, Html};
 use super::names::Names;
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
-use crate::board::{Board, Card, Column, Lane, LaneHead};
+use crate::board::{Board, Card, Column, Lane};
 use crate::phrase::Tone;
 
 /// The board (`docs/specs/design_system.md`, The board), ready for the page.
@@ -31,16 +31,7 @@ struct LaneShown {
     /// The tracking issue and its tickets closed of total, or the item; and
     /// when it finished, if it did.
     head: Html,
-    /// Its card status, if it has one (`docs/specs/design_system.md`, The
-    /// board, A lane's card status).
-    status: Option<StatusShown>,
     cells: Vec<CellShown>,
-}
-
-/// A lane's card status: its most pressing card's tone and line.
-struct StatusShown {
-    tone: Tone,
-    line: Html,
 }
 
 struct CellShown {
@@ -90,32 +81,9 @@ impl BoardShown {
 
 impl LaneShown {
     fn of(lane: &Lane, names: &Names) -> LaneShown {
-        let repo = names.repo();
-        let head = match &lane.head {
-            LaneHead::Tracking {
-                number,
-                title,
-                tickets_closed,
-                tickets,
-            } => html::titled(*number, title, repo).then(&html::escape(&format!(
-                " — {tickets_closed}/{tickets} tickets closed"
-            ))),
-            LaneHead::Item { number, title } => html::titled(*number, title, repo),
-        };
-        let head = match lane.finished() {
-            Some(at) => head
-                .then(&html::escape(" — finished "))
-                .then(&html::time(at)),
-            None => head,
-        };
-        let status = lane_line(lane).map(|(tone, line)| StatusShown {
-            tone,
-            line: line.html(names),
-        });
         LaneShown {
             id: format!("lane-{}", lane.head.number().0),
-            head,
-            status,
+            head: lane_head(&lane.heading(), names.repo()),
             cells: Column::ALL
                 .into_iter()
                 .map(|column| CellShown {
@@ -128,13 +96,6 @@ impl LaneShown {
                 })
                 .collect(),
         }
-    }
-}
-
-impl LaneShown {
-    /// The tone of its card status, if it has one.
-    fn tone(&self) -> Option<Tone> {
-        self.status.as_ref().map(|status| status.tone)
     }
 }
 

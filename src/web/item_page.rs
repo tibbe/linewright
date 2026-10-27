@@ -8,7 +8,7 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
-use super::cards::{card_line, lane_line, tone};
+use super::cards::{card_line, lane_head, tone};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
@@ -93,9 +93,8 @@ fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
 }
 
 /// The State fact's line: the column and the card's line with its card
-/// status; for a tracking issue, "Tracking", then when its lane finished or
-/// else its lane head's line with the lane's card status; or why Linewright
-/// leaves the item.
+/// status; for a tracking issue, "Tracking", then when its lane finished, if
+/// it did; or why Linewright leaves the item.
 fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
     let then = |first: &str, line: Option<(Html, Option<Tone>)>| {
         let mut pieces = vec![Piece::Text(html::escape(first))];
@@ -113,17 +112,15 @@ fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
             column.name(),
             card_line(card).map(|line| (line.html(names), card.status().map(tone))),
         ),
-        StateFact::Lane(lane) => then(
+        StateFact::Tracking { finished } => then(
             "Tracking",
-            match lane.finished() {
-                Some(at) => Some((
+            finished.map(|at| {
+                (
                     html::phrase(&Phrase::from("finished ").time(at), names),
                     None,
-                )),
-                None => lane_line(lane).map(|(tone, line)| (line.html(names), Some(tone))),
-            },
+                )
+            }),
         ),
-        StateFact::Tracking => then("Tracking", None),
         StateFact::LeftAlone(item) => then(
             "Left alone",
             Some((html::phrase(&left_alone_worded(item), names), None)),
@@ -132,16 +129,28 @@ fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
 }
 
 /// An item a fact lists, as its card is: its heading as a card's is, or its
-/// number alone where its title is not known.
+/// number alone where its title is not known; or a tracking issue as its
+/// lane's head is, with no card status.
 fn related(item: &Related, repo: &str) -> Piece {
-    let heading = match &item.title {
-        Some(title) => html::titled(item.number, title, repo),
-        None => html::item(item.number, repo),
-    };
-    Piece::Item {
-        tone: item.status.map(tone),
-        pull_request: item.pull_request,
-        heading,
+    match item {
+        Related::Card {
+            number,
+            title,
+            pull_request,
+            status,
+        } => Piece::Item {
+            tone: status.map(tone),
+            pull_request: *pull_request,
+            heading: match title {
+                Some(title) => html::titled(*number, title, repo),
+                None => html::item(*number, repo),
+            },
+        },
+        Related::LaneHead(lane) => Piece::Item {
+            tone: None,
+            pull_request: false,
+            heading: lane_head(lane, repo),
+        },
     }
 }
 
