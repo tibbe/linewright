@@ -23,7 +23,7 @@ use tracing::{error, info};
 
 use crate::board::{self, Board};
 use crate::clock::Clock;
-use crate::domain::{Number, Timestamp};
+use crate::domain::{Number, Snapshot, Timestamp};
 use crate::drain::{Asked, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::explain;
@@ -686,11 +686,12 @@ pub(crate) async fn item_answer(
 
 /// The item page's facts about #`number` (`docs/specs/design_system.md`,
 /// The item page), from what [`item_answer`] answers, with the board of the
-/// view it answered from.
+/// view it answered from, and that view's snapshot, whose titles the page
+/// names items with.
 pub(crate) async fn item_facts(
     sources: &Sources,
     number: Number,
-) -> Result<ItemFacts, Unexplained> {
+) -> Result<(ItemFacts, Arc<Snapshot>), Unexplained> {
     let (
         answer,
         Explaining {
@@ -701,7 +702,8 @@ pub(crate) async fn item_facts(
         },
     ) = item_answer_in_view(sources, number).await?;
     let board = board::board(&view, &recorded, now);
-    Ok(item_facts::item_facts(&answer, &view, &board))
+    let facts = item_facts::item_facts(&answer, &view, &board);
+    Ok((facts, view.snapshot))
 }
 
 /// What [`item_answer`] answers, and what it answered from: for an item read

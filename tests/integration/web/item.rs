@@ -371,3 +371,255 @@ async fn the_item_pages_stream_sends_nothing_when_its_runs_agent_produces_output
     drop(agent);
     web.stop().await;
 }
+
+#[tokio::test]
+async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
+    let world = with_ticket().await;
+    let blocker = world.store.open_issue(
+        "maintainer",
+        "Fix the parser",
+        "First.",
+        &["ready-for-human"],
+    );
+    let blocked = world.store.open_issue(
+        "maintainer",
+        "Then",
+        "After.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.store.add_blocked_by(blocked, blocker).await.unwrap();
+    let web = Web::start(world).await;
+
+    let html = web
+        .eventually_page(&format!("/items/{}", blocked.0), |html| {
+            item_facts(html)
+                .iter()
+                .any(|(label, _)| label == "Waiting for")
+        })
+        .await;
+
+    // `docs/specs/design_system.md`, Navigation: named by its number and
+    // its title, linking to its page and to GitHub.
+    assert_eq!(
+        fact(&item_facts(&html), "Waiting for"),
+        "#2: Fix the parser, which blocks it"
+    );
+    let links: Vec<&str> = select(&html, "#item dd")[1]
+        .select(&Selector::parse("a").unwrap())
+        .map(|a| a.attr("href").unwrap())
+        .collect();
+    assert_eq!(
+        links,
+        ["/items/2", "https://github.com/owner/widgets/issues/2"]
+    );
+    // A card's line names it by its number alone.
+    assert!(
+        fact(&item_facts(&html), "State").starts_with("Ready · blocked by #2 · 2026-"),
+        "{html:?}",
+        html = item_facts(&html)
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_page_names_a_blocker_the_snapshot_does_not_hold_by_its_number_alone() {
+    let world = with_ticket().await;
+    let first = world
+        .store
+        .open_issue("maintainer", "First", "Before.", &["ready-for-human"]);
+    let blocked = world.store.open_issue(
+        "maintainer",
+        "Then",
+        "After.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.store.add_blocked_by(blocked, first).await.unwrap();
+    let web = Web::start(world).await;
+    web.page("/").await;
+    // Opened since the poll, and read only as #3's blocker.
+    let blocker = web
+        .store
+        .open_issue("maintainer", "Fix the parser", "Too.", &[]);
+    web.store.add_blocked_by(blocked, blocker).await.unwrap();
+    web.deliver_issue(blocked.0).await;
+
+    let html = web
+        .eventually_page(&format!("/items/{}", blocked.0), |html| {
+            fact(&item_facts(html), "Waiting for").contains("#4")
+        })
+        .await;
+
+    let waits: Vec<String> = select(&html, "#item dd")[1]
+        .select(&Selector::parse("div").unwrap())
+        .map(text)
+        .collect();
+    assert_eq!(waits, ["#2: First, which blocks it", "#4, which blocks it"]);
+    web.stop().await;
+}
+
+/// `with_ticket`'s, and #2, cut into #3, which waits on the maintainer.
+async fn with_a_lane() -> World {
+    let world = with_ticket().await;
+    let tracking = world.store.open_issue(
+        "maintainer",
+        "Big thing",
+        "Cut it.",
+        &["linewright:designed"],
+    );
+    let part = world
+        .store
+        .open_issue(LINEWRIGHT, "Part one", "Of it.", &["ready-for-human"]);
+    world.store.add_sub_issue(tracking, part).await.unwrap();
+    world
+}
+
+#[tokio::test]
+async fn a_tracking_issues_state_is_tracking_then_its_lane_heads_line() {
+    let web = Web::start(with_a_lane().await).await;
+
+    let html = web.page("/items/2").await;
+
+    let state = fact(&item_facts(&html), "State").to_string();
+    assert!(
+        state.starts_with("Tracking · #3 · decision needed · 2026-"),
+        "{state}"
+    );
+    let value = select(&html, "#item dd")[0];
+    assert_eq!(
+        select_in(value, ".status-text svg.icon").len(),
+        1,
+        "{}",
+        value.html()
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn a_finished_tracking_issues_state_is_tracking_and_when_it_finished() {
+    let world = with_a_lane().await;
+    world
+        .store
+        .close_issue_as_completed(linewright::domain::Number(3))
+        .unwrap();
+    let web = Web::start(world).await;
+
+    let html = web.page("/items/2").await;
+
+    let state = fact(&item_facts(&html), "State").to_string();
+    assert!(state.starts_with("Tracking · finished 2026-"), "{state}");
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn a_tracking_issue_with_no_ticket_on_the_board_is_tracking_alone() {
+    let world = with_a_lane().await;
+    world
+        .store
+        .close_issue_as_completed(linewright::domain::Number(3))
+        .unwrap();
+    // Past the spec-lookback window, so that #3 leaves Done.
+    world.clock.advance(chrono::TimeDelta::days(8));
+    let web = Web::start(world).await;
+
+    let html = web.page("/items/2").await;
+
+    assert_eq!(fact(&item_facts(&html), "State"), "Tracking");
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_page_names_the_items_a_left_alone_reason_names_by_number_and_title() {
+    let world = with_ticket().await;
+    for (branch, title) in [("first", "First try"), ("second", "Second try")] {
+        world
+            .store
+            .open_pull_as(
+                LINEWRIGHT,
+                branch,
+                title,
+                "Closes #1.",
+                &[(&format!("src/{branch}.txt"), "try\n")],
+            )
+            .await
+            .unwrap();
+    }
+    let web = Web::start(world).await;
+
+    let html = web.page("/items/2").await;
+
+    assert_eq!(
+        fact(&item_facts(&html), "State"),
+        "Left alone · for #1: Do the thing, which Linewright works on through #3: Second try"
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_pages_card_line_names_its_pull_request_by_number_alone_and_its_waits_by_title() {
+    let world = with_ticket().await;
+    let pr = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            "first",
+            "First try",
+            "Closes #1.",
+            &[("src/first.txt", "try\n")],
+        )
+        .await
+        .unwrap();
+    world
+        .store
+        .set_checks(
+            pr,
+            vec![check("test", linewright::domain::CheckState::Pending, "")],
+        )
+        .await
+        .unwrap();
+    let web = Web::start(world).await;
+
+    let facts = item_facts(&web.page("/items/1").await);
+
+    assert_eq!(fact(&facts, "State"), "In review · #2 · checks running");
+    assert_eq!(
+        fact(&facts, "Waiting for"),
+        "#2: First try, its pull request, until it is merged or closed"
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_pages_stream_names_a_blocker_by_its_number_and_title() {
+    let world = with_ticket().await;
+    let blocker = world.store.open_issue(
+        "maintainer",
+        "Fix the parser",
+        "First.",
+        &["ready-for-human"],
+    );
+    let blocked = world.store.open_issue(
+        "maintainer",
+        "Then",
+        "After.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.store.add_blocked_by(blocked, blocker).await.unwrap();
+    let web = Web::start(world).await;
+    let mut events = stream(&web, &format!("/events/items/{}", blocked.0)).await;
+
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let item = regions(&first)
+        .into_iter()
+        .find(|(id, _)| id == "item")
+        .map(|(_, html)| item_facts(&html))
+        .expect("the item's region");
+    assert_eq!(
+        fact(&item, "Waiting for"),
+        "#2: Fix the parser, which blocks it"
+    );
+    web.stop().await;
+}

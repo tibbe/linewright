@@ -16,7 +16,7 @@ use super::runs_table::RunsShown;
 use super::{ErrorPage, Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::board;
-use crate::domain::{Number, StatusLabel, Timestamp, label};
+use crate::domain::{Number, Snapshot, StatusLabel, label};
 use crate::explain::{
     self, LeftAloneIssue, LeftAloneItem, LeftAlonePull, OpenIssueExclusion, PullExclusion,
 };
@@ -93,8 +93,9 @@ fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
 }
 
 /// The State fact's line: the column and the card's line with its card
-/// status, a tracking issue's lane head's line, or why Linewright leaves
-/// the item.
+/// status; for a tracking issue, "Tracking", then when its lane finished or
+/// else its lane head's line with the lane's card status; or why Linewright
+/// leaves the item.
 fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
     let then = |first: &str, line: Option<(Html, Option<Tone>)>| {
         let mut pieces = vec![Piece::Text(html::escape(first))];
@@ -107,30 +108,22 @@ fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
         }
         pieces
     };
-    let tracking = |finished: Option<Timestamp>| {
-        then(
-            "Tracking",
-            finished.map(|at| {
-                (
-                    html::phrase(&Phrase::from("finished ").time(at), names),
-                    None,
-                )
-            }),
-        )
-    };
     match state {
         StateFact::Card { column, card } => then(
             column.name(),
             card_line(card).map(|line| (line.html(names), card.status().map(tone))),
         ),
-        StateFact::Lane(lane) => match lane_line(lane) {
-            Some((tone, line)) => vec![Piece::Status {
-                tone,
-                words: line.html(names),
-            }],
-            None => tracking(lane.finished()),
-        },
-        StateFact::Tracking => tracking(None),
+        StateFact::Lane(lane) => then(
+            "Tracking",
+            match lane.finished() {
+                Some(at) => Some((
+                    html::phrase(&Phrase::from("finished ").time(at), names),
+                    None,
+                )),
+                None => lane_line(lane).map(|(tone, line)| (line.html(names), Some(tone))),
+            },
+        ),
+        StateFact::Tracking => then("Tracking", None),
         StateFact::LeftAlone(item) => then(
             "Left alone",
             Some((html::phrase(&left_alone_worded(item), names), None)),
@@ -257,23 +250,25 @@ pub(super) async fn item_page(
     )
     .filling_the_viewport();
     let frame = Frame::of(&sources);
-    let names = names(&sources);
     match api::item_facts(&sources, number).await {
-        Ok(facts) => ItemPage {
-            item: ItemShown::of(&facts, &names),
-            runs: item_runs(&sources, number, &names),
-            page,
-            frame,
+        Ok((facts, snapshot)) => {
+            let names = names(&sources, Some(&snapshot));
+            ItemPage {
+                item: ItemShown::of(&facts, &names),
+                runs: item_runs(&sources, number, &names),
+                page,
+                frame,
+            }
+            .into_response()
         }
-        .into_response(),
         Err(e) => error_page(page, frame, &e),
     }
 }
 
-/// How the item page names items: by number alone for now, as it has so
-/// far.
-fn names(sources: &Sources) -> Names<'_> {
-    Names::of(&sources.work_dir.repo, None)
+/// How the item page names items: with the titles of the snapshot its facts
+/// were answered from, or by number alone without one.
+fn names<'a>(sources: &'a Sources, snapshot: Option<&'a Snapshot>) -> Names<'a> {
+    Names::of(&sources.work_dir.repo, snapshot)
 }
 
 fn error_page(page: Page, frame: Frame, e: &Unexplained) -> Response {
@@ -296,9 +291,13 @@ pub(super) async fn item_events(
     Path(number): Path<Number>,
 ) -> Response {
     let regions = move || {
-        let names = names(&sources);
         let mut regions = frame_regions(&Frame::of(&sources));
-        if let Ok(in_view) = api::explaining(&sources)
+        let in_view = api::explaining(&sources).ok();
+        let names = names(
+            &sources,
+            in_view.as_ref().map(|in_view| &*in_view.view.snapshot),
+        );
+        if let Some(in_view) = &in_view
             && let Some(answer) =
                 explain::explain_in_view(&in_view.view, &in_view.recorded, number, in_view.now)
         {
