@@ -1,5 +1,6 @@
 use std::fmt::{self, Write as _};
 
+use super::names::Names;
 use crate::domain::{Number, Timestamp};
 use crate::phrase::{Phrase, Segment};
 use crate::runs::{RunId, RunOf};
@@ -25,17 +26,17 @@ impl fmt::Display for Html {
 
 impl askama::filters::HtmlSafe for Html {}
 
-/// `phrase` as HTML (`docs/specs/design_system.md`): an item links to its
-/// page and to GitHub, a time and a duration are `<time>` elements holding
+/// `phrase` as HTML (`docs/specs/design_system.md`): an item is named as
+/// `names` names it, a time and a duration are `<time>` elements holding
 /// the text the commands print, which the page's script shows in the
 /// reader's time zone or locale and keeps up, and a label or a command is
 /// code.
-pub(crate) fn phrase(phrase: &Phrase, repo: &str) -> Html {
+pub(crate) fn phrase(phrase: &Phrase, names: &Names) -> Html {
     let mut html = String::new();
     for segment in phrase.segments() {
         match segment {
             Segment::Text(text) => html.push_str(&escape(text).0),
-            Segment::Item(number) => html.push_str(&item(*number, repo).0),
+            Segment::Item(number) => html.push_str(&names.item(*number).0),
             Segment::Time(at) => html.push_str(&time(*at).0),
             Segment::Duration { seconds, since } => {
                 let text = escape(&Phrase::default().duration(*seconds, None).to_string()).0;

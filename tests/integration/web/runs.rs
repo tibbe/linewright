@@ -200,6 +200,27 @@ async fn the_runs_page_leaves_an_interrupted_runs_duration_empty() {
 }
 
 #[tokio::test]
+async fn the_runs_page_names_an_item_linewright_does_not_hold_by_its_number_alone() {
+    let web = Web::start(with_ticket().await).await;
+    record_interrupted(&web, 9, 1, "2026-10-01T11:00:00Z");
+
+    let html = web.page("/runs").await;
+
+    let shown = runs_shown(&html);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0][2], "#9", "{shown:?}");
+    let links: Vec<&str> = select(&html, "#runs tbody td:nth-child(3) a")
+        .into_iter()
+        .filter_map(|a| a.attr("href"))
+        .collect();
+    assert_eq!(
+        links,
+        ["/items/9", &format!("https://github.com/{REPO}/issues/9")]
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
 async fn the_runs_page_with_no_runs_to_list_says_so_in_place_of_the_table() {
     let web = Web::start(with_ticket().await).await;
 

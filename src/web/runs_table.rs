@@ -3,8 +3,9 @@
 //! `macros.html`'s `runs`.
 
 use super::html::{self, Html};
+use super::names::Names;
 use super::run_path;
-use crate::domain::{Number, Snapshot};
+use crate::domain::Number;
 use crate::phrase::Tone;
 use crate::runs::{self, Listing, NoRuns, Run, RunOf};
 
@@ -55,23 +56,18 @@ pub(super) struct LeftOut {
 }
 
 impl RunsShown {
-    /// The runs of `listing`, uncut, each with its item, titled where
-    /// `snapshot` holds it.
-    pub(super) fn all(listing: &Listing, snapshot: Option<&Snapshot>, repo: &str) -> RunsShown {
+    /// The runs of `listing`, uncut, each with its item as `names` names
+    /// it.
+    pub(super) fn all(listing: &Listing, names: &Names) -> RunsShown {
         let item = |run: &Run| match &run.id.of {
-            RunOf::Work { item, .. } => {
-                ItemCell::Item(match snapshot.and_then(|snapshot| snapshot.title(*item)) {
-                    Some(title) => html::titled(*item, title, repo),
-                    None => html::item(*item, repo),
-                })
-            }
+            RunOf::Work { item, .. } => ItemCell::Item(names.item(*item)),
             RunOf::Automation { automation } => ItemCell::Automation(automation.to_string()),
         };
         let rows = Rows::WithItems(
             listing
                 .runs
                 .iter()
-                .map(|run| (item(run), RunRow::of(run, repo)))
+                .map(|run| (item(run), RunRow::of(run, names)))
                 .collect(),
         );
         RunsShown::of(listing, rows, None)
@@ -79,7 +75,11 @@ impl RunsShown {
 
     /// #`item`'s runs, as `runs` listed them narrowed to it, without the
     /// Item column; the earlier runs it left out listed on the runs page.
-    pub(super) fn of_item(listed: Result<Listing, NoRuns>, item: Number, repo: &str) -> RunsShown {
+    pub(super) fn of_item(
+        listed: Result<Listing, NoRuns>,
+        item: Number,
+        names: &Names,
+    ) -> RunsShown {
         let Ok(listing) = listed else {
             return RunsShown::NoRuns;
         };
@@ -87,7 +87,7 @@ impl RunsShown {
             listing
                 .runs
                 .iter()
-                .map(|run| RunRow::of(run, repo))
+                .map(|run| RunRow::of(run, names))
                 .collect(),
         );
         let left_out = (listing.left_out > 0).then(|| LeftOut {
@@ -106,7 +106,7 @@ impl RunsShown {
 }
 
 impl RunRow {
-    fn of(run: &Run, repo: &str) -> RunRow {
+    fn of(run: &Run, names: &Names) -> RunRow {
         RunRow {
             tone: run.outcome.tone(),
             word: run.outcome.word(),
@@ -118,7 +118,7 @@ impl RunRow {
             },
             started: html::time(run.started_at),
             by_hand: run.started().by_hand(),
-            duration: runs::duration(run).map(|duration| html::phrase(&duration, repo)),
+            duration: runs::duration(run).map(|duration| html::phrase(&duration, names)),
         }
     }
 }

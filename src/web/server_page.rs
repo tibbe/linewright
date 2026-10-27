@@ -130,10 +130,10 @@ fn failed_polls(failed: &FailedPolls) -> Phrase {
 /// The frame and the facts, from one answer of `status`.
 fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
     let read = Read::of(sources);
-    let repo = &sources.work_dir.repo;
+    let names = read.names(&sources.work_dir.repo);
     let facts = facts(&read.linewright)
         .into_iter()
-        .map(|fact| fact.map(|phrase| html::phrase(&phrase, repo)))
+        .map(|fact| fact.map(|phrase| html::phrase(&phrase, &names)))
         .collect();
     (Frame::of_read(sources, &read), facts)
 }

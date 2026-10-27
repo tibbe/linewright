@@ -11,6 +11,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use super::names::Names;
 use super::runs_table::RunsShown;
 use super::{Frame, Page, events, frame_regions, render, unanswered, with_query};
 use crate::api::{self, Sources};
@@ -135,11 +136,11 @@ fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
     match runs::answer(&sources.work_dir, &query, now) {
         Ok(listing) => {
             let view = api::view(sources);
-            let runs = RunsShown::all(
-                &listing,
-                view.as_ref().map(|view| &*view.snapshot),
+            let names = Names::of(
                 &sources.work_dir.repo,
+                view.as_ref().map(|view| &*view.snapshot),
             );
+            let runs = RunsShown::all(&listing, &names);
             (StatusCode::OK, runs)
         }
         Err(runs::ListError::NoRuns(_)) => (StatusCode::OK, RunsShown::NoRuns),

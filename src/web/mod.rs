@@ -7,6 +7,7 @@ mod cards;
 mod facts;
 mod html;
 mod item_page;
+mod names;
 mod run_page;
 mod runs_page;
 mod runs_table;
@@ -14,12 +15,13 @@ mod server_page;
 
 use automations_page::{Automations, LastRun};
 use html::Html;
+use names::Names;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
 use std::net::SocketAddr;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use askama::Template;
@@ -37,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::api::{self, Sources, Unanswered};
-use crate::domain::{Repo, Timestamp};
+use crate::domain::{Repo, Snapshot, Timestamp};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 use crate::phrase::{Phrase, Tone};
@@ -398,6 +400,8 @@ struct Read {
     linewright: Linewright,
     /// `None` before the first poll.
     automations: Option<Automations>,
+    /// The view's, `None` before the first poll.
+    snapshot: Option<Arc<Snapshot>>,
 }
 
 impl Read {
@@ -411,7 +415,13 @@ impl Read {
                 .as_ref()
                 .map(|view| Automations::of(&status, view, &recorded, now)),
             linewright: status.linewright,
+            snapshot: view.map(|view| view.snapshot),
         }
+    }
+
+    /// How the page names items: with the titles of the view it read.
+    fn names<'a>(&'a self, repo: &'a str) -> Names<'a> {
+        Names::of(repo, self.snapshot.as_deref())
     }
 }
 
@@ -423,12 +433,12 @@ impl Frame {
     fn of_read(sources: &Sources, read: &Read) -> Frame {
         let linewright = &read.linewright;
         let repo = sources.work_dir.repo.clone();
-        let html = |phrase: &Phrase| html::phrase(phrase, &repo);
+        let names = read.names(&repo);
         let holds = Hold::of(linewright, read.automations.as_ref())
             .iter()
             .map(|hold| HoldShown {
                 alert: hold.tone().alert(),
-                phrase: html(&hold.phrase()),
+                phrase: html::phrase(&hold.phrase(), &names),
                 href: hold.href(),
             })
             .collect();

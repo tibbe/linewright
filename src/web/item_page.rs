@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use super::cards::{card_line, lane_line, tone};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
+use super::names::Names;
 use super::runs_table::RunsShown;
 use super::{ErrorPage, Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources, Unexplained};
@@ -37,20 +38,23 @@ struct ItemShown {
 
 impl ItemShown {
     /// Its runs are left to [`item_runs`], to show as a table.
-    fn of(facts: &ItemFacts, repo: &str) -> ItemShown {
+    fn of(facts: &ItemFacts, names: &Names) -> ItemShown {
+        let repo = names.repo();
         ItemShown {
             heading: html::titled(facts.number, &facts.title, repo),
             pull_request: facts.pull_request,
             as_of: html::time(facts.last_read),
-            facts: shown_facts(facts, repo),
+            facts: shown_facts(facts, names),
         }
     }
 }
 
 /// `facts` in the order the item page's table gives them, each while it is
-/// shown (`docs/specs/design_system.md`, The item page).
-fn shown_facts(facts: &ItemFacts, repo: &str) -> Vec<Fact> {
-    let text = |phrase: &Phrase| Piece::Text(html::phrase(phrase, repo));
+/// shown (`docs/specs/design_system.md`, The item page), with the items its
+/// phrases name as `names` names them.
+fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
+    let repo = names.repo();
+    let text = |phrase: &Phrase| Piece::Text(html::phrase(phrase, names));
     let fact = |label, lines: Vec<Vec<Piece>>| (!lines.is_empty()).then_some(Fact { label, lines });
     let items = |items: &[Related]| items.iter().map(|item| vec![related(item, repo)]).collect();
     let tickets = facts.tickets.as_ref().map(|tickets| {
@@ -65,13 +69,10 @@ fn shown_facts(facts: &ItemFacts, repo: &str) -> Vec<Fact> {
         ]
     });
     [
-        Some(
-            Fact {
-                label: "State",
-                lines: vec![state(&facts.state)],
-            }
-            .map(|words| html::phrase(&words, repo)),
-        ),
+        Some(Fact {
+            label: "State",
+            lines: vec![state(&facts.state, names)],
+        }),
         fact(
             "Waiting for",
             facts
@@ -94,11 +95,11 @@ fn shown_facts(facts: &ItemFacts, repo: &str) -> Vec<Fact> {
 /// The State fact's line: the column and the card's line with its card
 /// status, a tracking issue's lane head's line, or why Linewright leaves
 /// the item.
-fn state(state: &StateFact) -> Vec<Piece<Phrase>> {
-    let then = |first: &str, line: Option<(Phrase, Option<Tone>)>| {
-        let mut pieces = vec![Piece::Text(Phrase::from(first))];
+fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
+    let then = |first: &str, line: Option<(Html, Option<Tone>)>| {
+        let mut pieces = vec![Piece::Text(html::escape(first))];
         if let Some((line, tone)) = line {
-            pieces.push(Piece::Text(" · ".into()));
+            pieces.push(Piece::Text(html::escape(" · ")));
             pieces.push(match tone {
                 Some(tone) => Piece::Status { tone, words: line },
                 None => Piece::Text(line),
@@ -109,20 +110,31 @@ fn state(state: &StateFact) -> Vec<Piece<Phrase>> {
     let tracking = |finished: Option<Timestamp>| {
         then(
             "Tracking",
-            finished.map(|at| (Phrase::from("finished ").time(at), None)),
+            finished.map(|at| {
+                (
+                    html::phrase(&Phrase::from("finished ").time(at), names),
+                    None,
+                )
+            }),
         )
     };
     match state {
         StateFact::Card { column, card } => then(
             column.name(),
-            card_line(card).map(|line| (line, card.status().map(tone))),
+            card_line(card).map(|line| (line.html(names), card.status().map(tone))),
         ),
         StateFact::Lane(lane) => match lane_line(lane) {
-            Some((tone, words)) => vec![Piece::Status { tone, words }],
+            Some((tone, line)) => vec![Piece::Status {
+                tone,
+                words: line.html(names),
+            }],
             None => tracking(lane.finished()),
         },
         StateFact::Tracking => tracking(None),
-        StateFact::LeftAlone(item) => then("Left alone", Some((left_alone_worded(item), None))),
+        StateFact::LeftAlone(item) => then(
+            "Left alone",
+            Some((html::phrase(&left_alone_worded(item), names), None)),
+        ),
     }
 }
 
@@ -204,14 +216,14 @@ const RUNS_SHOWN: usize = 10;
 
 /// #`number`'s latest runs, from their records, whether or not Linewright
 /// manages it.
-fn item_runs(sources: &Sources, number: Number) -> RunsShown {
+fn item_runs(sources: &Sources, number: Number, names: &Names) -> RunsShown {
     let query = runs::Query {
         item: Some(number),
         limit: Some(RUNS_SHOWN),
         ..runs::Query::default()
     };
     let listed = runs::list(api::recorded_or_none(sources), &query, sources.clock.now());
-    RunsShown::of_item(listed, number, &sources.work_dir.repo)
+    RunsShown::of_item(listed, number, names)
 }
 
 #[derive(Template, WebTemplate)]
@@ -245,16 +257,23 @@ pub(super) async fn item_page(
     )
     .filling_the_viewport();
     let frame = Frame::of(&sources);
+    let names = names(&sources);
     match api::item_facts(&sources, number).await {
         Ok(facts) => ItemPage {
-            item: ItemShown::of(&facts, &sources.work_dir.repo),
-            runs: item_runs(&sources, number),
+            item: ItemShown::of(&facts, &names),
+            runs: item_runs(&sources, number, &names),
             page,
             frame,
         }
         .into_response(),
         Err(e) => error_page(page, frame, &e),
     }
+}
+
+/// How the item page names items: by number alone for now, as it has so
+/// far.
+fn names(sources: &Sources) -> Names<'_> {
+    Names::of(&sources.work_dir.repo, None)
 }
 
 fn error_page(page: Page, frame: Frame, e: &Unexplained) -> Response {
@@ -277,6 +296,7 @@ pub(super) async fn item_events(
     Path(number): Path<Number>,
 ) -> Response {
     let regions = move || {
+        let names = names(&sources);
         let mut regions = frame_regions(&Frame::of(&sources));
         if let Ok(in_view) = api::explaining(&sources)
             && let Some(answer) =
@@ -284,10 +304,10 @@ pub(super) async fn item_events(
         {
             let board = board::board(&in_view.view, &in_view.recorded, in_view.now);
             let facts = item_facts::item_facts(&answer, &in_view.view, &board);
-            let item = ItemShown::of(&facts, &sources.work_dir.repo);
+            let item = ItemShown::of(&facts, &names);
             regions.push(("item", render(&ItemRegion { item: &item })));
         }
-        let runs = item_runs(&sources, number);
+        let runs = item_runs(&sources, number, &names);
         regions.push(("runs", render(&RunsRegion { runs: &runs })));
         regions
     };

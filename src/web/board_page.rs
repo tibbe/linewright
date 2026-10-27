@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::cards::{card_line, lane_line, tone};
 use super::html::{self, Html};
+use super::names::Names;
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
 use crate::board::{Board, Card, Column, Lane, LaneHead};
@@ -61,6 +62,9 @@ struct CardShown {
 
 impl BoardShown {
     fn of(board: &Board, repo: &str) -> BoardShown {
+        // A card's line names items by number alone, so the board needs no
+        // titles but its cards' own.
+        let names = Names::of(repo, None);
         let (finished, unfinished): (Vec<&Lane>, Vec<&Lane>) = board
             .lanes
             .iter()
@@ -68,7 +72,7 @@ impl BoardShown {
         let shown = |lanes: Vec<&Lane>| {
             lanes
                 .into_iter()
-                .map(|lane| LaneShown::of(lane, repo))
+                .map(|lane| LaneShown::of(lane, &names))
                 .collect()
         };
         BoardShown {
@@ -85,7 +89,8 @@ impl BoardShown {
 }
 
 impl LaneShown {
-    fn of(lane: &Lane, repo: &str) -> LaneShown {
+    fn of(lane: &Lane, names: &Names) -> LaneShown {
+        let repo = names.repo();
         let head = match &lane.head {
             LaneHead::Tracking {
                 number,
@@ -105,7 +110,7 @@ impl LaneShown {
         };
         let status = lane_line(lane).map(|(tone, line)| StatusShown {
             tone,
-            line: html::phrase(&line, repo),
+            line: line.html(names),
         });
         LaneShown {
             id: format!("lane-{}", lane.head.number().0),
@@ -118,7 +123,7 @@ impl LaneShown {
                     cards: lane
                         .cards(column)
                         .iter()
-                        .map(|card| CardShown::of(card, column, repo))
+                        .map(|card| CardShown::of(card, column, names))
                         .collect(),
                 })
                 .collect(),
@@ -142,12 +147,12 @@ fn counted(n: usize, thing: &str) -> String {
 }
 
 impl CardShown {
-    fn of(card: &Card, column: Column, repo: &str) -> CardShown {
+    fn of(card: &Card, column: Column, names: &Names) -> CardShown {
         CardShown {
-            heading: html::titled(card.number, &card.title, repo),
+            heading: html::titled(card.number, &card.title, names.repo()),
             pull_request: card.pull_request,
             tone: card.status().map(tone),
-            line: card_line(card).map(|line| html::phrase(&line, repo)),
+            line: card_line(card).map(|line| line.html(names)),
             quiet: column == Column::Done,
         }
     }

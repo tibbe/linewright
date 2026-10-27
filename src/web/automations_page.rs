@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
 use super::html::{self, Html};
+use super::names::Names;
 use super::{ErrorPage, Frame, Page, Read, events, frame_regions, render, run_path};
 use crate::api::{Sources, Unexplained};
 use crate::domain::Timestamp;
@@ -111,8 +112,8 @@ enum LastRunShown {
 }
 
 impl AutomationsShown {
-    fn of(automations: &Automations, repo: &str) -> AutomationsShown {
-        let html = |phrase: &Phrase| html::phrase(phrase, repo);
+    fn of(automations: &Automations, names: &Names) -> AutomationsShown {
+        let html = |phrase: &Phrase| html::phrase(phrase, names);
         AutomationsShown {
             unparsed: automations
                 .unparsed
@@ -171,7 +172,7 @@ fn shown(sources: &Sources) -> (Frame, Option<AutomationsShown>) {
     let automations = read
         .automations
         .as_ref()
-        .map(|automations| AutomationsShown::of(automations, &sources.work_dir.repo));
+        .map(|automations| AutomationsShown::of(automations, &read.names(&sources.work_dir.repo)));
     (Frame::of_read(sources, &read), automations)
 }
 

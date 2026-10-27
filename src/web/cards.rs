@@ -1,14 +1,32 @@
 //! A card's words (`docs/specs/design_system.md`, Cards), shared by every
 //! page that shows a card's line or status.
 
+use super::html::{self, Html};
+use super::names::Names;
 use crate::board::{Card, CardLine, CardStatus, Elapsed, Ended, Hold, Lane, Running, Stop};
 use crate::domain::{IssueCloseReason, ReviewDecision};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
 
+/// A card's line, the one place a page names items by their number alone
+/// (`docs/specs/design_system.md`, Navigation). Made only by [`card_line`]
+/// and [`lane_line`].
+pub(super) struct Line(Phrase);
+
+impl Line {
+    /// The line as HTML, each item it names by its number alone.
+    pub(super) fn html(&self, names: &Names) -> Html {
+        html::phrase(&self.0, &names.numbers_only())
+    }
+}
+
 /// The line under `card`'s title, ending with when it entered its column
 /// where it says so.
-pub(super) fn card_line(card: &Card) -> Option<Phrase> {
+pub(super) fn card_line(card: &Card) -> Option<Line> {
+    card_phrase(card).map(Line)
+}
+
+fn card_phrase(card: &Card) -> Option<Phrase> {
     let line = card.line.as_ref().map(worded);
     let entered = card.entered.map(|at| Phrase::default().time(at));
     match (line, entered) {
@@ -21,15 +39,15 @@ pub(super) fn card_line(card: &Card) -> Option<Phrase> {
 /// (`docs/specs/design_system.md`, The board, A lane's card status): its
 /// most pressing card's line, after the card's number where the card is not
 /// the lane's own item.
-pub(super) fn lane_line(lane: &Lane) -> Option<(Tone, Phrase)> {
+pub(super) fn lane_line(lane: &Lane) -> Option<(Tone, Line)> {
     let (card, status) = lane.most_pressing()?;
-    let line = card_line(card).unwrap_or_default();
+    let line = card_phrase(card).unwrap_or_default();
     let line = if lane.is_own_item(card) {
         line
     } else {
         Phrase::default().item(card.number).text(" · ").then(line)
     };
-    Some((tone(status), line))
+    Some((tone(status), Line(line)))
 }
 
 /// The tone `status` shows in (`docs/specs/web/design_system.md`, Status).
