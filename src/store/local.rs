@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::Serialize;
+use tokio::sync::oneshot;
 
 use super::{
     AnyItem, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
@@ -62,6 +63,49 @@ struct State {
     unassignable: Vec<Login>,
     after_comment: Option<Box<dyn FnOnce() + Send>>,
     after_labeling: Option<AfterLabeling>,
+    pause: Option<Pause>,
+}
+
+/// A write of Linewright's that [`LocalStore::pause_after`] can pause a
+/// store call after.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Write {
+    AddLabel { number: Number, label: String },
+    RemoveLabel { number: Number, label: String },
+    Unassign { number: Number },
+    AssignPeople { number: Number },
+    Comment { number: Number },
+    OpenPull { head: String },
+}
+
+/// The store's end of a [`Paused`].
+struct Pause {
+    after: Write,
+    reached: oneshot::Sender<()>,
+    released: oneshot::Receiver<()>,
+}
+
+/// A store call paused after a write, from [`LocalStore::pause_after`].
+/// Dropping it releases the call.
+pub struct Paused {
+    reached: oneshot::Receiver<()>,
+    release: oneshot::Sender<()>,
+}
+
+impl Paused {
+    /// Returns once the write has landed.
+    pub async fn reached(&mut self) {
+        (&mut self.reached)
+            .await
+            .expect("the paused write is reached before the store is dropped or paused elsewhere");
+    }
+
+    /// Lets the paused store call return.
+    pub fn release(self) {
+        // The call is gone only if the store was dropped, and then there is
+        // nothing to release.
+        let _ = self.release.send(());
+    }
 }
 
 /// What to run once Linewright next adds `label` to `number`.
@@ -182,6 +226,7 @@ impl LocalStore {
                 unassignable: vec![],
                 after_comment: None,
                 after_labeling: None,
+                pause: None,
             }),
         })
     }
@@ -544,6 +589,42 @@ impl LocalStore {
             label: label.to_string(),
             then: Box::new(then),
         });
+    }
+
+    /// Pauses the store call that next makes `write`, once the write is
+    /// applied, until the returned [`Paused`] is released. One pause is set
+    /// at a time: a second replaces the first.
+    pub fn pause_after(&self, write: Write) -> Paused {
+        let (reached, on_reached) = oneshot::channel();
+        let (release, released) = oneshot::channel();
+        self.state().pause = Some(Pause {
+            after: write,
+            reached,
+            released,
+        });
+        Paused {
+            reached: on_reached,
+            release,
+        }
+    }
+
+    /// Waits for the pause set on `write`, if any, to be released.
+    async fn paused(&self, write: Write) {
+        let pause = {
+            let mut state = self.state();
+            match state.pause.take() {
+                Some(pause) if pause.after == write => Some(pause),
+                other => {
+                    state.pause = other;
+                    None
+                }
+            }
+        };
+        if let Some(pause) = pause {
+            let _ = pause.reached.send(());
+            // A dropped `Paused` releases the call as well.
+            let _ = pause.released.await;
+        }
     }
 
     pub fn accept_merges(&self, pr: Number) {
@@ -1748,12 +1829,23 @@ impl Store for LocalStore {
         if let Some(then) = then {
             then();
         }
+        self.paused(Write::AddLabel {
+            number,
+            label: label.into(),
+        })
+        .await;
         Ok(())
     }
 
     async fn remove_label(&self, number: Number, label: &str) -> Result<()> {
         let now = self.now();
-        self.state().remove_label(number, label, now)
+        self.state().remove_label(number, label, now)?;
+        self.paused(Write::RemoveLabel {
+            number,
+            label: label.into(),
+        })
+        .await;
+        Ok(())
     }
 
     async fn assign(&self, number: Number) -> Result<()> {
@@ -1765,23 +1857,30 @@ impl Store for LocalStore {
 
     async fn unassign(&self, number: Number) -> Result<()> {
         let now = self.now();
-        let mut state = self.state();
-        let linewright = state.linewright.clone();
-        state.unassign(number, &linewright, &linewright, now)
+        {
+            let mut state = self.state();
+            let linewright = state.linewright.clone();
+            state.unassign(number, &linewright, &linewright, now)?;
+        }
+        self.paused(Write::Unassign { number }).await;
+        Ok(())
     }
 
     async fn assign_people(&self, issue: Number, people: &[Login]) -> Result<Vec<Login>> {
         let now = self.now();
-        let mut state = self.state();
-        let linewright = state.linewright.clone();
         let mut refused = vec![];
-        for person in people {
-            if state.unassignable.contains(person) {
-                refused.push(person.clone());
-            } else {
-                state.assign(issue, person, &linewright, now)?;
+        {
+            let mut state = self.state();
+            let linewright = state.linewright.clone();
+            for person in people {
+                if state.unassignable.contains(person) {
+                    refused.push(person.clone());
+                } else {
+                    state.assign(issue, person, &linewright, now)?;
+                }
             }
         }
+        self.paused(Write::AssignPeople { number: issue }).await;
         Ok(refused)
     }
 
@@ -1802,6 +1901,7 @@ impl Store for LocalStore {
         if let Some(then) = then {
             then();
         }
+        self.paused(Write::Comment { number }).await;
         Ok(())
     }
 
@@ -1857,13 +1957,17 @@ impl Store for LocalStore {
             bail!("no branch {}", pull.head);
         }
         let now = self.now();
-        let mut state = self.state();
-        let number = state.take_number();
-        let author = state.linewright.clone();
-        state.pulls.insert(
-            number,
-            PullRecord::new(number, &pull.title, &pull.body, author, &pull.head, now),
-        );
+        let number = {
+            let mut state = self.state();
+            let number = state.take_number();
+            let author = state.linewright.clone();
+            state.pulls.insert(
+                number,
+                PullRecord::new(number, &pull.title, &pull.body, author, &pull.head, now),
+            );
+            number
+        };
+        self.paused(Write::OpenPull { head: pull.head }).await;
         Ok(number)
     }
 

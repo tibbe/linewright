@@ -4985,7 +4985,10 @@ fn a_config_of_the_repositorys_that_cannot_be_used_holds_every_run_and_leaves_au
 fn starting_a_spec_change_design_touches_the_spec_change() {
     let action = Action::Start(Work::DesignSpecChange { pr: Number(20) });
 
-    assert_eq!(action.items(&snapshot(vec![])), vec![Item::Pull(Number(20))]);
+    assert_eq!(
+        action.items(&snapshot(vec![])),
+        vec![Item::Pull(Number(20))]
+    );
 }
 
 #[test]
@@ -5028,5 +5031,8 @@ fn deleting_a_ticket_branch_touches_its_ticket() {
         branch: TicketBranchName::parse("42-add-a-thing").unwrap(),
     };
 
-    assert_eq!(action.items(&snapshot(vec![])), vec![Item::Issue(Number(42))]);
+    assert_eq!(
+        action.items(&snapshot(vec![])),
+        vec![Item::Issue(Number(42))]
+    );
 }

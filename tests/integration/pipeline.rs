@@ -5,7 +5,7 @@ use common::*;
 use linewright::domain::{Assignment, AutoMerge, Issue, IssueEvent, PullState};
 use linewright::reconcile::WorkKind;
 use linewright::store::Store;
-use linewright::store::local::LocalStore;
+use linewright::store::local::{LocalStore, Write};
 use linewright::work_settings::{Effort, Partial, StageTable};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -37,6 +37,37 @@ async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
         "## Agent Brief\n\n**Summary:** Empty widgets crash."
     );
     assert!(issue.open);
+}
+
+#[tokio::test]
+async fn a_triage_run_paused_after_removing_needs_triage_ends_labeled_once_released() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Triage, |_| {
+        Ok(json!({
+            "outcome": "ready-for-agent",
+            "category": "bug",
+            "comment": "## Agent Brief\n\n**Summary:** Empty widgets crash."
+        })
+        .to_string())
+    });
+    let issue = world.store.open_issue(
+        "reporter",
+        "Crash on empty widget",
+        "It crashes.",
+        &["needs-triage"],
+    );
+    let mut paused = world.store.pause_after(Write::RemoveLabel {
+        number: issue,
+        label: "needs-triage".into(),
+    });
+
+    world.factory.cycle().await.unwrap();
+    paused.reached().await;
+    assert_eq!(labels(&world.issue(issue)), Vec::<&str>::new());
+    paused.release();
+    world.factory.settle().await;
+
+    assert_eq!(labels(&world.issue(issue)), ["bug", "ready-for-agent"]);
 }
 
 /// Triages two issues in one poll with sessions that each draft a comment in
