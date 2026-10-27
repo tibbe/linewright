@@ -1997,6 +1997,54 @@ fn a_stalled_issue_linewright_neither_holds_nor_claims_keeps_its_stall() {
 }
 
 #[test]
+fn a_stalled_issue_left_assigned_with_two_status_labels_is_let_go_of_with_its_stall_kept() {
+    // As a hand-back stopped after adding `ready-for-human` leaves it.
+    let handed_back = assigned_by(
+        labeled_both(StatusLabel::ReadyForAgent, StatusLabel::ReadyForHuman),
+        LINEWRIGHT,
+        LINEWRIGHT,
+        0,
+    );
+    let world = snapshot(vec![labeled(handed_back, label::STALLED)]);
+
+    let actions = decide(&world);
+
+    assert!(
+        actions.contains(&Action::RemoveStatusLabel {
+            issue: Number(1),
+            label: StatusLabel::ReadyForAgent,
+        }),
+        "{actions:?}"
+    );
+    assert!(
+        actions.iter().any(|a| matches!(
+            a,
+            Action::LetGo {
+                issue: Number(1),
+                ..
+            }
+        )),
+        "{actions:?}"
+    );
+    assert!(
+        !actions.contains(&clear_stall(Item::Issue(Number(1)))),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn a_stalled_pull_request_linewright_is_still_assigned_to_has_its_stall_cleared() {
+    let mut pr = ready(pull(20, 2));
+    pr.checks = vec![check("test", CheckState::Pending)];
+    let pr = labeled_pull(pr, label::STALLED);
+
+    assert_eq!(
+        at(&in_review(pr), 8),
+        vec![clear_stall(Item::Pull(Number(20)))]
+    );
+}
+
+#[test]
 fn a_stalled_ticket_claimed_but_held_back_by_the_drain_keeps_its_stall() {
     let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
     let memory = Memory {

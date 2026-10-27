@@ -983,19 +983,31 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
 }
 
 /// `actions`, with the stall of each open item Linewright works again
-/// cleared: one it is assigned to, or claims in `actions`
-/// (`docs/specs/repository.md`, "Stalls"), and that no live run holds. Each
-/// clear follows its claim, so that a stop before the claim leaves the label.
+/// cleared: one it is assigned to and `actions` do not let go of, or claims
+/// in `actions` (`docs/specs/repository.md`, "Stalls"), and that no live run
+/// holds. Each clear follows its claim, so that a stop before the claim
+/// leaves the label.
 fn clearing_stalls(
     snapshot: &Snapshot,
     actions: Vec<Action>,
     held_by_runs: &BTreeMap<Item, WorkKind>,
     linewright: &Login,
 ) -> Vec<Action> {
+    let let_go: BTreeSet<Number> = actions
+        .iter()
+        .filter_map(|action| {
+            if let Action::LetGo { issue, .. } = action {
+                Some(*issue)
+            } else {
+                None
+            }
+        })
+        .collect();
     let issues = snapshot
         .issues
         .iter()
         .filter(|i| i.open && i.is_stalled() && i.is_assigned(linewright))
+        .filter(|i| !let_go.contains(&i.number))
         .map(|i| Item::Issue(i.number));
     let pulls = snapshot
         .pulls
