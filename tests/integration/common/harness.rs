@@ -205,6 +205,14 @@ pub fn refused_for_the_usage_limit() -> Result<String, SessionError> {
     refused_until(usage_limit_resets_at(), None)
 }
 
+/// A session that ended unexpectedly, for `reason`.
+pub fn failed_session(reason: &str) -> Result<String, SessionError> {
+    Err(SessionError::Failed {
+        reason: reason.into(),
+        log_tail: String::new(),
+    })
+}
+
 pub fn refused_part_way(call: &Call) -> Result<String, SessionError> {
     refused_until(usage_limit_resets_at(), Some(call))
 }

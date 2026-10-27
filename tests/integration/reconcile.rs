@@ -441,7 +441,7 @@ fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
         vec![Action::Cancel {
             subject: Subject::Issue(Number(1)),
             reason: "`needs-triage` was removed from #1".into(),
-        },]
+        }]
     );
 }
 

@@ -169,12 +169,9 @@ fn assigned_by_hand(world: &World, labels: &[&str]) -> Number {
 async fn an_issue_assigned_by_hand_and_handed_back_through_a_poll_part_way_is_not_let_go_of_besides()
  {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Implement, |_| {
-        Err(linewright::harness::SessionError::Failed {
-            reason: "it broke".into(),
-            log_tail: String::new(),
-        })
-    });
+    world
+        .harness
+        .on(WorkKind::Implement, |_| failed_session("it broke"));
     let issue = assigned_by_hand(&world, &["ready-for-agent", "linewright:designed"]);
     // The last status label it removes before adding `ready-for-human`.
     let paused = world.store.pause_after(removing(issue, "ready-for-agent"));
@@ -240,6 +237,9 @@ async fn an_implement_runs_pull_request_is_left_to_it_through_a_poll_part_way() 
         .pulls()
         .last()
         .expect("the run opened its pull request");
+    // Past the grace for CI to report, so that with no CI the pull request
+    // is ready to be marked ready.
+    world.clock.advance(TimeDelta::minutes(6));
 
     let actions = world.factory.cycle().await.unwrap();
 
@@ -249,4 +249,9 @@ async fn an_implement_runs_pull_request_is_left_to_it_through_a_poll_part_way() 
     world.factory.settle().await;
     assert_eq!(world.store.pull_assignees(pr), [Login::new(LINEWRIGHT)]);
     assert!(world.store.pull_labels(pr).contains(&REQUIRED.to_string()));
+    // The poll after the run finds the pull request claimed.
+    assert_eq!(
+        world.factory.cycle().await.unwrap(),
+        [Action::MarkReady { pr }]
+    );
 }

@@ -1010,8 +1010,8 @@ fn clearing_stalls(
     let mut cleared: Vec<Action> = issues
         .chain(pulls)
         .chain(spec_changes)
-        .filter(|item| !held_by_runs.contains_key(item))
         .map(|item| Action::ClearStall { item })
+        .filter(|clear| held_back(clear, snapshot, held_by_runs).is_empty())
         .collect();
     for action in actions {
         let clear = if let Action::Claim { item } = action
@@ -1136,6 +1136,23 @@ fn held_by_runs(
     held
 }
 
+/// The items of `action` that `held_by_runs` holds, each with its run's
+/// stage: none for a cancel, which no live run holds back.
+fn held_back(
+    action: &Action,
+    snapshot: &Snapshot,
+    held_by_runs: &BTreeMap<Item, WorkKind>,
+) -> Vec<(Item, WorkKind)> {
+    if let Action::Cancel { .. } = action {
+        return vec![];
+    }
+    action
+        .items(snapshot)
+        .into_iter()
+        .filter_map(|item| held_by_runs.get(&item).map(|stage| (item, *stage)))
+        .collect()
+}
+
 fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<String> {
     match run.subject {
         Subject::Pull(number) => {
@@ -1223,17 +1240,17 @@ impl Plan<'_> {
     /// waits and keep work from being planned; this is what guarantees that
     /// nothing is written.
     fn act(&mut self, action: Action) {
-        if matches!(action, Action::Cancel { .. }) || !self.holds(&action.items(self.snapshot)) {
+        if !self.held_back(&[&action]) {
             self.actions.push(action);
         }
     }
 
-    /// Whether a live run holds one of `items`, noting the wait on each it
-    /// holds.
-    fn holds(&mut self, items: &[Item]) -> bool {
-        let held: Vec<(Item, WorkKind)> = items
+    /// Whether a live run holds back one of `actions`, noting the wait on
+    /// each item it holds.
+    fn held_back(&mut self, actions: &[&Action]) -> bool {
+        let held: Vec<(Item, WorkKind)> = actions
             .iter()
-            .filter_map(|item| self.held_by_runs.get(item).map(|stage| (*item, *stage)))
+            .flat_map(|action| held_back(action, self.snapshot, self.held_by_runs))
             .collect();
         for (item, stage) in &held {
             self.wait(item.number(), Wait::Run { stage: *stage });
@@ -1291,12 +1308,9 @@ impl Plan<'_> {
     /// A start that a live run or a file in `unusable` holds is neither
     /// claimed nor started, and its item waits for the run or the file.
     fn push_start(&mut self, start: Start) {
-        let items: Vec<Item> = start
-            .claim
-            .into_iter()
-            .chain([start.work.starts_from()])
-            .collect();
-        if self.holds(&items) {
+        let claim = start.claim.map(|item| Action::Claim { item });
+        let run = Action::Start(start.work.clone());
+        if self.held_back(&claim.iter().chain([&run]).collect::<Vec<_>>()) {
             return;
         }
         let waits: Vec<Wait> = holding(self.unusable, &RunKind::Stage(start.work.kind()))

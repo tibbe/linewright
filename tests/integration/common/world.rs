@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use super::cli::REPO;
 use super::clock::FakeClock;
 use super::files::commit_in;
-use super::harness::{ScriptedHarness, subject_file};
+use super::harness::{ScriptedHarness, failed_session, subject_file};
 
 pub const LINEWRIGHT: &str = "factory";
 
@@ -329,10 +329,7 @@ pub fn gated(world: &World, kind: WorkKind) -> Gate {
     world.harness.on(kind, move |_| {
         let _ = begin.send(());
         released.lock().unwrap().recv().unwrap();
-        Err(linewright::harness::SessionError::Failed {
-            reason: "released".into(),
-            log_tail: String::new(),
-        })
+        failed_session("released")
     });
     Gate { release, begun }
 }

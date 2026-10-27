@@ -60,6 +60,7 @@
 //! - `subject_file`: the file name of the subject a call works on.
 //! - `usage_limit_resets_at`: when the usage limit the refusals hit resets.
 //! - `refused_for_the_usage_limit`: a turn refused for the usage limit before it began.
+//! - `failed_session`: a session that ended unexpectedly, for a reason.
 //! - `refused_part_way`: a turn refused for the usage limit part way through.
 //! - `refused_until`: a turn refused for a usage limit that resets at a given time.
 //! - `assert_in_a_process_group_of_its_own`: asserts a process group is not
