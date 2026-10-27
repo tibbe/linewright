@@ -302,6 +302,41 @@ pub fn design_issues(world: &World) {
     });
 }
 
+/// A session held open until released, from [`gated`].
+pub struct Gate {
+    release: std::sync::mpsc::Sender<()>,
+    begun: tokio::sync::mpsc::UnboundedReceiver<()>,
+}
+
+impl Gate {
+    /// Returns once the session has begun.
+    pub async fn begun(&mut self) {
+        self.begun.recv().await.unwrap();
+    }
+
+    /// Ends the session, as failed.
+    pub fn release(&self) {
+        self.release.send(()).unwrap();
+    }
+}
+
+/// Holds each session of `kind` open until the returned [`Gate`] releases
+/// it.
+pub fn gated(world: &World, kind: WorkKind) -> Gate {
+    let (release, released) = std::sync::mpsc::channel();
+    let released = std::sync::Mutex::new(released);
+    let (begin, begun) = tokio::sync::mpsc::unbounded_channel();
+    world.harness.on(kind, move |_| {
+        let _ = begin.send(());
+        released.lock().unwrap().recv().unwrap();
+        Err(linewright::harness::SessionError::Failed {
+            reason: "released".into(),
+            log_tail: String::new(),
+        })
+    });
+    Gate { release, begun }
+}
+
 /// A world whose work dir is `REPO`'s, holding an issue that needs triage,
 /// which each triage answers is ready for an agent.
 pub async fn with_issue_for_triage() -> World {

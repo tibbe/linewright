@@ -36,6 +36,8 @@
 //! - `triage_paused_after_removing_needs_triage`: an issue needing triage,
 //!   its triage paused once it removes `needs-triage`, and `TRIAGE_BRIEF`,
 //!   the comment it posts.
+//! - `gated`: holds each session of a kind of work open until its `Gate`
+//!   releases it; the `Gate` tells when one has `begun`.
 //! - `HOURLY`: an automation file that runs on the hour; the fake clock starts
 //!   at 12:00.
 //! - `Serving`: a factory serving in the background.

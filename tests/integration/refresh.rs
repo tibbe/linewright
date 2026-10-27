@@ -486,36 +486,6 @@ async fn refresh(world: &mut World, item: Item) -> Vec<Action> {
     world.factory.refresh([item]).await.unwrap()
 }
 
-struct Gate {
-    release: mpsc::Sender<()>,
-    begun: tokio::sync::mpsc::UnboundedReceiver<()>,
-}
-
-impl Gate {
-    async fn begun(&mut self) {
-        self.begun.recv().await.unwrap();
-    }
-
-    fn release(&self) {
-        self.release.send(()).unwrap();
-    }
-}
-
-fn gated(world: &World, kind: WorkKind) -> Gate {
-    let (release, released) = mpsc::channel();
-    let released = Mutex::new(released);
-    let (begin, begun) = tokio::sync::mpsc::unbounded_channel();
-    world.harness.on(kind, move |_| {
-        let _ = begin.send(());
-        released.lock().unwrap().recv().unwrap();
-        Err(linewright::harness::SessionError::Failed {
-            reason: "released".into(),
-            log_tail: String::new(),
-        })
-    });
-    Gate { release, begun }
-}
-
 async fn spec_change(world: &World) -> Number {
     world
         .store

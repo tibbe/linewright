@@ -680,10 +680,13 @@ pub fn decisions(
             },
         ),
     };
+    let held_by_runs = held_by_runs(snapshot, live, memory, &policy.linewright);
     let mut plan = Plan {
         now,
         held,
         unusable,
+        snapshot,
+        held_by_runs: &held_by_runs,
         actions: vec![],
         starts: vec![],
         waits: BTreeMap::new(),
@@ -908,7 +911,12 @@ pub fn decisions(
     }
 
     let (mut decisions, room) = plan.into_decisions(room);
-    decisions.actions = clearing_stalls(snapshot, decisions.actions, &policy.linewright);
+    decisions.actions = clearing_stalls(
+        snapshot,
+        decisions.actions,
+        &held_by_runs,
+        &policy.linewright,
+    );
     decisions
         .actions
         .extend(schedule(automations, now, room, unusable));
@@ -976,9 +984,14 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
 
 /// `actions`, with the stall of each open item Linewright works again
 /// cleared: one it is assigned to, or claims in `actions`
-/// (`docs/specs/repository.md`, "Stalls"). Each clear follows its claim, so
-/// that a stop before the claim leaves the label.
-fn clearing_stalls(snapshot: &Snapshot, actions: Vec<Action>, linewright: &Login) -> Vec<Action> {
+/// (`docs/specs/repository.md`, "Stalls"), and that no live run holds. Each
+/// clear follows its claim, so that a stop before the claim leaves the label.
+fn clearing_stalls(
+    snapshot: &Snapshot,
+    actions: Vec<Action>,
+    held_by_runs: &BTreeMap<Item, WorkKind>,
+    linewright: &Login,
+) -> Vec<Action> {
     let issues = snapshot
         .issues
         .iter()
@@ -997,6 +1010,7 @@ fn clearing_stalls(snapshot: &Snapshot, actions: Vec<Action>, linewright: &Login
     let mut cleared: Vec<Action> = issues
         .chain(pulls)
         .chain(spec_changes)
+        .filter(|item| !held_by_runs.contains_key(item))
         .map(|item| Action::ClearStall { item })
         .collect();
     for action in actions {
@@ -1068,6 +1082,60 @@ fn schedule(
     actions
 }
 
+/// The items the live runs hold, each with its run's stage: those a run
+/// writes as it records its result, which no other write may touch until it
+/// ends. A cut in `memory.ended_cuts` holds what it held while live, as the
+/// snapshot may miss what it wrote.
+///
+/// The tickets a cut files are not held: each is readied last, so a poll
+/// sees it either unpublished or published to be worked.
+fn held_by_runs(
+    snapshot: &Snapshot,
+    live: &[LiveRun],
+    memory: &Memory,
+    linewright: &Login,
+) -> BTreeMap<Item, WorkKind> {
+    let ended_cuts = memory
+        .ended_cuts
+        .iter()
+        .map(|pr| (Subject::SpecChange(*pr), WorkKind::Design));
+    let mut held = BTreeMap::new();
+    for (subject, stage) in live
+        .iter()
+        .map(|run| (run.subject, run.kind))
+        .chain(ended_cuts)
+    {
+        match subject {
+            Subject::Pull(pr) => {
+                held.insert(Item::Pull(pr), stage);
+            }
+            // An implement run opens its pull request, then assigns and
+            // labels it.
+            Subject::Issue(issue) => {
+                held.insert(Item::Issue(issue), stage);
+                for pull in snapshot
+                    .pulls
+                    .iter()
+                    .filter(|p| p.is_open() && p.author == *linewright && p.closes.contains(&issue))
+                {
+                    held.insert(Item::Pull(pull.number), stage);
+                }
+            }
+            Subject::SpecChange(pr) => {
+                held.insert(Item::Pull(pr), stage);
+                for tracking in snapshot
+                    .issues
+                    .iter()
+                    .filter(|i| i.open && i.tracks(linewright) == Some(Tracks::SpecChange(pr)))
+                {
+                    held.insert(Item::Issue(tracking.number), stage);
+                }
+            }
+        }
+    }
+    held
+}
+
 fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<String> {
     match run.subject {
         Subject::Pull(number) => {
@@ -1127,6 +1195,9 @@ struct Plan<'a> {
     held: Held,
     /// The repository's files that hold the runs that would read them.
     unusable: &'a [Unusable],
+    snapshot: &'a Snapshot,
+    /// What [`held_by_runs`] returns: no action but a cancel touches these.
+    held_by_runs: &'a BTreeMap<Item, WorkKind>,
     actions: Vec<Action>,
     starts: Vec<Start>,
     waits: BTreeMap<Number, Vec<Wait>>,
@@ -1146,8 +1217,28 @@ struct Start {
 }
 
 impl Plan<'_> {
+    /// An action on an item a live run holds is not taken, and the item
+    /// waits for the run instead, so that the run is the item's only writer
+    /// until it ends. The checks of `running` in [`decisions`] give the
+    /// waits and keep work from being planned; this is what guarantees that
+    /// nothing is written.
     fn act(&mut self, action: Action) {
-        self.actions.push(action);
+        if matches!(action, Action::Cancel { .. }) || !self.holds(&action.items(self.snapshot)) {
+            self.actions.push(action);
+        }
+    }
+
+    /// Whether a live run holds one of `items`, noting the wait on each it
+    /// holds.
+    fn holds(&mut self, items: &[Item]) -> bool {
+        let held: Vec<(Item, WorkKind)> = items
+            .iter()
+            .filter_map(|item| self.held_by_runs.get(item).map(|stage| (*item, *stage)))
+            .collect();
+        for (item, stage) in &held {
+            self.wait(item.number(), Wait::Run { stage: *stage });
+        }
+        !held.is_empty()
     }
 
     /// A wait already noted for `item` is noted once.
@@ -1197,9 +1288,17 @@ impl Plan<'_> {
         });
     }
 
-    /// A start that a file in `unusable` holds is neither claimed nor
-    /// started, and its item waits for the file.
+    /// A start that a live run or a file in `unusable` holds is neither
+    /// claimed nor started, and its item waits for the run or the file.
     fn push_start(&mut self, start: Start) {
+        let items: Vec<Item> = start
+            .claim
+            .into_iter()
+            .chain([start.work.starts_from()])
+            .collect();
+        if self.holds(&items) {
+            return;
+        }
         let waits: Vec<Wait> = holding(self.unusable, &RunKind::Stage(start.work.kind()))
             .into_iter()
             .map(|file| Wait::RepositoryFile(file.clone()))

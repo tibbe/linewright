@@ -438,16 +438,10 @@ fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
             &policy(),
             &[]
         ),
-        vec![
-            Action::Cancel {
-                subject: Subject::Issue(Number(1)),
-                reason: "`needs-triage` was removed from #1".into(),
-            },
-            Action::RemoveStatusLabel {
-                issue: Number(1),
-                label: StatusLabel::NeedsTriage,
-            },
-        ]
+        vec![Action::Cancel {
+            subject: Subject::Issue(Number(1)),
+            reason: "`needs-triage` was removed from #1".into(),
+        },]
     );
 }
 
@@ -459,7 +453,8 @@ fn let_go(issue: u64) -> Action {
 }
 
 #[test]
-fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_lets_go() {
+fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_lets_go_once_it_ends()
+ {
     for (older, kind) in [
         (StatusLabel::ReadyForAgent, WorkKind::Implement),
         (StatusLabel::NeedsTriage, WorkKind::Triage),
@@ -477,18 +472,22 @@ fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_l
                     &policy(),
                     &[]
                 ),
+                vec![Action::Cancel {
+                    subject: Subject::Issue(Number(1)),
+                    reason: format!("`{older}` was removed from #1"),
+                }],
+                "{older} relabeled {newer}, with the run live"
+            );
+            assert_eq!(
+                decide(&world),
                 vec![
-                    Action::Cancel {
-                        subject: Subject::Issue(Number(1)),
-                        reason: format!("`{older}` was removed from #1"),
-                    },
                     Action::RemoveStatusLabel {
                         issue: Number(1),
                         label: older,
                     },
                     let_go(1),
                 ],
-                "{older} relabeled {newer}"
+                "{older} relabeled {newer}, once the run ended"
             );
         }
     }
@@ -499,6 +498,42 @@ fn removing_a_claimed_issues_status_label_lets_go_of_it() {
     let world = snapshot(vec![claimed(issue(1))]);
 
     assert_eq!(decide(&world), vec![let_go(1)]);
+}
+
+#[test]
+fn an_issue_with_no_status_label_whose_triage_run_is_live_is_held_until_the_run_ends() {
+    // As a triage run leaves it between removing `needs-triage` and adding
+    // its outcome, with a person asked beside Linewright.
+    let world = snapshot(vec![assigned_by(
+        claimed(issue(1)),
+        "reporter",
+        LINEWRIGHT,
+        1,
+    )]);
+
+    let decided = decisions(
+        &world,
+        &[live(1, WorkKind::Triage)],
+        &Memory::default(),
+        &Automations::default(),
+        t(10),
+        &policy(),
+        &[],
+    );
+
+    assert_eq!(
+        decided.actions,
+        vec![Action::Cancel {
+            subject: Subject::Issue(Number(1)),
+            reason: "`needs-triage` was removed from #1".into(),
+        }]
+    );
+    assert_eq!(
+        decided.waits.get(&Number(1)),
+        Some(&vec![Wait::Run {
+            stage: WorkKind::Triage
+        }])
+    );
 }
 
 #[test]
@@ -1481,19 +1516,22 @@ fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
             fix_ci(2, 20)
         ]
     );
+    // Its run holds it, to be claimed once the run ends.
+    let decided = decisions(
+        &world,
+        &runs,
+        &Memory::default(),
+        &Automations::default(),
+        t(10),
+        &policy(),
+        &[],
+    );
+    assert_eq!(decided.actions, vec![]);
     assert_eq!(
-        reconcile(
-            &world,
-            &runs,
-            &Memory::default(),
-            &Automations::default(),
-            t(10),
-            &policy(),
-            &[],
-        ),
-        vec![Action::Claim {
-            item: Item::Pull(Number(20)),
-        }]
+        decided.waits.get(&Number(20)),
+        Some(&vec![Wait::Run {
+            stage: WorkKind::FixCi
+        }])
     );
 }
 
@@ -3728,6 +3766,7 @@ fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Automations) {
         tracking(9, 7, &[(10, false)]),
         claimed(ticket(11)),
         claimed(issue(12)),
+        claimed(issue(13)),
     ]);
     world.pulls = vec![reworked, green, failing];
     world.merged = vec![merged(5, &["docs/spec.md"])];
@@ -3777,7 +3816,7 @@ fn sessionless_actions() -> Vec<Action> {
             add: label::NEEDS_TRIAGE.into(),
         },
         Action::CloseTracking { issue: Number(9) },
-        let_go(12),
+        let_go(13),
     ]
 }
 
