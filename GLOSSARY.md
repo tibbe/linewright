@@ -65,6 +65,10 @@ _Avoid_: job, task, build, execution
 A part of the pipeline that a run does, such as triage.
 _Avoid_: phase, step
 
+**Outcome**:
+How a run ended, such as done or handed back, or that it has not ended yet.
+_Avoid_: result, status, state, exit
+
 **Automation**:
 Instructions for an agent, paired with a trigger that says when they run.
 _Avoid_: workflow, action, routine, job, scheduled task

@@ -125,7 +125,8 @@ assigning itself and lets go of it by unassigning itself.
   issue needs first. A pull request or a spec change it goes on with.
 - **Cancelling.** A run is cancelled when its item stops asking for
   Linewright's work: Linewright is unassigned from the item, the item is
-  closed, or an issue's label stops asking.
+  closed, or an issue's label stops asking. When a cancel takes effect is
+  under [Runs](runs.md).
 - **Handing back.** Handing an item back is how Linewright lets go of an item
   it cannot finish: it labels an issue `ready-for-human`, unassigns itself
   from the item, removes `linewright:designed` where the design is the item's

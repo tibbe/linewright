@@ -35,7 +35,7 @@ exists) and ends in one of three states.
 | `ready-for-human` | a recommendation: the questions a maintainer must answer, or why the issue is not for an agent (duplicate, already implemented, needs a spec change, should be rejected) |
 
 - **Facts before decisions.** A fact only a person knows, what they saw or
-  meant, makes the outcome `needs-info`, asking only for it, even if a
+  meant, makes the state `needs-info`, asking only for it, even if a
   maintainer's decision will follow, because the decision usually depends on
   the facts.
 - **Category.** The category is the repository's issue type (Bug, Feature,
