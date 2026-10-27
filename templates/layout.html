@@ -26,6 +26,9 @@
     the box takes the rest and scrolls on both axes, so that what is sticky
     in it sticks to the box's top as it scrolls either way
     (`docs/specs/design_system.md`, Tables and Layout).
+    Everything in the content is inset from its edge by the page's gutter,
+    the same on every page, so that titles and alerts line up from page to
+    page; filling the viewport changes only how a page uses its height.
     The content is a stacking context of its own, so that what sticks in it
     stays under the navigation. -#}
 <div class="drawer lg:drawer-open">
@@ -35,14 +38,14 @@
 <svg class="size-5" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
 </label>
 {% block holds -%}
-<div id="holds" class="flex shrink-0 flex-col gap-2 empty:hidden px-4 pt-2">
+<div id="holds" class="flex shrink-0 flex-col gap-2 empty:hidden px-page pt-2">
 {%- for hold in frame.holds %}
 <div class="{{ hold.alert }}" role="alert"><span class="phrase">{{ hold.phrase|safe }}</span><a class="link" href="{{ hold.href }}">details</a></div>
 {%- endfor %}
 </div>
 {%- endblock %}
-<p id="lost" class="alert alert-warning mx-4 mt-2 shrink-0" role="status" hidden>Lost <code>serve</code> <time tabindex="0"></time>; reconnecting.</p>
-<main class="{% if page.fills_viewport %}flex min-h-0 flex-1 flex-col px-2 py-4{% else %}p-4{% endif %}">
+<p id="lost" class="alert alert-warning mx-page mt-2 shrink-0" role="status" hidden>Lost <code>serve</code> <time tabindex="0"></time>; reconnecting.</p>
+<main class="px-page py-4{% if page.fills_viewport %} flex min-h-0 flex-1 flex-col{% endif %}">
 {% block main %}{% endblock %}
 </main>
 </div>

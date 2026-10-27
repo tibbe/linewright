@@ -21,6 +21,32 @@ fn icons(element: ElementRef) -> usize {
     select_in(element, r#"svg[aria-hidden="true"]"#).len()
 }
 
+/// The classes of `element` that set its horizontal padding.
+fn horizontal_padding(element: ElementRef<'_>) -> Vec<&str> {
+    horizontal(element, 'p')
+}
+
+/// The classes of `element` that set its horizontal margin.
+fn horizontal_margin(element: ElementRef<'_>) -> Vec<&str> {
+    horizontal(element, 'm')
+}
+
+/// The classes of `element` with Tailwind's spacing `property` (`p` or `m`)
+/// on every side, the left and right, or one of them.
+fn horizontal(element: ElementRef<'_>, property: char) -> Vec<&str> {
+    element
+        .value()
+        .classes()
+        .filter(|class| {
+            class.strip_prefix(property).is_some_and(|sides| {
+                ["-", "x-", "l-", "r-", "s-", "e-"]
+                    .iter()
+                    .any(|side| sides.starts_with(side))
+            })
+        })
+        .collect()
+}
+
 #[tokio::test]
 async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_with_their_icons() {
     let web = Web::start(with_ticket().await).await;
@@ -656,6 +682,36 @@ async fn every_pages_heading_takes_its_look_from_the_stylesheet_alone() {
         let headings = select(&html, "h1");
         assert_eq!(headings.len(), 1, "{path}");
         assert_eq!(headings[0].attr("class"), None, "{path}");
+    }
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn every_pages_content_is_inset_by_the_same_gutter_as_the_alerts_above_it() {
+    let (web, _) = super::run::run_page_of_implemented().await;
+
+    for path in [
+        "/",
+        "/items/1",
+        "/runs",
+        "/runs/1/implement-1",
+        "/automations",
+        "/server",
+    ] {
+        let html = web.page(path).await;
+        let main = select(&html, "main");
+        assert_eq!(main.len(), 1, "{path}");
+        assert_eq!(horizontal_padding(main[0]), ["px-page"], "{path}");
+        assert_eq!(
+            horizontal_padding(select(&html, "#holds")[0]),
+            ["px-page"],
+            "{path}"
+        );
+        assert_eq!(
+            horizontal_margin(select(&html, "#lost")[0]),
+            ["mx-page"],
+            "{path}"
+        );
     }
     web.stop().await;
 }

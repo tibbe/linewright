@@ -63,6 +63,14 @@
   --color-muted: var(--muted);
 }
 
+/* The page's gutter, as `px-page` and `mx-page`: the inset of everything in
+   the content from its edge, the same on every page (templates/layout.html).
+   Widening it must keep the board fitting at the width
+   docs/specs/web/design_system.md, Board, sets. */
+@theme {
+  --spacing-page: 1rem;
+}
+
 @layer base {
   h1 {
     @apply mb-3 text-2xl font-semibold;
