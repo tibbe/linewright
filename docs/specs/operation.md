@@ -52,7 +52,7 @@ once.
 | State    | Event                                    | Next     | Effect                                                                              |
 | -------- | ---------------------------------------- | -------- | ----------------------------------------------------------------------------------- |
 | serving  | SIGTERM, SIGINT (Ctrl-C) or `drain`      | draining | claims no item and starts no run; exits once no run is in flight                    |
-| serving  | SIGQUIT                                  | stopping | cancels the runs in flight once the action in progress is done; exits once they end |
+| serving  | SIGQUIT                                  | stopping | cancels the runs in flight once the action in progress is done ([Runs](runs.md)); exits once they end |
 | draining | `drain`                                  | draining | nothing more                                                                        |
 | draining | SIGTERM, SIGINT, SIGQUIT or the deadline | stopping | as from serving                                                                     |
 | stopping | `drain`                                  | stopping | nothing more                                                                        |

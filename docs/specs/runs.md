@@ -93,20 +93,12 @@ A run ends in one of these outcomes, each with its name in JSON.
   uncommitted as an unfinished commit. The next run on the branch folds the
   unfinished commit into its own commits. Work that holds a secret is
   not pushed.
-- **Recording the outcome.** The writes that change what the run's item asks
-  for, such as its status label, are the last a run makes, but for its
-  pushes, which are its work and come before them, so that until they land
-  the item still asks for the run's work; a new status label is added before
-  the old one is removed.
-- **One writer.** While a run is in flight, Linewright changes nothing on
-  the items the run writes. What a person changed meanwhile is acted on once
-  the run ends, unless the run takes it up itself, as rework does with
-  feedback ([Pull requests](pull_requests.md)).
-- **Cancelling.** Until it begins recording its outcome, a run is cancelled
-  when its item stops asking for its work, as under
-  [Repository](repository.md), or when `serve` stops. A cancelled run posts
-  nothing more, and one whose pull request was merged or closed pushes
-  nothing either.
+- **Cancelling.** Until it begins applying its result
+  ([Architecture](architecture.md#the-manageragent-protocol)), or, for a run
+  without a session, until its push, a run is cancelled when its item stops
+  asking for its work, as under [Repository](repository.md), or when `serve`
+  stops. A cancelled run posts nothing more, and one whose pull request was
+  merged or closed pushes nothing either.
 - **Restarts.** A restart leaves the runs in flight interrupted.
 - **Kept.** Runs are kept across restarts, with their outcomes and their
   sessions' transcripts, and with each session's model and effort, as the

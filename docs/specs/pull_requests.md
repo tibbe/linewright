@@ -104,6 +104,9 @@ starts nothing.
   people's threads for them to resolve.
 - **Feedback during a run.** Feedback posted while a run works goes to its
   session before the run pushes.
+- **Its push.** Unlike Linewright's other writes
+  ([State](architecture.md#state)), the push comes before the replies, which
+  describe it.
 
 ## Keeping up to date
 

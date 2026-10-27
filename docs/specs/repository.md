@@ -149,7 +149,6 @@ assigning itself and lets go of it by unassigning itself.
 State GitHub already shows is derived from it, never labeled.
 
 - **In review.** An issue is in review while an open pull request closes it.
-- **Linewright's pull requests.** They are the ones its account opened.
 
 The lifecycle of an issue. `triage` and `work` each group several states,
 given under [Triage](triage.md) and [Pull requests](pull_requests.md);
@@ -181,8 +180,8 @@ Linewright records every outcome in a comment on the item it concerns.
   itself: a claim, a pull request and a merge need no comment, since the
   assignee, the PR and the merge are the record.
 - **For people.** A comment is for people. Linewright decides nothing from
-  what its own comments say: that it wrote one is the comment's author, and
-  what it waits for is in the labels, assignees, pushes and pull requests.
+  what its own comments say: what it waits for is in the labels, assignees,
+  pushes and pull requests.
 - **Contents.** Comments contain only what belongs to the repository: no run
   ids, hosts or links to the factory.
 

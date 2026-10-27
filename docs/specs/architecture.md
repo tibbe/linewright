@@ -36,6 +36,19 @@ lives in the store and nowhere else.
   `linewright:` label where they don't, such as that an item has been
   designed. Linewright may keep bookkeeping no person sets under the work
   directory.
+- **Writes.** GitHub has no transactions, so Linewright makes every change
+  as writes it may be stopped between: after any one of them, each item is
+  in a state the spec already decides, asking for the work again or for
+  nothing the change has not yet recorded. So the write that changes what an
+  item asks for, such as its status label, its assignment or a pull request
+  that closes it, comes last; for example, a new status label is added
+  before the old one is removed.
+- **One writer.** One of Linewright's runs or actions writes an item at a
+  time. What a person changed meanwhile is acted on once it ends, unless the
+  run takes it up itself, as rework does with feedback
+  ([Pull requests](pull_requests.md)).
+- **Its own writes.** Linewright tells its own writes from a person's by
+  their author.
 - **Webhook deliveries are hints, not state.** A delivery says which item to
   read again; the payload never stands in for the store.
 - **Spec changes are found by lookback** over the pull requests merged
@@ -95,8 +108,9 @@ only the manager writes to the store.
    there.
 3. The session's final message is JSON: the outcome, tickets, comments, the PR's
    title and body.
-4. The manager accepts the result and applies it: it pushes the branch and
-   opens the PR through the store, and posts prose for people as comments.
+4. The manager accepts the result and applies it through the store
+   ([State](#state)): it pushes the branch, posts prose for people as
+   comments and opens the PR.
 
 - **4a. The manager can't accept the result.** It is sent back to the session
   with the reason, a bounded number of times.
