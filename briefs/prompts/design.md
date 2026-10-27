@@ -14,7 +14,9 @@ Design the code for the {{kind}} below. You may read GitHub but must not write t
 
 Read the {{kind}}, `GLOSSARY.md` if present, the spec and the code the {{kind}} touches. Then call the Skill tool with `linewright:software-design`, and find how the problem has been solved before and choose a design from it, as it says. Start its research sub-agents together, in the foreground, and choose from the reports they return.
 
-### 2. Keep or change the structure
+### 2. Design the code
+
+Work out what the chosen design changes in the code: what the code does today and where it falls short, the parts, what each is responsible for, where it lives, and the interfaces between them.
 
 Keep the code's structure where it holds up. Change it where the change would add a special case to it, or where the structure makes the problem likely, so that the same kind of problem would come back.
 
