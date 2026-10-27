@@ -180,20 +180,16 @@ pub struct Unparsed {
 /// when the directory cannot be listed or its files read: a file that cannot
 /// be read as text is one that does not parse.
 pub async fn read(store: &dyn Store, branch: &str) -> Result<AutomationFiles> {
-    let (named, mut files) = sort(store.list_files(branch, DIR).await?);
-    let paths: Vec<String> = named.iter().map(|(path, _)| path.clone()).collect();
+    let (names, mut files) = classify(store.list_files(branch, DIR).await?);
+    let paths: Vec<String> = names.iter().map(AutomationName::path).collect();
     let mut blobs = store.read_files(branch, &paths).await?;
-    for (path, name) in named {
-        let blob = blobs.remove(&path);
-        let parsed = || {
-            let name: AutomationName = name.parse().map_err(anyhow::Error::msg)?;
-            let text = blob
-                .context("the file is gone")?
-                .text()
-                .map_err(anyhow::Error::msg)?;
-            parse(&name, &text)
-        };
-        match parsed() {
+    for (name, path) in names.into_iter().zip(paths) {
+        let parsed = blobs
+            .remove(&path)
+            .context("the file is gone")
+            .and_then(|blob| blob.text().map_err(anyhow::Error::msg))
+            .and_then(|text| parse(&name, &text));
+        match parsed {
             Ok(automation) => files.parsed.push(automation),
             Err(e) => files.unparsed.push(Unparsed {
                 path,
@@ -204,26 +200,30 @@ pub async fn read(store: &dyn Store, branch: &str) -> Result<AutomationFiles> {
     Ok(files)
 }
 
-/// Sorts `listed`, the files under [`DIR`] by their paths under it, hidden
-/// ones aside, into those named as automations, each by its path in the
-/// repository and its name, and those that do not parse.
-fn sort(listed: Vec<String>) -> (Vec<(String, String)>, AutomationFiles) {
-    let mut named = Vec::new();
+/// Splits `listed`, the files under [`DIR`] by their paths under it, hidden
+/// ones aside, into the automations they name and the files that do not
+/// parse.
+fn classify(listed: Vec<String>) -> (Vec<AutomationName>, AutomationFiles) {
+    let mut names = Vec::new();
     let mut files = AutomationFiles::default();
     for file in listed {
         if briefs::is_hidden(&file) {
             continue;
         }
-        let path = format!("{DIR}/{file}");
-        match file.strip_suffix(".md").filter(|name| !name.contains('/')) {
-            Some(name) => named.push((path, name.to_string())),
-            None => files.unparsed.push(Unparsed {
-                path,
-                reason: format!("an automation is a `.md` file directly in `{DIR}/`"),
+        let name = file
+            .strip_suffix(".md")
+            .filter(|name| !name.contains('/'))
+            .ok_or_else(|| format!("an automation is a `.md` file directly in `{DIR}/`"))
+            .and_then(str::parse);
+        match name {
+            Ok(name) => names.push(name),
+            Err(reason) => files.unparsed.push(Unparsed {
+                path: format!("{DIR}/{file}"),
+                reason,
             }),
         }
     }
-    (named, files)
+    (names, files)
 }
 
 #[derive(Deserialize)]
