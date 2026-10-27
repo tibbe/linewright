@@ -50,9 +50,42 @@ Choose on the reasons that remain.
 
 ## Output
 
-End with:
+End with, restating what you wrote down, one block per decision:
 
-- the case against each design, with each struck reason shown and the rule that
-  struck it;
-- the chosen design, where it follows or departs from the consensus and why,
-  with its sources.
+```markdown
+## {the decision, as a question}
+
+### Context and Problem Statement
+
+{two or three sentences}
+
+### Considered Options
+
+* {title of option 1}
+* {title of option 2}
+
+### Decision Outcome
+
+Chosen option: "{title of option 1}", because {justification, in one sentence}.
+{Follows the consensus. | Departs from the consensus, "{title of option}",
+because {why, in one sentence}.}
+
+### Pros and Cons of the Options
+
+#### {title of option 1}
+
+{what it is, in a sentence or two}. Taken by {the sources that take it}.
+
+* Good, because {why its adopters chose it}
+* Bad, because {an argument}
+* ~~{a reason, for or against}~~ (struck: {the rule that struck it})
+
+#### {title of option 2}
+
+{what it is, in a sentence or two}. Taken by {the sources that take it}.
+
+* Good, because {why its adopters chose it}
+* Bad, because {an argument}
+```
+
+One Good line per option: why its adopters chose it.

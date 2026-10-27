@@ -9,9 +9,8 @@ code-blocks = false
 reflow = true
 
 # A prompt template's line breaks are the prompt's: a part filled in mid-line
-# would break its sentence where the template wrapped. A forked skill keeps
-# its upstream's line breaks, so a diff against the upstream shows only what
-# the fork changed.
+# would break its sentence where the template wrapped. A skill keeps its
+# origin's line breaks.
 [per-file-ignores]
 "briefs/prompts/**" = ["MD013"]
 "briefs/plugin/skills/**" = ["MD013"]
