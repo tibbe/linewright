@@ -141,7 +141,7 @@ async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_li
     assert_eq!(
         cut(&transcript_shown(&html, false), 100),
         [
-            "run: 1/implement-1",
+            "1/implement-1",
             "session 1: started 2026-10-13 10:09:08 UTC",
             "0:03 Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit ",
             "0:14 Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2",
@@ -229,7 +229,7 @@ async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everyth
     assert_eq!(
         cut(&transcript_shown(&verbose, true), 40),
         [
-            "run: 1/implement-1",
+            "1/implement-1",
             "session 1: started 2026-10-13 10:09:08 U",
             "0:00 brief: # Your task Implement the ti",
             "0:00 event: {\"analytics_disabled\":false,",
@@ -521,6 +521,66 @@ fn heading(html: &Html) -> Vec<String> {
         .collect()
 }
 
+/// The line under the run page's heading that names the run's item, and
+/// where its links go.
+fn item_line(html: &Html) -> (String, Vec<String>) {
+    let line = select(html, "#transcript hgroup#run > p");
+    assert_eq!(line.len(), 1, "one item line");
+    (text(line[0]), hrefs(select_in(line[0], "a")))
+}
+
+/// Where the links in the run page's heading itself go.
+fn heading_links(html: &Html) -> Vec<String> {
+    hrefs(select(html, "#transcript h1 a"))
+}
+
+#[tokio::test]
+async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_under_it_as_the_runs_page_does()
+ {
+    let (web, html) = run_page_of_implemented().await;
+    let runs = web.page("/runs").await;
+
+    let row = runs_shown(&runs)
+        .into_iter()
+        .find(|row| row[1] == "1/implement-1")
+        .unwrap();
+    let cell_links = hrefs(select(&runs, "#runs tbody td:nth-child(3) a"));
+    assert_eq!(heading(&html)[0], "1/implement-1");
+    assert!(
+        heading_links(&html).is_empty(),
+        "{:?}",
+        heading_links(&html)
+    );
+    let links = vec![
+        "/items/1".to_string(),
+        format!("https://github.com/{REPO}/issues/1"),
+    ];
+    // As the runs page's Item cell names the run's item.
+    assert_eq!((row[2].as_str(), &cell_links), ("#1: Ship gh", &links));
+    assert_eq!(item_line(&html), ("#1: Ship gh".to_string(), links));
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_run_pages_stream_swaps_in_the_whole_heading_when_the_runs_header_comes() {
+    let (web, _) = run_page_of_implemented().await;
+    let mut events = stream_with_ids(&web, "/events/runs/1/implement-1?follow=start", None).await;
+
+    let sent = transcript_events(&mut events, |sent| !sent.is_empty()).await;
+
+    let [(target, swap, heading)] = &patches(&sent[0].1)[..] else {
+        panic!("one patch for the header: {sent:?}")
+    };
+    assert_eq!((target.as_str(), swap.as_str()), ("#run", "outerHTML"));
+    let swapped: Vec<String> = select(heading, "hgroup#run > h1")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(swapped, ["1/implement-1"]);
+    assert_eq!(text(select(heading, "hgroup#run > p")[0]), "#1: Ship gh");
+    web.stop().await;
+}
+
 #[tokio::test]
 async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
@@ -556,8 +616,20 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
         .collect();
     assert_eq!(links, ["/runs/weekly/1"]);
     let shown = heading(&html);
-    assert_eq!(shown[0], "run: weekly/1, by hand");
+    assert_eq!(shown[0], "weekly/1, by hand");
     assert!(shown[1].starts_with("session 1"), "{shown:?}");
+    assert!(
+        heading_links(&html).is_empty(),
+        "{:?}",
+        heading_links(&html)
+    );
+    assert_eq!(
+        item_line(&html),
+        (
+            "automation weekly".to_string(),
+            vec!["/automations".to_string()]
+        )
+    );
     web.stop().await;
 }
 
@@ -571,8 +643,8 @@ async fn the_page_of_an_automations_run_by_hand_says_so_in_its_heading_and_of_a_
     let by_hand = web.page("/runs/hourly/2").await;
     let scheduled = web.page("/runs/hourly/1").await;
 
-    assert_eq!(heading(&by_hand)[0], "run: hourly/2, by hand");
-    assert_eq!(heading(&scheduled)[0], "run: hourly/1");
+    assert_eq!(heading(&by_hand)[0], "hourly/2, by hand");
+    assert_eq!(heading(&scheduled)[0], "hourly/1");
     web.stop().await;
 }
 
@@ -598,8 +670,9 @@ async fn the_page_of_a_run_that_started_no_session_says_so() {
 
     assert_eq!(
         heading(&html),
-        [format!("run: {}/update-1 (it started no session)", pr.0)]
+        [format!("{}/update-1 (it started no session)", pr.0)]
     );
+    assert_eq!(item_line(&html).1[0], format!("/items/{}", pr.0));
     assert_eq!(select(&html, "#transcript .entry").len(), 0);
     assert_eq!(events_path(&html), Some("/events/runs/2/update-1"));
     web.stop().await;

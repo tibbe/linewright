@@ -2,6 +2,8 @@
 //! as the runs page and the item page both show one, drawn by
 //! `macros.html`'s `runs`.
 
+use askama::Template;
+
 use super::html::{self, Html};
 use super::names::Names;
 use super::run_path;
@@ -42,11 +44,37 @@ pub(super) struct RunRow {
     pub(super) duration: Option<Html>,
 }
 
+/// What a run is of, as the Item column names it, drawn by `macros.html`'s
+/// `item_cell`.
 pub(super) enum ItemCell {
     /// The item's number, and its title where known, linking to its page.
     Item(Html),
     /// The automation's name, for the cell to link to the automations page.
     Automation(String),
+}
+
+impl ItemCell {
+    /// What the run of `of` is of, its item as `names` names it.
+    pub(super) fn of(of: &RunOf, names: &Names) -> ItemCell {
+        match of {
+            RunOf::Work { item, .. } => ItemCell::Item(names.item(*item)),
+            RunOf::Automation { automation } => ItemCell::Automation(automation.to_string()),
+        }
+    }
+
+    /// The cell's content as markup, for a page that builds its own.
+    pub(super) fn html(&self) -> Html {
+        html::rendered(&ItemCellHtml { item: self })
+    }
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"{%- import "macros.html" as ui -%}{% call ui::item_cell(item) %}{% endcall %}"#,
+    ext = "html"
+)]
+struct ItemCellHtml<'a> {
+    item: &'a ItemCell,
 }
 
 /// How many earlier runs a cut list left out, and where they are listed.
@@ -59,15 +87,11 @@ impl RunsShown {
     /// The runs of `listing`, uncut, each with its item as `names` names
     /// it.
     pub(super) fn all(listing: &Listing, names: &Names) -> RunsShown {
-        let item = |run: &Run| match &run.id.of {
-            RunOf::Work { item, .. } => ItemCell::Item(names.item(*item)),
-            RunOf::Automation { automation } => ItemCell::Automation(automation.to_string()),
-        };
         let rows = Rows::WithItems(
             listing
                 .runs
                 .iter()
-                .map(|run| (item(run), RunRow::of(run, names)))
+                .map(|run| (ItemCell::of(&run.id.of, names), RunRow::of(run, names)))
                 .collect(),
         );
         RunsShown::of(listing, rows, None)

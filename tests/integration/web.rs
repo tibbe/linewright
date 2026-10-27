@@ -201,6 +201,15 @@ fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>>
         .collect()
 }
 
+/// Where each of `links` goes.
+fn hrefs(links: Vec<ElementRef>) -> Vec<String> {
+    links
+        .into_iter()
+        .filter_map(|a| a.attr("href"))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Whether `element` has every one of `classes`.
 fn has_classes(element: ElementRef, classes: &[&str]) -> bool {
     classes.iter().all(|class| {

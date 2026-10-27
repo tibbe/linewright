@@ -92,6 +92,17 @@ card card-sm border border-base-300 bg-card shadow-sm
 </svg>
 {%- endmacro -%}
 
+{#- What a run is of, as the Item column of a list of runs names it
+    (`docs/specs/design_system.md`, Lists of runs). -#}
+{%- macro item_cell(item) -%}
+{%- match item -%}
+{%- when crate::web::runs_table::ItemCell::Item(item) -%}
+{{ item|safe }}
+{%- when crate::web::runs_table::ItemCell::Automation(name) -%}
+<a class="link link-hover" href="/automations">automation {{ name }}</a>
+{%- endmatch -%}
+{%- endmacro -%}
+
 {#- A list of runs (`docs/specs/design_system.md`, Lists of runs) in the
     page's scroll box, its heads pinned (`docs/specs/web/design_system.md`,
     Tables). A title is on one line, and whole in the page's tooltip
@@ -110,12 +121,7 @@ card card-sm border border-base-300 bg-card shadow-sm
 <td><a class="link link-hover whitespace-nowrap" href="{{ row.href }}">{{ row.id|safe }}</a></td>
 {%- if let Some(item) = item %}
 <td><div class="line-clamp-1 min-w-48 max-w-md" data-tip-cut>
-{%- match item -%}
-{%- when crate::web::runs_table::ItemCell::Item(item) -%}
-{{ item|safe }}
-{%- when crate::web::runs_table::ItemCell::Automation(name) -%}
-<a class="link link-hover" href="/automations">automation {{ name }}</a>
-{%- endmatch -%}
+{%- call item_cell(item) %}{% endcall -%}
 </div></td>
 {%- endif %}
 <td>{% if let Some(stage) = row.stage %}{{ stage }}{% endif %}</td>

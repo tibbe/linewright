@@ -18,11 +18,13 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-use super::html;
+use super::html::{self, Html};
+use super::names::Names;
+use super::runs_table::ItemCell;
 use super::{
     ErrorPage, Frame, Page, Sent, frame_regions, render, run_path, samples, unanswered, with_query,
 };
-use crate::api::{EventId, Sources};
+use crate::api::{self, EventId, Sources};
 use crate::domain::Timestamp;
 use crate::logs::{Following, LogsError, Which};
 use crate::phrase::Tone;
@@ -62,7 +64,9 @@ impl Patch {
 /// followed in pieces are one and the same.
 struct RunView {
     run: RunId,
-    repo: String,
+    /// What the run is of, as the Item column of a list of runs names it
+    /// (`docs/specs/design_system.md`, The run page, Heading).
+    item: Html,
     verbose: bool,
     /// The number of sessions its header gave, once it has come.
     sessions_started: Option<usize>,
@@ -101,10 +105,10 @@ struct StampView {
 }
 
 impl RunView {
-    fn new(run: RunId, repo: &str, verbose: bool) -> RunView {
+    fn new(run: RunId, item: Html, verbose: bool) -> RunView {
         RunView {
             run,
-            repo: repo.to_string(),
+            item,
             verbose,
             sessions_started: None,
             by_hand: false,
@@ -229,8 +233,9 @@ impl RunView {
         };
         let by_hand = if self.by_hand { ", by hand" } else { "" };
         format!(
-            r#"<h1 id="run">run: {}{by_hand}{none}</h1>"#,
-            html::run_id(&self.run, &self.repo)
+            r#"<hgroup id="run"><h1>{}{by_hand}{none}</h1><p class="text-muted">{}</p></hgroup>"#,
+            html::escape(&self.run.to_string()),
+            self.item,
         )
     }
 
@@ -582,12 +587,24 @@ fn following(sources: &Sources, id: RunId) -> Result<Following, LogsError> {
     Following::start(&sources.work_dir, &which, Verbosity::Full, None)
 }
 
+/// What `id` is of, as the Item column of a list of runs names it, its item
+/// as Linewright holds it now (`docs/specs/design_system.md`, The run page,
+/// Heading).
+fn item_line(sources: &Sources, id: &RunId) -> Html {
+    let view = api::view(sources);
+    let names = Names::of(
+        &sources.work_dir.repo,
+        view.as_ref().map(|view| &*view.snapshot),
+    );
+    ItemCell::of(&id.of, &names).html()
+}
+
 /// The transcript as its records hold it now, and while the run is in
 /// flight where its page's stream follows it from.
 fn read(sources: &Sources, id: RunId, verbose: bool) -> Result<(String, Option<Follow>), RunError> {
     let mut following = following(sources, id.clone())?;
     let lines = following.read().map_err(LogsError::Other)?;
-    let mut view = RunView::new(id.clone(), &sources.work_dir.repo, verbose);
+    let mut view = RunView::new(id.clone(), item_line(sources, &id), verbose);
     for FollowedLine { line, .. } in &lines {
         view.apply_line(line, &following);
     }
@@ -710,7 +727,7 @@ pub(super) async fn run_events(
             match following(&sources, run.clone()) {
                 Ok(following) => Some(FollowedTranscript {
                     following,
-                    view: RunView::new(run, &sources.work_dir.repo, query.verbose()),
+                    view: RunView::new(run.clone(), item_line(&sources, &run), query.verbose()),
                     after,
                 }),
                 Err(e) => {

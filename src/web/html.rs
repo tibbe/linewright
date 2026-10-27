@@ -3,10 +3,9 @@ use std::fmt::{self, Write as _};
 use super::names::Names;
 use crate::domain::{Number, Timestamp};
 use crate::phrase::{Phrase, Segment};
-use crate::runs::{RunId, RunOf};
 
 /// Markup with its text escaped, which a template may put in a page as it
-/// is. Only this module makes one.
+/// is. Only this module makes one, or [`rendered`] from a template.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Html(String);
 
@@ -25,6 +24,11 @@ impl fmt::Display for Html {
 }
 
 impl askama::filters::HtmlSafe for Html {}
+
+/// `template` rendered, its text escaped as a template escapes it.
+pub(crate) fn rendered(template: &impl askama::Template) -> Html {
+    Html(super::render(template))
+}
 
 /// `phrase` as HTML (`docs/specs/design_system.md`): an item is named as
 /// `names` names it, a time and a duration are `<time>` elements holding
@@ -88,24 +92,6 @@ fn github(number: Number, repo: &str) -> String {
         r#"<a class="github" href="{href}" aria-label="{number} on GitHub" data-tip="{number} on GitHub"></a>"#,
         href = escape(&format!("https://github.com/{repo}/issues/{}", number.0)),
     )
-}
-
-/// The run ID, its item linking to the item's page, and a link to the item
-/// on GitHub.
-pub(crate) fn run_id(id: &RunId, repo: &str) -> Html {
-    let shown = id.to_string();
-    match id.of {
-        RunOf::Work { item, .. } => {
-            let rest = shown.strip_prefix(&item.0.to_string()).unwrap_or_default();
-            Html(format!(
-                "{}{}{}",
-                page_link(item, &item.0.to_string()),
-                escape(rest),
-                github(item, repo),
-            ))
-        }
-        RunOf::Automation { .. } => escape(&shown),
-    }
 }
 
 /// `at` as a `<time>`, focusable so that the absolute time the page's
