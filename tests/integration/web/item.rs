@@ -1,33 +1,69 @@
 use super::*;
 
-fn without_last_read(lines: Vec<String>) -> Vec<String> {
-    lines
-        .into_iter()
-        .filter(|line| !line.starts_with("last read: "))
-        .collect()
-}
-
-fn read_at_a_time(line: &str) -> bool {
-    line.strip_prefix("last read: 2026-10-01 ")
-        .is_some_and(|time| time.ends_with(" UTC"))
+/// The fact labeled `label` among `facts`.
+fn fact<'a>(facts: &'a [(String, String)], label: &str) -> &'a str {
+    facts
+        .iter()
+        .find(|(shown, _)| shown == label)
+        .map(|(_, value)| value.as_str())
+        .unwrap_or_else(|| panic!("no {label}: {facts:?}"))
 }
 
 #[tokio::test]
-async fn the_item_page_shows_what_explain_shows_with_its_items_linked_and_its_times_as_times() {
+async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_state_in_the_boards_terms()
+ {
     let web = Web::start(with_ticket().await).await;
 
     let html = web.page("/items/1").await;
 
-    let lines = item_lines(&html);
-    assert_eq!(
-        without_last_read(lines.clone()),
-        [
-            "#1: Do the thing",
-            "state: with the maintainer",
-            "waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`",
-        ]
+    // `docs/specs/design_system.md`, The item page, Facts and Cards: the
+    // facts are labels beside their values, drawn as a card is; the state
+    // is the column and the card's line; the waits are plain text.
+    assert_eq!(select(&html, "#item dl.card").len(), 1, "{}", html.html());
+    assert_in_muted_text(&html, "#item dt");
+    let facts = item_facts(&html);
+    let labels: Vec<&str> = facts.iter().map(|(label, _)| label.as_str()).collect();
+    assert_eq!(labels, ["State", "Waiting for"]);
+    let state = fact(&facts, "State");
+    assert!(
+        state.starts_with("Needs a person · decision needed · 2026-"),
+        "{state}"
     );
-    assert!(read_at_a_time(&lines[2]), "{lines:?}");
+    let decision = select(&html, "#item dd")[0];
+    assert_eq!(
+        select_in(decision, ".status-text svg.icon").len(),
+        1,
+        "{}",
+        decision.html()
+    );
+    assert_eq!(
+        fact(&facts, "Waiting for"),
+        "the maintainer: to label it `ready-for-agent` or `needs-triage`"
+    );
+    let waits = select(&html, "#item dd")[1];
+    assert!(select_in(waits, "svg").is_empty(), "{}", waits.html());
+    assert!(
+        select(&html, "#item dl .badge").is_empty(),
+        "{}",
+        html.html()
+    );
+    assert_no_status_by_colour_alone(&html);
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_last_read_it() {
+    let web = Web::start(with_ticket().await).await;
+
+    let html = web.page("/items/1").await;
+
+    assert_eq!(
+        select(&html, "#item h1")
+            .into_iter()
+            .map(text)
+            .collect::<Vec<_>>(),
+        ["#1: Do the thing"]
+    );
     let links: Vec<(&str, &str)> = select(&html, "#item h1 a")
         .into_iter()
         .map(|a| {
@@ -44,9 +80,15 @@ async fn the_item_page_shows_what_explain_shows_with_its_items_linked_and_its_ti
             ("https://github.com/owner/widgets/issues/1", "#1 on GitHub"),
         ]
     );
-    let last_read = select(&html, "#item li time");
-    assert_eq!(last_read.len(), 1);
-    let at = last_read[0].attr("datetime").unwrap();
+    let as_of = select(&html, "#item .as-of");
+    assert_eq!(as_of.len(), 1, "{}", html.html());
+    assert!(
+        text(as_of[0]).starts_with("as of 2026-10-01 12:"),
+        "{}",
+        as_of[0].html()
+    );
+    assert_in_muted_text(&html, "#item .as-of");
+    let at = select_in(as_of[0], "time")[0].attr("datetime").unwrap();
     assert!(
         at.starts_with("2026-10-01T12:") && at.ends_with('Z'),
         "{at}"
@@ -55,7 +97,31 @@ async fn the_item_page_shows_what_explain_shows_with_its_items_linked_and_its_ti
 }
 
 #[tokio::test]
-async fn the_item_page_of_an_item_linewright_leaves_says_why() {
+async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
+    let world = with_ticket().await;
+    let unlabeled = world
+        .store
+        .open_issue("maintainer", "Old idea", "Maybe.", &[]);
+    let web = Web::start(world).await;
+
+    let html = web.page(&format!("/items/{}", unlabeled.0)).await;
+
+    let facts = item_facts(&html);
+    assert_eq!(
+        fact(&facts, "State"),
+        "Left alone · labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
+         `ready-for-human`"
+    );
+    assert!(
+        select(&html, "#item dl .badge").is_empty(),
+        "{}",
+        html.html()
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_page_of_an_issue_closed_in_the_window_shows_it_in_done() {
     let world = with_ticket().await;
     let closed = world.store.open_issue(
         "maintainer",
@@ -68,19 +134,11 @@ async fn the_item_page_of_an_item_linewright_leaves_says_why() {
 
     let html = web.page(&format!("/items/{}", closed.0)).await;
 
-    let lines = item_lines(&html);
-    assert_eq!(
-        without_last_read(lines.clone()),
-        [
-            format!("{closed}: Old idea"),
-            "state: closed issue".to_string(),
-            "left alone: it is closed".to_string(),
-        ]
+    let state = fact(&item_facts(&html), "State").to_string();
+    assert!(
+        state.starts_with("Done · closed as completed · 2026-"),
+        "{state}"
     );
-    assert!(read_at_a_time(&lines[2]), "{lines:?}");
-    let closed_state = select(&html, "#item li svg.icon");
-    assert_eq!(closed_state.len(), 1);
-    assert_no_status_by_colour_alone(&html);
     web.stop().await;
 }
 
@@ -127,9 +185,9 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
         "{}",
         running_html.html()
     );
-    let facts = item_lines(&running_html);
+    let facts = item_facts(&running_html);
     assert!(
-        !facts.iter().any(|line| line.starts_with("run in flight")),
+        !facts.iter().any(|(label, _)| label.contains("run")),
         "{facts:?}"
     );
 
@@ -144,10 +202,10 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
     assert_eq!(shown[0][..3], ["done", "1/triage-1", "triage"]);
     let done: Vec<ElementRef> = select(&html, "#runs .tone.badge-success");
     assert_eq!(done.into_iter().map(text).collect::<Vec<_>>(), ["done"]);
-    let lines = item_lines(&html);
+    let done_facts = item_facts(&html);
     assert!(
-        !lines.iter().any(|line| line.starts_with("past run")),
-        "{lines:?}"
+        !done_facts.iter().any(|(label, _)| label.contains("run")),
+        "{done_facts:?}"
     );
     assert_no_status_by_colour_alone(&html);
     web.stop().await;
@@ -277,15 +335,16 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
     let item = regions(&changed)
         .into_iter()
         .find(|(id, _)| id == "item")
-        .map(|(_, html)| item_lines(&html))
+        .map(|(_, html)| item_facts(&html))
         .expect("the item's region");
+    let state = fact(&item, "State");
+    assert!(
+        state.starts_with("Needs a person · people asked · 2026-"),
+        "{state}"
+    );
     assert_eq!(
-        without_last_read(item),
-        [
-            "#1: Do the thing",
-            "state: waiting on the people asked",
-            "waiting for: the people asked: labeled `needs-info`",
-        ]
+        fact(&item, "Waiting for"),
+        "the people asked: labeled `needs-info`"
     );
     web.stop().await;
 }

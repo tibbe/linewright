@@ -8,12 +8,12 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
-use super::cards::{card_line, tone};
+use super::cards::{card_line, lane_line, tone};
 use super::html::{self, Html};
 use super::{Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources};
 use crate::board::{Board, Card, Column, Lane, LaneHead};
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::Tone;
 
 /// The board (`docs/specs/design_system.md`, The board), ready for the page.
 struct BoardShown {
@@ -103,17 +103,9 @@ impl LaneShown {
                 .then(&html::time(at)),
             None => head,
         };
-        let status = lane.most_pressing().map(|(card, status)| {
-            let line = card_line(card).unwrap_or_default();
-            let line = if lane.is_own_item(card) {
-                line
-            } else {
-                Phrase::default().item(card.number).text(" · ").then(line)
-            };
-            StatusShown {
-                tone: tone(status),
-                line: html::phrase(&line, repo),
-            }
+        let status = lane_line(lane).map(|(tone, line)| StatusShown {
+            tone,
+            line: html::phrase(&line, repo),
         });
         LaneShown {
             id: format!("lane-{}", lane.head.number().0),

@@ -1,7 +1,7 @@
 //! A card's words (`docs/specs/design_system.md`, Cards), shared by every
 //! page that shows a card's line or status.
 
-use crate::board::{Card, CardLine, CardStatus, Elapsed, Ended, Hold, Running, Stop};
+use crate::board::{Card, CardLine, CardStatus, Elapsed, Ended, Hold, Lane, Running, Stop};
 use crate::domain::{IssueCloseReason, ReviewDecision};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
@@ -15,6 +15,21 @@ pub(super) fn card_line(card: &Card) -> Option<Phrase> {
         (Some(line), Some(entered)) => Some(line.text(" · ").then(entered)),
         (line, entered) => line.or(entered),
     }
+}
+
+/// The line `lane`'s head ends with and its tone, if it has a card status
+/// (`docs/specs/design_system.md`, The board, A lane's card status): its
+/// most pressing card's line, after the card's number where the card is not
+/// the lane's own item.
+pub(super) fn lane_line(lane: &Lane) -> Option<(Tone, Phrase)> {
+    let (card, status) = lane.most_pressing()?;
+    let line = card_line(card).unwrap_or_default();
+    let line = if lane.is_own_item(card) {
+        line
+    } else {
+        Phrase::default().item(card.number).text(" · ").then(line)
+    };
+    Some((tone(status), line))
 }
 
 /// The tone `status` shows in (`docs/specs/web/design_system.md`, Status).

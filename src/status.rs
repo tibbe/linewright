@@ -10,7 +10,7 @@ use crate::domain::{
     CheckState, Issue, Item, Login, MergedPull, Number, Pull, PullState, Requirement, Snapshot,
     StatusLabel, Timestamp, label,
 };
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::Phrase;
 use crate::reconcile::{
     Automations, Decisions, Drain, LiveRun, Memory, NextRun, NotSpecChange, Policy, Relabel,
     SpecChange, Wait, decisions, next_run, open_pull_for, spec_change, worked_pulls,
@@ -278,15 +278,6 @@ impl Ci {
             Ci::Failing => "CI failing",
             Ci::Running => "CI running",
             Ci::Green => "CI green",
-        }
-    }
-
-    pub(crate) fn tone(self) -> Option<Tone> {
-        match self {
-            Ci::NoChecks => None,
-            Ci::Failing => Some(Tone::Failure),
-            Ci::Running => Some(Tone::InProgress),
-            Ci::Green => Some(Tone::Success),
         }
     }
 }

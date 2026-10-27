@@ -28,6 +28,7 @@ use crate::drain::{Asked, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::explain;
 use crate::host::HostName;
+use crate::item_facts::{self, ItemFacts};
 use crate::listening::Listening;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
 use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
@@ -679,17 +680,52 @@ pub(crate) async fn item_answer(
     sources: &Sources,
     number: Number,
 ) -> Result<explain::Answer, Unexplained> {
+    let (answer, _) = item_answer_in_view(sources, number).await?;
+    Ok(answer)
+}
+
+/// The item page's facts about #`number` (`docs/specs/design_system.md`,
+/// The item page), from what [`item_answer`] answers, with the board of the
+/// view it answered from.
+pub(crate) async fn item_facts(
+    sources: &Sources,
+    number: Number,
+) -> Result<ItemFacts, Unexplained> {
+    let (
+        answer,
+        Explaining {
+            view,
+            recorded,
+            now,
+            ..
+        },
+    ) = item_answer_in_view(sources, number).await?;
+    let board = board::board(&view, &recorded, now);
+    Ok(item_facts::item_facts(&answer, &view, &board))
+}
+
+/// What [`item_answer`] answers, and what it answered from: for an item read
+/// from GitHub, `serve`'s view with the item put in.
+async fn item_answer_in_view(
+    sources: &Sources,
+    number: Number,
+) -> Result<(explain::Answer, Explaining), Unexplained> {
+    let explaining = explaining(sources)?;
     let Explaining {
         view,
         store,
         recorded,
         now,
-    } = explaining(sources)?;
-    if let Some(answer) = explain::explain(&view, &recorded, number, now) {
-        return Ok(explain::Answer::Managed(answer));
+    } = &explaining;
+    if let Some(answer) = explain::explain(view, recorded, number, *now) {
+        return Ok((explain::Answer::Managed(answer), explaining));
     }
     match store.any_item(number).await {
-        Ok(Some(read)) => Ok(explain::explain_read(&view, &recorded, &read, now)),
+        Ok(Some(read)) => {
+            let view = explain::fresh_view(view, &read, *now);
+            let answer = explain::explain_fresh(&view, recorded, &read, *now);
+            Ok((answer, Explaining { view, ..explaining }))
+        }
         Ok(None) => Err(Unexplained::NoSuchItem(number)),
         Err(e) => Err(Unexplained::Unread(e.context(format!("reading {number}")))),
     }

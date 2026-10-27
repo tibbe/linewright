@@ -14,8 +14,10 @@
 
 {#- A page's facts (`docs/specs/web/design_system.md`, Facts), drawn as a
     board card is, their labels in a column of their own in Muted text, and
-    each line of a value a block of its own. The labels and values are the
-    cells of the card's grid, so it pads itself in place of a `card-body`. -#}
+    each line of a value a block of its own. An item among them is shown as
+    its card is, its card status's icon in place of its line. The labels
+    and values are the cells of the card's grid, so it pads itself in place
+    of a `card-body`. -#}
 {%- macro facts(facts) -%}
 <dl class="{% call card_look() %}{% endcall %} grid w-fit grid-cols-[max-content_1fr] gap-x-6 gap-y-2 p-4">
 {%- for fact in facts %}
@@ -29,6 +31,8 @@
 {{ text|safe }}
 {%- when crate::web::facts::Piece::Status { tone, words } -%}
 {% call status_text(tone, words) %}{% endcall %}
+{%- when crate::web::facts::Piece::Item { tone, pull_request, heading } -%}
+<span class="related-item{% if let Some(tone) = tone %} {{ tone.accent() }}{% endif %}">{% if let Some(tone) = tone %}{% call icon(tone) %}{% endcall %}{% endif %}{% if pull_request %}{% call pull_request_icon() %}{% endcall %}{% endif %}{{ heading|safe }}</span>
 {%- endmatch -%}
 {%- endfor -%}
 </div>

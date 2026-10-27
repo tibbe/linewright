@@ -28,6 +28,7 @@ pub mod git;
 pub mod harness;
 pub mod holds;
 pub mod host;
+pub mod item_facts;
 pub mod layer;
 pub mod listening;
 pub mod logs;

@@ -20,6 +20,14 @@ pub(super) enum Piece<Words = Html> {
         tone: Tone,
         words: Words,
     },
+    /// An item as its card is (`docs/specs/design_system.md`, The item page,
+    /// Related items): its card status's icon, if it has one, then its
+    /// heading, with the pull request icon where it is one.
+    Item {
+        tone: Option<Tone>,
+        pull_request: bool,
+        heading: Words,
+    },
 }
 
 impl<Words> Fact<Words> {
@@ -37,6 +45,15 @@ impl<Words> Fact<Words> {
                             Piece::Status { tone, words } => Piece::Status {
                                 tone,
                                 words: draw(words),
+                            },
+                            Piece::Item {
+                                tone,
+                                pull_request,
+                                heading,
+                            } => Piece::Item {
+                                tone,
+                                pull_request,
+                                heading: draw(heading),
                             },
                         })
                         .collect()

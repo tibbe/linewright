@@ -282,11 +282,15 @@ fn text(element: ElementRef) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The item page's heading and lines, as a reader reads them.
-fn item_lines(html: &Html) -> Vec<String> {
-    select(html, "#item h1, #item li")
+/// The item page's facts, each label and its value's text, in order.
+fn item_facts(html: &Html) -> Vec<(String, String)> {
+    let labels = select(html, "#item dl > dt");
+    let values = select(html, "#item dl > dd");
+    assert_eq!(labels.len(), values.len(), "{}", html.html());
+    labels
         .into_iter()
         .map(text)
+        .zip(values.into_iter().map(text))
         .collect()
 }
 

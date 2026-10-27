@@ -51,6 +51,32 @@ pub struct Board {
     pub lanes: Vec<Lane>,
     /// The count of cards in Needs a person.
     pub needing_a_person: usize,
+    /// The cards Linewright's pull requests would have on their own, where
+    /// each shows on the card of an issue it closes instead
+    /// (`docs/specs/design_system.md`, The item page, Its card), which no
+    /// lane or count holds.
+    own_cards: Vec<(Column, Card)>,
+}
+
+impl Board {
+    /// The card #`number` has on the board, or for a pull request shown on
+    /// the card of an issue it closes, the card it would have on its own.
+    pub fn card(&self, number: Number) -> Option<(Column, &Card)> {
+        let on_lanes = self.lanes.iter().flat_map(|lane| {
+            Column::ALL
+                .into_iter()
+                .flat_map(move |column| lane.cards(column).iter().map(move |card| (column, card)))
+        });
+        let own = self.own_cards.iter().map(|(column, card)| (*column, card));
+        on_lanes.chain(own).find(|(_, card)| card.number == number)
+    }
+
+    /// The lane the tracking issue #`number` heads.
+    pub fn lane_headed_by(&self, number: Number) -> Option<&Lane> {
+        self.lanes.iter().find(
+            |lane| matches!(lane.head, LaneHead::Tracking { number: head, .. } if head == number),
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -403,6 +429,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     };
 
     let mut cards: Vec<(Column, Card)> = vec![];
+    let mut own_cards: Vec<(Column, Card)> = vec![];
     for managed in &items {
         let folded = closing(managed.number);
         let mut on: Vec<Number> = vec![managed.number];
@@ -466,44 +493,49 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     }
     let on_the_board: Vec<Number> = cards.iter().map(|(_, card)| card.number).collect();
     let closes_none = |closes: &[Number]| !closes.iter().any(|n| on_the_board.contains(n));
+    // A pull request of Linewright's closing an issue on the board shows on
+    // that issue's card, and keeps the card it would have on its own apart.
+    let mut place = |closes: &[Number], card: (Column, Card)| {
+        if closes_none(closes) {
+            cards.push(card);
+        } else {
+            own_cards.push(card);
+        }
+    };
     for managed in &pulls {
         let Some(pull) = snapshot.pull(managed.number) else {
             continue;
         };
-        if !closes_none(&pull.closes) {
-            continue;
-        }
         let run = run_on(view, &[managed.number], now);
         let line = merge_stop(managed.number, None, run, view).map(CardLine::MergeStop);
         let pull_request = true;
         let changed = changed(&[managed.number]);
         let card = Card::new(managed.number, &managed.title, pull_request, line, changed);
-        cards.push((Column::InReview, card));
+        place(&pull.closes, (Column::InReview, card));
     }
     for item in &closed {
         let ClosedKind::Pull { closes } = &item.kind else {
             continue;
         };
-        if !closes_none(closes) {
-            continue;
-        }
-        cards.push(Card::ended(
+        let card = Card::ended(
             item.number,
             &item.title,
             Ended::ClosedUnmerged,
             item.closed_at,
             changed(&[item.number]),
-        ));
+        );
+        place(closes, card);
     }
     for pr in &snapshot.merged {
-        if &pr.author == linewright && pr.merged_at >= window_opened && closes_none(&pr.closes) {
-            cards.push(Card::ended(
+        if &pr.author == linewright && pr.merged_at >= window_opened {
+            let card = Card::ended(
                 pr.number,
                 &pr.title,
                 Ended::Merged,
                 pr.merged_at,
                 changed(&[pr.number]),
-            ));
+            );
+            place(&pr.closes, card);
         }
     }
 
@@ -587,6 +619,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     Board {
         lanes,
         needing_a_person,
+        own_cards,
     }
 }
 

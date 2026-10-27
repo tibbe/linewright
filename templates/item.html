@@ -2,20 +2,12 @@
 {%- import "macros.html" as ui -%}
 {%- block main -%}
 {% block item -%}
-<section id="item" class="mb-4">
-<h1>{{ item.heading|safe }}: {{ item.title }}</h1>
-<ul class="lines space-y-1">
-{%- for line in item.lines %}
-<li>
-{%- match line -%}
-{%- when LineShown::Fact { label, tone, phrase } -%}
-{{ label }}: {% if let Some(tone) = tone %}{% call ui::status(tone, phrase) %}{% endcall %}{% else %}{{ phrase|safe }}{% endif %}
-{%- when LineShown::Status { label, tone, phrase } -%}
-{% call ui::status(tone, label) %}{% endcall %}: {{ phrase|safe }}
-{%- endmatch -%}
-</li>
-{%- endfor %}
-</ul>
+<section id="item" class="mb-4 space-y-3">
+<hgroup>
+<h1>{% if item.pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ item.heading|safe }}</h1>
+<p class="as-of text-muted">as of {{ item.as_of|safe }}</p>
+</hgroup>
+{% call ui::facts(item.facts) %}{% endcall %}
 </section>
 {%- endblock %}
 {% block runs -%}

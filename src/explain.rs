@@ -7,7 +7,7 @@ use crate::domain::{
     ClosingPull, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
     Tracks, label,
 };
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::Phrase;
 use crate::reconcile::{NotSpecChange, NotWorked, Wait, worked_ticket};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{
@@ -463,18 +463,37 @@ pub enum PullExclusion {
     Superseded { issue: Number, by: Number },
 }
 
-pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Timestamp) -> Answer {
+/// `view` with `read`, read from GitHub `now`, put in as a poll taking a
+/// snapshot now would hold it, and an issue left out of the view put in
+/// too, so that what relates to it can be read from the view. Linewright
+/// manages no such issue, so it changes no item's standing.
+pub fn fresh_view(view: &View, read: &AnyItem, now: Timestamp) -> View {
     let mut fresh = view.clone();
     let linewright = &view.policy.linewright;
-    // As a poll taking a snapshot now would hold #N.
     let held = Arc::make_mut(&mut fresh.snapshot);
     match read {
-        AnyItem::HeldIssue(issue) => held.put_issue(issue.as_ref().clone()),
+        AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
+            held.put_issue(issue.as_ref().clone());
+        }
         AnyItem::Pull(pull) if &pull.author == linewright => held.put_pull(pull.as_ref().clone()),
         AnyItem::Merged { pull, .. } => held.put_merged(pull.as_ref().clone()),
-        AnyItem::LeftOutIssue(_) | AnyItem::Pull(_) => {}
+        AnyItem::Pull(_) => {}
     }
     fresh.read_at.insert(read.item(), now);
+    fresh
+}
+
+pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Timestamp) -> Answer {
+    explain_fresh(&fresh_view(view, read, now), recorded, read, now)
+}
+
+/// [`explain_read`] from `fresh`, the view [`fresh_view`] put `read` in.
+pub fn explain_fresh(
+    fresh: &View,
+    recorded: &[Recorded],
+    read: &AnyItem,
+    now: Timestamp,
+) -> Answer {
     let number = read.number();
     let mut waits = fresh.decisions(now).waits;
     let mut take_waits = || waits.remove(&number).unwrap_or_default();
@@ -498,7 +517,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             stalled,
             last_read: now,
             waiting_for,
-            runs: ItemRuns::of(view, recorded, number, now),
+            runs: ItemRuns::of(fresh, recorded, number, now),
         })
     };
     let (title, item) = match read {
@@ -539,7 +558,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
             &pull.title,
             LeftAloneItem::PullRequest(LeftAlonePull::Closed),
         ),
-        AnyItem::Pull(pull) => match pull_standing(&fresh, recorded, pull, now) {
+        AnyItem::Pull(pull) => match pull_standing(fresh, recorded, pull, now) {
             Ok(explanation) => return Answer::Managed(explanation),
             Err(left_alone) => (
                 &pull.title,
@@ -554,7 +573,7 @@ pub fn explain_read(view: &View, recorded: &[Recorded], read: &AnyItem, now: Tim
         item,
         stalled,
         last_read: now,
-        runs: ItemRuns::of(view, recorded, number, now),
+        runs: ItemRuns::of(fresh, recorded, number, now),
     })
 }
 
@@ -593,32 +612,24 @@ fn pull_standing(
 }
 
 /// What `explain` shows of an item, after the heading naming it.
-pub(crate) enum Line<'a> {
+enum Line<'a> {
     Item(ItemLine<'a>),
     InFlight(&'a RunInFlight),
     Past(&'a Run),
 }
 
 /// A line of what `explain` shows of an item that is not one of its runs.
-pub(crate) enum ItemLine<'a> {
-    Fact {
-        label: &'static str,
-        phrase: Phrase,
-        tone: Option<Tone>,
-    },
+enum ItemLine<'a> {
+    Fact { label: &'static str, phrase: Phrase },
     Wait(&'a Wait),
 }
 
 impl ItemLine<'_> {
     fn fact(label: &'static str, phrase: Phrase) -> ItemLine<'static> {
-        ItemLine::Fact {
-            label,
-            phrase,
-            tone: None,
-        }
+        ItemLine::Fact { label, phrase }
     }
 
-    pub(crate) fn label(&self) -> &'static str {
+    fn label(&self) -> &'static str {
         match self {
             ItemLine::Fact { label, .. } => label,
             ItemLine::Wait(_) => "waiting for",
@@ -661,6 +672,42 @@ impl Answer {
         }
     }
 
+    pub(crate) fn last_read(&self) -> Timestamp {
+        match self {
+            Answer::Managed(explanation) => explanation.last_read,
+            Answer::LeftAlone(left_alone) => left_alone.last_read,
+        }
+    }
+
+    pub(crate) fn family(&self) -> &Family {
+        match self {
+            Answer::Managed(explanation) => &explanation.family,
+            Answer::LeftAlone(left_alone) => &left_alone.family,
+        }
+    }
+
+    /// What Linewright waits for before it acts on the item next: nothing
+    /// for an item it leaves.
+    pub(crate) fn waiting_for(&self) -> &[Wait] {
+        match self {
+            Answer::Managed(explanation) => &explanation.waiting_for,
+            Answer::LeftAlone(_) => &[],
+        }
+    }
+
+    /// Whether the item is a pull request: Linewright's in review, or one
+    /// it leaves. A spec change's pull request is managed as an item.
+    pub(crate) fn is_pull_request(&self) -> bool {
+        match self {
+            Answer::Managed(explanation) => {
+                matches!(explanation.standing, Standing::PullRequest { .. })
+            }
+            Answer::LeftAlone(left_alone) => {
+                matches!(left_alone.item, LeftAloneItem::PullRequest(_))
+            }
+        }
+    }
+
     pub(crate) fn title(&self) -> &str {
         match self {
             Answer::Managed(explanation) => &explanation.title,
@@ -683,7 +730,7 @@ impl Answer {
 
     /// [`Answer::lines`] up to its runs: the item's facts and waits, without
     /// the run in flight, the past runs and how many were left out.
-    pub(crate) fn lines_without_runs(&self) -> Vec<ItemLine<'_>> {
+    fn lines_without_runs(&self) -> Vec<ItemLine<'_>> {
         match self {
             Answer::Managed(explanation) => explanation_lines(explanation),
             Answer::LeftAlone(left_alone) => left_alone_lines(left_alone),
@@ -707,22 +754,11 @@ fn left_alone_lines(left_alone: &LeftAlone) -> Vec<ItemLine<'_>> {
             Phrase::from("it is no spec change: ").then(describe_not_spec_change(left_alone)),
         ),
     };
-    let tone = match left_alone.item {
-        LeftAloneItem::Issue(LeftAloneIssue::Closed)
-        | LeftAloneItem::PullRequest(LeftAlonePull::Closed) => Some(Tone::Cancelled),
-        LeftAloneItem::PullRequest(LeftAlonePull::Merged { .. }) => Some(Tone::Success),
-        LeftAloneItem::Issue(LeftAloneIssue::Open { .. })
-        | LeftAloneItem::PullRequest(LeftAlonePull::Open { .. }) => None,
-    };
     left_alone
         .family
         .lines()
         .chain([
-            ItemLine::Fact {
-                label: "state",
-                phrase: with_stall(state.into(), left_alone.stalled),
-                tone,
-            },
+            ItemLine::fact("state", with_stall(state.into(), left_alone.stalled)),
             ItemLine::fact("last read", Phrase::default().time(left_alone.last_read)),
             ItemLine::fact("left alone", why),
         ])
@@ -742,11 +778,11 @@ fn with_stall(state: Phrase, stalled: bool) -> Phrase {
 pub(crate) const NOTHING_WAITED_FOR: &str = "nothing: Linewright acts on it at its next poll";
 
 fn explanation_lines(explanation: &Explanation) -> Vec<ItemLine<'_>> {
-    let (state, tone) = match &explanation.standing {
+    let state = match &explanation.standing {
         Standing::PullRequest { review, .. } | Standing::Item(ItemState::InReview(review)) => {
-            (review.describe(), review.ci.tone())
+            review.describe()
         }
-        Standing::Item(state) => (describe(state), None),
+        Standing::Item(state) => describe(state),
     };
     let nothing = explanation
         .waiting_for
@@ -756,11 +792,7 @@ fn explanation_lines(explanation: &Explanation) -> Vec<ItemLine<'_>> {
         .family
         .lines()
         .chain([
-            ItemLine::Fact {
-                label: "state",
-                phrase: with_stall(state, explanation.stalled),
-                tone,
-            },
+            ItemLine::fact("state", with_stall(state, explanation.stalled)),
             ItemLine::fact("last read", Phrase::default().time(explanation.last_read)),
         ])
         .chain(nothing)

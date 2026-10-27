@@ -144,6 +144,23 @@
     @apply mr-1 inline-block align-[-0.125em];
   }
 
+  /* An item among a page's facts, as its card is (docs/specs/design_system.md,
+     The item page): its card status's icon in the colour of `--tone`, which
+     its `Tone::accent` class sets, and its pull request icon, before its
+     heading, and a space after it, before the next on its line
+     (templates/macros.html, `facts`). */
+  .related-item svg {
+    @apply mr-1 inline-block align-[-0.125em];
+  }
+
+  .related-item svg.icon {
+    @apply text-(--tone);
+  }
+
+  .related-item:not(:last-child) {
+    @apply mr-4;
+  }
+
   .transcript .entry:target > .line,
   .transcript .entry:target > details > summary {
     @apply bg-warning/20;
