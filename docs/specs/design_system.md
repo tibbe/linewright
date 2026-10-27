@@ -173,10 +173,6 @@ order:
   tracking issue's number and title and its tickets closed of total, with
   its tickets as its cards; otherwise headed by the item's number and title,
   with the item as its one card.
-- **A lane's card status.** A lane's head ends with the line of its most
-  pressing card: the first card, by column and then by number, with the most
-  pressing card status any of its cards has. The line follows the card's
-  number where the card is not the lane's own item.
 - **Finished lanes.** A lane whose cards are all in Done is finished. It shows
   as its head alone, with when its last card closed, and opens on click. The
   finished lanes sit together under one fold that says how many there are
@@ -216,7 +212,7 @@ to add is the title alone.
 | Triage         | nothing but the time                                                                                                                                                                                                                                                   |                                                                                                                                                         |  |
 | Needs a person | "stalled"                                                                                                                                                                                                                                                              | it holds `linewright:stalled`                                                                                                                           | failed |
 |                | "asked alice", "asked alice and bob", "asked alice, bob and carol": the issue's assignees, in GitHub's order; "people asked" with none                                                                                                                                 | it holds `needs-info`                                                                                                                                   | waiting for a person |
-|                | "handed back"                                                                                                                                                                                                                                                          | it holds `ready-for-human`, and Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged              | failed |
+|                | "handed back"                                                                                                                                                                                                                                                          | it holds `ready-for-human`, and Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged              | waiting for a person |
 |                | "decision needed"                                                                                                                                                                                                                                                      | it holds `ready-for-human` otherwise                                                                                                                    | waiting for a person |
 | Ready          | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |  |
 |                | "assigned to alice"                                                                                                                                                                                                                                                    | someone other than Linewright is assigned to it                                                                                                         |  |
@@ -256,11 +252,12 @@ order below, then its runs ([Lists of runs](#lists-of-runs)).
 - **Its card.** For an item shown on another's card, such as a pull request
   on the card of the issue it closes, the card it would have on its own.
 - **Related items.** An item a fact lists is shown as its card is, with its
-  card status's icon in place of its line.
+  card status's icon in place of its line, and a tracking issue as its lane
+  head is.
 
 | Fact           | Holds                                                                                                                                  | Shown                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| State          | #N's column, then its card's line, with its card status ([Cards](#cards)); for a tracking issue, "Tracking", then, while its lane is unfinished, its lane head's line, with the lane's card status; once it is finished, when it finished, such as "Tracking · finished 2 days ago"; for an item the board does not show, "Left alone", then what keeps it out, such as "closed" or "labeled none of `needs-triage`, …" | always                         |
+| State          | #N's column, then its card's line, with its card status ([Cards](#cards)); for a tracking issue, "Tracking", and once its lane is finished when it finished, such as "Tracking · finished 2 days ago"; for an item the board does not show, "Left alone", then what keeps it out, such as "closed" or "labeled none of `needs-triage`, …" | always                         |
 | Waiting for    | each thing Linewright waits for before it acts on #N next, one per line, naming what ends it, such as "the usage limit, until 14:30", in plain text | while it waits for any         |
 | Tracking issue | a ticket's tracking issue, or the tracking issue cut from a spec change                                                                | while there is one             |
 | Tickets        | a tracking issue's tickets, with how many are closed of the total, such as "3 of 5 closed"                                             | while it has any               |
@@ -336,4 +333,5 @@ The server page shows the facts about Linewright itself ([Facts](#facts)).
 
 - A login of Linewright's own for the web UI.
 - A layout of the board for narrow screens.
+- A status of a lane's own: its cards carry theirs.
 - Acting from the UI on `serve` or on the work.
