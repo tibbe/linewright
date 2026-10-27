@@ -47,7 +47,8 @@ fn entry_of(element: ElementRef) -> Option<ElementRef> {
         .find(|ancestor| ancestor.value().classes().any(|class| class == "entry"))
 }
 
-async fn run_page_of_implemented() -> (Web, Html) {
+/// #1's run page, once its run, with the recorded transcript, is done.
+pub(super) async fn run_page_of_implemented() -> (Web, Html) {
     run_page_of(implemented_as_recorded().await).await
 }
 

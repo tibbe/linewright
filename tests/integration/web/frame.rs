@@ -598,3 +598,22 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
     );
     web.stop().await;
 }
+
+#[tokio::test]
+async fn every_pages_heading_takes_its_look_from_the_stylesheet_alone() {
+    let (web, _) = super::run::run_page_of_implemented().await;
+
+    for path in [
+        "/items/1",
+        "/runs",
+        "/runs/1/implement-1",
+        "/automations",
+        "/server",
+    ] {
+        let html = web.page(path).await;
+        let headings = select(&html, "h1");
+        assert_eq!(headings.len(), 1, "{path}");
+        assert_eq!(headings[0].attr("class"), None, "{path}");
+    }
+    web.stop().await;
+}
