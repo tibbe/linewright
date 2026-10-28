@@ -1,8 +1,8 @@
 ---
 name: software-design
 description:
-  Find how the problem has been solved before, and choose a design from it. Use
-  before implementing a feature or fixing a bug.
+  Find how the problem has been solved before, and choose an option from it.
+  Use before implementing a feature or fixing a bug.
 ---
 
 # Software design
@@ -25,7 +25,7 @@ sub-agents, so each search stays out of the others' context and yours.
      facing the same problem, handle this behavior.
 
    Give each the framing and this brief: "Search the web for how this problem is
-   solved. Report every principled design the sources take, each with its
+   solved. Report every principled option the sources take, each with its
    trade-offs, the evidence of its adoption, why its adopters chose it, and the
    sources it comes from. Evidence of adoption: the platform providing or
    documenting it; products like ours using it; and, for a library to adopt, its
@@ -33,14 +33,14 @@ sub-agents, so each search stays out of the others' context and yours.
 
 ### 2. Choose
 
-Compare the reported designs and, for each decision, follow the consensus: the
-design most sources converge on, counting a solution the platform documents for
-this problem as strong evidence. Any other design, whether fewer sources take it
+Compare the reported options and, for each decision, follow the consensus: the
+option most sources converge on, counting a solution the platform documents for
+this problem as strong evidence. Any other option, whether fewer sources take it
 or none do, has to win against it.
 
-Before choosing, write down the case against each design. The case against the
+Before choosing, write down the case against each option. The case against the
 consensus first says why its adopters chose it, then why that reasoning doesn't
-apply here. Strike out any reason, for or against a design, that:
+apply here. Strike out any reason, for or against an option, that:
 
 - counts the size of the change;
 - leans on what the code already does;
