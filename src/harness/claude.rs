@@ -53,30 +53,79 @@ pub const CREDENTIAL_VARIABLES: [&str; 8] = [
 /// passes. Docs: <https://code.claude.com/docs/en/env-vars>.
 pub const HEADER_VARIABLES: [&str; 1] = ["ANTHROPIC_CUSTOM_HEADERS"];
 
+/// A variable Linewright sets for sessions itself.
+#[derive(Clone, Copy)]
+enum Own {
+    TemporaryDirectory,
+    Shell,
+    NoUpdates,
+    Effort,
+    GhToken,
+    GithubToken,
+}
+
+impl Own {
+    const ALL: [Own; 6] = [
+        Own::TemporaryDirectory,
+        Own::Shell,
+        Own::NoUpdates,
+        Own::Effort,
+        Own::GhToken,
+        Own::GithubToken,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Own::TemporaryDirectory => TEMPORARY_DIRECTORY,
+            Own::Shell => SHELL,
+            Own::NoUpdates => NO_UPDATES,
+            Own::Effort => EFFORT,
+            Own::GhToken => TOKEN_VARIABLES[0],
+            Own::GithubToken => TOKEN_VARIABLES[1],
+        }
+    }
+}
+
+/// Every variable `set_for_session` may set, whether or not it sets it for
+/// a given session.
+pub const SET_FOR_SESSIONS: [&str; Own::ALL.len()] = {
+    let mut names = [""; Own::ALL.len()];
+    let mut i = 0;
+    while i < names.len() {
+        names[i] = Own::ALL[i].name();
+        i += 1;
+    }
+    names
+};
+
 /// What Linewright sets for a session, over any variable of the same name
-/// the session's `environment` gives it.
+/// the session's `environment` gives it: of `SET_FOR_SESSIONS`, those it
+/// has a value for.
 fn set_for_session<'a>(
     scratch: &'a Path,
     bash: &'a Path,
     github_token: Option<&'a str>,
     effort: Option<Effort>,
 ) -> Vec<(&'static str, &'a OsStr)> {
-    let mut variables = vec![
-        (TEMPORARY_DIRECTORY, scratch.as_os_str()),
-        // Claude Code otherwise picks the operator's `$SHELL`. It still
-        // sources the host's `~/.bashrc`, if there is one, and has no
-        // switch to stop that, so a session is not insulated from it.
-        (SHELL, bash.as_os_str()),
-        // Every session runs the Claude Code the operator installed.
-        (NO_UPDATES, OsStr::new("1")),
-    ];
-    if let Some(token) = github_token {
-        variables.extend(TOKEN_VARIABLES.map(|variable| (variable, OsStr::new(token))));
-    }
-    if let Some(effort) = effort {
-        variables.push((EFFORT, OsStr::new(effort.name())));
-    }
-    variables
+    Own::ALL
+        .into_iter()
+        .filter_map(|own| {
+            let value = match own {
+                Own::TemporaryDirectory => Some(scratch.as_os_str()),
+                // Claude Code otherwise picks the operator's `$SHELL`. It
+                // still sources the host's `~/.bashrc`, if there is one,
+                // and has no switch to stop that, so a session is not
+                // insulated from it.
+                Own::Shell => Some(bash.as_os_str()),
+                // Every session runs the Claude Code the operator
+                // installed.
+                Own::NoUpdates => Some(OsStr::new("1")),
+                Own::Effort => effort.map(|effort| OsStr::new(effort.name())),
+                Own::GhToken | Own::GithubToken => github_token.map(OsStr::new),
+            };
+            Some((own.name(), value?))
+        })
+        .collect()
 }
 
 /// <https://code.claude.com/docs/en/headless#get-structured-output>

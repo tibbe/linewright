@@ -9,6 +9,7 @@ use linewright::reconcile::WorkKind;
 use linewright::runs::{
     self, Ending, Listing, NoRuns, Query, Recorded, RunId, RunOf, Runs, Started, StartedBy, State,
 };
+use linewright::session_env::SetEnv;
 use linewright::work_settings::{Partial, StageTable};
 use serde_json::json;
 
@@ -49,8 +50,8 @@ fn triage_again(world: &World, issue: linewright::domain::Number) {
     world.store.label_as(issue, "needs-triage").unwrap();
 }
 
-/// A world whose triage sessions run with the operator's `opus`, leaving
-/// effort to the harness.
+/// A world whose triage sessions run with the operator's `opus` and a
+/// value its table sets, leaving effort to the harness.
 async fn triage_on_opus() -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
     let mut world = World::with(|config| {
@@ -62,7 +63,8 @@ async fn triage_on_opus() -> (World, tempfile::TempDir) {
                     model: Some("opus".into()),
                     ..Partial::default()
                 },
-                session_env: None,
+                session_env: Some(SetEnv::new([("CI".into(), "true".into())]).unwrap()),
+                ..StageTable::default()
             },
         );
     })
@@ -112,7 +114,8 @@ async fn an_items_runs_as_json_give_where_each_setting_and_prompt_file_came_from
             "model": "operator",
             "effort": "harness",
             "session-timeout": "operator",
-            "session-env": "linewright",
+            "session-env": "operator",
+            "session-pass-env": "linewright",
         })
     );
     assert_eq!(session["layers"]["prompts"]["triage.md"], "linewright");

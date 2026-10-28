@@ -178,7 +178,7 @@ async fn a_config_with_a_key_of_the_operators_holds_every_run_until_the_default_
         &world,
         "main",
         &[
-            (CONFIG, "session-env = [\"GH_TOKEN\"]\nmax-runs = 9\n"),
+            (CONFIG, "session-pass-env = [\"GH_TOKEN\"]\nmax-runs = 9\n"),
             (".linewright/automations/hourly.md", HOURLY),
         ],
     )

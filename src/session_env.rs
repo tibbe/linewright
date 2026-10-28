@@ -1,15 +1,20 @@
-//! Which variables of Linewright's environment an agent session is given:
-//! "Sessions' environment" in `docs/specs/operation.md`.
+//! Which variables of Linewright's environment an agent session is given,
+//! and the values set for it: "Sessions' environment" in
+//! `docs/specs/operation.md`.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 
 use percent_encoding::percent_decode_str;
 
-use crate::harness::claude::{CREDENTIAL_VARIABLES, HEADER_VARIABLES};
+use crate::harness::claude::{CREDENTIAL_VARIABLES, HEADER_VARIABLES, SET_FOR_SESSIONS};
 use crate::secrets::OWN_CREDENTIAL_VARIABLES;
 use crate::variable_names::{self, VariableNames, matches};
 
-const SETTING: &str = "session-env";
+/// The setting naming the variables passed.
+const PASS_SETTING: &str = "session-pass-env";
+/// The setting naming the values set.
+const SET_SETTING: &str = "session-env";
 
 /// The spec's table, but for `PROXY_VARIABLES`: every session is given
 /// these.
@@ -145,16 +150,23 @@ fn without_scheme(value: &str) -> Option<&str> {
 }
 
 /// Whether `name` is a variable Linewright reads its own GitHub tokens or
-/// webhook secret from, which `session-env` never passes.
+/// webhook secret from, which `session-pass-env` never passes.
 fn never_passed(name: &str) -> bool {
     OWN_CREDENTIAL_VARIABLES.contains(&name)
 }
 
-/// The `session-env` setting: the variables of Linewright's environment
-/// sessions are given beyond the table's.
+/// The `session-pass-env` setting: the variables of Linewright's
+/// environment sessions are given beyond the table's.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PassEnv {
     names: VariableNames,
+}
+
+/// One layer's `session-env`, or the layers' together: the values sessions
+/// are given, by name, taken as written.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SetEnv {
+    values: BTreeMap<String, String>,
 }
 
 /// What sessions are given beyond what Linewright sets itself: the whole
@@ -162,6 +174,7 @@ pub struct PassEnv {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionEnv {
     pass: PassEnv,
+    set: SetEnv,
 }
 
 /// The variables of Linewright's environment that sessions are given. Only
@@ -172,6 +185,19 @@ pub struct Given(Vec<(OsString, OsString)>);
 impl Given {
     pub fn iter(&self) -> impl Iterator<Item = (&OsString, &OsString)> {
         self.0.iter().map(|(name, value)| (name, value))
+    }
+
+    /// Gives `set`'s values, each replacing a variable of the same name.
+    fn set(&mut self, set: &SetEnv) {
+        self.0.retain(|(name, _)| {
+            name.to_str()
+                .is_none_or(|name| !set.values.contains_key(name))
+        });
+        self.0.extend(
+            set.values
+                .iter()
+                .map(|(name, value)| (name.into(), value.into())),
+        );
     }
 }
 
@@ -185,7 +211,7 @@ pub struct Split {
 }
 
 impl PassEnv {
-    /// Refuses a name `session-env` never passes, and a `*` anywhere but at
+    /// Refuses a name `session-pass-env` never passes, and a `*` anywhere but at
     /// a name's end.
     pub fn new(names: impl IntoIterator<Item = String>) -> Result<PassEnv, String> {
         let names: Vec<String> = names
@@ -193,16 +219,16 @@ impl PassEnv {
             .map(|name| {
                 if never_passed(&name) {
                     return Err(format!(
-                        "the setting `{SETTING}` names `{name}`: sessions are never given \
+                        "the setting `{PASS_SETTING}` names `{name}`: sessions are never given \
                          Linewright's GitHub tokens or its webhook secret"
                     ));
                 }
-                variable_names::check(SETTING, &name)?;
+                variable_names::check(PASS_SETTING, &name)?;
                 Ok(name)
             })
             .collect::<Result<_, _>>()?;
         Ok(PassEnv {
-            names: VariableNames::new(SETTING, names)?,
+            names: VariableNames::new(PASS_SETTING, names)?,
         })
     }
 
@@ -228,22 +254,97 @@ impl std::str::FromStr for PassEnv {
     }
 }
 
-/// Sessions given the variables `pass` names.
-impl From<PassEnv> for SessionEnv {
-    fn from(pass: PassEnv) -> SessionEnv {
-        SessionEnv { pass }
+impl SetEnv {
+    /// One layer's values. Refuses a name given twice, a name or value an
+    /// environment can't hold, and a name Linewright may set for sessions
+    /// itself.
+    pub fn new(entries: impl IntoIterator<Item = (String, String)>) -> Result<SetEnv, String> {
+        let mut values = BTreeMap::new();
+        for (name, value) in entries {
+            let cannot_hold = |what: &str| {
+                Err(format!(
+                    "the setting `{SET_SETTING}` sets {what}, which an environment can't hold"
+                ))
+            };
+            if name.is_empty() {
+                return cannot_hold("a variable with an empty name");
+            }
+            if name.contains('=') {
+                return cannot_hold(&format!("`{name}`, a name with `=`"));
+            }
+            if name.contains('\0') {
+                return cannot_hold(&format!("{name:?}, a name with a NUL byte"));
+            }
+            if value.contains('\0') {
+                return cannot_hold(&format!("`{name}` to a value with a NUL byte"));
+            }
+            if SET_FOR_SESSIONS.contains(&name.as_str()) {
+                return Err(format!(
+                    "the setting `{SET_SETTING}` sets `{name}`: Linewright sets `{name}` for \
+                     sessions itself"
+                ));
+            }
+            if values.contains_key(&name) {
+                return Err(format!("the setting `{SET_SETTING}` sets `{name}` twice"));
+            }
+            values.insert(name, value);
+        }
+        Ok(SetEnv { values })
+    }
+
+    /// The layer the flag gives, once per entry, each `NAME=value` split at
+    /// its first `=`.
+    pub fn from_flags(entries: &[String]) -> Result<SetEnv, String> {
+        SetEnv::new(
+            entries
+                .iter()
+                .map(|entry| match entry.split_once('=') {
+                    Some((name, value)) => Ok((name.to_string(), value.to_string())),
+                    None => Err(format!(
+                        "the setting `{SET_SETTING}` is given {entry:?}, not `NAME=value`; \
+                         `{PASS_SETTING}` names variables to pass"
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    }
+
+    /// Every name set here or in `lower`, with this value where both set
+    /// one.
+    #[must_use]
+    pub fn over(&self, lower: &SetEnv) -> SetEnv {
+        let mut values = lower.values.clone();
+        values.extend(self.values.clone());
+        SetEnv { values }
+    }
+
+    /// The names set, sorted.
+    pub fn names(&self) -> Vec<String> {
+        self.values.keys().cloned().collect()
     }
 }
 
 impl SessionEnv {
-    /// This and what a stage's table adds to it.
+    pub fn new(pass: PassEnv, set: SetEnv) -> SessionEnv {
+        SessionEnv { pass, set }
+    }
+
+    /// The names `session-env` sets, sorted.
+    pub fn set_names(&self) -> Vec<String> {
+        self.set.names()
+    }
+
+    /// This and what a stage's table adds to it, the stage's value winning
+    /// for a name both set.
     #[must_use]
     pub fn and(&self, stage: &SessionEnv) -> SessionEnv {
         SessionEnv {
             pass: self.pass.and(&stage.pass),
+            set: stage.set.over(&self.set),
         }
     }
 
+    /// The values set replace variables of the same name passed.
     /// `set_by_linewright` names the variables Linewright sets for sessions
     /// itself, which are not withheld whatever their values here.
     pub fn split(
@@ -260,6 +361,7 @@ impl SessionEnv {
             }
         }
         split.withheld.sort();
+        split.given.set(&self.set);
         split
     }
 }

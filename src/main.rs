@@ -705,8 +705,9 @@ fn harness(bash: PathBuf, sessions: &SessionCredentials) -> ClaudeCode {
 
 /// What sessions are given of Linewright's environment. Logs the names of
 /// the variables they are not given, so that an operator whose build fails
-/// only in a session sees what to add to `session-env`, and of those, what
-/// each stage's table gives its sessions.
+/// only in a session sees what to add to `session-pass-env`, and of those,
+/// what each stage's table gives its sessions; and the names, never the
+/// values, `session-env` sets.
 fn environments(config: &Config, sessions: &SessionCredentials) -> Environments {
     let split = config.work.environments(
         &config.session_env,
@@ -716,14 +717,29 @@ fn environments(config: &Config, sessions: &SessionCredentials) -> Environments 
     info!(
         variables = split.withheld.join(" "),
         "agent sessions are not given these variables of Linewright's environment; \
-         `session-env` names the ones they need"
+         `session-pass-env` names the ones they need"
     );
     for (stage, added) in &split.added {
         info!(
             stage = stage.name(),
             variables = added.join(" "),
-            "of those, the stage's sessions are given these, which `session-env` in its \
+            "of those, the stage's sessions are given these, which `session-pass-env` in its \
              table names"
+        );
+    }
+    if !split.set.is_empty() {
+        info!(
+            set = split.set.join(" "),
+            "`session-env` sets these variables in agent sessions"
+        );
+    }
+    for (stage, set) in &split.stages_set {
+        info!(
+            stage = stage.name(),
+            set = set.own.join(" "),
+            taken = set.taken.join(" "),
+            "`session-env` in the stage's table sets these variables in its sessions, \
+             besides those it takes from the whole pipeline's"
         );
     }
     split.environments

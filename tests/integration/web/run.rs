@@ -95,6 +95,7 @@ async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_se
             "effort: the harness's",
             "session-timeout: the operator's",
             "session-env: Linewright's own",
+            "session-pass-env: Linewright's own",
         ]
     );
     let prompts = texts("#s1 .layers .prompt");

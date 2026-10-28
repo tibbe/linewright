@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::TimeDelta;
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
 use crate::domain::{AutoMerge, MergeMethod, Number, Repo, Timestamp, UpdateMethod};
@@ -15,12 +15,14 @@ use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
 use crate::secrets;
-use crate::session_env::{PassEnv, SessionEnv};
+use crate::session_env::{PassEnv, SessionEnv, SetEnv};
 use crate::spec_glob::SpecGlob;
 use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
-use crate::work_settings::{Effort, Partial, RepoSettings, Setting, StageTable, WorkSettings};
+use crate::work_settings::{
+    Effort, EnvLayers, Partial, RepoSettings, Setting, StageTable, WorkSettings,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -205,8 +207,8 @@ pub enum AutomationCommand {
     },
 }
 
-/// The settings as flags. Each is a string here and parsed once, after the
-/// layers are merged.
+/// The settings as flags. Each is a string here, or a string per entry for a
+/// table, and parsed once, after the layers are merged.
 #[derive(Args, Debug, Default)]
 pub struct Settings {
     /// The TOML config file [default: linewright.toml in the working directory]
@@ -259,12 +261,20 @@ pub struct Settings {
     /// taken in place of Linewright's own [default: none]
     #[arg(long, global = true)]
     pub prompts: Option<String>,
+    /// A variable to set in agent sessions, its value taken as written and
+    /// replacing a passed variable of the same name; given once per
+    /// variable, and added to the config file's; a stage's table in the
+    /// config file, `[stage.NAME]`, can add values for its sessions
+    /// [default: none]
+    #[arg(long, global = true, value_name = "NAME=VALUE", action = ArgAction::Append)]
+    pub session_env: Vec<String>,
     /// The variables of Linewright's environment that agent sessions are given
-    /// besides the ones they always get, comma-separated; a name ending in `*`
-    /// names every variable with that prefix; a stage's table in the config
-    /// file, `[stage.NAME]`, can add names for its sessions [default: none]
+    /// besides the ones they always get, comma-separated, and added to those
+    /// the environment and the config file name; a name ending in `*` names
+    /// every variable with that prefix; a stage's table in the config file,
+    /// `[stage.NAME]`, can add names for its sessions [default: none]
     #[arg(long, global = true, value_name = "NAMES")]
-    pub session_env: Option<String>,
+    pub session_pass_env: Option<String>,
     /// The variables of Linewright's environment whose values are secrets,
     /// redacted and refused in commits, besides the ones Linewright reads a
     /// credential from, comma-separated; a name ending in `*` names every
@@ -323,7 +333,7 @@ pub struct Config {
     pub max_runs: usize,
     pub work_dir: PathBuf,
     /// `model`, `effort`, `session-timeout` and the stages' tables, and
-    /// where `session-env` came from.
+    /// where `session-env` and `session-pass-env` came from.
     pub work: WorkSettings,
     pub prompts: Option<PathBuf>,
     pub session_env: SessionEnv,
@@ -354,7 +364,7 @@ impl Settings {
             ("model", &self.model),
             ("effort", &self.effort),
             ("prompts", &self.prompts),
-            ("session-env", &self.session_env),
+            ("session-pass-env", &self.session_pass_env),
             ("secrets", &self.secrets),
             ("session-timeout", &self.session_timeout),
             ("result-retries", &self.result_retries),
@@ -377,6 +387,16 @@ impl Settings {
 /// (`docs/specs/operation.md`, Configuration).
 #[derive(Clone, Copy, Debug)]
 enum Form {
+    /// Held as the text its flag takes.
+    Text(Text),
+    /// Variables' values by name, as `session-env` holds them: a flag given
+    /// once per entry, or a table in a file.
+    Table,
+}
+
+/// The form of a setting held as the text its flag takes.
+#[derive(Clone, Copy, Debug)]
+enum Text {
     /// A string, number or boolean.
     Value,
     /// Entries separated by commas, or an array in a file, each entry
@@ -384,26 +404,32 @@ enum Form {
     List { holds: &'static str },
 }
 
+const VALUE: Form = Form::Text(Text::Value);
+
+const fn list(holds: &'static str) -> Form {
+    Form::Text(Text::List { holds })
+}
+
 impl Form {
     /// Whether the setting is also an environment variable,
     /// `LINEWRIGHT_<FLAG>`.
     fn has_variable(self) -> bool {
         match self {
-            Form::Value | Form::List { .. } => true,
+            Form::Text(_) => true,
+            Form::Table => false,
         }
     }
 }
 
-/// A variable's name, what `session-env` and `secrets` hold.
+/// A variable's name, what `session-pass-env` and `secrets` hold.
 const VARIABLE_NAME: &str = "a variable's name";
 
 /// The form of `setting`, a stage's setting.
 const fn stage_form(setting: Setting) -> Form {
     match setting {
-        Setting::Model | Setting::Effort | Setting::SessionTimeout => Form::Value,
-        Setting::SessionEnv => Form::List {
-            holds: VARIABLE_NAME,
-        },
+        Setting::Model | Setting::Effort | Setting::SessionTimeout => VALUE,
+        Setting::SessionPassEnv => list(VARIABLE_NAME),
+        Setting::SessionEnv => Form::Table,
     }
 }
 
@@ -413,42 +439,33 @@ const fn stage_entry(setting: Setting) -> (&'static str, Form) {
 }
 
 /// The operator's settings, each with its form.
-const SETTINGS: [(&str, Form); 25] = [
-    ("repo", Form::Value),
-    ("poll-interval", Form::Value),
-    ("webhook-address", Form::Value),
-    ("ui-address", Form::Value),
-    (
-        "ui-hosts",
-        Form::List {
-            holds: "a host name",
-        },
-    ),
-    ("spec-glob", Form::Value),
-    ("spec-lookback", Form::Value),
-    ("done-window", Form::Value),
-    ("max-runs", Form::Value),
-    ("work-dir", Form::Value),
+const SETTINGS: [(&str, Form); 26] = [
+    ("repo", VALUE),
+    ("poll-interval", VALUE),
+    ("webhook-address", VALUE),
+    ("ui-address", VALUE),
+    ("ui-hosts", list("a host name")),
+    ("spec-glob", VALUE),
+    ("spec-lookback", VALUE),
+    ("done-window", VALUE),
+    ("max-runs", VALUE),
+    ("work-dir", VALUE),
     stage_entry(Setting::Model),
     stage_entry(Setting::Effort),
-    ("prompts", Form::Value),
+    ("prompts", VALUE),
     stage_entry(Setting::SessionEnv),
-    (
-        "secrets",
-        Form::List {
-            holds: VARIABLE_NAME,
-        },
-    ),
+    stage_entry(Setting::SessionPassEnv),
+    ("secrets", list(VARIABLE_NAME)),
     stage_entry(Setting::SessionTimeout),
-    ("result-retries", Form::Value),
-    ("ci-grace", Form::Value),
-    ("ci-timeout", Form::Value),
-    ("ci-attempts", Form::Value),
-    ("update-branch", Form::Value),
-    ("auto-merge", Form::Value),
-    ("merge-method", Form::Value),
-    ("require-label", Form::Value),
-    ("log-format", Form::Value),
+    ("result-retries", VALUE),
+    ("ci-grace", VALUE),
+    ("ci-timeout", VALUE),
+    ("ci-attempts", VALUE),
+    ("update-branch", VALUE),
+    ("auto-merge", VALUE),
+    ("merge-method", VALUE),
+    ("require-label", VALUE),
+    ("log-format", VALUE),
 ];
 
 /// The form of the setting `key`, `None` when it is no setting.
@@ -550,6 +567,7 @@ impl Config {
         let FileSettings {
             path,
             top: file,
+            session_env: file_session_env,
             stages,
         } = read_file(settings.config.as_deref(), cwd)?;
         let flags = settings.flags();
@@ -722,12 +740,28 @@ impl Config {
                 hosts: ui_hosts.unwrap_or_default(),
             }),
         };
-        let session_env = SessionEnv::from(
-            get("session-env")
-                .unwrap_or_default()
-                .parse::<PassEnv>()
-                .map_err(|e| wrong("session-env", e))?,
-        );
+        // Every layer's names, and each name's value from the highest
+        // layer setting it (`docs/specs/operation.md`, Stage settings,
+        // Combining).
+        let pass_names = |names: Option<&String>, refuse: &dyn Fn(String) -> ResolveError| {
+            names
+                .map_or(Ok(PassEnv::default()), |names| names.parse::<PassEnv>())
+                .map_err(refuse)
+        };
+        let pass_variable = env("LINEWRIGHT_SESSION_PASS_ENV");
+        let pass = pass_names(flags.get("session-pass-env").copied(), &|e| {
+            ResolveError::CommandLine(anyhow!(e))
+        })?
+        .and(&pass_names(pass_variable.as_ref(), &|e| {
+            ResolveError::Elsewhere(anyhow!(e))
+        })?)
+        .and(&pass_names(file.get("session-pass-env"), &|e| {
+            ResolveError::Elsewhere(anyhow!(e).context(path.display().to_string()))
+        })?);
+        let values = SetEnv::from_flags(&settings.session_env)
+            .map_err(|e| ResolveError::CommandLine(anyhow!(e)))?
+            .over(&file_session_env.clone().unwrap_or_default());
+        let session_env = SessionEnv::new(pass, values);
         let secrets = VariableNames::new(
             secrets::SETTING,
             variable_names::comma_separated(&get(secrets::SETTING).unwrap_or_default()),
@@ -743,6 +777,13 @@ impl Config {
         };
         // The file's is read only when no flag or variable sets one, as it
         // could not win over them.
+        let operator_if = |set: bool| {
+            if set {
+                Layer::Operator
+            } else {
+                Layer::Linewright
+            }
+        };
         let in_file = |key: &str| match flags_and_env(key) {
             Some(_) => None,
             None => file.get(key).cloned(),
@@ -759,10 +800,12 @@ impl Config {
                 session_timeout: session_timeout(in_file("session-timeout"))?,
             },
             stages,
-            session_env: if get("session-env").is_some() {
-                Layer::Operator
-            } else {
-                Layer::Linewright
+            env_layers: EnvLayers {
+                set: operator_if(!settings.session_env.is_empty() || file_session_env.is_some()),
+                pass: operator_if(
+                    flags_and_env("session-pass-env").is_some()
+                        || file.contains_key("session-pass-env"),
+                ),
             },
         };
         let (ci_grace, ci_timeout) = (delta("ci-grace", "5m")?, delta("ci-timeout", "6h")?);
@@ -811,8 +854,9 @@ pub enum ResolveError {
 /// The operator's config file.
 struct FileSettings {
     path: PathBuf,
-    /// Each value as the text its flag takes.
+    /// Each value as the text its flag takes, but for `session-env`'s.
     top: BTreeMap<String, String>,
+    session_env: Option<SetEnv>,
     /// The `[stage.NAME]` tables.
     stages: BTreeMap<WorkKind, StageTable>,
 }
@@ -827,6 +871,7 @@ fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<FileSettings, Resolv
             return Ok(FileSettings {
                 path,
                 top: BTreeMap::new(),
+                session_env: None,
                 stages: BTreeMap::new(),
             });
         }
@@ -887,16 +932,25 @@ fn repository_setting(key: &str, at: &str) -> Result<Setting> {
     bail!("{at} has an unknown setting `{key}`: {holds}")
 }
 
-/// Sets `setting` in `table` to `text`.
-fn set(table: &mut StageTable, setting: Setting, text: &str) -> Result<()> {
+/// Sets `setting` in `table` to `value`.
+fn set(table: &mut StageTable, setting: Setting, value: toml::Value) -> Result<()> {
+    let text = |form, given| setting_value(setting.name(), form, given);
     let settings = &mut table.settings;
     match setting {
-        Setting::Model => settings.model = Some(text.to_string()),
-        Setting::Effort => settings.effort = Some(effort(text)?),
-        Setting::SessionTimeout => settings.session_timeout = Some(session_timeout(text)?),
-        Setting::SessionEnv => {
-            let pass: PassEnv = text.parse().map_err(|e: String| anyhow!(e))?;
-            table.session_env = Some(pass.into());
+        Setting::Model => settings.model = Some(text(Text::Value, value)?),
+        Setting::Effort => settings.effort = Some(effort(&text(Text::Value, value)?)?),
+        Setting::SessionTimeout => {
+            settings.session_timeout = Some(session_timeout(&text(Text::Value, value)?)?);
+        }
+        Setting::SessionEnv => table.session_env = Some(set_env(setting.name(), value)?),
+        Setting::SessionPassEnv => {
+            let names = text(
+                Text::List {
+                    holds: VARIABLE_NAME,
+                },
+                value,
+            )?;
+            table.session_pass_env = Some(names.parse().map_err(|e: String| anyhow!(e))?);
         }
     }
     Ok(())
@@ -909,6 +963,7 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
     let mut settings = FileSettings {
         path: path.to_path_buf(),
         top: BTreeMap::new(),
+        session_env: None,
         stages: BTreeMap::new(),
     };
     for (key, value) in table {
@@ -920,9 +975,17 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
         let Some(form) = form(&key) else {
             bail!("{} has an unknown setting `{key}`", path.display());
         };
-        let value =
-            setting_value(&key, form, value).with_context(|| format!("{}", path.display()))?;
-        settings.top.insert(key, value);
+        match form {
+            Form::Text(form) => {
+                let value = setting_value(&key, form, value)
+                    .with_context(|| format!("{}", path.display()))?;
+                settings.top.insert(key, value);
+            }
+            Form::Table => {
+                settings.session_env =
+                    Some(set_env(&key, value).with_context(|| path.display().to_string())?);
+            }
+        }
     }
     Ok(settings)
 }
@@ -943,7 +1006,7 @@ impl RepoSettings {
                 continue;
             }
             let setting = repository_setting(&key, "the repository's file")?;
-            set(&mut top, setting, &stage_setting_value(setting, value)?)?;
+            set(&mut top, setting, value)?;
         }
         Ok(RepoSettings::new(top.settings, stages))
     }
@@ -965,8 +1028,7 @@ fn stage_tables(stages: toml::Value, owner: Owner) -> Result<BTreeMap<WorkKind, 
             let mut parsed = StageTable::default();
             for (key, value) in table {
                 let setting = owner.stage_setting(&key, &at)?;
-                let text = stage_setting_value(setting, value).context(at.clone())?;
-                set(&mut parsed, setting, &text).context(at.clone())?;
+                set(&mut parsed, setting, value).context(at.clone())?;
             }
             Ok((stage, parsed))
         })
@@ -984,13 +1046,13 @@ fn session_timeout(text: &str) -> Result<Duration> {
 
 /// `value`, of the setting `key` with form `form`, as the text its flag
 /// takes.
-fn setting_value(key: &str, form: Form, value: toml::Value) -> Result<String> {
+fn setting_value(key: &str, form: Text, value: toml::Value) -> Result<String> {
     Ok(match (form, value) {
         (_, toml::Value::String(s)) => s,
         (_, toml::Value::Integer(i)) => i.to_string(),
         (_, toml::Value::Boolean(b)) => b.to_string(),
         // As the text its flag takes, separated by commas.
-        (Form::List { holds }, toml::Value::Array(entries)) => entries
+        (Text::List { holds }, toml::Value::Array(entries)) => entries
             .into_iter()
             .map(|entry| match entry.as_str() {
                 Some(entry) if !entry.is_empty() && !entry.contains(',') => Ok(entry.to_string()),
@@ -999,7 +1061,7 @@ fn setting_value(key: &str, form: Form, value: toml::Value) -> Result<String> {
             .collect::<Result<Vec<_>>>()?
             .join(","),
         (
-            Form::Value | Form::List { .. },
+            Text::Value | Text::List { .. },
             other @ (toml::Value::Float(_)
             | toml::Value::Datetime(_)
             | toml::Value::Array(_)
@@ -1010,7 +1072,38 @@ fn setting_value(key: &str, form: Form, value: toml::Value) -> Result<String> {
     })
 }
 
-/// `value`, of `setting`, a stage's setting, as the text its flag takes.
-fn stage_setting_value(setting: Setting, value: toml::Value) -> Result<String> {
-    setting_value(setting.name(), stage_form(setting), value)
+/// `value`, of the table setting `key`, `session-env`, as the values it
+/// sets. An array, the form of `session-pass-env`, which `session-env` once
+/// held, says so.
+fn set_env(key: &str, value: toml::Value) -> Result<SetEnv> {
+    let toml::Value::Table(table) = value else {
+        let pass = match value {
+            toml::Value::Array(_) => "; `session-pass-env` names variables to pass",
+            toml::Value::String(_)
+            | toml::Value::Integer(_)
+            | toml::Value::Float(_)
+            | toml::Value::Boolean(_)
+            | toml::Value::Datetime(_)
+            | toml::Value::Table(_) => "",
+        };
+        bail!(
+            "the setting `{key}` is {value}, not a table of variables' values such as \
+             `{{ RUST_LOG = \"info\" }}`{pass}"
+        );
+    };
+    let entries = table
+        .into_iter()
+        .map(|(name, entry)| match entry {
+            toml::Value::String(text) => Ok((name, text)),
+            other @ (toml::Value::Integer(_)
+            | toml::Value::Float(_)
+            | toml::Value::Boolean(_)
+            | toml::Value::Datetime(_)
+            | toml::Value::Array(_)
+            | toml::Value::Table(_)) => {
+                bail!("the setting `{key}` sets `{name}` to {other}, not a string")
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    SetEnv::new(entries).map_err(|e| anyhow!(e))
 }

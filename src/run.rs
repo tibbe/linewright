@@ -1038,7 +1038,7 @@ fn session_spec(
         prompt,
         model: settings.model_set(),
         effort: settings.effort_set(),
-        environment: settings.environment.value.clone(),
+        environment: settings.environment.clone(),
         deadline: tokio::time::Instant::now() + settings.session_timeout.value,
         report: Reporter::new(move |reported| recorder.reported(reported)),
     })

@@ -1,4 +1,4 @@
-//! A list of variable names, as a setting such as `session-env` gives it
+//! A list of variable names, as a setting such as `session-pass-env` gives it
 //! (`docs/specs/operation.md`, "Configuration").
 
 /// `pattern` is a variable's name, or a prefix when it ends in `*`.
@@ -21,7 +21,7 @@ pub fn check(setting: &str, name: &str) -> Result<(), String> {
 }
 
 /// The names in `names` separated by commas, the form of a setting such as
-/// `session-env` as a flag or variable.
+/// `session-pass-env` as a flag or variable.
 pub fn comma_separated(names: &str) -> impl Iterator<Item = String> {
     names
         .split(',')

@@ -188,7 +188,11 @@ fn startup_logs_the_variables_a_stages_table_gives_its_sessions() {
     let bin = path_to_start_on();
     let config = tempfile::tempdir().unwrap();
     let file = config.path().join("linewright.toml");
-    std::fs::write(&file, "[stage.implement]\nsession-env = [\"DEPLOY_KEY\"]\n").unwrap();
+    std::fs::write(
+        &file,
+        "[stage.implement]\nsession-pass-env = [\"DEPLOY_KEY\"]\n",
+    )
+    .unwrap();
 
     let (_, log) = lw(
         bin.path(),
@@ -231,6 +235,67 @@ fn startup_logs_the_variables_a_stages_table_gives_its_sessions() {
         .collect();
     assert_eq!(staged, [("implement", "DEPLOY_KEY")], "{log}");
     assert!(!log.contains("hunter2"), "{log}");
+}
+
+#[test]
+fn startup_logs_the_names_but_not_the_values_session_env_sets() {
+    let bin = path_to_start_on();
+    let config = tempfile::tempdir().unwrap();
+    let file = config.path().join("linewright.toml");
+    std::fs::write(
+        &file,
+        "session-env = { CI = \"value-1\", RUST_LOG = \"value-2\" }\n\n\
+         [stage.implement]\nsession-env = { RUST_LOG = \"value-3\", DEPLOY = \"value-4\" }\n\n\
+         [stage.design]\nsession-pass-env = [\"OTHER\"]\n",
+    )
+    .unwrap();
+
+    let (_, log) = lw(
+        bin.path(),
+        &[
+            "--repo",
+            "owner/name",
+            "--log-format",
+            "json",
+            "--config",
+            file.to_str().unwrap(),
+            "--session-env",
+            "FLAGGED=value-5",
+            "once",
+        ],
+        &[
+            ("GH_TOKEN", "linewright-token"),
+            // Fails the connection to GitHub at once, after the log.
+            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+        ],
+    );
+
+    let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
+    let set: Vec<(Option<String>, String, Option<String>)> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|line| {
+            let fields = &line["fields"];
+            Some((
+                text(&fields["stage"]),
+                text(&fields["set"])?,
+                text(&fields["taken"]),
+            ))
+        })
+        .collect();
+    assert_eq!(
+        set,
+        [
+            (None, "CI FLAGGED RUST_LOG".into(), None),
+            (
+                Some("implement".into()),
+                "DEPLOY RUST_LOG".into(),
+                Some("CI FLAGGED".into())
+            ),
+        ],
+        "{log}"
+    );
+    assert!(!log.contains("value-"), "{log}");
 }
 
 /// A path holding a Claude Code that would finish, `git` and `bash`, so

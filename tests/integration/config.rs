@@ -6,12 +6,13 @@ use linewright::automation;
 use linewright::config::{Cli, Config, LogFormat, ResolveError};
 use linewright::domain::{AutoMerge, MergeMethod};
 use linewright::host::HostName;
-use linewright::layer::{Layer, Sourced};
+use linewright::layer::{Layer, Source, Sourced};
 use linewright::reconcile::WorkKind;
-use linewright::session_env::{PassEnv, SessionEnv};
+use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
 use linewright::variable_names::VariableNames;
 use linewright::work_settings::{
-    Effort, Environments, RepoSettings, RunKind, SessionSettings, TimeoutSetting,
+    Effort, Environments, RepoSettings, RunKind, SessionSettings, Setting, Split, StageSet,
+    TimeoutSetting,
 };
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
@@ -168,7 +169,11 @@ fn a_mistake_in_a_stages_table_is_an_error_naming_the_file_and_the_key() {
             "session-timeout",
         ),
         (
-            "[stage.implement]\nsession-env = [\"GH_TOKEN\"]\n",
+            "[stage.implement]\nsession-pass-env = [\"GH_TOKEN\"]\n",
+            "session-pass-env",
+        ),
+        (
+            "[stage.implement]\nsession-env = { TMPDIR = \"/tmp\" }\n",
             "session-env",
         ),
         ("stage = \"implement\"\n", "stage"),
@@ -251,11 +256,16 @@ fn the_repositorys_stage_table_sets_its_stages_session_timeout() {
 #[test]
 fn a_key_of_the_operators_in_the_repositorys_file_is_an_error_saying_it_is_the_operators() {
     for (file, key) in [
-        ("session-env = [\"GH_TOKEN\"]\n", "session-env"),
+        ("session-env = { RUST_LOG = \"info\" }\n", "session-env"),
+        ("session-pass-env = [\"GH_TOKEN\"]\n", "session-pass-env"),
         ("max-runs = 9\n", "max-runs"),
         ("secrets = \"KEY\"\n", "secrets"),
         (
-            "[stage.implement]\nsession-env = [\"DEPLOY_KEY\"]\n",
+            "[stage.implement]\nsession-pass-env = [\"DEPLOY_KEY\"]\n",
+            "session-pass-env",
+        ),
+        (
+            "[stage.implement]\nsession-env = { RUST_LOG = \"info\" }\n",
             "session-env",
         ),
     ] {
@@ -291,13 +301,44 @@ fn a_stage_has_no_flag() {
     assert!(Cli::try_parse_from(["lw", "--stage.implement.model", "opus", "status"]).is_err());
 }
 
+/// The variables a `stage` run's sessions are given, by name, under
+/// `config` and the environments `split` made.
+fn given(config: &Config, split: &Split, stage: WorkKind) -> Vec<(String, String)> {
+    let mut given: Vec<(String, String)> = config
+        .work
+        .for_run(
+            RunKind::Stage(stage),
+            &RepoSettings::default(),
+            &split.environments,
+        )
+        .environment
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    given.sort();
+    given
+}
+
+fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
+    values
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
 #[test]
-fn a_stages_session_env_adds_its_names_to_the_whole_pipelines_for_that_stage_only() {
+fn a_stages_session_pass_env_adds_its_names_to_the_whole_pipelines_for_that_stage_only() {
     let config = resolve(
         &[],
         &[],
         Some(
-            "session-env = [\"CARGO_HOME\"]\n\n[stage.implement]\nsession-env = [\"DEPLOY_KEY\"]\n",
+            "session-pass-env = [\"CARGO_HOME\"]\n\n\
+             [stage.implement]\nsession-pass-env = [\"DEPLOY_KEY\"]\n",
         ),
     )
     .unwrap();
@@ -312,26 +353,67 @@ fn a_stages_session_env_adds_its_names_to_the_whole_pipelines_for_that_stage_onl
         .work
         .environments(&config.session_env, environment, &[]);
 
-    let given = |stage| -> Vec<String> {
-        config
-            .work
-            .for_run(
-                RunKind::Stage(stage),
-                &RepoSettings::default(),
-                &split.environments,
-            )
-            .environment
-            .value
-            .iter()
-            .map(|(name, _)| name.to_string_lossy().into_owned())
-            .collect()
-    };
-    assert_eq!(given(WorkKind::Implement), ["CARGO_HOME", "DEPLOY_KEY"]);
-    assert_eq!(given(WorkKind::Rework), ["CARGO_HOME"]);
+    assert_eq!(
+        given(&config, &split, WorkKind::Implement),
+        pairs(&[("CARGO_HOME", "/cargo"), ("DEPLOY_KEY", "k")])
+    );
+    assert_eq!(
+        given(&config, &split, WorkKind::Rework),
+        pairs(&[("CARGO_HOME", "/cargo")])
+    );
     assert_eq!(split.withheld, ["DEPLOY_KEY", "OTHER"]);
     assert_eq!(
         split.added,
         [(WorkKind::Implement, vec!["DEPLOY_KEY".to_string()])].into()
+    );
+}
+
+#[test]
+fn a_stages_session_env_adds_its_values_to_the_whole_pipelines_for_that_stage_only() {
+    let config = resolve(
+        &["--session-env", "RUST_LOG=warn"],
+        &[],
+        Some(
+            "session-pass-env = [\"CARGO_HOME\", \"RUST_LOG\"]\n\
+             session-env = { CI = \"true\" }\n\n\
+             [stage.implement]\nsession-env = { RUST_LOG = \"debug\", CARGO_HOME = \"/stage\" }\n",
+        ),
+    )
+    .unwrap();
+    let environment = [("CARGO_HOME", "/cargo"), ("RUST_LOG", "info")]
+        .map(|(name, value)| (name.into(), value.into()));
+
+    let split = config
+        .work
+        .environments(&config.session_env, environment, &[]);
+
+    assert_eq!(
+        given(&config, &split, WorkKind::Implement),
+        pairs(&[
+            ("CARGO_HOME", "/stage"),
+            ("CI", "true"),
+            ("RUST_LOG", "debug")
+        ])
+    );
+    assert_eq!(
+        given(&config, &split, WorkKind::Rework),
+        pairs(&[
+            ("CARGO_HOME", "/cargo"),
+            ("CI", "true"),
+            ("RUST_LOG", "warn")
+        ])
+    );
+    assert_eq!(split.set, ["CI", "RUST_LOG"]);
+    assert_eq!(
+        split.stages_set,
+        [(
+            WorkKind::Implement,
+            StageSet {
+                own: vec!["CARGO_HOME".into(), "RUST_LOG".into()],
+                taken: vec!["CI".into()],
+            }
+        )]
+        .into()
     );
 }
 
@@ -370,7 +452,9 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
         Some("session-timeout = \"10m\"\n"),
     )
     .unwrap();
-    let from_variable = resolve(&[], &[("LINEWRIGHT_SESSION_ENV", "CARGO_HOME")], None).unwrap();
+    let from_variable =
+        resolve(&[], &[("LINEWRIGHT_SESSION_PASS_ENV", "CARGO_HOME")], None).unwrap();
+    let set_in_file = resolve(&[], &[], Some("session-env = { CI = \"true\" }\n")).unwrap();
     let defaults = resolve(&[], &[], None).unwrap();
 
     let flagged = session(&from_flag);
@@ -382,8 +466,37 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
         flagged.session_timeout,
         Sourced::new(Duration::from_mins(10), Layer::Operator)
     );
-    assert_eq!(flagged.environment.layer, Layer::Linewright);
-    assert_eq!(session(&from_variable).environment.layer, Layer::Operator);
+    let sources = |config| session(config).sources();
+    assert_eq!(
+        (
+            sources(&from_flag)[&Setting::SessionPassEnv],
+            sources(&from_flag)[&Setting::SessionEnv]
+        ),
+        (
+            Source::Layer(Layer::Linewright),
+            Source::Layer(Layer::Linewright)
+        )
+    );
+    assert_eq!(
+        (
+            sources(&from_variable)[&Setting::SessionPassEnv],
+            sources(&from_variable)[&Setting::SessionEnv]
+        ),
+        (
+            Source::Layer(Layer::Operator),
+            Source::Layer(Layer::Linewright)
+        )
+    );
+    assert_eq!(
+        (
+            sources(&set_in_file)[&Setting::SessionPassEnv],
+            sources(&set_in_file)[&Setting::SessionEnv]
+        ),
+        (
+            Source::Layer(Layer::Linewright),
+            Source::Layer(Layer::Operator)
+        )
+    );
     let defaulted = session(&defaults);
     assert_eq!(defaulted.model, None);
     assert_eq!(
@@ -807,59 +920,196 @@ fn help_lists_the_webhook_address_with_its_default() {
     );
 }
 
-fn session_env(names: &[&str]) -> SessionEnv {
-    SessionEnv::from(PassEnv::new(names.iter().map(ToString::to_string)).unwrap())
+fn pass_env(names: &[&str]) -> PassEnv {
+    PassEnv::new(names.iter().map(ToString::to_string)).unwrap()
+}
+
+fn set_env(values: &[(&str, &str)]) -> SetEnv {
+    SetEnv::new(
+        values
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string())),
+    )
+    .unwrap()
+}
+
+fn session_env(names: &[&str], values: &[(&str, &str)]) -> SessionEnv {
+    SessionEnv::new(pass_env(names), set_env(values))
 }
 
 #[test]
-fn session_env_is_a_flag_the_environment_or_the_file_naming_variables() {
-    let file = Some("session-env = [\"CARGO_HOME\", \"RUSTUP_HOME\"]\n");
-    let env = [("LINEWRIGHT_SESSION_ENV", "CARGO_*,SCCACHE_DIR")];
+fn session_pass_env_joins_the_names_of_the_flag_the_environment_and_the_file() {
+    let file = Some("session-pass-env = [\"CARGO_HOME\", \"RUSTUP_HOME\"]\n");
+    let env = [("LINEWRIGHT_SESSION_PASS_ENV", "CARGO_*,SCCACHE_DIR")];
 
     let from_file = resolve(&[], &[], file).unwrap();
-    let from_env = resolve(&[], &env, file).unwrap();
-    let from_flag = resolve(&["--session-env", "RUSTC_WRAPPER"], &env, file).unwrap();
+    let joined = resolve(&["--session-pass-env", "RUSTC_WRAPPER"], &env, file).unwrap();
 
     assert_eq!(
         from_file.session_env,
-        session_env(&["CARGO_HOME", "RUSTUP_HOME"])
+        session_env(&["CARGO_HOME", "RUSTUP_HOME"], &[])
     );
-    assert_eq!(
-        from_env.session_env,
-        session_env(&["CARGO_*", "SCCACHE_DIR"])
+    let given = joined.session_env.split(
+        [
+            "RUSTC_WRAPPER",
+            "CARGO_TARGET_DIR",
+            "SCCACHE_DIR",
+            "RUSTUP_HOME",
+            "OTHER",
+        ]
+        .map(|name| (name.into(), "v".into())),
+        &[],
     );
-    assert_eq!(from_flag.session_env, session_env(&["RUSTC_WRAPPER"]));
+    assert_eq!(given.withheld, ["OTHER"]);
 }
 
 #[test]
-fn session_env_naming_a_credential_of_linewrights_is_an_error_saying_why() {
+fn session_env_sets_each_name_from_the_flag_over_the_file() {
+    let config = resolve(
+        &["--session-env", "A=1"],
+        &[],
+        Some("session-env = { B = \"2\", A = \"3\" }\n"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.session_env,
+        session_env(&[], &[("A", "1"), ("B", "2")])
+    );
+}
+
+#[test]
+fn session_env_takes_its_values_as_written() {
+    let config = resolve(
+        &["--session-env", "URL=a=b,c", "--session-env", "EMPTY="],
+        &[],
+        Some("session-env = { HOME_TOO = \"$HOME\", LINES = \"one\\ntwo\" }\n"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.session_env,
+        session_env(
+            &[],
+            &[
+                ("URL", "a=b,c"),
+                ("EMPTY", ""),
+                ("HOME_TOO", "$HOME"),
+                ("LINES", "one\ntwo"),
+            ]
+        )
+    );
+}
+
+#[test]
+fn session_env_has_no_environment_variable() {
+    let config = resolve(&[], &[("LINEWRIGHT_SESSION_ENV", "A=1")], None).unwrap();
+
+    assert_eq!(config.session_env, SessionEnv::default());
+}
+
+#[test]
+fn a_mistake_in_session_envs_flag_is_a_command_line_error_naming_the_setting() {
+    for (entries, says) in [
+        (&["CARGO_HOME"][..], "`session-pass-env`"),
+        (&["A=1", "A=2"][..], "`A` twice"),
+        (&["=1"][..], "empty name"),
+        (&["A=x\0y"][..], "NUL"),
+        (&["TMPDIR=/tmp"][..], "`TMPDIR`"),
+    ] {
+        let args: Vec<&str> = entries
+            .iter()
+            .flat_map(|entry| ["--session-env", entry])
+            .collect();
+
+        let error = resolve(&args, &[], None).unwrap_err();
+
+        assert!(error.contains("`session-env`"), "{entries:?}: {error}");
+        assert!(error.contains(says), "{entries:?}: {error}");
+        assert!(blames_the_command_line(&args, &[], None), "{entries:?}");
+    }
+}
+
+#[test]
+fn a_mistake_in_session_env_in_the_file_is_an_error_naming_the_file_and_the_setting() {
+    for (file, says) in [
+        ("session-env = [\"CARGO_HOME\"]\n", "`session-pass-env`"),
+        ("session-env = { \"\" = \"1\" }\n", "empty name"),
+        ("session-env = { \"A=B\" = \"1\" }\n", "`=`"),
+        ("session-env = { A = \"x\\u0000y\" }\n", "NUL"),
+        ("session-env = { \"A\\u0000\" = \"y\" }\n", "NUL"),
+        ("session-env = { A = 1 }\n", "string"),
+        ("session-env = \"A=1\"\n", "`session-env`"),
+        ("[stage.implement]\nsession-env = { A = 1 }\n", "string"),
+        (
+            "[stage.implement]\nsession-env = [\"A\"]\n",
+            "`session-pass-env`",
+        ),
+    ] {
+        let error = resolve(&[], &[], Some(file)).unwrap_err();
+
+        assert!(error.contains("linewright.toml"), "{file}: {error}");
+        assert!(error.contains("`session-env`"), "{file}: {error}");
+        assert!(error.contains(says), "{file}: {error}");
+        assert!(!blames_the_command_line(&[], &[], Some(file)), "{file}");
+    }
+}
+
+#[test]
+fn session_env_setting_a_variable_linewright_may_set_itself_is_an_error() {
+    for name in [
+        "TMPDIR",
+        "CLAUDE_CODE_SHELL",
+        "DISABLE_UPDATES",
+        "CLAUDE_CODE_EFFORT_LEVEL",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ] {
+        let error = resolve(
+            &[],
+            &[],
+            Some(&format!("session-env = {{ {name} = \"x\" }}\n")),
+        )
+        .unwrap_err();
+
+        assert!(error.contains(&format!("`{name}`")), "{error}");
+        assert!(error.contains("Linewright sets"), "{error}");
+    }
+}
+
+#[test]
+fn session_pass_env_naming_a_credential_of_linewrights_is_an_error_saying_why() {
     for name in [
         "GH_TOKEN",
         "GITHUB_TOKEN",
         "LINEWRIGHT_SESSION_GITHUB_TOKEN",
         "LINEWRIGHT_WEBHOOK_SECRET",
     ] {
-        let error =
-            resolve(&["--session-env", &format!("CARGO_HOME,{name}")], &[], None).unwrap_err();
+        let error = resolve(
+            &["--session-pass-env", &format!("CARGO_HOME,{name}")],
+            &[],
+            None,
+        )
+        .unwrap_err();
 
-        assert!(error.contains("session-env"), "{error}");
+        assert!(error.contains("session-pass-env"), "{error}");
         assert!(error.contains(&format!("`{name}`")), "{error}");
         assert!(error.contains("never given"), "{error}");
     }
 }
 
 #[test]
-fn a_session_env_pattern_matching_a_credential_of_linewrights_is_no_error() {
-    let config = resolve(&["--session-env", "GH_*,LINEWRIGHT_*"], &[], None);
+fn a_session_pass_env_pattern_matching_a_credential_of_linewrights_is_no_error() {
+    let config = resolve(&["--session-pass-env", "GH_*,LINEWRIGHT_*"], &[], None);
 
     assert!(config.is_ok());
 }
 
 #[test]
-fn session_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
+fn session_pass_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
     for name in ["CARGO_*_HOME", "*CARGO"] {
         let error = resolve(
-            &["--session-env", &format!("RUSTUP_HOME,{name}")],
+            &["--session-pass-env", &format!("RUSTUP_HOME,{name}")],
             &[],
             None,
         )
@@ -867,7 +1117,7 @@ fn session_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
 
         assert!(
             error.contains(&format!(
-                "the setting `session-env` names `{name}`: a `*` can only end a name"
+                "the setting `session-pass-env` names `{name}`: a `*` can only end a name"
             )),
             "{error}"
         );
@@ -875,9 +1125,15 @@ fn session_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
 }
 
 #[test]
-fn help_lists_session_env_with_its_default() {
-    let (help, line) = help_for("--session-env");
-    assert!(line.contains("[default: none]"), "{help}");
+fn help_lists_session_env_and_session_pass_env_with_their_forms() {
+    for (flag, form) in [
+        ("--session-env", "--session-env <NAME=VALUE>"),
+        ("--session-pass-env", "--session-pass-env <NAMES>"),
+    ] {
+        let (help, line) = help_for(flag);
+        assert!(line.contains(form), "{help}");
+        assert!(line.contains("[default: none]"), "{help}");
+    }
 }
 
 fn secrets(names: &[&str]) -> VariableNames {

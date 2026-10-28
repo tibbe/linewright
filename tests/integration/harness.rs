@@ -9,7 +9,7 @@ use linewright::harness::claude::ClaudeCode;
 use linewright::harness::{Harness, Purpose, Reported, Reporter, SessionError, SessionSpec};
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
-use linewright::session_env::{Given, PassEnv, SessionEnv};
+use linewright::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 use linewright::transcript::{Prompt, What};
 use linewright::work_settings::Effort;
 use serde_json::{Value, json};
@@ -211,7 +211,7 @@ fn session_variables(dir: &Path) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() {
+async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_name() {
     let dir = tempfile::tempdir().unwrap();
     let path = std::env::var("PATH").unwrap();
     let linewrights = [
@@ -233,8 +233,9 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() 
         ("TMPDIR", "/tmp"),
         ("GH_TOKEN", "linewright-token"),
     ];
-    let session_env = SessionEnv::from(
+    let session_env = SessionEnv::new(
         PassEnv::new(["CARGO_*", "RUSTUP_HOME", "LINEWRIGHT_*"].map(String::from)).unwrap(),
+        SetEnv::default(),
     );
     let harness = harness_without_token(dir.path());
     let mut session = triage_session(dir.path());
@@ -275,6 +276,51 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() 
         "{env}"
     );
     assert!(env.contains("DISABLE_UPDATES=1\n"), "{env}");
+}
+
+#[tokio::test]
+async fn a_session_is_given_the_values_session_env_sets_over_passed_ones_and_below_linewrights() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = std::env::var("PATH").unwrap();
+    let linewrights = [
+        ("PATH", path.as_str()),
+        ("CARGO_HOME", "/usr/local/cargo"),
+        ("TMPDIR", "/tmp"),
+    ];
+    let session_env = SessionEnv::new(
+        PassEnv::new(["CARGO_HOME", "TMPDIR"].map(String::from)).unwrap(),
+        SetEnv::new(
+            [
+                ("CARGO_HOME", "/opt/cargo"),
+                ("RUST_LOG", "$RUST_LOG"),
+                ("EMPTY", ""),
+            ]
+            .map(|(name, value)| (name.to_string(), value.to_string())),
+        )
+        .unwrap(),
+    );
+    let harness = harness_without_token(dir.path());
+    let mut session = triage_session(dir.path());
+    session.environment = Arc::new(
+        session_env
+            .split(
+                linewrights.map(|(name, value)| (name.into(), value.into())),
+                &[],
+            )
+            .given,
+    );
+
+    harness.start(&session).await.unwrap();
+
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(session_variable(&env, "CARGO_HOME"), Some("/opt/cargo"));
+    assert_eq!(session_variable(&env, "RUST_LOG"), Some("$RUST_LOG"));
+    assert_eq!(session_variable(&env, "EMPTY"), Some(""));
+    let scratch = dir.path().join("tmp");
+    assert_eq!(
+        session_variable(&env, "TMPDIR"),
+        Some(scratch.to_str().unwrap())
+    );
 }
 
 #[tokio::test]

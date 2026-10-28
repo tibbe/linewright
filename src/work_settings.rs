@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::automation::Automation;
 use crate::layer::{Layer, Source, Sourced};
 use crate::reconcile::WorkKind;
-use crate::session_env::{Given, SessionEnv};
+use crate::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 
 /// `session-timeout`'s default.
 pub const SESSION_TIMEOUT: Duration = Duration::from_mins(60);
@@ -79,14 +79,16 @@ pub enum Setting {
     Effort,
     SessionTimeout,
     SessionEnv,
+    SessionPassEnv,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 4] = [
+    pub const ALL: [Setting; 5] = [
         Setting::Model,
         Setting::Effort,
         Setting::SessionTimeout,
         Setting::SessionEnv,
+        Setting::SessionPassEnv,
     ];
 
     /// Its key in a config file.
@@ -96,6 +98,7 @@ impl Setting {
             Setting::Effort => "effort",
             Setting::SessionTimeout => "session-timeout",
             Setting::SessionEnv => "session-env",
+            Setting::SessionPassEnv => "session-pass-env",
         }
     }
 }
@@ -137,14 +140,30 @@ pub struct Partial {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StageTable {
     pub settings: Partial,
+    /// The values it adds to the whole pipeline's, `None` when it sets
+    /// none.
+    pub session_env: Option<SetEnv>,
+    /// The names it adds to the whole pipeline's, `None` when it sets none.
+    pub session_pass_env: Option<PassEnv>,
+}
+
+impl StageTable {
     /// What it adds to the whole pipeline's sessions' environment, `None`
-    /// when it sets none of its settings.
-    pub session_env: Option<SessionEnv>,
+    /// when it sets neither of its settings.
+    fn session_environment(&self) -> Option<SessionEnv> {
+        if self.session_env.is_none() && self.session_pass_env.is_none() {
+            return None;
+        }
+        Some(SessionEnv::new(
+            self.session_pass_env.clone().unwrap_or_default(),
+            self.session_env.clone().unwrap_or_default(),
+        ))
+    }
 }
 
 /// The operator's settings for sessions, each of its layers kept apart so
 /// that a run can rank the repository's between them.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct WorkSettings {
     pub flags_and_env: Partial,
     /// The operator's config file, but for the settings `flags_and_env`
@@ -152,17 +171,37 @@ pub struct WorkSettings {
     pub file: Partial,
     /// The operator's file's `[stage.NAME]` tables.
     pub stages: BTreeMap<WorkKind, StageTable>,
-    /// The layer the whole pipeline's `session-env` came from.
-    pub session_env: Layer,
+    /// The layers the whole pipeline's `session-env` and
+    /// `session-pass-env` came from.
+    pub env_layers: EnvLayers,
 }
 
-impl Default for WorkSettings {
-    fn default() -> WorkSettings {
-        WorkSettings {
-            flags_and_env: Partial::default(),
-            file: Partial::default(),
-            stages: BTreeMap::new(),
-            session_env: Layer::Linewright,
+/// The layers `session-env` and `session-pass-env` came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnvLayers {
+    pub set: Layer,
+    pub pass: Layer,
+}
+
+impl Default for EnvLayers {
+    fn default() -> EnvLayers {
+        EnvLayers {
+            set: Layer::Linewright,
+            pass: Layer::Linewright,
+        }
+    }
+}
+
+impl EnvLayers {
+    /// These for a stage whose table, the operator's, is `table`.
+    fn with(self, table: Option<&StageTable>) -> EnvLayers {
+        let Some(table) = table else {
+            return self;
+        };
+        let operator_if = |sets: bool, layer| if sets { Layer::Operator } else { layer };
+        EnvLayers {
+            set: operator_if(table.session_env.is_some(), self.set),
+            pass: operator_if(table.session_pass_env.is_some(), self.pass),
         }
     }
 }
@@ -191,7 +230,7 @@ pub enum RunKind<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct Environments {
     pipeline: Arc<Given>,
-    /// The stages whose tables add to `session-env`.
+    /// The stages whose tables add to `session-env` or `session-pass-env`.
     stages: BTreeMap<WorkKind, Arc<Given>>,
 }
 
@@ -204,6 +243,19 @@ pub struct Split {
     pub withheld: Vec<String>,
     /// Of `withheld`, the names each stage's table gives its sessions.
     pub added: BTreeMap<WorkKind, Vec<String>>,
+    /// The names the whole pipeline's `session-env` sets, sorted.
+    pub set: Vec<String>,
+    /// The names set for each stage whose table sets `session-env`.
+    pub stages_set: BTreeMap<WorkKind, StageSet>,
+}
+
+/// The names `session-env` sets for a stage whose table sets it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct StageSet {
+    /// Those its table sets, sorted.
+    pub own: Vec<String>,
+    /// Those it takes from the whole pipeline's, sorted.
+    pub taken: Vec<String>,
 }
 
 /// The setting a session's timeout came from. A timeout bounds what a run
@@ -240,7 +292,8 @@ pub struct SessionSettings {
     pub effort: Option<Sourced<Effort>>,
     pub session_timeout: Sourced<Duration>,
     pub timeout_setting: TimeoutSetting,
-    pub environment: Sourced<Arc<Given>>,
+    pub environment: Arc<Given>,
+    pub env_layers: EnvLayers,
 }
 
 impl SessionSettings {
@@ -270,7 +323,8 @@ impl SessionSettings {
                 Setting::SessionTimeout,
                 Source::Layer(self.session_timeout.layer),
             ),
-            (Setting::SessionEnv, Source::Layer(self.environment.layer)),
+            (Setting::SessionEnv, Source::Layer(self.env_layers.set)),
+            (Setting::SessionPassEnv, Source::Layer(self.env_layers.pass)),
         ])
     }
 }
@@ -364,19 +418,13 @@ impl WorkSettings {
                 ),
             };
         let staged_environment = stage.and_then(|stage| environments.stages.get(&stage));
-        let environment_layer = match table.and_then(|table| table.session_env.as_ref()) {
-            Some(_) => Layer::Operator,
-            None => self.session_env,
-        };
         SessionSettings {
             model,
             effort,
             session_timeout,
             timeout_setting,
-            environment: Sourced::new(
-                staged_environment.unwrap_or(&environments.pipeline).clone(),
-                environment_layer,
-            ),
+            environment: staged_environment.unwrap_or(&environments.pipeline).clone(),
+            env_layers: self.env_layers.with(table),
         }
     }
 
@@ -394,12 +442,28 @@ impl WorkSettings {
         let pipeline = session_env.split(environment.iter().cloned(), set_by_linewright);
         let mut stages = BTreeMap::new();
         let mut added = BTreeMap::new();
+        let set = session_env.set_names();
+        let mut stages_set = BTreeMap::new();
         for (&stage, table) in &self.stages {
-            let Some(more) = &table.session_env else {
+            let Some(more) = table.session_environment() else {
                 continue;
             };
+            if table.session_env.is_some() {
+                let own = more.set_names();
+                stages_set.insert(
+                    stage,
+                    StageSet {
+                        taken: set
+                            .iter()
+                            .filter(|name| !own.contains(name))
+                            .cloned()
+                            .collect(),
+                        own,
+                    },
+                );
+            }
             let split = session_env
-                .and(more)
+                .and(&more)
                 .split(environment.iter().cloned(), set_by_linewright);
             added.insert(
                 stage,
@@ -419,6 +483,8 @@ impl WorkSettings {
             },
             withheld: pipeline.withheld,
             added,
+            set,
+            stages_set,
         }
     }
 }
