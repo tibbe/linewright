@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    Assignment, BranchIssue, CheckState, ClosedItem, ClosingPull, Comment, DesignedLabel, Filed,
-    HandBackKind, Issue, Item, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull,
-    Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
-    StatusLabel, Thread, TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, Windows,
-    label, last_assigned, last_assignment, last_labeling, last_unassignment,
+    Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, HandBackKind,
+    Issue, Item, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull,
+    PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
+    TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, Windows, label, last_assigned,
+    last_assignment, last_labeling, last_unassignment,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
@@ -42,13 +42,6 @@ impl Policy {
         self.require_label
             .as_ref()
             .is_none_or(|required| labels.contains(required))
-    }
-
-    /// Whether `item`, closed, was managed: marked for Linewright, or worked
-    /// by it (`GLOSSARY.md`, **Managed**), as `status::standing` asks of an
-    /// open issue.
-    pub(crate) fn manages_closed(&self, item: &ClosedItem) -> bool {
-        self.marks(item.labels()) || item.worked_by(&self.linewright)
     }
 
     /// The windows open at `now`.

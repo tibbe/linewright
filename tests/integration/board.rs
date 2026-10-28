@@ -1835,14 +1835,15 @@ fn with_a_required_label_a_closed_issue_without_it_that_linewright_never_worked_
 }
 
 #[test]
-fn with_a_required_label_a_closed_issue_carrying_it_is_in_done() {
+fn with_a_required_label_a_closed_issue_carrying_it_that_linewright_never_worked_is_not_on_the_board()
+ {
     let mut closed = persons_closed_issue(1);
     if let ClosedKind::Issue { labels, .. } = &mut closed.kind {
         labels.push("linewright".into());
     }
     let view = requiring_label(with_closed(view(vec![], vec![]), vec![closed]));
 
-    assert_eq!(placed(&board(&view, &[], at(NOW))), [(1, Column::Done, 1)]);
+    assert_eq!(placed(&board(&view, &[], at(NOW))), []);
 }
 
 #[test]
@@ -1901,10 +1902,10 @@ fn with_a_required_label_a_closed_issue_without_it_closed_by_a_pull_request_of_l
 }
 
 #[test]
-fn with_no_required_label_a_closed_issue_linewright_never_worked_is_in_done() {
+fn with_no_required_label_a_closed_issue_linewright_never_worked_is_not_on_the_board() {
     let view = with_closed(view(vec![], vec![]), vec![persons_closed_issue(1)]);
 
-    assert_eq!(placed(&board(&view, &[], at(NOW))), [(1, Column::Done, 1)]);
+    assert_eq!(placed(&board(&view, &[], at(NOW))), []);
 }
 
 #[test]

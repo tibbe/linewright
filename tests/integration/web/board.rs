@@ -968,8 +968,7 @@ async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_
 }
 
 #[tokio::test]
-async fn with_a_required_label_done_holds_only_the_closed_issues_marked_for_linewright_or_worked_by_it()
- {
+async fn with_a_required_label_done_holds_only_the_closed_issues_linewright_worked() {
     let world = World::with(|c| c.require_label = Some(REQUIRED.into())).await;
     let open = |author: &str, title: &str, labels: &[&str]| {
         world.store.open_issue(author, title, "Maybe.", labels)
@@ -1027,7 +1026,6 @@ async fn with_a_required_label_done_holds_only_the_closed_issues_marked_for_line
     assert_eq!(
         shown,
         [
-            "Done: #3: Marked",
             "Done: #4: Filed by Linewright",
             "Done: #5: Assigned",
             "Done: #6: Handed back",

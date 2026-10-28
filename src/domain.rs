@@ -682,7 +682,7 @@ impl Issue {
         self.assignees.contains(login)
     }
 
-    /// Whether `linewright` has worked it (`GLOSSARY.md`, **Managed**), as
+    /// Whether `linewright` has worked it (`GLOSSARY.md`, **Worked**), as
     /// `snapshot`, which holds the pull requests closing it, tells.
     pub fn worked_by(&self, linewright: &Login, snapshot: &Snapshot) -> bool {
         WorkSigns {
@@ -1057,7 +1057,7 @@ pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<EventOrder> {
 }
 
 /// What tells whether Linewright has worked an issue, open or closed
-/// (`GLOSSARY.md`, **Managed**).
+/// (`GLOSSARY.md`, **Worked**).
 struct WorkSigns<'a> {
     author: Option<&'a Login>,
     assignees: &'a [Login],
@@ -1068,8 +1068,11 @@ struct WorkSigns<'a> {
 }
 
 impl WorkSigns<'_> {
-    /// Whether `linewright` filed it, is or ever was assigned to it, wrote a
-    /// pull request closing it, or tracks tickets with it.
+    /// Whether `linewright` worked it:
+    ///
+    /// - it filed it, or tracks tickets with it: it opened it;
+    /// - it is or ever was assigned to it: it claimed it;
+    /// - it wrote a pull request closing it: it opened that pull request.
     fn worked_by(&self, linewright: &Login) -> bool {
         self.author == Some(linewright)
             || self.assignees.contains(linewright)
@@ -1214,7 +1217,7 @@ pub struct Snapshot {
     /// The issues closed within the Done window that the snapshot would hold
     /// were they open, and Linewright's pull requests closed without merging
     /// within it, for the board's Done column (`docs/specs/design_system.md`,
-    /// "The board"), which keeps only those managed. The reconcile ignores
+    /// "The board"), which keeps only those worked. The reconcile ignores
     /// them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
@@ -1248,16 +1251,9 @@ impl ClosedItem {
         }
     }
 
-    /// Its labels; a pull request's are not read.
-    pub fn labels(&self) -> &[String] {
-        match &self.kind {
-            ClosedKind::Issue { labels, .. } => labels,
-            ClosedKind::Pull { .. } => &[],
-        }
-    }
-
-    /// Whether `linewright` has worked it, as [`Issue::worked_by`] tells. A
-    /// pull request is Linewright's own.
+    /// Whether `linewright` has worked it (`GLOSSARY.md`, **Worked**), as
+    /// [`Issue::worked_by`] tells. A pull request is Linewright's own: it
+    /// opened it.
     pub fn worked_by(&self, linewright: &Login) -> bool {
         match &self.kind {
             ClosedKind::Issue { work, .. } => WorkSigns {

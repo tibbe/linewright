@@ -143,6 +143,25 @@ async fn the_item_page_of_an_issue_closed_in_the_window_shows_it_in_done() {
 }
 
 #[tokio::test]
+async fn with_a_required_label_the_item_page_of_a_closed_issue_carrying_it_linewright_never_worked_says_left_alone()
+ {
+    let world = World::with(|c| c.require_label = Some(REQUIRED.into())).await;
+    let closed = world.store.open_issue(
+        "maintainer",
+        "Old idea",
+        "Maybe.",
+        &["ready-for-agent", REQUIRED],
+    );
+    world.store.close_issue_as_completed(closed).unwrap();
+    let web = Web::start(world).await;
+
+    let html = web.page(&format!("/items/{}", closed.0)).await;
+
+    assert_eq!(fact(&item_facts(&html), "State"), "Left alone · closed");
+    web.stop().await;
+}
+
+#[tokio::test]
 async fn with_a_required_label_the_item_page_of_a_closed_issue_without_it_linewright_never_worked_says_left_alone()
  {
     let world = World::with(|c| c.require_label = Some(REQUIRED.into())).await;

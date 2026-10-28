@@ -481,7 +481,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         else {
             continue;
         };
-        if item.tracks(linewright).is_some() || !view.policy.manages_closed(item) {
+        if item.tracks(linewright).is_some() || !item.worked_by(linewright) {
             continue;
         }
         let ended = merged_by.map_or(Ended::Closed(reason), Ended::ClosedIn);
