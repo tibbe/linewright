@@ -685,15 +685,14 @@ impl Issue {
     /// Whether `linewright` has worked it (`GLOSSARY.md`, **Managed**), as
     /// `snapshot`, which holds the pull requests closing it, tells.
     pub fn worked_by(&self, linewright: &Login, snapshot: &Snapshot) -> bool {
-        self.author == *linewright
-            || self.is_assigned(linewright)
-            || last_assignment(&self.events, linewright).is_some()
-            || last_unassignment(&self.events, linewright).is_some()
-            || snapshot
-                .pulls_closing(self)
-                .iter()
-                .any(|pr| pr.author == *linewright)
-            || self.tracks(linewright).is_some()
+        WorkSigns {
+            author: Some(&self.author),
+            assignees: &self.assignees,
+            events: &self.events,
+            closed_by: &snapshot.pulls_closing(self),
+            tracks: self.tracks(linewright).is_some(),
+        }
+        .worked_by(linewright)
     }
 
     pub fn last_reopened(&self) -> Option<Timestamp> {
@@ -1057,6 +1056,30 @@ pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<EventOrder> {
         .max()
 }
 
+/// What tells whether Linewright has worked an issue, open or closed
+/// (`GLOSSARY.md`, **Managed**).
+struct WorkSigns<'a> {
+    author: Option<&'a Login>,
+    assignees: &'a [Login],
+    events: &'a [IssueEvent],
+    closed_by: &'a [ClosingPull],
+    /// Whether it is a tracking issue.
+    tracks: bool,
+}
+
+impl WorkSigns<'_> {
+    /// Whether `linewright` filed it, is or ever was assigned to it, wrote a
+    /// pull request closing it, or tracks tickets with it.
+    fn worked_by(&self, linewright: &Login) -> bool {
+        self.author == Some(linewright)
+            || self.assignees.contains(linewright)
+            || last_assignment(self.events, linewright).is_some()
+            || last_unassignment(self.events, linewright).is_some()
+            || self.closed_by.iter().any(|pr| pr.author == *linewright)
+            || self.tracks
+    }
+}
+
 /// When `assignee` was last assigned among `events`, by anyone.
 pub fn last_assigned(events: &[IssueEvent], assignee: &Login) -> Option<Timestamp> {
     last_assignment(events, assignee).map(|(order, _)| order.at)
@@ -1191,7 +1214,8 @@ pub struct Snapshot {
     /// The issues closed since the spec lookback window opened that the
     /// snapshot would hold were they open, and Linewright's pull requests
     /// closed without merging since then, for the board's Done column
-    /// (`docs/specs/design_system.md`, "The board"). The reconcile ignores them.
+    /// (`docs/specs/design_system.md`, "The board"), which keeps only those
+    /// managed. The reconcile ignores them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
 }
@@ -1227,6 +1251,30 @@ impl ClosedItem {
             ClosedKind::Pull { .. } => None,
         }
     }
+
+    /// Its labels; a pull request's are not read.
+    pub fn labels(&self) -> &[String] {
+        match &self.kind {
+            ClosedKind::Issue { labels, .. } => labels,
+            ClosedKind::Pull { .. } => &[],
+        }
+    }
+
+    /// Whether `linewright` has worked it, as [`Issue::worked_by`] tells. A
+    /// pull request is Linewright's own.
+    pub fn worked_by(&self, linewright: &Login) -> bool {
+        match &self.kind {
+            ClosedKind::Issue { work, .. } => WorkSigns {
+                author: work.author.as_ref(),
+                assignees: &work.assignees,
+                events: &work.events,
+                closed_by: &work.closed_by,
+                tracks: self.tracks(linewright).is_some(),
+            }
+            .worked_by(linewright),
+            ClosedKind::Pull { .. } => true,
+        }
+    }
 }
 
 /// Those of `closed` closed since `window_opened`, in number order, as a
@@ -1257,9 +1305,22 @@ pub enum ClosedKind {
         /// Linewright read it.
         #[serde(default)]
         reason: Option<IssueCloseReason>,
+        /// None of it known in a snapshot taken before Linewright read it.
+        #[serde(default)]
+        work: WorkFacts,
     },
     /// Linewright's, closed without merging.
     Pull { closes: Vec<Number> },
+}
+
+/// What a closed issue holds that tells whether Linewright has worked it, as
+/// an [`Issue`]'s fields of the same names do.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkFacts {
+    pub author: Option<Login>,
+    pub assignees: Vec<Login>,
+    pub events: Vec<IssueEvent>,
+    pub closed_by: Vec<ClosingPull>,
 }
 
 /// Why an issue was closed, as GitHub records it
@@ -1624,6 +1685,33 @@ mod tests {
             snapshot.closed[0].kind,
             ClosedKind::Issue { reason: None, .. }
         ));
+    }
+
+    /// A snapshot as Linewright wrote it before it held who filed a closed
+    /// issue, who was assigned to it and the pull requests closing it: none
+    /// of them is known.
+    #[test]
+    fn a_snapshot_written_before_closed_issues_held_how_they_were_worked_loads_with_none_known() {
+        let snapshot: Snapshot = serde_json::from_str(
+            r#"{
+              "default_branch": "main",
+              "issues": [],
+              "pulls": [],
+              "merged": [],
+              "closed": [{
+                "number": 2, "title": "Ticket 2", "closed_at": "2026-09-28T13:00:00Z",
+                "updated_at": "2026-09-28T13:00:00Z", "kind": "issue", "parent": null,
+                "filed": null, "sub_issues": [], "labels": ["ready-for-agent"],
+                "merged_by": null, "reason": "completed"
+              }]
+            }"#,
+        )
+        .unwrap();
+
+        let ClosedKind::Issue { work, .. } = &snapshot.closed[0].kind else {
+            panic!("an issue");
+        };
+        assert_eq!(*work, WorkFacts::default());
     }
 
     /// A snapshot as Linewright wrote it before it held when each item was

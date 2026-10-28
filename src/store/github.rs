@@ -21,7 +21,7 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Linked, Login,
     MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
     Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread,
-    TicketBranch, TicketBranchName, Timestamp, closed_within, label,
+    TicketBranch, TicketBranchName, Timestamp, WorkFacts, closed_within, label,
 };
 use crate::git;
 
@@ -1379,19 +1379,32 @@ struct GqlClosingPull {
 /// latest closing: the pull request whose merge closed it, a commit, or none
 /// when a person closed it
 /// (<https://docs.github.com/en/graphql/reference/objects#closedevent>).
-/// Twenty issues with the four connections each cost 81 requests, which
-/// rounds to 1 point.
+/// With its assignees, assignments and the pull requests closing it, which
+/// tell whether Linewright worked it. Twenty issues with the six connections
+/// each cost 121 requests, which rounds to 1 point
+/// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
 const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
     name: "ClosedIssueFields",
-    text: "fragment ClosedIssueFields on Issue {
+    text: concat!(
+        "fragment ClosedIssueFields on Issue {
   number title body closedAt updatedAt stateReason
   author { __typename login }
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
   subIssues(first: 100) { nodes { number state author { __typename login } } }
   parent { number title body author { __typename login } }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
   timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) { nodes { ... on ClosedEvent { closer { __typename ... on PullRequest { number } } } } }
-}",
+  assignments: timelineItems(last: 100, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+    nodes {
+      __typename
+      ",
+        assignment_fields!(),
+        "
+    }
+  }
+}"
+    ),
 };
 
 #[derive(Deserialize)]
@@ -1405,9 +1418,12 @@ struct GqlClosedIssue {
     state_reason: Option<GqlStateReason>,
     author: Option<Actor>,
     labels: Nodes<Name>,
+    assignees: Nodes<LoginNode>,
     sub_issues: Option<Nodes<SubIssueNode>>,
     parent: Option<LinkedIssueNode>,
+    closed_by_pull_requests_references: Option<Nodes<GqlClosingPull>>,
     timeline_items: Nodes<GqlClosedEvent>,
+    assignments: Nodes<GqlEvent>,
 }
 
 #[derive(Deserialize)]
@@ -1450,6 +1466,12 @@ impl GqlClosedIssue {
                 labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
                 merged_by,
                 reason: self.state_reason.and_then(GqlStateReason::reason),
+                work: WorkFacts {
+                    author: Some(author),
+                    assignees: logins(self.assignees),
+                    events: events(self.assignments.nodes),
+                    closed_by: closing_pulls(self.closed_by_pull_requests_references),
+                },
             },
             title: self.title,
         })
@@ -1624,20 +1646,23 @@ impl GqlIssue {
             parent: i.parent.map(|p| p.into_parent(linewright)),
             events,
             filed,
-            closed_by: i
-                .closed_by_pull_requests_references
-                .map(|n| n.nodes)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|p| ClosingPull {
-                    number: Number(p.number),
-                    state: pull_state(&p.state, p.is_draft, p.merged_at, p.closed_at),
-                    author: login(p.author),
-                    updated_at: p.updated_at,
-                })
-                .collect(),
+            closed_by: closing_pulls(i.closed_by_pull_requests_references),
         }
     }
+}
+
+fn closing_pulls(nodes: Option<Nodes<GqlClosingPull>>) -> Vec<ClosingPull> {
+    nodes
+        .map(|n| n.nodes)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| ClosingPull {
+            number: Number(p.number),
+            state: pull_state(&p.state, p.is_draft, p.merged_at, p.closed_at),
+            author: login(p.author),
+            updated_at: p.updated_at,
+        })
+        .collect()
 }
 
 fn events(nodes: Vec<GqlEvent>) -> Vec<IssueEvent> {
@@ -3687,6 +3712,10 @@ mod tests {
                         labels: vec![],
                         merged_by: None,
                         reason: Some(IssueCloseReason::Completed),
+                        work: WorkFacts {
+                            author: Some(Login::new("tibbe-bot")),
+                            ..WorkFacts::default()
+                        },
                     },
                 },
                 ClosedItem {
@@ -3706,9 +3735,76 @@ mod tests {
                         labels: vec!["ready-for-agent".into(), "linewright:designed".into()],
                         merged_by: Some(Number(391)),
                         reason: Some(IssueCloseReason::Completed),
+                        work: WorkFacts {
+                            author: Some(Login::new("tibbe-bot")),
+                            assignees: vec![Login::new("tibbe-bot")],
+                            events: vec![IssueEvent::Assignment(Assignment::Assigned {
+                                assignee: Login::new("tibbe-bot"),
+                                actor: Login::new("tibbe-bot"),
+                                at: at("2026-10-20T13:49:39Z"),
+                            })],
+                            closed_by: vec![ClosingPull {
+                                number: Number(391),
+                                author: Login::new("tibbe-bot"),
+                                state: PullState::Merged {
+                                    at: at("2026-10-20T14:10:30Z"),
+                                },
+                                updated_at: at("2026-10-20T14:10:34Z"),
+                            }],
+                        },
                     },
                 },
             ]
+        );
+    }
+
+    /// `fixtures/closed-issue-worked.json` is `ClosedIssueFields` as GitHub
+    /// returned it for <https://github.com/tibbe/linewright/issues/673>, a
+    /// person's issue Linewright claimed, let go of, claimed again and closed
+    /// with its merged pull request #675.
+    #[test]
+    fn a_closed_issue_is_held_with_its_assignees_assignments_and_the_pull_requests_closing_it() {
+        let issue: GqlClosedIssue =
+            serde_json::from_str(include_str!("fixtures/closed-issue-worked.json")).unwrap();
+
+        let closed = issue.into_closed(&Login::new("tibbe-bot")).unwrap();
+
+        let ClosedKind::Issue { work, .. } = closed.kind else {
+            panic!("an issue");
+        };
+        let bot = || Login::new("tibbe-bot");
+        assert_eq!(work.author, Some(Login::new("tibbe")));
+        assert_eq!(work.assignees, [bot()]);
+        assert_eq!(
+            work.events,
+            [
+                IssueEvent::Assignment(Assignment::Assigned {
+                    assignee: bot(),
+                    actor: bot(),
+                    at: at("2026-10-27T05:29:42Z"),
+                }),
+                IssueEvent::Assignment(Assignment::Unassigned {
+                    assignee: bot(),
+                    actor: bot(),
+                    at: at("2026-10-27T05:30:54Z"),
+                }),
+                IssueEvent::Assignment(Assignment::Assigned {
+                    assignee: bot(),
+                    actor: bot(),
+                    at: at("2026-10-27T05:40:47Z"),
+                }),
+            ]
+        );
+        assert_eq!(
+            work.closed_by,
+            [ClosingPull {
+                number: Number(675),
+                author: bot(),
+                state: PullState::Merged {
+                    at: at("2026-10-27T05:54:12Z"),
+                },
+                updated_at: at("2026-10-27T05:54:14Z"),
+            }]
         );
     }
 

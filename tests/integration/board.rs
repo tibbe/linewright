@@ -132,6 +132,7 @@ fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedI
             labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
             merged_by: merged_by.map(Number),
             reason: None,
+            work: WorkFacts::default(),
         },
     }
 }
@@ -559,6 +560,7 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
         labels: vec![label::DESIGNED.into()],
         merged_by: Some(Number(40)),
         reason: None,
+        work: WorkFacts::default(),
     };
     let view = with_closed(
         view(
@@ -706,6 +708,7 @@ fn closed_ticket(number: u64, tracking: u64, closed_at: &str) -> ClosedItem {
         labels: vec![label::DESIGNED.into()],
         merged_by: Some(Number(number + 100)),
         reason: None,
+        work: WorkFacts::default(),
     };
     closed
 }
@@ -1763,5 +1766,133 @@ fn a_card_in_done_has_no_card_status() {
             (30, None),
             (40, None)
         ]
+    );
+}
+
+/// A person's issue #`number`, labeled `ready-for-agent`, closed by hand
+/// within the window.
+fn persons_closed_issue(number: u64) -> ClosedItem {
+    let mut closed = closed_issue(number, "2026-09-30T12:00:00Z", None);
+    if let ClosedKind::Issue { labels, .. } = &mut closed.kind {
+        *labels = vec!["ready-for-agent".into()];
+    }
+    closed
+}
+
+/// `view` with `linewright` as its required label.
+fn requiring_label(mut view: View) -> View {
+    view.policy.require_label = Some("linewright".into());
+    view
+}
+
+/// Where the cards are with `linewright` the required label and `closed`
+/// the one item, a person's issue closed within the window, worked as
+/// `work` tells.
+fn placed_requiring_label(work: WorkFacts) -> Vec<(u64, Column, u64)> {
+    let mut closed = persons_closed_issue(1);
+    if let ClosedKind::Issue { work: held, .. } = &mut closed.kind {
+        *held = work;
+    }
+    let view = requiring_label(with_closed(view(vec![], vec![]), vec![closed]));
+    placed(&board(&view, &[], at(NOW)))
+}
+
+#[test]
+fn with_a_required_label_a_closed_issue_without_it_that_linewright_never_worked_is_not_on_the_board()
+ {
+    let theirs = WorkFacts {
+        author: Some(Login::new("maintainer")),
+        assignees: vec![Login::new("alice")],
+        ..WorkFacts::default()
+    };
+
+    assert_eq!(placed_requiring_label(theirs), []);
+}
+
+#[test]
+fn with_a_required_label_a_closed_issue_carrying_it_is_in_done() {
+    let mut closed = persons_closed_issue(1);
+    if let ClosedKind::Issue { labels, .. } = &mut closed.kind {
+        labels.push("linewright".into());
+    }
+    let view = requiring_label(with_closed(view(vec![], vec![]), vec![closed]));
+
+    assert_eq!(placed(&board(&view, &[], at(NOW))), [(1, Column::Done, 1)]);
+}
+
+#[test]
+fn with_a_required_label_a_closed_issue_without_it_that_linewright_filed_is_in_done() {
+    let filed = WorkFacts {
+        author: Some(Login::new("factory")),
+        ..WorkFacts::default()
+    };
+
+    assert_eq!(placed_requiring_label(filed), [(1, Column::Done, 1)]);
+}
+
+#[test]
+fn with_a_required_label_a_closed_issue_without_it_assigned_to_linewright_is_in_done() {
+    let assigned = WorkFacts {
+        assignees: vec![Login::new("factory")],
+        ..WorkFacts::default()
+    };
+
+    assert_eq!(placed_requiring_label(assigned), [(1, Column::Done, 1)]);
+}
+
+#[test]
+fn with_a_required_label_a_closed_issue_without_it_linewright_claimed_and_was_unassigned_from_is_in_done()
+ {
+    let handed_back = WorkFacts {
+        events: vec![
+            assigning_linewright("2026-09-29T10:00:00Z"),
+            unassigning_linewright("2026-09-29T11:00:00Z"),
+        ],
+        ..WorkFacts::default()
+    };
+
+    assert_eq!(placed_requiring_label(handed_back), [(1, Column::Done, 1)]);
+}
+
+#[test]
+fn with_a_required_label_a_closed_issue_without_it_closed_by_a_pull_request_of_linewrights_is_in_done()
+ {
+    let closed_by_ours = WorkFacts {
+        closed_by: vec![ClosingPull {
+            number: Number(10),
+            author: Login::new("factory"),
+            state: PullState::Closed {
+                at: at("2026-09-30T11:00:00Z"),
+            },
+            updated_at: at("2026-09-30T11:00:00Z"),
+        }],
+        ..WorkFacts::default()
+    };
+
+    assert_eq!(
+        placed_requiring_label(closed_by_ours),
+        [(1, Column::Done, 1)]
+    );
+}
+
+#[test]
+fn with_no_required_label_a_closed_issue_linewright_never_worked_is_in_done() {
+    let view = with_closed(view(vec![], vec![]), vec![persons_closed_issue(1)]);
+
+    assert_eq!(placed(&board(&view, &[], at(NOW))), [(1, Column::Done, 1)]);
+}
+
+#[test]
+fn a_merged_pull_request_of_linewrights_closing_an_issue_left_off_the_board_is_a_card_of_its_own() {
+    // As in a snapshot taken before Linewright read the pull requests
+    // closing a closed issue.
+    let view = requiring_label(with_merged(
+        with_closed(view(vec![], vec![]), vec![persons_closed_issue(1)]),
+        vec![merged(10, &[1], "factory", "2026-09-30T11:59:00Z")],
+    ));
+
+    assert_eq!(
+        placed(&board(&view, &[], at(NOW))),
+        [(10, Column::Done, 10)]
     );
 }

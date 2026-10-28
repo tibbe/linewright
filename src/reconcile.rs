@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, HandBackKind,
-    Issue, Item, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull,
-    PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
-    TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, label, last_assigned,
-    last_assignment, last_labeling, last_unassignment,
+    Assignment, BranchIssue, CheckState, ClosedItem, ClosingPull, Comment, DesignedLabel, Filed,
+    HandBackKind, Issue, Item, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull,
+    Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
+    StatusLabel, Thread, TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, label,
+    last_assigned, last_assignment, last_labeling, last_unassignment,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
@@ -35,10 +35,19 @@ pub struct Policy {
 }
 
 impl Policy {
-    fn may_start_on(&self, issue: &Issue) -> bool {
+    /// Whether an item labeled `labels` is marked for Linewright
+    /// (`docs/specs/repository.md`, "Marked for Linewright").
+    pub(crate) fn marks(&self, labels: &[String]) -> bool {
         self.require_label
             .as_ref()
-            .is_none_or(|l| issue.has_label(l))
+            .is_none_or(|required| labels.contains(required))
+    }
+
+    /// Whether `item`, closed, was managed: marked for Linewright, or worked
+    /// by it (`GLOSSARY.md`, **Managed**), as `status::standing` asks of an
+    /// open issue.
+    pub(crate) fn manages_closed(&self, item: &ClosedItem) -> bool {
+        self.marks(item.labels()) || item.worked_by(&self.linewright)
     }
 
     /// A merge commit that resolved a conflict is the usual cause of GitHub
@@ -1456,7 +1465,7 @@ fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
     } else {
         return vec![];
     };
-    let unlabeled = required_label(policy).filter(|_| !policy.may_start_on(issue));
+    let unlabeled = required_label(policy).filter(|_| !policy.marks(&issue.labels));
     handed_to.into_iter().chain(unlabeled).collect()
 }
 
@@ -1592,7 +1601,7 @@ fn may_claim(
             },
         }]);
     }
-    if !policy.may_start_on(issue) {
+    if !policy.marks(&issue.labels) {
         return Err(required_label(policy).into_iter().collect());
     }
     Ok(())
@@ -2090,7 +2099,7 @@ fn let_go_of_people_asked<'a>(
     plan: &mut Plan,
 ) -> Cow<'a, Issue> {
     let people_asked = issue.assigned_by(&policy.linewright);
-    if asked.is_err() || !policy.may_start_on(issue) || people_asked.is_empty() {
+    if asked.is_err() || !policy.marks(&issue.labels) || people_asked.is_empty() {
         return Cow::Borrowed(issue);
     }
     // Unassigned before the relabeling, so that a stop between the two
@@ -2108,7 +2117,7 @@ fn let_go_of_people_asked<'a>(
 
 fn has_reply_to_needs_info(issue: &Issue, policy: &Policy) -> bool {
     let linewright = &policy.linewright;
-    if !issue.holds(StatusLabel::NeedsInfo) || !policy.may_start_on(issue) {
+    if !issue.holds(StatusLabel::NeedsInfo) || !policy.marks(&issue.labels) {
         return false;
     }
     let Some(last) = issue

@@ -18,7 +18,7 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, MergeMethod,
     MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
     Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread,
-    TicketBranch, TicketBranchName, Timestamp, closed_within, closing_references, label,
+    TicketBranch, TicketBranchName, Timestamp, WorkFacts, closed_within, closing_references, label,
 };
 use crate::git::{self, Merged};
 
@@ -1171,6 +1171,12 @@ impl State {
                 labels: issue.labels,
                 merged_by: closing.merged_by,
                 reason: Some(closing.reason),
+                work: WorkFacts {
+                    author: Some(issue.author),
+                    assignees: issue.assignees,
+                    events: issue.events,
+                    closed_by: issue.closed_by,
+                },
             },
         })
     }

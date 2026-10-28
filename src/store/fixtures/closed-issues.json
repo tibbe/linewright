@@ -42,12 +42,18 @@
         ]
       },
       "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
       "timelineItems": {
         "nodes": [
           {
             "closer": null
           }
         ]
+      },
+      "assignments": {
+        "nodes": []
       }
     },
     {
@@ -90,12 +96,44 @@
           "login": "tibbe-bot"
         }
       },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 390,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-20T13:49:31Z",
+            "closedAt": "2026-10-20T13:49:31Z",
+            "updatedAt": "2026-10-20T13:49:34Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
       "timelineItems": {
         "nodes": [
           {
             "closer": {
               "__typename": "PullRequest",
               "number": 390
+            }
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-20T13:38:44Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
             }
           }
         ]
@@ -141,12 +179,44 @@
           "login": "tibbe-bot"
         }
       },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 391,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-20T14:10:30Z",
+            "closedAt": "2026-10-20T14:10:30Z",
+            "updatedAt": "2026-10-20T14:10:34Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
       "timelineItems": {
         "nodes": [
           {
             "closer": {
               "__typename": "PullRequest",
               "number": 391
+            }
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-20T13:49:39Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
             }
           }
         ]

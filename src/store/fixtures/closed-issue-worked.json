@@ -1,0 +1,102 @@
+{
+  "number": 673,
+  "title": "Web UI: lane header background doesn't fill the whole lane",
+  "body": "I believe the original prototype did but now the lane header stops before the edge:\n\n<img width=\"1422\" height=\"154\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/de7af72e-f31f-473f-8fa3-80a4ad947f83\" />",
+  "closedAt": "2026-10-27T05:54:13Z",
+  "updatedAt": "2026-10-27T05:54:13Z",
+  "stateReason": "COMPLETED",
+  "author": {
+    "__typename": "User",
+    "login": "tibbe"
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "bug"
+      },
+      {
+        "name": "ready-for-agent"
+      },
+      {
+        "name": "linewright:designed"
+      }
+    ]
+  },
+  "assignees": {
+    "nodes": [
+      {
+        "login": "tibbe-bot"
+      }
+    ]
+  },
+  "subIssues": {
+    "nodes": []
+  },
+  "parent": null,
+  "closedByPullRequestsReferences": {
+    "nodes": [
+      {
+        "number": 675,
+        "state": "MERGED",
+        "isDraft": false,
+        "mergedAt": "2026-10-27T05:54:12Z",
+        "closedAt": "2026-10-27T05:54:12Z",
+        "updatedAt": "2026-10-27T05:54:14Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "closer": {
+          "__typename": "PullRequest",
+          "number": 675
+        }
+      }
+    ]
+  },
+  "assignments": {
+    "nodes": [
+      {
+        "__typename": "AssignedEvent",
+        "createdAt": "2026-10-27T05:29:42Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "UnassignedEvent",
+        "createdAt": "2026-10-27T05:30:54Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "AssignedEvent",
+        "createdAt": "2026-10-27T05:40:47Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  }
+}

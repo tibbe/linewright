@@ -959,3 +959,73 @@ async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_
     );
     web.stop().await;
 }
+
+#[tokio::test]
+async fn with_a_required_label_done_holds_only_the_closed_issues_marked_for_linewright_or_worked_by_it()
+ {
+    let world = World::with(|c| c.require_label = Some(REQUIRED.into())).await;
+    let open = |author: &str, title: &str, labels: &[&str]| {
+        world.store.open_issue(author, title, "Maybe.", labels)
+    };
+    let theirs = open("maintainer", "Theirs", &["ready-for-agent"]);
+    let triaged_by_hand = open("maintainer", "Triaged by hand", &["needs-triage"]);
+    let marked = open("maintainer", "Marked", &["ready-for-agent", REQUIRED]);
+    let filed = open(LINEWRIGHT, "Filed by Linewright", &["ready-for-agent"]);
+    let assigned = open("maintainer", "Assigned", &["ready-for-agent"]);
+    world
+        .store
+        .assign_as("maintainer", assigned, LINEWRIGHT)
+        .unwrap();
+    let handed_back = open("maintainer", "Handed back", &["ready-for-agent"]);
+    world
+        .store
+        .assign_as(LINEWRIGHT, handed_back, LINEWRIGHT)
+        .unwrap();
+    world
+        .store
+        .unassign_as("maintainer", handed_back, LINEWRIGHT)
+        .unwrap();
+    let ours = open("maintainer", "Closed by ours", &["ready-for-agent"]);
+    let pr = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            "ours",
+            "Ours",
+            &format!("Closes {ours}."),
+            &[("src/ours.txt", "ours\n")],
+        )
+        .await
+        .unwrap();
+    world.store.merge_pull(pr).await.unwrap();
+    for issue in [
+        theirs,
+        triaged_by_hand,
+        marked,
+        filed,
+        assigned,
+        handed_back,
+    ] {
+        world.store.close_issue_as_completed(issue).unwrap();
+    }
+    let web = Web::start(world).await;
+
+    let mut shown: Vec<String> = cards_shown(&web.page("/").await)
+        .into_iter()
+        .filter(|(_, pull_request)| !pull_request)
+        .filter_map(|(card, _)| card.split(" | ").next().map(str::to_string))
+        .collect();
+    shown.sort();
+
+    assert_eq!(
+        shown,
+        [
+            "Done: #3: Marked",
+            "Done: #4: Filed by Linewright",
+            "Done: #5: Assigned",
+            "Done: #6: Handed back",
+            "Done: #7: Closed by ours",
+        ]
+    );
+    web.stop().await;
+}

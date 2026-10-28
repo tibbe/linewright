@@ -226,6 +226,7 @@ fn closed_ticket(number: u64, closed_at: &str) -> ClosedItem {
             labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
             merged_by: None,
             reason: Some(IssueCloseReason::Completed),
+            work: WorkFacts::default(),
         },
     }
 }

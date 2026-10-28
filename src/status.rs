@@ -513,7 +513,7 @@ pub(crate) fn standing(
 ) -> Result<ItemState, IssueExclusion> {
     let state = issue_state(issue, snapshot, policy)?;
     if let Some(label) = &policy.require_label
-        && !issue.has_label(label)
+        && !policy.marks(&issue.labels)
         && !issue.worked_by(&policy.linewright, snapshot)
     {
         return Err(IssueExclusion::NotMarked {
