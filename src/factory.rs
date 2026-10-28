@@ -16,7 +16,8 @@ use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastS
 use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
 use crate::domain::{
-    AutoMerge, IssueCloseReason, Item, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
+    AutoMerge, IssueCloseReason, Item, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule,
+    Windows, label,
 };
 use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
@@ -40,6 +41,7 @@ use crate::work_settings::{Environments, RunKind, WorkSettings};
 pub struct FactoryConfig {
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
+    pub done_window: TimeDelta,
     pub max_runs: usize,
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
@@ -263,6 +265,7 @@ impl Factory {
                 linewright: identity.login.clone(),
                 spec_glob: config.spec_glob,
                 spec_lookback: config.spec_lookback,
+                done_window: config.done_window,
                 max_runs: config.max_runs,
                 ci_grace: config.ci_grace,
                 ci_timeout: config.ci_timeout,
@@ -331,7 +334,7 @@ impl Factory {
         let now = shell.clock.now();
         let snapshot = shell
             .store
-            .snapshot(now - shell.policy.spec_lookback)
+            .snapshot(shell.policy.windows(now))
             .await
             .context("taking a snapshot")?;
         let repo = self.read_repo_files().await?;
@@ -362,9 +365,9 @@ impl Factory {
         self.reap();
         let shell = &self.shell;
         let now = shell.clock.now();
-        let window_opened = now - shell.policy.spec_lookback;
+        let windows = shell.policy.windows(now);
         let snapshot = Arc::make_mut(&mut kept.snapshot);
-        let mut read = read_all(snapshot, shell, self.written.clone(), window_opened).await?;
+        let mut read = read_all(snapshot, shell, self.written.clone(), windows).await?;
         let named: BTreeSet<Item> = subjects
             .into_iter()
             .flat_map(|subject| subject.into().items(snapshot))
@@ -373,9 +376,9 @@ impl Factory {
         if read.is_empty() && named.is_empty() {
             return Ok(vec![]);
         }
-        read.extend(read_all(snapshot, shell, named, window_opened).await?);
+        read.extend(read_all(snapshot, shell, named, windows).await?);
         let others = closed_by_pulls_read(snapshot, &read);
-        read.extend(read_all(snapshot, shell, others, window_opened).await?);
+        read.extend(read_all(snapshot, shell, others, windows).await?);
         kept.read_at
             .extend(read.into_iter().map(|item| (item, now)));
         kept.repo = self.read_repo_files().await?;
@@ -1160,11 +1163,11 @@ async fn read_all(
     snapshot: &mut Snapshot,
     shell: &Shell,
     items: impl IntoIterator<Item = Item>,
-    window_opened: Timestamp,
+    windows: Windows,
 ) -> Result<BTreeSet<Item>> {
     let mut read = BTreeSet::new();
     for item in items {
-        let read_with = read_into(snapshot, shell, item, window_opened).await;
+        let read_with = read_into(snapshot, shell, item, windows).await;
         read.extend(read_with.with_context(|| format!("reading {item} again"))?);
     }
     Ok(read)
@@ -1177,11 +1180,11 @@ async fn read_into(
     snapshot: &mut Snapshot,
     shell: &Shell,
     item: Item,
-    window_opened: Timestamp,
+    windows: Windows,
 ) -> Result<Vec<Item>> {
     let store = &shell.store;
     match item {
-        Item::Issue(number) => read_issue_into(snapshot, shell, number, window_opened).await,
+        Item::Issue(number) => read_issue_into(snapshot, shell, number, windows).await,
         Item::Pull(number) => {
             let mut closing = BTreeSet::new();
             match store.linewright_pull(number).await? {
@@ -1192,13 +1195,13 @@ async fn read_into(
                     closing.extend(snapshot.issues_closing(number, &closes));
                 }
             }
-            match store.merged_pull(number, window_opened).await? {
+            match store.merged_pull(number, windows).await? {
                 Some(merged) => snapshot.put_merged(merged),
                 None => snapshot.remove_merged(number),
             }
             let mut read = vec![item];
             for issue in closing {
-                read.extend(read_issue_into(snapshot, shell, issue, window_opened).await?);
+                read.extend(read_issue_into(snapshot, shell, issue, windows).await?);
             }
             Ok(read)
         }
@@ -1209,12 +1212,12 @@ async fn read_issue_into(
     snapshot: &mut Snapshot,
     shell: &Shell,
     number: Number,
-    window_opened: Timestamp,
+    windows: Windows,
 ) -> Result<Vec<Item>> {
     let store = &shell.store;
     let mut read = vec![Item::Issue(number)];
     snapshot.remove_closed(number);
-    let left = match store.issue(number, window_opened).await? {
+    let left = match store.issue(number, windows).await? {
         IssueRead::Held { issue, pulls } => {
             snapshot.relink(number, issue.open);
             snapshot.put_issue(*issue);

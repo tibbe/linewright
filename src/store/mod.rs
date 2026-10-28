@@ -11,7 +11,7 @@ use async_trait::async_trait;
 
 use crate::domain::{
     CheckFailure, ClosedItem, Issue, IssueCloseReason, Item, Login, MergeMethod, MergeMethods,
-    MergedPull, Number, Pull, Repo, Snapshot, Timestamp, UpdateMethod, UpdateRule, label,
+    MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule, Windows, label,
 };
 use crate::redaction::Redaction;
 
@@ -344,13 +344,12 @@ pub trait Store: Send + Sync {
     /// can create it, so a label Linewright must not create is checked first.
     async fn label_exists(&self, name: &str) -> Result<bool>;
 
-    /// The facts one poll reconciles, with pull requests merged and items
-    /// closed since `window_opened` and every branch Linewright pushed for a
+    /// The facts one poll reconciles, with the merged pull requests and
+    /// closed items `windows` holds and every branch Linewright pushed for a
     /// ticket.
-    async fn snapshot(&self, window_opened: Timestamp) -> Result<Snapshot>;
-    /// The issue as a snapshot taken now, with items closed since
-    /// `window_opened`, sees it.
-    async fn issue(&self, number: Number, window_opened: Timestamp) -> Result<IssueRead>;
+    async fn snapshot(&self, windows: Windows) -> Result<Snapshot>;
+    /// The issue as a snapshot taken now, over `windows`, sees it.
+    async fn issue(&self, number: Number, windows: Windows) -> Result<IssueRead>;
     async fn pull(&self, number: Number) -> Result<Pull>;
     /// The issue or pull request #`number`, open or not, whoever opened it:
     /// `None` when the store has neither.
@@ -363,15 +362,10 @@ pub trait Store: Send + Sync {
     /// whoever opened it: none when it is not open, or the store has no such
     /// pull request.
     async fn open_pull_closes(&self, number: Number) -> Result<Vec<Number>>;
-    /// The pull request as a snapshot taken now, with pull requests merged
-    /// since `merged_since`, holds it among the merged ones: `None` when the
-    /// snapshot leaves it out of them, as it does one the store does not
-    /// have.
-    async fn merged_pull(
-        &self,
-        number: Number,
-        merged_since: Timestamp,
-    ) -> Result<Option<MergedPull>>;
+    /// The pull request as a snapshot taken now, over `windows`, holds it
+    /// among the merged ones: `None` when the snapshot leaves it out of them,
+    /// as it does one the store does not have.
+    async fn merged_pull(&self, number: Number, windows: Windows) -> Result<Option<MergedPull>>;
     /// The pull request's changes to `paths`, as a unified diff.
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String>;
     async fn check_failures(&self, pr: Number, checks: &[String]) -> Result<Vec<CheckFailure>>;

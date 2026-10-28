@@ -9,8 +9,8 @@ use crate::domain::{
     Assignment, BranchIssue, CheckState, ClosedItem, ClosingPull, Comment, DesignedLabel, Filed,
     HandBackKind, Issue, Item, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull,
     Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
-    StatusLabel, Thread, TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, label,
-    last_assigned, last_assignment, last_labeling, last_unassignment,
+    StatusLabel, Thread, TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, Windows,
+    label, last_assigned, last_assignment, last_labeling, last_unassignment,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
@@ -24,6 +24,7 @@ pub struct Policy {
     pub linewright: Login,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
+    pub done_window: TimeDelta,
     pub max_runs: usize,
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
@@ -48,6 +49,11 @@ impl Policy {
     /// open issue.
     pub(crate) fn manages_closed(&self, item: &ClosedItem) -> bool {
         self.marks(item.labels()) || item.worked_by(&self.linewright)
+    }
+
+    /// The windows open at `now`.
+    pub fn windows(&self, now: Timestamp) -> Windows {
+        Windows::at(now, self.spec_lookback, self.done_window)
     }
 
     /// A merge commit that resolved a conflict is the usual cause of GitHub
@@ -2196,7 +2202,7 @@ pub fn spec_change(
     now: Timestamp,
     policy: &Policy,
 ) -> Result<SpecChange, NotSpecChange> {
-    let window_opened = now - policy.spec_lookback;
+    let window_opened = policy.windows(now).lookback_opened();
     let because = if pr.author == policy.linewright {
         NotSpecChange::Linewrights
     } else if pr.base_ref != default_branch {

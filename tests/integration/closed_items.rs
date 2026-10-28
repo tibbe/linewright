@@ -42,8 +42,7 @@ fn endings(closed: &[ClosedItem]) -> Vec<(Number, String)> {
 }
 
 #[tokio::test]
-async fn a_ticket_merged_within_the_spec_lookback_window_is_held_closed_and_one_merged_before_is_not()
- {
+async fn a_ticket_merged_within_the_done_window_is_held_closed_and_one_merged_before_is_not() {
     let mut world = World::new().await;
     let (_, before_pr) = world.ticket_in_review().await;
     world.store.merge_pull(before_pr).await.unwrap();

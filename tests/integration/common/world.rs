@@ -5,7 +5,7 @@ use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
 use linewright::briefs::OperatorPrompts;
 use linewright::domain::{
-    AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Timestamp, label,
+    AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Windows, label,
 };
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::WorkKind;
@@ -110,6 +110,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
     FactoryConfig {
         spec_glob: SpecGlob::default(),
         spec_lookback: TimeDelta::days(7),
+        done_window: TimeDelta::days(7),
         max_runs: 4,
         ci_grace: TimeDelta::minutes(5),
         ci_timeout: TimeDelta::hours(6),
@@ -274,7 +275,7 @@ pub async fn last_pull_comment(world: &World, pr: Number) -> String {
 pub async fn spec_change_assignees(world: &World, pr: Number) -> Vec<Login> {
     world
         .store
-        .merged_pull(pr, Timestamp::MIN_UTC)
+        .merged_pull(pr, Windows::EVER)
         .await
         .unwrap()
         .expect("a merged pull request")

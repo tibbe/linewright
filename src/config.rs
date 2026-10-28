@@ -237,6 +237,9 @@ pub struct Settings {
     /// How far back merged spec changes are picked up [default: 7d]
     #[arg(long, global = true)]
     pub spec_lookback: Option<String>,
+    /// How long a finished item stays in the board's Done column [default: 7d]
+    #[arg(long, global = true)]
+    pub done_window: Option<String>,
     /// The ceiling on runs in flight [default: 4]
     #[arg(long, global = true)]
     pub max_runs: Option<String>,
@@ -316,6 +319,7 @@ pub struct Config {
     pub ui: Option<web::Ui>,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
+    pub done_window: TimeDelta,
     pub max_runs: usize,
     pub work_dir: PathBuf,
     /// `model`, `effort`, `session-timeout` and the stages' tables, and
@@ -344,6 +348,7 @@ impl Settings {
             ("ui-hosts", &self.ui_hosts),
             ("spec-glob", &self.spec_glob),
             ("spec-lookback", &self.spec_lookback),
+            ("done-window", &self.done_window),
             ("max-runs", &self.max_runs),
             ("work-dir", &self.work_dir),
             ("model", &self.model),
@@ -376,7 +381,7 @@ const LISTS: [(&str, &str); 3] = [
     ("ui-hosts", "a host name"),
 ];
 
-const KEYS: [&str; 24] = [
+const KEYS: [&str; 25] = [
     "repo",
     "poll-interval",
     "webhook-address",
@@ -384,6 +389,7 @@ const KEYS: [&str; 24] = [
     "ui-hosts",
     "spec-glob",
     "spec-lookback",
+    "done-window",
     "max-runs",
     "work-dir",
     "model",
@@ -711,6 +717,7 @@ impl Config {
             ui,
             spec_glob,
             spec_lookback: delta("spec-lookback", "7d")?,
+            done_window: delta("done-window", "7d")?,
             max_runs: number("max-runs", "4")? as usize,
             work_dir,
             work,

@@ -755,6 +755,7 @@ fn factory_config(
     FactoryConfig {
         spec_glob: config.spec_glob.clone(),
         spec_lookback: config.spec_lookback,
+        done_window: config.done_window,
         max_runs: config.max_runs,
         ci_grace: config.ci_grace,
         ci_timeout: config.ci_timeout,

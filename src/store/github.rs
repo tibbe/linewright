@@ -21,7 +21,7 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Linked, Login,
     MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
     Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread,
-    TicketBranch, TicketBranchName, Timestamp, WorkFacts, closed_within, label,
+    TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within, label,
 };
 use crate::git;
 
@@ -503,7 +503,8 @@ impl GitHub {
         Ok(paths)
     }
 
-    async fn merged_since(&self, base: &str, since: Timestamp) -> Result<Vec<MergedPull>> {
+    /// The pull requests merged into `base` that `windows` holds.
+    async fn merged_within(&self, base: &str, windows: Windows) -> Result<Vec<MergedPull>> {
         let query = "query($owner: String!, $name: String!, $base: String!, $cursor: String) {
               repository(owner: $owner, name: $name) {
                 pullRequests(first: 25, after: $cursor, states: [MERGED], baseRefName: $base,
@@ -528,11 +529,11 @@ impl GitHub {
             for pr in page.nodes {
                 // Merging updates a pull request, so ordering by update time
                 // finds everything merged since the cutoff.
-                if pr.updated_at < since {
+                if pr.updated_at < windows.read_since() {
                     older = true;
                     continue;
                 }
-                if let Some(pr) = self.merged_view(pr, base, since).await? {
+                if let Some(pr) = self.merged_view(pr, base, windows).await? {
                     merged.push(pr);
                 }
             }
@@ -547,15 +548,13 @@ impl GitHub {
         &self,
         pr: GqlMerged,
         base: &str,
-        since: Timestamp,
+        windows: Windows,
     ) -> Result<Option<MergedPull>> {
-        let Some(merged_at) = pr.merged_at.filter(|at| *at >= since) else {
-            return Ok(None);
-        };
-        if pr.base_ref_name != base {
-            return Ok(None);
+        // Before `merged_of`, so that files are read only for those held.
+        match pr.held_merged_at(base, windows) {
+            Some(merged_at) => Ok(Some(self.merged_of(pr, merged_at).await?)),
+            None => Ok(None),
         }
-        Ok(Some(self.merged_of(pr, merged_at).await?))
     }
 
     async fn merged_of(&self, mut pr: GqlMerged, merged_at: Timestamp) -> Result<MergedPull> {
@@ -2090,6 +2089,14 @@ struct GqlMerged {
 }
 
 impl GqlMerged {
+    /// When it merged, if a snapshot over `windows` holds it among the pull
+    /// requests merged into `base`.
+    fn held_merged_at(&self, base: &str, windows: Windows) -> Option<Timestamp> {
+        self.merged_at
+            .filter(|at| windows.holds_merged(*at, self.updated_at))
+            .filter(|_| self.base_ref_name == base)
+    }
+
     fn into_merged(self, merged_at: Timestamp, files: Vec<String>) -> MergedPull {
         MergedPull {
             number: Number(self.number),
@@ -2291,7 +2298,7 @@ impl Store for GitHub {
             .await
     }
 
-    async fn snapshot(&self, window_opened: Timestamp) -> Result<Snapshot> {
+    async fn snapshot(&self, windows: Windows) -> Result<Snapshot> {
         let settings_branch: Value = self.rest(Method::GET, &self.repo_path(""), None).await?;
         let default_branch = settings_branch["default_branch"]
             .as_str()
@@ -2330,12 +2337,12 @@ impl Store for GitHub {
         for number in closed {
             pulls.push(self.pull(Number(number)).await?);
         }
-        let closed_issues = self.closed_issues(window_opened).await?;
-        let closed_pulls = self.closed_pulls(window_opened).await?;
+        let closed_issues = self.closed_issues(windows.read_since()).await?;
+        let closed_pulls = self.closed_pulls(windows.read_since()).await?;
         Ok(Snapshot {
             ticket_branches: self.ticket_branches(&issues).await?,
-            merged: self.merged_since(&default_branch, window_opened).await?,
-            closed: closed_within(closed_issues.into_iter().chain(closed_pulls), window_opened),
+            merged: self.merged_within(&default_branch, windows).await?,
+            closed: closed_within(closed_issues.into_iter().chain(closed_pulls), windows),
             default_branch,
             issues: issues
                 .into_values()
@@ -2409,7 +2416,7 @@ impl Store for GitHub {
         Ok(Some(self.pull_view(pr).await?))
     }
 
-    async fn issue(&self, number: Number, window_opened: Timestamp) -> Result<IssueRead> {
+    async fn issue(&self, number: Number, windows: Windows) -> Result<IssueRead> {
         let Some(issue) = self.gql_issue(number).await? else {
             return Ok(IssueRead::Gone);
         };
@@ -2419,7 +2426,7 @@ impl Store for GitHub {
                 self.issue_with(number, CLOSED_ISSUE_FIELDS).await?;
             if let Some(closed) = closed
                 .and_then(|i| i.into_closed(&self.linewright()))
-                .filter(|item| item.closed_since(window_opened))
+                .filter(|item| windows.holds_closed(item.closed_at))
             {
                 return Ok(IssueRead::Closed(Box::new(closed)));
             }
@@ -2475,11 +2482,7 @@ impl Store for GitHub {
             .unwrap_or_default())
     }
 
-    async fn merged_pull(
-        &self,
-        number: Number,
-        merged_since: Timestamp,
-    ) -> Result<Option<MergedPull>> {
+    async fn merged_pull(&self, number: Number, windows: Windows) -> Result<Option<MergedPull>> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct One {
@@ -2508,7 +2511,7 @@ impl Store for GitHub {
             default_branch_ref,
             pull_request,
         } = data.repository;
-        self.merged_view(pull_request, &default_branch_ref.name, merged_since)
+        self.merged_view(pull_request, &default_branch_ref.name, windows)
             .await
     }
 
@@ -2996,6 +2999,8 @@ impl Store for GitHub {
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeDelta;
+
     use super::*;
 
     fn review_required(requests: &Value) -> GqlPull {
@@ -3368,6 +3373,27 @@ mod tests {
         assert_eq!(merged.updated_at, at("2026-10-21T15:05:15Z"));
     }
 
+    /// `fixtures/merged-pull.json`, as above: merged at 14:56:28, and
+    /// labeled designed, which updated it, at 15:05:15.
+    #[test]
+    fn a_spec_change_merged_before_the_lookback_window_is_held_while_it_was_designed_within_the_done_window()
+     {
+        let pr: GqlMerged =
+            serde_json::from_str(include_str!("fixtures/merged-pull.json")).unwrap();
+        let now = at("2026-10-21T15:10:00Z");
+        let lookback = TimeDelta::minutes(10);
+
+        let designed_within = Windows::at(now, lookback, TimeDelta::minutes(10));
+        let designed_before = Windows::at(now, lookback, TimeDelta::minutes(4));
+
+        assert_eq!(
+            pr.held_merged_at("main", designed_within),
+            Some(at("2026-10-21T14:56:28Z"))
+        );
+        assert_eq!(pr.held_merged_at("main", designed_before), None);
+        assert_eq!(pr.held_merged_at("release", designed_within), None);
+    }
+
     #[test]
     fn an_issue_lists_its_labelings_unlabelings_and_assignments_with_who_made_them() {
         let issue: GqlIssue = serde_json::from_value(json!({
@@ -3668,6 +3694,11 @@ mod tests {
         time.parse().unwrap()
     }
 
+    /// Both windows opened at `time`.
+    fn opened(time: &str) -> Windows {
+        Windows::at(at(time), TimeDelta::zero(), TimeDelta::zero())
+    }
+
     /// `fixtures/closed-issues.json` is the page of `ClosedIssueFields`
     /// GitHub returned for the issues of <https://github.com/tibbe/linewright>
     /// its account opened, closed and updated since 2026-10-20T13:40:00Z:
@@ -3684,7 +3715,7 @@ mod tests {
             .nodes
             .into_iter()
             .filter_map(|issue| issue.into_closed(&Login::new("tibbe-bot")));
-        let closed = closed_within(read, at("2026-10-20T13:50:00Z"));
+        let closed = closed_within(read, opened("2026-10-20T13:50:00Z"));
 
         let ticket = |number| SubIssue {
             linked: Linked {
@@ -3864,7 +3895,7 @@ mod tests {
                 .nodes
                 .into_iter()
                 .filter_map(|pr| pr.into_closed(&Login::new(linewright)));
-            closed_within(read, at(since))
+            closed_within(read, opened(since))
         };
 
         // The maintainer's account standing in for Linewright's.

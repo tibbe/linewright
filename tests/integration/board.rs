@@ -119,6 +119,15 @@ fn with_closed(mut view: View, closed: Vec<ClosedItem>) -> View {
     view
 }
 
+/// What a ticket Linewright claimed holds of how it was worked.
+fn claimed() -> WorkFacts {
+    WorkFacts {
+        assignees: vec![Login::new("factory")],
+        ..WorkFacts::default()
+    }
+}
+
+/// Ticket #`number`, which Linewright claimed, closed at `closed_at`.
 fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedItem {
     ClosedItem {
         number: Number(number),
@@ -132,7 +141,7 @@ fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedI
             labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
             merged_by: merged_by.map(Number),
             reason: None,
-            work: WorkFacts::default(),
+            work: claimed(),
         },
     }
 }
@@ -175,7 +184,7 @@ fn a_ticket_with_an_open_pull_request_is_in_review() {
 }
 
 #[test]
-fn a_ticket_closed_within_the_spec_lookback_window_is_in_done_and_one_closed_before_is_nowhere() {
+fn a_ticket_closed_within_the_done_window_is_in_done_and_one_closed_before_is_nowhere() {
     let view = with_closed(
         view(vec![], vec![]),
         vec![
@@ -183,6 +192,21 @@ fn a_ticket_closed_within_the_spec_lookback_window_is_in_done_and_one_closed_bef
             closed_issue(2, "2026-09-28T12:00:00Z", Some(12)),
         ],
     );
+
+    assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Done, 2)]);
+}
+
+#[test]
+fn the_done_window_not_the_spec_lookback_says_how_long_a_closed_ticket_stays_in_done() {
+    let mut view = with_closed(
+        view(vec![], vec![]),
+        vec![
+            closed_issue(1, "2026-09-28T12:00:00Z", Some(11)),
+            closed_issue(2, "2026-09-30T12:00:00Z", Some(12)),
+        ],
+    );
+    view.policy.done_window = chrono::TimeDelta::days(2);
+    view.policy.spec_lookback = chrono::TimeDelta::days(7);
 
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Done, 2)]);
 }
@@ -379,7 +403,7 @@ fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
             merged(40, &[98], "factory", "2026-09-30T12:00:00Z"),
             // Someone else's.
             merged(41, &[], "someone", "2026-09-30T12:00:00Z"),
-            // Linewright's, merged before the spec lookback window opened.
+            // Linewright's, merged before the Done window opened.
             merged(42, &[], "factory", "2026-09-20T12:00:00Z"),
         ],
     );
@@ -560,7 +584,7 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
         labels: vec![label::DESIGNED.into()],
         merged_by: Some(Number(40)),
         reason: None,
-        work: WorkFacts::default(),
+        work: claimed(),
     };
     let view = with_closed(
         view(
@@ -708,7 +732,7 @@ fn closed_ticket(number: u64, tracking: u64, closed_at: &str) -> ClosedItem {
         labels: vec![label::DESIGNED.into()],
         merged_by: Some(Number(number + 100)),
         reason: None,
-        work: WorkFacts::default(),
+        work: claimed(),
     };
     closed
 }
@@ -1770,11 +1794,12 @@ fn a_card_in_done_has_no_card_status() {
 }
 
 /// A person's issue #`number`, labeled `ready-for-agent`, closed by hand
-/// within the window.
+/// within the window, that Linewright never worked.
 fn persons_closed_issue(number: u64) -> ClosedItem {
     let mut closed = closed_issue(number, "2026-09-30T12:00:00Z", None);
-    if let ClosedKind::Issue { labels, .. } = &mut closed.kind {
+    if let ClosedKind::Issue { labels, work, .. } = &mut closed.kind {
         *labels = vec!["ready-for-agent".into()];
+        *work = WorkFacts::default();
     }
     closed
 }

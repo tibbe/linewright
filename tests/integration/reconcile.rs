@@ -970,6 +970,32 @@ fn only_undesigned_spec_changes_by_people_within_the_lookback_are_picked_up() {
 }
 
 #[test]
+fn a_spec_change_merged_within_the_lookback_is_cut_though_it_merged_before_the_done_window() {
+    let policy = Policy {
+        spec_lookback: TimeDelta::days(7),
+        done_window: TimeDelta::days(1),
+        ..policy()
+    };
+    let mut spec_change = assigned(merged(5, &["docs/spec.md"]), 1);
+    spec_change.merged_at = t(10) - TimeDelta::days(3);
+    let mut world = snapshot(vec![]);
+    world.merged = vec![spec_change];
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &[],
+            &Memory::default(),
+            &Automations::default(),
+            t(10),
+            &policy,
+            &[]
+        ),
+        vec![Action::Start(Work::DesignSpecChange { pr: Number(5) })]
+    );
+}
+
+#[test]
 fn a_spec_change_labeled_before_the_design_label_is_not_designed_again() {
     let mut designed = merged(5, &["docs/spec.md"]);
     designed.labels.push(label::SPEC_PROCESSED.into());

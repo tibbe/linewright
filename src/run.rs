@@ -13,7 +13,7 @@ use crate::briefs::{Briefs, OperatorPrompts};
 use crate::clock::Clock;
 use crate::domain::{
     HandBackKind, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
-    addressed_to, closing_references, label,
+    Windows, addressed_to, closing_references, label,
 };
 use crate::git::{self, Updated, WorkState};
 use crate::harness::{Harness, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit};
@@ -528,7 +528,7 @@ async fn ticket_of<'a>(
         Some(spec_change) => {
             let pr = shell
                 .store
-                .merged_pull(spec_change, Timestamp::MIN_UTC)
+                .merged_pull(spec_change, Windows::EVER)
                 .await
                 .map_err(infra)?
                 .with_context(|| {

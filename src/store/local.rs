@@ -18,7 +18,8 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, MergeMethod,
     MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
     Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread,
-    TicketBranch, TicketBranchName, Timestamp, WorkFacts, closed_within, closing_references, label,
+    TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within,
+    closing_references, label,
 };
 use crate::git::{self, Merged};
 
@@ -1543,7 +1544,7 @@ impl Store for LocalStore {
         Ok(self.has_label(name))
     }
 
-    async fn snapshot(&self, window_opened: Timestamp) -> Result<Snapshot> {
+    async fn snapshot(&self, windows: Windows) -> Result<Snapshot> {
         self.readable()?;
         let (default_branch, issues, closed, linewright, pulls) = {
             let mut state = self.state();
@@ -1559,7 +1560,7 @@ impl Store for LocalStore {
                 .pulls
                 .values()
                 .filter_map(|p| p.closed_unmerged(&state.linewright));
-            let closed = closed_within(closed_issues.chain(closed_pulls), window_opened);
+            let closed = closed_within(closed_issues.chain(closed_pulls), windows);
             let pulls: Vec<(Number, Login)> = state
                 .pulls
                 .values()
@@ -1582,7 +1583,7 @@ impl Store for LocalStore {
             ticket_branches: self.ticket_branches().await?,
         };
         for (number, author) in pulls {
-            if let Some(merged) = self.merged_pull(number, window_opened).await? {
+            if let Some(merged) = self.merged_pull(number, windows).await? {
                 snapshot.merged.push(merged);
             }
             if author == linewright {
@@ -1592,7 +1593,7 @@ impl Store for LocalStore {
         Ok(snapshot)
     }
 
-    async fn issue(&self, number: Number, window_opened: Timestamp) -> Result<IssueRead> {
+    async fn issue(&self, number: Number, windows: Windows) -> Result<IssueRead> {
         self.read_item()?;
         let (issue, pulls) = {
             let state = self.state();
@@ -1602,7 +1603,7 @@ impl Store for LocalStore {
             if !record.is_open() {
                 let closed = state.closed_issue(record);
                 return Ok(
-                    match closed.filter(|item| item.closed_since(window_opened)) {
+                    match closed.filter(|item| windows.holds_closed(item.closed_at)) {
                         Some(closed) => IssueRead::Closed(Box::new(closed)),
                         None => IssueRead::LeftOut { open: false },
                     },
@@ -1684,11 +1685,7 @@ impl Store for LocalStore {
             .unwrap_or_default())
     }
 
-    async fn merged_pull(
-        &self,
-        number: Number,
-        merged_since: Timestamp,
-    ) -> Result<Option<MergedPull>> {
+    async fn merged_pull(&self, number: Number, windows: Windows) -> Result<Option<MergedPull>> {
         self.read_item()?;
         let state = self.state();
         let Some(record) = state.pulls.get(&number) else {
@@ -1696,7 +1693,7 @@ impl Store for LocalStore {
         };
         Ok(record
             .merged(&state.default_branch)
-            .filter(|merged| merged.merged_at >= merged_since))
+            .filter(|merged| windows.holds_merged(merged.merged_at, merged.updated_at)))
     }
 
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String> {

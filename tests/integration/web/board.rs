@@ -1,7 +1,7 @@
 use super::*;
 
 /// #1 with the maintainer; #2 cut into #3, which waits on alice, asked;
-/// and #4, closed.
+/// and #4, which Linewright filed, closed.
 async fn with_a_board() -> World {
     let world = with_ticket().await;
     let tracking = world.store.open_issue(
@@ -16,7 +16,7 @@ async fn with_a_board() -> World {
     world.store.assign_as(LINEWRIGHT, part, "alice").unwrap();
     world.store.add_sub_issue(tracking, part).await.unwrap();
     let closed = world.store.open_issue(
-        "maintainer",
+        LINEWRIGHT,
         "Old idea",
         "Maybe.",
         &["ready-for-agent", "linewright:designed"],
@@ -180,6 +180,9 @@ async fn the_boards_stream_sends_the_board_and_the_tab_title_after_a_poll_moves_
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
     assert_eq!(ids, ["holds", "title", "board"]);
 
+    web.store
+        .assign_as(LINEWRIGHT, linewright::domain::Number(1), LINEWRIGHT)
+        .unwrap();
     web.store
         .close_issue_as_completed(linewright::domain::Number(1))
         .unwrap();
@@ -555,6 +558,10 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
     let world = with_ticket().await;
     world
         .store
+        .assign_as(LINEWRIGHT, linewright::domain::Number(1), LINEWRIGHT)
+        .unwrap();
+    world
+        .store
         .close_issue_as_completed(linewright::domain::Number(1))
         .unwrap();
     let web = Web::start(world).await;
@@ -732,7 +739,7 @@ async fn an_issue_closed_without_a_merge_shows_githubs_reason_for_closing_it() {
         ("Same as another", Duplicate),
     ] {
         let issue = world.store.open_issue(
-            "maintainer",
+            LINEWRIGHT,
             title,
             "Maybe.",
             &["ready-for-agent", "linewright:designed"],
@@ -920,7 +927,7 @@ async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_
         .store
         .unassign_as("maintainer", let_go, LINEWRIGHT)
         .unwrap();
-    // An issue closed before the spec lookback window is not on the board.
+    // An issue closed before the Done window is not on the board.
     let untidy = world
         .store
         .open_issue("maintainer", "Untidy", "Tidy it.", &[]);
@@ -1026,6 +1033,67 @@ async fn with_a_required_label_done_holds_only_the_closed_issues_marked_for_line
             "Done: #6: Handed back",
             "Done: #7: Closed by ours",
         ]
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn with_the_spec_lookback_shorter_than_the_done_window_what_finished_between_them_is_in_done_and_a_spec_change_merged_then_is_left_alone()
+ {
+    let mut world = World::with(|c| {
+        c.spec_lookback = chrono::TimeDelta::days(2);
+        c.done_window = chrono::TimeDelta::days(7);
+    })
+    .await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.store.merge_pull(pr).await.unwrap();
+    let ours = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            "ours",
+            "Ours",
+            "Tidies up.",
+            &[("src/ours.txt", "ours\n")],
+        )
+        .await
+        .unwrap();
+    world.store.merge_pull(ours).await.unwrap();
+    let spec_change = world
+        .store
+        .merge_change(
+            "maintainer",
+            "Gadgets",
+            "Adds gadgets.",
+            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
+        )
+        .await
+        .unwrap();
+    world.clock.advance(chrono::TimeDelta::days(4));
+    let web = Web::start(world).await;
+
+    let mut shown: Vec<String> = cards_shown(&web.page("/").await)
+        .into_iter()
+        .filter_map(|(card, _)| card.split(" | ").next().map(str::to_string))
+        .collect();
+    shown.sort();
+
+    assert_eq!(
+        shown,
+        [
+            format!("Done: {ticket}: Do the thing"),
+            format!("Done: {ours}: Ours"),
+        ]
+    );
+    let html = web.page(&format!("/items/{}", spec_change.0)).await;
+    let (_, state) = item_facts(&html)
+        .into_iter()
+        .find(|(label, _)| label == "State")
+        .unwrap();
+    assert!(
+        state.starts_with("Left alone · merged 2026-")
+            && state.contains(", before the spec-lookback window opened 2026-"),
+        "{state}"
     );
     web.stop().await;
 }

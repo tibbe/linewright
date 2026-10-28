@@ -124,7 +124,7 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
 async fn the_item_page_of_an_issue_closed_in_the_window_shows_it_in_done() {
     let world = with_ticket().await;
     let closed = world.store.open_issue(
-        "maintainer",
+        LINEWRIGHT,
         "Old idea",
         "Maybe.",
         &["ready-for-agent", "linewright:designed"],
@@ -556,7 +556,7 @@ async fn a_tracking_issue_with_no_ticket_on_the_board_is_tracking_alone() {
         .store
         .close_issue_as_completed(linewright::domain::Number(3))
         .unwrap();
-    // Past the spec-lookback window, so that #3 leaves Done.
+    // Past the Done window, so that #3 leaves Done.
     world.clock.advance(chrono::TimeDelta::days(8));
     let web = Web::start(world).await;
 

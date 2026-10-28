@@ -1,6 +1,6 @@
 use std::fmt;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::phrase::Phrase;
@@ -1211,16 +1211,16 @@ pub struct Snapshot {
     pub merged: Vec<MergedPull>,
     #[serde(default)]
     pub ticket_branches: Vec<TicketBranch>,
-    /// The issues closed since the spec lookback window opened that the
-    /// snapshot would hold were they open, and Linewright's pull requests
-    /// closed without merging since then, for the board's Done column
-    /// (`docs/specs/design_system.md`, "The board"), which keeps only those
-    /// managed. The reconcile ignores them.
+    /// The issues closed within the Done window that the snapshot would hold
+    /// were they open, and Linewright's pull requests closed without merging
+    /// within it, for the board's Done column (`docs/specs/design_system.md`,
+    /// "The board"), which keeps only those managed. The reconcile ignores
+    /// them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
 }
 
-/// An issue or pull request closed within the spec lookback window.
+/// An issue or pull request closed within the Done window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClosedItem {
     pub number: Number,
@@ -1235,10 +1235,6 @@ pub struct ClosedItem {
 }
 
 impl ClosedItem {
-    pub fn closed_since(&self, window_opened: Timestamp) -> bool {
-        self.closed_at >= window_opened
-    }
-
     /// What it tracks, if it is a tracking issue, as [`Issue::tracks`] tells.
     pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
         match &self.kind {
@@ -1277,15 +1273,74 @@ impl ClosedItem {
     }
 }
 
-/// Those of `closed` closed since `window_opened`, in number order, as a
-/// snapshot holds them.
+/// The windows a snapshot reads back over (`docs/specs/operation.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Windows {
+    /// When the spec lookback window (`spec-lookback`) opened.
+    lookback_opened: Timestamp,
+    /// When the Done window (`done-window`) opened.
+    done_opened: Timestamp,
+}
+
+impl Windows {
+    /// Windows that opened at the earliest time, so that a snapshot over them
+    /// holds every closed and merged item.
+    pub const EVER: Windows = Windows {
+        lookback_opened: Timestamp::MIN_UTC,
+        done_opened: Timestamp::MIN_UTC,
+    };
+
+    /// The windows open at `now`, the lookback window `spec_lookback` long
+    /// and the Done window `done_window` long.
+    pub fn at(now: Timestamp, spec_lookback: TimeDelta, done_window: TimeDelta) -> Windows {
+        Windows {
+            lookback_opened: now - spec_lookback,
+            done_opened: now - done_window,
+        }
+    }
+
+    /// When the spec lookback window opened.
+    pub fn lookback_opened(&self) -> Timestamp {
+        self.lookback_opened
+    }
+
+    /// How far back, by update time, a snapshot reads closed and merged
+    /// items.
+    pub fn read_since(&self) -> Timestamp {
+        self.lookback_opened.min(self.done_opened)
+    }
+
+    /// Whether a snapshot holds a pull request merged at `merged_at` and
+    /// last updated at `updated_at` among the merged ones: merged within the
+    /// lookback window, or updated within the Done window. A merge or a
+    /// designed label updates a pull request, so this holds Linewright's own
+    /// merged within the Done window and every spec change designed within
+    /// it.
+    pub fn holds_merged(&self, merged_at: Timestamp, updated_at: Timestamp) -> bool {
+        merged_at >= self.lookback_opened || updated_at >= self.done_opened
+    }
+
+    /// Whether a snapshot holds an item closed at `closed_at` among the
+    /// closed ones.
+    pub fn holds_closed(&self, closed_at: Timestamp) -> bool {
+        self.in_done_window(closed_at)
+    }
+
+    /// Whether `at` is within the Done window.
+    pub fn in_done_window(&self, at: Timestamp) -> bool {
+        at >= self.done_opened
+    }
+}
+
+/// Those of `closed` that `windows` holds, in number order, as a snapshot
+/// holds them.
 pub fn closed_within(
     closed: impl IntoIterator<Item = ClosedItem>,
-    window_opened: Timestamp,
+    windows: Windows,
 ) -> Vec<ClosedItem> {
     let mut within: Vec<ClosedItem> = closed
         .into_iter()
-        .filter(|item| item.closed_since(window_opened))
+        .filter(|item| windows.holds_closed(item.closed_at))
         .collect();
     within.sort_by_key(|item| item.number);
     within
@@ -1653,6 +1708,44 @@ pub fn closing_references(body: &str) -> Vec<Number> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(time: &str) -> Timestamp {
+        time.parse().unwrap()
+    }
+
+    /// The lookback window opened on 2026-09-29, the Done window on
+    /// 2026-09-24.
+    fn windows() -> Windows {
+        Windows::at(
+            at("2026-10-01T12:00:00Z"),
+            TimeDelta::days(2),
+            TimeDelta::days(7),
+        )
+    }
+
+    #[test]
+    fn a_snapshot_reads_back_to_the_earlier_window() {
+        assert_eq!(windows().read_since(), at("2026-09-24T12:00:00Z"));
+    }
+
+    #[test]
+    fn a_snapshot_holds_a_pull_request_merged_within_the_lookback_or_updated_within_the_done_window()
+     {
+        let w = windows();
+        let held = |merged: &str, updated: &str| w.holds_merged(at(merged), at(updated));
+
+        assert!(held("2026-09-30T12:00:00Z", "2026-09-30T12:00:00Z"));
+        assert!(held("2026-09-26T12:00:00Z", "2026-09-26T12:00:00Z"));
+        // Merged before both windows, designed within the Done window.
+        assert!(held("2026-09-20T12:00:00Z", "2026-09-26T12:00:00Z"));
+        assert!(!held("2026-09-20T12:00:00Z", "2026-09-22T12:00:00Z"));
+    }
+
+    #[test]
+    fn a_snapshot_holds_an_item_closed_within_the_done_window() {
+        assert!(windows().holds_closed(at("2026-09-26T12:00:00Z")));
+        assert!(!windows().holds_closed(at("2026-09-22T12:00:00Z")));
+    }
 
     /// A snapshot as Linewright wrote it before it held a closed issue's
     /// reason and a pull request's review decision.

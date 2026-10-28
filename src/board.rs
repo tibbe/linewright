@@ -407,11 +407,11 @@ impl Ended {
 pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     let snapshot = &view.snapshot;
     let linewright = &view.policy.linewright;
-    let window_opened = now - view.policy.spec_lookback;
+    let windows = view.policy.windows(now);
     let closed: Vec<&ClosedItem> = snapshot
         .closed
         .iter()
-        .filter(|item| item.closed_since(window_opened))
+        .filter(|item| windows.in_done_window(item.closed_at))
         .collect();
     // Linewright's worked pull requests are managed items of their own; the
     // rest are issues and spec changes.
@@ -529,7 +529,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         place(closes, card);
     }
     for pr in &snapshot.merged {
-        if &pr.author == linewright && pr.merged_at >= window_opened {
+        if &pr.author == linewright && windows.in_done_window(pr.merged_at) {
             let card = Card::ended(
                 pr.number,
                 &pr.title,
@@ -579,7 +579,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         let cut = trackers
             .iter()
             .any(|tracker| tracker.tracks == Tracks::SpecChange(pr.number));
-        if designed && pr.merged_at >= window_opened && !cut {
+        if designed && windows.in_done_window(pr.merged_at) && !cut {
             cards.push(Card::ended(
                 pr.number,
                 &pr.title,

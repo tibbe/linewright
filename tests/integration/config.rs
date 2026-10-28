@@ -436,11 +436,22 @@ fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
 }
 
 #[test]
+fn the_done_window_is_read_from_the_file_apart_from_the_spec_lookback() {
+    let file = "repo = \"acme/widgets\"\ndone-window = \"30d\"\n";
+
+    let config = resolve(&[], &[], Some(file)).unwrap();
+
+    assert_eq!(config.done_window, chrono::TimeDelta::days(30));
+    assert_eq!(config.spec_lookback, chrono::TimeDelta::days(7));
+}
+
+#[test]
 fn defaults_follow_the_spec() {
     let config = resolve(&["--repo", "acme/widgets"], &[], None).unwrap();
 
     assert_eq!(config.poll_interval, Duration::from_mins(1));
     assert_eq!(config.spec_lookback, chrono::TimeDelta::days(7));
+    assert_eq!(config.done_window, chrono::TimeDelta::days(7));
     assert_eq!(config.max_runs, 4);
     assert_eq!(
         session(&config).session_timeout.value,
