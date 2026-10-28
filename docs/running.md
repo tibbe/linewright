@@ -32,17 +32,19 @@ automation in `.linewright/automations/NAME.md` once, now.
 ## Settings
 
 Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
-in `linewright.toml`; `lw --help` lists them with their defaults.
+in `linewright.toml`, except `session-env`, which has no variable;
+`lw --help` lists them with their defaults.
 
 ### Stage settings
 
 `model`, `effort` (`low`, `medium`, `high`, `xhigh` or `max`) and
 `session-timeout` are for the whole pipeline, and a stage's table in
 `linewright.toml` can set its own for its sessions. Without a `model` or
-`effort`, Claude Code chooses. A stage's `session-env` adds its names to the
-whole pipeline's for that stage's sessions only. The stages are `triage`,
-`design`, `implement`, `rework`, `fix-ci` and `update`; their tables have no
-flags or variables.
+`effort`, Claude Code chooses. A stage's `session-pass-env` and `session-env`
+add their variables to the whole pipeline's for that stage's sessions only,
+and a value the stage's `session-env` sets wins over the whole pipeline's.
+The stages are `triage`, `design`, `implement`, `rework`, `fix-ci` and
+`update`; their tables have no flags or variables.
 
 ```toml
 model = "sonnet"
@@ -52,7 +54,7 @@ effort = "medium"
 model = "opus"
 effort = "high"
 session-timeout = "2h"
-session-env = ["DEPLOY_KEY"]
+session-pass-env = ["DEPLOY_KEY"]
 ```
 
 A model or effort Linewright sets wins over `ANTHROPIC_MODEL`,
@@ -98,7 +100,8 @@ repository's `AGENTS.md`, `CLAUDE.md`, `.claude/` and `.mcp.json`, plus any
 managed policy, and auto-memory is always off.
 
 Put what sessions need in the repository (its `.claude/settings.json` or
-`.mcp.json`) or in the environment: variables named in `session-env` (see
+`.mcp.json`) or in the environment: variables named in `session-pass-env` or
+set in `session-env` (see
 [Variables your build needs](#variables-your-build-needs)), and
 `ANTHROPIC_API_KEY` in place of an `apiKeyHelper`.
 
@@ -129,28 +132,16 @@ of the checks Linewright asks a session to fix are in its brief.
 
 Sessions get the basic variables of a shell (such as `PATH`, `HOME` and the
 locale), the proxy and certificate variables, and Claude Code's own
-`ANTHROPIC_*` and `CLAUDE_*`. Name the rest in `session-env`; a name ending in
-`*` names every variable with that prefix. Claude Code's settings outside
-those prefixes, such as `DISABLE_TELEMETRY`, are part of the rest: name them
-too, or set them in a
+`ANTHROPIC_*` and `CLAUDE_*`. Name the rest in `session-pass-env` to pass them
+from Linewright's environment; a name ending in `*` names every variable with
+that prefix. Claude Code's settings outside those prefixes, such as
+`DISABLE_TELEMETRY`, are part of the rest: pass them too, or set them in a
 [managed settings file](https://code.claude.com/docs/en/managed-settings),
 which sessions read. At startup Linewright logs the names of the variables it
 keeps from sessions, and which of those each stage's table gives its sessions,
 so a build that fails only in a session shows there what to add.
 
-Credentials your agents need for other services, such as a cloud account or a
-database, go in `session-env` too, and every session gets them. Name the
-variables that hold secrets in `secrets` as well, so that Linewright redacts
-them; it redacts on its own those sessions get without your naming them,
-such as Claude Code's login, a credential in its `ANTHROPIC_CUSTOM_HEADERS`,
-or a proxy's password:
-
-```toml
-session-env = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"]
-secrets = ["AWS_SECRET_ACCESS_KEY"]
-```
-
-| for | add to `session-env` |
+| for | add to `session-pass-env` |
 |---|---|
 | Rust | `CARGO_HOME`, `RUSTUP_HOME` |
 | Java | `JAVA_HOME` |
@@ -158,10 +149,26 @@ secrets = ["AWS_SECRET_ACCESS_KEY"]
 | Claude Code on Google Vertex AI | `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS` |
 | Claude Code's other settings | their names, such as `DISABLE_TELEMETRY` or `BASH_DEFAULT_TIMEOUT_MS` |
 
-For a Rust project, `linewright.toml` would have:
+To give sessions a value Linewright's environment doesn't hold, set it in
+`session-env`, or with `--session-env NAME=value` once per variable. Values are
+strings, used as written, and win over a variable of the same name passed from
+Linewright's environment. For a Rust project, `linewright.toml` would have:
 
 ```toml
-session-env = ["CARGO_HOME", "RUSTUP_HOME"]
+session-pass-env = ["CARGO_HOME", "RUSTUP_HOME"]
+session-env = { RUST_LOG = "info", CARGO_TERM_COLOR = "never" }
+```
+
+Credentials your agents need for other services, such as a cloud account or a
+database, go in `session-pass-env` too, and every session gets them; keep them
+out of `session-env`, which is not redacted. Name the variables that hold
+secrets in `secrets` as well, so that Linewright redacts them; it redacts on
+its own those sessions get without your naming them, such as Claude Code's
+login, a credential in its `ANTHROPIC_CUSTOM_HEADERS`, or a proxy's password:
+
+```toml
+session-pass-env = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"]
+secrets = ["AWS_SECRET_ACCESS_KEY"]
 ```
 
 ### Credentials outside Linewright

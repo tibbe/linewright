@@ -78,10 +78,9 @@ once.
 
 ## Configuration
 
-Every setting is a key in the operator's TOML config file (`--config`,
-default `linewright.toml` in the working directory) and, but for a stage's, a
-flag or an environment variable (`LINEWRIGHT_<FLAG>`); some are also keys in
-the repository's file ([The repository's file](#the-repositorys-file)).
+Every setting is a key in the operator's TOML config file (`--config`, default
+`linewright.toml` in the working directory); some are also keys in the
+repository's file ([The repository's file](#the-repositorys-file)).
 Precedence: flag, then environment, then the repository's file, then the
 operator's file, then default.
 
@@ -99,7 +98,8 @@ operator's file, then default.
 | `model`                                      | the harness's choice                        |
 | `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | the harness's choice                  |
 | `prompts` (the operator's layer, [Prompts](#prompts)) | none                               |
-| `session-env` (variable names)               | none                                        |
+| `session-env` (variables' values)            | none                                        |
+| `session-pass-env` (variable names)          | none                                        |
 | `secrets` (variable names)                   | none                                        |
 | `session-timeout`                            | 60m                                         |
 | `result-retries`                             | 1                                           |
@@ -112,6 +112,13 @@ operator's file, then default.
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
+- **A value or a list.** A setting that holds one is also a flag and an
+  environment variable (`LINEWRIGHT_<FLAG>`).
+- **A table of values.** A setting that holds one is also a flag, given once
+  per entry and split at the first `=`, such as `--session-env NAME=value`,
+  and has no environment variable. An entry without `=`, or a name given
+  twice in one layer, is an error at startup.
+- **A stage's table.** Its entries are settings, so it is a key only.
 - **A wrong value.** A setting whose value is not one it takes, such as an
   `effort` outside its levels or an unknown key in a stage's table, is an
   error: at startup in the operator's layers
@@ -145,21 +152,22 @@ operator's file, then default.
 A stage's sessions take the whole-pipeline settings, except where the
 stage's own table sets them.
 
-| setting           | in a stage's table                   |
-| ----------------- | ------------------------------------ |
-| `model`           | replaces the whole pipeline's        |
-| `effort`          | replaces the whole pipeline's        |
-| `session-timeout` | replaces the whole pipeline's        |
-| `session-env`     | adds its names to the whole pipeline's |
+| setting            | in a stage's table                      |
+| ------------------ | --------------------------------------- |
+| `model`            | replaces the whole pipeline's           |
+| `effort`           | replaces the whole pipeline's           |
+| `session-timeout`  | replaces the whole pipeline's           |
+| `session-env`      | adds its values to the whole pipeline's |
+| `session-pass-env` | adds its names to the whole pipeline's  |
 
 - **The tables.** A stage's settings are a table in a config file,
   `[stage.NAME]` with the stage's name under [Runs](runs.md), such as
-  `[stage.implement]`, with the settings above as its keys. A stage's
-  settings have no flag or variable.
+  `[stage.implement]`, with the settings above as its keys.
 - **Combining.** A setting's value is a stage's table's where any layer sets
   one, else the whole pipeline's, each by the layers' precedence
   ([Configuration](#configuration)). A list holds every name set at any
-  layer.
+  layer, and a table every name set at any layer, each name's value chosen
+  as a setting's is.
 
 ## The repository's file
 
@@ -168,8 +176,8 @@ on its default branch, the same TOML as the operator's file.
 
 - **Its keys.** `model`, `effort` and `session-timeout`, for the whole
   pipeline and in stage tables. Any other key is an error: the deployment's
-  settings are the operator's, and so are `session-env` and `secrets`,
-  because they hand out what Linewright's environment holds.
+  settings are the operator's, and so are `session-env`, `session-pass-env`
+  and `secrets`.
 - **When it is read, and a file with an error.** As for every file of
   Linewright's in the repository
   ([Linewright's files](repository.md#linewrights-files)).
@@ -197,10 +205,11 @@ included.
 ## Sessions' environment
 
 An agent session's environment holds only the variables of Linewright's
-environment that this table or `session-env` names, and what Linewright sets
-itself: the session's GitHub token, when it has one, as `GH_TOKEN` and
-`GITHUB_TOKEN`, its own temporary directory as `TMPDIR`, and the harness's
-settings that the rules under [Running](#running) need, such as the shell.
+environment that this table or `session-pass-env` names, the values
+`session-env` sets, and what Linewright sets itself: the session's GitHub
+token, when it has one, as `GH_TOKEN` and `GITHUB_TOKEN`, its own temporary
+directory as `TMPDIR`, and the harness's settings that the rules under
+[Running](#running) need, such as the shell.
 
 | variables                                                                | what for                                           |
 | ------------------------------------------------------------------------ | -------------------------------------------------- |
@@ -215,10 +224,18 @@ settings that the rules under [Running](#running) need, such as the shell.
 - **Patterns.** A name ending in `*` names every variable with that prefix.
 - **The harness's namespaces.** Of the harness's variables, the table passes
   those in the namespaces it owns; a setting outside them, such as
-  `DISABLE_TELEMETRY`, the operator names in `session-env` like any other
-  variable.
-- **Linewright's own win.** A variable Linewright sets itself replaces one of
-  the same name the table or `session-env` passes.
+  `DISABLE_TELEMETRY`, the operator passes or sets like any other variable.
+- **Which value wins.** A variable Linewright sets itself replaces one of the
+  same name the table or `session-pass-env` passes, and a value `session-env`
+  sets replaces a passed one.
+- **Linewright's own.** `session-env` setting a variable Linewright may set
+  itself is an error at startup.
+- **Set values.** `session-env`'s values are strings, taken as written, such
+  as a `$`, which refers to no variable, or an empty string, which sets the
+  variable empty.
+- **What an environment can't hold.** A name or value `session-env` sets that
+  an environment can't hold is an error at startup, such as an empty name, an
+  `=` in a name or a NUL byte in either.
 - **Credentials passed.** The credentials the table passes are those its
   variables hold, where each variable's format puts them:
 
@@ -227,11 +244,13 @@ settings that the rules under [Running](#running) need, such as the shell.
   | those the harness reads a credential from    | the value                                                                                                        |
   | the proxy variables                          | the password in the URL, both as written and percent-decoded                                                     |
   | those the harness reads request headers from | each header's value, both whole and, when it opens with a scheme, without it, as in `Authorization: Bearer …` |
-- **Never passed.** `session-env` never passes Linewright's GitHub tokens or
-  the webhook secret: a pattern skips them, and naming one is an error at
-  startup.
+- **Never passed.** `session-pass-env` never passes Linewright's GitHub
+  tokens or the webhook secret: a pattern skips them, and naming one is an
+  error at startup.
 - **Logged at startup.** At startup Linewright logs the names, never the
-  values, of the variables in its environment that sessions are not given.
+  values, of the variables in its environment that sessions are not given,
+  and, for the whole pipeline and for each stage, the names `session-env`
+  sets, a stage's own apart from those it takes from the whole pipeline's.
 
 ## Running
 
@@ -267,7 +286,11 @@ image the operator builds with those in it.
 - Caps on what the repository's file may set, such as the models it may
   choose.
 - The repository's file naming the variables a stage's sessions get, even
-  from those the operator's `session-env` names.
+  from those the operator's `session-pass-env` names.
+- A layer or a stage's table taking away a variable that another passes or
+  sets.
+- A value built from other variables, such as a `PATH` with a directory
+  added.
 - The settings the pipeline reads between runs, such as `auto-merge` or
   `max-runs`, in the repository's file.
 - Layers of skills: the repository or the operator replacing Linewright's
