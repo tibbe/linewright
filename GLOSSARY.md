@@ -122,15 +122,19 @@ _Avoid_: epic
 
 **Lane**:
 The board's row for one piece of work: a tracking issue with its tickets, or
-an item worked as one.
+an item on its own.
 
 **Card status**:
 How pressing what a board card's line reports is.
 _Avoid_: state, flag, priority
 
+**Worked**:
+Of an item: Linewright has opened it, claimed it, or opened a pull request
+that closes it.
+
 **Managed**:
 Of an item: it is marked for Linewright and asks for a step of the pipeline,
-or Linewright has worked it.
+or it is worked.
 _Avoid_: tracked, watched, monitored, in the pool
 
 **Usage limit**:

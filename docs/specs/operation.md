@@ -94,6 +94,7 @@ operator's file, then default.
 | `ui-hosts` (host names)                      | none: local names only                      |
 | `spec-glob`                                  | `docs/**/*.md`                              |
 | `spec-lookback`                              | 7d                                          |
+| `done-window`                                | 7d                                          |
 | `max-runs`                                   | 4                                           |
 | `work-dir`                                   | `linewright/` under the user's data directory |
 | `model`                                      | the harness's choice                        |

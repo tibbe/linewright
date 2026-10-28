@@ -150,8 +150,7 @@ when `ui-address` is empty.
 
 ### The board
 
-The board shows every managed item as a card in one of six columns, in this
-order:
+The board shows managed items as cards in six columns, in this order:
 
 | Column         | Holds a managed item that                                                                            |
 | -------------- | ---------------------------------------------------------------------------------------------------- |
@@ -160,7 +159,7 @@ order:
 | Ready          | holds `ready-for-agent` and is not claimed, or is a spec change not yet designed                     |
 | Working        | is claimed for design or implementation, or has a run in flight that no other column shows           |
 | In review      | has an open pull request that closes it, or is a pull request of Linewright's that closes no issue on the board |
-| Done           | closed within the spec lookback window (`spec-lookback`)                                             |
+| Done           | is worked and closed                                                                                 |
 
 - **Two columns.** An item that fits two columns is in the one further
   right.
@@ -174,9 +173,11 @@ order:
   its tickets as its cards; otherwise headed by the item's number and title,
   with the item as its one card.
 - **Finished lanes.** A lane whose cards are all in Done is finished. It shows
-  as its head alone, with when its last card closed, and opens on click. The
-  finished lanes sit together under one fold that says how many there are
-  and opens on click.
+  as its head alone, with when it finished: when its last card closed, or,
+  for a spec change designed with nothing to build, when it was designed. It
+  opens on click. The finished lanes sit together under one fold that says
+  how many there are and opens on click. A finished lane leaves the board
+  once it finished before the Done window (`done-window`) opened.
 - **Order of lanes.** The unfinished lanes come first, latest changed first,
   then the finished lanes, latest finished first. Lanes changed at the same
   time are in number order.
@@ -257,7 +258,7 @@ order below, then its runs ([Lists of runs](#lists-of-runs)).
 
 | Fact           | Holds                                                                                                                                  | Shown                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| State          | #N's column, then its card's line, with its card status ([Cards](#cards)); for a tracking issue, "Tracking", and once its lane is finished when it finished, such as "Tracking · finished 2 days ago"; for an item the board does not show, "Left alone", then what keeps it out, such as "closed" or "labeled none of `needs-triage`, …" | always                         |
+| State          | #N's column, then its card's line, with its card status ([Cards](#cards)); for a tracking issue, "Tracking", and once its lane is finished when it finished, on the board or off it, such as "Tracking · finished 2 days ago"; for an item the board does not show, "Left alone", then what keeps it out, such as "closed" or "labeled none of `needs-triage`, …" | always                         |
 | Waiting for    | each thing Linewright waits for before it acts on #N next, one per line, naming what ends it, such as "the usage limit, until 14:30", in plain text | while it waits for any         |
 | Tracking issue | a ticket's tracking issue, or the tracking issue cut from a spec change                                                                | while there is one             |
 | Tickets        | a tracking issue's tickets, with how many are closed of the total, such as "3 of 5 closed"                                             | while it has any               |

@@ -29,8 +29,8 @@ The spec is the tracked files matching the spec glob, and the spec as merged
 is what gets built.
 
 - **A spec change.** A pull request not Linewright's own, merged into the
-  default branch within the lookback window (default 7 days), that touched a
-  spec file.
+  default branch, that touched a spec file. Linewright takes up those merged
+  within the lookback window (`spec-lookback`).
 - **A push to the default branch.** A push straight to the default branch is
   the maintainer's own change, outside the factory.
 
