@@ -15,7 +15,7 @@ use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
 use crate::secrets;
-use crate::session_env::SessionEnv;
+use crate::session_env::{PassEnv, SessionEnv};
 use crate::spec_glob::SpecGlob;
 use crate::variable_names::{self, VariableNames};
 use crate::web;
@@ -373,41 +373,90 @@ impl Settings {
     }
 }
 
-/// The settings that are lists, and what each holds, which may be an array
-/// in the file.
-const LISTS: [(&str, &str); 3] = [
-    ("session-env", "a variable's name"),
-    ("secrets", "a variable's name"),
-    ("ui-hosts", "a host name"),
+/// What a setting holds, which says how it is given
+/// (`docs/specs/operation.md`, Configuration).
+#[derive(Clone, Copy, Debug)]
+enum Form {
+    /// A string, number or boolean.
+    Value,
+    /// Entries separated by commas, or an array in a file, each entry
+    /// being `holds`.
+    List { holds: &'static str },
+}
+
+impl Form {
+    /// Whether the setting is also an environment variable,
+    /// `LINEWRIGHT_<FLAG>`.
+    fn has_variable(self) -> bool {
+        match self {
+            Form::Value | Form::List { .. } => true,
+        }
+    }
+}
+
+/// A variable's name, what `session-env` and `secrets` hold.
+const VARIABLE_NAME: &str = "a variable's name";
+
+/// The form of `setting`, a stage's setting.
+const fn stage_form(setting: Setting) -> Form {
+    match setting {
+        Setting::Model | Setting::Effort | Setting::SessionTimeout => Form::Value,
+        Setting::SessionEnv => Form::List {
+            holds: VARIABLE_NAME,
+        },
+    }
+}
+
+/// `setting`, a stage's setting, as an entry of `SETTINGS`.
+const fn stage_entry(setting: Setting) -> (&'static str, Form) {
+    (setting.name(), stage_form(setting))
+}
+
+/// The operator's settings, each with its form.
+const SETTINGS: [(&str, Form); 25] = [
+    ("repo", Form::Value),
+    ("poll-interval", Form::Value),
+    ("webhook-address", Form::Value),
+    ("ui-address", Form::Value),
+    (
+        "ui-hosts",
+        Form::List {
+            holds: "a host name",
+        },
+    ),
+    ("spec-glob", Form::Value),
+    ("spec-lookback", Form::Value),
+    ("done-window", Form::Value),
+    ("max-runs", Form::Value),
+    ("work-dir", Form::Value),
+    stage_entry(Setting::Model),
+    stage_entry(Setting::Effort),
+    ("prompts", Form::Value),
+    stage_entry(Setting::SessionEnv),
+    (
+        "secrets",
+        Form::List {
+            holds: VARIABLE_NAME,
+        },
+    ),
+    stage_entry(Setting::SessionTimeout),
+    ("result-retries", Form::Value),
+    ("ci-grace", Form::Value),
+    ("ci-timeout", Form::Value),
+    ("ci-attempts", Form::Value),
+    ("update-branch", Form::Value),
+    ("auto-merge", Form::Value),
+    ("merge-method", Form::Value),
+    ("require-label", Form::Value),
+    ("log-format", Form::Value),
 ];
 
-const KEYS: [&str; 25] = [
-    "repo",
-    "poll-interval",
-    "webhook-address",
-    "ui-address",
-    "ui-hosts",
-    "spec-glob",
-    "spec-lookback",
-    "done-window",
-    "max-runs",
-    "work-dir",
-    "model",
-    "effort",
-    "prompts",
-    "session-env",
-    "secrets",
-    "session-timeout",
-    "result-retries",
-    "ci-grace",
-    "ci-timeout",
-    "ci-attempts",
-    "update-branch",
-    "auto-merge",
-    "merge-method",
-    "require-label",
-    "log-format",
-];
+/// The form of the setting `key`, `None` when it is no setting.
+fn form(key: &str) -> Option<Form> {
+    SETTINGS
+        .iter()
+        .find_map(|&(setting, form)| (setting == key).then_some(form))
+}
 
 /// A feature and what turns it on or off: a setting only it uses is an
 /// error while it is off unless the setting is at its default
@@ -504,10 +553,21 @@ impl Config {
             stages,
         } = read_file(settings.config.as_deref(), cwd)?;
         let flags = settings.flags();
-        // A flag, then a variable.
+        // A flag, then a variable, where its form has one. `key` is one of
+        // `SETTINGS`.
         let flags_and_env = |key: &str| -> Option<String> {
-            let variable = format!("LINEWRIGHT_{}", key.to_uppercase().replace('-', "_"));
-            flags.get(key).copied().cloned().or_else(|| env(&variable))
+            let form = form(key).unwrap_or_else(|| panic!("`{key}` is not a setting"));
+            let variable = || {
+                env(&format!(
+                    "LINEWRIGHT_{}",
+                    key.to_uppercase().replace('-', "_")
+                ))
+            };
+            flags
+                .get(key)
+                .copied()
+                .cloned()
+                .or_else(|| form.has_variable().then(variable).flatten())
         };
         let get =
             |key: &str| -> Option<String> { flags_and_env(key).or_else(|| file.get(key).cloned()) };
@@ -662,10 +722,12 @@ impl Config {
                 hosts: ui_hosts.unwrap_or_default(),
             }),
         };
-        let session_env = get("session-env")
-            .unwrap_or_default()
-            .parse::<SessionEnv>()
-            .map_err(|e| wrong("session-env", e))?;
+        let session_env = SessionEnv::from(
+            get("session-env")
+                .unwrap_or_default()
+                .parse::<PassEnv>()
+                .map_err(|e| wrong("session-env", e))?,
+        );
         let secrets = VariableNames::new(
             secrets::SETTING,
             variable_names::comma_separated(&get(secrets::SETTING).unwrap_or_default()),
@@ -749,7 +811,7 @@ pub enum ResolveError {
 /// The operator's config file.
 struct FileSettings {
     path: PathBuf,
-    /// Each value in the form its flag takes.
+    /// Each value as the text its flag takes.
     top: BTreeMap<String, String>,
     /// The `[stage.NAME]` tables.
     stages: BTreeMap<WorkKind, StageTable>,
@@ -819,7 +881,7 @@ fn repository_setting(key: &str, at: &str) -> Result<Setting> {
     }
     let keys = REPOSITORY_SETTINGS.map(Setting::name);
     let holds = format!("{at} holds `{}`", keys.join("`, `"));
-    if KEYS.contains(&key) {
+    if form(key).is_some() {
         bail!("the setting `{key}` is the operator's: {holds}");
     }
     bail!("{at} has an unknown setting `{key}`: {holds}")
@@ -833,7 +895,8 @@ fn set(table: &mut StageTable, setting: Setting, text: &str) -> Result<()> {
         Setting::Effort => settings.effort = Some(effort(text)?),
         Setting::SessionTimeout => settings.session_timeout = Some(session_timeout(text)?),
         Setting::SessionEnv => {
-            table.session_env = Some(text.parse().map_err(|e: String| anyhow!(e))?);
+            let pass: PassEnv = text.parse().map_err(|e: String| anyhow!(e))?;
+            table.session_env = Some(pass.into());
         }
     }
     Ok(())
@@ -854,10 +917,11 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
                 stage_tables(value, Owner::Operator).with_context(|| path.display().to_string())?;
             continue;
         }
-        if !KEYS.contains(&key.as_str()) {
+        let Some(form) = form(&key) else {
             bail!("{} has an unknown setting `{key}`", path.display());
-        }
-        let value = setting_value(&key, value).with_context(|| format!("{}", path.display()))?;
+        };
+        let value =
+            setting_value(&key, form, value).with_context(|| format!("{}", path.display()))?;
         settings.top.insert(key, value);
     }
     Ok(settings)
@@ -879,7 +943,7 @@ impl RepoSettings {
                 continue;
             }
             let setting = repository_setting(&key, "the repository's file")?;
-            set(&mut top, setting, &setting_value(&key, value)?)?;
+            set(&mut top, setting, &stage_setting_value(setting, value)?)?;
         }
         Ok(RepoSettings::new(top.settings, stages))
     }
@@ -901,7 +965,7 @@ fn stage_tables(stages: toml::Value, owner: Owner) -> Result<BTreeMap<WorkKind, 
             let mut parsed = StageTable::default();
             for (key, value) in table {
                 let setting = owner.stage_setting(&key, &at)?;
-                let text = setting_value(&key, value).context(at.clone())?;
+                let text = stage_setting_value(setting, value).context(at.clone())?;
                 set(&mut parsed, setting, &text).context(at.clone())?;
             }
             Ok((stage, parsed))
@@ -918,14 +982,15 @@ fn session_timeout(text: &str) -> Result<Duration> {
         .with_context(|| format!("the setting `session-timeout` is {text:?}"))
 }
 
-/// `value` in the form `key`'s flag takes.
-fn setting_value(key: &str, value: toml::Value) -> Result<String> {
-    Ok(match value {
-        toml::Value::String(s) => s,
-        toml::Value::Integer(i) => i.to_string(),
-        toml::Value::Boolean(b) => b.to_string(),
-        // In the form its flag takes, separated by commas.
-        toml::Value::Array(entries) if let Some(holds) = list_holds(key) => entries
+/// `value`, of the setting `key` with form `form`, as the text its flag
+/// takes.
+fn setting_value(key: &str, form: Form, value: toml::Value) -> Result<String> {
+    Ok(match (form, value) {
+        (_, toml::Value::String(s)) => s,
+        (_, toml::Value::Integer(i)) => i.to_string(),
+        (_, toml::Value::Boolean(b)) => b.to_string(),
+        // As the text its flag takes, separated by commas.
+        (Form::List { holds }, toml::Value::Array(entries)) => entries
             .into_iter()
             .map(|entry| match entry.as_str() {
                 Some(entry) if !entry.is_empty() && !entry.contains(',') => Ok(entry.to_string()),
@@ -933,18 +998,19 @@ fn setting_value(key: &str, value: toml::Value) -> Result<String> {
             })
             .collect::<Result<Vec<_>>>()?
             .join(","),
-        other @ (toml::Value::Float(_)
-        | toml::Value::Datetime(_)
-        | toml::Value::Array(_)
-        | toml::Value::Table(_)) => {
+        (
+            Form::Value | Form::List { .. },
+            other @ (toml::Value::Float(_)
+            | toml::Value::Datetime(_)
+            | toml::Value::Array(_)
+            | toml::Value::Table(_)),
+        ) => {
             bail!("the setting `{key}` is {other}, not a string, number or boolean")
         }
     })
 }
 
-/// What the list setting `key` holds, `None` when it is not a list.
-fn list_holds(key: &str) -> Option<&'static str> {
-    LISTS
-        .iter()
-        .find_map(|&(list, holds)| (list == key).then_some(holds))
+/// `value`, of `setting`, a stage's setting, as the text its flag takes.
+fn stage_setting_value(setting: Setting, value: toml::Value) -> Result<String> {
+    setting_value(setting.name(), stage_form(setting), value)
 }

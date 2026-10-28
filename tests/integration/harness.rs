@@ -9,7 +9,7 @@ use linewright::harness::claude::ClaudeCode;
 use linewright::harness::{Harness, Purpose, Reported, Reporter, SessionError, SessionSpec};
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
-use linewright::session_env::{Given, SessionEnv};
+use linewright::session_env::{Given, PassEnv, SessionEnv};
 use linewright::transcript::{Prompt, What};
 use linewright::work_settings::Effort;
 use serde_json::{Value, json};
@@ -233,8 +233,9 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_env_name() 
         ("TMPDIR", "/tmp"),
         ("GH_TOKEN", "linewright-token"),
     ];
-    let session_env =
-        SessionEnv::new(["CARGO_*", "RUSTUP_HOME", "LINEWRIGHT_*"].map(String::from)).unwrap();
+    let session_env = SessionEnv::from(
+        PassEnv::new(["CARGO_*", "RUSTUP_HOME", "LINEWRIGHT_*"].map(String::from)).unwrap(),
+    );
     let harness = harness_without_token(dir.path());
     let mut session = triage_session(dir.path());
     session.environment = Arc::new(

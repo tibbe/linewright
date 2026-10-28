@@ -90,7 +90,7 @@ impl Setting {
     ];
 
     /// Its key in a config file.
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Setting::Model => "model",
             Setting::Effort => "effort",
@@ -137,7 +137,8 @@ pub struct Partial {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StageTable {
     pub settings: Partial,
-    /// The names it adds to the whole pipeline's `session-env`.
+    /// What it adds to the whole pipeline's sessions' environment, `None`
+    /// when it sets none of its settings.
     pub session_env: Option<SessionEnv>,
 }
 
@@ -380,7 +381,7 @@ impl WorkSettings {
     }
 
     /// Splits `environment` by what each stage's sessions are given: the
-    /// whole pipeline's `session_env`, and the names its table adds.
+    /// whole pipeline's `session_env`, and what its table adds.
     /// `set_by_linewright` names the variables Linewright sets for sessions
     /// itself, which are not withheld.
     pub fn environments(

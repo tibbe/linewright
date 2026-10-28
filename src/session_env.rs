@@ -150,11 +150,18 @@ fn never_passed(name: &str) -> bool {
     OWN_CREDENTIAL_VARIABLES.contains(&name)
 }
 
-/// The `session-env` setting: the variables sessions are given beyond the
-/// table's.
+/// The `session-env` setting: the variables of Linewright's environment
+/// sessions are given beyond the table's.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PassEnv {
+    names: VariableNames,
+}
+
+/// What sessions are given beyond what Linewright sets itself: the whole
+/// pipeline's, or what a stage's table adds to it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionEnv {
-    names: VariableNames,
+    pass: PassEnv,
 }
 
 /// The variables of Linewright's environment that sessions are given. Only
@@ -177,10 +184,10 @@ pub struct Split {
     pub withheld: Vec<String>,
 }
 
-impl SessionEnv {
+impl PassEnv {
     /// Refuses a name `session-env` never passes, and a `*` anywhere but at
     /// a name's end.
-    pub fn new(names: impl IntoIterator<Item = String>) -> Result<SessionEnv, String> {
+    pub fn new(names: impl IntoIterator<Item = String>) -> Result<PassEnv, String> {
         let names: Vec<String> = names
             .into_iter()
             .map(|name| {
@@ -194,21 +201,47 @@ impl SessionEnv {
                 Ok(name)
             })
             .collect::<Result<_, _>>()?;
-        Ok(SessionEnv {
+        Ok(PassEnv {
             names: VariableNames::new(SETTING, names)?,
         })
     }
 
     /// These names and `more`'s.
     #[must_use]
-    pub fn and(&self, more: &SessionEnv) -> SessionEnv {
-        SessionEnv {
+    pub fn and(&self, more: &PassEnv) -> PassEnv {
+        PassEnv {
             names: self.names.and(&more.names),
         }
     }
 
     fn passes(&self, name: &str) -> bool {
         in_table(name) || (!never_passed(name) && self.names.matches(name))
+    }
+}
+
+/// The setting as a flag or variable takes it: names separated by commas.
+impl std::str::FromStr for PassEnv {
+    type Err = String;
+
+    fn from_str(names: &str) -> Result<PassEnv, String> {
+        PassEnv::new(variable_names::comma_separated(names))
+    }
+}
+
+/// Sessions given the variables `pass` names.
+impl From<PassEnv> for SessionEnv {
+    fn from(pass: PassEnv) -> SessionEnv {
+        SessionEnv { pass }
+    }
+}
+
+impl SessionEnv {
+    /// This and what a stage's table adds to it.
+    #[must_use]
+    pub fn and(&self, stage: &SessionEnv) -> SessionEnv {
+        SessionEnv {
+            pass: self.pass.and(&stage.pass),
+        }
     }
 
     /// `set_by_linewright` names the variables Linewright sets for sessions
@@ -221,22 +254,13 @@ impl SessionEnv {
         let mut split = Split::default();
         for (name, value) in environment {
             match name.to_str() {
-                Some(text) if self.passes(text) => split.given.0.push((name, value)),
+                Some(text) if self.pass.passes(text) => split.given.0.push((name, value)),
                 Some(text) if set_by_linewright.contains(&text) => {}
                 _ => split.withheld.push(name.to_string_lossy().into_owned()),
             }
         }
         split.withheld.sort();
         split
-    }
-}
-
-/// The setting's form as a flag or variable: names separated by commas.
-impl std::str::FromStr for SessionEnv {
-    type Err = String;
-
-    fn from_str(names: &str) -> Result<SessionEnv, String> {
-        SessionEnv::new(variable_names::comma_separated(names))
     }
 }
 

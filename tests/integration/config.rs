@@ -8,7 +8,7 @@ use linewright::domain::{AutoMerge, MergeMethod};
 use linewright::host::HostName;
 use linewright::layer::{Layer, Sourced};
 use linewright::reconcile::WorkKind;
-use linewright::session_env::SessionEnv;
+use linewright::session_env::{PassEnv, SessionEnv};
 use linewright::variable_names::VariableNames;
 use linewright::work_settings::{
     Effort, Environments, RepoSettings, RunKind, SessionSettings, TimeoutSetting,
@@ -808,7 +808,7 @@ fn help_lists_the_webhook_address_with_its_default() {
 }
 
 fn session_env(names: &[&str]) -> SessionEnv {
-    SessionEnv::new(names.iter().map(ToString::to_string)).unwrap()
+    SessionEnv::from(PassEnv::new(names.iter().map(ToString::to_string)).unwrap())
 }
 
 #[test]
