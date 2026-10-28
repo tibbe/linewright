@@ -16,8 +16,8 @@ use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastS
 use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
 use crate::domain::{
-    AutoMerge, IssueCloseReason, Item, Number, Snapshot, Timestamp, UpdateMethod, UpdateRule,
-    Windows, label,
+    AutoMerge, IssueCloseReason, Item, Number, Snapshot, SubIssueState, Timestamp, UpdateMethod,
+    UpdateRule, Windows, label,
 };
 use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
@@ -1232,7 +1232,7 @@ async fn read_issue_into(
     snapshot.remove_closed(number);
     let left = match store.issue(number).await? {
         IssueRead::Held { issue, pulls } => {
-            snapshot.relink(number, issue.open);
+            snapshot.relink(number, SubIssueState::open(issue.open));
             snapshot.put_issue(*issue);
             for pull in pulls {
                 read.push(Item::Pull(pull.number));
@@ -1241,11 +1241,16 @@ async fn read_issue_into(
             false
         }
         IssueRead::LeftOut { open } => {
-            snapshot.relink(number, open);
+            snapshot.relink(number, SubIssueState::open(open));
             true
         }
         IssueRead::Closed(closed) => {
-            snapshot.relink(number, false);
+            snapshot.relink(
+                number,
+                SubIssueState::Closed {
+                    at: Some(closed.closed_at),
+                },
+            );
             if snapshot.keeps_closed(&closed, windows, &shell.policy.linewright) {
                 snapshot.put_closed(*closed);
             }

@@ -3242,7 +3242,7 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_desi
         sub_issue(12, true, "maintainer"),
     ];
     let mut discarded = stopped.clone();
-    discarded.sub_issues[0].linked.open = false;
+    discarded.sub_issues[0].state = SubIssueState::Closed { at: None };
 
     let decided = decisions(
         &snapshot(vec![stopped]),

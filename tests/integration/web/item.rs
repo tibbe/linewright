@@ -569,19 +569,20 @@ async fn a_finished_tracking_issues_state_is_tracking_and_when_it_finished() {
 }
 
 #[tokio::test]
-async fn a_tracking_issue_with_no_ticket_on_the_board_is_tracking_alone() {
+async fn a_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_it_finished() {
     let world = with_a_lane().await;
     world
         .store
         .close_issue_as_completed(linewright::domain::Number(3))
         .unwrap();
-    // Past the Done window, so that #3 leaves Done.
+    // Past the Done window, so that #2's lane leaves the board.
     world.clock.advance(chrono::TimeDelta::days(8));
     let web = Web::start(world).await;
 
     let html = web.page("/items/2").await;
 
-    assert_eq!(fact(&item_facts(&html), "State"), "Tracking");
+    let state = fact(&item_facts(&html), "State").to_string();
+    assert!(state.starts_with("Tracking · finished 2026-"), "{state}");
     web.stop().await;
 }
 

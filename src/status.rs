@@ -554,7 +554,7 @@ fn issue_state(
     let open_closing = closing.iter().find(|p| p.is_open());
     let state = if issue.tracks(&policy.linewright).is_some() {
         ItemState::Tracking {
-            tickets_closed: issue.sub_issues.iter().filter(|t| !t.linked.open).count(),
+            tickets_closed: issue.sub_issues.iter().filter(|t| !t.is_open()).count(),
             tickets: issue.sub_issues.len(),
         }
     } else if let Some(pr) = open_pull {

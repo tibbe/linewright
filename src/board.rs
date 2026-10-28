@@ -818,8 +818,8 @@ impl Tracker {
             number,
             title: title.to_string(),
             tracks,
-            tickets: tickets.iter().map(|s| s.linked.number).collect(),
-            tickets_closed: tickets.iter().filter(|s| !s.linked.open).count(),
+            tickets: tickets.iter().map(|s| s.number).collect(),
+            tickets_closed: tickets.iter().filter(|s| !s.is_open()).count(),
         }
     }
 

@@ -20,8 +20,8 @@ use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Linked, Login,
     MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
-    Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread,
-    TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within, label,
+    Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, SubIssueState,
+    Thread, TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within, label,
 };
 use crate::git;
 
@@ -1186,10 +1186,12 @@ fn linked_of(node: &LinkedNode) -> Linked {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SubIssueNode {
     #[serde(flatten)]
     linked: LinkedNode,
     author: Option<Actor>,
+    closed_at: Option<Timestamp>,
 }
 
 fn sub_issues(nodes: Option<Nodes<SubIssueNode>>) -> Vec<SubIssue> {
@@ -1197,8 +1199,13 @@ fn sub_issues(nodes: Option<Nodes<SubIssueNode>>) -> Vec<SubIssue> {
     nodes
         .into_iter()
         .map(|n| SubIssue {
-            linked: linked_of(&n.linked),
+            number: Number(n.linked.number),
             author: login(n.author),
+            state: if linked_of(&n.linked).open {
+                SubIssueState::Open
+            } else {
+                SubIssueState::Closed { at: n.closed_at }
+            },
         })
         .collect()
 }
@@ -1348,7 +1355,7 @@ const ISSUE_FIELDS: Fragment = Fragment {
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
-  subIssues(first: 100) { nodes { number state author { __typename login } } }
+  subIssues(first: 100) { nodes { number state closedAt author { __typename login } } }
   parent { number title body author { __typename login } }
   blockedBy(first: 50) { nodes { number state } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
@@ -1409,7 +1416,7 @@ const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
   author { __typename login }
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
-  subIssues(first: 100) { nodes { number state author { __typename login } } }
+  subIssues(first: 100) { nodes { number state closedAt author { __typename login } } }
   parent { number title body author { __typename login } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
   timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) { nodes { ... on ClosedEvent { closer { __typename ... on PullRequest { number } } } } }
@@ -3614,27 +3621,27 @@ mod tests {
 
     /// `fixtures/sub-issues.json` is the `subIssues` connection GitHub
     /// returned for <https://github.com/tibbe/linewright/issues/373>, the
-    /// tracking issue of tickets its account opened.
+    /// tracking issue of tickets its account opened, all of them closed.
     #[test]
-    fn an_issues_sub_issues_are_read_with_who_opened_them() {
+    fn an_issues_sub_issues_are_read_with_who_opened_them_and_when_they_closed() {
         let nodes: Nodes<SubIssueNode> =
             serde_json::from_str(include_str!("fixtures/sub-issues.json")).unwrap();
 
         assert_eq!(
             sub_issues(Some(nodes)),
             [
-                (374, false),
-                (375, false),
-                (376, false),
-                (377, false),
-                (378, true),
+                (374, "2026-10-20T07:25:56Z"),
+                (375, "2026-10-20T07:37:18Z"),
+                (376, "2026-10-20T07:59:39Z"),
+                (377, "2026-10-20T09:35:32Z"),
+                (378, "2026-10-20T12:02:46Z"),
             ]
-            .map(|(number, open)| SubIssue {
-                linked: Linked {
-                    number: Number(number),
-                    open,
-                },
+            .map(|(number, closed_at)| SubIssue {
+                number: Number(number),
                 author: Login::new("tibbe-bot"),
+                state: SubIssueState::Closed {
+                    at: Some(at(closed_at)),
+                },
             })
         );
     }
@@ -3801,12 +3808,12 @@ mod tests {
             .filter_map(|issue| issue.into_closed(&Login::new("tibbe-bot")));
         let closed = closed_within(read, opened("2026-10-20T13:50:00Z"));
 
-        let ticket = |number| SubIssue {
-            linked: Linked {
-                number: Number(number),
-                open: false,
-            },
+        let ticket = |number, closed_at| SubIssue {
+            number: Number(number),
             author: Login::new("tibbe-bot"),
+            state: SubIssueState::Closed {
+                at: Some(at(closed_at)),
+            },
         };
         assert_eq!(
             closed,
@@ -3823,7 +3830,10 @@ mod tests {
                         filed: Some(Filed::Tracking {
                             spec_change: Number(386)
                         }),
-                        sub_issues: vec![ticket(388), ticket(389)],
+                        sub_issues: vec![
+                            ticket(388, "2026-10-20T13:49:33Z"),
+                            ticket(389, "2026-10-20T14:10:32Z"),
+                        ],
                         labels: vec![],
                         merged_by: None,
                         reason: Some(IssueCloseReason::Completed),

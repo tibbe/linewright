@@ -942,7 +942,7 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
         tracking
             .sub_issues
             .iter()
-            .map(|s| s.linked.number)
+            .map(|s| s.number)
             .collect::<Vec<_>>(),
         [store_ticket.number, list_ticket.number]
     );
@@ -1062,11 +1062,7 @@ async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_reque
  {
     let (mut world, spec_pr) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
     let tracking = world.store.issues()[0].clone();
-    let tickets: Vec<_> = tracking
-        .sub_issues
-        .iter()
-        .map(|s| s.linked.number)
-        .collect();
+    let tickets: Vec<_> = tracking.sub_issues.iter().map(|s| s.number).collect();
     let pr = *world.store.pulls().last().expect("a ticket is in review");
     let persons = world
         .store
@@ -2519,7 +2515,7 @@ async fn issue_cut_into_tickets() -> (World, Number, [Number; 2]) {
         .issue(issue)
         .sub_issues
         .iter()
-        .map(|s| s.linked.number)
+        .map(|s| s.number)
         .collect();
     let [store_ticket, list_ticket] = tickets[..] else {
         panic!("expected two tickets, got {tickets:?}");

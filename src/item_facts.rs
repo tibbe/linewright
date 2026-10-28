@@ -3,8 +3,8 @@
 //! and the items it relates to, from what `explain` answers of it, the view
 //! it answered from and that view's board.
 
-use crate::board::{Board, Card, CardStatus, Column, LaneHeading};
-use crate::domain::{ClosedKind, Number, PullState, SubIssue, Timestamp, Tracks};
+use crate::board::{Board, Card, CardStatus, Column, Lane, LaneHeading};
+use crate::domain::{ClosedKind, Number, PullState, SubIssue, Timestamp, Tracks, tickets_finished};
 use crate::explain::{Answer, ChildRole, LeftAloneItem, ParentRole};
 use crate::reconcile::Wait;
 use crate::status::View;
@@ -32,8 +32,8 @@ pub struct ItemFacts {
 pub enum StateFact {
     /// Its card, or the card it would have on its own, and its column.
     Card { column: Column, card: Card },
-    /// A tracking issue, and when its lane finished, if it has a lane and
-    /// it finished.
+    /// A tracking issue, and when its lane finished, if it finished, on the
+    /// board or off it.
     Tracking { finished: Option<Timestamp> },
     /// Linewright leaves it, and why.
     LeftAlone(LeftAloneItem),
@@ -106,12 +106,13 @@ pub fn item_facts(answer: &Answer, view: &View, board: &Board) -> ItemFacts {
         .filter(|parent| parent.role == ParentRole::IssueItCloses)
         .map(|parent| related(parent.number, false))
         .collect();
-    let tickets = tickets_of(number, view).filter(|tickets| !tickets.is_empty());
+    let all_tickets = tickets_of(number, view);
+    let tickets = all_tickets.as_ref().filter(|tickets| !tickets.is_empty());
     let tickets = tickets.map(|tickets| Tickets {
-        closed: tickets.iter().filter(|ticket| !ticket.linked.open).count(),
+        closed: tickets.iter().filter(|ticket| !ticket.is_open()).count(),
         tickets: tickets
             .iter()
-            .map(|ticket| related(ticket.linked.number, false))
+            .map(|ticket| related(ticket.number, false))
             .collect(),
     });
     let pull_requests = view
@@ -130,15 +131,19 @@ pub fn item_facts(answer: &Answer, view: &View, board: &Board) -> ItemFacts {
             column,
             card: card.clone(),
         }
-    } else if let Some(lane) = lane {
+    } else if lane.is_some() || all_tickets.is_some() {
+        // Its lane's finish time while it is on the board; off it, its
+        // tickets'.
         StateFact::Tracking {
-            finished: lane.finished(),
+            finished: lane
+                .and_then(Lane::finished)
+                .or_else(|| all_tickets.as_deref().and_then(tickets_finished)),
         }
     } else {
         match answer {
             Answer::LeftAlone(left_alone) => StateFact::LeftAlone(left_alone.item.clone()),
             // Of the items Linewright manages, only a tracking issue has no
-            // card, and with none of its tickets on the board, no lane.
+            // card.
             Answer::Managed(_) => StateFact::Tracking { finished: None },
         }
     };

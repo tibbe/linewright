@@ -5,6 +5,7 @@
         "__typename": "User",
         "login": "tibbe-bot"
       },
+      "closedAt": "2026-10-20T07:25:56Z",
       "number": 374,
       "state": "CLOSED"
     },
@@ -13,6 +14,7 @@
         "__typename": "User",
         "login": "tibbe-bot"
       },
+      "closedAt": "2026-10-20T07:37:18Z",
       "number": 375,
       "state": "CLOSED"
     },
@@ -21,6 +23,7 @@
         "__typename": "User",
         "login": "tibbe-bot"
       },
+      "closedAt": "2026-10-20T07:59:39Z",
       "number": 376,
       "state": "CLOSED"
     },
@@ -29,6 +32,7 @@
         "__typename": "User",
         "login": "tibbe-bot"
       },
+      "closedAt": "2026-10-20T09:35:32Z",
       "number": 377,
       "state": "CLOSED"
     },
@@ -37,8 +41,9 @@
         "__typename": "User",
         "login": "tibbe-bot"
       },
+      "closedAt": "2026-10-20T12:02:46Z",
       "number": 378,
-      "state": "OPEN"
+      "state": "CLOSED"
     }
   ]
 }

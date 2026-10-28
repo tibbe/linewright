@@ -17,8 +17,8 @@ use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, MergeMethod,
     MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
-    Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, Thread,
-    TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within,
+    Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, SubIssueState,
+    Thread, TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within,
     closing_references, label,
 };
 use crate::git::{self, Merged};
@@ -1126,12 +1126,21 @@ impl State {
         Issue {
             open: record.is_open(),
             blocked_by: self.linked(&record.blocked_by),
-            sub_issues: self
-                .linked(&record.sub_issues)
-                .into_iter()
-                .map(|linked| SubIssue {
-                    linked,
-                    author: self.issues[&linked.number].issue.author.clone(),
+            sub_issues: record
+                .sub_issues
+                .iter()
+                .map(|number| {
+                    let sub_issue = &self.issues[number];
+                    SubIssue {
+                        number: *number,
+                        author: sub_issue.issue.author.clone(),
+                        state: match sub_issue.closing {
+                            None => SubIssueState::Open,
+                            Some(closing) => SubIssueState::Closed {
+                                at: Some(closing.at),
+                            },
+                        },
+                    }
                 })
                 .collect(),
             parent: self
@@ -2107,7 +2116,7 @@ fn render_comments(out: &mut String, comments: &[Comment]) {
 
 fn render_issue(issue: &Issue, issue_type: Option<&str>) -> String {
     let mut out = String::new();
-    let numbers = |linked: Vec<&Linked>| {
+    let numbers = |linked: Vec<Linked>| {
         linked
             .into_iter()
             .map(|l| format!("{}{}", l.number, if l.open { "" } else { " (closed)" }))
@@ -2129,8 +2138,8 @@ fn render_issue(issue: &Issue, issue_type: Option<&str>) -> String {
             .map(|a| a.0.as_str())
             .collect::<Vec<_>>()
             .join(", "),
-        numbers(issue.blocked_by.iter().collect()),
-        numbers(issue.sub_issues.iter().map(|s| &s.linked).collect()),
+        numbers(issue.blocked_by.clone()),
+        numbers(issue.sub_issues.iter().map(SubIssue::linked).collect()),
         issue
             .parent
             .map_or("none".to_string(), |p| p.number.to_string()),

@@ -8,9 +8,9 @@ use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
     Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, HandBackKind,
     Issue, Item, Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Pull,
-    PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, Thread,
-    TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, Windows, label, last_assigned,
-    last_assignment, last_labeling, last_unassignment,
+    PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot, StatusLabel, SubIssue,
+    Thread, TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule, Windows, label,
+    last_assigned, last_assignment, last_labeling, last_unassignment,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
@@ -790,7 +790,7 @@ pub fn decisions(
             || matches!(tracks, Some(Tracks::SpecChange(sc))
                 if pending.contains(&sc) || discarded.contains(&sc));
         if tracks.is_some() && !cutting && !issue.sub_issues.is_empty() {
-            let open = open_numbers(issue.sub_issues.iter().map(|s| &s.linked));
+            let open = open_numbers(issue.sub_issues.iter().map(SubIssue::linked));
             if open.is_empty() {
                 plan.act(Action::CloseTracking {
                     issue: issue.number,
@@ -1513,9 +1513,9 @@ fn discards(
 
 /// The discard of `item`'s cut, whose tickets are under `parent`.
 fn cut_to_discard(snapshot: &Snapshot, item: CutItem, parent: &Issue, policy: &Policy) -> Discard {
-    let cut: Vec<&Linked> = parent
+    let cut: Vec<Linked> = parent
         .tickets_cut(&policy.linewright)
-        .map(|t| &t.linked)
+        .map(SubIssue::linked)
         .collect();
     let tickets = open_numbers(cut.iter().copied());
     let pulls = snapshot
@@ -1539,7 +1539,7 @@ fn cut_to_discard(snapshot: &Snapshot, item: CutItem, parent: &Issue, policy: &P
     }
 }
 
-fn open_numbers<'a>(linked: impl IntoIterator<Item = &'a Linked>) -> Vec<Number> {
+fn open_numbers(linked: impl IntoIterator<Item = Linked>) -> Vec<Number> {
     linked
         .into_iter()
         .filter(|l| l.open)

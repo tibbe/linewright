@@ -211,7 +211,7 @@ impl Family {
                 .sub_issues
                 .iter()
                 .map(|ticket| Child {
-                    number: ticket.linked.number,
+                    number: ticket.number,
                     role: ChildRole::Ticket,
                 })
                 .collect()

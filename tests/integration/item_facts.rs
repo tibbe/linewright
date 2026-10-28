@@ -353,6 +353,121 @@ fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_
     );
 }
 
+/// Tracking issue #20 of spec change #15, open or not, whose tickets #1 and
+/// #2 closed before the Done window opened, so that its lane left the board.
+fn tracking_finished_before_the_window(open: bool) -> (View, Issue) {
+    let closed_at = |number, at: &str| SubIssue {
+        state: SubIssueState::Closed {
+            at: Some(common::at(at)),
+        },
+        ..sub_issue(number, false, "factory")
+    };
+    let tracking = Issue {
+        open,
+        sub_issues: vec![
+            closed_at(1, "2026-09-20T12:00:00Z"),
+            closed_at(2, "2026-09-22T12:00:00Z"),
+        ],
+        ..tracking_issue(20, 15, &[])
+    };
+    let mut view = view(if open { vec![tracking.clone()] } else { vec![] }, vec![]);
+    let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
+    snapshot.closed = vec![
+        closed_ticket(1, "2026-09-20T12:00:00Z"),
+        closed_ticket(2, "2026-09-22T12:00:00Z"),
+    ];
+    snapshot.merged = vec![spec_change(15)];
+    (view, tracking)
+}
+
+/// `docs/specs/design_system.md`, The item page, State: a tracking issue
+/// says when it finished off the board too.
+#[test]
+fn an_open_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_its_last_ticket_closed() {
+    let (view, _) = tracking_finished_before_the_window(true);
+    assert!(
+        board(&view, &[], at(NOW))
+            .lane_headed_by(Number(20))
+            .is_none()
+    );
+
+    let facts = facts_of(&view, 20);
+
+    assert_eq!(
+        facts.state,
+        StateFact::Tracking {
+            finished: Some(at("2026-09-22T12:00:00Z"))
+        }
+    );
+}
+
+#[test]
+fn a_closed_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_its_last_ticket_closed() {
+    let (view, tracking) = tracking_finished_before_the_window(false);
+
+    let facts = facts_read(&view, &AnyItem::HeldIssue(Box::new(tracking)));
+
+    assert_eq!(
+        facts.state,
+        StateFact::Tracking {
+            finished: Some(at("2026-09-22T12:00:00Z"))
+        }
+    );
+}
+
+#[test]
+fn a_closed_tracking_issue_with_a_ticket_open_is_tracking() {
+    let tracking = Issue {
+        open: false,
+        sub_issues: vec![
+            SubIssue {
+                state: SubIssueState::Closed {
+                    at: Some(at("2026-09-20T12:00:00Z")),
+                },
+                ..sub_issue(1, false, "factory")
+            },
+            sub_issue(2, true, "factory"),
+        ],
+        ..tracking_issue(20, 15, &[])
+    };
+
+    let facts = facts_read(
+        &view(vec![], vec![]),
+        &AnyItem::HeldIssue(Box::new(tracking)),
+    );
+
+    assert_eq!(facts.state, StateFact::Tracking { finished: None });
+}
+
+/// A snapshot written before sub-issues held when they closed knows of no
+/// close time for them.
+#[test]
+fn a_closed_tracking_issue_with_a_ticket_closed_at_an_unknown_time_is_tracking() {
+    let tracking = Issue {
+        open: false,
+        sub_issues: vec![
+            SubIssue {
+                state: SubIssueState::Closed {
+                    at: Some(at("2026-09-20T12:00:00Z")),
+                },
+                ..sub_issue(1, false, "factory")
+            },
+            SubIssue {
+                state: SubIssueState::Closed { at: None },
+                ..sub_issue(2, false, "factory")
+            },
+        ],
+        ..tracking_issue(20, 15, &[])
+    };
+
+    let facts = facts_read(
+        &view(vec![], vec![]),
+        &AnyItem::HeldIssue(Box::new(tracking)),
+    );
+
+    assert_eq!(facts.state, StateFact::Tracking { finished: None });
+}
+
 /// `docs/specs/design_system.md`, The item page, Related items: a tracking
 /// issue heading no lane has no lane head to be shown as, so it is shown by
 /// its number and title, with no card status.

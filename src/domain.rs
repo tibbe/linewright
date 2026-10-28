@@ -339,10 +339,86 @@ pub struct Linked {
 
 /// A sub-issue, with who opened it: Linewright opens the tickets it cuts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "SubIssueRecord", into = "SubIssueRecord")]
 pub struct SubIssue {
-    #[serde(flatten)]
-    pub linked: Linked,
+    pub number: Number,
     pub author: Login,
+    pub state: SubIssueState,
+}
+
+/// Whether a sub-issue is open, or closed and when.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubIssueState {
+    Open,
+    /// `at` is unknown in a snapshot written before sub-issues held it, and
+    /// until a full read after a refresh found it closed without its close
+    /// time.
+    Closed {
+        at: Option<Timestamp>,
+    },
+}
+
+impl SubIssueState {
+    /// Open, or closed at an unknown time.
+    pub fn open(open: bool) -> SubIssueState {
+        if open {
+            SubIssueState::Open
+        } else {
+            SubIssueState::Closed { at: None }
+        }
+    }
+}
+
+impl SubIssue {
+    pub fn is_open(&self) -> bool {
+        self.state == SubIssueState::Open
+    }
+
+    pub fn linked(&self) -> Linked {
+        Linked {
+            number: self.number,
+            open: self.is_open(),
+        }
+    }
+}
+
+/// A [`SubIssue`] as a snapshot holds it.
+#[derive(Serialize, Deserialize)]
+struct SubIssueRecord {
+    #[serde(flatten)]
+    linked: Linked,
+    author: Login,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    closed_at: Option<Timestamp>,
+}
+
+impl From<SubIssueRecord> for SubIssue {
+    fn from(record: SubIssueRecord) -> SubIssue {
+        SubIssue {
+            number: record.linked.number,
+            author: record.author,
+            state: if record.linked.open {
+                SubIssueState::Open
+            } else {
+                SubIssueState::Closed {
+                    at: record.closed_at,
+                }
+            },
+        }
+    }
+}
+
+impl From<SubIssue> for SubIssueRecord {
+    fn from(sub_issue: SubIssue) -> SubIssueRecord {
+        SubIssueRecord {
+            linked: sub_issue.linked(),
+            author: sub_issue.author,
+            closed_at: match sub_issue.state {
+                SubIssueState::Open => None,
+                SubIssueState::Closed { at } => at,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -517,6 +593,20 @@ impl Tracks {
             Tracks::Cut => is_cut(s, linewright),
         })
     }
+}
+
+/// When `tickets` finished: once every one is closed, when the last of them
+/// closed. `None` while one is open, or when one's close time is unknown.
+pub fn tickets_finished(tickets: &[&SubIssue]) -> Option<Timestamp> {
+    tickets
+        .iter()
+        .map(|ticket| match ticket.state {
+            SubIssueState::Open => None,
+            SubIssueState::Closed { at } => at,
+        })
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .max()
 }
 
 /// Those of `sub_issues` `linewright` opened: the tickets it cut.
@@ -1497,12 +1587,17 @@ impl Snapshot {
         self.issues.retain(|i| i.number != number);
     }
 
-    pub fn relink(&mut self, number: Number, open: bool) {
+    /// Has the issues linking #`number` see it as `state`.
+    pub fn relink(&mut self, number: Number, state: SubIssueState) {
         for issue in &mut self.issues {
-            let sub_issues = issue.sub_issues.iter_mut().map(|s| &mut s.linked);
-            for linked in issue.blocked_by.iter_mut().chain(sub_issues) {
+            for linked in &mut issue.blocked_by {
                 if linked.number == number {
-                    linked.open = open;
+                    linked.open = state == SubIssueState::Open;
+                }
+            }
+            for sub_issue in &mut issue.sub_issues {
+                if sub_issue.number == number {
+                    sub_issue.state = state;
                 }
             }
         }
@@ -1511,7 +1606,7 @@ impl Snapshot {
     pub fn unlink(&mut self, number: Number) {
         for issue in &mut self.issues {
             issue.blocked_by.retain(|linked| linked.number != number);
-            issue.sub_issues.retain(|s| s.linked.number != number);
+            issue.sub_issues.retain(|s| s.number != number);
         }
     }
 
@@ -1569,7 +1664,7 @@ impl Snapshot {
         windows.holds_closed(item.closed_at)
             || self
                 .held_tickets(linewright)
-                .any(|ticket| ticket.linked.number == item.number)
+                .any(|ticket| ticket.number == item.number)
     }
 
     /// Drops the closed items it would not keep ([`Snapshot::keeps_closed`]),
@@ -1597,8 +1692,8 @@ impl Snapshot {
     /// after the rest.
     pub fn unheld_closed_tickets(&self, linewright: &Login) -> BTreeSet<Number> {
         self.held_tickets(linewright)
-            .filter(|ticket| !ticket.linked.open)
-            .map(|ticket| ticket.linked.number)
+            .filter(|ticket| !ticket.is_open())
+            .map(|ticket| ticket.number)
             .filter(|&number| !self.closed.iter().any(|item| item.number == number))
             .collect()
     }
@@ -1801,6 +1896,33 @@ mod tests {
     fn a_snapshot_holds_an_item_closed_within_the_done_window() {
         assert!(windows().holds_closed(at("2026-09-26T12:00:00Z")));
         assert!(!windows().holds_closed(at("2026-09-22T12:00:00Z")));
+    }
+
+    /// A snapshot as Linewright wrote it before a sub-issue held when it
+    /// closed.
+    #[test]
+    fn a_snapshot_written_before_sub_issues_held_their_close_time_loads_with_it_unknown() {
+        let snapshot: Snapshot = serde_json::from_str(
+            r#"{
+              "default_branch": "main",
+              "issues": [{
+                "number": 20, "title": "Tracking 20", "body": "", "author": "factory",
+                "open": true, "created_at": "2026-10-01T11:00:00Z", "labels": [],
+                "assignees": [], "comments": [], "blocked_by": [],
+                "sub_issues": [{"number": 1, "open": false, "author": "factory"}],
+                "events": [], "closed_by": []
+              }],
+              "pulls": [],
+              "merged": [],
+              "closed": []
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            snapshot.issues[0].sub_issues[0].state,
+            SubIssueState::Closed { at: None }
+        );
     }
 
     /// A snapshot as Linewright wrote it before it held a closed issue's

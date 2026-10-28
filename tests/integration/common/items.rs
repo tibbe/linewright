@@ -31,11 +31,9 @@ pub fn policy() -> Policy {
 
 pub fn sub_issue(number: u64, open: bool, author: &str) -> SubIssue {
     SubIssue {
-        linked: Linked {
-            number: Number(number),
-            open,
-        },
+        number: Number(number),
         author: Login::new(author),
+        state: SubIssueState::open(open),
     }
 }
 

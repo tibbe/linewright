@@ -26,6 +26,7 @@
           {
             "number": 388,
             "state": "CLOSED",
+            "closedAt": "2026-10-20T13:49:33Z",
             "author": {
               "__typename": "User",
               "login": "tibbe-bot"
@@ -34,6 +35,7 @@
           {
             "number": 389,
             "state": "CLOSED",
+            "closedAt": "2026-10-20T14:10:32Z",
             "author": {
               "__typename": "User",
               "login": "tibbe-bot"
