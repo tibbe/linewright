@@ -77,6 +77,12 @@ pub struct World {
     pub dir: tempfile::TempDir,
 }
 
+/// A tracking issue and its closed ticket.
+pub struct Tracking {
+    pub tracking: Number,
+    pub closed: Number,
+}
+
 pub struct Repository {
     pub linear_history: bool,
     pub allowed_merge_methods: MergeMethods,
@@ -428,6 +434,26 @@ pub fn open_ticket(world: &World, title: &str) -> Number {
 pub const HOURLY: &str = "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n";
 
 impl World {
+    /// Opens a tracking issue cut into two tickets, ready for a person, and
+    /// closes the first.
+    pub async fn tracking_with_a_closed_ticket(&self) -> Tracking {
+        let tracking = self.store.open_issue(
+            "maintainer",
+            "Big thing",
+            "Cut it.",
+            &["linewright:designed"],
+        );
+        let [closed, open] = ["Part one", "Part two"].map(|title| {
+            self.store
+                .open_issue(LINEWRIGHT, title, "Of it.", &["ready-for-human"])
+        });
+        for ticket in [closed, open] {
+            self.store.add_sub_issue(tracking, ticket).await.unwrap();
+        }
+        self.store.close_issue_as_completed(closed).unwrap();
+        Tracking { tracking, closed }
+    }
+
     /// The hourly automation, run once on its schedule at 13:00 and once by
     /// hand at 13:05: `hourly/1` and `hourly/2`.
     pub async fn hourly_by_schedule_then_by_hand(&mut self) {

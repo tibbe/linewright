@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -1215,15 +1216,16 @@ pub struct Snapshot {
     #[serde(default)]
     pub ticket_branches: Vec<TicketBranch>,
     /// The issues closed within the Done window that the snapshot would hold
-    /// were they open, and Linewright's pull requests closed without merging
-    /// within it, for the board's Done column (`docs/specs/design_system.md`,
+    /// were they open, every closed ticket of a tracking issue it holds,
+    /// whenever it closed, and Linewright's pull requests closed without
+    /// merging within the Done window, for the board's Done column (`docs/specs/design_system.md`,
     /// "The board"), which keeps only those worked. The reconcile ignores
     /// them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
 }
 
-/// An issue or pull request closed within the Done window.
+/// An issue or pull request a snapshot holds closed ([`Snapshot::closed`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClosedItem {
     pub number: Number,
@@ -1556,6 +1558,64 @@ impl Snapshot {
 
     pub fn remove_closed(&mut self, number: Number) {
         self.closed.retain(|i| i.number != number);
+    }
+
+    /// Whether a snapshot holding the rest of what this one holds holds
+    /// `item` among the closed ones: closed within the Done window, or a
+    /// ticket of a tracking issue it holds, whenever it closed, as an
+    /// unfinished lane keeps every ticket it closed
+    /// (`docs/specs/design_system.md`, The board, Finished lanes).
+    pub fn keeps_closed(&self, item: &ClosedItem, windows: Windows, linewright: &Login) -> bool {
+        windows.holds_closed(item.closed_at)
+            || self
+                .held_tickets(linewright)
+                .any(|ticket| ticket.linked.number == item.number)
+    }
+
+    /// Drops the closed items it would not keep ([`Snapshot::keeps_closed`]),
+    /// as a snapshot taken now would not hold them: those of a tracking
+    /// issue it no longer holds, or closed before the Done window opened
+    /// since it read them.
+    pub fn drop_unkept_closed(&mut self, windows: Windows, linewright: &Login) {
+        loop {
+            let unkept: Vec<Number> = self
+                .closed
+                .iter()
+                .filter(|item| !self.keeps_closed(item, windows, linewright))
+                .map(|item| item.number)
+                .collect();
+            if unkept.is_empty() {
+                return;
+            }
+            // A tracking issue dropped can leave its tickets unkept.
+            self.closed.retain(|item| !unkept.contains(&item.number));
+        }
+    }
+
+    /// The closed tickets of the tracking issues it holds, open or closed,
+    /// that it does not yet hold among the closed items, which a store reads
+    /// after the rest.
+    pub fn unheld_closed_tickets(&self, linewright: &Login) -> BTreeSet<Number> {
+        self.held_tickets(linewright)
+            .filter(|ticket| !ticket.linked.open)
+            .map(|ticket| ticket.linked.number)
+            .filter(|&number| !self.closed.iter().any(|item| item.number == number))
+            .collect()
+    }
+
+    /// The tickets of each tracking issue it holds, open or closed.
+    fn held_tickets<'a>(&'a self, linewright: &'a Login) -> impl Iterator<Item = &'a SubIssue> {
+        let open = self
+            .issues
+            .iter()
+            .filter(|issue| issue.open)
+            .filter_map(|issue| Some((issue.tracks(linewright)?, &issue.sub_issues)));
+        let closed = self.closed.iter().filter_map(|item| match &item.kind {
+            ClosedKind::Issue { sub_issues, .. } => Some((item.tracks(linewright)?, sub_issues)),
+            ClosedKind::Pull { .. } => None,
+        });
+        open.chain(closed)
+            .flat_map(|(tracks, sub_issues)| tracks.tickets(sub_issues, linewright))
     }
 }
 

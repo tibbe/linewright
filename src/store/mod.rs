@@ -244,8 +244,8 @@ pub enum IssueRead {
     LeftOut {
         open: bool,
     },
-    /// Left out of the open issues, and closed since the window opened: one
-    /// the snapshot holds among its closed items.
+    /// Left out of the open issues, and closed: one a snapshot may hold
+    /// among its closed items.
     Closed(Box<ClosedItem>),
     Gone,
 }
@@ -345,11 +345,14 @@ pub trait Store: Send + Sync {
     async fn label_exists(&self, name: &str) -> Result<bool>;
 
     /// The facts one poll reconciles, with the merged pull requests and
-    /// closed items `windows` holds and every branch Linewright pushed for a
-    /// ticket.
+    /// closed items `windows` holds, every closed ticket of a tracking issue
+    /// it holds ([`Snapshot::unheld_closed_tickets`]) and every branch
+    /// Linewright pushed for a ticket.
     async fn snapshot(&self, windows: Windows) -> Result<Snapshot>;
-    /// The issue as a snapshot taken now, over `windows`, sees it.
-    async fn issue(&self, number: Number, windows: Windows) -> Result<IssueRead>;
+    /// The issue as a snapshot taken now sees it, but a closed one whenever
+    /// it closed: whether a snapshot holds it closed depends on the rest it
+    /// holds ([`Snapshot::keeps_closed`]).
+    async fn issue(&self, number: Number) -> Result<IssueRead>;
     async fn pull(&self, number: Number) -> Result<Pull>;
     /// The issue or pull request #`number`, open or not, whoever opened it:
     /// `None` when the store has neither.

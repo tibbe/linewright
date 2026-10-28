@@ -379,6 +379,19 @@ impl Factory {
         read.extend(read_all(snapshot, shell, named, windows).await?);
         let others = closed_by_pulls_read(snapshot, &read);
         read.extend(read_all(snapshot, shell, others, windows).await?);
+        // Hold the closed items a snapshot taken now would.
+        let linewright = &shell.policy.linewright;
+        let tickets = snapshot.unheld_closed_tickets(linewright);
+        read.extend(
+            read_all(
+                snapshot,
+                shell,
+                tickets.into_iter().map(Item::Issue),
+                windows,
+            )
+            .await?,
+        );
+        snapshot.drop_unkept_closed(windows, linewright);
         kept.read_at
             .extend(read.into_iter().map(|item| (item, now)));
         kept.repo = self.read_repo_files().await?;
@@ -1217,7 +1230,7 @@ async fn read_issue_into(
     let store = &shell.store;
     let mut read = vec![Item::Issue(number)];
     snapshot.remove_closed(number);
-    let left = match store.issue(number, windows).await? {
+    let left = match store.issue(number).await? {
         IssueRead::Held { issue, pulls } => {
             snapshot.relink(number, issue.open);
             snapshot.put_issue(*issue);
@@ -1233,7 +1246,9 @@ async fn read_issue_into(
         }
         IssueRead::Closed(closed) => {
             snapshot.relink(number, false);
-            snapshot.put_closed(*closed);
+            if snapshot.keeps_closed(&closed, windows, &shell.policy.linewright) {
+                snapshot.put_closed(*closed);
+            }
             true
         }
         IssueRead::Gone => {

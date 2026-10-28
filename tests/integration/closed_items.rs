@@ -76,3 +76,18 @@ async fn an_issue_a_person_closed_and_linewrights_pull_request_closed_unmerged_a
         ]
     );
 }
+
+#[tokio::test]
+async fn a_ticket_closed_before_the_done_window_is_held_closed_while_its_tracking_issue_is_held() {
+    let world = World::new().await;
+    let Tracking { closed, .. } = world.tracking_with_a_closed_ticket().await;
+    let alone = world
+        .store
+        .open_issue(LINEWRIGHT, "Old idea", "Maybe.", &["ready-for-human"]);
+    world.store.close_issue_as_completed(alone).unwrap();
+    world.clock.advance(TimeDelta::days(8));
+
+    let closed_items = closed_items_served(world).await;
+
+    assert_eq!(endings(&closed_items), [(closed, "closed".to_string())]);
+}

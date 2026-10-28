@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::Path;
 use std::time::SystemTime;
@@ -350,6 +350,25 @@ impl GitHub {
             }
         }
         Ok(closed.into_values().collect())
+    }
+
+    /// The closed issues of `numbers` that the snapshot's filters would hold
+    /// were they open, as [`Store::issue`] reads them, twenty to a query by
+    /// aliases, which costs about a point
+    /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
+    async fn closed_issues_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<ClosedItem>> {
+        let numbers: Vec<Number> = numbers.iter().copied().collect();
+        let mut closed = vec![];
+        for batch in numbers.chunks(20) {
+            let response: GqlResponse<RepoData<BTreeMap<String, Option<GqlClosedIssue>>>> = self
+                .graphql_response(
+                    &numbered_query(batch, CLOSED_ISSUE_FIELDS),
+                    json!({"owner": self.owner, "name": self.name}),
+                )
+                .await?;
+            closed.extend(closed_of_numbered(response, &self.linewright())?);
+        }
+        Ok(closed)
     }
 
     /// Linewright's pull requests closed without merging, among those
@@ -1477,6 +1496,50 @@ impl GqlClosedIssue {
     }
 }
 
+/// A query for the issues `numbers`, each read with `fields` under the alias
+/// `i` and its number
+/// (<https://docs.github.com/en/graphql/guides/using-the-explorer#aliases>).
+fn numbered_query(numbers: &[Number], fields: Fragment) -> String {
+    let Fragment { name, text } = fields;
+    let issues: String = numbers
+        .iter()
+        .map(|Number(n)| format!("i{n}: issue(number: {n}) {{ ...{name} }} "))
+        .collect();
+    format!(
+        "query($owner: String!, $name: String!) {{
+          repository(owner: $owner, name: $name) {{ {issues}}}
+        }}
+        {text}"
+    )
+}
+
+/// The closed issues `response` to a [`numbered_query`] holds that the
+/// snapshot's filters would hold were they open. GitHub resolves a deleted
+/// issue to null, with an error saying so.
+fn closed_of_numbered(
+    response: GqlResponse<RepoData<BTreeMap<String, Option<GqlClosedIssue>>>>,
+    linewright: &Login,
+) -> Result<Vec<ClosedItem>> {
+    if !response.errors.iter().all(|e| e["type"] == "NOT_FOUND") {
+        bail!("GraphQL errors: {}", Value::Array(response.errors));
+    }
+    let issues = response.data.context("GraphQL returned no data")?;
+    Ok(issues
+        .repository
+        .into_values()
+        .flatten()
+        .filter(|issue| {
+            in_view_if_open(
+                &issue.labels,
+                &issue.assignees,
+                issue.author.as_ref(),
+                linewright,
+            )
+        })
+        .filter_map(|issue| issue.into_closed(linewright))
+        .collect())
+}
+
 /// <https://docs.github.com/en/graphql/reference/enums#issuestatereason>
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -1608,6 +1671,25 @@ fn in_view_filters(state: IssueState, linewright: &str) -> [Value; 3] {
     ]
 }
 
+/// Whether the snapshot would hold an issue with `labels`, `assignees` and
+/// `author`, were it open: must match the snapshot's filters.
+fn in_view_if_open(
+    labels: &Nodes<Name>,
+    assignees: &Nodes<LoginNode>,
+    author: Option<&Actor>,
+    linewright: &Login,
+) -> bool {
+    labels
+        .nodes
+        .iter()
+        .any(|l| label::IN_VIEW.contains(&l.name.as_str()))
+        || assignees
+            .nodes
+            .iter()
+            .any(|a| a.login == linewright.as_str())
+        || author.is_some_and(|a| a.login == linewright.as_str())
+}
+
 impl GqlIssue {
     /// Must match the snapshot's filters.
     fn in_view(&self, linewright: &str) -> bool {
@@ -1616,12 +1698,12 @@ impl GqlIssue {
 
     /// Whether the snapshot would hold it, were it open.
     fn in_view_if_open(&self, linewright: &str) -> bool {
-        self.labels
-            .nodes
-            .iter()
-            .any(|l| label::IN_VIEW.contains(&l.name.as_str()))
-            || self.assignees.nodes.iter().any(|a| a.login == linewright)
-            || self.author.as_ref().is_some_and(|a| a.login == linewright)
+        in_view_if_open(
+            &self.labels,
+            &self.assignees,
+            self.author.as_ref(),
+            &Login::new(linewright),
+        )
     }
 
     fn into_issue(self, linewright: &Login) -> Issue {
@@ -2339,7 +2421,7 @@ impl Store for GitHub {
         }
         let closed_issues = self.closed_issues(windows.read_since()).await?;
         let closed_pulls = self.closed_pulls(windows.read_since()).await?;
-        Ok(Snapshot {
+        let mut snapshot = Snapshot {
             ticket_branches: self.ticket_branches(&issues).await?,
             merged: self.merged_within(&default_branch, windows).await?,
             closed: closed_within(closed_issues.into_iter().chain(closed_pulls), windows),
@@ -2349,7 +2431,12 @@ impl Store for GitHub {
                 .map(|i| i.into_issue(&self.linewright()))
                 .collect(),
             pulls,
-        })
+        };
+        let tickets = snapshot.unheld_closed_tickets(&self.linewright());
+        for ticket in self.closed_issues_numbered(&tickets).await? {
+            snapshot.put_closed(ticket);
+        }
+        Ok(snapshot)
     }
 
     async fn pull(&self, number: Number) -> Result<Pull> {
@@ -2416,7 +2503,7 @@ impl Store for GitHub {
         Ok(Some(self.pull_view(pr).await?))
     }
 
-    async fn issue(&self, number: Number, windows: Windows) -> Result<IssueRead> {
+    async fn issue(&self, number: Number) -> Result<IssueRead> {
         let Some(issue) = self.gql_issue(number).await? else {
             return Ok(IssueRead::Gone);
         };
@@ -2424,10 +2511,7 @@ impl Store for GitHub {
         if !open && issue.in_view_if_open(&self.viewer.login) {
             let closed: Option<GqlClosedIssue> =
                 self.issue_with(number, CLOSED_ISSUE_FIELDS).await?;
-            if let Some(closed) = closed
-                .and_then(|i| i.into_closed(&self.linewright()))
-                .filter(|item| windows.holds_closed(item.closed_at))
-            {
+            if let Some(closed) = closed.and_then(|i| i.into_closed(&self.linewright())) {
                 return Ok(IssueRead::Closed(Box::new(closed)));
             }
         }
@@ -3786,6 +3870,33 @@ mod tests {
                     },
                 },
             ]
+        );
+    }
+
+    /// `fixtures/closed-issues-numbered.json` is GitHub's response to
+    /// `numbered_query` for #388, #719 and #99999 of
+    /// <https://github.com/tibbe/linewright>: #388, a ticket its account
+    /// opened, closed by the merge of #390; #719, an issue a person opened,
+    /// unlabeled and assigned only to them; and #99999, which does not exist.
+    #[test]
+    fn closed_issues_read_by_number_are_those_the_snapshot_would_hold_were_they_open() {
+        let response =
+            serde_json::from_str(include_str!("fixtures/closed-issues-numbered.json")).unwrap();
+
+        let closed = closed_of_numbered(response, &Login::new("tibbe-bot")).unwrap();
+
+        let read: Vec<(Number, Timestamp, Option<Number>)> = closed
+            .iter()
+            .map(|item| {
+                let ClosedKind::Issue { merged_by, .. } = item.kind else {
+                    panic!("an issue");
+                };
+                (item.number, item.closed_at, merged_by)
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [(Number(388), at("2026-10-20T13:49:33Z"), Some(Number(390)))]
         );
     }
 

@@ -1,0 +1,158 @@
+{
+  "data": {
+    "repository": {
+      "i388": {
+        "number": 388,
+        "title": "Plan and run every discarded cut as one action, decided before the rest of the plan",
+        "body": "## What to build\n\nRestructuring only: no behavior changes. Today a cut is discarded in two ways. `Action::DiscardTickets` is planned for a spec change in the merged-PR loop, and `Action::DiscardCut` is planned for an issue inside the issue loop. Each has its own arm in the factory. Replace both with one discard step. It is computed before the rest of the plan, under the rule *Discarding a cut* in docs/specs/design.md.\n\n- A single reconcile function finds every item to discard and what to close for it. It covers a spec change whose merged PR lacks `linewright:designed`, has no design running and still has an open tracking issue. It also covers an open issue, other than a spec change's tracking issue, that lacks the label, has no design running and has open tickets Linewright cut. The function runs before the pulls loop and the issue loop.\n- One action, `DiscardCut { item, tickets }`, where `item` is either a spec change with its tracking issue or an issue. It replaces `DiscardTickets` and the old `DiscardCut`. It is used in the drain's held-back list and in `written`.\n- One factory arm runs it, keeping today's order and comments: close the tickets, then close the tracking issue of a spec change, or comment on the issue.\n- For now, the spec-change case keeps the tickets it closes today (every open sub-issue of the tracking issue). Restricting them is the next ticket's job.\n- A discarded item still waits until the next poll before it is designed again, as today.\n\nSee the design posted on the tracking issue.\n\n## Acceptance criteria\n\n- [ ] One action type and one factory arm discard both spec-change cuts and issue cuts. `DiscardTickets` is gone.\n- [ ] Discards are computed once, before the pulls loop and the issue loop, and those loops read the result instead of planning discards themselves.\n- [ ] The existing discard tests pass, rewritten only for the new action's shape. They include an interrupted decomposition, a cut stopped part way, a removed label, an unassigned spec change, a cut still running that is not discarded, and the issue designed once its tickets close.\n- [ ] `scripts/check` passes.",
+        "closedAt": "2026-10-20T13:49:33Z",
+        "updatedAt": "2026-10-20T13:49:33Z",
+        "stateReason": "COMPLETED",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "labels": {
+          "nodes": [
+            {
+              "name": "ready-for-agent"
+            },
+            {
+              "name": "linewright:designed"
+            }
+          ]
+        },
+        "assignees": {
+          "nodes": [
+            {
+              "login": "tibbe-bot"
+            }
+          ]
+        },
+        "subIssues": {
+          "nodes": []
+        },
+        "parent": {
+          "number": 387,
+          "title": "Spec change: Say what removing `linewright:designed` does to an issue's tickets",
+          "body": "Tickets for the spec change in #386.\n\n- #388 Plan and run every discarded cut as one action, decided before the rest of the plan\n- #389 Close a discarded cut's pull requests, and keep sub-issues a person added\n",
+          "author": {
+            "__typename": "User",
+            "login": "tibbe-bot"
+          }
+        },
+        "closedByPullRequestsReferences": {
+          "nodes": [
+            {
+              "number": 390,
+              "state": "MERGED",
+              "isDraft": false,
+              "mergedAt": "2026-10-20T13:49:31Z",
+              "closedAt": "2026-10-20T13:49:31Z",
+              "updatedAt": "2026-10-20T13:49:34Z",
+              "author": {
+                "__typename": "User",
+                "login": "tibbe-bot"
+              }
+            }
+          ]
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "closer": {
+                "__typename": "PullRequest",
+                "number": 390
+              }
+            }
+          ]
+        },
+        "assignments": {
+          "nodes": [
+            {
+              "__typename": "AssignedEvent",
+              "createdAt": "2026-10-20T13:38:44Z",
+              "actor": {
+                "__typename": "User",
+                "login": "tibbe-bot"
+              },
+              "assignee": {
+                "__typename": "User",
+                "login": "tibbe-bot"
+              }
+            }
+          ]
+        }
+      },
+      "i719": {
+        "number": 719,
+        "title": "Investigate whether we can omit struck reasons from the software design skill",
+        "body": "These come out as noise in the issue comment but they are currently needed to prevent the model from bad decision making.",
+        "closedAt": "2026-10-27T15:20:26Z",
+        "updatedAt": "2026-10-27T15:20:26Z",
+        "stateReason": "NOT_PLANNED",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "labels": {
+          "nodes": []
+        },
+        "assignees": {
+          "nodes": [
+            {
+              "login": "tibbe"
+            }
+          ]
+        },
+        "subIssues": {
+          "nodes": []
+        },
+        "parent": null,
+        "closedByPullRequestsReferences": {
+          "nodes": []
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "closer": null
+            }
+          ]
+        },
+        "assignments": {
+          "nodes": [
+            {
+              "__typename": "AssignedEvent",
+              "createdAt": "2026-10-27T14:35:14Z",
+              "actor": {
+                "__typename": "User",
+                "login": "tibbe"
+              },
+              "assignee": {
+                "__typename": "User",
+                "login": "tibbe"
+              }
+            }
+          ]
+        }
+      },
+      "i99999": null
+    }
+  },
+  "errors": [
+    {
+      "type": "NOT_FOUND",
+      "path": [
+        "repository",
+        "i99999"
+      ],
+      "locations": [
+        {
+          "line": 2,
+          "column": 152
+        }
+      ],
+      "message": "Could not resolve to an Issue with the number of 99999."
+    }
+  ]
+}

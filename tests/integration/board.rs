@@ -565,7 +565,9 @@ fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
     assert_eq!(
         card(&board, 5).line,
         Some(CardLine::Ended {
-            ended: Ended::NothingToBuild,
+            ended: Ended::NothingToBuild {
+                designed: at("2026-10-01T09:00:00Z")
+            },
             at: at("2026-10-01T09:00:00Z"),
         })
     );
@@ -1920,5 +1922,82 @@ fn a_merged_pull_request_of_linewrights_closing_an_issue_left_off_the_board_is_a
     assert_eq!(
         placed(&board(&view, &[], at(NOW))),
         [(10, Column::Done, 10)]
+    );
+}
+
+#[test]
+fn an_unfinished_lane_keeps_a_ticket_closed_before_the_done_window_in_done() {
+    let view = with_closed(
+        view(
+            vec![
+                tracking_issue(10, 9, &[(11, true), (12, false)]),
+                cut_from(ticket(11, "Open"), 10, 9),
+            ],
+            vec![],
+        ),
+        vec![closed_ticket(12, 10, "2026-09-10T12:00:00Z")],
+    );
+
+    assert_eq!(
+        placed(&board(&view, &[], at(NOW))),
+        [(10, Column::Ready, 11), (10, Column::Done, 12)]
+    );
+}
+
+#[test]
+fn a_finished_lane_shows_every_ticket_until_it_finished_before_the_done_window_then_leaves_whole() {
+    let view = with_closed(
+        view(
+            vec![
+                tracking_issue(10, 9, &[(11, false), (12, false)]),
+                tracking_issue(20, 19, &[(21, false), (22, false)]),
+            ],
+            vec![],
+        ),
+        vec![
+            closed_ticket(11, 10, "2026-09-10T12:00:00Z"),
+            closed_ticket(12, 10, "2026-09-28T12:00:00Z"),
+            closed_ticket(21, 20, "2026-09-10T12:00:00Z"),
+            closed_ticket(22, 20, "2026-09-20T12:00:00Z"),
+        ],
+    );
+
+    assert_eq!(
+        placed(&board(&view, &[], at(NOW))),
+        [(10, Column::Done, 11), (10, Column::Done, 12)]
+    );
+}
+
+#[test]
+fn a_spec_change_designed_with_nothing_to_build_finished_when_it_was_designed() {
+    let merged_before = |number: u64, designed: Option<&str>| MergedPull {
+        merged_at: at("2026-09-01T09:00:00Z"),
+        updated_at: at(designed.unwrap_or("2026-09-01T09:00:00Z")),
+        events: designed
+            .map(|when| labeling(label::DESIGNED, when))
+            .into_iter()
+            .collect(),
+        ..spec_change(number, &[label::DESIGNED])
+    };
+    let view = with_merged(
+        view(vec![], vec![]),
+        vec![
+            merged_before(5, Some("2026-09-29T09:00:00Z")),
+            merged_before(6, Some("2026-09-10T09:00:00Z")),
+            merged_before(7, None),
+        ],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(lanes(&board), [(5, Some(at("2026-09-29T09:00:00Z")))]);
+    assert_eq!(
+        card(&board, 5).line,
+        Some(CardLine::Ended {
+            ended: Ended::NothingToBuild {
+                designed: at("2026-09-29T09:00:00Z")
+            },
+            at: at("2026-09-01T09:00:00Z"),
+        })
     );
 }

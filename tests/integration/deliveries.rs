@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use chrono::TimeDelta;
+
 use common::*;
 use linewright::domain::{
     CheckState, Issue, Login, Mergeability, Number, PullState, ReviewState, Snapshot,
@@ -190,6 +192,96 @@ async fn an_issue_closed_is_held_among_the_closed_items_on_the_delivery_about_it
     eventually(closed).await;
     assert!(served.snapshot().issue(issue).is_none());
     assert_eq!(served.store.snapshots_taken(), 1);
+    served.stop().await;
+}
+
+#[tokio::test]
+async fn a_refresh_holds_the_closed_issues_a_fresh_snapshot_would() {
+    let world = World::new().await;
+    let Tracking { closed: ticket, .. } = world.tracking_with_a_closed_ticket().await;
+    let alone = world
+        .store
+        .open_issue(LINEWRIGHT, "Old idea", "Maybe.", &["ready-for-human"]);
+    world.store.close_issue_as_completed(alone).unwrap();
+    world.clock.advance(TimeDelta::days(8));
+    let marker = world
+        .store
+        .open_issue(LINEWRIGHT, "Marker", "Now.", &["ready-for-human"]);
+    let served = serve(world, NEVER).await;
+
+    served.store.close_issue_as_completed(marker).unwrap();
+    for issue in [ticket, alone, marker] {
+        served.deliver("issues", about_issue(issue)).await;
+    }
+
+    let held = || -> Vec<Number> {
+        let snapshot = served.snapshot();
+        snapshot.closed.iter().map(|item| item.number).collect()
+    };
+    eventually(|| held().contains(&marker)).await;
+    assert_eq!(held(), [ticket, marker]);
+    served.stop().await;
+}
+
+#[tokio::test]
+async fn a_refreshed_tracking_issue_that_gained_a_ticket_closed_before_the_done_window_holds_it() {
+    let world = World::new().await;
+    let Tracking {
+        tracking,
+        closed: ticket,
+    } = world.tracking_with_a_closed_ticket().await;
+    let old = world
+        .store
+        .open_issue(LINEWRIGHT, "Part three", "Of it.", &["ready-for-human"]);
+    world.store.close_issue_as_completed(old).unwrap();
+    world.clock.advance(TimeDelta::days(8));
+    let marker = world
+        .store
+        .open_issue(LINEWRIGHT, "Marker", "Now.", &["ready-for-human"]);
+    let served = serve(world, NEVER).await;
+
+    served.store.add_sub_issue(tracking, old).await.unwrap();
+    served.store.close_issue_as_completed(marker).unwrap();
+    for issue in [tracking, marker] {
+        served.deliver("issues", about_issue(issue)).await;
+    }
+
+    let held = || -> Vec<Number> {
+        let snapshot = served.snapshot();
+        snapshot.closed.iter().map(|item| item.number).collect()
+    };
+    eventually(|| held().contains(&marker)).await;
+    assert_eq!(held(), [ticket, old, marker]);
+    served.stop().await;
+}
+
+#[tokio::test]
+async fn a_refresh_drops_an_issue_closed_before_the_done_window_since_the_poll() {
+    let world = World::new().await;
+    let aged = world
+        .store
+        .open_issue(LINEWRIGHT, "Old idea", "Maybe.", &["ready-for-human"]);
+    world.store.close_issue_as_completed(aged).unwrap();
+    world
+        .clock
+        .advance(TimeDelta::days(7) - TimeDelta::hours(1));
+    let marker = world
+        .store
+        .open_issue(LINEWRIGHT, "Marker", "Now.", &["ready-for-human"]);
+    let clock = world.clock.clone();
+    let served = serve(world, NEVER).await;
+    let held = || -> Vec<Number> {
+        let snapshot = served.snapshot();
+        snapshot.closed.iter().map(|item| item.number).collect()
+    };
+    assert_eq!(held(), [aged]);
+
+    clock.advance(TimeDelta::hours(2));
+    served.store.close_issue_as_completed(marker).unwrap();
+    served.deliver("issues", about_issue(marker)).await;
+
+    eventually(|| held().contains(&marker)).await;
+    assert_eq!(held(), [marker]);
     served.stop().await;
 }
 

@@ -96,7 +96,7 @@ impl Lane {
         self.columns.iter().all(Vec::is_empty)
     }
 
-    /// When its last card closed, if every card is in Done.
+    /// When its last card's item finished, if every card is in Done.
     pub fn finished(&self) -> Option<Timestamp> {
         let open = Column::ALL
             .into_iter()
@@ -108,7 +108,7 @@ impl Lane {
         self.cards(Column::Done)
             .iter()
             .filter_map(|card| match card.line {
-                Some(CardLine::Ended { at, .. }) => Some(at),
+                Some(CardLine::Ended { ended, at }) => Some(ended.finished(at)),
                 _ => None,
             })
             .max()
@@ -172,7 +172,8 @@ pub enum LaneHead {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneHeading {
     pub head: LaneHead,
-    /// When its last card closed, if the lane is finished.
+    /// When it finished, if it did (`docs/specs/design_system.md`, The
+    /// board, Finished lanes).
     pub finished: Option<Timestamp>,
 }
 
@@ -388,8 +389,8 @@ pub enum Ended {
     Merged,
     /// A pull request of Linewright's, closed without merging.
     ClosedUnmerged,
-    /// A spec change designed with nothing to build.
-    NothingToBuild,
+    /// A spec change designed with nothing to build, at `designed`.
+    NothingToBuild { designed: Timestamp },
 }
 
 impl Ended {
@@ -397,7 +398,20 @@ impl Ended {
     fn of_pull_request(self) -> bool {
         match self {
             Ended::ClosedIn(_) | Ended::Closed(_) => false,
-            Ended::Merged | Ended::ClosedUnmerged | Ended::NothingToBuild => true,
+            Ended::Merged | Ended::ClosedUnmerged | Ended::NothingToBuild { .. } => true,
+        }
+    }
+
+    /// When the item that ended so, closing at `closed_at`, finished
+    /// (`docs/specs/design_system.md`, The board, Finished lanes): when it
+    /// closed, or for a spec change with nothing to build, when it was
+    /// designed.
+    fn finished(self, closed_at: Timestamp) -> Timestamp {
+        match self {
+            Ended::NothingToBuild { designed } => designed,
+            Ended::ClosedIn(_) | Ended::Closed(_) | Ended::Merged | Ended::ClosedUnmerged => {
+                closed_at
+            }
         }
     }
 }
@@ -407,12 +421,7 @@ impl Ended {
 pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     let snapshot = &view.snapshot;
     let linewright = &view.policy.linewright;
-    let windows = view.policy.windows(now);
-    let closed: Vec<&ClosedItem> = snapshot
-        .closed
-        .iter()
-        .filter(|item| windows.in_done_window(item.closed_at))
-        .collect();
+    let closed: Vec<&ClosedItem> = snapshot.closed.iter().collect();
     // Linewright's worked pull requests are managed items of their own; the
     // rest are issues and spec changes.
     let (pulls, items): (Vec<Managed>, Vec<Managed>) = status::managed(view, now)
@@ -529,7 +538,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         place(closes, card);
     }
     for pr in &snapshot.merged {
-        if &pr.author == linewright && windows.in_done_window(pr.merged_at) {
+        if &pr.author == linewright {
             let card = Card::ended(
                 pr.number,
                 &pr.title,
@@ -572,18 +581,21 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     trackers.sort_by_key(|tracker| tracker.number);
 
     for pr in &snapshot.merged {
-        let designed = matches!(
-            status::spec_change_standing(pr, snapshot, now, &view.policy),
-            Err(NotSpecChange::Designed { .. })
-        );
+        let Err(NotSpecChange::Designed { label }) =
+            status::spec_change_standing(pr, snapshot, now, &view.policy)
+        else {
+            continue;
+        };
         let cut = trackers
             .iter()
             .any(|tracker| tracker.tracks == Tracks::SpecChange(pr.number));
-        if designed && windows.in_done_window(pr.merged_at) && !cut {
+        if !cut {
+            let designed = last_labeling(&pr.events, label.name())
+                .map_or(pr.merged_at, |labeling| labeling.at);
             cards.push(Card::ended(
                 pr.number,
                 &pr.title,
-                Ended::NothingToBuild,
+                Ended::NothingToBuild { designed },
                 pr.merged_at,
                 changed(&[pr.number]),
             ));
@@ -611,8 +623,13 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             }
         }
     }
-    // A tracking issue with none of its tickets on the board has no lane.
-    lanes.retain(|lane| !lane.is_empty());
+    // A tracking issue with none of its tickets on the board has no lane,
+    // and a finished lane leaves the board whole once it finished before the
+    // Done window opened.
+    let windows = view.policy.windows(now);
+    lanes.retain(|lane| {
+        !lane.is_empty() && lane.finished().is_none_or(|at| windows.in_done_window(at))
+    });
     lanes.sort_by_key(Lane::order);
     let needing_a_person = lanes
         .iter()
@@ -778,7 +795,7 @@ fn merge_stop(
     first(stops)
 }
 
-/// A tracking issue, open or closed in the window, heading its lane.
+/// A tracking issue the snapshot holds, open or closed, heading its lane.
 struct Tracker {
     number: Number,
     title: String,

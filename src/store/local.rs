@@ -1590,24 +1590,28 @@ impl Store for LocalStore {
                 snapshot.pulls.push(self.pull_view(number).await?);
             }
         }
+        let state = self.state();
+        for number in snapshot.unheld_closed_tickets(&linewright) {
+            if let Some(ticket) = state
+                .issues
+                .get(&number)
+                .and_then(|r| state.closed_issue(r))
+            {
+                snapshot.put_closed(ticket);
+            }
+        }
         Ok(snapshot)
     }
 
-    async fn issue(&self, number: Number, windows: Windows) -> Result<IssueRead> {
+    async fn issue(&self, number: Number) -> Result<IssueRead> {
         self.read_item()?;
         let (issue, pulls) = {
             let state = self.state();
             let Some(record) = state.issues.get(&number) else {
                 return Ok(IssueRead::Gone);
             };
-            if !record.is_open() {
-                let closed = state.closed_issue(record);
-                return Ok(
-                    match closed.filter(|item| windows.holds_closed(item.closed_at)) {
-                        Some(closed) => IssueRead::Closed(Box::new(closed)),
-                        None => IssueRead::LeftOut { open: false },
-                    },
-                );
+            if let Some(closed) = state.closed_issue(record) {
+                return Ok(IssueRead::Closed(Box::new(closed)));
             }
             let issue = state.issue_view(record);
             let linewright = &state.linewright;
