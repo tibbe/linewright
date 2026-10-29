@@ -23,6 +23,7 @@ RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=bind,source=briefs,target=briefs \
     --mount=type=bind,source=templates,target=templates \
     --mount=type=bind,source=assets,target=assets \
+    --mount=type=bind,source=docs/specs/results,target=docs/specs/results \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target,sharing=locked \
     cargo build --release --locked \
