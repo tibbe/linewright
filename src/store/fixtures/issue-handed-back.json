@@ -1,0 +1,132 @@
+{
+  "number": 731,
+  "title": "The spec does not say which items Linewright reads",
+  "body": "## The gap\n\nNo spec says which items Linewright reads at all. Today it reads the issues carrying one of `needs-triage`, `needs-info`, `ready-for-agent` or `linewright:designed`, those assigned to it, and those it filed; an open issue outside that set has an item page saying \"Left alone · labeled none of …, and Linewright neither opened it nor is assigned to it\". Closed items are read only within a window.\n\nThat reach is a user-visible decision the spec leaves to the code. It shows in two places:\n\n- The item page's \"Left alone\" reasons name it (`docs/specs/design_system.md`, the State fact), with no rule behind them.\n- The board's Done: an issue Linewright claimed and handed back, whose status labels a person then removed before closing it, isn't read, so it isn't in Done although Linewright worked it (`GLOSSARY.md`, **Managed**).\n\n## What to settle\n\nWhat Linewright reads, stated as a rule in `docs/specs/repository.md` or `docs/specs/sources_of_work.md`: for example, every item that asks for a step of the pipeline or that Linewright has worked, with the item page's reasons following from it.\n\nFound while settling #729.\n",
+  "createdAt": "2026-10-28T09:34:01Z",
+  "updatedAt": "2026-10-29T21:33:33Z",
+  "state": "CLOSED",
+  "author": {
+    "__typename": "User",
+    "login": "tibbe"
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "enhancement"
+      },
+      {
+        "name": "ready-for-human"
+      }
+    ]
+  },
+  "assignees": {
+    "nodes": []
+  },
+  "comments": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "body": "## Triage Notes\n\nThis needs a spec change, so it is for the maintainer. The specs never say which items Linewright reads. Choosing that rule is a product decision, and an agent has nothing to implement until it is chosen.\n\n**Current behavior (confirmed in the code):**\n\n- The snapshot reads open issues that match any of three filters. The issue carries one of `needs-triage`, `needs-info`, `ready-for-agent` or `linewright:designed` (the `label::IN_VIEW` set). Or it is assigned to Linewright. Or Linewright opened it. The GitHub store's `in_view_filters` and `GqlIssue::in_view_if_open` must match each other, and they do.\n- Closed issues are read only if they closed within the spec lookback window and match the same filters as if they were open (`Snapshot::closed`). Linewright's own pull requests closed without merging in that window are read too.\n- Anything else is \"Left alone\". The item page explains it with `OpenIssueExclusion::NotInView` (\"labeled none of …, and Linewright neither opened it nor is assigned to it\"), and `IssueExclusion::NoPipelineLabel` gives the same explanation elsewhere.\n- The specs only touch this indirectly:\n  - `sources_of_work.md` § Issues says issues *enter* by `needs-triage`, `ready-for-agent` or an assignment. That describes how work starts, not what is read: it leaves out `needs-info`, `linewright:designed` and issues Linewright filed.\n  - `design_system.md` (the State fact) gives \"labeled none of `needs-triage`, …\" as an example reason, with no rule behind it.\n  - `GLOSSARY.md` **Managed** (\"marked for Linewright and asks for a step of the pipeline, or Linewright has worked it\") is broader than what the code reads. An issue Linewright claimed and handed back, whose status label a person then removed before closing it, is managed but never read, so it never reaches Done. The reporter describes exactly this case.\n\n**Redundancy / prior rejection:** I found no rule elsewhere in `docs/specs/` or `GLOSSARY.md` that states the read set. There is no `.out-of-scope/` directory.\n\n**Why it can't be delegated:** the fix is a new rule in `docs/specs/repository.md` or `docs/specs/sources_of_work.md`, and spec changes need the maintainer's approval. Some rules can't be checked with GitHub's issue filters alone (for example, \"Linewright has worked it\" with no label, assignment or authorship left). Those change what a poll costs, which is also the maintainer's decision.\n\n**Recommendation:** state the read set as a rule that matches **Managed**: Linewright reads every item that asks for a step of the pipeline or that it has worked. The item page's \"Left alone\" reasons are then the ways an item fails that rule. Once the rule is merged, an agent can bring the snapshot filters and the reasons in line with it.\n\n**Questions for the maintainer:**\n\n1. Which file should hold the rule: `repository.md` (next to Labels and claiming) or `sources_of_work.md` (replacing or extending § Issues)?\n2. Should the read set match **Managed** exactly, or be a deliberately narrower set that **Managed** is then defined against?\n3. How should \"Linewright has worked it\" be recognised once its labels and assignment are gone: through Linewright's own comments or timeline events on the item, a record Linewright keeps itself, or not at all (so such an item drops out)?\n4. `ready-for-human` is not in the label set Linewright reads, so an issue a person filed and labeled only `ready-for-human`, unassigned, is left alone. Is that intended, or should the rule include it?\n5. Should the rule say that closed items are read only within the spec lookback window, or is that left to the board's Done column as it is today?\n\nFound while settling #729.\n\nAnswer with a label: `ready-for-agent` to implement it as decided or `needs-triage` to triage it again. A comment alone starts nothing.",
+        "createdAt": "2026-10-28T09:34:47Z"
+      }
+    ]
+  },
+  "subIssues": {
+    "nodes": []
+  },
+  "parent": null,
+  "blockedBy": {
+    "nodes": []
+  },
+  "closedByPullRequestsReferences": {
+    "nodes": [
+      {
+        "number": 784,
+        "state": "MERGED",
+        "isDraft": false,
+        "mergedAt": "2026-10-29T21:33:31Z",
+        "closedAt": "2026-10-29T21:33:31Z",
+        "updatedAt": "2026-10-29T21:45:25Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        }
+      }
+    ]
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2026-10-28T09:34:02Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "label": {
+          "name": "needs-triage"
+        }
+      },
+      {
+        "__typename": "AssignedEvent",
+        "createdAt": "2026-10-28T09:34:04Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2026-10-28T09:34:48Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "label": {
+          "name": "enhancement"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2026-10-28T09:34:49Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "label": {
+          "name": "ready-for-human"
+        }
+      },
+      {
+        "__typename": "UnlabeledEvent",
+        "createdAt": "2026-10-28T09:34:49Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "label": {
+          "name": "needs-triage"
+        }
+      },
+      {
+        "__typename": "UnassignedEvent",
+        "createdAt": "2026-10-28T09:34:50Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  }
+}

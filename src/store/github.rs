@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use super::{
     AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError,
-    PushMode, RepoSettings, Store,
+    PushMode, RepoSettings, Store, holds,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
@@ -497,17 +497,21 @@ impl GitHub {
     }
 
     /// The closed issues updated since `since`, which hold every one closed
-    /// since then, that the snapshot's filters would hold were they open.
+    /// since then, among those the snapshot's filters read, that Linewright
+    /// manages ([`ClosedItem::managed`]).
     async fn closed_issues(&self, since: Timestamp) -> Result<Vec<ClosedItem>> {
-        let linewright = &self.viewer.login;
+        let linewright = self.linewright();
         let mut closed: BTreeMap<Number, ClosedItem> = BTreeMap::new();
         // Closing updates an issue
         // (<https://docs.github.com/en/graphql/reference/input-objects#issuefilters>).
-        for mut filter in in_view_filters(IssueState::Closed, linewright) {
+        for mut filter in in_view_filters(IssueState::Closed, &linewright) {
             filter["since"] = json!(since);
             let issues: Vec<GqlClosedIssue> = self.issues(CLOSED_ISSUE_FIELDS, filter).await?;
             for issue in issues {
-                if let Some(item) = issue.into_closed(&self.linewright()) {
+                if let Some(item) = issue
+                    .into_closed(&linewright)
+                    .filter(|item| item.managed(&linewright))
+                {
                     closed.insert(item.number, item);
                 }
             }
@@ -515,8 +519,8 @@ impl GitHub {
         Ok(closed.into_values().collect())
     }
 
-    /// The closed issues of `numbers` that the snapshot's filters would hold
-    /// were they open, as [`Store::issue`] reads them, twenty to a query by
+    /// The closed issues of `numbers` that Linewright manages
+    /// ([`ClosedItem::managed`]), as [`Store::issue`] reads them, twenty to a query by
     /// aliases, which costs about a point
     /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
     async fn closed_issues_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<ClosedItem>> {
@@ -605,10 +609,9 @@ impl GitHub {
         }
     }
 
-    async fn ticket_branches(
-        &self,
-        open_in_view: &BTreeMap<u64, GqlIssue>,
-    ) -> Result<Vec<TicketBranch>> {
+    /// The branches Linewright pushed for a ticket, each with its issue: held,
+    /// when `held` holds its number, or else as read.
+    async fn ticket_branches(&self, held: &BTreeSet<Number>) -> Result<Vec<TicketBranch>> {
         #[derive(Deserialize)]
         struct Refs {
             refs: Page<GqlRef>,
@@ -639,7 +642,7 @@ impl GitHub {
                 let Some(name) = branch.pushed_for(&self.viewer.login) else {
                     continue;
                 };
-                let issue = if open_in_view.contains_key(&name.issue().0) {
+                let issue = if held.contains(&name.issue()) {
                     BranchIssue::Held
                 } else {
                     // No issue, as when the number is a pull request's, names
@@ -1452,7 +1455,7 @@ macro_rules! assignment_fields {
 
 macro_rules! labeling_fields {
     () => {
-        "createdAt label { name }"
+        "createdAt actor { __typename login } label { name }"
     };
 }
 
@@ -1460,6 +1463,7 @@ macro_rules! labeling_fields {
 #[serde(rename_all = "camelCase")]
 struct GqlLabeling {
     created_at: Timestamp,
+    actor: Option<Actor>,
     label: Name,
 }
 
@@ -1567,9 +1571,9 @@ struct GqlClosingPull {
 /// latest closing: the pull request whose merge closed it, a commit, or none
 /// when a person closed it
 /// (<https://docs.github.com/en/graphql/reference/objects#closedevent>).
-/// With its assignees, assignments and the pull requests closing it, which
-/// tell whether Linewright worked it. Twenty issues with the six connections
-/// each cost 121 requests, which rounds to 1 point
+/// With its assignees, labelings, assignments and the pull requests closing
+/// it, which tell whether Linewright worked it. Twenty issues with the six
+/// connections each cost 121 requests, which rounds to 1 point
 /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
 const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
     name: "ClosedIssueFields",
@@ -1583,9 +1587,12 @@ const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
   parent { number title body author { __typename login } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
   timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) { nodes { ... on ClosedEvent { closer { __typename ... on PullRequest { number } } } } }
-  assignments: timelineItems(last: 100, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+  assignments: timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
     nodes {
       __typename
+      ... on LabeledEvent { ",
+        labeling_fields!(),
+        " }
       ",
         assignment_fields!(),
         "
@@ -1683,8 +1690,8 @@ fn numbered_query(numbers: &[Number], fields: Fragment) -> String {
     )
 }
 
-/// The closed issues `response` to a [`numbered_query`] holds that the
-/// snapshot's filters would hold were they open. GitHub resolves a deleted
+/// The closed issues `response` to a [`numbered_query`] holds that
+/// `linewright` manages ([`ClosedItem::managed`]). GitHub resolves a deleted
 /// issue to null, with an error saying so.
 fn closed_of_numbered(
     response: GqlResponse<RepoData<BTreeMap<String, Option<GqlClosedIssue>>>>,
@@ -1698,15 +1705,8 @@ fn closed_of_numbered(
         .repository
         .into_values()
         .flatten()
-        .filter(|issue| {
-            in_view_if_open(
-                &issue.labels,
-                &issue.assignees,
-                issue.author.as_ref(),
-                linewright,
-            )
-        })
         .filter_map(|issue| issue.into_closed(linewright))
+        .filter(|item| item.managed(linewright))
         .collect())
 }
 
@@ -1831,51 +1831,17 @@ enum IssueState {
     Closed,
 }
 
-/// The snapshot's filters, for the issues in `state`: must match
-/// [`GqlIssue::in_view`].
-fn in_view_filters(state: IssueState, linewright: &str) -> [Value; 3] {
+/// The filters the snapshot reads the issues in `state` through, of which it
+/// holds those Linewright manages.
+fn in_view_filters(state: IssueState, linewright: &Login) -> [Value; 3] {
     [
         json!({"states": [state], "labels": label::IN_VIEW}),
-        json!({"states": [state], "assignee": linewright}),
-        json!({"states": [state], "createdBy": linewright}),
+        json!({"states": [state], "assignee": linewright.as_str()}),
+        json!({"states": [state], "createdBy": linewright.as_str()}),
     ]
 }
 
-/// Whether the snapshot would hold an issue with `labels`, `assignees` and
-/// `author`, were it open: must match the snapshot's filters.
-fn in_view_if_open(
-    labels: &Nodes<Name>,
-    assignees: &Nodes<LoginNode>,
-    author: Option<&Actor>,
-    linewright: &Login,
-) -> bool {
-    labels
-        .nodes
-        .iter()
-        .any(|l| label::IN_VIEW.contains(&l.name.as_str()))
-        || assignees
-            .nodes
-            .iter()
-            .any(|a| a.login == linewright.as_str())
-        || author.is_some_and(|a| a.login == linewright.as_str())
-}
-
 impl GqlIssue {
-    /// Must match the snapshot's filters.
-    fn in_view(&self, linewright: &str) -> bool {
-        self.state == IssueState::Open && self.in_view_if_open(linewright)
-    }
-
-    /// Whether the snapshot would hold it, were it open.
-    fn in_view_if_open(&self, linewright: &str) -> bool {
-        in_view_if_open(
-            &self.labels,
-            &self.assignees,
-            self.author.as_ref(),
-            &Login::new(linewright),
-        )
-    }
-
     fn into_issue(self, linewright: &Login) -> Issue {
         let i = self;
         let author = login(i.author);
@@ -1922,6 +1888,7 @@ fn events(nodes: Vec<GqlEvent>) -> Vec<IssueEvent> {
         .filter_map(|e| match e {
             GqlEvent::Labeled(labeling) => Some(IssueEvent::Labeled {
                 label: labeling.label.name,
+                by: labeling.actor.map(|actor| login(Some(actor))),
                 at: labeling.created_at,
             }),
             GqlEvent::Unlabeled(labeling) => Some(IssueEvent::Unlabeled {
@@ -2556,50 +2523,46 @@ impl Store for GitHub {
             .as_str()
             .context("the repository has a default branch")?
             .to_string();
-        let linewright = &self.viewer.login;
-        let mut issues: BTreeMap<u64, GqlIssue> = BTreeMap::new();
-        for filter in in_view_filters(IssueState::Open, linewright) {
+        let linewright = self.linewright();
+        let mut read: BTreeMap<u64, GqlIssue> = BTreeMap::new();
+        for filter in in_view_filters(IssueState::Open, &linewright) {
             // Twenty issues with the seven connections each cost 141
             // requests, which rounds to 1 point; fifty cost 4
             // (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
             let open: Vec<GqlIssue> = self.issues(ISSUE_FIELDS, filter).await?;
             for issue in open {
-                issues.insert(issue.number, issue);
+                read.insert(issue.number, issue);
             }
         }
+        let issues: Vec<Issue> = read
+            .into_values()
+            .map(|issue| issue.into_issue(&linewright))
+            .filter(|issue| holds(issue, &linewright))
+            .collect();
         let mut pulls = vec![];
         for pr in self.open_pulls().await? {
             if self.by_linewright(pr.author.as_ref()) {
                 pulls.push(self.pull(Number(pr.number)).await?);
             }
         }
-        let closed: std::collections::BTreeSet<u64> = issues
-            .values()
-            .flat_map(|i| {
-                i.closed_by_pull_requests_references
-                    .iter()
-                    .flat_map(|n| &n.nodes)
-            })
-            .filter(|p| {
-                matches!(p.state.as_str(), "CLOSED" | "MERGED")
-                    && self.by_linewright(p.author.as_ref())
-            })
+        let closed: BTreeSet<Number> = issues
+            .iter()
+            .flat_map(|issue| &issue.closed_by)
+            .filter(|p| !p.is_open() && p.author == linewright)
             .map(|p| p.number)
             .collect();
         for number in closed {
-            pulls.push(self.pull(Number(number)).await?);
+            pulls.push(self.pull(number).await?);
         }
         let closed_issues = self.closed_issues(windows.read_since()).await?;
         let closed_pulls = self.closed_pulls(windows.read_since()).await?;
+        let held = issues.iter().map(|issue| issue.number).collect();
         let mut snapshot = Snapshot {
-            ticket_branches: self.ticket_branches(&issues).await?,
+            ticket_branches: self.ticket_branches(&held).await?,
             merged: self.merged_within(&default_branch, windows).await?,
             closed: closed_within(closed_issues.into_iter().chain(closed_pulls), windows),
             default_branch,
-            issues: issues
-                .into_values()
-                .map(|i| i.into_issue(&self.linewright()))
-                .collect(),
+            issues,
             pulls,
         };
         let tickets = snapshot.unheld_closed_tickets(&self.linewright());
@@ -2618,13 +2581,11 @@ impl Store for GitHub {
     async fn any_item(&self, number: Number) -> Result<Option<AnyItem>> {
         // GitHub resolves no issue for a pull request's number.
         if let Some(issue) = self.gql_issue(number).await? {
-            let held = issue.in_view(&self.viewer.login);
-            let issue = Box::new(issue.into_issue(&self.linewright()));
-            return Ok(Some(if held {
-                AnyItem::HeldIssue(issue)
-            } else {
-                AnyItem::LeftOutIssue(issue)
-            }));
+            let linewright = self.linewright();
+            return Ok(Some(AnyItem::issue(
+                issue.into_issue(&linewright),
+                &linewright,
+            )));
         }
         let Some(pr) = self.gql_pull(number).await? else {
             return Ok(None);
@@ -2664,8 +2625,9 @@ impl Store for GitHub {
             if held {
                 break;
             }
+            let linewright = self.linewright();
             let issue = self.gql_issue(Number(issue)).await?;
-            held = issue.is_some_and(|i| i.in_view(&self.viewer.login));
+            held = issue.is_some_and(|i| holds(&i.into_issue(&linewright), &linewright));
         }
         if !held {
             return Ok(None);
@@ -2677,29 +2639,31 @@ impl Store for GitHub {
         let Some(issue) = self.gql_issue(number).await? else {
             return Ok(IssueRead::Gone);
         };
-        let open = issue.state == IssueState::Open;
-        if !open && issue.in_view_if_open(&self.viewer.login) {
+        let linewright = self.linewright();
+        if issue.state != IssueState::Open {
             let closed: Option<GqlClosedIssue> =
                 self.issue_with(number, CLOSED_ISSUE_FIELDS).await?;
-            if let Some(closed) = closed.and_then(|i| i.into_closed(&self.linewright())) {
-                return Ok(IssueRead::Closed(Box::new(closed)));
-            }
+            return Ok(
+                match closed
+                    .and_then(|i| i.into_closed(&linewright))
+                    .filter(|closed| closed.managed(&linewright))
+                {
+                    Some(closed) => IssueRead::Closed(Box::new(closed)),
+                    None => IssueRead::LeftOut { open: false },
+                },
+            );
         }
-        if !issue.in_view(&self.viewer.login) {
-            return Ok(IssueRead::LeftOut { open });
+        let issue = issue.into_issue(&linewright);
+        if !holds(&issue, &linewright) {
+            return Ok(IssueRead::LeftOut { open: true });
         }
         // Must match what the snapshot holds.
         let mut pulls = vec![];
-        for pr in issue
-            .closed_by_pull_requests_references
-            .iter()
-            .flat_map(|n| &n.nodes)
-            .filter(|p| self.by_linewright(p.author.as_ref()))
-        {
-            pulls.push(self.pull(Number(pr.number)).await?);
+        for pr in issue.closed_by.iter().filter(|p| p.author == linewright) {
+            pulls.push(self.pull(pr.number).await?);
         }
         Ok(IssueRead::Held {
-            issue: Box::new(issue.into_issue(&self.linewright())),
+            issue: Box::new(issue),
             pulls,
         })
     }
@@ -3272,6 +3236,7 @@ impl Store for GitHub {
 
 #[cfg(test)]
 mod tests {
+
     use chrono::TimeDelta;
 
     use super::*;
@@ -3590,15 +3555,52 @@ mod tests {
             [
                 IssueEvent::Labeled {
                     label: "A-documenting-cargo-itself".into(),
+                    by: None,
                     at: at("2024-04-09T11:02:07Z"),
                 },
                 IssueEvent::Labeled {
                     label: "S-blocked-external".into(),
+                    by: None,
                     at: at("2024-04-10T01:18:27Z"),
                 },
                 IssueEvent::Reopened {
                     at: at("2024-09-19T12:01:27Z"),
                 },
+            ]
+        );
+    }
+
+    /// Each label applied among `events`, with who applied it.
+    fn labelings(events: &[IssueEvent]) -> Vec<(&str, Option<&str>)> {
+        events
+            .iter()
+            .filter_map(|event| {
+                if let IssueEvent::Labeled { label, by, .. } = event {
+                    Some((label.as_str(), by.as_ref().map(Login::as_str)))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// `fixtures/issue-handed-back.json` is `IssueFields` as GitHub returned
+    /// it for <https://github.com/tibbe/linewright/issues/731>, which tibbe
+    /// filed and labeled `needs-triage`, and Linewright, as `tibbe-bot`,
+    /// triaged and handed back.
+    #[test]
+    fn an_issue_lists_who_applied_each_label() {
+        let issue: GqlIssue =
+            serde_json::from_str(include_str!("fixtures/issue-handed-back.json")).unwrap();
+
+        let issue = issue.into_issue(&Login::new("tibbe-bot"));
+
+        assert_eq!(
+            labelings(&issue.events),
+            [
+                ("needs-triage", Some("tibbe")),
+                ("enhancement", Some("tibbe-bot")),
+                ("ready-for-human", Some("tibbe-bot")),
             ]
         );
     }
@@ -3695,6 +3697,7 @@ mod tests {
             [
                 IssueEvent::Labeled {
                     label: "ready-for-agent".into(),
+                    by: None,
                     at: at("2026-10-09T12:01:00Z"),
                 },
                 IssueEvent::Assignment(Assignment::Assigned {
@@ -3757,6 +3760,7 @@ mod tests {
             [
                 IssueEvent::Labeled {
                     label: "linewright".into(),
+                    by: None,
                     at: at("2026-10-09T11:00:00Z"),
                 },
                 IssueEvent::Assignment(Assignment::Assigned {
@@ -3826,18 +3830,6 @@ mod tests {
                 },
             })
         );
-    }
-
-    /// The person's issue of `fixtures/issue-reopened.json`, unassigned, as
-    /// Linewright leaves an issue it cut: labeled designed alone.
-    #[test]
-    fn an_issue_a_person_opened_labeled_designed_alone_is_in_view_as_a_tracking_issue_may_be() {
-        let mut issue: Value =
-            serde_json::from_str(include_str!("fixtures/issue-reopened.json")).unwrap();
-        issue["labels"] = json!({"nodes": [{"name": "linewright:designed"}]});
-        let issue: GqlIssue = serde_json::from_value(issue).unwrap();
-
-        assert!(issue.in_view("linewright"));
     }
 
     #[test]
@@ -4139,6 +4131,29 @@ mod tests {
                 },
                 updated_at: at("2026-10-27T05:54:14Z"),
             }]
+        );
+    }
+
+    /// `fixtures/closed-issue-handed-back.json` is `ClosedIssueFields` as
+    /// GitHub returned it for <https://github.com/tibbe/linewright/issues/731>,
+    /// as in [`an_issue_lists_who_applied_each_label`].
+    #[test]
+    fn a_closed_issue_is_held_with_who_applied_each_label() {
+        let issue: GqlClosedIssue =
+            serde_json::from_str(include_str!("fixtures/closed-issue-handed-back.json")).unwrap();
+
+        let closed = issue.into_closed(&Login::new("tibbe-bot")).unwrap();
+
+        let ClosedKind::Issue { work, .. } = closed.kind else {
+            panic!("an issue");
+        };
+        assert_eq!(
+            labelings(&work.events),
+            [
+                ("needs-triage", Some("tibbe")),
+                ("enhancement", Some("tibbe-bot")),
+                ("ready-for-human", Some("tibbe-bot")),
+            ]
         );
     }
 

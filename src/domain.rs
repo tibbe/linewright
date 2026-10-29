@@ -183,9 +183,9 @@ pub mod label {
     /// designed again; never set.
     pub const SPEC_PROCESSED: &str = "linewright:spec-processed";
 
-    /// The labels that bring an issue into the snapshot: those asking for
-    /// Linewright's work, and the label a tracking issue cut from an issue
-    /// keeps when its status label goes.
+    /// The labels a snapshot reads issues by, of which it holds those
+    /// Linewright manages: those asking for Linewright's work, and the label
+    /// a tracking issue cut from an issue keeps when its status label goes.
     pub const IN_VIEW: [&str; 4] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT, DESIGNED];
 
     pub const ANSWERS: [(&str, &str); 2] = [
@@ -426,6 +426,11 @@ impl From<SubIssue> for SubIssueRecord {
 pub enum IssueEvent {
     Labeled {
         label: String,
+        /// Who applied it: `None` where GitHub gives no actor, as for a
+        /// deleted account, or in a snapshot written before Linewright read
+        /// it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<Login>,
         at: Timestamp,
     },
     Unlabeled {
@@ -549,6 +554,14 @@ impl Filed {
         }
         crate::spec_gap::ticket_of(body).map(|ticket| Filed::SpecGap { ticket })
     }
+}
+
+/// Whether an item is marked for Linewright (`GLOSSARY.md`, **Marked for
+/// Linewright**).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Marking {
+    Marked,
+    Unmarked,
 }
 
 /// What a tracking issue tracks: the tickets cut from one item.
@@ -773,17 +786,40 @@ impl Issue {
         self.assignees.contains(login)
     }
 
-    /// Whether `linewright` has worked it (`GLOSSARY.md`, **Worked**), as
-    /// `snapshot`, which holds the pull requests closing it, tells.
-    pub fn worked_by(&self, linewright: &Login, snapshot: &Snapshot) -> bool {
+    /// Whether `linewright` has worked it (`GLOSSARY.md`, **Worked**), with
+    /// `closing` the pull requests that close it, such as
+    /// [`Snapshot::pulls_closing`] gives.
+    pub fn worked_by(&self, linewright: &Login, closing: &[ClosingPull]) -> bool {
         WorkSigns {
             author: Some(&self.author),
             assignees: &self.assignees,
             events: &self.events,
-            closed_by: &snapshot.pulls_closing(self),
+            closed_by: closing,
             tracks: self.tracks(linewright).is_some(),
         }
         .worked_by(linewright)
+    }
+
+    /// Whether it waits on `linewright` to act next (`GLOSSARY.md`,
+    /// **Managed**): it is open, and assigned to Linewright, such as by
+    /// hand, or, with `marking` [`Marking::Marked`], labeled `needs-triage`
+    /// or `ready-for-agent`. A spec change waiting for design is a merged
+    /// pull request, which `reconcile::spec_change` tells.
+    pub fn waits_on_linewright(&self, linewright: &Login, marking: Marking) -> bool {
+        self.open
+            && (self.is_assigned(linewright)
+                || marking == Marking::Marked
+                    && matches!(
+                        self.status_label(),
+                        Some(StatusLabel::NeedsTriage | StatusLabel::ReadyForAgent)
+                    ))
+    }
+
+    /// Whether `linewright` manages it (`GLOSSARY.md`, **Managed**): it has
+    /// worked it, as [`Issue::worked_by`] tells with `closing`, or it waits
+    /// on Linewright, as [`Issue::waits_on_linewright`] tells with `marking`.
+    pub fn managed(&self, linewright: &Login, closing: &[ClosingPull], marking: Marking) -> bool {
+        self.worked_by(linewright, closing) || self.waits_on_linewright(linewright, marking)
     }
 
     pub fn last_reopened(&self) -> Option<Timestamp> {
@@ -1136,7 +1172,7 @@ pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<EventOrder> {
         .iter()
         .enumerate()
         .filter_map(|(i, e)| {
-            if let IssueEvent::Labeled { label, at } = e
+            if let IssueEvent::Labeled { label, at, .. } = e
                 && label == name
             {
                 Some(EventOrder::new(*at, i))
@@ -1162,13 +1198,22 @@ impl WorkSigns<'_> {
     /// Whether `linewright` worked it:
     ///
     /// - it filed it, or tracks tickets with it: it opened it;
-    /// - it is or ever was assigned to it: it claimed it;
+    /// - it is assigned to it, or assigned itself to it once: it assigned
+    ///   itself;
+    /// - it applied one of its labels: it labeled it;
     /// - it wrote a pull request closing it: it opened that pull request.
     fn worked_by(&self, linewright: &Login) -> bool {
         self.author == Some(linewright)
             || self.assignees.contains(linewright)
-            || last_assignment(self.events, linewright).is_some()
-            || last_unassignment(self.events, linewright).is_some()
+            || self.events.iter().any(|event| match event {
+                IssueEvent::Labeled { by, .. } => by.as_ref() == Some(linewright),
+                IssueEvent::Assignment(Assignment::Assigned {
+                    assignee, actor, ..
+                }) => assignee == linewright && actor == linewright,
+                IssueEvent::Unlabeled { .. }
+                | IssueEvent::Reopened { .. }
+                | IssueEvent::Assignment(Assignment::Unassigned { .. }) => false,
+            })
             || self.closed_by.iter().any(|pr| pr.author == *linewright)
             || self.tracks
     }
@@ -1305,12 +1350,12 @@ pub struct Snapshot {
     pub merged: Vec<MergedPull>,
     #[serde(default)]
     pub ticket_branches: Vec<TicketBranch>,
-    /// The issues closed within the Done window that the snapshot would hold
-    /// were they open, every closed ticket of a tracking issue it holds,
-    /// whenever it closed, and Linewright's pull requests closed without
-    /// merging within the Done window, for the board's Done column (`docs/specs/design_system.md`,
-    /// "The board"), which keeps only those worked. The reconcile ignores
-    /// them.
+    /// The issues closed within the Done window that Linewright manages
+    /// ([`ClosedItem::managed`]), every closed ticket of a tracking issue it
+    /// holds, whenever it closed, and Linewright's pull requests closed
+    /// without merging within the Done window, for the board's Done column
+    /// (`docs/specs/design_system.md`, "The board"), which keeps only those
+    /// worked. The reconcile ignores them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
 }
@@ -1358,6 +1403,13 @@ impl ClosedItem {
             .worked_by(linewright),
             ClosedKind::Pull { .. } => true,
         }
+    }
+
+    /// Whether `linewright` manages it (`GLOSSARY.md`, **Managed**), as
+    /// [`Issue::managed`] tells: closed, it waits on Linewright for nothing,
+    /// so it is managed when Linewright has worked it.
+    pub fn managed(&self, linewright: &Login) -> bool {
+        self.worked_by(linewright)
     }
 }
 

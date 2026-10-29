@@ -109,8 +109,7 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
     let facts = item_facts(&html);
     assert_eq!(
         fact(&facts, "State"),
-        "Left alone · labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
-         `ready-for-human`"
+        "Left alone · waits on a person, and Linewright has not worked it"
     );
     assert!(
         select(&html, "#item dl .badge").is_empty(),
@@ -174,6 +173,24 @@ async fn with_a_required_label_the_item_page_of_a_closed_issue_without_it_linewr
     let html = web.page(&format!("/items/{}", closed.0)).await;
 
     assert_eq!(fact(&item_facts(&html), "State"), "Left alone · closed");
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn with_a_required_label_the_item_page_of_an_open_issue_without_it_linewright_never_worked_says_not_marked()
+ {
+    let world = World::with(|c| c.require_label = Some(REQUIRED.into())).await;
+    let unmarked = world
+        .store
+        .open_issue("maintainer", "Old idea", "Maybe.", &["needs-triage"]);
+    let web = Web::start(world).await;
+
+    let html = web.page(&format!("/items/{}", unmarked.0)).await;
+
+    assert_eq!(
+        fact(&item_facts(&html), "State"),
+        "Left alone · not marked for Linewright"
+    );
     web.stop().await;
 }
 
@@ -359,7 +376,7 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
         .unlabel_as(linewright::domain::Number(1), "ready-for-human")
         .unwrap();
     web.store
-        .label_as(linewright::domain::Number(1), "needs-info")
+        .label_as("maintainer", linewright::domain::Number(1), "needs-info")
         .unwrap();
     web.deliver_issue(1).await;
     let changed = tokio::time::timeout(Duration::from_secs(10), events.recv())
@@ -410,7 +427,8 @@ async fn the_item_pages_stream_sends_nothing_when_its_runs_agent_produces_output
 #[tokio::test]
 async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
     let world = with_ticket().await;
-    let blocker = world.store.open_issue(
+    let blocker = open_issue_linewright_labeled(
+        &world.store,
         "maintainer",
         "Fix the parser",
         "First.",
@@ -459,9 +477,13 @@ async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
 #[tokio::test]
 async fn the_item_page_names_a_blocker_the_snapshot_does_not_hold_by_its_number_alone() {
     let world = with_ticket().await;
-    let first = world
-        .store
-        .open_issue("maintainer", "First", "Before.", &["ready-for-human"]);
+    let first = open_issue_linewright_labeled(
+        &world.store,
+        "maintainer",
+        "First",
+        "Before.",
+        &["ready-for-human"],
+    );
     let blocked = world.store.open_issue(
         "maintainer",
         "Then",
@@ -650,7 +672,8 @@ async fn the_item_pages_card_line_names_its_pull_request_by_number_alone_and_its
 #[tokio::test]
 async fn the_item_pages_stream_names_a_blocker_by_its_number_and_title() {
     let world = with_ticket().await;
-    let blocker = world.store.open_issue(
+    let blocker = open_issue_linewright_labeled(
+        &world.store,
         "maintainer",
         "Fix the parser",
         "First.",

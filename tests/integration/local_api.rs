@@ -247,7 +247,8 @@ async fn send(
 /// A world whose work dir is `REPO`'s, as `serve`'s API reads it.
 async fn with_ticket_and_automation() -> World {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    world.store.open_issue(
+    open_issue_linewright_labeled(
+        &world.store,
         "maintainer",
         "Do the thing",
         "Please.",

@@ -4,8 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    ClosingPull, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
-    Tracks, label,
+    ClosingPull, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, Timestamp, Tracks,
 };
 use crate::phrase::Phrase;
 use crate::reconcile::{NotSpecChange, NotWorked, Wait, worked_ticket};
@@ -436,15 +435,7 @@ pub enum LeftAloneItem {
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum LeftAloneIssue {
     Closed,
-    Open { left_alone: OpenIssueExclusion },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "reason", rename_all = "kebab-case")]
-pub enum OpenIssueExclusion {
-    NotInView,
-    #[serde(untagged)]
-    Held(IssueExclusion),
+    Open { left_alone: IssueExclusion },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -524,21 +515,13 @@ pub fn explain_fresh(
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) if !issue.open => {
             (&issue.title, LeftAloneItem::Issue(LeftAloneIssue::Closed))
         }
-        AnyItem::LeftOutIssue(issue) => (
-            &issue.title,
-            LeftAloneItem::Issue(LeftAloneIssue::Open {
-                left_alone: OpenIssueExclusion::NotInView,
-            }),
-        ),
-        AnyItem::HeldIssue(issue) => {
+        AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
             let waiting_for = take_waits();
             match standing(issue, &fresh.snapshot, &fresh.policy, &waiting_for) {
                 Ok(state) => return managed_as(&issue.title, state, waiting_for),
-                Err(exclusion) => (
+                Err(left_alone) => (
                     &issue.title,
-                    LeftAloneItem::Issue(LeftAloneIssue::Open {
-                        left_alone: OpenIssueExclusion::Held(exclusion),
-                    }),
+                    LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }),
                 ),
             }
         }
@@ -811,29 +794,14 @@ pub fn render_answer(answer: &Answer, colour: bool) -> String {
     text
 }
 
-fn one_of(names: &[&str]) -> Phrase {
-    Phrase::list(names.iter().map(|&name| Phrase::default().code(name)), "or")
-}
-
-fn describe_issue_exclusion(exclusion: &OpenIssueExclusion) -> Phrase {
-    let exclusion = match exclusion {
-        OpenIssueExclusion::NotInView => {
-            return Phrase::from("it is labeled none of ")
-                .then(one_of(&label::IN_VIEW))
-                .text(", and Linewright neither opened it nor is assigned to it");
-        }
-        OpenIssueExclusion::Held(exclusion) => exclusion,
+fn describe_issue_exclusion(exclusion: &IssueExclusion) -> Phrase {
+    let subject = match exclusion {
+        IssueExclusion::WaitsOnAPerson => "it ",
+        IssueExclusion::NotMarked { .. }
+        | IssueExclusion::NoPipelineLabel
+        | IssueExclusion::NoTickets => "it is ",
     };
-    match exclusion {
-        IssueExclusion::NoPipelineLabel => Phrase::from("it is labeled none of ")
-            .then(one_of(&StatusLabel::ALL.map(StatusLabel::label))),
-        IssueExclusion::NoTickets => {
-            "it is a tracking issue with no tickets, and none are being cut".into()
-        }
-        IssueExclusion::NotMarked { label } => Phrase::from("it is not labeled ")
-            .code(label.clone())
-            .text(", the required label, and Linewright has not worked it"),
-    }
+    Phrase::from(subject).then(exclusion.worded())
 }
 
 fn describe_pull_exclusion(exclusion: &PullExclusion) -> Phrase {

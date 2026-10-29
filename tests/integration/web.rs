@@ -306,7 +306,8 @@ fn item_facts(html: &Html) -> Vec<(String, String)> {
 
 async fn with_ticket() -> World {
     let world = World::new().await;
-    world.store.open_issue(
+    open_issue_linewright_labeled(
+        &world.store,
         "maintainer",
         "Do the thing",
         "Please.",

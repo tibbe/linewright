@@ -2,7 +2,8 @@ use crate::common;
 
 use common::{
     NOW, assigning_linewright, at, closed_by, draining_since, implementing, in_flight,
-    limited_until, linewright_letting_go, relabeled, sub_issue, ticket, view,
+    labeled_by_linewright, limited_until, linewright_letting_go, relabeled, sub_issue, ticket,
+    view,
 };
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
@@ -196,10 +197,10 @@ fn an_item_in_review_whose_checks_all_passed_says_ci_is_green() {
 
 #[test]
 fn an_item_with_the_maintainer_waits_for_their_label() {
-    let handed_back = Issue {
+    let handed_back = labeled_by_linewright(Issue {
         labels: vec!["ready-for-human".into()],
         ..ticket(42, "Add invoices")
-    };
+    });
 
     assert_eq!(
         text(&view(vec![handed_back], vec![]), 42)[1..],
@@ -1001,24 +1002,40 @@ fn a_closed_issue_is_left_alone_as_closed() {
 }
 
 #[test]
-fn an_open_issue_a_snapshot_does_not_read_names_the_labels_and_linewright() {
-    let elsewhere = Issue {
-        labels: vec!["ready-for-human".into()],
+fn an_open_issue_linewright_has_not_worked_that_waits_on_a_person_is_left_alone_as_such() {
+    let asked = Issue {
+        labels: vec!["needs-info".into()],
         ..ticket(42, "Add invoices")
     };
 
-    assert_eq!(
-        left_alone_text(
-            &view(vec![], vec![]),
-            &AnyItem::LeftOutIssue(Box::new(elsewhere))
-        )[1..],
-        [
-            "state: open issue",
-            "last read: 2026-10-01 12:00:30 UTC",
-            "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
-             `linewright:designed`, and Linewright neither opened it nor is assigned to it",
-        ]
-    );
+    for read in [
+        AnyItem::HeldIssue(Box::new(asked.clone())),
+        AnyItem::LeftOutIssue(Box::new(asked.clone())),
+    ] {
+        assert_eq!(
+            left_alone_text(&view(vec![asked.clone()], vec![]), &read)[1..],
+            [
+                "state: open issue",
+                "last read: 2026-10-01 12:00:30 UTC",
+                "left alone: it waits on a person, and Linewright has not worked it",
+            ]
+        );
+    }
+}
+
+#[test]
+fn an_issue_a_person_filed_that_linewright_labeled_is_managed() {
+    let handed_back = Issue {
+        labels: vec!["needs-info".into()],
+        events: vec![IssueEvent::Labeled {
+            label: "needs-info".into(),
+            by: Some(Login::new("factory")),
+            at: at("2026-10-01T10:00:00Z"),
+        }],
+        ..ticket(42, "Add invoices")
+    };
+
+    assert!(explain(&view(vec![handed_back], vec![]), &[], Number(42), at(NOW)).is_some());
 }
 
 #[test]
@@ -1040,16 +1057,34 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
 }
 
 #[test]
-fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_names_the_label() {
-    let unmarked = ticket(42, "Add invoices");
+fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_is_not_marked() {
+    let unmarked = Issue {
+        labels: vec!["needs-triage".into()],
+        ..ticket(42, "Add invoices")
+    };
     let mut view = view(vec![unmarked.clone()], vec![]);
     view.policy.require_label = Some("linewright".into());
 
     assert_eq!(explain(&view, &[], Number(42), at(NOW)), None);
     assert_eq!(
         left_alone_text(&view, &AnyItem::HeldIssue(Box::new(unmarked)))[3],
-        "left alone: it is not labeled `linewright`, the required label, and Linewright has not \
-         worked it"
+        "left alone: it is not marked for Linewright"
+    );
+}
+
+#[test]
+fn with_a_required_label_an_unmarked_issue_that_would_wait_on_a_person_were_it_marked_waits_on_one()
+{
+    let asked = Issue {
+        labels: vec!["needs-info".into()],
+        ..ticket(42, "Add invoices")
+    };
+    let mut view = view(vec![asked.clone()], vec![]);
+    view.policy.require_label = Some("linewright".into());
+
+    assert_eq!(
+        left_alone_text(&view, &AnyItem::HeldIssue(Box::new(asked)))[3],
+        "left alone: it waits on a person, and Linewright has not worked it"
     );
 }
 
@@ -1295,6 +1330,7 @@ fn unassigned_at(minute: &str) -> MergedPull {
         events: vec![
             IssueEvent::Labeled {
                 label: "linewright".into(),
+                by: None,
                 at: at("2026-10-01T09:00:00Z"),
             },
             IssueEvent::Assignment(Assignment::Assigned {
@@ -1556,7 +1592,7 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
         at(NOW),
     );
 
-    for (answer, reason) in [(&held, "no-pipeline-label"), (&left_out, "not-in-view")] {
+    for answer in [&held, &left_out] {
         assert_eq!(
             serde_json::to_value(answer).unwrap(),
             serde_json::json!({
@@ -1569,7 +1605,7 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
                 "state": "open",
                 "last_read": "2026-10-01T12:00:30Z",
                 "stalled": false,
-                "left_alone": {"reason": reason},
+                "left_alone": {"reason": "waits-on-a-person"},
                 "run_in_flight": null,
                 "past_runs": [],
                 "past_runs_left_out": 0,
@@ -2266,10 +2302,10 @@ fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
 
 #[test]
 fn a_stalled_item_says_so_on_its_state_line_and_in_its_json() {
-    let stalled = Issue {
+    let stalled = labeled_by_linewright(Issue {
         labels: vec!["ready-for-human".into(), label::STALLED.into()],
         ..ticket(42, "Add invoices")
-    };
+    });
     let view = view(vec![stalled], vec![]);
 
     assert_eq!(text(&view, 42)[1], "state: with the maintainer · stalled");

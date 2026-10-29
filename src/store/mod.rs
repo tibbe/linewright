@@ -10,8 +10,9 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, ClosedItem, Issue, IssueCloseReason, Item, Login, MergeMethod, MergeMethods,
-    MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule, Windows, label,
+    CheckFailure, ClosedItem, Issue, IssueCloseReason, Item, Login, Marking, MergeMethod,
+    MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule, Windows,
+    label,
 };
 use crate::redaction::Redaction;
 
@@ -275,7 +276,24 @@ pub enum AnyItem {
     },
 }
 
+/// Whether a snapshot holds open `issue`: whether `linewright` manages it
+/// ([`Issue::managed`]), with the pull requests GitHub says close it. A store
+/// does not know the required label, so it counts every issue marked, and
+/// `status::standing` leaves one that is not alone.
+pub fn holds(issue: &Issue, linewright: &Login) -> bool {
+    issue.open && issue.managed(linewright, &issue.closed_by, Marking::Marked)
+}
+
 impl AnyItem {
+    /// `issue`, held or left out as [`holds`] tells.
+    pub fn issue(issue: Issue, linewright: &Login) -> AnyItem {
+        if holds(&issue, linewright) {
+            AnyItem::HeldIssue(Box::new(issue))
+        } else {
+            AnyItem::LeftOutIssue(Box::new(issue))
+        }
+    }
+
     pub fn number(&self) -> Number {
         match self {
             AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => issue.number,

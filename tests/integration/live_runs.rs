@@ -160,7 +160,7 @@ fn assigned_by_hand(world: &World, labels: &[&str]) -> Number {
         .unwrap();
     world.clock.advance(TimeDelta::minutes(1));
     for label in labels {
-        world.store.label_as(issue, label).unwrap();
+        world.store.label_as("maintainer", issue, label).unwrap();
     }
     issue
 }

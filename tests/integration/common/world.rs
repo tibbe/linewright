@@ -29,6 +29,22 @@ use super::harness::{ScriptedHarness, failed_session, subject_file};
 
 pub const LINEWRIGHT: &str = "factory";
 
+/// Opens an issue `author` filed, which Linewright then labeled `labels`, as
+/// it labels an issue it triages or hands back: it has worked it.
+pub fn open_issue_linewright_labeled(
+    store: &LocalStore,
+    author: &str,
+    title: &str,
+    body: &str,
+    labels: &[&str],
+) -> Number {
+    let issue = store.open_issue(author, title, body, &[]);
+    for label in labels {
+        store.label_as(LINEWRIGHT, issue, label).unwrap();
+    }
+    issue
+}
+
 /// The label a factory requires when set to require one.
 pub const REQUIRED: &str = "linewright";
 

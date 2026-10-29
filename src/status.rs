@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    CheckState, Issue, Item, Login, MergedPull, Number, Pull, PullState, Requirement, Snapshot,
-    StatusLabel, Timestamp, label,
+    CheckState, Issue, Item, Login, Marking, MergedPull, Number, Pull, PullState, Requirement,
+    Snapshot, StatusLabel, Timestamp, label,
 };
 use crate::phrase::Phrase;
 use crate::reconcile::{
@@ -493,33 +493,67 @@ pub(crate) fn managed(view: &View, now: Timestamp) -> Vec<Managed> {
     items
 }
 
+/// Why Linewright leaves an open issue alone.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum IssueExclusion {
-    NoPipelineLabel,
-    NoTickets,
-    /// Its labels ask for a step, but it is not marked for Linewright, and
+    /// It would wait on Linewright were it marked for Linewright, and
     /// Linewright has not worked it.
     NotMarked {
         label: String,
     },
+    /// It waits on a person, and Linewright has not worked it.
+    WaitsOnAPerson,
+    /// Linewright has worked it, and no column holds it.
+    NoPipelineLabel,
+    NoTickets,
 }
 
+impl IssueExclusion {
+    /// What keeps the issue out, as a predicate of it, such as "not marked
+    /// for Linewright".
+    pub(crate) fn worded(&self) -> Phrase {
+        match self {
+            IssueExclusion::NotMarked { .. } => "not marked for Linewright".into(),
+            IssueExclusion::WaitsOnAPerson => {
+                "waits on a person, and Linewright has not worked it".into()
+            }
+            IssueExclusion::NoPipelineLabel => Phrase::from("labeled none of ").then(Phrase::list(
+                StatusLabel::ALL.map(|status| Phrase::default().code(status.label())),
+                "or",
+            )),
+            IssueExclusion::NoTickets => {
+                "a tracking issue with no tickets, and none are being cut".into()
+            }
+        }
+    }
+}
+
+/// Where open `issue` stands, or why Linewright leaves it alone: it is
+/// managed (`GLOSSARY.md`, **Managed**) or left alone by
+/// [`Issue::managed`].
 pub(crate) fn standing(
     issue: &Issue,
     snapshot: &Snapshot,
     policy: &Policy,
     waiting_for: &[Wait],
 ) -> Result<ItemState, IssueExclusion> {
-    let state = issue_state(issue, snapshot, policy)?;
-    if let Some(label) = &policy.require_label
-        && !policy.marks(&issue.labels)
-        && !issue.worked_by(&policy.linewright, snapshot)
-    {
-        return Err(IssueExclusion::NotMarked {
-            label: label.clone(),
+    let linewright = &policy.linewright;
+    let marking = policy.marking(&issue.labels);
+    if !issue.managed(linewright, &snapshot.pulls_closing(issue), marking) {
+        return Err(match &policy.require_label {
+            Some(label)
+                if marking == Marking::Unmarked
+                    && issue.waits_on_linewright(linewright, Marking::Marked) =>
+            {
+                IssueExclusion::NotMarked {
+                    label: label.clone(),
+                }
+            }
+            _ => IssueExclusion::WaitsOnAPerson,
         });
     }
+    let state = issue_state(issue, snapshot, policy)?;
     if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
         return Err(IssueExclusion::NoTickets);
     }

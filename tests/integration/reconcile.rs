@@ -801,6 +801,7 @@ fn labeled_merged(mut pr: MergedPull, label: &str, minute: i64) -> MergedPull {
     }
     pr.events.push(IssueEvent::Labeled {
         label: label.into(),
+        by: None,
         at: t(minute),
     });
     pr
@@ -1298,6 +1299,7 @@ fn unassigned_by(mut issue: Issue, actor: &str, minute: i64) -> Issue {
 fn labeled_at(mut issue: Issue, label: &str, minute: i64) -> Issue {
     issue.events.push(IssueEvent::Labeled {
         label: label.into(),
+        by: None,
         at: t(minute),
     });
     issue
@@ -2435,6 +2437,7 @@ fn a_ticket_labeled_again_since_a_rebase_was_tried_does_not_try_it_again() {
     let mut world = in_review(not_rebaseable());
     world.issues[0].events = vec![IssueEvent::Labeled {
         label: label::READY_FOR_AGENT.into(),
+        by: None,
         at: t(7),
     }];
 

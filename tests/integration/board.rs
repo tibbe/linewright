@@ -1,6 +1,8 @@
 use crate::common;
 
-use common::{NOW, assigning_linewright, at, ticket, unassigning_linewright, view};
+use common::{
+    NOW, assigning_linewright, at, labeled_by_linewright, ticket, unassigning_linewright, view,
+};
 use linewright::board::{
     Board, Card, CardLine, CardStatus, Column, Elapsed, Ended, Hold, LaneHead, Running, Stop, board,
 };
@@ -31,11 +33,12 @@ fn heads(board: &Board) -> Vec<LaneHead> {
     board.lanes.iter().map(|lane| lane.head.clone()).collect()
 }
 
+/// Ticket #`number`, which Linewright labeled `labels`.
 fn labeled(number: u64, labels: &[&str]) -> Issue {
-    Issue {
+    labeled_by_linewright(Issue {
         labels: labels.iter().map(ToString::to_string).collect(),
         ..ticket(number, &format!("Ticket {number}"))
-    }
+    })
 }
 
 #[test]
@@ -64,6 +67,40 @@ fn each_status_label_puts_its_issue_in_its_column() {
         ]
     );
     assert_eq!(board.needing_a_person, 2);
+}
+
+#[test]
+fn an_issue_a_person_filed_that_linewright_labeled_in_a_hand_back_needs_a_person() {
+    let handed_back = Issue {
+        events: vec![IssueEvent::Labeled {
+            label: "ready-for-human".into(),
+            by: Some(Login::new("factory")),
+            at: at("2026-10-01T10:00:00Z"),
+        }],
+        ..unworked(1, "ready-for-human")
+    };
+    let view = view(
+        vec![
+            handed_back,
+            unworked(2, "needs-info"),
+            unworked(3, "ready-for-human"),
+        ],
+        vec![],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(placed(&board), [(1, Column::NeedsAPerson, 1)]);
+    assert_eq!(board.needing_a_person, 1);
+}
+
+/// Ticket #`number`, which a person labeled `label`, and Linewright has not
+/// worked.
+fn unworked(number: u64, label: &str) -> Issue {
+    Issue {
+        labels: vec![label.into()],
+        ..ticket(number, &format!("Ticket {number}"))
+    }
 }
 
 fn assigned(issue: Issue) -> Issue {
@@ -1315,9 +1352,11 @@ fn with_events(issue: Issue, events: Vec<IssueEvent>) -> Issue {
     Issue { events, ..issue }
 }
 
+/// Linewright labeling an item `label` at `when`.
 fn labeling(label: &str, when: &str) -> IssueEvent {
     IssueEvent::Labeled {
         label: label.into(),
+        by: Some(Login::new("factory")),
         at: at(when),
     }
 }

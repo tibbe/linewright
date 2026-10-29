@@ -519,7 +519,10 @@ async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again_once_they_
         ["enhancement", "ready-for-human"]
     );
 
-    world.store.label_as(issue, "needs-triage").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "needs-triage")
+        .unwrap();
     world.poll().await;
 
     let issue = world.issue(issue);
@@ -540,7 +543,10 @@ async fn an_issue_given_a_second_status_label_keeps_only_the_newer() {
         &["bug", "ready-for-human"],
     );
     world.clock.advance(TimeDelta::minutes(1));
-    world.store.label_as(issue, "needs-info").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "needs-info")
+        .unwrap();
 
     world.poll().await;
 
@@ -1468,8 +1474,14 @@ async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Numbe
         .pulls()
         .last()
         .expect("a pull request was opened");
-    world.store.label_as(other, "ready-for-agent").unwrap();
-    world.store.label_as(other, "linewright:designed").unwrap();
+    world
+        .store
+        .label_as("maintainer", other, "ready-for-agent")
+        .unwrap();
+    world
+        .store
+        .label_as("maintainer", other, "linewright:designed")
+        .unwrap();
     world
         .store
         .set_checks(pr, vec![check("test", CheckState::Failed, "boom")])
@@ -1567,7 +1579,10 @@ async fn a_pull_request_closed_unmerged_hands_back_each_claimed_ticket_it_closes
     design_issues(&world);
     world.clock.advance(TimeDelta::minutes(1));
     for issue in [ticket, other] {
-        world.store.label_as(issue, "ready-for-agent").unwrap();
+        world
+            .store
+            .label_as("maintainer", issue, "ready-for-agent")
+            .unwrap();
     }
     world.poll().await;
     world.poll().await;
@@ -2347,7 +2362,9 @@ async fn a_handed_back_spec_change_loses_its_design_label() {
     let store = world.store.clone();
     world.harness.on(WorkKind::Design, move |_| {
         let spec_change = *store.pulls().last().expect("a spec change");
-        store.label_as(spec_change, "linewright:designed").unwrap();
+        store
+            .label_as("maintainer", spec_change, "linewright:designed")
+            .unwrap();
         Ok(json!({"outcome": "gave-up", "reason": "Not now."}).to_string())
     });
     let spec_pr = merge_spec_change(&world).await;
@@ -2793,7 +2810,10 @@ async fn an_issue_handed_back_after_its_design_loses_it_and_is_designed_again() 
     assert_eq!(labels(&world.issue(issue)), ["ready-for-human"]);
 
     world.store.unlabel_as(issue, "ready-for-human").unwrap();
-    world.store.label_as(issue, "ready-for-agent").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     world.poll().await;
 
     assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
@@ -3192,7 +3212,10 @@ async fn relabeling_a_claimed_ticket_ready_for_human_lets_go_of_it_but_not_of_it
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
 
-    world.store.label_as(ticket, "ready-for-human").unwrap();
+    world
+        .store
+        .label_as("maintainer", ticket, "ready-for-human")
+        .unwrap();
     world.poll().await;
 
     let issue = world.issue(ticket);
@@ -3346,8 +3369,14 @@ async fn relabeling_a_ticket_assigned_to_linewright_by_hand_lets_go_of_it_silent
         .unwrap();
     world.poll().await;
 
-    world.store.label_as(ticket, "ready-for-agent").unwrap();
-    world.store.label_as(ticket, "ready-for-human").unwrap();
+    world
+        .store
+        .label_as("maintainer", ticket, "ready-for-agent")
+        .unwrap();
+    world
+        .store
+        .label_as("maintainer", ticket, "ready-for-human")
+        .unwrap();
     world.poll().await;
 
     let issue = world.issue(ticket);
@@ -3496,7 +3525,10 @@ fn script_next_run(
 /// it again: the hand-back took its design with it.
 async fn relabel_ready_for_agent(world: &mut World, ticket: Number) {
     world.store.unlabel_as(ticket, "ready-for-human").unwrap();
-    world.store.label_as(ticket, "ready-for-agent").unwrap();
+    world
+        .store
+        .label_as("maintainer", ticket, "ready-for-agent")
+        .unwrap();
     design_issues(world);
     world.poll().await;
     assert!(labels(&world.issue(ticket)).contains(&"linewright:designed"));

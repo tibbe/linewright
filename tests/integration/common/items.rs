@@ -58,7 +58,22 @@ pub fn ticket(number: u64, title: &str) -> Issue {
     }
 }
 
-/// `issue` labeled `older`, then `newer`, listed newest first so that only
+/// `issue`, with each of its labels applied by Linewright when it was
+/// opened, as Linewright labels an issue it triages or hands back: it has
+/// worked it.
+pub fn labeled_by_linewright(issue: Issue) -> Issue {
+    let labelings = issue.labels.iter().map(|label| IssueEvent::Labeled {
+        label: label.clone(),
+        by: Some(Login::new("factory")),
+        at: issue.created_at,
+    });
+    Issue {
+        events: labelings.chain(issue.events.iter().cloned()).collect(),
+        ..issue
+    }
+}
+
+/// `issue` labeled `older`, then `newer`, by Linewright, listed newest first so that only
 /// the order they were applied in tells them apart.
 pub fn relabeled(issue: Issue, older: &str, newer: &str) -> Issue {
     Issue {
@@ -69,6 +84,7 @@ pub fn relabeled(issue: Issue, older: &str, newer: &str) -> Issue {
         ]
         .map(|(label, time)| IssueEvent::Labeled {
             label: label.into(),
+            by: Some(Login::new("factory")),
             at: at(time),
         })
         .to_vec(),

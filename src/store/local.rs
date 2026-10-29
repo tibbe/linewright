@@ -196,6 +196,7 @@ pub struct CheckRecord {
 #[derive(Clone, Serialize)]
 struct Labeling {
     label: String,
+    by: Login,
     at: Timestamp,
 }
 
@@ -384,6 +385,7 @@ impl LocalStore {
                         .iter()
                         .map(|l| IssueEvent::Labeled {
                             label: l.to_string(),
+                            by: Some(Login::new(author)),
                             at: now,
                         })
                         .collect(),
@@ -411,9 +413,11 @@ impl LocalStore {
         Ok(())
     }
 
-    pub fn label_as(&self, number: Number, label: &str) -> Result<()> {
+    /// `actor` labels the issue or pull request #`number` `label`.
+    pub fn label_as(&self, actor: &str, number: Number, label: &str) -> Result<()> {
         let now = self.now();
-        self.state().add_label(number, label, now)
+        self.state()
+            .add_label(number, label, &Login::new(actor), now)
     }
 
     pub fn unlabel_as(&self, number: Number, label: &str) -> Result<()> {
@@ -1250,7 +1254,7 @@ impl State {
         Filed::read(&issue.author, &issue.title, &issue.body, &self.linewright)
     }
 
-    fn add_label(&mut self, number: Number, label: &str, now: Timestamp) -> Result<()> {
+    fn add_label(&mut self, number: Number, label: &str, by: &Login, now: Timestamp) -> Result<()> {
         match self.item_mut(number)? {
             Written::Issue(record) if !record.issue.has_label(label) => {
                 let issue = &mut record.issue;
@@ -1258,6 +1262,7 @@ impl State {
                 issue.labels.push(label.into());
                 issue.events.push(IssueEvent::Labeled {
                     label: label.into(),
+                    by: Some(by.clone()),
                     at: now,
                 });
             }
@@ -1266,6 +1271,7 @@ impl State {
                 pull.labels.push(label.into());
                 pull.labelings.push(Labeling {
                     label: label.into(),
+                    by: by.clone(),
                     at: now,
                 });
             }
@@ -1468,6 +1474,7 @@ impl PullRecord {
     fn events(&self) -> Vec<IssueEvent> {
         let labelings = self.labelings.iter().map(|l| IssueEvent::Labeled {
             label: l.label.clone(),
+            by: Some(l.by.clone()),
             at: l.at,
         });
         let assignments = self.assignments.iter().cloned().map(IssueEvent::Assignment);
@@ -1696,14 +1703,11 @@ impl Store for LocalStore {
         self.read_item()?;
         {
             let state = self.state();
-            // A snapshot of the local store holds every open issue.
             if let Some(record) = state.issues.get(&number) {
-                let issue = Box::new(state.issue_view(record));
-                return Ok(Some(if issue.open {
-                    AnyItem::HeldIssue(issue)
-                } else {
-                    AnyItem::LeftOutIssue(issue)
-                }));
+                return Ok(Some(AnyItem::issue(
+                    state.issue_view(record),
+                    &state.linewright,
+                )));
             }
             let Some(record) = state.pulls.get(&number) else {
                 return Ok(None);
@@ -1951,7 +1955,8 @@ impl Store for LocalStore {
         let now = self.now();
         let then = {
             let mut state = self.state();
-            state.add_label(number, label, now)?;
+            let linewright = state.linewright.clone();
+            state.add_label(number, label, &linewright, now)?;
             match state.after_labeling.take() {
                 Some(hook) if hook.number == number && hook.label == label => Some(hook.then),
                 other => {

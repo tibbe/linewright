@@ -47,7 +47,10 @@ async fn a_triage_run_is_listed_under_its_run_id_with_its_outcome() {
 
 fn triage_again(world: &World, issue: linewright::domain::Number) {
     world.store.unlabel_as(issue, "ready-for-agent").unwrap();
-    world.store.label_as(issue, "needs-triage").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "needs-triage")
+        .unwrap();
 }
 
 /// A world whose triage sessions run with the operator's `opus` and a
@@ -654,7 +657,10 @@ async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
     world.store.close_pull_as(closed).unwrap();
     world.poll().await;
     world.store.unlabel_as(issue, "ready-for-human").unwrap();
-    world.store.label_as(issue, "ready-for-agent").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     design_issues(&world);
     world.poll().await;
     world.poll().await;

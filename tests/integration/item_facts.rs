@@ -3,7 +3,7 @@
 
 use crate::common;
 
-use common::{NOW, at, sub_issue, ticket, view};
+use common::{NOW, at, labeled_by_linewright, sub_issue, ticket, view};
 use linewright::board::{CardLine, CardStatus, Column, LaneHead, Stop, board};
 use linewright::domain::*;
 use linewright::explain::{LeftAloneIssue, LeftAloneItem, explain, explain_fresh, fresh_view};
@@ -550,10 +550,10 @@ fn an_item_left_out_of_the_view_lists_the_open_or_merged_pull_requests_closing_i
 
 #[test]
 fn what_linewright_waits_for_is_listed_only_while_it_waits_for_any() {
-    let handed_back = Issue {
+    let handed_back = labeled_by_linewright(Issue {
         labels: vec!["ready-for-human".into()],
         ..ticket(1, "Handed back")
-    };
+    });
     let view = view(vec![handed_back, ticket(2, "Ready")], vec![]);
 
     assert_eq!(facts_of(&view, 1).waiting_for, [Wait::Maintainer]);

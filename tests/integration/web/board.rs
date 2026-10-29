@@ -124,24 +124,30 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
 #[tokio::test]
 async fn a_card_waiting_on_the_people_asked_names_them_as_a_list_or_says_people_asked() {
     let world = with_ticket().await;
-    let two = world
-        .store
-        .open_issue("maintainer", "Two", "Who?", &["needs-info"]);
+    let two =
+        open_issue_linewright_labeled(&world.store, "maintainer", "Two", "Who?", &["needs-info"]);
     for person in ["alice", "bob"] {
         world.store.assign_as(LINEWRIGHT, two, person).unwrap();
     }
-    let three = world
-        .store
-        .open_issue("maintainer", "Three", "Who?", &["needs-info"]);
+    let three =
+        open_issue_linewright_labeled(&world.store, "maintainer", "Three", "Who?", &["needs-info"]);
     for person in ["alice", "bob", "carol"] {
         world.store.assign_as(LINEWRIGHT, three, person).unwrap();
     }
-    world
-        .store
-        .open_issue("maintainer", "Nobody", "Who?", &["needs-info"]);
-    let linewright = world
-        .store
-        .open_issue("maintainer", "Linewright", "Who?", &["needs-info"]);
+    open_issue_linewright_labeled(
+        &world.store,
+        "maintainer",
+        "Nobody",
+        "Who?",
+        &["needs-info"],
+    );
+    let linewright = open_issue_linewright_labeled(
+        &world.store,
+        "maintainer",
+        "Linewright",
+        "Who?",
+        &["needs-info"],
+    );
     world
         .store
         .assign_as(LINEWRIGHT, linewright, LINEWRIGHT)
@@ -633,7 +639,9 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
         .collect();
     web.store.close_pull_as(pr).unwrap();
     web.store.unlabel_as(ticket, "ready-for-agent").unwrap();
-    web.store.label_as(ticket, "ready-for-human").unwrap();
+    web.store
+        .label_as("maintainer", ticket, "ready-for-human")
+        .unwrap();
     web.deliver_issue(ticket.0).await;
     let handed_back = eventually_on_the_board(&web, "handed back · 2026-10-01 12:00:SS UTC").await;
 
@@ -671,8 +679,12 @@ async fn a_stalled_card_says_stalled_in_needs_a_person_and_after_its_pull_reques
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
     world.store.unassign_as(LINEWRIGHT, pr, LINEWRIGHT).unwrap();
-    world.store.label_as(pr, "linewright:stalled").unwrap();
-    let stalled = world.store.open_issue(
+    world
+        .store
+        .label_as("maintainer", pr, "linewright:stalled")
+        .unwrap();
+    let stalled = open_issue_linewright_labeled(
+        &world.store,
         "maintainer",
         "Do another thing",
         "Please.",
@@ -857,9 +869,13 @@ async fn a_card_waiting_in_its_column_ends_its_line_with_when_it_entered_its_col
     world
         .harness
         .on(WorkKind::Triage, |_| refused_for_the_usage_limit());
-    let blocker = world
-        .store
-        .open_issue("maintainer", "First", "Before.", &["ready-for-human"]);
+    let blocker = open_issue_linewright_labeled(
+        &world.store,
+        "maintainer",
+        "First",
+        "Before.",
+        &["ready-for-human"],
+    );
     let blocked = world.store.open_issue(
         "maintainer",
         "Then",

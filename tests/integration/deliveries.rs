@@ -104,7 +104,10 @@ async fn an_issue_labeled_ready_for_agent_is_claimed_on_the_delivery() {
         .open_issue("maintainer", "Do the thing", "Please.", &[]);
     let served = serve(world, NEVER).await;
 
-    served.store.label_as(issue, "ready-for-agent").unwrap();
+    served
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     served
         .deliver(
             "issues",
@@ -126,7 +129,10 @@ async fn an_issue_labeled_ready_for_agent_is_claimed_on_a_form_encoded_delivery(
         .open_issue("maintainer", "Do the thing", "Please.", &[]);
     let served = serve(world, NEVER).await;
 
-    served.store.label_as(issue, "ready-for-agent").unwrap();
+    served
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     served
         .deliver_form_encoded(
             "issues",
@@ -167,7 +173,10 @@ async fn an_issue_labeled_needs_triage_is_triaged_on_the_delivery() {
         .open_issue("reporter", "Crash", "It crashes.", &[]);
     let served = serve(world, NEVER).await;
 
-    served.store.label_as(issue, "needs-triage").unwrap();
+    served
+        .store
+        .label_as("maintainer", issue, "needs-triage")
+        .unwrap();
     served.deliver("issues", about_issue(issue)).await;
 
     eventually(|| labels(&served.issue(issue)).contains(&"ready-for-human")).await;
@@ -594,7 +603,10 @@ async fn a_delivery_replayed_late_and_twice_after_a_newer_change_takes_no_step_b
         "label": {"name": "needs-triage"},
         "issue": {"number": issue.0, "state": "open", "labels": [{"name": "needs-triage"}]}
     });
-    served.store.label_as(issue, "needs-triage").unwrap();
+    served
+        .store
+        .label_as("maintainer", issue, "needs-triage")
+        .unwrap();
     served.deliver("issues", labeled.clone()).await;
     eventually(|| labels(&served.issue(issue)).contains(&"ready-for-human")).await;
     let comments = served.issue(issue).comments.len();
@@ -602,7 +614,10 @@ async fn a_delivery_replayed_late_and_twice_after_a_newer_change_takes_no_step_b
     served.deliver("issues", labeled.clone()).await;
     served.deliver("issues", labeled).await;
     // A delivery after them shows when they were acted on.
-    served.store.label_as(other, "ready-for-agent").unwrap();
+    served
+        .store
+        .label_as("maintainer", other, "ready-for-agent")
+        .unwrap();
     served.deliver("issues", about_issue(other)).await;
     eventually(|| claimed(&served.store, other)).await;
 
@@ -644,7 +659,10 @@ async fn a_failed_read_for_a_delivery_is_logged_and_the_next_poll_catches_up() {
     let served = serve(world, Duration::from_millis(200)).await;
 
     served.store.fail_reads("GitHub is down");
-    served.store.label_as(issue, "ready-for-agent").unwrap();
+    served
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     served.deliver("issues", about_issue(issue)).await;
     let failed = || {
         log.lines("ERROR")

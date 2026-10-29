@@ -3,8 +3,8 @@ use crate::common;
 use chrono::TimeDelta;
 
 use common::{
-    assigning_linewright, at, closed_by, draining_since, implementing, in_flight, limited_until,
-    linewright_letting_go, relabeled, sub_issue, ticket,
+    assigning_linewright, at, closed_by, draining_since, implementing, in_flight,
+    labeled_by_linewright, limited_until, linewright_letting_go, relabeled, sub_issue, ticket,
 };
 use linewright::automation::{AutomationFiles, LastScheduledRuns, Unparsed};
 use linewright::domain::*;
@@ -628,12 +628,12 @@ fn each_managed_item_says_in_one_line_what_linewright_waits_for_on_it() {
         assignees: vec![Login::new("factory")],
         ..ready_issue()
     };
-    let with_the_maintainer = Issue {
+    let with_the_maintainer = labeled_by_linewright(Issue {
         number: Number(10),
         title: "It broke".into(),
         labels: vec!["ready-for-human".into()],
         ..ready_issue()
-    };
+    });
     let view = View {
         memory: limited_until("2026-10-01T14:30:00Z"),
         live: vec![implementing(9)],

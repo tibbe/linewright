@@ -33,7 +33,7 @@ async fn merged_spec_change(world: &World) {
         )
         .await
         .unwrap();
-    world.store.label_as(pr, REQUIRED).unwrap();
+    world.store.label_as("maintainer", pr, REQUIRED).unwrap();
 }
 
 fn all_labels(world: &World) -> Vec<Vec<String>> {

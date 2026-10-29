@@ -20,7 +20,10 @@ async fn an_issue_labeled_ready_for_agent_and_refreshed_after_a_poll_is_claimed_
     world.poll().await;
     let polled = world.store.snapshots_taken();
 
-    world.store.label_as(issue, "ready-for-agent").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     let actions = world.factory.refresh([Item::Issue(issue)]).await.unwrap();
 
     assert_eq!(
@@ -232,7 +235,10 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
         .open_issue("maintainer", "Do another thing", "Please.", &[]);
     let (ticket, pr) = world.ticket_in_review().await;
 
-    world.store.label_as(issue, "ready-for-agent").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     let spec = spec_change(&world).await;
     world
         .store
@@ -286,7 +292,10 @@ async fn refreshing_an_item_again_or_one_that_did_not_change_takes_no_actions() 
     world.poll().await;
 
     assert_eq!(refresh(&mut world, Item::Issue(unchanged)).await, []);
-    world.store.label_as(issue, "ready-for-agent").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     refresh(&mut world, Item::Issue(issue)).await;
     world.factory.settle().await;
 
@@ -324,7 +333,10 @@ async fn a_poll_reads_what_changed_since_whether_refreshed_or_not() {
             .open_issue("maintainer", "Leave it", "Later.", &["ready-for-human"]);
     world.poll().await;
 
-    world.store.label_as(issue, "ready-for-agent").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     assert_eq!(refresh(&mut world, Item::Issue(unchanged)).await, []);
     let actions = world.factory.cycle().await.unwrap();
     world.factory.settle().await;
@@ -459,7 +471,10 @@ async fn a_refresh_naming_items_the_store_does_not_have_reads_the_others() {
         .open_issue("maintainer", "Do the thing", "Please.", &[]);
     world.poll().await;
 
-    world.store.label_as(issue, "ready-for-agent").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
     let actions = world
         .factory
         .refresh([

@@ -16,15 +16,13 @@ use super::runs_table::RunsShown;
 use super::{ErrorPage, Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::board;
-use crate::domain::{Number, Snapshot, StatusLabel, label};
-use crate::explain::{
-    self, LeftAloneIssue, LeftAloneItem, LeftAlonePull, OpenIssueExclusion, PullExclusion,
-};
+use crate::domain::{Number, Snapshot};
+use crate::explain::{self, LeftAloneIssue, LeftAloneItem, LeftAlonePull, PullExclusion};
 use crate::item_facts::{self, ItemFacts, Related, StateFact};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::NotSpecChange;
 use crate::runs;
-use crate::status::{self, IssueExclusion};
+use crate::status;
 
 /// #N's heading and facts, ready for the page.
 struct ItemShown {
@@ -159,23 +157,7 @@ fn left_alone_worded(item: &LeftAloneItem) -> Phrase {
     match item {
         LeftAloneItem::Issue(LeftAloneIssue::Closed)
         | LeftAloneItem::PullRequest(LeftAlonePull::Closed) => "closed".into(),
-        LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }) => match left_alone {
-            OpenIssueExclusion::NotInView => Phrase::from("labeled none of ")
-                .then(one_of(&label::IN_VIEW))
-                .text(", and Linewright neither opened it nor is assigned to it"),
-            OpenIssueExclusion::Held(IssueExclusion::NoPipelineLabel) => {
-                Phrase::from("labeled none of ")
-                    .then(one_of(&StatusLabel::ALL.map(StatusLabel::label)))
-            }
-            OpenIssueExclusion::Held(IssueExclusion::NoTickets) => {
-                "a tracking issue with no tickets, and none are being cut".into()
-            }
-            OpenIssueExclusion::Held(IssueExclusion::NotMarked { label }) => {
-                Phrase::from("not labeled ")
-                    .code(label.clone())
-                    .text(", the required label, and Linewright has not worked it")
-            }
-        },
+        LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }) => left_alone.worded(),
         LeftAloneItem::PullRequest(LeftAlonePull::Open { left_alone }) => match left_alone {
             PullExclusion::NotLinewrights { author } => format!("opened by {author}").into(),
             PullExclusion::ClosesNoIssue => "closes no issue Linewright could work on".into(),
@@ -205,11 +187,6 @@ fn left_alone_worded(item: &LeftAloneItem) -> Phrase {
                 .text(", the required label"),
         },
     }
-}
-
-/// `names` as code, listed with "or".
-fn one_of(names: &[&str]) -> Phrase {
-    Phrase::list(names.iter().map(|&name| Phrase::default().code(name)), "or")
 }
 
 /// How many of an item's runs its page lists, the latest
