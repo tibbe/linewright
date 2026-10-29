@@ -89,7 +89,8 @@ only after driving it as far as it goes.
 The brief establishes the facts, so that the design that follows doesn't
 have to do the research. The decisions, what to change and how to test it,
 stay the design's. Issue readiness is separate from PR acceptance: the brief
-requires no tests of an unwritten fix.
+requires no tests of an unwritten fix. Do not guess a solution, and do not
+turn triage into a speculative implementation plan.
 
 - **Durability over precision.** The issue may wait days or weeks while the
   code changes. Describe interfaces, types and behavioral contracts; name
@@ -111,8 +112,7 @@ What happens now. For bugs, the broken behavior (and how you reproduced it).
 For enhancements, the status quo the feature builds on.
 
 **Expected behavior:**
-What should happen, as the spec (quoted) or the reporter states it. Mark each
-case neither settles as [NEEDS CLARIFICATION: specific question].
+What should happen instead, quoted from the reporter or the spec.
 
 **Cause:**
 For bugs, the hypothesis that turned out correct, and the probe that showed it.
