@@ -62,6 +62,10 @@ _Avoid_: setup script, setup steps, setup hook, init script, install script,
 bootstrap, provisioning, lifecycle script, post-create command, pre-start
 hook, build script
 
+**Session setting**:
+A setting that shapes the sessions of a stage or an automation, such as its
+model or its setup command.
+
 ### Work
 
 **Item**:
@@ -156,9 +160,9 @@ _Avoid_: rate limit, session limit, quota
 ### Operation
 
 **Layer**:
-One of the sources a setting or a prompt file can come from, ranked so that
-the first that has it wins: the repository's, the operator's or Linewright's
-own.
+One of the ranked places a setting or a prompt file can be set, such as a
+flag or the repository's file, each the repository's, the operator's or
+Linewright's own.
 _Avoid_: scope, level, tier, source, overlay, override, drop-in
 
 **Drain**:

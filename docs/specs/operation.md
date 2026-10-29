@@ -81,8 +81,8 @@ once.
 Every setting is a key in the operator's TOML config file (`--config`, default
 `linewright.toml` in the working directory); some are also keys in the
 repository's file ([The repository's file](#the-repositorys-file)).
-Precedence: flag, then environment, then the repository's file, then the
-operator's file, then default.
+Each place a setting is set is a layer, highest first: flag, environment, the
+repository's file, the operator's file, default.
 
 | setting                                      | default                                     |
 | -------------------------------------------- | ------------------------------------------- |
@@ -114,6 +114,10 @@ operator's file, then default.
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
+- **Combining layers.** A setting's value combines what every layer sets, by
+  what the setting holds: a value is the highest layer's, a list holds the
+  entries of every layer, and a table holds the names of every layer, each
+  name's value combined as a value is.
 - **A value or a list.** A setting that holds one is also a flag and an
   environment variable (`LINEWRIGHT_<FLAG>`).
 - **A table of values.** A setting that holds one is also a flag, given once
@@ -151,26 +155,14 @@ operator's file, then default.
 
 ## Stage settings
 
-A stage's sessions take the whole-pipeline settings, except where the
-stage's own table sets them.
-
-| setting            | in a stage's table                      |
-| ------------------ | --------------------------------------- |
-| `model`            | replaces the whole pipeline's           |
-| `effort`           | replaces the whole pipeline's           |
-| `session-timeout`  | replaces the whole pipeline's           |
-| `setup`            | replaces the whole pipeline's           |
-| `session-env`      | adds its values to the whole pipeline's |
-| `session-pass-env` | adds its names to the whole pipeline's  |
+A stage's sessions take the session settings, `model`, `effort`,
+`session-timeout`, `setup`, `session-env` and `session-pass-env`, from the
+whole pipeline and from the stage's own tables, which are layers above every
+whole-pipeline layer ([Configuration](#configuration)).
 
 - **The tables.** A stage's settings are a table in a config file,
   `[stage.NAME]` with the stage's name under [Runs](runs.md), such as
-  `[stage.implement]`, with the settings above as its keys.
-- **Combining.** A setting's value is a stage's table's where any layer sets
-  one, else the whole pipeline's, each by the layers' precedence
-  ([Configuration](#configuration)). A list holds every name set at any
-  layer, and a table every name set at any layer, each name's value chosen
-  as a setting's is.
+  `[stage.implement]`, with the session settings as its keys.
 
 ## The repository's file
 
@@ -290,8 +282,8 @@ image the operator builds with those in it.
   choose.
 - The repository's file naming the variables a stage's sessions get, even
   from those the operator's `session-pass-env` names.
-- A layer or a stage's table taking away a variable that another passes or
-  sets.
+- A layer taking away what a lower one sets, such as a variable it passes or
+  a host it allows.
 - A value built from other variables, such as a `PATH` with a directory
   added.
 - The settings the pipeline reads between runs, such as `auto-merge` or
