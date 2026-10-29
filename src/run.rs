@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -7,6 +8,7 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::attachments::{self, Dir, Refusal};
 use crate::automation::Automation;
 use crate::briefs::{Briefs, OperatorPrompts};
 use crate::clock::Clock;
@@ -23,14 +25,14 @@ use crate::reconcile::{
 use crate::repo_files::RepoLayer;
 use crate::results::{
     self, AutomationIssueLabel, AutomationResult, Contract, Cut, DesignResult, ImplementResult,
-    IssueWork, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
+    IssueWork, Posts, PullWorkResult, SpecGap, SpecGaps, Tickets, TriageOutcome, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs};
 use crate::secrets::{Held, Secrets};
 use crate::spec_gap::{self, FiledGaps};
 use crate::store::{
-    AnyItem, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError, PushMode,
-    RepoSettings, Store,
+    AnyItem, AttachError, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError,
+    PushMode, RepoSettings, Store,
 };
 use crate::tracking::{self, FiledTicket};
 use crate::transcript;
@@ -829,6 +831,20 @@ impl Rejection {
     }
 }
 
+/// Why a result's first writes refused it.
+enum Refused {
+    /// Before they wrote to the session's work, which is as it left it.
+    Untouched(Rejection),
+    /// As they wrote the work, whose failure says what became of it.
+    Writing(Rejection),
+}
+
+impl From<anyhow::Error> for Refused {
+    fn from(error: anyhow::Error) -> Refused {
+        Refused::Untouched(error.into())
+    }
+}
+
 /// How a conversation ended before its result's first writes were done.
 enum Unbegun {
     /// In session, or sent back to it: the stage's work is as the session
@@ -869,11 +885,6 @@ fn parse_retry(ctx: &Ctx) -> impl Fn(String) -> Rejection + '_ {
     |error| Rejection::retry(prompts::result_error(&ctx.with.briefs.prompts, &error))
 }
 
-/// A `begin` for a result whose first writes are the stage's own.
-async fn no_first_writes<T>(result: T) -> Result<T, Rejection> {
-    Ok(result)
-}
-
 /// Runs a session until `accept` takes its result, in session, and `begin`
 /// has made the result's first writes, once applying it has begun. A result
 /// either rejects goes back to the session.
@@ -889,7 +900,7 @@ where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, Rejection>>,
     B: Fn(T) -> BFut,
-    BFut: Future<Output = Result<U, Rejection>>,
+    BFut: Future<Output = Result<U, Refused>>,
 {
     converse_counting(shell, ctx, spec, first, &mut 0, accept, begin).await
 }
@@ -909,14 +920,14 @@ where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, Rejection>>,
     B: Fn(T) -> BFut,
-    BFut: Future<Output = Result<U, Rejection>>,
+    BFut: Future<Output = Result<U, Refused>>,
 {
     let in_session = Unbegun::InSession;
     let mut turn = take_turn(shell, ctx, spec, first)
         .await
         .map_err(in_session)?;
     loop {
-        let (rejection, begun) = match accept(turn.message.clone()).await {
+        let refused = match accept(turn.message.clone()).await {
             Ok(result) => {
                 let json = results::json_value(&turn.message)
                     .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
@@ -927,31 +938,30 @@ where
                 ctx.cancel.begin_applying().map_err(in_session)?;
                 match begin(result).await {
                     Ok(written) => return Ok((written, turn)),
-                    Err(Rejection::Fail(failure)) => return Err(Unbegun::Begun(failure)),
-                    Err(rejection) => {
+                    Err(Refused::Writing(Rejection::Fail(failure))) => {
+                        return Err(Unbegun::Begun(failure));
+                    }
+                    Err(refused) => {
                         // A cancel that came while applying cancels the run
-                        // now, rather than send the result back.
+                        // now, rather than send the result back or end it
+                        // otherwise.
                         ctx.cancel.back_to_session().map_err(in_session)?;
-                        (rejection, true)
+                        refused
                     }
                 }
             }
-            Err(rejection) => (rejection, false),
+            Err(rejection) => Refused::Untouched(rejection),
+        };
+        // What the first writes refused as they wrote the work, they would
+        // refuse again of the work as the session left it.
+        let (rejection, unbegun): (_, fn(Failure) -> Unbegun) = match refused {
+            Refused::Untouched(rejection) => (rejection, Unbegun::InSession),
+            Refused::Writing(rejection) => (rejection, Unbegun::Begun),
         };
         let step = match rejection {
-            Rejection::Fail(failure) => return Err(in_session(failure)),
-            Rejection::Retry { followup, note } => {
-                send_back(shell, spec, &turn, followup, retries).map_err(|failure| {
-                    let failure = failure.noted(note.as_deref().unwrap_or_default());
-                    // What the first writes refused, they would refuse again
-                    // of the work as the session left it.
-                    if begun {
-                        Unbegun::Begun(failure)
-                    } else {
-                        in_session(failure)
-                    }
-                })?
-            }
+            Rejection::Fail(failure) => return Err(unbegun(failure)),
+            Rejection::Retry { followup, note } => send_back(shell, spec, &turn, followup, retries)
+                .map_err(|failure| unbegun(failure.noted(note.as_deref().unwrap_or_default())))?,
             Rejection::Resume(followup) => {
                 *retries = 0;
                 Step::Resume {
@@ -1098,19 +1108,26 @@ fn tail(text: &str, lines: usize) -> String {
     all[all.len().saturating_sub(lines)..].join("\n")
 }
 
+/// The session of `purpose` in `ws`, sent the `prompt` made for its
+/// attachments directory, and that directory.
 fn session_spec(
     shell: &Shell,
     ctx: &Ctx,
     purpose: Purpose,
     ws: &Workspace,
-    prompt: String,
-) -> Result<SessionSpec, Failure> {
+    prompt: impl FnOnce(&Path) -> String,
+) -> Result<(SessionSpec, Dir), Failure> {
     let settings = &ctx.with.settings;
     let now = shell.clock.now();
     let record = record_dir(shell, &purpose, now)?;
+    let attachments = Dir::create(&record)
+        .context("creating the attachments directory")
+        .map_err(infra)?;
+    let prompt = prompt(attachments.path());
     let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
-    Ok(SessionSpec {
+    let spec = SessionSpec {
         record,
+        attachments: attachments.path().to_path_buf(),
         purpose,
         dir: ws.dir.clone(),
         scratch: ws.scratch.clone(),
@@ -1121,7 +1138,86 @@ fn session_spec(
         environment: settings.environment.clone(),
         deadline: tokio::time::Instant::now() + settings.session_timeout.value,
         report: Reporter::new(move |reported| recorder.reported(reported)),
-    })
+    };
+    Ok((spec, attachments))
+}
+
+/// Uploads each attachment `result`'s posted Markdown refers to in `dir`
+/// and puts its URL in place of its path, as the first write of applying
+/// it (docs/specs/runs.md, "Attachments"). A reference or a file the
+/// session can fix sends the result back to it.
+async fn post_attachments(
+    shell: &Shell,
+    ctx: &Ctx,
+    dir: &Dir,
+    result: &mut impl Posts,
+) -> Result<(), Refused> {
+    let prompts = &ctx.with.briefs.prompts;
+    let sent_back = |followup| Err(Refused::Untouched(Rejection::retry(followup)));
+    let resolved = {
+        let markdown = result.markdown();
+        let texts: Vec<&str> = markdown.iter().map(|text| text.as_str()).collect();
+        attachments::resolve(dir, &texts, &shell.secrets)
+    };
+    let resolved = match resolved {
+        Ok(resolved) => resolved,
+        Err(Refusal::Secret { variable, path }) => {
+            return sent_back(prompts::attachment_secret(prompts, &variable, &path));
+        }
+        Err(refusal @ (Refusal::NotAFile { .. } | Refusal::Outside { .. })) => {
+            return sent_back(prompts::result_error(prompts, &refusal.to_string()));
+        }
+    };
+    let mut urls = BTreeMap::new();
+    for file in resolved.files() {
+        let attached = shell
+            .store
+            .attach(file.path(), file.name(), file.content_type())
+            .await;
+        let failure = match attached {
+            Ok(url) => {
+                urls.insert(file.path().to_path_buf(), url);
+                continue;
+            }
+            Err(AttachError::RefusedFile { reason }) => {
+                return sent_back(prompts::attachment_refused(prompts, file.path(), &reason));
+            }
+            Err(AttachError::RefusedToken { reason }) => Failure::HandBack(HandBack {
+                kind: HandBackKind::Stall,
+                reason: format!(
+                    "GitHub refused Linewright's token the upload of the attachment `{}`. \
+                     GitHub's reason: {reason}\n\nLinewright's token needs write access to \
+                     the repository, in a classic or fine-grained personal access token, to \
+                     attach files to what it posts.",
+                    file.name()
+                ),
+                log_tail: None,
+            }),
+            Err(AttachError::Failed(e)) => infra(e),
+        };
+        return Err(Refused::Untouched(Rejection::Fail(failure)));
+    }
+    resolved.rewrite(&mut result.markdown(), &urls);
+    Ok(())
+}
+
+/// Drops from `result`'s spec gaps those already filed and still open,
+/// which are not posted again (docs/specs/runs.md, "Spec gaps").
+fn drop_filed_gaps(result: &mut impl SpecGaps, filed: &FiledGaps<'_>) {
+    let Some(gaps) = result.spec_gaps_mut() else {
+        return;
+    };
+    gaps.retain(|gap| match spec_gap::filed_as(filed, &gap.title) {
+        Some(issue) => {
+            info!(
+                issue = issue.number.0,
+                item = filed.item.0,
+                "spec gap already filed"
+            );
+            false
+        }
+        None => true,
+    });
 }
 
 async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> {
@@ -1131,9 +1227,16 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
-    let prompt = prompts::triage(&ctx.with.briefs.prompts, &shell.repo(), issue, &categories);
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
-    let categories = &categories;
+    let (mut spec, dir) = session_spec(shell, ctx, purpose, &ws, |attachments| {
+        prompts::triage(
+            &ctx.with.briefs.prompts,
+            &shell.repo(),
+            issue,
+            &categories,
+            attachments,
+        )
+    })?;
+    let (categories, dir) = (&categories, &dir);
     let (result, _) =
         converse(
             shell,
@@ -1143,7 +1246,10 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
             |message| async move {
                 results::parse_triage(&message, categories).map_err(parse_retry(ctx))
             },
-            no_first_writes,
+            |mut result: TriageResult| async move {
+                post_attachments(shell, ctx, dir, &mut result).await?;
+                Ok(result)
+            },
         )
         .await?;
     record_triage(shell, issue, result).await.map_err(apply)
@@ -1204,26 +1310,41 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
     ask(&**store, issue.number, &asks).await
 }
 
-/// Runs a design session on `subject`, sent `prompt`, and begins applying
-/// its result.
+/// Runs a design session on `subject`, sent `prompt` made for its
+/// attachments directory, and begins applying its result, the gaps in
+/// `filed_gaps` dropped from it.
 async fn design_session<C>(
     shell: &Shell,
     ctx: &Ctx,
     subject: Subject,
-    prompt: String,
+    filed_gaps: &FiledGaps<'_>,
+    prompt: impl FnOnce(&Path) -> String,
 ) -> Result<(DesignResult<C>, Turn), Failure>
 where
-    DesignResult<C>: Contract,
+    DesignResult<C>: Contract + Posts + SpecGaps,
 {
     let purpose = Purpose::Work {
         subject,
         kind: WorkKind::Design,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
-    converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
-    }, no_first_writes)
+    let (mut spec, dir) = session_spec(shell, ctx, purpose, &ws, prompt)?;
+    let dir = &dir;
+    let begin = |mut result: DesignResult<C>| async move {
+        drop_filed_gaps(&mut result, filed_gaps);
+        post_attachments(shell, ctx, dir, &mut result).await?;
+        Ok(result)
+    };
+    converse(
+        shell,
+        ctx,
+        &mut spec,
+        Step::Start,
+        |message| async move {
+            results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
+        },
+        begin,
+    )
     .await
     .map_err(Failure::from)
 }
@@ -1234,9 +1355,9 @@ async fn design_blocked(
     shell: &Shell,
     question: &str,
     spec_gaps: &[SpecGap],
-    filed_gaps: &FiledGaps<'_>,
+    item: Number,
 ) -> Result<(), Failure> {
-    file_spec_gaps(shell, spec_gaps, filed_gaps)
+    file_spec_gaps(shell, spec_gaps, item)
         .await
         .map_err(apply)?;
     Err(Failure::HandBack(HandBack {
@@ -1266,15 +1387,18 @@ async fn design_spec_change(
         item: pr.number,
         issues: &filed_issues,
     };
-    let prompt = prompts::design_spec_change(
-        &ctx.with.briefs.prompts,
-        &shell.repo(),
-        pr,
-        &diff,
-        &filed_issues,
-    );
+    let prompt = |attachments: &Path| {
+        prompts::design_spec_change(
+            &ctx.with.briefs.prompts,
+            &shell.repo(),
+            pr,
+            &diff,
+            &filed_issues,
+            attachments,
+        )
+    };
     let subject = Subject::SpecChange(pr.number);
-    let (result, turn) = design_session::<Cut>(shell, ctx, subject, prompt).await?;
+    let (result, turn) = design_session::<Cut>(shell, ctx, subject, &filed_gaps, prompt).await?;
     match result {
         DesignResult::Designed {
             design,
@@ -1284,7 +1408,7 @@ async fn design_spec_change(
             file_tickets(shell, pr, &design, &tickets, &comment)
                 .await
                 .map_err(apply)?;
-            file_spec_gaps(shell, &spec_gaps, &filed_gaps)
+            file_spec_gaps(shell, &spec_gaps, filed_gaps.item)
                 .await
                 .map_err(apply)?;
             mark_designed(shell, pr).await.map_err(apply)
@@ -1300,7 +1424,7 @@ async fn design_spec_change(
         DesignResult::Blocked {
             question,
             spec_gaps,
-        } => design_blocked(shell, &question, &spec_gaps, &filed_gaps).await,
+        } => design_blocked(shell, &question, &spec_gaps, filed_gaps.item).await,
         DesignResult::GaveUp { reason } => Err(design_gave_up(DesignOf::SpecChange, &reason, turn)),
     }
 }
@@ -1319,14 +1443,18 @@ async fn design_issue(
         item: issue.number,
         issues: &filed_issues,
     };
-    let prompt = prompts::design_issue(
-        &ctx.with.briefs.prompts,
-        &shell.repo(),
-        issue,
-        &filed_issues,
-    );
+    let prompt = |attachments: &Path| {
+        prompts::design_issue(
+            &ctx.with.briefs.prompts,
+            &shell.repo(),
+            issue,
+            &filed_issues,
+            attachments,
+        )
+    };
     let subject = Subject::Issue(issue.number);
-    let (result, turn) = design_session::<IssueWork>(shell, ctx, subject, prompt).await?;
+    let (result, turn) =
+        design_session::<IssueWork>(shell, ctx, subject, &filed_gaps, prompt).await?;
     match result {
         DesignResult::Designed {
             design,
@@ -1348,7 +1476,7 @@ async fn design_issue(
                 }
             }
             .map_err(apply)?;
-            file_spec_gaps(shell, &spec_gaps, &filed_gaps)
+            file_spec_gaps(shell, &spec_gaps, filed_gaps.item)
                 .await
                 .map_err(apply)?;
             let asks = match cut {
@@ -1377,7 +1505,7 @@ async fn design_issue(
         DesignResult::Blocked {
             question,
             spec_gaps,
-        } => design_blocked(shell, &question, &spec_gaps, &filed_gaps).await,
+        } => design_blocked(shell, &question, &spec_gaps, filed_gaps.item).await,
         DesignResult::GaveUp { reason } => Err(design_gave_up(DesignOf::Issue, &reason, turn)),
     }
 }
@@ -1682,14 +1810,16 @@ async fn implement(
     let start = git::check_out_branch(&ws.dir, &branch, &upstream)
         .await
         .map_err(infra)?;
-    let prompt = prompts::implement(
-        &ctx.with.briefs.prompts,
-        &shell.repo(),
-        ticket,
-        &branch,
-        &start,
-    );
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
+    let (mut spec, attachments) = session_spec(shell, ctx, purpose, &ws, |attachments| {
+        prompts::implement(
+            &ctx.with.briefs.prompts,
+            &shell.repo(),
+            ticket,
+            &branch,
+            &start,
+            attachments,
+        )
+    })?;
     let (dir, base) = (&ws.dir, &upstream);
     let accept = |message: String| async move {
         let result: ImplementResult = results::parse(&message).map_err(parse_retry(ctx))?;
@@ -1727,9 +1857,13 @@ async fn implement(
         let kept = keep_unfinished_work(shell, &ws.dir, &upstream, &branch).await;
         kept_note(&branch, &kept, TryAgain::Relabel)
     };
-    // A finished result is pushed as it begins applying, so that one GitHub
-    // refuses over a secret goes back to its session.
-    let begin = |result: ImplementResult| async {
+    // A finished result is pushed as it begins applying, after its
+    // attachments, so that one GitHub refuses over a secret goes back to its
+    // session.
+    let (filed_gaps, attachments) = (&ticket.filed_gaps(), &attachments);
+    let begin = |mut result: ImplementResult| async {
+        drop_filed_gaps(&mut result, filed_gaps);
+        post_attachments(shell, ctx, attachments, &mut result).await?;
         if !matches!(result, ImplementResult::Done { .. }) {
             return Ok(result);
         }
@@ -1741,7 +1875,8 @@ async fn implement(
             PushMode::Replace,
             TryAgain::Relabel,
         );
-        pushing.await.map(|()| result)
+        pushing.await.map_err(Refused::Writing)?;
+        Ok(result)
     };
     let (result, turn) = match converse(shell, ctx, &mut spec, Step::Start, accept, begin).await {
         Ok(conversation) => conversation,
@@ -1757,7 +1892,7 @@ async fn implement(
             // Opening the pull request puts the ticket in review, which
             // changes what it asks for, so the gaps go first
             // (docs/specs/architecture.md, State, "Writes").
-            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
+            file_spec_gaps(shell, &spec_gaps, ticket.number())
                 .await
                 .map_err(apply)?;
             let pr = store
@@ -1792,7 +1927,7 @@ async fn implement(
             spec_gaps,
         } => {
             let kept = keep().await;
-            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
+            file_spec_gaps(shell, &spec_gaps, ticket.number())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
             Err(Failure::HandBack(HandBack {
@@ -1837,20 +1972,10 @@ fn closing(body: &str, closes: &[Number]) -> String {
     }
 }
 
-/// A session told which gaps are filed may still return one, so titles are
-/// compared.
-async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], filed: &FiledGaps<'_>) -> Result<()> {
-    let item = filed.item;
-    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+/// Files `gaps` for `item`, those already filed dropped from them by
+/// [`drop_filed_gaps`].
+async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], item: Number) -> Result<()> {
     for gap in gaps {
-        if let Some(filed) = filed.issues.iter().find(|f| same(&f.title, &gap.title)) {
-            info!(
-                issue = filed.number.0,
-                item = item.0,
-                "spec gap already filed"
-            );
-            continue;
-        }
         let number = shell
             .store
             .create_issue(NewIssue {
@@ -1969,15 +2094,17 @@ async fn pull_work(
     let left_unfinished = git::unfinished_commits(dir, &upstream, tip)
         .await
         .map_err(infra)?;
-    let prompt = prompts::pull_work(
-        &ctx.with.briefs.prompts,
-        &shell.repo(),
-        ticket,
-        pr,
-        &pull_task,
-        left_unfinished.as_ref(),
-    );
-    let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
+    let (mut spec, attachments) = session_spec(shell, ctx, purpose, &ws, |attachments| {
+        prompts::pull_work(
+            &ctx.with.briefs.prompts,
+            &shell.repo(),
+            ticket,
+            pr,
+            &pull_task,
+            left_unfinished.as_ref(),
+            attachments,
+        )
+    })?;
     let before = git::work_state(dir).await.map_err(infra)?;
     let (upstream, base) = (&upstream, start.as_str());
     let check_result = |message: String, pr_threads: Vec<String>| async move {
@@ -2055,10 +2182,13 @@ async fn pull_work(
             &arrived,
         )))
     };
-    // A finished result is pushed as it begins applying, as for an implement
-    // run.
+    // A finished result is pushed as it begins applying, after its
+    // attachments, as for an implement run.
     let (start, lease) = (&start, &lease);
-    let begin = |(result, pr_now, read_at): (PullWorkResult, Pull, Timestamp)| async move {
+    let (filed_gaps, attachments) = (&ticket.filed_gaps(), &attachments);
+    let begin = |(mut result, pr_now, read_at): (PullWorkResult, Pull, Timestamp)| async move {
+        drop_filed_gaps(&mut result, filed_gaps);
+        post_attachments(shell, ctx, attachments, &mut result).await?;
         if !matches!(result, PullWorkResult::Done { .. }) || git::head(dir).await? == *start {
             return Ok((result, pr_now, read_at));
         }
@@ -2070,7 +2200,8 @@ async fn pull_work(
             lease.clone(),
             TryAgain::Reassign,
         );
-        pushing.await.map(|()| (result, pr_now, read_at))
+        pushing.await.map_err(Refused::Writing)?;
+        Ok((result, pr_now, read_at))
     };
     let ((result, pr_now, read_at), turn) =
         match converse(shell, ctx, &mut spec, Step::Start, accept, begin).await {
@@ -2099,7 +2230,7 @@ async fn pull_work(
             if kind == WorkKind::Rework {
                 ctx.run.answered(read_at);
             }
-            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
+            file_spec_gaps(shell, &spec_gaps, ticket.number())
                 .await
                 .map_err(apply)
         }
@@ -2108,7 +2239,7 @@ async fn pull_work(
             spec_gaps,
         } => {
             let kept = keep().await;
-            file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
+            file_spec_gaps(shell, &spec_gaps, ticket.number())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
             Err(Failure::HandBack(HandBack {
@@ -2243,16 +2374,27 @@ pub(crate) async fn automation(
     let session = async {
         let purpose = Purpose::Automation(automation.name.clone());
         let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-        let prompt = prompts::automation(&ctx.with.briefs.prompts, &shell.repo(), automation);
-        let mut spec = session_spec(shell, &ctx, purpose, &ws, prompt)?;
-        let ctx = &ctx;
+        let (mut spec, dir) = session_spec(shell, &ctx, purpose, &ws, |attachments| {
+            prompts::automation(
+                &ctx.with.briefs.prompts,
+                &shell.repo(),
+                automation,
+                attachments,
+            )
+        })?;
+        let (ctx, dir) = (&ctx, &dir);
+        let begin = |mut result: AutomationResult| async move {
+            drop_past_max_issues(automation, &mut result);
+            post_attachments(shell, ctx, dir, &mut result).await?;
+            Ok(result)
+        };
         let (result, _) = converse(
             shell,
             ctx,
             &mut spec,
             Step::Start,
             |message| async move { results::parse(&message).map_err(parse_retry(ctx)) },
-            no_first_writes,
+            begin,
         )
         .await?;
         record_automation(shell, automation, &result)
@@ -2286,14 +2428,25 @@ pub(crate) async fn automation(
     }
 }
 
+/// Drops the issues past `max-issues` from `result`, which are not filed.
+fn drop_past_max_issues(automation: &Automation, result: &mut AutomationResult) {
+    let cap = (automation.max_issues as usize).min(result.issues.len());
+    for issue in result.issues.drain(cap..) {
+        warn!(
+            automation = %automation.name,
+            max_issues = automation.max_issues,
+            title = issue.title,
+            "automation issue dropped: the run returned more than max-issues"
+        );
+    }
+}
+
 async fn record_automation(
     shell: &Shell,
     automation: &Automation,
     result: &AutomationResult,
 ) -> Result<()> {
-    let cap = (automation.max_issues as usize).min(result.issues.len());
-    let (filed, dropped) = result.issues.split_at(cap);
-    for issue in filed {
+    for issue in &result.issues {
         let state = match issue.label {
             AutomationIssueLabel::ReadyForAgent => label::READY_FOR_AGENT,
             AutomationIssueLabel::ReadyForHuman => label::READY_FOR_HUMAN,
@@ -2317,14 +2470,6 @@ async fn record_automation(
             issue = %number,
             title = issue.title,
             "automation issue filed"
-        );
-    }
-    for issue in dropped {
-        warn!(
-            automation = %automation.name,
-            max_issues = automation.max_issues,
-            title = issue.title,
-            "automation issue dropped: the run returned more than max-issues"
         );
     }
     Ok(())

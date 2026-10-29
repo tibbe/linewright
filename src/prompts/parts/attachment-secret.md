@@ -1,0 +1,1 @@
+the attachment `{{file}}` holds the value of `{{variable}}`, a secret. Linewright uploads no attachment that holds a secret, so take the secret out of the file, or take the reference to it out of your result.

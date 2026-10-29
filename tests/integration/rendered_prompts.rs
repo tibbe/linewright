@@ -63,6 +63,9 @@ fn pull() -> Pull {
     }
 }
 
+/// The session's attachments directory each prompt names.
+const ATTACHMENTS: &str = "/work/sessions/issue-7/20261001T120000Z-implement/attachments";
+
 fn repo_name() -> linewright::domain::Repo {
     "owner/widgets".parse().unwrap()
 }
@@ -97,6 +100,7 @@ fn triage_is_filled_as_before() {
         &repo(&name),
         &issue(7, "Count the widgets", "They are not counted."),
         &["bug".into(), "enhancement".into()],
+        std::path::Path::new(ATTACHMENTS),
     );
 
     assert_eq!(prompt, expected("triage.txt"));
@@ -126,6 +130,7 @@ fn design_of_a_spec_change_is_filled_as_before() {
         &pr,
         "+Widgets are counted.\n",
         &[&gap],
+        std::path::Path::new(ATTACHMENTS),
     );
 
     assert_eq!(prompt, expected("design-spec-change.txt"));
@@ -139,6 +144,7 @@ fn design_of_an_issue_is_filled_as_before() {
         &repo(&name),
         &issue(7, "Count the widgets", "They are not counted."),
         &[],
+        std::path::Path::new(ATTACHMENTS),
     );
 
     assert_eq!(prompt, expected("design-issue.txt"));
@@ -158,6 +164,7 @@ fn implement_is_filled_as_before() {
         &BranchStart::Existing {
             unfinished: Some(unfinished()),
         },
+        std::path::Path::new(ATTACHMENTS),
     );
 
     assert_eq!(prompt, expected("implement.txt"));
@@ -192,6 +199,7 @@ fn rework_is_filled_as_before() {
             conflict: Some(&conflict),
         },
         Some(&unfinished()),
+        std::path::Path::new(ATTACHMENTS),
     );
 
     assert_eq!(prompt, expected("rework.txt"));
@@ -217,6 +225,7 @@ fn fix_ci_is_filled_as_before() {
             conflict: None,
         },
         None,
+        std::path::Path::new(ATTACHMENTS),
     );
 
     assert_eq!(prompt, expected("fix-ci.txt"));
@@ -238,6 +247,7 @@ fn update_is_filled_as_before() {
         &pull(),
         &PullTask::Update(&conflict),
         None,
+        std::path::Path::new(ATTACHMENTS),
     );
 
     assert_eq!(prompt, expected("update.txt"));
@@ -255,6 +265,7 @@ fn automation_is_filled_as_before() {
         &common::placeholders_only().prompts,
         &repo(&name),
         &automation,
+        std::path::Path::new(ATTACHMENTS),
     );
 
     assert_eq!(prompt, expected("automation.txt"));

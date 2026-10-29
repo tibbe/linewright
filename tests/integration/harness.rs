@@ -79,6 +79,7 @@ fn triage_session(dir: &Path) -> SessionSpec {
         dir: dir.join("repo"),
         scratch: dir.join("tmp"),
         record: dir.to_path_buf(),
+        attachments: dir.join("attachments"),
         plugin: dir.join("plugin"),
         prompt: "Triage #1.".into(),
         model: None,

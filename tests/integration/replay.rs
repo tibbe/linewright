@@ -678,3 +678,25 @@ fn a_captured_case_keeps_the_transcripts_of_the_sessions_that_handled_it() {
     assert!(!case.join("transcripts/issue-4").exists());
     assert!(!case.join("traces").exists());
 }
+
+#[test]
+fn a_captured_case_keeps_the_attachments_of_its_sessions_but_not_what_a_symlink_points_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let sessions = dir.path().join("sessions");
+    let attachments = sessions.join("issue-3/20260101T000000Z-implement/attachments");
+    std::fs::create_dir_all(&attachments).unwrap();
+    std::fs::write(attachments.join("shot.png"), "PNG bytes").unwrap();
+    let private = dir.path().join("private.txt");
+    std::fs::write(&private, "not the session's").unwrap();
+    std::os::unix::fs::symlink(&private, attachments.join("link.txt")).unwrap();
+    let case = dir.path().join("case");
+
+    copy_sessions(&[Subject::Issue(Number(3))], &sessions, &case).unwrap();
+
+    let copied = case.join("transcripts/issue-3/20260101T000000Z-implement/attachments");
+    assert_eq!(
+        std::fs::read_to_string(copied.join("shot.png")).unwrap(),
+        "PNG bytes"
+    );
+    assert!(std::fs::symlink_metadata(copied.join("link.txt")).is_err());
+}

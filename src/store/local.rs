@@ -63,6 +63,7 @@ struct State {
     items_read: usize,
     unreadable: Option<String>,
     pushes_refused: Option<String>,
+    attachments_refused: Option<AttachRefusal>,
     /// GitHub tokens that cannot read the repository.
     unreadable_by: Vec<String>,
     /// People GitHub would refuse to assign, such as those without access.
@@ -76,13 +77,42 @@ struct State {
 /// store call after.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Write {
-    AddLabel { number: Number, label: String },
-    RemoveLabel { number: Number, label: String },
-    Unassign { number: Number },
-    AssignPeople { number: Number },
-    Comment { number: Number },
-    OpenPull { head: String },
-    Push { branch: String },
+    AddLabel {
+        number: Number,
+        label: String,
+    },
+    RemoveLabel {
+        number: Number,
+        label: String,
+    },
+    Unassign {
+        number: Number,
+    },
+    AssignPeople {
+        number: Number,
+    },
+    Comment {
+        number: Number,
+    },
+    OpenPull {
+        head: String,
+    },
+    Push {
+        branch: String,
+    },
+    /// An upload of the attachment named `name`.
+    Attach {
+        name: String,
+    },
+}
+
+/// How [`LocalStore::refuse_attachments`] has GitHub refuse an upload.
+#[derive(Clone, Debug)]
+pub enum AttachRefusal {
+    /// Over the file itself, for `reason`.
+    File(String),
+    /// Over Linewright's token, for `reason`.
+    Token(String),
 }
 
 /// The store's end of a [`Paused`].
@@ -242,6 +272,7 @@ impl LocalStore {
                 items_read: 0,
                 unreadable: None,
                 pushes_refused: None,
+                attachments_refused: None,
                 unreadable_by: vec![],
                 unassignable: vec![],
                 after_comment: None,
@@ -581,6 +612,16 @@ impl LocalStore {
 
     pub fn accept_pushes(&self) {
         self.state().pushes_refused = None;
+    }
+
+    /// Refuses every upload of an attachment from now on, as `refusal`
+    /// says.
+    pub fn refuse_attachments(&self, refusal: AttachRefusal) {
+        self.state().attachments_refused = Some(refusal);
+    }
+
+    pub fn accept_attachments(&self) {
+        self.state().attachments_refused = None;
     }
 
     /// Refuses to let `token` read the repository.
@@ -1868,6 +1909,16 @@ impl Store for LocalStore {
         name: &str,
         _content_type: &str,
     ) -> Result<String, AttachError> {
+        let refused = self.state().attachments_refused.clone();
+        if let Some(refusal) = refused {
+            // A refused upload pauses as well, before GitHub's refusal
+            // returns.
+            self.paused(Write::Attach { name: name.into() }).await?;
+            return Err(match refusal {
+                AttachRefusal::File(reason) => AttachError::RefusedFile { reason },
+                AttachRefusal::Token(reason) => AttachError::RefusedToken { reason },
+            });
+        }
         let bytes = tokio::fs::read(file)
             .await
             .with_context(|| format!("reading {}", file.display()))?;
@@ -1888,6 +1939,7 @@ impl Store for LocalStore {
                 .await
                 .context("keeping an attachment")?;
         }
+        self.paused(Write::Attach { name: name.into() }).await?;
         Ok(format!("../{ATTACHMENTS}/{kept}"))
     }
 

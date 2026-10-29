@@ -18,6 +18,17 @@ pub struct FiledGaps<'a> {
     pub issues: &'a [&'a Issue],
 }
 
+/// The gap in `filed` titled `title`: a session told which gaps are filed
+/// may still return one, so titles are compared.
+pub fn filed_as<'a>(filed: &FiledGaps<'a>, title: &str) -> Option<&'a Issue> {
+    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+    filed
+        .issues
+        .iter()
+        .copied()
+        .find(|issue| same(&issue.title, title))
+}
+
 pub fn filed_for(snapshot: &Snapshot, ticket: Number) -> Vec<&Issue> {
     snapshot
         .issues

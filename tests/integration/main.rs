@@ -22,6 +22,7 @@ mod local_store;
 mod logs;
 mod phrase;
 mod pipeline;
+mod posted_attachments;
 mod push_protection;
 mod rate_limit;
 mod reconcile;

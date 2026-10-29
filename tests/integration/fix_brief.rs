@@ -74,6 +74,7 @@ fn section(failures: &[CheckFailure], name: &str) -> String {
             conflict: None,
         },
         None,
+        std::path::Path::new("/attachments"),
     );
     let heading = format!("#### `{name}`\n");
     let start = brief.find(&heading).expect(&brief);

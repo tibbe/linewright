@@ -54,3 +54,5 @@ where
 - `SPEC_GAP` is `{ "title": "<issue title>", "body": "<the spec change needed, in Markdown>" }`, and `spec_gaps` lists the gaps that did not block the ticket (often none).
 - `DECLINED` is `{ "finding": "<the review finding, as the review put it>", "evidence": "<the quote that shows it is wrong on the facts>" }`, and `declined_findings` lists the review findings you did not apply (often none).
 
+To show a screenshot or a video in the Markdown your result posts, save the file in your attachments directory, `/work/sessions/issue-7/20261001T120000Z-implement/attachments`, and refer to it by its absolute path there: as the destination of a Markdown image (`![what it shows](/path/to/file.png)`) or link, or as an HTML `img`'s `src`. Linewright uploads each file you refer to and puts its URL in place of the path. A video (`.mp4`, `.mov` or `.webm`) embedded alone in its paragraph plays inline; anywhere else it becomes a link to it.
+

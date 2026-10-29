@@ -297,6 +297,164 @@ fn ordered(drafts: &[TicketDraft]) -> Result<Vec<Ticket>, String> {
     Ok(ordered)
 }
 
+/// A result whose fields Linewright posts as Markdown, each of which may
+/// refer to attachments (docs/specs/runs.md, "Attachments"). Titles are not
+/// Markdown, and what Linewright does not post is not listed.
+pub trait Posts {
+    fn markdown(&mut self) -> Vec<&mut String>;
+}
+
+fn gap_bodies(gaps: &mut [SpecGap]) -> impl Iterator<Item = &mut String> {
+    gaps.iter_mut().map(|gap| &mut gap.body)
+}
+
+/// `text`, followed by the bodies of `gaps`.
+fn with_gaps<'a>(text: &'a mut String, gaps: &'a mut [SpecGap]) -> Vec<&'a mut String> {
+    [text].into_iter().chain(gap_bodies(gaps)).collect()
+}
+
+impl Posts for TriageResult {
+    fn markdown(&mut self) -> Vec<&mut String> {
+        vec![&mut self.comment]
+    }
+}
+
+impl Posts for Cut {
+    fn markdown(&mut self) -> Vec<&mut String> {
+        self.tickets
+            .0
+            .iter_mut()
+            .map(|ticket| &mut ticket.body)
+            .chain([&mut self.comment])
+            .collect()
+    }
+}
+
+impl Posts for IssueWork {
+    fn markdown(&mut self) -> Vec<&mut String> {
+        match self {
+            IssueWork::AsItIs => vec![],
+            IssueWork::Cut(cut) => cut.markdown(),
+        }
+    }
+}
+
+impl<C: Posts> Posts for DesignResult<C> {
+    fn markdown(&mut self) -> Vec<&mut String> {
+        match self {
+            DesignResult::Designed {
+                design,
+                cut,
+                spec_gaps,
+            } => [design]
+                .into_iter()
+                .chain(cut.markdown())
+                .chain(gap_bodies(spec_gaps))
+                .collect(),
+            DesignResult::NothingToBuild { reason } | DesignResult::GaveUp { reason } => {
+                vec![reason]
+            }
+            DesignResult::Blocked {
+                question,
+                spec_gaps,
+            } => [question]
+                .into_iter()
+                .chain(gap_bodies(spec_gaps))
+                .collect(),
+        }
+    }
+}
+
+impl Posts for ImplementResult {
+    fn markdown(&mut self) -> Vec<&mut String> {
+        match self {
+            ImplementResult::Done {
+                pr_body, spec_gaps, ..
+            } => with_gaps(pr_body, spec_gaps),
+            ImplementResult::Blocked {
+                question,
+                spec_gaps,
+            } => [question]
+                .into_iter()
+                .chain(gap_bodies(spec_gaps))
+                .collect(),
+            ImplementResult::GaveUp { reason } => vec![reason],
+        }
+    }
+}
+
+impl Posts for PullWorkResult {
+    fn markdown(&mut self) -> Vec<&mut String> {
+        match self {
+            PullWorkResult::Done {
+                comment,
+                pr_body,
+                replies,
+                spec_gaps,
+            } => [comment]
+                .into_iter()
+                .chain(pr_body)
+                .chain(replies.iter_mut().map(|reply| &mut reply.body))
+                .chain(gap_bodies(spec_gaps))
+                .collect(),
+            PullWorkResult::Blocked {
+                question,
+                spec_gaps,
+            } => [question]
+                .into_iter()
+                .chain(gap_bodies(spec_gaps))
+                .collect(),
+            PullWorkResult::GaveUp { reason } => vec![reason],
+        }
+    }
+}
+
+impl Posts for AutomationResult {
+    fn markdown(&mut self) -> Vec<&mut String> {
+        self.issues
+            .iter_mut()
+            .map(|issue| &mut issue.body)
+            .collect()
+    }
+}
+
+/// A result that may hand back spec gaps (docs/specs/runs.md, "Spec gaps").
+pub trait SpecGaps {
+    fn spec_gaps_mut(&mut self) -> Option<&mut Vec<SpecGap>>;
+}
+
+impl<C> SpecGaps for DesignResult<C> {
+    fn spec_gaps_mut(&mut self) -> Option<&mut Vec<SpecGap>> {
+        match self {
+            DesignResult::Designed { spec_gaps, .. } | DesignResult::Blocked { spec_gaps, .. } => {
+                Some(spec_gaps)
+            }
+            DesignResult::NothingToBuild { .. } | DesignResult::GaveUp { .. } => None,
+        }
+    }
+}
+
+impl SpecGaps for ImplementResult {
+    fn spec_gaps_mut(&mut self) -> Option<&mut Vec<SpecGap>> {
+        match self {
+            ImplementResult::Done { spec_gaps, .. }
+            | ImplementResult::Blocked { spec_gaps, .. } => Some(spec_gaps),
+            ImplementResult::GaveUp { .. } => None,
+        }
+    }
+}
+
+impl SpecGaps for PullWorkResult {
+    fn spec_gaps_mut(&mut self) -> Option<&mut Vec<SpecGap>> {
+        match self {
+            PullWorkResult::Done { spec_gaps, .. } | PullWorkResult::Blocked { spec_gaps, .. } => {
+                Some(spec_gaps)
+            }
+            PullWorkResult::GaveUp { .. } => None,
+        }
+    }
+}
+
 /// A result type and the JSON Schema its session's result matches
 /// (docs/specs/runs.md, "Contract").
 pub trait Contract: DeserializeOwned {

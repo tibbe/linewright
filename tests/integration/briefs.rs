@@ -203,6 +203,7 @@ fn implement_prompt(briefs: &Briefs) -> String {
         &prompts::Ticket::new(&issue, None, vec![], None),
         "7-count-the-widgets",
         &BranchStart::New,
+        std::path::Path::new("/attachments"),
     )
 }
 
@@ -231,9 +232,11 @@ fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_l
         "{prompt}"
     );
     assert!(
-        prompt.ends_with(
-            "`declined_findings` lists the review findings you did not apply (often none).\n"
-        ),
+        prompt.contains(
+            "`declined_findings` lists the review findings you did not apply (often none).\n\n\
+             To show a screenshot or a video in the Markdown your result posts, save the file \
+             in your attachments directory, `/attachments`, "
+        ) && prompt.ends_with("anywhere else it becomes a link to it.\n"),
         "{prompt}"
     );
     assert_eq!(briefs.layers()["implement.md"], Layer::Operator);

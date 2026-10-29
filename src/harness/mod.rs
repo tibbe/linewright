@@ -27,6 +27,9 @@ pub struct SessionSpec {
     /// share one.
     pub scratch: PathBuf,
     pub record: PathBuf,
+    /// The session's attachments directory, in its record
+    /// (docs/specs/runs.md, "Attachments").
+    pub attachments: PathBuf,
     pub plugin: PathBuf,
     pub prompt: String,
     /// `None` is the harness's choice.

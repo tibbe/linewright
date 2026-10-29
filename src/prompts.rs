@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt::{self, Write};
 use std::marker::PhantomData;
+use std::path::Path;
 use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
@@ -216,6 +217,12 @@ values!(HeldSecret {
     file
 });
 values!(PushedSecret { secrets });
+values!(
+    /// The attachments contract, from `parts/attachments.md`.
+    Attachments { directory }
+);
+values!(AttachmentSecret { variable, file });
+values!(AttachmentRefused { file, reason });
 values!(NoValues {});
 values!(LateFeedback {
     feedback,
@@ -406,6 +413,9 @@ struct OwnTemplates {
     fold_unfinished: Template<Commits>,
     held_secret: Template<HeldSecret>,
     pushed_secret: Template<PushedSecret>,
+    attachments: Template<Attachments>,
+    attachment_secret: Template<AttachmentSecret>,
+    attachment_refused: Template<AttachmentRefused>,
     triage_output: Template<TriageOutput>,
     design_output: Template<DesignOutput>,
     implement_output: Template<NoValues>,
@@ -433,6 +443,9 @@ static OWN_TEMPLATES: LazyLock<OwnTemplates> = LazyLock::new(|| OwnTemplates {
     fold_unfinished: own_template!("parts/fold-unfinished.md"),
     held_secret: own_template!("parts/held-credential.md"),
     pushed_secret: own_template!("parts/pushed-secret.md"),
+    attachments: own_template!("parts/attachments.md"),
+    attachment_secret: own_template!("parts/attachment-secret.md"),
+    attachment_refused: own_template!("parts/attachment-refused.md"),
     triage_output: own_template!("outputs/triage.md"),
     design_output: own_template!("outputs/design.md"),
     implement_output: own_template!("outputs/implement.md"),
@@ -599,7 +612,13 @@ fn shared(repo: &Repo) -> Shared {
     }
 }
 
-pub fn triage(prompts: &Prompts, repo: &Repo, issue: &Issue, categories: &[String]) -> String {
+pub fn triage(
+    prompts: &Prompts,
+    repo: &Repo,
+    issue: &Issue,
+    categories: &[String],
+    attachments: &Path,
+) -> String {
     let mut rendered = String::new();
     write_issue(&mut rendered, "The issue", issue);
     prompts.triage.fill(&Triage {
@@ -610,14 +629,17 @@ pub fn triage(prompts: &Prompts, repo: &Repo, issue: &Issue, categories: &[Strin
             .collect::<Vec<_>>()
             .join(", "),
         issue: rendered.trim_end().into(),
-        output: OWN_TEMPLATES.triage_output.fill(&TriageOutput {
-            category_choices: categories
-                .iter()
-                .map(|c| format!("\"{c}\""))
-                .collect::<Vec<_>>()
-                .join(" | "),
-            author: issue.author.to_string(),
-        }),
+        output: with_attachments(
+            &OWN_TEMPLATES.triage_output.fill(&TriageOutput {
+                category_choices: categories
+                    .iter()
+                    .map(|c| format!("\"{c}\""))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                author: issue.author.to_string(),
+            }),
+            attachments,
+        ),
     })
 }
 
@@ -643,6 +665,7 @@ pub fn design_spec_change(
     pr: &MergedPull,
     spec_diff: &str,
     filed_gaps: &[&Issue],
+    attachments: &Path,
 ) -> String {
     prompts.design.fill(&Design {
         base: shared(repo),
@@ -657,7 +680,7 @@ pub fn design_spec_change(
         }),
         filed_gaps: render_filed_gaps(filed_gaps),
         cutting: OWN_TEMPLATES.cut_spec_change.fill(&NoValues {}),
-        output: design_output(DesignOf::SpecChange),
+        output: design_output(DesignOf::SpecChange, attachments),
     })
 }
 
@@ -668,6 +691,7 @@ pub fn design_issue(
     repo: &Repo,
     issue: &Issue,
     filed_gaps: &[&Issue],
+    attachments: &Path,
 ) -> String {
     let mut item = String::new();
     write_issue(&mut item, "The issue", issue);
@@ -677,14 +701,27 @@ pub fn design_issue(
         item: item.trim_end().into(),
         filed_gaps: render_filed_gaps(filed_gaps),
         cutting: OWN_TEMPLATES.cut_issue.fill(&NoValues {}),
-        output: design_output(DesignOf::Issue),
+        output: design_output(DesignOf::Issue, attachments),
     })
 }
 
-fn design_output(of: DesignOf) -> String {
-    OWN_TEMPLATES.design_output.fill(&DesignOutput {
-        kind: of.noun().into(),
-    })
+fn design_output(of: DesignOf, attachments: &Path) -> String {
+    with_attachments(
+        &OWN_TEMPLATES.design_output.fill(&DesignOutput {
+            kind: of.noun().into(),
+        }),
+        attachments,
+    )
+}
+
+/// A stage's result contract `output`, followed by the attachments
+/// contract naming the session's `attachments` directory
+/// (docs/specs/runs.md, "Every prompt").
+fn with_attachments(output: &str, attachments: &Path) -> String {
+    let contract = OWN_TEMPLATES.attachments.fill(&Attachments {
+        directory: attachments.display().to_string(),
+    });
+    format!("{output}\n\n{contract}")
 }
 
 pub fn implement(
@@ -693,6 +730,7 @@ pub fn implement(
     ticket: &Ticket,
     branch: &str,
     start: &BranchStart,
+    attachments: &Path,
 ) -> String {
     let holding = match start {
         BranchStart::New => OWN_TEMPLATES.new_branch.fill(&DefaultBranch {
@@ -714,7 +752,10 @@ pub fn implement(
         branch: branch.into(),
         holding,
         ticket: render_ticket(ticket),
-        output: OWN_TEMPLATES.implement_output.fill(&NoValues {}),
+        output: with_attachments(
+            &OWN_TEMPLATES.implement_output.fill(&NoValues {}),
+            attachments,
+        ),
     })
 }
 
@@ -725,6 +766,7 @@ pub fn pull_work(
     pr: &Pull,
     work: &PullTask,
     unfinished: Option<&UnfinishedCommits>,
+    attachments: &Path,
 ) -> String {
     let pull_request = |conflict: String, output: &Template<NoValues>| PullRequest {
         base: shared(repo),
@@ -735,7 +777,7 @@ pub fn pull_work(
         conflict,
         description: or_none(&pr.body).into(),
         ticket: render_ticket(ticket),
-        output: output.fill(&NoValues {}),
+        output: with_attachments(&output.fill(&NoValues {}), attachments),
     };
     let first_update = |conflict: Option<&Conflict>| {
         conflict
@@ -812,13 +854,21 @@ fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedC
         .unwrap_or_default()
 }
 
-pub fn automation(prompts: &Prompts, repo: &Repo, automation: &Automation) -> String {
+pub fn automation(
+    prompts: &Prompts,
+    repo: &Repo,
+    automation: &Automation,
+    attachments: &Path,
+) -> String {
     prompts.automation.fill(&AutomationRun {
         base: shared(repo),
         max_issues: automation.max_issues.to_string(),
         name: automation.name.to_string(),
         instructions: or_none(&automation.instructions).into(),
-        output: OWN_TEMPLATES.automation_output.fill(&NoValues {}),
+        output: with_attachments(
+            &OWN_TEMPLATES.automation_output.fill(&NoValues {}),
+            attachments,
+        ),
     })
 }
 
@@ -877,6 +927,30 @@ pub fn pushed_secret(prompts: &Prompts, secrets: &FoundSecrets) -> String {
         prompts,
         &OWN_TEMPLATES.pushed_secret.fill(&PushedSecret {
             secrets: secrets.to_string(),
+        }),
+    )
+}
+
+/// What a result is sent back with while the attachment `file` it refers to
+/// holds the secret of `variable`.
+pub fn attachment_secret(prompts: &Prompts, variable: &str, file: &Path) -> String {
+    loose_ends(
+        prompts,
+        &OWN_TEMPLATES.attachment_secret.fill(&AttachmentSecret {
+            variable: variable.into(),
+            file: file.display().to_string(),
+        }),
+    )
+}
+
+/// What a result is sent back with while GitHub refuses the attachment
+/// `file` it refers to, for `reason`.
+pub fn attachment_refused(prompts: &Prompts, file: &Path, reason: &str) -> String {
+    result_error(
+        prompts,
+        &OWN_TEMPLATES.attachment_refused.fill(&AttachmentRefused {
+            file: file.display().to_string(),
+            reason: reason.into(),
         }),
     )
 }
