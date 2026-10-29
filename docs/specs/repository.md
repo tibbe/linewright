@@ -40,11 +40,8 @@ it.
   see its claims as assignments. With `--auto-merge`, the account must not be
   able to bypass the default branch's rules (no admin rights, not on a
   ruleset's bypass list), or the reviews they require are skipped.
-- **The sessions' token.** Optionally, a GitHub token for agent sessions
-  (`LINEWRIGHT_SESSION_GITHUB_TOKEN`), which they are given in place of
-  Linewright's, so that what a session may do on GitHub, such as only read,
-  is the operator's to choose. Without one, sessions are given Linewright's
-  token, and Linewright warns at startup that sessions can write to GitHub.
+- **The sessions' token.** Optional
+  ([What a session has](sessions.md#what-a-session-has)).
 - **Spec files.** Tracked Markdown matching the spec glob (default
   `docs/**/*.md`).
 - **Used when present.** CI, as checks on pull requests. The agent instructions
@@ -170,6 +167,24 @@ given under [Triage](triage.md) and [Pull requests](pull_requests.md);
 | work            | cut into tickets               | tracking        | tickets filed as sub-issues             |
 | tracking        | every sub-issue closed         | —               | issue closed                            |
 | work            | PR merged                      | —               | issue closed                            |
+
+## Writes
+
+Linewright changes an item so that, stopped between any two of its writes,
+the item is in a state the spec already decides, asking for the work again or
+for nothing the change has not yet recorded.
+
+- **Order.** The write that changes what an item asks for, such as its status
+  label, its assignment or a pull request that closes it, comes last; for
+  example, a new status label is added before the old one is removed.
+- **One writer.** One of Linewright's runs or actions writes an item at a
+  time.
+- **A person's change during a run.** While a run works an item, Linewright
+  acts on a person's change to it when the run ends, except a change that
+  ends the run ([Ending](runs.md#ending)) and one the run takes up itself,
+  such as feedback during rework ([Rework](pull_requests.md#rework)).
+- **Its own writes.** Linewright tells its own writes from a person's by
+  their author.
 
 ## Comments
 

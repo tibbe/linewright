@@ -1,7 +1,7 @@
 //! Linewright's secrets: the values of the variables it reads a credential
 //! from and of those the `secrets` setting names, and the credentials the
-//! table of sessions' variables passes (`docs/specs/architecture.md`, the
-//! redaction decision).
+//! table of sessions' variables passes (`docs/specs/operation.md`,
+//! Secrets).
 
 use std::ffi::OsString;
 

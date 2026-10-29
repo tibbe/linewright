@@ -31,7 +31,7 @@ to review again; the maintainer approves and merges.
 
 Once Linewright opens a PR, the PR is the item its work is on.
 
-- **Opening.** When the implementer is done the manager pushes its branch and
+- **Opening.** When the implementer is done Linewright pushes its branch and
   opens a draft PR from it to the default branch: title and body written by
   the agent for the diff, which Linewright ends with `Closes #N` for the
   ticket.
@@ -103,7 +103,7 @@ starts nothing.
 - **Feedback during a run.** Feedback posted while a run works goes to its
   session before the run pushes.
 - **Its push.** Unlike Linewright's other writes
-  ([State](architecture.md#state)), the push comes before the replies, which
+  ([Writes](repository.md#writes)), the push comes before the replies, which
   describe it.
 
 ## Keeping up to date

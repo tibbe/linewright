@@ -1,6 +1,6 @@
 //! Which variables of Linewright's environment an agent session is given,
-//! and the values set for it: "Sessions' environment" in
-//! `docs/specs/operation.md`.
+//! and the values set for it: "Environment" in
+//! `docs/specs/sessions.md`.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;

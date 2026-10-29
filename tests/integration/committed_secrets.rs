@@ -1,5 +1,5 @@
 //! A finished session whose commits hold a secret: docs/specs/runs.md,
-//! "A result the manager can't accept".
+//! "A result Linewright can't accept".
 
 use crate::common;
 

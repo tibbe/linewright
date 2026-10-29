@@ -53,7 +53,7 @@ seeded from the case.
   and the Markdown that refers to it points at it by a relative path.
 - **What agents see.** Agents see only the case: a session reads issues,
   comments and spec diffs from its brief and hands back tickets, comments and
-  PR bodies in its result, and the manager alone writes to the store. In
+  PR bodies in its result, and Linewright alone writes to the store. In
   replay agents get no GitHub credentials, so a session reads no newer state
   than the case and cannot touch the repository. Automations, whose agents read
   GitHub, are not captured or replayed.

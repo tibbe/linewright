@@ -1,5 +1,5 @@
 //! A push GitHub's push protection refuses over a secret in the work:
-//! docs/specs/runs.md, "A result the manager can't accept" and "Unfinished
+//! docs/specs/runs.md, "A result Linewright can't accept" and "Unfinished
 //! work".
 
 use crate::common;

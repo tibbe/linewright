@@ -130,8 +130,10 @@ page.
 `serve` serves the web UI on `ui-address`, a host and port, and serves none
 when `ui-address` is empty.
 
+- **Access.** Whoever reaches the port; who reaches it is the operator's to
+  restrict, such as with an authenticating proxy in front.
 - **Requests answered.** Only those whose `Host` is local
-  ([The local API](architecture.md#the-local-api)), an IP address or one of
+  ([Commands](monitoring.md#commands)), an IP address or one of
   `ui-hosts`, each compared ignoring case, port and a trailing dot. The
   others get 421 Misdirected Request.
 

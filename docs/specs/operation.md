@@ -22,6 +22,8 @@ from Linewright's base image with the project's toolchain added.
    that I can debug it without GitHub.
 7. As an operator, I want to replace the binary without wasting the work in
    flight, so that an upgrade costs no agent sessions.
+8. As an operator, I want secrets kept out of what Linewright keeps, logs and
+   posts, so that running it doesn't leak them.
 
 ## Commands
 
@@ -135,18 +137,16 @@ repository's file, the operator's file, default.
   ([Startup](repository.md#startup)): `webhook-address` without the webhook
   secret, `ui-hosts` with `ui-address` empty, `merge-method` without
   `auto-merge`.
-- **Model and effort.** A model or effort set for a session wins over what
-  the session's environment and the harness's own settings say.
-- **Credentials.** They are the environment variables their tools already
-  use, so an existing setup is picked up: `GITHUB_TOKEN` or `GH_TOKEN` as
-  `gh` reads them, and `ANTHROPIC_API_KEY`. The webhook secret has no such
-  variable and is `LINEWRIGHT_WEBHOOK_SECRET`, and the GitHub token agent
-  sessions are given in place of Linewright's (see
-  [Repository](repository.md)) is `LINEWRIGHT_SESSION_GITHUB_TOKEN`.
-- **Secrets.** `secrets` names the variables whose values are secrets
-  ([Architecture](architecture.md#capabilities-and-credentials)); a name
-  ending in `*` names every variable with that prefix. A name without `*`
-  whose variable is unset or empty is an error at startup.
+- **Model and effort.** A model or effort set for a session wins over what the
+  session's environment and the harness's own settings say. Linewright sets no
+  model or effort for a session's sub-agents.
+- **Credentials come from the environment only.** They are the environment
+  variables their tools already use, so an existing setup is picked up:
+  `GITHUB_TOKEN` or `GH_TOKEN` as `gh` reads them, and `ANTHROPIC_API_KEY`. The
+  webhook secret has no such variable and is `LINEWRIGHT_WEBHOOK_SECRET`, and
+  the GitHub token agent sessions are given in place of Linewright's
+  ([What a session has](sessions.md#what-a-session-has)) is
+  `LINEWRIGHT_SESSION_GITHUB_TOKEN`.
 - **Times and durations.** Every time and duration given to Linewright, as a
   setting or as a command's argument, takes the same forms: a time in RFC
   3339 (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC
@@ -197,55 +197,23 @@ and the follow-ups ([Contract](runs.md#contract)).
 - **Logged at startup.** Linewright logs which files the operator's layer
   provides.
 
-## Sessions' environment
+## Secrets
 
-An agent session's environment holds only the variables of Linewright's
-environment that this table or `session-pass-env` names, the values
-`session-env` sets, and what Linewright sets itself: the session's GitHub
-token, when it has one, as `GH_TOKEN` and `GITHUB_TOKEN`, its own temporary
-directory as `TMPDIR`, and the harness's settings that the rules under
-[Running](#running) need, such as the shell.
+Linewright keeps secrets out of what it keeps, logs, posts or pushes.
 
-| variables                                                                | what for                                           |
-| ------------------------------------------------------------------------ | -------------------------------------------------- |
-| `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`                               | finding programs and the user's home               |
-| `LANG`, `LANGUAGE`, `LC_*`, `TZ`                                         | locale and time zone                               |
-| `TERM`                                                                   | the terminal tools format for                      |
-| `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`   | where tools keep their configuration and caches    |
-| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, in either case     | reaching the network through the host's proxy      |
-| `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`                   | trusting the host's certificate authorities        |
-| `ANTHROPIC_*`, `CLAUDE_*`                                                | the harness's configuration and credentials        |
-
-- **Patterns.** A name ending in `*` names every variable with that prefix.
-- **The harness's namespaces.** Of the harness's variables, the table passes
-  those in the namespaces it owns; a setting outside them, such as
-  `DISABLE_TELEMETRY`, the operator passes or sets like any other variable.
-- **Which value wins.** A variable Linewright sets itself replaces one of the
-  same name the table or `session-pass-env` passes, and a value `session-env`
-  sets replaces a passed one.
-- **Linewright's own.** `session-env` setting a variable Linewright may set
-  itself is an error at startup.
-- **Set values.** `session-env`'s values are strings, taken as written, such
-  as a `$`, which refers to no variable, or an empty string, which sets the
-  variable empty.
-- **What an environment can't hold.** A name or value `session-env` sets that
-  an environment can't hold is an error at startup, such as an empty name, an
-  `=` in a name or a NUL byte in either.
-- **Credentials passed.** The credentials the table passes are those its
-  variables hold, where each variable's format puts them:
-
-  | variables                                    | the credentials                                                                                                  |
-  | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-  | those the harness reads a credential from    | the value                                                                                                        |
-  | the proxy variables                          | the password in the URL, both as written and percent-decoded                                                     |
-  | those the harness reads request headers from | each header's value, both whole and, when it opens with a scheme, without it, as in `Authorization: Bearer …` |
-- **Never passed.** `session-pass-env` never passes Linewright's GitHub
-  tokens or the webhook secret: a pattern skips them, and naming one is an
-  error at startup.
-- **Logged at startup.** At startup Linewright logs the names, never the
-  values, of the variables in its environment that sessions are not given,
-  and, for the whole pipeline and for each stage, the names `session-env`
-  sets, a stage's own apart from those it takes from the whole pipeline's.
+- **Secrets are redacted.** What Linewright keeps, logs or posts has secrets
+  replaced by `[redacted]`, except the commits it pushes and the attachments
+  it uploads: a commit or an attachment holding a secret is refused
+  ([Runs](runs.md)). Redaction is best effort. A secret of 1
+  to 5 characters is neither redacted nor refused, which Linewright warns of at
+  startup, naming its variable; an empty one is ignored.
+- **A secret** is a credential Linewright reads
+  ([Configuration](#configuration)) or passes to a session
+  ([Environment](sessions.md#environment)), or the value of a variable
+  `secrets` names.
+- **The `secrets` setting.** `secrets` names the variables whose values are
+  secrets; a name ending in `*` names every variable with that prefix. A name
+  without `*` whose variable is unset or empty is an error at startup.
 
 ## Running
 
@@ -253,6 +221,9 @@ Linewright runs wherever `git`, `bash`, the harness and the project's
 toolchain are on the path: directly on a machine, or in a container whose
 image the operator builds with those in it.
 
+- **The base image.** A published base image (`lw`, the harness, and the
+  tools coding agents expect, such as `git`, `gh`, `jq`, `python3` and
+  `ripgrep`) is the starting point for the operator's image.
 - **TLS.** Linewright listens over plain HTTP; TLS, where wanted, is a
   reverse proxy's in front.
 - **Certificate authorities.** Linewright trusts the host's certificate
@@ -260,24 +231,16 @@ image the operator builds with those in it.
 - **Behind a proxy.** Event streams ask a reverse proxy in front to pass each
   event on as it is sent, unchanged, and to keep no copy, and send something
   at least every 15 seconds, so that the proxy never closes one as idle.
-- **The shell.** Agents' commands run in `bash`, whatever shell the operator
-  uses.
-- **As installed.** A session never updates the harness, in the background
-  or on an agent's command: every session runs the harness the operator
-  installed.
 - **The log.** The server logs each decision and action, readable for a
   person tailing it and structured (JSON lines) for machines, by the
   `log-format` setting. That includes, while it serves the web UI, its
   address and each request it refuses and why, and, with webhooks on, the
   address it listens on for them, each delivery and what it names, and each
   delivery refused and why.
-- **Permissions.** Agents run without permission prompts; the container is
-  the isolation when one is used.
 - **Systems.** Unix-like systems: Linux and macOS.
 
 ## Out of scope
 
-- One container per run, instead of agents as processes beside the manager.
 - Caps on what the repository's file may set, such as the models it may
   choose.
 - The repository's file naming the variables a stage's sessions get, even
@@ -290,10 +253,6 @@ image the operator builds with those in it.
   `max-runs`, in the repository's file.
 - Layers of skills: the repository or the operator replacing Linewright's
   skills.
-- Keeping sessions from, or redacting, credentials stored where Linewright's
-  user can read them, such as `~/.config/gh/hosts.yml`, `~/.aws/credentials`
-  or the harness's own login. A container, or a user of its own that holds no
-  other credentials, is the isolation.
 - How Linewright is released (`docs/releasing.md`).
 - Calling off a drain; the restart it ends in takes the work up again.
 - A setting that bounds every drain; the bound is each request's.

@@ -45,6 +45,11 @@ same host.
 
 - **Without `serve`.** `status` and `explain` need it running; `runs` and
   `logs` work either way.
+- **Access.** File permissions: only `serve`'s user can open the socket.
+- **The socket's path.** Derived from the repository, in a short per-user
+  directory such as `$XDG_RUNTIME_DIR`.
+- **Requests answered.** Only those whose `Host` is local: `localhost` or a
+  loopback address, ignoring case, port and a trailing dot.
 
 ## status
 

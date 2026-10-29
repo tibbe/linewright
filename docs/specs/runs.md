@@ -39,9 +39,9 @@ has no item.
 | `rework`    | addresses feedback on Linewright's pull request ([Pull requests](pull_requests.md))   | `rework.md`    |
 | `update`    | brings Linewright's pull request up to date ([Pull requests](pull_requests.md))       | `update.md`    |
 
-- **Sessions.** A run works in agent sessions, each fresh and in its own
-  clone, or in none where its work needs no agent, such as an update without
-  a conflict.
+- **Sessions.** A run works in agent sessions ([Sessions](sessions.md)), each
+  fresh and in its own clone, or in none where its work needs no agent, such as
+  an update without a conflict.
 
 ## Setup
 
@@ -51,7 +51,7 @@ before the agent's first prompt.
 - **The command.** The `setup` setting
   ([Stage settings](operation.md#stage-settings)), run by `bash` in the root of
   the clone, with nothing on its standard input, in the session's environment
-  ([Sessions' environment](operation.md#sessions-environment)). With an empty
+  ([Environment](sessions.md#environment)). With an empty
   one, the session starts with the agent's first prompt.
 - **When.** On the branch as the clone checked it out, before the run brings
   the branch up to date with the default branch
@@ -154,11 +154,11 @@ A run ends in one of these outcomes, each with its name in JSON.
   a separate `ready-for-human` issue describing the needed spec change, and
   the run continues. A gap already filed for the item and still open is not
   filed again.
-- **A result the manager can't accept.** A session's result the manager
+- **A result Linewright can't accept.** A session's result Linewright
   cannot use for a reason the session can fix goes back to the session with
   the reason, so it can answer again (`result-retries`), as a result that
   does not match its schema does ([Contract](#contract)). Work holding a
-  secret ([Architecture](architecture.md)) is one such reason, whether
+  secret ([Secrets](operation.md#secrets)) is one such reason, whether
   Linewright finds the secret or GitHub refuses the push over it, and its
   reason names the variable, the file and, in a commit, the commit.
 - **Unexpected ends.** Any unexpected end (a crash, a timeout, the agent
@@ -176,11 +176,11 @@ A run ends in one of these outcomes, each with its name in JSON.
   unfinished commit into its own commits. Work that holds a secret is
   not pushed.
 - **Cancelling.** Except while it applies a result
-  ([Architecture](architecture.md#the-manageragent-protocol)), or, for a run
-  without a session, from its push on, a run is cancelled when its item stops
-  asking for its work, as under [Repository](repository.md), or when `serve`
-  stops. A cancelled run posts nothing more, and one whose pull request was
-  merged or closed pushes nothing either.
+  ([Architecture](architecture.md#the-protocol-between-linewright-and-an-agent)),
+  or, for a run without a session, from its push on, a run is cancelled when its
+  item stops asking for its work, as under [Repository](repository.md), or when
+  `serve` stops. A cancelled run posts nothing more, and one whose pull request
+  was merged or closed pushes nothing either.
 - **Restarts.** A restart leaves the runs in flight interrupted.
 - **Kept.** Runs are kept across restarts, with their outcomes and their
   sessions' transcripts and attachments directories, and with each session's

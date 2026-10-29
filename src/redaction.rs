@@ -1,5 +1,5 @@
 //! Keeping Linewright's secrets out of what it keeps, logs or posts
-//! (`docs/specs/architecture.md`, the redaction decision).
+//! (`docs/specs/operation.md`, Secrets).
 
 use aho_corasick::{AhoCorasick, MatchKind};
 

@@ -34,7 +34,7 @@ impl HostName {
     }
 
     /// `localhost` or a loopback address
-    /// (`docs/specs/architecture.md`, The local API).
+    /// (`docs/specs/monitoring.md`, Commands).
     pub fn is_local(&self) -> bool {
         self.0 == "localhost" || self.ip().is_some_and(|address| address.is_loopback())
     }

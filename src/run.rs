@@ -631,7 +631,7 @@ fn stopped(pr: &Pull, linewright: &Login) -> Option<PullStop> {
 }
 
 /// The writes that change what an item asks for, which a run makes last
-/// (docs/specs/architecture.md, State, "Writes"), made by [`ask`].
+/// (docs/specs/repository.md, Writes, "Order"), made by [`ask`].
 #[derive(Default)]
 pub(crate) struct Asks {
     pub designed: Option<Designed>,
@@ -655,8 +655,8 @@ pub(crate) enum StatusTo {
     Clear,
 }
 
-/// Makes `asks`' writes on `number` in the order docs/specs/architecture.md,
-/// State, "Writes", asks for: `linewright:designed`, the stall, the
+/// Makes `asks`' writes on `number` in the order docs/specs/repository.md,
+/// Writes, "Order", asks for: `linewright:designed`, the stall, the
 /// new status label, the removal of the others, the unassignment.
 pub(crate) async fn ask(store: &dyn Store, number: Number, asks: &Asks) -> Result<()> {
     match asks.designed {
@@ -1916,7 +1916,7 @@ async fn push_unfinished(
 }
 
 /// The first secret the commits on the clone's `HEAD` past each of
-/// `past` add: docs/specs/runs.md, "A result the manager can't accept".
+/// `past` add: docs/specs/runs.md, "A result Linewright can't accept".
 async fn held_secret(shell: &Shell, dir: &Path, past: &[&str]) -> Result<Option<Held>> {
     let additions = git::additions(dir, "HEAD", past).await?;
     Ok(shell.secrets.held(&additions))
@@ -2080,7 +2080,7 @@ async fn implement(
         } => {
             // Opening the pull request puts the ticket in review, which
             // changes what it asks for, so the gaps go first
-            // (docs/specs/architecture.md, State, "Writes").
+            // (docs/specs/repository.md, Writes, "Order").
             file_spec_gaps(shell, &spec_gaps, ticket.number())
                 .await
                 .map_err(apply)?;
