@@ -19,7 +19,7 @@ The design, in this template:
 
 ## Design
 
-<what the code does today and where it falls short; the structure kept or changed, and why; the parts, what each is responsible for, where it lives, and the interfaces between them>
+<what the code does today and where it falls short; the structure kept or changed, and why; the modules the change touches, what each is responsible for, and the interfaces between them: everything the other modules must know of each>
 ```
 
 Linewright adds the tickets after it.

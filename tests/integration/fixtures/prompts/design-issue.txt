@@ -27,11 +27,13 @@ Read the issue, `GLOSSARY.md` if present, the spec and the code the issue touche
 
 ### 2. Design the code
 
-Work out what the chosen option changes in the code: what the code does today and where it falls short, the parts, what each is responsible for, where it lives, and the interfaces between them.
+A design names the modules the change touches. For each, it says what the module is responsible for and its interface to the other modules. A module is anything with an interface and an implementation: a method or function, a class, a package, a service or a library the code uses. Its interface is everything the other modules must know of it. Everything else the module hides, and the implementer decides it.
+
+Some decisions affect more than one module, and must be made before work on the modules can begin. Those are the design's. The first is the seam, where the option attaches to the code. Choose each as the software-design skill chooses between options: list the ways it could go, write the case against each, and take the one that wins.
 
 Keep the code's structure where it holds up. Change it where the change would add a special case to it, or where the structure makes the problem likely, so that the same kind of problem would come back.
 
-A changed structure covers the part the change touches, judged against the whole spec rather than the issue alone.
+A changed structure covers the modules the change touches, judged against the whole spec rather than the issue alone.
 
 ### 3. Cut the work
 
@@ -64,7 +66,7 @@ The design, in this template:
 
 ## Design
 
-<what the code does today and where it falls short; the structure kept or changed, and why; the parts, what each is responsible for, where it lives, and the interfaces between them>
+<what the code does today and where it falls short; the structure kept or changed, and why; the modules the change touches, what each is responsible for, and the interfaces between them: everything the other modules must know of each>
 ```
 
 Linewright adds the tickets after it.
