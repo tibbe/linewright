@@ -34,9 +34,8 @@ Every item is designed before it is built, by its first run; a ticket is
 created designed, with the design of the item it was cut from, and is never
 designed on its own.
 
-1. An agent reads what the item asks (a spec change's PR and spec diff, or an
-   issue and its comments), the spec and the codebase, and produces a design,
-   chosen against the alternatives and recorded with them.
+1. An agent designs the item from what it asks: a spec change's PR and spec
+   diff, or an issue and its comments.
 2. It cuts the work into tickets, as under [Cutting](#cutting).
 3. Linewright records the design in a comment on the tracking issue or the
    issue: the design and, where the work was cut, the tickets in order and
@@ -60,34 +59,39 @@ designed on its own.
   or a claimed issue to the ready PRs with no human step, and a wrong design
   or set of tickets from a good spec is a defect in Linewright.
 
-## Keeping or changing the structure
-
-The design keeps the code's structure where it holds up and changes it where
-it does not: where the change would add a special case to the structure, or
-where the problem is one the structure makes likely, so that its kind would
-recur.
-
-- **How much.** A changed structure covers the part the change touches,
-  judged against the whole spec rather than the item alone.
-
 ## Cutting
 
-Work is cut into tickets when it does not fit one session's smart zone or
-changes the code's structure; the structure change is the first ticket, the
-behavior change after it.
+The design cuts work into tickets where it needs cutting, in the order they
+are to be built.
 
-- **Tickets.** Vertical slices, each sized to a session, with code that
-  already matches the spec producing none. Each ticket is a sub-issue of its
-  tracking issue, states what to build and its acceptance criteria, carries
+- **Tickets.** Each ticket is a sub-issue of its tracking issue, carries
   `ready-for-agent` and `linewright:designed`, and is linked to the tickets
   it is blocked by with GitHub's issue dependencies.
-- **A spec change.** Its work is always tickets, one when it fits a session,
+- **A spec change.** Its work is always at least one ticket,
   under a tracking issue Linewright creates: "Spec change: <PR title>",
   linking the PR and listing the tickets. A spec change's tracking issue is
   the open issue Linewright created that references the pull request.
 - **An issue.** One that fits a session is built as it is; one that is cut
   becomes its tickets' tracking issue.
 - **The tracking issue** carries no status label.
+
+## The session
+
+A design session is sent `design.md`, with these placeholders filled besides
+those of every prompt ([Contract](runs.md#contract)).
+
+| placeholder      | value                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `{{kind}}`       | `spec change` or `issue`, what is designed                                                                                  |
+| `{{item}}`       | a spec change's number, title, author, body and spec diff, or the issue and its comments        |
+| `{{filed_gaps}}` | the spec gaps already filed for the item, or nothing                                             |
+| `{{cutting}}`    | how the work is cut, for a spec change or an issue ([Cutting](#cutting))                                                       |
+
+The session ends with a result that matches
+[`results/design-spec-change.schema.json`](results/design-spec-change.schema.json)
+for a spec change, or
+[`results/design-issue.schema.json`](results/design-issue.schema.json) for an
+issue.
 
 ## Out of scope
 

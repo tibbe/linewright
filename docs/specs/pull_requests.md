@@ -98,10 +98,8 @@ starts nothing.
 - **The run.** It brings the branch up to date, addresses the comments,
   pushes, replies in each thread and re-requests review from the people whose
   comments it addressed.
-- **Whose comments.** Comments from people are always addressed; those from
-  other bots at the implementer's judgment, and it may answer that a comment
-  needs no change. The implementer resolves the threads bots opened and leaves
-  people's threads for them to resolve.
+- **Resolving threads.** A reply that asks to resolve its thread resolves it
+  when a bot opened the thread; people resolve their own threads.
 - **Feedback during a run.** Feedback posted while a run works goes to its
   session before the run pushes.
 - **Its push.** Unlike Linewright's other writes
@@ -144,3 +142,25 @@ repository allows; with it, Linewright merges each green PR it opened.
   then the PR is handed back with GitHub's reason.
 - **Which PRs.** Auto-merge covers every open PR Linewright opened, including
   those opened while it ran without `--auto-merge`.
+
+## The sessions
+
+A fix, rework or update session is sent `fix-ci.md`, `rework.md` or
+`update.md`, with these placeholders filled besides those of every prompt
+([Contract](runs.md#contract)).
+
+| placeholder        | value                                                                                                                               |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `{{branch}}`       | the pull request's branch                                                                                                           |
+| `{{pr}}`           | its number                                                                                                                          |
+| `{{pr_title}}`     | its title                                                                                                                           |
+| `{{description}}`  | its description                                                                                                                     |
+| `{{ticket}}`       | the issue the pull request closes, as the implementer is given its ticket ([Implementation](implementation.md#the-session))       |
+| `{{unfinished}}`   | the unfinished commits on the branch, or nothing                                                                                    |
+| `{{conflict}}`     | where the update stopped and the files in conflict; for a fix or a rework, nothing unless the update it starts with stopped         |
+| `{{failures}}`     | a fix's alone: each failing check, as under [CI](#ci)                                                                               |
+| `{{feedback}}`     | a rework's alone: the new comments, reviews and comments in threads                                                                 |
+| `{{conversation}}` | a rework's alone: the pull request's comments and its unresolved threads                                                            |
+
+The session ends with a result that matches
+[`results/pull-request.schema.json`](results/pull-request.schema.json).

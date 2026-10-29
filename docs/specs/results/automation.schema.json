@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "An automation session's result",
+  "type": "object",
+  "$defs": {
+    "issue": {
+      "description": "An issue to file.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "The issue's title.",
+          "type": "string"
+        },
+        "body": {
+          "description": "The issue's body, in Markdown.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Its label.",
+          "enum": [
+            "ready-for-agent",
+            "ready-for-human"
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "body",
+        "label"
+      ]
+    }
+  },
+  "properties": {
+    "summary": {
+      "description": "What the run did and found, in Markdown.",
+      "type": "string"
+    },
+    "issues": {
+      "description": "The issues to file. Left out, none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    }
+  },
+  "required": [
+    "summary"
+  ]
+}

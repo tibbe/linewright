@@ -23,21 +23,15 @@ brief an implementer works from.
 
 ## Outcomes
 
-Triage establishes every fact it can reach itself: the agent reads the
-issue and its comments, the codebase and the spec, categorizes, verifies the
-claim (reproduces a bug, runs the tests, checks whether the behavior already
-exists) and ends in one of three states.
+A triage run ends in one of three states and posts the
+agent's comment on the issue.
 
-| State             | Comment                                                                                                                                                                 |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ready-for-agent` | a triage brief: summary, current and desired behavior, acceptance criteria, out of scope                                                                                |
-| `needs-info`      | addressed to the people asked: what is established, what was tried, what is still needed                                                                                |
-| `ready-for-human` | a recommendation: the questions a maintainer must answer, or why the issue is not for an agent (duplicate, already implemented, needs a spec change, should be rejected) |
+| State             | Means                                  |
+| ----------------- | -------------------------------------- |
+| `ready-for-agent` | an agent can work the issue            |
+| `needs-info`      | the people asked owe a fact            |
+| `ready-for-human` | a maintainer must decide               |
 
-- **Facts before decisions.** A fact only a person knows, what they saw or
-  meant, makes the state `needs-info`, asking only for it, even if a
-  maintainer's decision will follow, because the decision usually depends on
-  the facts.
 - **Category.** The category is the repository's issue type (Bug, Feature,
   Task) where the repository has issue types, and the `bug` or `enhancement`
   label otherwise.
@@ -65,3 +59,16 @@ The `triage` states of the issue lifecycle; both are labels.
 | `needs-info`   | a person comments                    | `needs-triage`    |        |
 | `needs-triage` | triage ends in `ready-for-agent`     | `ready-for-agent` |        |
 | `needs-triage` | triage ends in `ready-for-human`     | `ready-for-human` |        |
+
+## The session
+
+A triage session is sent `triage.md`, with these placeholders filled besides
+those of every prompt ([Contract](runs.md#contract)).
+
+| placeholder            | value                                                                   |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `{{categories}}`       | the categories to choose from ([Outcomes](#outcomes))                   |
+| `{{issue}}`            | the issue: its number, title, author, labels, body and comments         |
+
+The session ends with a result that matches
+[`results/triage.schema.json`](results/triage.schema.json).

@@ -74,17 +74,28 @@ scheduled run.
 A run is one agent session in a fresh clone of the default branch, counted
 against the ceiling on simultaneous runs.
 
-- **The brief.** The agent does what its instructions say. Its brief carries
+- **Instructions.** The session is given the automation's instructions and
   nothing of earlier runs: an automation that looks back says how far in its
   instructions.
 - **Filing issues.** A run may hand the pipeline work by filing issues, each
   saying which automation filed it:
-  - `ready-for-agent`, for work an agent can do: what to build and its
-    acceptance criteria, like a ticket.
+  - `ready-for-agent`, for work an agent can do.
   - `ready-for-human`, when a person must decide or help.
-- **Existing issues.** The agent searches the existing issues first and does
-  not file one that is already open.
 - **Beyond `max-issues`.** Issues beyond `max-issues` are dropped and logged.
+
+## The session
+
+An automation's session is sent `automation.md`, with these placeholders
+filled besides those of every prompt ([Contract](runs.md#contract)).
+
+| placeholder        | value                          |
+| ------------------ | ------------------------------ |
+| `{{name}}`         | the automation's name          |
+| `{{instructions}}` | its instructions               |
+| `{{max_issues}}`   | its `max-issues`               |
+
+The session ends with a result that matches
+[`results/automation.schema.json`](results/automation.schema.json).
 
 ## Out of scope
 

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A triage session's result",
+  "type": "object",
+  "properties": {
+    "outcome": {
+      "description": "The state the issue moves to.",
+      "enum": [
+        "ready-for-agent",
+        "needs-info",
+        "ready-for-human"
+      ]
+    },
+    "category": {
+      "description": "The issue's category: one of the categories (triage.md, Outcomes).",
+      "type": "string"
+    },
+    "comment": {
+      "description": "The comment on the issue, in Markdown.",
+      "type": "string"
+    },
+    "ask": {
+      "description": "With `needs-info`, the people asked, each a GitHub login with or without a leading `@`; ignored with another outcome. Empty or left out, the reporter.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^@?(?=[A-Za-z0-9-]{1,39}$)[A-Za-z0-9]+(-[A-Za-z0-9]+)*$"
+      }
+    }
+  },
+  "required": [
+    "outcome",
+    "category",
+    "comment"
+  ]
+}

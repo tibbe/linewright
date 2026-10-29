@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "An implement session's result",
+  "$defs": {
+    "declined_finding": {
+      "description": "A review finding the session did not apply.",
+      "type": "object",
+      "properties": {
+        "finding": {
+          "description": "The review finding, as the review put it.",
+          "type": "string"
+        },
+        "evidence": {
+          "description": "The quote that shows it is wrong on the facts.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "finding",
+        "evidence"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "description": "The ticket is built.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "const": "done"
+        },
+        "pr_title": {
+          "description": "The pull request's title.",
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "pr_body": {
+          "description": "The pull request's body, in Markdown, without a closing reference to the ticket.",
+          "type": "string"
+        },
+        "spec_gaps": {
+          "$ref": "common.schema.json#/$defs/spec_gaps"
+        },
+        "declined_findings": {
+          "description": "The review findings it did not apply. Left out, none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/declined_finding"
+          }
+        }
+      },
+      "required": [
+        "outcome",
+        "pr_title",
+        "pr_body"
+      ]
+    },
+    {
+      "$ref": "common.schema.json#/$defs/blocked"
+    },
+    {
+      "$ref": "common.schema.json#/$defs/gave-up"
+    }
+  ]
+}

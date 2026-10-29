@@ -187,16 +187,16 @@ on its default branch, the same TOML as the operator's file.
 
 A session's prompts come in three layers, each a directory laid out as the
 prompts Linewright ships: the repository's `.linewright/prompts/`, the
-operator's `prompts` directory and Linewright's own. Each file is taken from
-the first layer that has it, the parts that carry the result contract
-included.
+operator's `prompts` directory and Linewright's own, `briefs/prompts/`. Each
+file is taken from the first layer that has it. Linewright's own layer holds
+only what a layer may override: the stage prompts ([Stages](runs.md#stages))
+and the follow-ups ([Contract](runs.md#contract)).
 
 - **Placeholders.** A prompt's placeholders are fixed: Linewright refuses a
   prompt that lacks one or holds one it doesn't know.
-- **The result contract.** Each prompt's result contract, the output its
-  session ends with, is a part of its own filled into the prompt's
-  `{{output}}` placeholder, so a prompt written over keeps the contract
-  Linewright reads.
+- **The result contract.** A prompt's `{{output}}` is filled with
+  Linewright's own wording of its result contract, so a prompt written over
+  keeps the contract Linewright reads.
 - **Other files.** A file in the operator's layer that is not one of
   Linewright's prompts, hidden files aside, is an error at startup
   ([Startup](repository.md#startup)).

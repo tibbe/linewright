@@ -67,35 +67,16 @@ during the session.
   session never depends on what an earlier session left behind or on the host's
   user-level setup. Isolation is of what sessions can observe of each other, not
   of where they run.
-- **Briefs are files**: the skills ([Skills](#skills)) and the prompts, the
-  prompts in layers ([Prompts](operation.md#prompts)).
+- **Briefs are files**: the skills in `briefs/plugin/`, given to every
+  session, and the prompts in `briefs/prompts/`, in layers
+  ([Prompts](operation.md#prompts)).
 - **A session's skills and tools.** A session or sub-agent has Linewright's
   skills and the repository's own, and only the tools its work needs.
-- **No person takes part in a session.** A decision an original skill puts to a
-  person is made by an agent or handed back as an outcome, and judging an
-  agent's own work, as review does, falls to agents in fresh contexts.
+- **No person takes part in a session.** A question for a person comes back
+  as the session's outcome.
 - **Every session's transcript is kept**: the harness's own record of the
   session, copied beside the session's brief and result under the work
   directory.
-
-## Skills
-
-A stage's skill is a fork of a published skill, kept as upstream's text but
-for what Linewright's use of it requires; the rules that are Linewright's own
-are the prompt's.
-
-| skill | forked from |
-|---|---|
-| `triage`, `to-tickets`, `implement`, `code-review`, `pr`, `tdd` | `mattpocock/skills`, MIT, with its notice |
-| `software-design` | `prior-art` in `tibbe/skills`, with what concerns products removed |
-
-- **Invoking.** A session's prompt holds its task and the result contract
-  as the steps the session takes, and the step a skill covers has the session
-  call the skill; the prompts of rework, CI fixes and updates are their whole
-  briefs. The skills a skill
-  calls (`tdd`, `code-review`, `pr`) are given to the session as skills under
-  a `linewright:` namespace and invoked as the originals invoke them; the
-  design prompt has the session call `software-design`, then `to-tickets`.
 
 ## The manager–agent protocol
 
@@ -123,13 +104,13 @@ Agents get the capabilities their work needs, and are limited where that costs
 their work nothing.
 
 - **What an agent has.** A shell, the web and GitHub, which it is trusted to
-  use as its brief says.
+  use for its work.
 - **What an agent lacks.** What its work does not need, such as Linewright's
   other credentials or a token that writes to GitHub.
 - **What code enforces.** A rule is enforced in code only where it limits what a
   session is given, or where Linewright would malfunction without it. Anything
-  else, such as an agent writing to GitHub outside its result, is the brief's to
-  prevent.
+  else, such as an agent writing to GitHub outside its result, is not
+  prevented.
 - **Secrets are redacted.** What Linewright keeps, logs or posts has secrets
   replaced by `[redacted]`, except the commits it pushes: a commit holding a
   secret is refused ([Runs](runs.md)). Redaction is best effort. A secret of 1

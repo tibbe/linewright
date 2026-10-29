@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A fix, rework or update session's result",
+  "$defs": {
+    "reply": {
+      "description": "A reply in a thread.",
+      "type": "object",
+      "properties": {
+        "thread": {
+          "description": "The thread's id.",
+          "type": "string"
+        },
+        "body": {
+          "description": "The reply, in Markdown.",
+          "type": "string"
+        },
+        "resolve": {
+          "description": "Whether to resolve the thread. Left out, false.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "thread",
+        "body"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "description": "The work is done.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "const": "done"
+        },
+        "comment": {
+          "description": "What it changed, for the pull request, in Markdown.",
+          "type": "string"
+        },
+        "pr_body": {
+          "description": "The whole description rewritten, in Markdown, when the change made it out of date. Left out, the description stays.",
+          "type": "string"
+        },
+        "replies": {
+          "description": "Its replies in threads. Left out, none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reply"
+          }
+        },
+        "spec_gaps": {
+          "$ref": "common.schema.json#/$defs/spec_gaps"
+        }
+      },
+      "required": [
+        "outcome",
+        "comment"
+      ]
+    },
+    {
+      "$ref": "common.schema.json#/$defs/blocked"
+    },
+    {
+      "$ref": "common.schema.json#/$defs/gave-up"
+    }
+  ]
+}

@@ -39,9 +39,8 @@ request that is reviewed, green and ready for a person.
   pipeline and a pull request ends it. Between the two the factory runs on
   its own; when it cannot continue, it hands the item back with a comment
   that says why.
-- **The spec is how the maintainer steers.** Agents build from the spec and
-  leave it as it is; a spec that needs changing becomes an issue for the
-  maintainer.
+- **The spec is how the maintainer steers.** Agents build from the spec,
+  and a spec that needs changing becomes an issue for the maintainer.
 - **Reviewed before a person sees it.** Agent review, the repository's own
   checks and CI all pass before a PR is marked ready.
 - **The work shows in GitHub.** The state of the work lives in GitHub, kept

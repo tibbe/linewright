@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "What every stage's result shares",
+  "$defs": {
+    "spec_gap": {
+      "description": "A spec gap that did not block the work.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "The title of the gap's issue.",
+          "type": "string"
+        },
+        "body": {
+          "description": "The spec change needed, in Markdown.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ]
+    },
+    "spec_gaps": {
+      "description": "The spec gaps that did not block the work. Left out, none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/spec_gap"
+      }
+    },
+    "blocked": {
+      "description": "The work is blocked on a spec gap only the maintainer can answer.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "const": "blocked"
+        },
+        "question": {
+          "description": "What the maintainer must answer, in Markdown.",
+          "type": "string"
+        },
+        "spec_gaps": {
+          "$ref": "#/$defs/spec_gaps"
+        }
+      },
+      "required": [
+        "outcome",
+        "question"
+      ]
+    },
+    "gave-up": {
+      "description": "The work cannot be done.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "const": "gave-up"
+        },
+        "reason": {
+          "description": "Why the work cannot be done, in Markdown.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "reason"
+      ]
+    },
+    "ticket": {
+      "description": "A ticket the work is cut into.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "An id of the session's choosing, unique among the tickets.",
+          "type": "string"
+        },
+        "title": {
+          "description": "The ticket's title.",
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "body": {
+          "description": "The ticket's body, in Markdown.",
+          "type": "string"
+        },
+        "blocked_by": {
+          "description": "The ids of the tickets that must be merged first, each another ticket's, with no cycle among them. Left out, none.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "body"
+      ]
+    }
+  }
+}

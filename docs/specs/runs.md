@@ -27,18 +27,47 @@ hands #43 back at once, saying which permission to grant.
 A run does one stage on one item, or runs one automation; an automation's run
 has no item.
 
-| stage       | what its run does                                                               |
-| ----------- | ------------------------------------------------------------------------------- |
-| `triage`    | triages an issue ([Triage](triage.md))                                          |
-| `design`    | designs an item, and cuts it into tickets where it needs cutting ([Design](design.md)) |
-| `implement` | builds a ticket into a pull request ([Implementation](implementation.md))       |
-| `fix-ci`    | fixes the CI of Linewright's pull request ([Pull requests](pull_requests.md))   |
-| `rework`    | addresses feedback on Linewright's pull request ([Pull requests](pull_requests.md)) |
-| `update`    | brings Linewright's pull request up to date ([Pull requests](pull_requests.md)) |
+| stage       | what its run does                                                                     | prompt         |
+| ----------- | ------------------------------------------------------------------------------------- | -------------- |
+| `triage`    | triages an issue ([Triage](triage.md))                                                | `triage.md`    |
+| `design`    | designs an item, and cuts it into tickets where it needs cutting ([Design](design.md)) | `design.md`    |
+| `implement` | builds a ticket into a pull request ([Implementation](implementation.md))             | `implement.md` |
+| `fix-ci`    | fixes the CI of Linewright's pull request ([Pull requests](pull_requests.md))         | `fix-ci.md`    |
+| `rework`    | addresses feedback on Linewright's pull request ([Pull requests](pull_requests.md))   | `rework.md`    |
+| `update`    | brings Linewright's pull request up to date ([Pull requests](pull_requests.md))       | `update.md`    |
 
 - **Sessions.** A run works in agent sessions, each fresh and in its own
   clone, or in none where its work needs no agent, such as an update without
   a conflict.
+
+## Contract
+
+Each stage's area decides its session's contract: the value Linewright fills
+into each of its prompt's placeholders, and the result the session ends with,
+which Linewright parses. What the agent does between the two is the prompt's.
+A stage's session is sent the prompt [Stages](#stages) names, and an
+automation's `automation.md` ([Prompts](operation.md#prompts)).
+
+- **Every prompt.** `{{facts}}` is the repository, its default branch and the
+  spec glob, and `{{output}}` is Linewright's wording of the stage's result
+  contract.
+- **The result** is a JSON object in the session's final message: the whole
+  message when it is one, else its last fenced code block when that holds one,
+  else the text from its first `{` to its last `}`. Linewright checks it against
+  its stage's JSON Schema (draft 2020-12) in [`results/`](results/), whose
+  descriptions say what each key holds. A result that does not match, or that
+  breaks a rule its schema's descriptions state, is sent back to the session
+  ([Ending](#ending)).
+- **Follow-ups.** A session sent back to work is sent a follow-up, with these
+  placeholders filled.
+
+  | follow-up                         | placeholder        | value                                                                                                             |
+  | --------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+  | `follow-ups/parse-error.md`       | `{{error}}`        | why the result could not be used                                                                                  |
+  | `follow-ups/loose-ends.md`        | `{{problem}}`      | what is still wrong with the session's work: unfinished commits on its branch, or a secret in its commits or push  |
+  | `follow-ups/late-feedback.md`     | `{{feedback}}`     | the feedback posted while the session worked ([Rework](pull_requests.md#rework))                                  |
+  | `follow-ups/late-feedback.md`     | `{{conversation}}` | the pull request's comments and its unresolved threads                                                            |
+  | `follow-ups/usage-limit-reset.md` | none               |                                                                                                                   |
 
 ## Limits
 

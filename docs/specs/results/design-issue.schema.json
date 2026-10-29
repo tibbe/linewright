@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A design session's result for an issue",
+  "oneOf": [
+    {
+      "description": "The item is designed.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "const": "designed"
+        },
+        "design": {
+          "description": "The design, in Markdown.",
+          "type": "string"
+        },
+        "tickets": {
+          "description": "The tickets the work is cut into. Left out, none.",
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ticket"
+          }
+        },
+        "comment": {
+          "description": "Why the work is cut into these tickets, in Markdown.",
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "spec_gaps": {
+          "$ref": "common.schema.json#/$defs/spec_gaps"
+        }
+      },
+      "required": [
+        "outcome",
+        "design"
+      ],
+      "if": {
+        "properties": {
+          "tickets": {
+            "minItems": 1
+          }
+        },
+        "required": [
+          "tickets"
+        ]
+      },
+      "then": {
+        "required": [
+          "comment"
+        ]
+      }
+    },
+    {
+      "description": "The code already does what the item asks.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "const": "nothing-to-build"
+        },
+        "reason": {
+          "description": "Why the code already does what the item asks, in Markdown.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "reason"
+      ]
+    },
+    {
+      "$ref": "common.schema.json#/$defs/blocked"
+    },
+    {
+      "$ref": "common.schema.json#/$defs/gave-up"
+    }
+  ]
+}
