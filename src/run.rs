@@ -305,11 +305,10 @@ fn pushed(branch: &str, pushed: Pushed, again: TryAgain) -> Result<(), Failure> 
     }
 }
 
-/// Pushes a session's finished result to `branch`, which begins applying
-/// it, and returns the secrets GitHub's push protection refused the push
-/// over, if it did: then none of the result was applied, and the run is back
-/// in its session. A push GitHub refuses for a missing permission is handed
-/// back with how to `again`.
+/// Pushes a session's finished result to `branch`, as the first write of
+/// applying it. A push GitHub's push protection refuses over a secret sends
+/// the result back to its session, and one GitHub refuses for a missing
+/// permission is handed back with how to `again`.
 async fn push_result(
     shell: &Shell,
     ctx: &Ctx,
@@ -317,15 +316,14 @@ async fn push_result(
     branch: &str,
     mode: PushMode,
     again: TryAgain,
-) -> Result<Option<FoundSecrets>, Failure> {
-    ctx.cancel.begin_applying()?;
+) -> Result<(), Rejection> {
     match push(shell, dir, branch, mode).await {
-        Pushed::Protected(secrets) => {
-            ctx.cancel.back_to_session()?;
-            Ok(Some(secrets))
-        }
+        Pushed::Protected(secrets) => Err(Rejection::Retry {
+            followup: prompts::pushed_secret(&ctx.with.briefs.prompts, &secrets),
+            note: Some(protected_note(&secrets)),
+        }),
         other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
-            pushed(branch, other, again).map(|()| None)
+            pushed(branch, other, again).map_err(Rejection::Fail)
         }
     }
 }
@@ -807,9 +805,57 @@ fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBu
     unreachable!()
 }
 
+/// Why a result goes back to its session.
 enum Rejection {
-    Retry(String),
+    /// Sent back with `followup`, counted against `result-retries`; `note`
+    /// is what the hand-back adds once they run out.
+    Retry {
+        followup: String,
+        note: Option<String>,
+    },
+    /// Sent back with `followup` as a new question, the count reset: the
+    /// answer to new feedback is a new result.
+    Resume(String),
     Fail(Failure),
+}
+
+impl Rejection {
+    /// Sent back with `followup`, the hand-back adding nothing.
+    fn retry(followup: String) -> Rejection {
+        Rejection::Retry {
+            followup,
+            note: None,
+        }
+    }
+}
+
+/// How a conversation ended before its result's first writes were done.
+enum Unbegun {
+    /// In session, or sent back to it: the stage's work is as the session
+    /// left it.
+    InSession(Failure),
+    /// In the result's first writes, whose failure says what became of the
+    /// work.
+    Begun(Failure),
+}
+
+impl Unbegun {
+    /// The failure, noted with what `keep` keeps of the work the session
+    /// left.
+    async fn keeping(self, keep: impl AsyncFnOnce() -> String) -> Failure {
+        match self {
+            Unbegun::InSession(failure) => failure.noted(&keep().await),
+            Unbegun::Begun(failure) => failure,
+        }
+    }
+}
+
+impl From<Unbegun> for Failure {
+    fn from(unbegun: Unbegun) -> Failure {
+        match unbegun {
+            Unbegun::InSession(failure) | Unbegun::Begun(failure) => failure,
+        }
+    }
 }
 
 impl From<anyhow::Error> for Rejection {
@@ -820,53 +866,103 @@ impl From<anyhow::Error> for Rejection {
 
 /// Sends a result that does not parse back to the session with its `error`.
 fn parse_retry(ctx: &Ctx) -> impl Fn(String) -> Rejection + '_ {
-    |error| Rejection::Retry(prompts::result_error(&ctx.with.briefs.prompts, &error))
+    |error| Rejection::retry(prompts::result_error(&ctx.with.briefs.prompts, &error))
 }
 
-async fn converse<T, F, Fut>(
+/// A `begin` for a result whose first writes are the stage's own.
+async fn no_first_writes<T>(result: T) -> Result<T, Rejection> {
+    Ok(result)
+}
+
+/// Runs a session until `accept` takes its result, in session, and `begin`
+/// has made the result's first writes, once applying it has begun. A result
+/// either rejects goes back to the session.
+async fn converse<T, U, F, Fut, B, BFut>(
     shell: &Shell,
     ctx: &Ctx,
     spec: &mut SessionSpec,
     first: Step,
     accept: F,
-) -> Result<(T, Turn), Failure>
+    begin: B,
+) -> Result<(U, Turn), Unbegun>
 where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, Rejection>>,
+    B: Fn(T) -> BFut,
+    BFut: Future<Output = Result<U, Rejection>>,
 {
-    converse_counting(shell, ctx, spec, first, &mut 0, accept).await
+    converse_counting(shell, ctx, spec, first, &mut 0, accept, begin).await
 }
 
 /// As [`converse`], counting the follow-ups the result is sent back with in
 /// `retries`, which holds those it was sent back with before.
-async fn converse_counting<T, F, Fut>(
+async fn converse_counting<T, U, F, Fut, B, BFut>(
     shell: &Shell,
     ctx: &Ctx,
     spec: &mut SessionSpec,
     first: Step,
     retries: &mut u32,
     accept: F,
-) -> Result<(T, Turn), Failure>
+    begin: B,
+) -> Result<(U, Turn), Unbegun>
 where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, Rejection>>,
+    B: Fn(T) -> BFut,
+    BFut: Future<Output = Result<U, Rejection>>,
 {
-    let mut turn = take_turn(shell, ctx, spec, first).await?;
+    let in_session = Unbegun::InSession;
+    let mut turn = take_turn(shell, ctx, spec, first)
+        .await
+        .map_err(in_session)?;
     loop {
-        match accept(turn.message.clone()).await {
+        let (rejection, begun) = match accept(turn.message.clone()).await {
             Ok(result) => {
                 let json = results::json_value(&turn.message)
                     .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
                     .unwrap_or_else(|| turn.message.clone());
                 record(spec, "result.json", &json);
-                return Ok((result, turn));
+                // The session may end as the run is cancelled, too late to
+                // stop it.
+                ctx.cancel.begin_applying().map_err(in_session)?;
+                match begin(result).await {
+                    Ok(written) => return Ok((written, turn)),
+                    Err(Rejection::Fail(failure)) => return Err(Unbegun::Begun(failure)),
+                    Err(rejection) => {
+                        // A cancel that came while applying cancels the run
+                        // now, rather than send the result back.
+                        ctx.cancel.back_to_session().map_err(in_session)?;
+                        (rejection, true)
+                    }
+                }
             }
-            Err(Rejection::Fail(failure)) => return Err(failure),
-            Err(Rejection::Retry(followup)) => {
-                let step = send_back(shell, spec, &turn, followup, retries)?;
-                turn = take_turn(shell, ctx, spec, step).await?;
+            Err(rejection) => (rejection, false),
+        };
+        let step = match rejection {
+            Rejection::Fail(failure) => return Err(in_session(failure)),
+            Rejection::Retry { followup, note } => {
+                send_back(shell, spec, &turn, followup, retries).map_err(|failure| {
+                    let failure = failure.noted(note.as_deref().unwrap_or_default());
+                    // What the first writes refused, they would refuse again
+                    // of the work as the session left it.
+                    if begun {
+                        Unbegun::Begun(failure)
+                    } else {
+                        in_session(failure)
+                    }
+                })?
             }
-        }
+            Rejection::Resume(followup) => {
+                *retries = 0;
+                Step::Resume {
+                    session: turn.session.clone(),
+                    prompt: followup,
+                }
+            }
+        };
+        turn = take_turn(shell, ctx, spec, step)
+            .await
+            .map_err(in_session)?;
     }
 }
 
@@ -894,21 +990,6 @@ fn send_back(
         ),
         log_tail: Some(tail(&scrub(&turn.message, &spec.dir), 40)),
     }))
-}
-
-/// The step that sends a result whose push GitHub's push protection refused
-/// over `secrets` back to its session, as [`send_back`], or the hand-back
-/// saying the work was not kept.
-fn send_back_protected(
-    shell: &Shell,
-    ctx: &Ctx,
-    spec: &SessionSpec,
-    turn: &Turn,
-    secrets: &FoundSecrets,
-    retries: &mut u32,
-) -> Result<Step, Failure> {
-    let followup = prompts::pushed_secret(&ctx.with.briefs.prompts, secrets);
-    send_back(shell, spec, turn, followup, retries).map_err(|f| f.noted(&protected_note(secrets)))
 }
 
 enum Step {
@@ -1053,12 +1134,18 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     let prompt = prompts::triage(&ctx.with.briefs.prompts, &shell.repo(), issue, &categories);
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
     let categories = &categories;
-    let (result, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-        results::parse_triage(&message, categories).map_err(parse_retry(ctx))
-    })
-    .await?;
-    // The session may end as the run is cancelled, too late to stop it.
-    ctx.cancel.begin_applying()?;
+    let (result, _) =
+        converse(
+            shell,
+            ctx,
+            &mut spec,
+            Step::Start,
+            |message| async move {
+                results::parse_triage(&message, categories).map_err(parse_retry(ctx))
+            },
+            no_first_writes,
+        )
+        .await?;
     record_triage(shell, issue, result).await.map_err(apply)
 }
 
@@ -1134,12 +1221,11 @@ where
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
-    let answered = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
+    converse(shell, ctx, &mut spec, Step::Start, |message| async move {
         results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
-    })
-    .await?;
-    ctx.cancel.begin_applying()?;
-    Ok(answered)
+    }, no_first_writes)
+    .await
+    .map_err(Failure::from)
 }
 
 /// A design blocked on `question` files its spec gaps and hands its item
@@ -1611,26 +1697,26 @@ async fn implement(
             return Ok(result);
         }
         if let Some(problem) = git::loose_ends(dir).await? {
-            return Err(Rejection::Retry(prompts::loose_ends(
+            return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.prompts,
                 &problem,
             )));
         }
         if git::commits_ahead(dir, base).await? == 0 {
-            return Err(Rejection::Retry(prompts::loose_ends(
+            return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.prompts,
                 "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
             )));
         }
         let unfinished = git::unfinished_commits(dir, base, "HEAD").await?;
         if let Some(unfinished) = unfinished {
-            return Err(Rejection::Retry(prompts::fold_unfinished(
+            return Err(Rejection::retry(prompts::fold_unfinished(
                 &ctx.with.briefs.prompts,
                 &unfinished,
             )));
         }
         if let Some(held) = held_secret(shell, dir, &[base]).await? {
-            return Err(Rejection::Retry(prompts::held_secret(
+            return Err(Rejection::retry(prompts::held_secret(
                 &ctx.with.briefs.prompts,
                 &held,
             )));
@@ -1641,17 +1727,11 @@ async fn implement(
         let kept = keep_unfinished_work(shell, &ws.dir, &upstream, &branch).await;
         kept_note(&branch, &kept, TryAgain::Relabel)
     };
-    // A finished result is pushed while its session can still be resumed,
-    // so that one GitHub refuses over a secret goes back to it.
-    let (mut step, mut retries) = (Step::Start, 0);
-    let (result, turn) = loop {
-        let conversation = converse_counting(shell, ctx, &mut spec, step, &mut retries, &accept);
-        let (result, turn) = match conversation.await {
-            Ok(conversation) => conversation,
-            Err(failure) => return Err(failure.noted(&keep().await)),
-        };
+    // A finished result is pushed as it begins applying, so that one GitHub
+    // refuses over a secret goes back to its session.
+    let begin = |result: ImplementResult| async {
         if !matches!(result, ImplementResult::Done { .. }) {
-            break (result, turn);
+            return Ok(result);
         }
         let pushing = push_result(
             shell,
@@ -1661,17 +1741,11 @@ async fn implement(
             PushMode::Replace,
             TryAgain::Relabel,
         );
-        match pushing.await {
-            Err(Failure::Cancelled) => {
-                keep().await;
-                return Err(Failure::Cancelled);
-            }
-            Err(failure) => return Err(failure),
-            Ok(Some(secrets)) => {
-                step = send_back_protected(shell, ctx, &spec, &turn, &secrets, &mut retries)?;
-            }
-            Ok(None) => break (result, turn),
-        }
+        pushing.await.map(|()| result)
+    };
+    let (result, turn) = match converse(shell, ctx, &mut spec, Step::Start, accept, begin).await {
+        Ok(conversation) => conversation,
+        Err(unbegun) => return Err(unbegun.keeping(keep).await),
     };
     let store = &shell.store;
     match result {
@@ -1680,7 +1754,6 @@ async fn implement(
             pr_body,
             spec_gaps,
         } => {
-            ctx.cancel.begin_applying()?;
             // Opening the pull request puts the ticket in review, which
             // changes what it asks for, so the gaps go first
             // (docs/specs/architecture.md, State, "Writes").
@@ -1719,7 +1792,6 @@ async fn implement(
             spec_gaps,
         } => {
             let kept = keep().await;
-            ctx.cancel.begin_applying()?;
             file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
@@ -1876,7 +1948,7 @@ async fn pull_work(
         Task::Rework | Task::Update => vec![],
     };
     let feedback = new_feedback(pr, linewright, ctx.reworked);
-    let mut feedback_authors = feedback_people(&feedback, linewright);
+    let briefed_authors = feedback_people(&feedback, linewright);
     let pull_task = match (task, &conflict) {
         (Task::Rework, conflict) => PullTask::Rework {
             feedback,
@@ -1906,28 +1978,27 @@ async fn pull_work(
         left_unfinished.as_ref(),
     );
     let mut spec = session_spec(shell, ctx, purpose, &ws, prompt)?;
-    let mut threads: Vec<String> = pr.threads.iter().map(|t| t.id.clone()).collect();
     let before = git::work_state(dir).await.map_err(infra)?;
     let (upstream, base) = (&upstream, start.as_str());
-    let accept = |message: String, pr_threads: Vec<String>| async move {
+    let check_result = |message: String, pr_threads: Vec<String>| async move {
         let result: PullWorkResult = results::parse(&message).map_err(parse_retry(ctx))?;
         let PullWorkResult::Done { replies, .. } = &result else {
             return Ok(result);
         };
         if let Some(problem) = git::loose_ends(dir).await? {
-            return Err(Rejection::Retry(prompts::loose_ends(
+            return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.prompts,
                 &problem,
             )));
         }
         if let Some(unfinished) = git::unfinished_commits(dir, upstream, "HEAD").await? {
-            return Err(Rejection::Retry(prompts::fold_unfinished(
+            return Err(Rejection::retry(prompts::fold_unfinished(
                 &ctx.with.briefs.prompts,
                 &unfinished,
             )));
         }
         if let Some(held) = held_secret(shell, dir, &[base, upstream]).await? {
-            return Err(Rejection::Retry(prompts::held_secret(
+            return Err(Rejection::retry(prompts::held_secret(
                 &ctx.with.briefs.prompts,
                 &held,
             )));
@@ -1944,66 +2015,52 @@ async fn pull_work(
         let kept = keep_unfinished_pull_work(shell, dir, pr, &start, &before).await;
         kept_note(&pr.head_ref, &kept, TryAgain::Reassign)
     };
-    let mut shown_until = ctx.as_of;
-    // A finished result is pushed while its session can still be resumed,
-    // as for an implement run.
-    let (mut step, mut retries) = (Step::Start, 0);
-    let (result, turn, pr_now, read_at) = loop {
-        let ended: Result<_, Failure> = async {
-            let (mut result, mut turn) =
-                converse_counting(shell, ctx, &mut spec, step, &mut retries, |m| {
-                    accept(m, threads.clone())
-                })
-                .await?;
-            // Feedback posted after the snapshot the brief came from would
-            // be older than the push that follows, so it goes to the session
-            // before anything is pushed, for as long as it keeps coming
-            // within the session's time.
-            loop {
-                let read_at = shell.clock.now();
-                let pr_now = store.pull(pr.number).await.map_err(infra)?;
-                if pull_stop(&pr_now, linewright).is_some()
-                    || !matches!(result, PullWorkResult::Done { .. })
-                {
-                    return Ok((result, turn, pr_now, read_at));
-                }
-                let arrived = late(
-                    &new_feedback(&pr_now, linewright, ctx.reworked),
-                    shown_until,
-                );
-                if arrived.is_empty() {
-                    return Ok((result, turn, pr_now, read_at));
-                }
-                shown_until = read_at;
-                feedback_authors.extend(feedback_people(&arrived, linewright));
-                threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
-                let followup = prompts::late_feedback(&ctx.with.briefs.prompts, &pr_now, &arrived);
-                let resume = Step::Resume {
-                    session: turn.session.clone(),
-                    prompt: followup,
-                };
-                // The answer to new feedback is a new result.
-                retries = 0;
-                (result, turn) =
-                    converse_counting(shell, ctx, &mut spec, resume, &mut retries, |m| {
-                        accept(m, threads.clone())
-                    })
-                    .await?;
-            }
-        }
-        .await;
-        let (result, turn, pr_now, read_at) = match ended {
-            Ok(ended) => ended,
-            Err(failure) => return Err(failure.noted(&keep().await)),
-        };
+    let shown = Mutex::new(Shown {
+        until: ctx.as_of,
+        threads: pr.threads.iter().map(|t| t.id.clone()).collect(),
+        feedback_authors: briefed_authors,
+    });
+    let (check_result, shown) = (&check_result, &shown);
+    let accept = |message: String| async move {
+        let threads = lock(shown).threads.clone();
+        let result = check_result(message, threads).await?;
+        let read_at = shell.clock.now();
+        let pr_now = store.pull(pr.number).await?;
         if stopped(&pr_now, linewright).is_some() {
-            keep().await;
-            return Err(Failure::Cancelled);
+            return Err(Rejection::Fail(Failure::Cancelled));
         }
-        if !matches!(result, PullWorkResult::Done { .. })
-            || git::head(dir).await.map_err(infra)? == start
-        {
-            break (result, turn, pr_now, read_at);
+        if !matches!(result, PullWorkResult::Done { .. }) {
+            return Ok((result, pr_now, read_at));
+        }
+        // Feedback posted after the snapshot the brief came from would be
+        // older than the push that follows, so it goes to the session before
+        // anything is pushed, for as long as it keeps coming within the
+        // session's time.
+        let mut shown = lock(shown);
+        let arrived = late(
+            &new_feedback(&pr_now, linewright, ctx.reworked),
+            shown.until,
+        );
+        if arrived.is_empty() {
+            return Ok((result, pr_now, read_at));
+        }
+        shown.until = read_at;
+        shown
+            .feedback_authors
+            .extend(feedback_people(&arrived, linewright));
+        shown.threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
+        Err(Rejection::Resume(prompts::late_feedback(
+            &ctx.with.briefs.prompts,
+            &pr_now,
+            &arrived,
+        )))
+    };
+    // A finished result is pushed as it begins applying, as for an implement
+    // run.
+    let (start, lease) = (&start, &lease);
+    let begin = |(result, pr_now, read_at): (PullWorkResult, Pull, Timestamp)| async move {
+        if !matches!(result, PullWorkResult::Done { .. }) || git::head(dir).await? == *start {
+            return Ok((result, pr_now, read_at));
         }
         let pushing = push_result(
             shell,
@@ -2013,18 +2070,14 @@ async fn pull_work(
             lease.clone(),
             TryAgain::Reassign,
         );
-        match pushing.await {
-            Err(Failure::Cancelled) => {
-                keep().await;
-                return Err(Failure::Cancelled);
-            }
-            Err(failure) => return Err(failure),
-            Ok(Some(secrets)) => {
-                step = send_back_protected(shell, ctx, &spec, &turn, &secrets, &mut retries)?;
-            }
-            Ok(None) => break (result, turn, pr_now, read_at),
-        }
+        pushing.await.map(|()| (result, pr_now, read_at))
     };
+    let ((result, pr_now, read_at), turn) =
+        match converse(shell, ctx, &mut spec, Step::Start, accept, begin).await {
+            Ok(conversation) => conversation,
+            Err(unbegun) => return Err(unbegun.keeping(keep).await),
+        };
+    let feedback_authors = lock(shown).feedback_authors.clone();
     match result {
         PullWorkResult::Done {
             comment,
@@ -2032,7 +2085,6 @@ async fn pull_work(
             replies,
             spec_gaps,
         } => {
-            ctx.cancel.begin_applying()?;
             if let Some(body) = pr_body {
                 store
                     .edit_body(pr.number, &closing(&body, &pr_now.closes))
@@ -2056,7 +2108,6 @@ async fn pull_work(
             spec_gaps,
         } => {
             let kept = keep().await;
-            ctx.cancel.begin_applying()?;
             file_spec_gaps(shell, &spec_gaps, &ticket.filed_gaps())
                 .await
                 .map_err(|e| apply(e).noted(&kept))?;
@@ -2078,6 +2129,23 @@ async fn pull_work(
             }))
         }
     }
+}
+
+/// What a pull work session was shown of its pull request.
+struct Shown {
+    /// The feedback up to then.
+    until: Timestamp,
+    /// The threads it may reply in.
+    threads: Vec<String>,
+    /// The people whose feedback it was shown.
+    feedback_authors: Vec<Login>,
+}
+
+fn lock(shown: &Mutex<Shown>) -> std::sync::MutexGuard<'_, Shown> {
+    // Each field is set whole, so what a panic left is still sound.
+    shown
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn late<'a>(feedback: &Feedback<'a>, since: Timestamp) -> Feedback<'a> {
@@ -2178,11 +2246,15 @@ pub(crate) async fn automation(
         let prompt = prompts::automation(&ctx.with.briefs.prompts, &shell.repo(), automation);
         let mut spec = session_spec(shell, &ctx, purpose, &ws, prompt)?;
         let ctx = &ctx;
-        let (result, _) = converse(shell, ctx, &mut spec, Step::Start, |message| async move {
-            results::parse(&message).map_err(parse_retry(ctx))
-        })
+        let (result, _) = converse(
+            shell,
+            ctx,
+            &mut spec,
+            Step::Start,
+            |message| async move { results::parse(&message).map_err(parse_retry(ctx)) },
+            no_first_writes,
+        )
         .await?;
-        ctx.cancel.begin_applying()?;
         record_automation(shell, automation, &result)
             .await
             .map_err(apply)?;

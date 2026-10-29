@@ -1709,6 +1709,65 @@ async fn feedback_posted_while_the_session_works_is_addressed_before_the_push() 
 }
 
 #[tokio::test]
+async fn the_answer_to_feedback_posted_while_the_session_works_has_its_own_follow_ups() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .comment_as("maintainer", pr, "Add a changelog entry.")
+        .unwrap();
+    let store = world.store.clone();
+    let answers = Arc::new(Mutex::new(0));
+    world.harness.on(WorkKind::Rework, move |call| {
+        let answer = {
+            let mut answers = answers.lock().unwrap();
+            *answers += 1;
+            *answers
+        };
+        match answer {
+            // Each a result that does not parse, the test factory's one
+            // follow-up spent on it.
+            1 | 3 => Ok("Done, I think.".into()),
+            2 => {
+                commit_in(
+                    &call.spec.dir,
+                    &[("CHANGELOG.md", "- thing\n")],
+                    "Changelog",
+                );
+                store
+                    .comment_as("maintainer", pr, "Also update the README.")
+                    .unwrap();
+                Ok(json!({"outcome": "done", "comment": "Added the entry."}).to_string())
+            }
+            _ => {
+                commit_in(
+                    &call.spec.dir,
+                    &[("README.md", "# Widgets, updated\n")],
+                    "README",
+                );
+                Ok(
+                    json!({"outcome": "done", "comment": "Added the entry and updated the README."})
+                        .to_string(),
+                )
+            }
+        }
+    });
+
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_eq!(
+        world.store.file(&view.head_ref, "README.md").await.unwrap(),
+        "# Widgets, updated\n"
+    );
+    assert!(
+        view.comments
+            .iter()
+            .any(|c| c.body == "Added the entry and updated the README.")
+    );
+}
+
+#[tokio::test]
 async fn a_rework_that_needed_no_change_answers_its_feedback_also_after_a_restart() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;

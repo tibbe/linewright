@@ -129,6 +129,39 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
 }
 
 #[tokio::test]
+async fn a_ticket_handed_back_as_github_still_refuses_its_push_says_once_that_the_work_was_not_kept()
+ {
+    let mut world = World::new().await;
+    let store = world.store.clone();
+    world.harness.on(WorkKind::Implement, move |call| {
+        if call.followup.is_none() {
+            commit_token(&call.spec.dir);
+            store.refuse_pushes(REFUSAL);
+        }
+        Ok(
+            json!({"outcome": "done", "pr_title": "Configure", "pr_body": "Configures."})
+                .to_string(),
+        )
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Configure",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
+
+    world.poll().await;
+
+    let issue = world.issue(ticket);
+    let comment = last_comment(&issue);
+    assert_eq!(
+        comment.matches("The work so far was not kept").count(),
+        1,
+        "{comment}"
+    );
+}
+
+#[tokio::test]
 async fn a_rework_whose_push_github_refuses_over_a_secret_is_sent_back_and_pushes_once_it_is_taken_out()
  {
     let mut world = World::new().await;
