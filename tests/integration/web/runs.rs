@@ -9,11 +9,16 @@ async fn with_two_issues_triaged() -> World {
     world
 }
 
-/// Whether `shown` reads as a duration `runs` words, in seconds.
-fn seconds(shown: &str) -> bool {
-    shown
-        .strip_suffix('s')
-        .is_some_and(|seconds| seconds.parse::<u32>().is_ok())
+/// Whether `shown` reads as a duration `runs` words, such as `26s` or
+/// `1m 50s`. The fake clock ticks on every page the test polls while a run
+/// works, so how long a run took depends on how fast the host is.
+fn duration(shown: &str) -> bool {
+    let parts: Vec<&str> = shown.split(' ').collect();
+    (1..=2).contains(&parts.len())
+        && parts.iter().all(|part| {
+            part.strip_suffix(['d', 'h', 'm', 's'])
+                .is_some_and(|n| n.parse::<u32>().is_ok())
+        })
 }
 
 /// Whether `shown` reads as a time on 2026-10-01 from `hour_minute`, as the
@@ -49,7 +54,7 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
         ["done", "2/triage-1", "#2: Import fails", "triage"]
     );
     assert!(started(&shown[0][4], "12:00"), "{shown:?}");
-    assert!(seconds(&shown[0][5]), "{shown:?}");
+    assert!(duration(&shown[0][5]), "{shown:?}");
     assert_eq!(
         shown[1][..4],
         ["done", "1/triage-1", "#1: Export fails", "triage"]
@@ -157,7 +162,7 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
             .is_some_and(|at| started(at, "13:05")),
         "{shown:?}"
     );
-    assert!(seconds(&shown[0][5]), "{shown:?}");
+    assert!(duration(&shown[0][5]), "{shown:?}");
     assert_eq!(shown[1][..4], ["done", "hourly/1", "automation hourly", ""]);
     assert!(started(&shown[1][4], "13:00"), "{shown:?}");
     let items: Vec<&str> = select(&html, "#runs tbody td:nth-child(3) a")
