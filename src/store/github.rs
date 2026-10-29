@@ -515,12 +515,13 @@ impl GitHub {
         Ok(refreshed)
     }
 
-    /// The issues of `numbers` that GitHub has, each read with `fields`,
-    /// twenty to a query by aliases. Twenty
+    /// The issues or pull requests, as `kind` says, of `numbers` that GitHub
+    /// has, each read with `fields`, twenty to a query by aliases. Twenty
     /// with seven connections each cost 140 requests, which rounds to 1 point
     /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
-    async fn issues_numbered<T: DeserializeOwned>(
+    async fn numbered<T: DeserializeOwned>(
         &self,
+        kind: ItemKind,
         numbers: &BTreeSet<Number>,
         fields: Fragment,
     ) -> Result<Vec<T>> {
@@ -529,7 +530,7 @@ impl GitHub {
         for batch in numbers.chunks(20) {
             let response = self
                 .graphql_response(
-                    &numbered_query(batch, fields),
+                    &numbered_query(kind, batch, fields),
                     json!({"owner": self.owner, "name": self.name}),
                 )
                 .await?;
@@ -541,9 +542,19 @@ impl GitHub {
     /// The closed issues of `numbers` that Linewright manages
     /// ([`ClosedItem::managed`]), as [`Store::issue`] reads them.
     async fn closed_issues_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<ClosedItem>> {
-        let issues: Vec<GqlClosedIssue> =
-            self.issues_numbered(numbers, CLOSED_ISSUE_FIELDS).await?;
+        let issues: Vec<GqlClosedIssue> = self
+            .numbered(ItemKind::Issue, numbers, CLOSED_ISSUE_FIELDS)
+            .await?;
         Ok(managed_closed(issues, &self.linewright()))
+    }
+
+    /// Those of the pull requests `numbers` that are Linewright's and closed
+    /// without merging.
+    async fn closed_pulls_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<ClosedItem>> {
+        let pulls: Vec<GqlNumberedPull> = self
+            .numbered(ItemKind::PullRequest, numbers, CLOSED_PULL_FIELDS)
+            .await?;
+        Ok(closed_unmerged(pulls, &self.linewright()))
     }
 
     /// Linewright's pull requests closed without merging, among those
@@ -1683,24 +1694,35 @@ impl GqlClosedIssue {
     }
 }
 
-/// A query for the issues `numbers`, each read with `fields` under the
-/// alias `i` and its number
+/// Which a number names, an issue or a pull request.
+#[derive(Clone, Copy)]
+enum ItemKind {
+    Issue,
+    PullRequest,
+}
+
+/// A query for the issues or pull requests `numbers`, as `kind` says, each
+/// read with `fields` under the alias `i` and its number
 /// (<https://docs.github.com/en/graphql/guides/using-the-explorer#aliases>).
-fn numbered_query(numbers: &[Number], fields: Fragment) -> String {
+fn numbered_query(kind: ItemKind, numbers: &[Number], fields: Fragment) -> String {
     let Fragment { name, text } = fields;
-    let issues: String = numbers
+    let item = match kind {
+        ItemKind::Issue => "issue",
+        ItemKind::PullRequest => "pullRequest",
+    };
+    let items: String = numbers
         .iter()
-        .map(|Number(n)| format!("i{n}: issue(number: {n}) {{ ...{name} }} "))
+        .map(|Number(n)| format!("i{n}: {item}(number: {n}) {{ ...{name} }} "))
         .collect();
     format!(
         "query($owner: String!, $name: String!) {{
-          repository(owner: $owner, name: $name) {{ {issues}}}
+          repository(owner: $owner, name: $name) {{ {items}}}
         }}
         {text}"
     )
 }
 
-/// The issues `response` to a [`numbered_query`] holds. GitHub resolves a
+/// The items `response` to a [`numbered_query`] holds. GitHub resolves a
 /// deleted one to null, with an error saying so.
 fn found_of_numbered<T>(
     response: GqlResponse<RepoData<BTreeMap<String, Option<T>>>>,
@@ -1718,6 +1740,45 @@ fn managed_closed(issues: Vec<GqlClosedIssue>, linewright: &Login) -> Vec<Closed
         .into_iter()
         .filter_map(|issue| issue.into_closed(linewright))
         .filter(|item| item.managed(linewright))
+        .collect()
+}
+
+/// What [`GitHub::closed_pulls_numbered`] reads of a pull request.
+const CLOSED_PULL_FIELDS: Fragment = Fragment {
+    name: "ClosedPullFields",
+    text: concat!(
+        "fragment ClosedPullFields on PullRequest {
+  number title state closedAt updatedAt
+  author { __typename login }
+  ",
+        closes_field!(),
+        "
+}"
+    ),
+};
+
+#[derive(Deserialize)]
+struct GqlNumberedPull {
+    state: GqlPullState,
+    #[serde(flatten)]
+    pull: GqlClosedPull,
+}
+
+/// <https://docs.github.com/en/graphql/reference/enums#pullrequeststate>
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GqlPullState {
+    Open,
+    Closed,
+    Merged,
+}
+
+/// Those of `pulls` that are `linewright`'s and closed without merging.
+fn closed_unmerged(pulls: Vec<GqlNumberedPull>, linewright: &Login) -> Vec<ClosedItem> {
+    pulls
+        .into_iter()
+        .filter(|numbered| numbered.state == GqlPullState::Closed)
+        .filter_map(|numbered| numbered.pull.into_closed(linewright))
         .collect()
 }
 
@@ -2700,7 +2761,9 @@ impl Store for GitHub {
             .to_string();
         let linewright = self.linewright();
         let index = self.managed_issues(windows.read_since()).await?;
-        let open: Vec<GqlIssue> = self.issues_numbered(&index.open, ISSUE_FIELDS).await?;
+        let open: Vec<GqlIssue> = self
+            .numbered(ItemKind::Issue, &index.open, ISSUE_FIELDS)
+            .await?;
         let issues: Vec<Issue> = open
             .into_iter()
             .map(|issue| issue.into_issue(&linewright))
@@ -2734,9 +2797,15 @@ impl Store for GitHub {
             issues,
             pulls,
         };
+        // An unfinished lane holds its closed tickets, and Linewright's pull
+        // requests closing them, whenever they closed.
         let tickets = snapshot.unheld_closed_tickets(&linewright);
         for ticket in self.closed_issues_numbered(&tickets).await? {
             snapshot.put_closed(ticket);
+        }
+        let closing = snapshot.unheld_closing_pulls(&linewright);
+        for pull in self.closed_pulls_numbered(&closing).await? {
+            snapshot.put_closed(pull);
         }
         Ok(snapshot)
     }

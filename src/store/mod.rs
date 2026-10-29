@@ -377,8 +377,10 @@ pub trait Store: Send + Sync {
 
     /// The facts one poll reconciles, with the merged pull requests and
     /// closed items `windows` holds, every closed ticket of a tracking issue
-    /// it holds ([`Snapshot::unheld_closed_tickets`]) and every branch
-    /// Linewright pushed for a ticket.
+    /// it holds ([`Snapshot::unheld_closed_tickets`]), Linewright's pull
+    /// requests closed without merging that close one
+    /// ([`Snapshot::unheld_closing_pulls`]) and every branch Linewright
+    /// pushed for a ticket.
     async fn snapshot(&self, windows: Windows) -> Result<Snapshot>;
     /// The issue as a snapshot taken now sees it, but a closed one whenever
     /// it closed: whether a snapshot holds it closed depends on the rest it

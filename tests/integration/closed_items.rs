@@ -118,3 +118,33 @@ async fn a_ticket_of_an_unfinished_lane_a_person_unlabeled_and_closed_before_the
         Some(Column::Done)
     );
 }
+
+#[tokio::test]
+async fn linewrights_pull_request_closed_unmerged_before_the_done_window_closing_a_ticket_of_an_unfinished_lane_is_held_closed()
+ {
+    let world = World::new().await;
+    let Tracking { closed, .. } = world.tracking_with_a_closed_ticket().await;
+    let pr = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            &format!("{}-part-one", closed.0),
+            "Part one",
+            &format!("Closes {closed}"),
+            &[("src/part.txt", "part\n")],
+        )
+        .await
+        .unwrap();
+    world.store.close_pull_as(pr).unwrap();
+    world.clock.advance(TimeDelta::days(8));
+
+    let closed_items = closed_items_served(world).await;
+
+    assert_eq!(
+        endings(&closed_items),
+        [
+            (closed, "closed".to_string()),
+            (pr, format!("pull request closing {closed}")),
+        ]
+    );
+}

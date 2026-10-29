@@ -267,6 +267,41 @@ async fn a_refreshed_tracking_issue_that_gained_a_ticket_closed_before_the_done_
 }
 
 #[tokio::test]
+async fn a_refresh_keeps_linewrights_pull_request_closed_before_the_done_window_closing_a_ticket_of_an_unfinished_lane()
+ {
+    let world = World::new().await;
+    let Tracking { closed: ticket, .. } = world.tracking_with_a_closed_ticket().await;
+    let pr = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            &format!("{}-part-one", ticket.0),
+            "Part one",
+            &format!("Closes {ticket}"),
+            &[("src/part.txt", "part\n")],
+        )
+        .await
+        .unwrap();
+    world.store.close_pull_as(pr).unwrap();
+    world.clock.advance(TimeDelta::days(8));
+    let marker = world
+        .store
+        .open_issue(LINEWRIGHT, "Marker", "Now.", &["ready-for-human"]);
+    let served = serve(world, NEVER).await;
+
+    served.store.close_issue_as_completed(marker).unwrap();
+    served.deliver("issues", about_issue(marker)).await;
+
+    let held = || -> Vec<Number> {
+        let snapshot = served.snapshot();
+        snapshot.closed.iter().map(|item| item.number).collect()
+    };
+    eventually(|| held().contains(&marker)).await;
+    assert_eq!(held(), [ticket, pr, marker]);
+    served.stop().await;
+}
+
+#[tokio::test]
 async fn a_refresh_drops_an_issue_closed_before_the_done_window_since_the_poll() {
     let world = World::new().await;
     let aged = world

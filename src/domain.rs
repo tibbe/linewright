@@ -1431,7 +1431,8 @@ pub struct Snapshot {
     pub ticket_branches: Vec<TicketBranch>,
     /// The issues closed within the Done window that Linewright manages
     /// ([`ClosedItem::managed`]), every closed ticket of a tracking issue it
-    /// holds, whenever it closed, and Linewright's pull requests closed
+    /// holds and Linewright's pull requests closed without merging that
+    /// close one, whenever they closed, and Linewright's pull requests closed
     /// without merging within the Done window, for the board's Done column
     /// (`docs/specs/design_system.md`, "The board"), which keeps only those
     /// worked. The reconcile ignores them.
@@ -1771,15 +1772,19 @@ impl Snapshot {
     }
 
     /// Whether a snapshot holding the rest of what this one holds holds
-    /// `item` among the closed ones: closed within the Done window, or a
-    /// ticket of a tracking issue it holds, whenever it closed, as an
-    /// unfinished lane keeps every ticket it closed
-    /// (`docs/specs/design_system.md`, The board, Finished lanes).
+    /// `item` among the closed ones: closed within the Done window, or,
+    /// whenever it closed, a ticket of a tracking issue it holds or a pull
+    /// request of Linewright's closing one, as an unfinished lane keeps
+    /// every ticket it closed (`docs/specs/design_system.md`, The board,
+    /// Finished lanes).
     pub fn keeps_closed(&self, item: &ClosedItem, windows: Windows, linewright: &Login) -> bool {
+        let held_ticket = |number: Number| {
+            self.held_tickets(linewright)
+                .any(|ticket| ticket.number == number)
+        };
         windows.holds_closed(item.closed_at)
-            || self
-                .held_tickets(linewright)
-                .any(|ticket| ticket.number == item.number)
+            || held_ticket(item.number)
+            || matches!(&item.kind, ClosedKind::Pull { closes } if closes.iter().any(|&n| held_ticket(n)))
     }
 
     /// Drops the closed items it would not keep ([`Snapshot::keeps_closed`]),
@@ -1809,6 +1814,31 @@ impl Snapshot {
         self.held_tickets(linewright)
             .filter(|ticket| !ticket.is_open())
             .map(|ticket| ticket.number)
+            .filter(|&number| !self.closed.iter().any(|item| item.number == number))
+            .collect()
+    }
+
+    /// Linewright's pull requests closed without merging that close the
+    /// closed tickets of the tracking issues it holds, that it does not yet
+    /// hold among the closed items, which a store reads after those tickets
+    /// ([`Snapshot::unheld_closed_tickets`]).
+    pub fn unheld_closing_pulls(&self, linewright: &Login) -> BTreeSet<Number> {
+        let tickets: BTreeSet<Number> = self
+            .held_tickets(linewright)
+            .map(|ticket| ticket.number)
+            .collect();
+        self.closed
+            .iter()
+            .filter(|item| tickets.contains(&item.number))
+            .filter_map(|item| match &item.kind {
+                ClosedKind::Issue { facts, .. } => Some(&facts.work.closed_by),
+                ClosedKind::Pull { .. } => None,
+            })
+            .flatten()
+            .filter(|pull| {
+                pull.author == *linewright && matches!(pull.state, PullState::Closed { .. })
+            })
+            .map(|pull| pull.number)
             .filter(|&number| !self.closed.iter().any(|item| item.number == number))
             .collect()
     }

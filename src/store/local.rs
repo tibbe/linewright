@@ -1664,6 +1664,15 @@ impl Store for LocalStore {
                 snapshot.put_closed(ticket);
             }
         }
+        for number in snapshot.unheld_closing_pulls(&linewright) {
+            if let Some(pull) = state
+                .pulls
+                .get(&number)
+                .and_then(|p| p.closed_unmerged(&linewright))
+            {
+                snapshot.put_closed(pull);
+            }
+        }
         Ok(snapshot)
     }
 
