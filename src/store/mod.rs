@@ -135,6 +135,19 @@ impl PushError {
     }
 }
 
+/// Why the store did not attach a file.
+#[derive(Debug, thiserror::Error)]
+pub enum AttachError {
+    /// GitHub refuses the file itself, such as for its size or type.
+    #[error("GitHub refused the file: {reason}")]
+    RefusedFile { reason: String },
+    /// GitHub refuses Linewright's token.
+    #[error("GitHub refused Linewright's token: {reason}")]
+    RefusedToken { reason: String },
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
+}
+
 /// A secret GitHub's push protection found in a commit pushed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoundSecret {
@@ -385,6 +398,15 @@ pub trait Store: Send + Sync {
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;
+    /// Uploads `file` as an attachment of the repository's Markdown, named
+    /// `name`, and returns the URL to put in place of its path
+    /// (`docs/specs/runs.md`, "Attachments").
+    async fn attach(
+        &self,
+        file: &Path,
+        name: &str,
+        content_type: &str,
+    ) -> Result<String, AttachError>;
     /// Deletes `branch`, if the repository has it.
     async fn delete_branch(&self, branch: &str) -> Result<()>;
 

@@ -6,11 +6,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
 use super::{
-    AnyItem, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
-    RepoSettings, Store,
+    AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError,
+    PushMode, RepoSettings, Store,
 };
 use crate::clock::Clock;
 use crate::domain::{
@@ -26,6 +27,10 @@ use crate::git::{self, Merged};
 mod history;
 
 use history::{MergeOf, NewCommit, Replayed};
+
+/// The directory, beside the exported `issues/` and `pulls/`, that keeps
+/// the attachments.
+const ATTACHMENTS: &str = "attachments";
 
 pub struct Seed {
     pub repo: Repo,
@@ -1852,6 +1857,38 @@ impl Store for LocalStore {
         })
         .await
         .map_err(PushError::Failed)
+    }
+
+    /// Keeps each attachment once, named by its content's hash, and gives
+    /// its path from the exported items (`docs/specs/replay.md`,
+    /// "Attachments").
+    async fn attach(
+        &self,
+        file: &Path,
+        name: &str,
+        _content_type: &str,
+    ) -> Result<String, AttachError> {
+        let bytes = tokio::fs::read(file)
+            .await
+            .with_context(|| format!("reading {}", file.display()))?;
+        let mut kept = hex::encode(Sha256::digest(&bytes));
+        if let Some(extension) = Path::new(name).extension() {
+            kept = format!("{kept}.{}", extension.to_string_lossy());
+        }
+        let dir = self.root.join(ATTACHMENTS);
+        let path = dir.join(&kept);
+        if !tokio::fs::try_exists(&path)
+            .await
+            .context("reading the attachments")?
+        {
+            tokio::fs::create_dir_all(&dir)
+                .await
+                .context("keeping an attachment")?;
+            tokio::fs::write(&path, bytes)
+                .await
+                .context("keeping an attachment")?;
+        }
+        Ok(format!("../{ATTACHMENTS}/{kept}"))
     }
 
     async fn delete_branch(&self, branch: &str) -> Result<()> {

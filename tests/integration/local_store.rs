@@ -580,3 +580,40 @@ async fn every_file_under_a_directory_is_listed_by_its_path_under_it() {
         Vec::<String>::new()
     );
 }
+
+#[tokio::test]
+async fn uploads_of_the_same_bytes_keep_one_file_that_the_exported_items_reach() {
+    let world = World::new().await;
+    let session = tempfile::tempdir().unwrap();
+    let shot = session.path().join("shot.png");
+    let again = session.path().join("again.png");
+    std::fs::write(&shot, "the bytes").unwrap();
+    std::fs::write(&again, "the bytes").unwrap();
+
+    let first = world
+        .store
+        .attach(&shot, "shot.png", "image/png")
+        .await
+        .unwrap();
+    let second = world
+        .store
+        .attach(&again, "again.png", "image/png")
+        .await
+        .unwrap();
+
+    // `sha256sum` of `the bytes`.
+    let expected =
+        "../attachments/ed589341c9fd5da96aaff4c5efa008226282a716186608d5a032ac75895a9c2f.png";
+    assert_eq!(first, expected);
+    assert_eq!(second, expected);
+    let root = world.dir.path().join("store");
+    let kept: Vec<_> = std::fs::read_dir(root.join("attachments"))
+        .unwrap()
+        .collect();
+    assert_eq!(kept.len(), 1);
+    world.store.export().await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("issues").join(&first)).unwrap(),
+        "the bytes"
+    );
+}

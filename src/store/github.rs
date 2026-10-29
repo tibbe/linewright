@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -12,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    AnyItem, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError, PushMode,
-    RepoSettings, Store,
+    AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError,
+    PushMode, RepoSettings, Store,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
@@ -26,6 +27,10 @@ use crate::domain::{
 use crate::git;
 
 const API: &str = "https://api.github.com";
+
+/// Where attachments are uploaded, as gh uploads them (`internal/attachments`
+/// in <https://github.com/cli/cli>).
+const ATTACHMENTS: &str = "https://uploads.github.com/user-attachments/assets";
 
 /// In `gh`'s order (<https://cli.github.com/manual/gh_help_environment>).
 pub const TOKEN_VARIABLES: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
@@ -40,6 +45,8 @@ pub struct GitHub {
     owner: String,
     name: String,
     viewer: Viewer,
+    /// The repository's numeric id, read once.
+    repository_id: Arc<tokio::sync::OnceCell<u64>>,
 }
 
 macro_rules! closes_field {
@@ -65,6 +72,44 @@ impl ErrorResponse {
             .map(|b| b.message)
             .unwrap_or_else(|_| format!("{}: {}", self.status, self.body))
     }
+
+    /// The message, followed by each of the errors it lists
+    /// (<https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api>).
+    fn reasons(&self) -> String {
+        #[derive(Deserialize)]
+        struct Body {
+            message: String,
+            #[serde(default)]
+            errors: Vec<Cause>,
+        }
+        #[derive(Deserialize)]
+        struct Cause {
+            message: Option<String>,
+            resource: Option<String>,
+            field: Option<String>,
+            code: Option<String>,
+        }
+        let Ok(body) = serde_json::from_str::<Body>(&self.body) else {
+            return self.message();
+        };
+        let causes = body.errors.into_iter().filter_map(|cause| match cause {
+            Cause {
+                message: Some(message),
+                ..
+            } => Some(message),
+            Cause {
+                resource: Some(resource),
+                field: Some(field),
+                code: Some(code),
+                ..
+            } => Some(format!("{resource}.{field} is {code}")),
+            Cause { code, .. } => code,
+        });
+        std::iter::once(body.message)
+            .chain(causes)
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
 }
 
 impl std::fmt::Display for ErrorResponse {
@@ -74,6 +119,92 @@ impl std::fmt::Display for ErrorResponse {
 }
 
 impl std::error::Error for ErrorResponse {}
+
+/// One answer GitHub gave.
+struct Answer {
+    status: StatusCode,
+    headers: reqwest::header::HeaderMap,
+    body: String,
+}
+
+impl Answer {
+    async fn read(response: reqwest::Response) -> Result<Answer> {
+        Ok(Answer {
+            status: response.status(),
+            headers: response.headers().clone(),
+            body: response.text().await?,
+        })
+    }
+}
+
+/// The answer to `request`, which `send` makes, made again once each rate
+/// limit is waited out, at most [`rate_limit::RETRIES`] times: a rate limit
+/// still in force after them fails it.
+async fn waiting_out_rate_limits<F, Fut>(request: &str, mut send: F) -> Result<Answer>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Answer>>,
+{
+    let mut retries = 0;
+    loop {
+        let answer = send().await?;
+        let wait = rate_limit::wait(
+            answer.status,
+            &answer.headers,
+            &answer.body,
+            retries,
+            SystemTime::now(),
+        );
+        match wait {
+            None => return Ok(answer),
+            Some(wait) if retries < rate_limit::RETRIES => {
+                tracing::warn!(request, wait = %humantime::format_duration(wait), "rate limited");
+                tokio::time::sleep(wait).await;
+                retries += 1;
+            }
+            Some(_) => {
+                return Err(ErrorResponse {
+                    request: request.to_string(),
+                    status: answer.status,
+                    body: answer.body,
+                }
+                .into());
+            }
+        }
+    }
+}
+
+/// The URL of the attachment GitHub gave `answer` to `request`, an upload
+/// that is not rate limited. GitHub answers a token that cannot write to the
+/// repository with 404, as gh says (`uploadPermissions` in
+/// `internal/attachments` of <https://github.com/cli/cli>).
+fn attached(request: &str, answer: Answer) -> Result<String, AttachError> {
+    #[derive(Deserialize)]
+    struct Uploaded {
+        url: String,
+    }
+    if answer.status.is_success() {
+        let uploaded: Uploaded =
+            serde_json::from_str(&answer.body).with_context(|| format!("decoding {request}"))?;
+        return Ok(uploaded.url);
+    }
+    let refusal = ErrorResponse {
+        request: request.to_string(),
+        status: answer.status,
+        body: answer.body,
+    };
+    match refusal.status {
+        StatusCode::UNPROCESSABLE_ENTITY => Err(AttachError::RefusedFile {
+            reason: refusal.reasons(),
+        }),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::NOT_FOUND => {
+            Err(AttachError::RefusedToken {
+                reason: refusal.message(),
+            })
+        }
+        _ => Err(AttachError::Failed(refusal.into())),
+    }
+}
 
 #[derive(Clone, Deserialize)]
 struct Viewer {
@@ -100,6 +231,7 @@ impl GitHub {
                 login: String::new(),
                 id: 0,
             },
+            repository_id: Arc::default(),
         };
         github.viewer = github
             .rest(Method::GET, "/user", None)
@@ -160,30 +292,24 @@ impl GitHub {
         path: &str,
         body: Option<Value>,
     ) -> Result<T> {
-        let mut retries = 0;
-        let text = loop {
-            let response = self.send(method.clone(), path, body.clone()).await?;
-            let status = response.status();
-            let headers = response.headers().clone();
-            let text = response.text().await?;
-            let wait = rate_limit::wait(status, &headers, &text, retries, SystemTime::now());
-            if let Some(wait) = wait.filter(|_| retries < rate_limit::RETRIES) {
-                tracing::warn!(%method, path, wait = %humantime::format_duration(wait), "rate limited");
-                tokio::time::sleep(wait).await;
-                retries += 1;
-                continue;
+        let request = format!("{method} {path}");
+        let answer = waiting_out_rate_limits(&request, || async {
+            Answer::read(self.send(method.clone(), path, body.clone()).await?).await
+        })
+        .await?;
+        if !answer.status.is_success() {
+            return Err(ErrorResponse {
+                request,
+                status: answer.status,
+                body: answer.body,
             }
-            if !status.is_success() || wait.is_some() {
-                return Err(ErrorResponse {
-                    request: format!("{method} {path}"),
-                    status,
-                    body: text,
-                }
-                .into());
-            }
-            break text;
+            .into());
+        }
+        let text = if answer.body.is_empty() {
+            "null"
+        } else {
+            &answer.body
         };
-        let text = if text.is_empty() { "null" } else { &text };
         serde_json::from_str(text).with_context(|| format!("decoding {method} {path}"))
     }
 
@@ -295,6 +421,43 @@ impl GitHub {
             )
             .await?;
         Ok(issue.id)
+    }
+
+    /// The repository's numeric id, which the upload of an attachment names.
+    async fn repository_id(&self) -> Result<u64> {
+        #[derive(Deserialize)]
+        struct Id {
+            id: u64,
+        }
+        self.repository_id
+            .get_or_try_init(|| async {
+                let repo: Id = self.rest(Method::GET, &self.repo_path(""), None).await?;
+                Ok(repo.id)
+            })
+            .await
+            .copied()
+    }
+
+    /// The upload of `bytes` as an attachment named `name`, as gh makes it,
+    /// with `token` and not `Bearer` (<https://github.com/cli/cli/pull/14495>).
+    fn attach_request(
+        &self,
+        repository_id: u64,
+        name: &str,
+        content_type: &str,
+        bytes: Vec<u8>,
+    ) -> reqwest::RequestBuilder {
+        let query = form_urlencoded::Serializer::new(String::new())
+            .append_pair("content_type", content_type)
+            .append_pair("name", name)
+            .append_pair("repository_id", &repository_id.to_string())
+            .finish();
+        self.http
+            .post(format!("{ATTACHMENTS}?{query}"))
+            .header("Authorization", format!("token {}", self.token))
+            .header("Accept", "application/vnd.github+json")
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes)
     }
 
     /// The issues `filter` finds, each read with `fields`.
@@ -2812,6 +2975,25 @@ impl Store for GitHub {
         Ok(())
     }
 
+    async fn attach(
+        &self,
+        file: &Path,
+        name: &str,
+        content_type: &str,
+    ) -> Result<String, AttachError> {
+        let repository_id = self.repository_id().await?;
+        let bytes = tokio::fs::read(file)
+            .await
+            .with_context(|| format!("reading {}", file.display()))?;
+        let request = format!("POST {ATTACHMENTS}");
+        let answer = waiting_out_rate_limits(&request, || async {
+            let upload = self.attach_request(repository_id, name, content_type, bytes.clone());
+            Answer::read(upload.send().await.with_context(|| request.clone())?).await
+        })
+        .await?;
+        attached(&request, answer)
+    }
+
     async fn delete_branch(&self, branch: &str) -> Result<()> {
         let path = format!("/git/refs/heads/{}", percent_encode(branch));
         let response = self
@@ -4205,5 +4387,149 @@ mod tests {
         let response: GqlResponse<RepoData<BTreeMap<String, Option<GqlObject>>>> =
             serde_json::from_str(recorded).unwrap();
         response.data.unwrap().repository
+    }
+
+    fn github(token: &str) -> GitHub {
+        GitHub {
+            http: reqwest::Client::new(),
+            token: token.to_string(),
+            owner: "owner".into(),
+            name: "repo".into(),
+            viewer: Viewer {
+                login: "linewright".into(),
+                id: 1,
+            },
+            repository_id: Arc::default(),
+        }
+    }
+
+    fn answer(status: u16, headers: &[(&'static str, &str)], body: &str) -> Answer {
+        let mut map = reqwest::header::HeaderMap::new();
+        for (name, value) in headers {
+            map.insert(*name, value.parse().unwrap());
+        }
+        Answer {
+            status: StatusCode::from_u16(status).unwrap(),
+            headers: map,
+            body: body.to_string(),
+        }
+    }
+
+    const UPLOAD: &str = "POST https://uploads.github.com/user-attachments/assets";
+
+    /// As gh's `TestUpload` and `TestUploadAuthentication`
+    /// (`internal/attachments/client_test.go` in cli/cli) expect it.
+    #[test]
+    fn an_attachment_is_uploaded_as_gh_uploads_it() {
+        let request = github("github-token")
+            .attach_request(1234, "shot.png", "image/png", b"the bytes".to_vec())
+            .build()
+            .unwrap();
+
+        assert_eq!(request.method(), Method::POST);
+        assert_eq!(
+            request.url().as_str(),
+            "https://uploads.github.com/user-attachments/assets?content_type=image%2Fpng&name=shot.png&repository_id=1234"
+        );
+        let header = |name: &str| request.headers()[name].to_str().unwrap().to_string();
+        assert_eq!(header("Authorization"), "token github-token");
+        assert_eq!(header("Content-Type"), "application/octet-stream");
+        assert_eq!(header("Accept"), "application/vnd.github+json");
+        assert_eq!(
+            request.body().and_then(reqwest::Body::as_bytes),
+            Some(&b"the bytes"[..])
+        );
+    }
+
+    /// The answers in `fixtures/attachment-*.json` are gh's
+    /// (`internal/attachments/client_test.go` in cli/cli), but for
+    /// `attachment-forbidden.json`, whose message is GitHub's for a token
+    /// that lacks a permission
+    /// (<https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#resource-not-accessible>).
+    #[test]
+    fn an_uploaded_attachment_gives_its_url() {
+        let url = attached(
+            UPLOAD,
+            answer(201, &[], include_str!("fixtures/attachment-uploaded.json")),
+        );
+
+        assert_eq!(
+            url.unwrap(),
+            "https://github.com/user-attachments/assets/be9b3920"
+        );
+    }
+
+    #[test]
+    fn a_file_github_refuses_is_refused_with_githubs_reason() {
+        let refused = attached(
+            UPLOAD,
+            answer(422, &[], include_str!("fixtures/attachment-refused.json")),
+        );
+
+        let Err(AttachError::RefusedFile { reason }) = refused else {
+            panic!("{refused:?}");
+        };
+        assert_eq!(
+            reason,
+            "Validation Failed; content_type is not included in the list of allowed content types"
+        );
+    }
+
+    /// GitHub answers a token that cannot write with 404, as gh's
+    /// `uploadPermissions` says.
+    #[test]
+    fn an_upload_not_found_refuses_the_token() {
+        let refused = attached(
+            UPLOAD,
+            answer(404, &[], include_str!("fixtures/attachment-not-found.json")),
+        );
+
+        let Err(AttachError::RefusedToken { reason }) = refused else {
+            panic!("{refused:?}");
+        };
+        assert_eq!(reason, "Not Found");
+    }
+
+    #[test]
+    fn an_upload_forbidden_refuses_the_token() {
+        let refused = attached(
+            UPLOAD,
+            answer(403, &[], include_str!("fixtures/attachment-forbidden.json")),
+        );
+
+        let Err(AttachError::RefusedToken { reason }) = refused else {
+            panic!("{refused:?}");
+        };
+        assert_eq!(reason, "Resource not accessible by personal access token");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rate_limited_upload_is_sent_again_once_the_limit_is_waited_out() {
+        let start = tokio::time::Instant::now();
+
+        let mut answers = vec![
+            answer(
+                429,
+                &[("retry-after", "120")],
+                include_str!("fixtures/attachment-rate-limited.json"),
+            ),
+            answer(201, &[], include_str!("fixtures/attachment-uploaded.json")),
+        ]
+        .into_iter();
+        let mut sent = 0;
+
+        let answered = waiting_out_rate_limits(UPLOAD, || {
+            sent += 1;
+            std::future::ready(Ok(answers.next().expect("an answer left")))
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            attached(UPLOAD, answered).unwrap(),
+            "https://github.com/user-attachments/assets/be9b3920"
+        );
+        assert_eq!(sent, 2);
+        assert!(start.elapsed() >= std::time::Duration::from_secs(120));
     }
 }

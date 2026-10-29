@@ -1,0 +1,1 @@
+{"message":"Validation Failed","errors":[{"field":"content_type","message":"content_type is not included in the list of allowed content types"}]}
