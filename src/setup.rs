@@ -36,7 +36,9 @@ pub struct Request<'a> {
     pub dir: &'a Path,
     /// The whole environment the command runs in.
     pub environment: Vec<(OsString, OsString)>,
-    pub timeout: Duration,
+    /// The session's deadline: the command still running then is ended, as
+    /// the session timing out.
+    pub deadline: Instant,
     /// When it starts.
     pub started_at: Timestamp,
     /// The session's record directory.
@@ -53,9 +55,9 @@ pub struct Ran {
 
 /// Runs `bash -c command` with stdin from `/dev/null` and stdout and stderr
 /// on one pipe, in a process group of its own. `cancelled` ending first ends
-/// the group at once, as a timeout does. Its start and end are appended to
-/// [`transcript::OUTPUT`] in the record, and its output to
-/// [`transcript::SETUP_OUTPUT`] as it arrives, all of it before its end.
+/// the group at once, as the session's deadline passing does. Its start and
+/// end are appended to [`transcript::OUTPUT`] in the record, and its output
+/// to [`transcript::SETUP_OUTPUT`] as it arrives, all of it before its end.
 /// `Err` is a failure to start the command or to keep its record.
 pub async fn run(
     bash: &Path,
@@ -117,7 +119,6 @@ pub async fn run(
         text: String::new(),
         log: &mut log,
     };
-    let deadline = Instant::now() + request.timeout;
     let mut cancelled = std::pin::pin!(cancelled);
     let mut buffer = vec![0; 8192];
     let mut open = true;
@@ -128,7 +129,7 @@ pub async fn run(
                 end_at_once(group, &mut child).await;
                 break Status::Cancelled;
             }
-            () = tokio::time::sleep_until(deadline) => {
+            () = tokio::time::sleep_until(request.deadline) => {
                 end_at_once(group, &mut child).await;
                 break Status::TimedOut;
             }

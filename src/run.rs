@@ -17,7 +17,9 @@ use crate::domain::{
     Windows, addressed_to, closing_references, label,
 };
 use crate::git::{self, Updated, WorkState};
-use crate::harness::{Harness, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit};
+use crate::harness::{
+    self, Harness, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
+};
 use crate::prompts::{self, DesignOf, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
@@ -1115,19 +1117,11 @@ async fn take_turn(
             Err(SessionError::Infrastructure(reason)) => {
                 return Err(infra(anyhow::anyhow!(reason)));
             }
-            Err(e @ SessionError::TimedOut { .. }) => {
-                let SessionError::TimedOut { log_tail } = &e else {
-                    unreachable!("matched as a timeout")
-                };
-                return Err(Failure::HandBack(HandBack {
-                    kind: HandBackKind::Stall,
-                    reason: format!(
-                        "The session ended unexpectedly: {e}. The work may need cutting \
-                         smaller, or {} may need to be longer.",
-                        ctx.with.settings.timeout_setting
-                    ),
-                    log_tail: LogTail::session(&scrub(log_tail, &spec.dir)),
-                }));
+            Err(SessionError::TimedOut { log_tail }) => {
+                return Err(timed_out(
+                    &ctx.with.settings,
+                    LogTail::session(&scrub(&log_tail, &spec.dir)),
+                ));
             }
             Err(SessionError::Failed { reason, log_tail }) => {
                 return Err(Failure::HandBack(HandBack {
@@ -1172,6 +1166,21 @@ async fn cancellable<T>(ctx: &Ctx, turn: impl Future<Output = T>) -> Result<T, F
     }
 }
 
+/// The hand-back of a session that timed out, with `log_tail` as its log
+/// (docs/specs/runs.md, "Limits", Session timeout): it is not retried.
+fn timed_out(settings: &SessionSettings, log_tail: Option<LogTail>) -> Failure {
+    Failure::HandBack(HandBack {
+        kind: HandBackKind::Stall,
+        reason: format!(
+            "The session ended unexpectedly: {}. The work may need cutting smaller, or {} \
+             may need to be longer.",
+            harness::TIMED_OUT,
+            settings.timeout_setting
+        ),
+        log_tail,
+    })
+}
+
 fn followup_name(record: &Path) -> String {
     let n = (1..=usize::MAX)
         .find(|n| !record.join(transcript::followup_file(*n)).exists())
@@ -1198,12 +1207,15 @@ struct Opened<'a> {
     dir: PathBuf,
     scratch: PathBuf,
     plugin: PathBuf,
+    /// When the session times out, its setup command included.
+    deadline: tokio::time::Instant,
 }
 
 /// Opens the session of `purpose` in `ws`: makes its record and its
-/// attachments directory, registers it with the run, and runs its setup
-/// command (docs/specs/runs.md, "Setup"), so that the command's output is
-/// under the session whether or not it starts.
+/// attachments directory, registers it with the run, sets its deadline and
+/// runs its setup command (docs/specs/runs.md, "Setup"), so that the
+/// command's output is under the session whether or not the agent starts,
+/// and its time counts against the session's timeout.
 async fn open_session<'a>(
     shell: &Shell,
     ctx: &'a Ctx,
@@ -1216,8 +1228,9 @@ async fn open_session<'a>(
         .context("creating the attachments directory")
         .map_err(infra)?;
     let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
+    let deadline = tokio::time::Instant::now() + settings.session_timeout.value;
     if let Setup::Command(command) = &settings.setup.value {
-        set_up(shell, ctx, command, &record, ws).await?;
+        set_up(shell, ctx, command, &record, deadline, ws).await?;
     }
     Ok(Opened {
         settings,
@@ -1228,16 +1241,18 @@ async fn open_session<'a>(
         dir: ws.dir.clone(),
         scratch: ws.scratch.clone(),
         plugin: ws.plugin.clone(),
+        deadline,
     })
 }
 
-/// Runs the setup `command` in `ws`, which keeps what it leaves running.
-/// It fails as the session would not start.
+/// Runs the setup `command` in `ws`, which keeps what it leaves running,
+/// until the session's `deadline`. It fails as the session would end.
 async fn set_up(
     shell: &Shell,
     ctx: &Ctx,
     command: &SetupCommand,
     record: &Path,
+    deadline: tokio::time::Instant,
     ws: &mut Workspace,
 ) -> Result<(), Failure> {
     let settings = &ctx.with.settings;
@@ -1249,7 +1264,7 @@ async fn set_up(
             &ws.scratch,
             settings.effort_set(),
         ),
-        timeout: settings.session_timeout.value,
+        deadline,
         started_at: shell.clock.now(),
         record,
     };
@@ -1266,26 +1281,16 @@ async fn set_up(
     set_up_failure(&ran, &ws.dir, settings).map_or(Ok(()), Err)
 }
 
-/// Why the session does not start after the setup command ran in `dir` as
-/// `ran`, if it does not (docs/specs/runs.md, "Setup", Failing).
+/// Why the session ends after the setup command ran in `dir` as `ran`, if
+/// it does (docs/specs/runs.md, "Setup", Failing): a command still running
+/// at the session's deadline is the session timing out.
 fn set_up_failure(ran: &setup::Ran, dir: &Path, settings: &SessionSettings) -> Option<Failure> {
     let log_tail = || LogTail::setup(&scrub(&tail(&ran.output, 40), dir));
     let failed = match ran.status {
         setup::Status::Exited(0) => return None,
         setup::Status::Exited(code) => format!("exited with status {code}"),
         setup::Status::Signalled(signal) => format!("was ended by signal {signal}"),
-        setup::Status::TimedOut => {
-            return Some(Failure::HandBack(HandBack {
-                kind: HandBackKind::Stall,
-                reason: format!(
-                    "The setup command timed out after {}. It may need to do less, or {} \
-                     may need to be longer.",
-                    humantime::format_duration(settings.session_timeout.value),
-                    settings.timeout_setting
-                ),
-                log_tail: log_tail(),
-            }));
-        }
+        setup::Status::TimedOut => return Some(timed_out(settings, log_tail())),
         setup::Status::Cancelled => return Some(Failure::Cancelled),
     };
     Some(Failure::Infrastructure {
@@ -1308,6 +1313,7 @@ impl Opened<'_> {
             dir,
             scratch,
             plugin,
+            deadline,
         } = self;
         let spec = SessionSpec {
             record,
@@ -1320,7 +1326,7 @@ impl Opened<'_> {
             model: settings.model_set(),
             effort: settings.effort_set(),
             environment: settings.environment.clone(),
-            deadline: tokio::time::Instant::now() + settings.session_timeout.value,
+            deadline,
             report: Reporter::new(move |reported| recorder.reported(reported)),
         };
         (spec, attachments)

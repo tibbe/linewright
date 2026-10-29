@@ -48,6 +48,7 @@ pub enum SetupStatus {
     Exited(i32),
     /// A signal ended it, this one.
     Signalled(i32),
+    /// Its session's deadline passed while it ran.
     TimedOut,
     Cancelled,
 }

@@ -108,6 +108,9 @@ impl UsageLimit {
     }
 }
 
+/// What a session that ran past its deadline did, as its error says.
+pub const TIMED_OUT: &str = "it timed out";
+
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     /// Worth one retry.
@@ -122,7 +125,7 @@ pub enum SessionError {
         underway: Option<String>,
     },
     /// Ran past its deadline.
-    #[error("it timed out")]
+    #[error("{TIMED_OUT}")]
     TimedOut { log_tail: String },
     #[error("{reason}")]
     Failed { reason: String, log_tail: String },

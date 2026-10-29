@@ -326,7 +326,7 @@ pub struct SessionSettings {
     pub effort: Option<Sourced<Effort>>,
     pub session_timeout: Sourced<Duration>,
     pub timeout_setting: TimeoutSetting,
-    /// The setup command, whose timeout is `session_timeout`'s.
+    /// The setup command, whose time counts against `session_timeout`.
     pub setup: Sourced<Setup>,
     pub environment: Arc<Given>,
     pub env_layers: EnvLayers,

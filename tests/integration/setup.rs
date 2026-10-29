@@ -243,7 +243,36 @@ async fn a_setup_command_that_fails_once_is_retried_and_its_session_starts() {
 }
 
 #[tokio::test]
-async fn a_setup_command_that_times_out_hands_back_at_once_naming_the_timeout_setting() {
+async fn the_setup_commands_time_counts_against_its_sessions_timeout() {
+    let mut world = World::with(|config| {
+        config.work.flags_and_env.setup = Some(setup("sleep 2"));
+        config.work.flags_and_env.session_timeout = Some(Duration::from_secs(10));
+    })
+    .await;
+    let left = Arc::new(Mutex::new(None));
+    world.harness.on(WorkKind::Triage, {
+        let left = left.clone();
+        move |call| {
+            *left.lock().unwrap() = Some(call.spec.deadline - tokio::time::Instant::now());
+            Ok(json!({
+                "outcome": "ready-for-agent",
+                "category": "bug",
+                "comment": "## Agent Brief\n\n**Summary:** It crashes."
+            })
+            .to_string())
+        }
+    });
+    open_for_triage(&world);
+
+    world.poll().await;
+
+    let left = left.lock().unwrap().expect("the session started");
+    assert!(left <= Duration::from_secs(8), "{left:?}");
+    assert!(left > Duration::from_secs(5), "{left:?}");
+}
+
+#[tokio::test]
+async fn a_setup_command_that_outlasts_its_sessions_timeout_is_the_session_timing_out() {
     let marks = marks();
     let command = format!(
         "echo ran >> '{}/runs'; echo 'fetching...'; sleep 30",
@@ -262,9 +291,15 @@ async fn a_setup_command_that_times_out_hands_back_at_once_naming_the_timeout_se
     assert!(started.elapsed() < Duration::from_secs(20));
     assert_eq!(lines_of(marks.path(), "runs"), ["ran"], "not retried");
     let issue = world.issue(issue);
+    assert!(labels(&issue).contains(&"ready-for-human"));
     let comment = last_comment(&issue);
-    assert!(comment.contains("The setup command timed out"), "{comment}");
-    assert!(comment.contains("`session-timeout`"), "{comment}");
+    assert!(
+        comment.contains(
+            "The session ended unexpectedly: it timed out. The work may need cutting \
+             smaller, or `session-timeout` may need to be longer."
+        ),
+        "{comment}"
+    );
     assert!(!comment.contains("failed twice"), "{comment}");
     assert!(
         comment.contains("<summary>The end of the setup command's output</summary>"),
