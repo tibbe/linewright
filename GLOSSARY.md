@@ -27,14 +27,15 @@ harness.
 _Avoid_: bot, worker, assistant, model, LLM, the AI, Claude
 
 **Harness**:
-The program that runs an agent's sessions: the loop, tools, context and
+The program that runs the agent in a session: the loop, tools, context and
 permission gating around the model, such as Claude Code. The agent harness,
 not an evaluation harness.
 _Avoid_: agent runtime, runtime, scaffold, engine, CLI, binary, coding agent,
 coding tool, framework, platform, assistant
 
 **Session**:
-An agent's work in one context, from its first prompt to its last.
+Linewright's work in one clone for a run: its setup command, then an agent's
+work in one context, from its first prompt to its last.
 _Avoid_: conversation, task
 
 **Transcript**:
@@ -56,8 +57,8 @@ A file a session makes for Linewright to post with the Markdown of its result.
 _Avoid_: artifact, asset, media
 
 **Setup command**:
-The command that prepares a session's clone before the session starts, such
-as by installing dependencies.
+The command a session starts with, which prepares its clone for the agent,
+such as by installing dependencies.
 _Avoid_: setup script, setup steps, setup hook, init script, install script,
 bootstrap, provisioning, lifecycle script, post-create command, pre-start
 hook, build script

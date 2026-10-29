@@ -67,8 +67,8 @@ during the session.
   each other, and a session from depending on what an earlier session left
   behind or on the host's user-level setup. Isolation is best effort, of what
   sessions can observe of each other, not of where they run: sessions share the
-  host and its user, so what a session or its setup command
-  ([Setup](runs.md#setup)) reaches outside its clone is not isolated.
+  host and its user, so what a session reaches outside its clone is not
+  isolated.
 - **Briefs are files**: the skills in `briefs/plugin/`, given to every
   session, and the prompts in `briefs/prompts/`, in layers
   ([Prompts](operation.md#prompts)).

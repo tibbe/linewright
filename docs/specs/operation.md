@@ -169,10 +169,10 @@ whole-pipeline layer ([Configuration](#configuration)).
 The repository configures the work its agents do in `.linewright/config.toml`
 on its default branch, the same TOML as the operator's file.
 
-- **Its keys.** `model`, `effort`, `session-timeout` and `setup`, for the whole
-  pipeline and in stage tables. Any other key is an error: the deployment's
-  settings are the operator's, and so are `session-env`, `session-pass-env` and
-  `secrets`.
+- **Its keys.** The session settings ([Stage settings](#stage-settings))
+  except `session-env` and `session-pass-env`, for the whole pipeline and in
+  stage tables. Any other key is an error: the rest of the settings are the
+  operator's.
 - **When it is read, and a file with an error.** As for every file of
   Linewright's in the repository
   ([Linewright's files](repository.md#linewrights-files)).

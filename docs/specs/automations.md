@@ -31,21 +31,22 @@ and its body is the agent's instructions.
 ---
 on:
   schedule: "0 6 * * 1"
-timeout: 60m
+session-timeout: 60m
 max-issues: 3
 ---
 Look at the bugs fixed in the past week ...
 ```
 
-| key           | meaning                                                | default           |
-| ------------- | ------------------------------------------------------ | ----------------- |
-| `on.schedule` | when it runs: a cron expression, in UTC                | required          |
-| `timeout`     | the session timeout of its runs                        | `session-timeout` |
-| `model`       | the model of its runs                                  | `model`           |
-| `effort`      | the effort of its runs                                 | `effort`          |
-| `setup`       | the setup command of its runs ([Setup](runs.md#setup)) | `setup`           |
-| `max-issues`  | the most issues one run files                          | 3                 |
+| key           | meaning                                 | default  |
+| ------------- | --------------------------------------- | -------- |
+| `on.schedule` | when it runs: a cron expression, in UTC | required |
+| `max-issues`  | the most issues one run files           | 3        |
 
+- **Session settings.** The front matter also takes the session settings the
+  repository's file takes
+  ([The repository's file](operation.md#the-repositorys-file)), as a layer
+  above every whole-pipeline layer, as a stage's table is
+  ([Stage settings](operation.md#stage-settings)).
 - **A file that does not parse.** Every file in `.linewright/automations/`,
   hidden files aside, is an automation file; one that does not parse is
   logged and skipped, and the other automations run.
@@ -72,8 +73,8 @@ scheduled run.
 
 ## Runs
 
-A run is one agent session in a fresh clone of the default branch, counted
-against the ceiling on simultaneous runs.
+A run's sessions each work in a fresh clone of the default branch, and the run
+counts against the ceiling on simultaneous runs.
 
 - **Instructions.** The session is given the automation's instructions and
   nothing of earlier runs: an automation that looks back says how far in its
