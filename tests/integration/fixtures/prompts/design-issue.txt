@@ -66,7 +66,29 @@ The design, in this template:
 
 ## Design
 
-<what the code does today and where it falls short; the structure kept or changed, and why; the modules the change touches, what each is responsible for, and the interfaces between them: everything the other modules must know of each>
+### Today
+
+<what the code does today and where it falls short>
+
+### Decisions
+
+#### <the decision, as a question>
+
+Chosen option: "<a short title for the way taken>", because <why>.
+
+* <another way it could go>: <the case against it>
+
+### Structure
+
+<kept or changed, and why>
+
+### Modules
+
+#### <the module>
+
+<what it is responsible for>
+
+Interface: <its interface>
 ```
 
 Linewright adds the tickets after it.
