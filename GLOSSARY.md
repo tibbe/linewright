@@ -140,12 +140,11 @@ How pressing what a board card's line reports is.
 _Avoid_: state, flag, priority
 
 **Worked**:
-Of an item: Linewright has opened it, claimed it, or opened a pull request
-that closes it.
+Of an item: Linewright has opened it, assigned itself to it, labeled it, or
+opened a pull request that closes it.
 
 **Managed**:
-Of an item: it is marked for Linewright and asks for a step of the pipeline,
-or it is worked.
+Of an item: Linewright has worked it, or it waits on Linewright to act next.
 _Avoid_: tracked, watched, monitored, in the pool
 
 **Usage limit**:
