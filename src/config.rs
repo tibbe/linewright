@@ -10,7 +10,7 @@ use crate::automation::AutomationName;
 use crate::domain::{AutoMerge, MergeMethod, Number, Repo, Timestamp, UpdateMethod};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
-use crate::layer::Layer;
+use crate::layer::{self, Layer};
 use crate::logs::Which;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
@@ -387,13 +387,23 @@ impl Settings {
         .filter_map(|(key, value)| Some((key, value.as_ref()?)))
         .collect()
     }
+
+    /// The tables given as flags, each as its `NAME=value` entries.
+    fn tables(&self) -> BTreeMap<&'static str, &[String]> {
+        [(SESSION_ENV, &self.session_env)]
+            .into_iter()
+            .filter(|(_, entries)| !entries.is_empty())
+            .map(|(key, entries)| (key, entries.as_slice()))
+            .collect()
+    }
 }
 
 /// What a setting holds, which says how it is given
 /// (`docs/specs/operation.md`, Configuration).
 #[derive(Clone, Copy, Debug)]
 enum Form {
-    /// Held as the text its flag takes.
+    /// Held as the text its flag takes, and also an environment variable,
+    /// `LINEWRIGHT_<FLAG>`.
     Text(Text),
     /// Variables' values by name, as `session-env` holds them: a flag given
     /// once per entry, or a table in a file.
@@ -416,16 +426,9 @@ const fn list(holds: &'static str) -> Form {
     Form::Text(Text::List { holds })
 }
 
-impl Form {
-    /// Whether the setting is also an environment variable,
-    /// `LINEWRIGHT_<FLAG>`.
-    fn has_variable(self) -> bool {
-        match self {
-            Form::Text(_) => true,
-            Form::Table => false,
-        }
-    }
-}
+/// The keys of `session-env` and `session-pass-env`.
+const SESSION_ENV: &str = Setting::SessionEnv.name();
+const PASS_ENV: &str = Setting::SessionPassEnv.name();
 
 /// A variable's name, what `session-pass-env` and `secrets` hold.
 const VARIABLE_NAME: &str = "a variable's name";
@@ -480,6 +483,91 @@ fn form(key: &str) -> Option<Form> {
     SETTINGS
         .iter()
         .find_map(|&(setting, form)| (setting == key).then_some(form))
+}
+
+/// An operator's layer a setting is set in, highest first
+/// (`docs/specs/operation.md`, Configuration).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OperatorLayer {
+    Flag,
+    Environment,
+    File,
+}
+
+/// What each operator's layer sets of a setting, highest first.
+#[derive(Clone)]
+enum Layers {
+    /// Each layer's text, as its flag takes it.
+    Text {
+        form: Text,
+        set: Vec<(OperatorLayer, String)>,
+    },
+    /// Each layer's values by name.
+    Table(Vec<(OperatorLayer, BTreeMap<String, String>)>),
+}
+
+/// A value, or one entry of a list or a table, and the layer it came from.
+#[derive(Clone, Debug)]
+struct Entry {
+    value: String,
+    layer: OperatorLayer,
+}
+
+/// A setting's layers combined by what it holds.
+enum Combined {
+    Value(Option<Entry>),
+    List(Vec<Entry>),
+    Table(BTreeMap<String, Entry>),
+}
+
+impl Layers {
+    /// The layers that set the setting, even to nothing, highest first.
+    fn layers(&self) -> Vec<OperatorLayer> {
+        match self {
+            Layers::Text { set, .. } => set.iter().map(|&(layer, _)| layer).collect(),
+            Layers::Table(set) => set.iter().map(|&(layer, _)| layer).collect(),
+        }
+    }
+
+    /// The highest layer that sets the setting.
+    fn highest(&self) -> Option<OperatorLayer> {
+        self.layers().first().copied()
+    }
+
+    /// The setting's value: a value is the highest layer's, a list every
+    /// layer's entries and a table every layer's names, each with the
+    /// highest layer's value (`docs/specs/operation.md`, Configuration,
+    /// Combining layers).
+    fn combine(self) -> Combined {
+        match self {
+            Layers::Text {
+                form: Text::Value,
+                set,
+            } => Combined::Value(
+                set.into_iter()
+                    .next()
+                    .map(|(layer, value)| Entry { value, layer }),
+            ),
+            Layers::Text {
+                form: Text::List { .. },
+                set,
+            } => Combined::List(layer::list(
+                set.into_iter().map(|(layer, text)| {
+                    variable_names::comma_separated(&text)
+                        .map(move |value| Entry { value, layer })
+                        .collect::<Vec<_>>()
+                }),
+                |entry| &entry.value,
+            )),
+            Layers::Table(set) => {
+                Combined::Table(layer::table(set.into_iter().map(|(layer, values)| {
+                    values
+                        .into_iter()
+                        .map(move |(name, value)| (name, Entry { value, layer }))
+                })))
+            }
+        }
+    }
 }
 
 /// A feature and what turns it on or off: a setting only it uses is an
@@ -574,44 +662,96 @@ impl Config {
         let FileSettings {
             path,
             top: file,
-            session_env: file_session_env,
+            tables: file_tables,
             stages,
         } = read_file(settings.config.as_deref(), cwd)?;
         let flags = settings.flags();
-        // A flag, then a variable, where its form has one. `key` is one of
-        // `SETTINGS`.
-        let flags_and_env = |key: &str| -> Option<String> {
-            let form = form(key).unwrap_or_else(|| panic!("`{key}` is not a setting"));
-            let variable = || {
-                env(&format!(
-                    "LINEWRIGHT_{}",
-                    key.to_uppercase().replace('-', "_")
-                ))
-            };
-            flags
-                .get(key)
-                .copied()
-                .cloned()
-                .or_else(|| form.has_variable().then(variable).flatten())
+        let variable = |key: &str| {
+            env(&format!(
+                "LINEWRIGHT_{}",
+                key.to_uppercase().replace('-', "_")
+            ))
         };
-        let get =
-            |key: &str| -> Option<String> { flags_and_env(key).or_else(|| file.get(key).cloned()) };
+        // What each layer sets of every setting held as text, read once:
+        // its flag, its variable and the file.
+        let texts: BTreeMap<&str, Layers> = SETTINGS
+            .iter()
+            .filter_map(|&(key, form)| {
+                let Form::Text(form) = form else {
+                    return None;
+                };
+                let set = [
+                    (
+                        OperatorLayer::Flag,
+                        flags.get(key).map(|&text| text.clone()),
+                    ),
+                    (OperatorLayer::Environment, variable(key)),
+                    (OperatorLayer::File, file.get(key).cloned()),
+                ]
+                .into_iter()
+                .filter_map(|(layer, text)| Some((layer, text?)))
+                .collect();
+                Some((key, Layers::Text { form, set }))
+            })
+            .collect();
+        // `key` is one of `SETTINGS` held as text.
+        let layers = |key: &str| -> &Layers {
+            texts
+                .get(key)
+                .unwrap_or_else(|| panic!("`{key}` is not a setting held as text"))
+        };
+        // What each layer sets of the table `key`: its flag, a mistake in
+        // which is the command line's, and the file.
+        let flag_tables = settings.tables();
+        let table_layers = |key: &str| -> Result<Layers, ResolveError> {
+            let flag = flag_tables
+                .get(key)
+                .map(|&entries| SetEnv::from_flags(entries))
+                .transpose()
+                .map_err(|e| ResolveError::CommandLine(anyhow!(e)))?;
+            let set = [
+                (OperatorLayer::Flag, flag.as_ref()),
+                (OperatorLayer::File, file_tables.get(key)),
+            ]
+            .into_iter()
+            .filter_map(|(layer, values)| Some((layer, values?.values().clone())))
+            .collect();
+            Ok(Layers::Table(set))
+        };
+        let combined = |key: &str| layers(key).clone().combine();
+        let value_of = |key: &str| match combined(key) {
+            Combined::Value(entry) => entry,
+            Combined::List(_) | Combined::Table(_) => panic!("`{key}` is not a value"),
+        };
+        let get = |key: &str| value_of(key).map(|entry| entry.value);
+        // `ui-hosts` and `secrets` are lists the highest layer replaces
+        // whole.
+        let replaced = |key: &str| match layers(key) {
+            Layers::Text { set, .. } => set.first().map(|(_, text)| text.clone()),
+            Layers::Table(_) => panic!("`{key}` is a table"),
+        };
+        // A wrong value is blamed on the flag that gave it, and one the file
+        // gave names the file.
+        let blame_on = |layer: Option<OperatorLayer>, error: anyhow::Error| match layer {
+            Some(OperatorLayer::Flag) => ResolveError::CommandLine(error),
+            Some(OperatorLayer::File) => {
+                ResolveError::Elsewhere(error.context(path.display().to_string()))
+            }
+            Some(OperatorLayer::Environment) | None => ResolveError::Elsewhere(error),
+        };
+        // A wrong combination is blamed on the command line when a flag gave
+        // any of `keys`.
         let blame = |keys: &[&str], error: anyhow::Error| {
-            if keys.iter().any(|key| flags.contains_key(key)) {
+            if keys
+                .iter()
+                .any(|key| layers(key).highest() == Some(OperatorLayer::Flag))
+            {
                 ResolveError::CommandLine(error)
             } else {
                 ResolveError::Elsewhere(error)
             }
         };
-        // A wrong value the file gave names the file.
-        let in_the_file = |key: &str, error: anyhow::Error| {
-            if flags_and_env(key).is_none() && file.contains_key(key) {
-                error.context(path.display().to_string())
-            } else {
-                error
-            }
-        };
-        let refused = |key: &str, error: anyhow::Error| blame(&[key], in_the_file(key, error));
+        let refused = |key: &str, error: anyhow::Error| blame_on(layers(key).highest(), error);
         let not_one = |key: &str, value: &str, error: anyhow::Error| {
             refused(
                 key,
@@ -625,7 +765,7 @@ impl Config {
             humantime::parse_duration(&value).map_err(|e| not_one(key, &value, e.into()))
         };
         let delta = |key: &str, default: &str| -> Result<TimeDelta, ResolveError> {
-            TimeDelta::from_std(duration(key, default)?).map_err(|e| blame(&[key], e.into()))
+            TimeDelta::from_std(duration(key, default)?).map_err(|e| refused(key, e.into()))
         };
         let number = |key: &str, default: &str| {
             let value = value(key, default);
@@ -729,7 +869,7 @@ impl Config {
         let ui_hosts = refuse_while_off(
             &FEATURES.ui,
             !ui_address.is_empty(),
-            get("ui-hosts")
+            replaced("ui-hosts")
                 .filter(|names| !names.is_empty())
                 .map(|names| {
                     UiHosts::new(names.split(','))
@@ -747,31 +887,31 @@ impl Config {
                 hosts: ui_hosts.unwrap_or_default(),
             }),
         };
-        // Every layer's names, and each name's value from the highest
-        // layer setting it (`docs/specs/operation.md`, Stage settings,
-        // Combining).
-        let pass_names = |names: Option<&String>, refuse: &dyn Fn(String) -> ResolveError| {
-            names
-                .map_or(Ok(PassEnv::default()), |names| names.parse::<PassEnv>())
-                .map_err(refuse)
+        // Each entry is checked on its own, so that an error blames the
+        // layer that gave it.
+        let Combined::List(names) = combined(PASS_ENV) else {
+            panic!("`{PASS_ENV}` is a list");
         };
-        let pass_variable = env("LINEWRIGHT_SESSION_PASS_ENV");
-        let pass = pass_names(flags.get("session-pass-env").copied(), &|e| {
-            ResolveError::CommandLine(anyhow!(e))
-        })?
-        .and(&pass_names(pass_variable.as_ref(), &|e| {
-            ResolveError::Elsewhere(anyhow!(e))
-        })?)
-        .and(&pass_names(file.get("session-pass-env"), &|e| {
-            ResolveError::Elsewhere(anyhow!(e).context(path.display().to_string()))
-        })?);
-        let values = SetEnv::from_flags(&settings.session_env)
-            .map_err(|e| ResolveError::CommandLine(anyhow!(e)))?
-            .over(&file_session_env.clone().unwrap_or_default());
+        let pass = names
+            .into_iter()
+            .try_fold(PassEnv::default(), |pass, name| {
+                let one: PassEnv = name
+                    .value
+                    .parse()
+                    .map_err(|e: String| blame_on(Some(name.layer), anyhow!(e)))?;
+                Ok(pass.and(&one))
+            })?;
+        let session_env_layers = table_layers(SESSION_ENV)?;
+        let session_env_set = !session_env_layers.layers().is_empty();
+        let Combined::Table(entries) = session_env_layers.combine() else {
+            panic!("`{SESSION_ENV}` is a table");
+        };
+        let values = SetEnv::new(entries.into_iter().map(|(name, entry)| (name, entry.value)))
+            .expect("each layer's values were checked as it was read, and a name is set once");
         let session_env = SessionEnv::new(pass, values);
         let secrets = VariableNames::new(
             secrets::SETTING,
-            variable_names::comma_separated(&get(secrets::SETTING).unwrap_or_default()),
+            variable_names::comma_separated(&replaced(secrets::SETTING).unwrap_or_default()),
         )
         .map_err(|e| wrong(secrets::SETTING, e))?;
         let session_timeout = |set: Option<String>| {
@@ -782,8 +922,6 @@ impl Config {
             set.map(|text| effort(&text).map_err(|e| refused("effort", e)))
                 .transpose()
         };
-        // The file's is read only when no flag or variable sets one, as it
-        // could not win over them.
         let operator_if = |set: bool| {
             if set {
                 Layer::Operator
@@ -791,30 +929,30 @@ impl Config {
                 Layer::Linewright
             }
         };
-        let in_file = |key: &str| match flags_and_env(key) {
-            Some(_) => None,
-            None => file.get(key).cloned(),
-        };
+        // The repository's file ranks between the flags and environment and
+        // the operator's file, so a run is given the value with the layer
+        // it came from.
+        let flag_or_env =
+            |key: &str| value_of(key).filter(|entry| entry.layer != OperatorLayer::File);
+        let in_file = |key: &str| value_of(key).filter(|entry| entry.layer == OperatorLayer::File);
+        let text = |entry: Option<Entry>| entry.map(|entry| entry.value);
         let work = WorkSettings {
             flags_and_env: Partial {
-                model: flags_and_env("model"),
-                effort: effort(flags_and_env("effort"))?,
-                session_timeout: session_timeout(flags_and_env("session-timeout"))?,
-                setup: flags_and_env("setup").map(Setup::from),
+                model: text(flag_or_env("model")),
+                effort: effort(text(flag_or_env("effort")))?,
+                session_timeout: session_timeout(text(flag_or_env("session-timeout")))?,
+                setup: text(flag_or_env("setup")).map(Setup::from),
             },
             file: Partial {
-                model: file.get("model").cloned(),
-                effort: effort(in_file("effort"))?,
-                session_timeout: session_timeout(in_file("session-timeout"))?,
-                setup: in_file("setup").map(Setup::from),
+                model: text(in_file("model")),
+                effort: effort(text(in_file("effort")))?,
+                session_timeout: session_timeout(text(in_file("session-timeout")))?,
+                setup: text(in_file("setup")).map(Setup::from),
             },
             stages,
             env_layers: EnvLayers {
-                set: operator_if(!settings.session_env.is_empty() || file_session_env.is_some()),
-                pass: operator_if(
-                    flags_and_env("session-pass-env").is_some()
-                        || file.contains_key("session-pass-env"),
-                ),
+                set: operator_if(session_env_set),
+                pass: operator_if(!layers(PASS_ENV).layers().is_empty()),
             },
         };
         let (ci_grace, ci_timeout) = (delta("ci-grace", "5m")?, delta("ci-timeout", "6h")?);
@@ -863,9 +1001,10 @@ pub enum ResolveError {
 /// The operator's config file.
 struct FileSettings {
     path: PathBuf,
-    /// Each value as the text its flag takes, but for `session-env`'s.
+    /// Each value as the text its flag takes, but for the tables'.
     top: BTreeMap<String, String>,
-    session_env: Option<SetEnv>,
+    /// The tables' values, by setting.
+    tables: BTreeMap<String, SetEnv>,
     /// The `[stage.NAME]` tables.
     stages: BTreeMap<WorkKind, StageTable>,
 }
@@ -880,7 +1019,7 @@ fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<FileSettings, Resolv
             return Ok(FileSettings {
                 path,
                 top: BTreeMap::new(),
-                session_env: None,
+                tables: BTreeMap::new(),
                 stages: BTreeMap::new(),
             });
         }
@@ -977,7 +1116,7 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
     let mut settings = FileSettings {
         path: path.to_path_buf(),
         top: BTreeMap::new(),
-        session_env: None,
+        tables: BTreeMap::new(),
         stages: BTreeMap::new(),
     };
     for (key, value) in table {
@@ -996,8 +1135,8 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
                 settings.top.insert(key, value);
             }
             Form::Table => {
-                settings.session_env =
-                    Some(set_env(&key, value).with_context(|| path.display().to_string())?);
+                let values = set_env(&key, value).with_context(|| path.display().to_string())?;
+                settings.tables.insert(key, values);
             }
         }
     }

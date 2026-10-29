@@ -1,6 +1,8 @@
 //! A list of variable names, as a setting such as `session-pass-env` gives it
 //! (`docs/specs/operation.md`, "Configuration").
 
+use crate::layer;
+
 /// `pattern` is a variable's name, or a prefix when it ends in `*`.
 pub fn matches(pattern: &str, name: &str) -> bool {
     match pattern.strip_suffix('*') {
@@ -55,14 +57,12 @@ impl VariableNames {
         self.patterns.iter().any(|pattern| matches(pattern, name))
     }
 
-    /// These names and `more`'s.
+    /// These names and `more`'s, a layer below them, as a list combines.
     #[must_use]
     pub fn and(&self, more: &VariableNames) -> VariableNames {
         VariableNames {
-            patterns: self
-                .patterns
-                .iter()
-                .chain(&more.patterns)
+            patterns: layer::list([&self.patterns, &more.patterns], |name| name)
+                .into_iter()
                 .cloned()
                 .collect(),
         }

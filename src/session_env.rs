@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use percent_encoding::percent_decode_str;
 
 use crate::harness::claude::{CREDENTIAL_VARIABLES, HEADER_VARIABLES, SET_FOR_SESSIONS};
+use crate::layer;
 use crate::secrets::OWN_CREDENTIAL_VARIABLES;
 use crate::variable_names::{self, VariableNames, matches};
 
@@ -310,12 +311,17 @@ impl SetEnv {
     }
 
     /// Every name set here or in `lower`, with this value where both set
-    /// one.
+    /// one, as a table combines.
     #[must_use]
     pub fn over(&self, lower: &SetEnv) -> SetEnv {
-        let mut values = lower.values.clone();
-        values.extend(self.values.clone());
-        SetEnv { values }
+        SetEnv {
+            values: layer::table([self.values.clone(), lower.values.clone()]),
+        }
+    }
+
+    /// The values set, by name.
+    pub fn values(&self) -> &BTreeMap<String, String> {
+        &self.values
     }
 
     /// The names set, sorted.

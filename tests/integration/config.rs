@@ -1099,6 +1099,24 @@ fn session_pass_env_naming_a_credential_of_linewrights_is_an_error_saying_why() 
 }
 
 #[test]
+fn a_wrong_name_in_session_pass_env_is_blamed_on_the_layer_that_gave_it() {
+    let flag = ["--session-pass-env", "CARGO_HOME"];
+    let bad_env = [("LINEWRIGHT_SESSION_PASS_ENV", "GH_TOKEN")];
+    let bad_file = Some("session-pass-env = [\"RUSTUP_HOME\", \"GH_TOKEN\"]\n");
+
+    assert!(blames_the_command_line(
+        &["--session-pass-env", "GH_TOKEN"],
+        &[],
+        bad_file
+    ));
+    assert!(!blames_the_command_line(&flag, &bad_env, None));
+    assert!(!blames_the_command_line(&flag, &[], bad_file));
+    let error = resolve(&flag, &[], bad_file).unwrap_err();
+    assert!(error.contains("linewright.toml"), "{error}");
+    assert!(error.contains("`GH_TOKEN`"), "{error}");
+}
+
+#[test]
 fn a_session_pass_env_pattern_matching_a_credential_of_linewrights_is_no_error() {
     let config = resolve(&["--session-pass-env", "GH_*,LINEWRIGHT_*"], &[], None);
 

@@ -1,5 +1,7 @@
 //! Where a setting or a prompt file comes from (`GLOSSARY.md`, **Layer**).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// The sources a setting or a prompt file can come from, first the one that
@@ -78,4 +80,34 @@ impl<'de> Deserialize<'de> for Source {
         Layer::deserialize(serde::de::value::StrDeserializer::<D::Error>::new(&name))
             .map(Source::Layer)
     }
+}
+
+/// A list setting's entries across its layers, given highest first: every
+/// layer's entries, highest first, without repeats, an entry being the same
+/// as another when their `key`s are (`docs/specs/operation.md`,
+/// Configuration, Combining layers).
+pub fn list<T, K: PartialEq>(
+    layers: impl IntoIterator<Item = impl IntoIterator<Item = T>>,
+    key: impl Fn(&T) -> &K,
+) -> Vec<T> {
+    let mut entries: Vec<T> = Vec::new();
+    for entry in layers.into_iter().flatten() {
+        if !entries.iter().any(|kept| key(kept) == key(&entry)) {
+            entries.push(entry);
+        }
+    }
+    entries
+}
+
+/// A table setting's names across its layers, given highest first: every
+/// layer's names, each with the highest layer's value
+/// (`docs/specs/operation.md`, Configuration, Combining layers).
+pub fn table<K: Ord, V>(
+    layers: impl IntoIterator<Item = impl IntoIterator<Item = (K, V)>>,
+) -> BTreeMap<K, V> {
+    let mut names = BTreeMap::new();
+    for (name, value) in layers.into_iter().flatten() {
+        names.entry(name).or_insert(value);
+    }
+    names
 }
