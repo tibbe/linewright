@@ -281,6 +281,9 @@ async fn a_file_under_linewright_that_is_not_one_of_linewrights_holds_every_run_
     for path in [
         ".linewright/prompts/implment.md",
         ".linewright/prompts/parts/x/y.md",
+        // Linewright's own, which no layer overrides.
+        ".linewright/prompts/parts/facts.md",
+        ".linewright/prompts/outputs/implement.md",
         ".linewright/notes.txt",
         // Where an earlier release kept the repository's prompts.
         ".linewright/briefs/prompts/triage.md",

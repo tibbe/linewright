@@ -4,7 +4,7 @@ What Linewright gives its agents, built into the binary:
 
 - `plugin/`: the skills, a Claude Code plugin given to every session;
 - `prompts/`: what Linewright sends a session, from its first message to the
-  follow-ups, and the result contracts Linewright parses.
+  follow-ups.
 
 The skills are always these. The `prompts` setting names a directory laid out
 as `prompts/` is, the operator's layer over it. Linewright takes each file in
@@ -53,10 +53,6 @@ the ticket or the default branch. The placeholders a prompt has are fixed.
 Linewright refuses to start with a prompt that lacks one or has one it doesn't
 know.
 
-Each first-message prompt's result contract, the JSON its session ends with, is
-a part of its own in `outputs/`, filled into the prompt's `{{output}}`. A prompt
-written over keeps `{{output}}`, and so keeps the contract Linewright reads.
-
 | file | sent to |
 |---|---|
 | `triage.md` | triage |
@@ -66,8 +62,6 @@ written over keeps `{{output}}`, and so keeps the contract Linewright reads.
 | `fix-ci.md` | CI fixes, likewise |
 | `update.md` | an update's conflict, likewise |
 | `automation.md` | automation runs |
-| `outputs/` | each prompt's result contract, filled into its `{{output}}`, such as `outputs/triage.md` into `triage.md` |
-| `parts/` | filled into the prompts above, such as a conflict's instructions |
 | `follow-ups/` | a session sent back to work, such as for a result that doesn't parse |
 
 When a placeholder alone on its line is filled with nothing, its line and the

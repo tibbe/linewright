@@ -19,8 +19,8 @@ pub struct Briefs {
 }
 
 /// One layer of the prompts: each of Linewright's prompts it has, by its
-/// path under the prompts' root, such as `parts/facts.md`. Built only by
-/// [`PromptLayer::parse`], which looks at every file the layer holds.
+/// path under the prompts' root, such as `follow-ups/parse-error.md`. Built
+/// only by [`PromptLayer::parse`], which looks at every file the layer holds.
 #[derive(Clone, Debug)]
 pub struct PromptLayer {
     pub layer: Layer,

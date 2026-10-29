@@ -222,8 +222,8 @@ values!(LateFeedback {
     conversation
 });
 
-/// A prompt, or a part of one, from `briefs/prompts/`: Markdown with a
-/// `{{name}}` placeholder for each of the values `V`.
+/// A prompt from `briefs/prompts/`, or a part of one from `src/prompts/`:
+/// Markdown with a `{{name}}` placeholder for each of the values `V`.
 struct Template<V> {
     text: String,
     values: PhantomData<fn(&V)>,
@@ -253,6 +253,23 @@ macro_rules! template {
             $readers,
             include_str!(concat!("../briefs/prompts/", $path)),
         )
+    };
+}
+
+/// Linewright's own template at `$path` under `src/prompts/`, without its
+/// trailing newline.
+macro_rules! own_template {
+    ($path:literal) => {
+        Template::parse(
+            include_str!(concat!("prompts/", $path))
+                .trim_end()
+                .to_string(),
+        )
+        .expect(concat!(
+            "src/prompts/",
+            $path,
+            " has its values' placeholders"
+        ))
     };
 }
 
@@ -351,20 +368,31 @@ fn braced(names: &[&str]) -> String {
         .join(", ")
 }
 
-/// The prompts Linewright sends sessions, and the parts it builds them from.
+/// The prompts Linewright sends sessions, each from the first layer that has
+/// it (docs/specs/operation.md, "Prompts").
 #[derive(Clone, Debug)]
 pub struct Prompts {
-    facts: Template<Facts>,
     triage: Template<Triage>,
     design: Template<Design>,
-    spec_change: Template<SpecChange>,
-    cut_spec_change: Template<NoValues>,
-    cut_issue: Template<NoValues>,
     implement: Template<Implement>,
     rework: Template<Rework>,
     fix_ci: Template<FixCi>,
     update: Template<PullRequest>,
     automation: Template<AutomationRun>,
+    parse_error: Template<ParseError>,
+    loose_ends: Template<LooseEnds>,
+    usage_limit_reset: Template<NoValues>,
+    late_feedback: Template<LateFeedback>,
+}
+
+/// The parts Linewright builds its prompts from, and each first-message
+/// prompt's result contract, filled into its `{{output}}`: Linewright's own,
+/// which no layer overrides (docs/specs/operation.md, "Prompts").
+struct OwnTemplates {
+    facts: Template<Facts>,
+    spec_change: Template<SpecChange>,
+    cut_spec_change: Template<NoValues>,
+    cut_issue: Template<NoValues>,
     new_branch: Template<DefaultBranch>,
     existing_branch: Template<ExistingBranch>,
     unfinished: Template<Commits>,
@@ -378,12 +406,6 @@ pub struct Prompts {
     fold_unfinished: Template<Commits>,
     held_secret: Template<HeldSecret>,
     pushed_secret: Template<PushedSecret>,
-    parse_error: Template<ParseError>,
-    loose_ends: Template<LooseEnds>,
-    usage_limit_reset: Template<NoValues>,
-    late_feedback: Template<LateFeedback>,
-    /// Each first-message prompt's result contract, filled into its
-    /// `{{output}}` (docs/specs/operation.md, "Prompts").
     triage_output: Template<TriageOutput>,
     design_output: Template<DesignOutput>,
     implement_output: Template<NoValues>,
@@ -392,6 +414,33 @@ pub struct Prompts {
     update_output: Template<NoValues>,
     automation_output: Template<NoValues>,
 }
+
+static OWN_TEMPLATES: LazyLock<OwnTemplates> = LazyLock::new(|| OwnTemplates {
+    facts: own_template!("parts/facts.md"),
+    spec_change: own_template!("parts/spec-change.md"),
+    cut_spec_change: own_template!("parts/cut-spec-change.md"),
+    cut_issue: own_template!("parts/cut-issue.md"),
+    new_branch: own_template!("parts/new-branch.md"),
+    existing_branch: own_template!("parts/existing-branch.md"),
+    unfinished: own_template!("parts/unfinished.md"),
+    unfinished_or_discard: own_template!("parts/unfinished-or-discard.md"),
+    conflict_rebase: own_template!("parts/conflict-rebase.md"),
+    conflict_merge: own_template!("parts/conflict-merge.md"),
+    update_rebase: own_template!("parts/update-rebase.md"),
+    update_merge: own_template!("parts/update-merge.md"),
+    full_log: own_template!("parts/full-log.md"),
+    filed_gaps: own_template!("parts/filed-gaps.md"),
+    fold_unfinished: own_template!("parts/fold-unfinished.md"),
+    held_secret: own_template!("parts/held-credential.md"),
+    pushed_secret: own_template!("parts/pushed-secret.md"),
+    triage_output: own_template!("outputs/triage.md"),
+    design_output: own_template!("outputs/design.md"),
+    implement_output: own_template!("outputs/implement.md"),
+    rework_output: own_template!("outputs/rework.md"),
+    fix_ci_output: own_template!("outputs/fix-ci.md"),
+    update_output: own_template!("outputs/update.md"),
+    automation_output: own_template!("outputs/automation.md"),
+});
 
 impl Prompts {
     /// The prompts, each from `lookup`'s text for its path under the prompts' root,
@@ -409,8 +458,8 @@ impl Prompts {
         (prompts, reader.unusable)
     }
 
-    /// The path under the prompts' root of every prompt and part, with the runs it
-    /// is sent to: the table that says which runs a file holds
+    /// The path under the prompts' root of every prompt a layer may override,
+    /// with the runs it is sent to: the table that says which runs a file holds
     /// (docs/specs/repository.md, "Linewright's files").
     fn layout() -> &'static [(&'static str, Readers)] {
         static LAYOUT: LazyLock<Vec<(&'static str, Readers)>> = LazyLock::new(|| {
@@ -427,45 +476,21 @@ impl Prompts {
 
     fn build(reader: &mut Reader) -> Prompts {
         Prompts {
-            facts: template!(reader, "parts/facts.md", Readers::Every),
             triage: template!(reader, "triage.md", TRIAGE),
             design: template!(reader, "design.md", DESIGN),
-            spec_change: template!(reader, "parts/spec-change.md", DESIGN),
-            cut_spec_change: template!(reader, "parts/cut-spec-change.md", DESIGN),
-            cut_issue: template!(reader, "parts/cut-issue.md", DESIGN),
             implement: template!(reader, "implement.md", IMPLEMENT),
             rework: template!(reader, "rework.md", REWORK),
             fix_ci: template!(reader, "fix-ci.md", FIX_CI),
             update: template!(reader, "update.md", UPDATE),
             automation: template!(reader, "automation.md", AUTOMATIONS),
-            new_branch: template!(reader, "parts/new-branch.md", IMPLEMENT),
-            existing_branch: template!(reader, "parts/existing-branch.md", IMPLEMENT),
-            unfinished: template!(reader, "parts/unfinished.md", PULL_WORK),
-            unfinished_or_discard: template!(reader, "parts/unfinished-or-discard.md", IMPLEMENT),
-            conflict_rebase: template!(reader, "parts/conflict-rebase.md", FIRST_UPDATE),
-            conflict_merge: template!(reader, "parts/conflict-merge.md", FIRST_UPDATE),
-            update_rebase: template!(reader, "parts/update-rebase.md", UPDATE),
-            update_merge: template!(reader, "parts/update-merge.md", UPDATE),
-            full_log: template!(reader, "parts/full-log.md", FIX_CI),
-            filed_gaps: template!(reader, "parts/filed-gaps.md", DESIGN_AND_BRANCH_WORK),
-            fold_unfinished: template!(reader, "parts/fold-unfinished.md", BRANCH_WORK),
-            held_secret: template!(reader, "parts/held-credential.md", BRANCH_WORK),
-            pushed_secret: template!(reader, "parts/pushed-secret.md", BRANCH_WORK),
             parse_error: template!(reader, "follow-ups/parse-error.md", Readers::Every),
             loose_ends: template!(reader, "follow-ups/loose-ends.md", BRANCH_WORK),
             usage_limit_reset: template!(reader, "follow-ups/usage-limit-reset.md", Readers::Every),
             late_feedback: template!(reader, "follow-ups/late-feedback.md", PULL_WORK),
-            triage_output: template!(reader, "outputs/triage.md", TRIAGE),
-            design_output: template!(reader, "outputs/design.md", DESIGN),
-            implement_output: template!(reader, "outputs/implement.md", IMPLEMENT),
-            rework_output: template!(reader, "outputs/rework.md", REWORK),
-            fix_ci_output: template!(reader, "outputs/fix-ci.md", FIX_CI),
-            update_output: template!(reader, "outputs/update.md", UPDATE),
-            automation_output: template!(reader, "outputs/automation.md", AUTOMATIONS),
         }
     }
 
-    /// The path under the prompts' root of every prompt and part.
+    /// The path under the prompts' root of every prompt a layer may override.
     pub fn paths() -> Vec<&'static str> {
         Prompts::layout().iter().map(|(path, _)| *path).collect()
     }
@@ -526,17 +551,6 @@ const BRANCH_WORK: Readers = Readers::Only(&[
     Reads::Stage(WorkKind::FixCi),
     Reads::Stage(WorkKind::Update),
 ]);
-const DESIGN_AND_BRANCH_WORK: Readers = Readers::Only(&[
-    Reads::Stage(WorkKind::Design),
-    Reads::Stage(WorkKind::Implement),
-    Reads::Stage(WorkKind::Rework),
-    Reads::Stage(WorkKind::FixCi),
-    Reads::Stage(WorkKind::Update),
-]);
-const FIRST_UPDATE: Readers = Readers::Only(&[
-    Reads::Stage(WorkKind::Rework),
-    Reads::Stage(WorkKind::FixCi),
-]);
 
 /// Reads each template from its lookup, noting the runs it is sent to.
 struct Reader<'l, 'a> {
@@ -546,8 +560,8 @@ struct Reader<'l, 'a> {
 }
 
 impl Reader<'_, '_> {
-    /// The template at `path`, which ships as `shipped`. A part or a
-    /// follow-up is used without its trailing newline.
+    /// The template at `path`, which ships as `shipped`. A follow-up is used
+    /// without its trailing newline.
     fn read<V: Values>(
         &mut self,
         path: &'static str,
@@ -575,9 +589,9 @@ impl Reader<'_, '_> {
 
 /// The values every first-message prompt shares, its facts filled from
 /// `parts/facts.md`.
-fn shared(prompts: &Prompts, repo: &Repo) -> Shared {
+fn shared(repo: &Repo) -> Shared {
     Shared {
-        facts: prompts.facts.fill(&Facts {
+        facts: OWN_TEMPLATES.facts.fill(&Facts {
             repo: repo.name.to_string(),
             default_branch: repo.default_branch.into(),
             spec_glob: repo.spec_glob.into(),
@@ -589,14 +603,14 @@ pub fn triage(prompts: &Prompts, repo: &Repo, issue: &Issue, categories: &[Strin
     let mut rendered = String::new();
     write_issue(&mut rendered, "The issue", issue);
     prompts.triage.fill(&Triage {
-        base: shared(prompts, repo),
+        base: shared(repo),
         categories: categories
             .iter()
             .map(|c| format!("`{c}`"))
             .collect::<Vec<_>>()
             .join(", "),
         issue: rendered.trim_end().into(),
-        output: prompts.triage_output.fill(&TriageOutput {
+        output: OWN_TEMPLATES.triage_output.fill(&TriageOutput {
             category_choices: categories
                 .iter()
                 .map(|c| format!("\"{c}\""))
@@ -631,9 +645,9 @@ pub fn design_spec_change(
     filed_gaps: &[&Issue],
 ) -> String {
     prompts.design.fill(&Design {
-        base: shared(prompts, repo),
+        base: shared(repo),
         kind: DesignOf::SpecChange.noun().into(),
-        item: prompts.spec_change.fill(&SpecChange {
+        item: OWN_TEMPLATES.spec_change.fill(&SpecChange {
             default_branch: repo.default_branch.into(),
             number: pr.number.to_string(),
             title: pr.title.clone(),
@@ -641,9 +655,9 @@ pub fn design_spec_change(
             body: or_none(&pr.body).into(),
             spec_diff: spec_diff.trim_end().into(),
         }),
-        filed_gaps: render_filed_gaps(prompts, filed_gaps),
-        cutting: prompts.cut_spec_change.fill(&NoValues {}),
-        output: design_output(prompts, DesignOf::SpecChange),
+        filed_gaps: render_filed_gaps(filed_gaps),
+        cutting: OWN_TEMPLATES.cut_spec_change.fill(&NoValues {}),
+        output: design_output(DesignOf::SpecChange),
     })
 }
 
@@ -658,17 +672,17 @@ pub fn design_issue(
     let mut item = String::new();
     write_issue(&mut item, "The issue", issue);
     prompts.design.fill(&Design {
-        base: shared(prompts, repo),
+        base: shared(repo),
         kind: DesignOf::Issue.noun().into(),
         item: item.trim_end().into(),
-        filed_gaps: render_filed_gaps(prompts, filed_gaps),
-        cutting: prompts.cut_issue.fill(&NoValues {}),
-        output: design_output(prompts, DesignOf::Issue),
+        filed_gaps: render_filed_gaps(filed_gaps),
+        cutting: OWN_TEMPLATES.cut_issue.fill(&NoValues {}),
+        output: design_output(DesignOf::Issue),
     })
 }
 
-fn design_output(prompts: &Prompts, of: DesignOf) -> String {
-    prompts.design_output.fill(&DesignOutput {
+fn design_output(of: DesignOf) -> String {
+    OWN_TEMPLATES.design_output.fill(&DesignOutput {
         kind: of.noun().into(),
     })
 }
@@ -681,21 +695,26 @@ pub fn implement(
     start: &BranchStart,
 ) -> String {
     let holding = match start {
-        BranchStart::New => prompts.new_branch.fill(&DefaultBranch {
+        BranchStart::New => OWN_TEMPLATES.new_branch.fill(&DefaultBranch {
             default_branch: repo.default_branch.into(),
         }),
-        BranchStart::Existing { unfinished } => prompts.existing_branch.fill(&ExistingBranch {
-            default_branch: repo.default_branch.into(),
-            unfinished: unfinished_sentence(&prompts.unfinished_or_discard, unfinished.as_ref()),
-        }),
+        BranchStart::Existing { unfinished } => {
+            OWN_TEMPLATES.existing_branch.fill(&ExistingBranch {
+                default_branch: repo.default_branch.into(),
+                unfinished: unfinished_sentence(
+                    &OWN_TEMPLATES.unfinished_or_discard,
+                    unfinished.as_ref(),
+                ),
+            })
+        }
     };
     prompts.implement.fill(&Implement {
-        base: shared(prompts, repo),
+        base: shared(repo),
         default_branch: repo.default_branch.into(),
         branch: branch.into(),
         holding,
-        ticket: render_ticket(prompts, ticket),
-        output: prompts.implement_output.fill(&NoValues {}),
+        ticket: render_ticket(ticket),
+        output: OWN_TEMPLATES.implement_output.fill(&NoValues {}),
     })
 }
 
@@ -708,42 +727,49 @@ pub fn pull_work(
     unfinished: Option<&UnfinishedCommits>,
 ) -> String {
     let pull_request = |conflict: String, output: &Template<NoValues>| PullRequest {
-        base: shared(prompts, repo),
+        base: shared(repo),
         branch: pr.head_ref.clone(),
         pr: pr.number.to_string(),
         pr_title: pr.title.clone(),
-        unfinished: unfinished_sentence(&prompts.unfinished, unfinished),
+        unfinished: unfinished_sentence(&OWN_TEMPLATES.unfinished, unfinished),
         conflict,
         description: or_none(&pr.body).into(),
-        ticket: render_ticket(prompts, ticket),
+        ticket: render_ticket(ticket),
         output: output.fill(&NoValues {}),
     };
     let first_update = |conflict: Option<&Conflict>| {
         conflict
-            .map(|c| stopped(&prompts.conflict_rebase, &prompts.conflict_merge, repo, c))
+            .map(|c| {
+                stopped(
+                    &OWN_TEMPLATES.conflict_rebase,
+                    &OWN_TEMPLATES.conflict_merge,
+                    repo,
+                    c,
+                )
+            })
             .unwrap_or_default()
     };
     match work {
         PullTask::Rework { feedback, conflict } => {
             let (feedback, conversation) = render_feedback(pr, feedback);
             prompts.rework.fill(&Rework {
-                base: pull_request(first_update(*conflict), &prompts.rework_output),
+                base: pull_request(first_update(*conflict), &OWN_TEMPLATES.rework_output),
                 feedback,
                 conversation,
             })
         }
         PullTask::FixCi { failures, conflict } => prompts.fix_ci.fill(&FixCi {
-            base: pull_request(first_update(*conflict), &prompts.fix_ci_output),
-            failures: render_failures(prompts, failures),
+            base: pull_request(first_update(*conflict), &OWN_TEMPLATES.fix_ci_output),
+            failures: render_failures(failures),
         }),
         PullTask::Update(conflict) => prompts.update.fill(&pull_request(
             stopped(
-                &prompts.update_rebase,
-                &prompts.update_merge,
+                &OWN_TEMPLATES.update_rebase,
+                &OWN_TEMPLATES.update_merge,
                 repo,
                 conflict,
             ),
-            &prompts.update_output,
+            &OWN_TEMPLATES.update_output,
         )),
     }
 }
@@ -788,11 +814,11 @@ fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedC
 
 pub fn automation(prompts: &Prompts, repo: &Repo, automation: &Automation) -> String {
     prompts.automation.fill(&AutomationRun {
-        base: shared(prompts, repo),
+        base: shared(repo),
         max_issues: automation.max_issues.to_string(),
         name: automation.name.to_string(),
         instructions: or_none(&automation.instructions).into(),
-        output: prompts.automation_output.fill(&NoValues {}),
+        output: OWN_TEMPLATES.automation_output.fill(&NoValues {}),
     })
 }
 
@@ -825,7 +851,7 @@ pub fn unfinished_commits(commits: &UnfinishedCommits) -> String {
 pub fn fold_unfinished(prompts: &Prompts, unfinished: &UnfinishedCommits) -> String {
     loose_ends(
         prompts,
-        &prompts.fold_unfinished.fill(&Commits {
+        &OWN_TEMPLATES.fold_unfinished.fill(&Commits {
             commits: unfinished_commits(unfinished),
         }),
     )
@@ -836,7 +862,7 @@ pub fn fold_unfinished(prompts: &Prompts, unfinished: &UnfinishedCommits) -> Str
 pub fn held_secret(prompts: &Prompts, held: &Held) -> String {
     loose_ends(
         prompts,
-        &prompts.held_secret.fill(&HeldSecret {
+        &OWN_TEMPLATES.held_secret.fill(&HeldSecret {
             commit: held.commit.clone(),
             variable: held.variable.clone(),
             file: held.file.clone(),
@@ -849,7 +875,7 @@ pub fn held_secret(prompts: &Prompts, held: &Held) -> String {
 pub fn pushed_secret(prompts: &Prompts, secrets: &FoundSecrets) -> String {
     loose_ends(
         prompts,
-        &prompts.pushed_secret.fill(&PushedSecret {
+        &OWN_TEMPLATES.pushed_secret.fill(&PushedSecret {
             secrets: secrets.to_string(),
         }),
     )
@@ -896,7 +922,7 @@ fn write_comments(task: &mut String, heading: &str, comments: &[Comment]) {
 }
 
 /// The ticket as a task shows it, without trailing whitespace.
-fn render_ticket(prompts: &Prompts, ticket: &Ticket) -> String {
+fn render_ticket(ticket: &Ticket) -> String {
     let mut task = String::new();
     write_issue(&mut task, "The ticket", ticket.issue);
     if let Some(parent) = ticket.parent.as_deref() {
@@ -917,12 +943,12 @@ fn render_ticket(prompts: &Prompts, ticket: &Ticket) -> String {
             spec_diff.trim_end()
         );
     }
-    task.push_str(&render_filed_gaps(prompts, &ticket.filed_gaps));
+    task.push_str(&render_filed_gaps(&ticket.filed_gaps));
     task.trim_end().to_string()
 }
 
 /// The spec gaps already filed for an item, or nothing when there are none.
-fn render_filed_gaps(prompts: &Prompts, filed_gaps: &[&Issue]) -> String {
+fn render_filed_gaps(filed_gaps: &[&Issue]) -> String {
     if filed_gaps.is_empty() {
         return String::new();
     }
@@ -936,12 +962,12 @@ fn render_filed_gaps(prompts: &Prompts, filed_gaps: &[&Issue]) -> String {
             gap.body.trim()
         );
     }
-    prompts.filed_gaps.fill(&FiledGapsPart {
+    OWN_TEMPLATES.filed_gaps.fill(&FiledGapsPart {
         gaps: gaps.trim_end().into(),
     })
 }
 
-fn render_failures(prompts: &Prompts, failures: &[CheckFailure]) -> String {
+fn render_failures(failures: &[CheckFailure]) -> String {
     let mut task = String::new();
     for failure in failures {
         let _ = writeln!(
@@ -956,7 +982,7 @@ fn render_failures(prompts: &Prompts, failures: &[CheckFailure]) -> String {
             let _ = writeln!(
                 task,
                 "{}\n",
-                prompts.full_log.fill(&FullLog {
+                OWN_TEMPLATES.full_log.fill(&FullLog {
                     job: full.job.to_string(),
                     repo: full.repo.clone(),
                 })
@@ -1028,5 +1054,15 @@ fn or_none(text: &str) -> &str {
         "_(empty)_"
     } else {
         text.trim()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linewrights_own_templates_have_their_values_placeholders() {
+        LazyLock::force(&OWN_TEMPLATES);
     }
 }

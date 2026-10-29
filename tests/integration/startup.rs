@@ -964,6 +964,31 @@ fn startup_logs_the_files_the_operators_prompts_provide() {
 }
 
 #[test]
+fn linewrights_own_prompts_can_be_the_operators_prompts() {
+    let prompts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs/prompts");
+
+    let (succeeded, log) = lw(
+        std::path::Path::new(""),
+        &[
+            "--repo",
+            "owner/name",
+            "--prompts",
+            prompts.to_str().unwrap(),
+            "--log-format",
+            "json",
+            "once",
+        ],
+        &[],
+    );
+
+    assert!(!succeeded, "fails later, without `git`: {log}");
+    assert!(
+        log.contains("the operator's prompts provide these files"),
+        "{log}"
+    );
+}
+
+#[test]
 fn files_in_the_operators_prompts_that_are_not_linewrights_are_an_error_naming_each() {
     let prompts = prompts_with("implement.md", |text| text);
     std::fs::write(prompts.path().join("implment.md"), "A misspelling.").unwrap();

@@ -13,4 +13,5 @@ reflow = true
 # origin's line breaks.
 [per-file-ignores]
 "briefs/prompts/**" = ["MD013"]
+"src/prompts/**" = ["MD013"]
 "briefs/plugin/skills/**" = ["MD013"]

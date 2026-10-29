@@ -470,7 +470,10 @@ async fn the_files_asked_for_are_read_from_the_head_of_the_branch_leaving_out_pa
             &[
                 (".linewright/config.toml", "model = \"opus\"\n"),
                 (".linewright/prompts/triage.md", "Triage it.\n"),
-                (".linewright/prompts/parts/facts.md", "Facts.\n"),
+                (
+                    ".linewright/prompts/follow-ups/parse-error.md",
+                    "Parse error.\n",
+                ),
             ],
             "Configure Linewright",
         )
@@ -488,9 +491,9 @@ async fn the_files_asked_for_are_read_from_the_head_of_the_branch_leaving_out_pa
         .unwrap();
     let paths = [
         ".linewright/config.toml",
-        ".linewright/prompts/parts/facts.md",
+        ".linewright/prompts/follow-ups/parse-error.md",
         ".linewright/prompts/design.md",
-        ".linewright/prompts/parts",
+        ".linewright/prompts/follow-ups",
     ]
     .map(String::from);
 
@@ -504,8 +507,8 @@ async fn the_files_asked_for_are_read_from_the_head_of_the_branch_leaving_out_pa
                 Blob::Text("model = \"opus\"\n".into())
             ),
             (
-                ".linewright/prompts/parts/facts.md".to_string(),
-                Blob::Text("Facts.\n".into())
+                ".linewright/prompts/follow-ups/parse-error.md".to_string(),
+                Blob::Text("Parse error.\n".into())
             ),
         ])
     );
@@ -546,7 +549,10 @@ async fn every_file_under_a_directory_is_listed_by_its_path_under_it() {
             &[
                 (".linewright/config.toml", "model = \"opus\"\n"),
                 (".linewright/prompts/triage.md", "Triage it.\n"),
-                (".linewright/prompts/parts/facts.md", "Facts.\n"),
+                (
+                    ".linewright/prompts/follow-ups/parse-error.md",
+                    "Parse error.\n",
+                ),
                 ("README.md", "Read me.\n"),
             ],
             "Configure Linewright",
@@ -559,7 +565,11 @@ async fn every_file_under_a_directory_is_listed_by_its_path_under_it() {
 
     assert_eq!(
         files,
-        ["config.toml", "prompts/parts/facts.md", "prompts/triage.md"]
+        [
+            "config.toml",
+            "prompts/follow-ups/parse-error.md",
+            "prompts/triage.md"
+        ]
     );
     assert_eq!(
         world

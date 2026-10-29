@@ -381,7 +381,7 @@ pub trait Store: Send + Sync {
     async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>>;
     /// The path, relative to `dir`, of every file in the directory `dir` and
     /// its subdirectories at the head of `branch`, such as
-    /// `prompts/parts/facts.md`: none when it has no such directory.
+    /// `prompts/follow-ups/parse-error.md`: none when it has no such directory.
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;
     async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;

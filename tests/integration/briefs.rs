@@ -67,7 +67,9 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     assert_eq!(layers["follow-ups/parse-error.md"], Layer::Repository);
     assert_eq!(layers["follow-ups/loose-ends.md"], Layer::Operator);
     assert_eq!(layers["triage.md"], Layer::Linewright);
-    assert_eq!(layers["parts/facts.md"], Layer::Linewright);
+    assert_eq!(layers.len(), 11);
+    assert!(!layers.contains_key("parts/facts.md"));
+    assert!(!layers.contains_key("outputs/implement.md"));
 }
 
 #[test]
@@ -235,7 +237,7 @@ fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_l
         "{prompt}"
     );
     assert_eq!(briefs.layers()["implement.md"], Layer::Operator);
-    assert_eq!(briefs.layers()["outputs/implement.md"], Layer::Linewright);
+    assert!(!briefs.layers().contains_key("outputs/implement.md"));
     assert_eq!(briefs.layers()["triage.md"], Layer::Linewright);
 }
 
@@ -281,23 +283,41 @@ fn an_operators_files_that_cannot_be_used_are_refused_each_named() {
 }
 
 #[test]
-fn an_operators_result_contract_is_filled_into_the_prompt() {
-    let dir = prompts_dir(&[(
-        "outputs/implement.md",
-        "End with {\"outcome\": \"done\"}.\n",
-    )]);
+fn an_operators_part_or_result_contract_is_refused() {
+    for path in ["parts/facts.md", "outputs/implement.md"] {
+        let dir = prompts_dir(&[(path, "Ours.\n")]);
 
-    let briefs = OperatorPrompts::read(Some(dir.path())).unwrap().briefs();
+        let error = OperatorPrompts::read(Some(dir.path())).unwrap_err();
 
-    assert!(
-        implement_prompt(&briefs).ends_with("### 2. Output\n\nEnd with {\"outcome\": \"done\"}.\n"),
-        "{}",
-        implement_prompt(&briefs)
-    );
+        assert_eq!(
+            format!("{error:#}"),
+            format!(
+                "the `prompts` directory {} holds files Linewright cannot use:\n\
+                 - {path}: not one of Linewright's prompts",
+                dir.path().display()
+            )
+        );
+    }
 }
 
 #[test]
-fn every_prompt_and_part_has_the_runs_it_is_sent_to_declared() {
+fn the_prompts_a_layer_may_override_are_the_stage_prompts_and_the_follow_ups() {
+    assert_eq!(
+        prompts::Prompts::paths(),
+        [
+            "triage.md",
+            "design.md",
+            "implement.md",
+            "rework.md",
+            "fix-ci.md",
+            "update.md",
+            "automation.md",
+            "follow-ups/parse-error.md",
+            "follow-ups/loose-ends.md",
+            "follow-ups/usage-limit-reset.md",
+            "follow-ups/late-feedback.md",
+        ]
+    );
     for path in prompts::Prompts::paths() {
         assert!(
             prompts::readers(path).is_some(),
@@ -305,13 +325,15 @@ fn every_prompt_and_part_has_the_runs_it_is_sent_to_declared() {
         );
     }
     assert_eq!(prompts::readers("tickets.md"), None);
+    assert_eq!(prompts::readers("parts/facts.md"), None);
+    assert_eq!(prompts::readers("outputs/implement.md"), None);
 }
 
 #[test]
-fn a_part_is_read_only_by_the_runs_it_is_sent_to() {
+fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
     let fix_ci = RunKind::Stage(WorkKind::FixCi);
     let implement = RunKind::Stage(WorkKind::Implement);
-    let full_log = prompts::readers("parts/full-log.md").unwrap();
+    let fix_ci_prompt = prompts::readers("fix-ci.md").unwrap();
     let parse_error = prompts::readers("follow-ups/parse-error.md").unwrap();
     let automation = linewright::automation::parse(
         &"weekly".parse().unwrap(),
@@ -319,8 +341,8 @@ fn a_part_is_read_only_by_the_runs_it_is_sent_to() {
     )
     .unwrap();
 
-    assert!(full_log.read_by(&fix_ci));
-    assert!(!full_log.read_by(&implement));
-    assert!(!full_log.read_by(&RunKind::Automation(&automation)));
+    assert!(fix_ci_prompt.read_by(&fix_ci));
+    assert!(!fix_ci_prompt.read_by(&implement));
+    assert!(!fix_ci_prompt.read_by(&RunKind::Automation(&automation)));
     assert!(parse_error.read_by(&RunKind::Automation(&automation)));
 }
