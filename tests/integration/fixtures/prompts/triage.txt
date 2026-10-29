@@ -1,12 +1,15 @@
-# Your task
-
-Triage the issue below.
+## facts
 
 - Repository: `owner/widgets`
 - Default branch: `main`
 - Spec: the tracked files matching `docs/specs/**/*.md`
 - Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
-- Categories to choose from: `bug`, `enhancement`
+
+## categories
+
+`bug`, `enhancement`
+
+## issue
 
 ### The issue: #7 Count the widgets
 
@@ -20,13 +23,7 @@ They are not counted.
 
 Seen it too.
 
-## Steps
-
-### 1. Triage the issue
-
-Call the Skill tool with `linewright:triage` and work as it says.
-
-### 2. Output
+## output
 
 End your session with a final message that is a single JSON object and nothing else:
 
@@ -40,3 +37,4 @@ End your session with a final message that is a single JSON object and nothing e
 ```
 
 `ask` is for `needs-info` only. Leave it out to ask the reporter, @reporter.
+

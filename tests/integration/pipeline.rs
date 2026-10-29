@@ -418,10 +418,7 @@ async fn every_first_message_prompt_names_the_repository() {
     for (kind, prompts) in every_kind_of_first_message_prompt().await {
         assert_ne!(prompts.len(), 0, "no {kind} prompt");
         let first = &prompts[0];
-        assert!(
-            first.contains(&format!("- Repository: `{REPO}`")),
-            "{kind}: {first}"
-        );
+        assert!(first.contains(REPO), "{kind}: {first}");
     }
 }
 
@@ -1607,7 +1604,7 @@ async fn a_ticket_whose_pull_request_is_edited_not_to_close_it_is_worked_again_b
     assert_ne!(old.head_ref, new.head_ref);
     assert_eq!(new.closes, [ticket]);
     let prompt = &world.harness.prompts(WorkKind::Implement)[1];
-    assert!(prompt.contains(&format!("- Branch: `{}`, fresh from `main`.", new.head_ref)));
+    assert!(prompt.contains(&new.head_ref), "{prompt}");
 }
 
 #[tokio::test]
@@ -2328,8 +2325,7 @@ async fn a_spec_gap_that_does_not_block_a_design_is_filed_once_for_the_spec_chan
 
     let prompts = world.harness.prompts(WorkKind::Design);
     assert_eq!(prompts.len(), 2);
-    assert!(!prompts[0].contains("Spec gaps already filed"));
-    assert!(prompts[1].contains("Spec gaps already filed"));
+    assert!(!prompts[0].contains("Spec: gadget colors"));
     assert!(prompts[1].contains("Spec: gadget colors"));
     let gaps: Vec<_> = world
         .store
@@ -3082,8 +3078,7 @@ async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions_and_no
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
-    assert!(!prompts[0].contains("Spec gaps already filed"));
-    assert!(prompts[1].contains("Spec gaps already filed"));
+    assert!(!prompts[0].contains("Spec: gadget colors"));
     assert!(prompts[1].contains("Spec: gadget colors"));
     let gaps = world
         .store
@@ -3460,9 +3455,7 @@ async fn a_handed_back_tickets_next_run_starts_from_its_branch_and_is_told_it_ho
 
     assert!(next.held_earlier_work());
     let prompt = &world.harness.prompts(WorkKind::Implement)[1];
-    assert!(prompt.contains(&format!("- Branch: `{branch}`, holding earlier runs' work")));
-    assert!(prompt.contains("reset the branch to `origin/main`"));
-    assert!(!prompt.contains("fresh from"));
+    assert!(prompt.contains(&branch), "{prompt}");
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(pr.head_ref, branch);
     assert_eq!(
@@ -3507,8 +3500,7 @@ async fn a_handed_back_tickets_next_run_starts_from_the_default_branch_once_its_
 
     assert!(!next.held_earlier_work());
     let prompt = &world.harness.prompts(WorkKind::Implement)[1];
-    assert!(prompt.contains(&format!("- Branch: `{branch}`, fresh from `main`.")));
-    assert!(!prompt.contains("earlier runs' work"));
+    assert!(prompt.contains(&branch), "{prompt}");
 }
 
 #[tokio::test]
@@ -3857,22 +3849,8 @@ async fn the_next_run_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_s
     world.poll().await;
 
     let prompts = world.harness.prompts(WorkKind::Implement);
-    assert!(
-        prompts[1].contains(&format!(
-            "The branch holds the unfinished commit `{unfinished}`: what an earlier run's session \
-             left uncommitted when it stopped. Fold it into your own commits"
-        )),
-        "{}",
-        prompts[1]
-    );
-    assert!(
-        prompts[2].contains(&format!(
-            "the branch still holds the unfinished commit `{unfinished}`, from an earlier run; \
-             fold it into your own commits."
-        )),
-        "{}",
-        prompts[2]
-    );
+    assert!(prompts[1].contains(unfinished), "{}", prompts[1]);
+    assert!(prompts[2].contains(unfinished), "{}", prompts[2]);
     assert_eq!(prompts.len(), 3);
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(pr.head_ref, branch);
@@ -3932,11 +3910,15 @@ async fn a_run_that_fails_on_its_infrastructure_is_retried_from_its_unfinished_c
     let mut world = World::new().await;
     world.harness.on(WorkKind::Implement, |call| {
         if call.spec.dir.join("src/partial.txt").exists() {
-            assert!(
-                call.spec
-                    .prompt
-                    .contains("The branch holds the unfinished commit")
-            );
+            let unfinished = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&call.spec.dir)
+                .args(["log", "-1", "--format=%h"])
+                .output()
+                .unwrap()
+                .stdout;
+            let unfinished = String::from_utf8(unfinished).unwrap();
+            assert!(call.spec.prompt.contains(unfinished.trim()));
         } else {
             start_and_leave_edits(&call.spec.dir);
         }
@@ -4271,22 +4253,8 @@ async fn the_next_rework_is_told_to_fold_in_the_unfinished_commit_and_its_done_i
     world.poll().await;
 
     let prompts = world.harness.prompts(WorkKind::Rework);
-    assert!(
-        prompts[1].contains(&format!(
-            "The branch holds the unfinished commit `{unfinished}`: what an earlier run's session \
-             left uncommitted when it stopped. Fold it into your own commits"
-        )),
-        "{}",
-        prompts[1]
-    );
-    assert!(
-        prompts[2].contains(&format!(
-            "the branch still holds the unfinished commit `{unfinished}`, from an earlier run; \
-             fold it into your own commits."
-        )),
-        "{}",
-        prompts[2]
-    );
+    assert!(prompts[1].contains(&unfinished), "{}", prompts[1]);
+    assert!(prompts[2].contains(&unfinished), "{}", prompts[2]);
     assert_eq!(prompts.len(), 3);
     assert_eq!(
         subjects(&world, &branch),
@@ -4642,27 +4610,6 @@ fn contains(world: &World, branch: &str, commit: &str) -> bool {
         .success()
 }
 
-fn told_to_finish(world: &World, kind: WorkKind) -> Vec<&'static str> {
-    world
-        .harness
-        .prompts(kind)
-        .iter()
-        .filter_map(|prompt| {
-            if prompt.contains("A rebase onto `origin/main` stopped on conflicts in")
-                && prompt.contains("with `GIT_EDITOR=true git rebase --continue`")
-            {
-                Some("rebase")
-            } else if prompt.contains("A merge of `origin/main` stopped on conflicts in")
-                && prompt.contains("with `git commit`")
-            {
-                Some("merge")
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 #[tokio::test]
 async fn an_operators_prompt_is_the_one_the_session_gets() {
     let operators = prompts_with("update.md", |text| {
@@ -4687,7 +4634,7 @@ async fn an_operators_prompt_is_the_one_the_session_gets() {
         "{}",
         prompts[0]
     );
-    assert_eq!(told_to_finish(&world, WorkKind::Update), ["rebase"]);
+    assert_eq!(world.harness.stopped(WorkKind::Update), [Stopped::Rebase]);
 }
 
 #[tokio::test]
@@ -4698,7 +4645,7 @@ async fn by_default_a_conflict_is_resolved_in_a_rebase_where_the_repository_allo
     world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(told_to_finish(&world, WorkKind::Update), ["rebase"]);
+    assert_eq!(world.harness.stopped(WorkKind::Update), [Stopped::Rebase]);
     assert_eq!(merges(&world, &view.head_ref), 0);
     assert_eq!(view.mergeability, linewright::domain::Mergeability::Clean);
 }
@@ -4718,7 +4665,7 @@ async fn by_default_a_conflict_is_resolved_in_a_merge_where_the_repository_disal
     world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(told_to_finish(&world, WorkKind::Update), ["merge"]);
+    assert_eq!(world.harness.stopped(WorkKind::Update), [Stopped::Merge]);
     assert_eq!(merges(&world, &view.head_ref), 1);
     assert_eq!(view.mergeability, linewright::domain::Mergeability::Clean);
 }
@@ -4739,7 +4686,10 @@ async fn by_default_a_branch_is_always_rebased_where_the_repository_requires_lin
     let clean_ref = clean.store.snapshot_pull(clean_pr).await.head_ref;
     assert!(!contains(&clean, &clean_ref, &before), "rebased");
     assert_eq!(merges(&clean, &clean_ref), 0);
-    assert_eq!(told_to_finish(&conflicting, WorkKind::Update), ["rebase"]);
+    assert_eq!(
+        conflicting.harness.stopped(WorkKind::Update),
+        [Stopped::Rebase]
+    );
     let conflicting_ref = conflicting
         .store
         .snapshot_pull(conflicting_pr)
@@ -4761,7 +4711,7 @@ async fn update_branch_merge_merges_even_on_a_conflict_and_rebase_always_rebases
     merging.poll().await;
     rebasing.poll().await;
 
-    assert_eq!(told_to_finish(&merging, WorkKind::Update), ["merge"]);
+    assert_eq!(merging.harness.stopped(WorkKind::Update), [Stopped::Merge]);
     let merging_ref = merging.store.snapshot_pull(merging_pr).await.head_ref;
     assert_eq!(merges(&merging, &merging_ref), 1);
     let rebasing_ref = rebasing.store.snapshot_pull(rebasing_pr).await.head_ref;
@@ -4780,7 +4730,7 @@ async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
     world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(told_to_finish(&world, WorkKind::Rework), ["rebase"]);
+    assert_eq!(world.harness.stopped(WorkKind::Rework), [Stopped::Rebase]);
     assert_eq!(
         world.harness.prompts(WorkKind::Update),
         Vec::<String>::new()
@@ -4843,7 +4793,7 @@ async fn a_branch_with_a_merge_commit_github_cannot_rebase_is_rebased_by_an_upda
     world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(told_to_finish(&world, WorkKind::Update), ["rebase"]);
+    assert_eq!(world.harness.stopped(WorkKind::Update), [Stopped::Rebase]);
     assert_eq!(merges(&world, &view.head_ref), 0);
     assert_eq!(
         (view.mergeability, view.rebaseability),
@@ -4866,7 +4816,7 @@ async fn a_rework_run_on_a_pull_request_github_cannot_rebase_rebases_it_first() 
     world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(told_to_finish(&world, WorkKind::Rework), ["rebase"]);
+    assert_eq!(world.harness.stopped(WorkKind::Rework), [Stopped::Rebase]);
     assert_eq!(merges(&world, &view.head_ref), 0);
 }
 
@@ -4910,7 +4860,7 @@ async fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_befo
 
     world.poll().await;
 
-    assert_eq!(told_to_finish(&world, WorkKind::Update), ["rebase"]);
+    assert_eq!(world.harness.stopped(WorkKind::Update), [Stopped::Rebase]);
     let view = world.store.snapshot_pull(pr).await;
     assert!(matches!(view.state, PullState::Open { .. }));
 

@@ -17,11 +17,10 @@ lw --prompts briefs/prompts/ replay case/ --out run-1/
 `pulls/`, as JSON, Markdown and diffs) and every session's brief, result and
 transcript (`sessions/`).
 
-The prompts are compiled into the binary, and tests quote their wording. After
-changing a prompt, find the tests that quote the text you changed by searching
-`tests/` for it, run their files first, and only then the full `scripts/check`:
-
-```sh
-grep -rlF 'the text you changed' tests/
-cargo test --locked --test integration -- NAME:: NAME::  # each file found, without .rs
-```
+The prompts are compiled into the binary, but no test depends on their wording:
+tests check what Linewright fills into the placeholders, not the text around
+them. The parts in `prompts/parts/` and `prompts/outputs/` are Linewright's own
+wording of what it fills in, and `tests/integration/rendered_prompts.rs` holds
+that byte for byte against `tests/integration/fixtures/prompts/`. A change to a
+prompt's placeholders, which Linewright refuses unless the code changes with it,
+is a change to the spec (`docs/specs/runs.md`, "Contract").

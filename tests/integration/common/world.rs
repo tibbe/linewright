@@ -606,3 +606,89 @@ pub fn prompts_with(path: &str, edit: impl FnOnce(String) -> String) -> tempfile
     std::fs::write(prompt, edit(std::fs::read_to_string(shipped).unwrap())).unwrap();
     dir
 }
+
+/// Each first-message prompt and its placeholders, in the order of its
+/// table in the spec.
+const PLACEHOLDERS: &[(&str, &[&str])] = &[
+    ("triage.md", &["facts", "categories", "issue", "output"]),
+    (
+        "design.md",
+        &["facts", "kind", "item", "filed_gaps", "cutting", "output"],
+    ),
+    (
+        "implement.md",
+        &[
+            "facts",
+            "default_branch",
+            "branch",
+            "holding",
+            "ticket",
+            "output",
+        ],
+    ),
+    (
+        "rework.md",
+        &[
+            "facts",
+            "branch",
+            "pr",
+            "pr_title",
+            "description",
+            "ticket",
+            "unfinished",
+            "conflict",
+            "feedback",
+            "conversation",
+            "output",
+        ],
+    ),
+    (
+        "fix-ci.md",
+        &[
+            "facts",
+            "branch",
+            "pr",
+            "pr_title",
+            "description",
+            "ticket",
+            "unfinished",
+            "conflict",
+            "failures",
+            "output",
+        ],
+    ),
+    (
+        "update.md",
+        &[
+            "facts",
+            "branch",
+            "pr",
+            "pr_title",
+            "description",
+            "ticket",
+            "unfinished",
+            "conflict",
+            "output",
+        ],
+    ),
+    (
+        "automation.md",
+        &["facts", "name", "instructions", "max_issues", "output"],
+    ),
+];
+
+/// The briefs with each first-message prompt replaced by its placeholders,
+/// each under a heading naming it.
+pub fn placeholders_only() -> std::sync::Arc<linewright::briefs::Briefs> {
+    let dir = tempfile::tempdir().unwrap();
+    for (file, names) in PLACEHOLDERS {
+        let text: String = names
+            .iter()
+            .map(|name| format!("## {name}\n\n{{{{{name}}}}}\n\n"))
+            .collect();
+        std::fs::write(dir.path().join(file), text).unwrap();
+    }
+    linewright::briefs::OperatorPrompts::read(Some(dir.path()))
+        .unwrap()
+        .briefs()
+}

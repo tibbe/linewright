@@ -47,6 +47,8 @@
 //!   - `has_ended`, `ended`, `finished`: whether it has ended, and waits for
 //!     it to end of its own accord, or however long that takes.
 //! - `prompts_with`: a `prompts` directory with one shipped prompt edited.
+//! - `placeholders_only`: the briefs with each first-message prompt replaced
+//!   by its placeholders, each under a heading naming it.
 //!
 //! # `harness`: the scripted agent
 //!
@@ -56,6 +58,8 @@
 //!   - `takes`: makes the next turn take some time.
 //!   - `hold`: holds the next turn open, as a `HeldTurn`.
 //!   - `prompts`, `automation_prompts`: the prompts its turns were given.
+//!   - `stopped`: the update each session found its clone stopped in.
+//! - `Stopped`: an update stopped on conflicts, a rebase or a merge.
 //! - `HeldTurn`: the agent of a turn held open, producing output when told to
 //!   (`says`, `writes`) and ending its turn when dropped.
 //! - `subject_file`: the file name of the subject a call works on.

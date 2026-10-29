@@ -73,13 +73,7 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_is_sent_back_a
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
-    assert!(
-        prompts[1].contains(&format!(
-            "GitHub's push protection refused the push over a secret: {FOUND}."
-        )),
-        "{}",
-        prompts[1]
-    );
+    assert!(prompts[1].contains(FOUND), "{}", prompts[1]);
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(
         world

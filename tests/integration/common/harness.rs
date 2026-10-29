@@ -38,6 +38,8 @@ impl ScriptKey {
 pub struct ScriptedHarness {
     scripts: Mutex<HashMap<ScriptKey, Script>>,
     prompts: Mutex<Vec<(ScriptKey, String)>>,
+    /// The update each session's clone was left stopped in as it started.
+    stopped: Mutex<Vec<(ScriptKey, Stopped)>>,
     started: std::sync::atomic::AtomicUsize,
     turn_time: Mutex<std::time::Duration>,
     held: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>,
@@ -115,6 +117,18 @@ impl ScriptedHarness {
             .collect()
     }
 
+    /// The update each session of `kind` found its clone stopped in as it
+    /// started, for those that found one.
+    pub fn stopped(&self, kind: WorkKind) -> Vec<Stopped> {
+        self.stopped
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(k, _)| *k == ScriptKey::Work(kind))
+            .map(|(_, stopped)| *stopped)
+            .collect()
+    }
+
     async fn turn(
         &self,
         spec: &SessionSpec,
@@ -142,6 +156,11 @@ impl ScriptedHarness {
             }
         }
         let key = ScriptKey::of(spec);
+        if followup.is_none()
+            && let Some(stopped) = stopped_in(&spec.dir)
+        {
+            self.stopped.lock().unwrap().push((key, stopped));
+        }
         self.prompts
             .lock()
             .unwrap()
@@ -194,6 +213,34 @@ impl Harness for ScriptedHarness {
         prompt: &str,
     ) -> Result<Turn, SessionError> {
         self.turn(spec, session.to_string(), Some(prompt)).await
+    }
+}
+
+/// An update of a clone that stopped on conflicts for its session to finish.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stopped {
+    Rebase,
+    Merge,
+}
+
+/// The update `dir`'s clone is stopped in, if any.
+fn stopped_in(dir: &Path) -> Option<Stopped> {
+    let exists = |name: &str| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "--git-path", name])
+            .output()
+            .unwrap();
+        let path = String::from_utf8(output.stdout).unwrap();
+        dir.join(path.trim()).exists()
+    };
+    if exists("rebase-merge") || exists("rebase-apply") {
+        Some(Stopped::Rebase)
+    } else if exists("MERGE_HEAD") {
+        Some(Stopped::Merge)
+    } else {
+        None
     }
 }
 

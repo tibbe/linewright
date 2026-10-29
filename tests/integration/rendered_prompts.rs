@@ -1,13 +1,13 @@
-//! Each first-message prompt as the shipped briefs render it, byte for byte,
-//! against the text in `fixtures/prompts/`, whichever files of the briefs
-//! its parts come from.
+//! What Linewright fills into each first-message prompt's placeholders, byte
+//! for byte, against the text in `fixtures/prompts/`. The prompts are a layer
+//! holding only their placeholders, so the shipped prompts' wording plays no
+//! part (docs/specs/runs.md, "Contract").
 
 use std::borrow::Cow;
 
 use chrono::{DateTime, Utc};
 
 use crate::common;
-use linewright::briefs::Briefs;
 use linewright::domain::*;
 use linewright::git::{BranchStart, Conflict, UnfinishedCommits};
 use linewright::prompts::{self, PullTask, Repo, Ticket};
@@ -90,10 +90,10 @@ fn unfinished() -> UnfinishedCommits {
 }
 
 #[test]
-fn triage_is_sent_as_before() {
+fn triage_is_filled_as_before() {
     let name = repo_name();
     let prompt = prompts::triage(
-        &Briefs::shipped().prompts,
+        &common::placeholders_only().prompts,
         &repo(&name),
         &issue(7, "Count the widgets", "They are not counted."),
         &["bug".into(), "enhancement".into()],
@@ -103,7 +103,7 @@ fn triage_is_sent_as_before() {
 }
 
 #[test]
-fn design_of_a_spec_change_is_sent_as_before() {
+fn design_of_a_spec_change_is_filled_as_before() {
     let name = repo_name();
     let pr = MergedPull {
         number: Number(5),
@@ -121,7 +121,7 @@ fn design_of_a_spec_change_is_sent_as_before() {
     };
     let gap = issue(9, "Which widgets count?", "Say which.");
     let prompt = prompts::design_spec_change(
-        &Briefs::shipped().prompts,
+        &common::placeholders_only().prompts,
         &repo(&name),
         &pr,
         "+Widgets are counted.\n",
@@ -132,10 +132,10 @@ fn design_of_a_spec_change_is_sent_as_before() {
 }
 
 #[test]
-fn design_of_an_issue_is_sent_as_before() {
+fn design_of_an_issue_is_filled_as_before() {
     let name = repo_name();
     let prompt = prompts::design_issue(
-        &Briefs::shipped().prompts,
+        &common::placeholders_only().prompts,
         &repo(&name),
         &issue(7, "Count the widgets", "They are not counted."),
         &[],
@@ -145,13 +145,13 @@ fn design_of_an_issue_is_sent_as_before() {
 }
 
 #[test]
-fn implement_is_sent_as_before() {
+fn implement_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
     let parent = issue(4, "Widgets", "The design.");
     let ticket = Ticket::new(&ticket_issue, Some(Cow::Borrowed(&parent)), vec![], None);
     let prompt = prompts::implement(
-        &Briefs::shipped().prompts,
+        &common::placeholders_only().prompts,
         &repo(&name),
         &ticket,
         "7-count-the-widgets",
@@ -164,7 +164,7 @@ fn implement_is_sent_as_before() {
 }
 
 #[test]
-fn rework_is_sent_as_before() {
+fn rework_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
     let ticket = Ticket::new(&ticket_issue, None, vec![], None);
@@ -179,7 +179,7 @@ fn rework_is_sent_as_before() {
         files: vec!["src/count.rs".into()],
     };
     let prompt = prompts::pull_work(
-        &Briefs::shipped().prompts,
+        &common::placeholders_only().prompts,
         &repo(&name),
         &ticket,
         &pr,
@@ -198,7 +198,7 @@ fn rework_is_sent_as_before() {
 }
 
 #[test]
-fn fix_ci_is_sent_as_before() {
+fn fix_ci_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
     let ticket = Ticket::new(&ticket_issue, None, vec![], None);
@@ -208,7 +208,7 @@ fn fix_ci_is_sent_as_before() {
         log: None,
     }];
     let prompt = prompts::pull_work(
-        &Briefs::shipped().prompts,
+        &common::placeholders_only().prompts,
         &repo(&name),
         &ticket,
         &pull(),
@@ -223,7 +223,7 @@ fn fix_ci_is_sent_as_before() {
 }
 
 #[test]
-fn update_is_sent_as_before() {
+fn update_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
     let ticket = Ticket::new(&ticket_issue, None, vec![], None);
@@ -232,7 +232,7 @@ fn update_is_sent_as_before() {
         files: vec!["src/count.rs".into(), "Cargo.lock".into()],
     };
     let prompt = prompts::pull_work(
-        &Briefs::shipped().prompts,
+        &common::placeholders_only().prompts,
         &repo(&name),
         &ticket,
         &pull(),
@@ -244,14 +244,18 @@ fn update_is_sent_as_before() {
 }
 
 #[test]
-fn automation_is_sent_as_before() {
+fn automation_is_filled_as_before() {
     let name = repo_name();
     let automation = linewright::automation::parse(
         &"weekly-bugs".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\nmax-issues: 2\n---\nLook at the bugs fixed in the past week.\n",
     )
     .unwrap();
-    let prompt = prompts::automation(&Briefs::shipped().prompts, &repo(&name), &automation);
+    let prompt = prompts::automation(
+        &common::placeholders_only().prompts,
+        &repo(&name),
+        &automation,
+    );
 
     assert_eq!(prompt, expected("automation.txt"));
 }

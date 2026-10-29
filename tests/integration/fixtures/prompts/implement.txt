@@ -1,12 +1,23 @@
-# Your task
-
-Implement the ticket below on its branch.
+## facts
 
 - Repository: `owner/widgets`
 - Default branch: `main`
 - Spec: the tracked files matching `docs/specs/**/*.md`
 - Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
-- Branch: `7-count-the-widgets`, holding earlier runs' work on the ticket; its comments say what they tried. Build on that work, or, if it is not worth keeping, reset the branch to `origin/main` and start again. The branch holds the unfinished commit `abc1234`: what an earlier run's session left uncommitted when it stopped. Fold it into your own commits, for example by resetting softly to before it and committing the work properly, or discard it with the rest. No pull request opens while the branch holds an unfinished commit. The fixed point for review is `origin/main`.
+
+## default_branch
+
+main
+
+## branch
+
+7-count-the-widgets
+
+## holding
+
+holding earlier runs' work on the ticket; its comments say what they tried. Build on that work, or, if it is not worth keeping, reset the branch to `origin/main` and start again. The branch holds the unfinished commit `abc1234`: what an earlier run's session left uncommitted when it stopped. Fold it into your own commits, for example by resetting softly to before it and committing the work properly, or discard it with the rest. No pull request opens while the branch holds an unfinished commit.
+
+## ticket
 
 ### The ticket: #7 Count the widgets
 
@@ -30,13 +41,7 @@ Seen it too.
 
 Seen it too.
 
-## Steps
-
-### 1. Implement the ticket
-
-Call the Skill tool with `linewright:implement` and work as it says.
-
-### 2. Output
+## output
 
 End your session with a final message that is a single JSON object and nothing else, one of:
 
@@ -48,3 +53,4 @@ where
 
 - `SPEC_GAP` is `{ "title": "<issue title>", "body": "<the spec change needed, in Markdown>" }`, and `spec_gaps` lists the gaps that did not block the ticket (often none).
 - `DECLINED` is `{ "finding": "<the review finding, as the review put it>", "evidence": "<the quote that shows it is wrong on the facts>" }`, and `declined_findings` lists the review findings you did not apply (often none).
+

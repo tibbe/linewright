@@ -89,6 +89,14 @@ async fn assert_secret_kept_out(world: &World) {
     }
 }
 
+/// Whether a follow-up names the commit holding `NPM_TOKEN`, the variable
+/// and the file.
+fn names_the_secret(prompt: &str, commit: &str) -> bool {
+    [commit, "`NPM_TOKEN`", "`.npmrc`"]
+        .iter()
+        .all(|named| prompt.contains(named))
+}
+
 fn reason(commit: &str) -> String {
     format!("the commit `{commit}` adds the value of `NPM_TOKEN`, a secret, to `.npmrc`")
 }
@@ -134,7 +142,7 @@ async fn an_implement_run_whose_commits_hold_a_secret_is_sent_back_before_it_pus
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
     let commit = committed.lock().unwrap().clone();
-    assert!(prompts[1].contains(&reason(&commit)), "{}", prompts[1]);
+    assert!(names_the_secret(&prompts[1], &commit), "{}", prompts[1]);
     assert_eq!(
         pushed_before_followup.lock().unwrap().clone(),
         Some(vec!["main".to_string()]),
@@ -221,7 +229,7 @@ async fn a_rework_whose_commits_hold_a_secret_pushes_nothing_to_its_pull_request
     let prompts = world.harness.prompts(WorkKind::Rework);
     assert_eq!(prompts.len(), 2);
     let commit = committed.lock().unwrap().clone();
-    assert!(prompts[1].contains(&reason(&commit)), "{}", prompts[1]);
+    assert!(names_the_secret(&prompts[1], &commit), "{}", prompts[1]);
     assert_eq!(world.store.snapshot_pull(pr).await.head_sha, head);
     let comment = last_pull_comment(&world, pr).await;
     assert!(
@@ -324,7 +332,7 @@ async fn a_secret_whose_value_spans_lines_is_found_whole() {
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
     assert!(
-        prompts[1].contains("adds the value of `DEPLOY_KEY`, a secret, to `deploy/key.pem`"),
+        prompts[1].contains("`DEPLOY_KEY`") && prompts[1].contains("`deploy/key.pem`"),
         "{}",
         prompts[1]
     );
@@ -392,7 +400,7 @@ async fn a_commit_holding_a_harness_credential_no_one_named_is_sent_back_naming_
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
     assert!(
-        prompts[1].contains("adds the value of `CLAUDE_CODE_OAUTH_TOKEN`, a secret, to `auth.txt`"),
+        prompts[1].contains("`CLAUDE_CODE_OAUTH_TOKEN`") && prompts[1].contains("`auth.txt`"),
         "{}",
         prompts[1]
     );
