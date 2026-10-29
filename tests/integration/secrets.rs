@@ -236,3 +236,19 @@ fn a_header_value_of_1_to_5_characters_is_set_aside_by_its_variable() {
     assert_eq!(secrets.redaction().apply("dev"), "dev");
     assert_eq!(held_in(&env, "dev"), None);
 }
+
+#[test]
+fn a_file_s_bytes_hold_a_secret_even_among_bytes_that_are_not_text() {
+    let secrets = secrets_unnamed(&[("ANTHROPIC_API_KEY", "harness-s3cr3t")]);
+    let mut bytes = vec![0x89, b'P', b'N', b'G', 0xff, 0x00];
+    bytes.extend_from_slice(b"harness-s3cr3t");
+    bytes.extend_from_slice(&[0xfe, 0x00]);
+    assert_eq!(secrets.held_in(&bytes), Some("ANTHROPIC_API_KEY"));
+    assert_eq!(secrets.held_in(&[0x89, b'P', b'N', b'G', 0xff]), None);
+}
+
+#[test]
+fn a_file_s_bytes_holding_a_short_secret_hold_none() {
+    let secrets = secrets_unnamed(&[("ANTHROPIC_API_KEY", "s3cr3")]);
+    assert_eq!(secrets.held_in(b"the s3cr3 is out"), None);
+}

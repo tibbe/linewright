@@ -1,3 +1,4 @@
+mod attachments;
 mod automation_file;
 mod automation_run;
 mod automation_schedule;

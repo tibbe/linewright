@@ -5,6 +5,8 @@
 
 use std::ffi::OsString;
 
+use aho_corasick::AhoCorasick;
+
 use crate::git::Addition;
 use crate::redaction::Redaction;
 use crate::session_env;
@@ -153,6 +155,18 @@ impl Secrets {
                 commit: addition.commit.clone(),
             })
         })
+    }
+
+    /// The variable of the first secret `bytes` hold, as a file's bytes,
+    /// binary or text, hold it.
+    pub fn held_in(&self, bytes: &[u8]) -> Option<&str> {
+        if self.list.is_empty() {
+            return None;
+        }
+        let matcher = AhoCorasick::new(self.list.iter().map(|secret| secret.value.as_bytes()))
+            .expect("the secrets make a matcher");
+        let found = matcher.find(bytes)?;
+        Some(&self.list[found.pattern().as_usize()].name)
     }
 }
 
