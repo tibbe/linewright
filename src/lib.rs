@@ -44,6 +44,7 @@ pub mod run;
 pub mod runs;
 pub mod secrets;
 pub mod session_env;
+mod setup;
 pub mod spec_gap;
 pub mod spec_glob;
 pub mod status;

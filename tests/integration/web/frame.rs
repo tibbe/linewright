@@ -463,7 +463,7 @@ async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to
         .unwrap();
     let web = Web::polling(world, Duration::from_millis(200)).await;
     let error = "the setting `max-runs` is the operator's: the repository's file holds \
-                 `model`, `effort`, `session-timeout`";
+                 `model`, `effort`, `session-timeout`, `setup`";
 
     let html = web
         .eventually_page("/", |html| !holds(html).is_empty())

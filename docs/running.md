@@ -37,8 +37,8 @@ in `linewright.toml`, except `session-env`, which has no variable;
 
 ### Stage settings
 
-`model`, `effort` (`low`, `medium`, `high`, `xhigh` or `max`) and
-`session-timeout` are for the whole pipeline, and a stage's table in
+`model`, `effort` (`low`, `medium`, `high`, `xhigh` or `max`),
+`session-timeout` and `setup` are for the whole pipeline, and a stage's table in
 `linewright.toml` can set its own for its sessions. Without a `model` or
 `effort`, Claude Code chooses. A stage's `session-pass-env` and `session-env`
 add their variables to the whole pipeline's for that stage's sessions only,
@@ -61,6 +61,39 @@ A model or effort Linewright sets wins over `ANTHROPIC_MODEL`,
 `CLAUDE_CODE_EFFORT_LEVEL` and the repository's Claude Code settings. An
 automation's `model` and `effort` in its front matter win over the whole
 pipeline's for its runs.
+
+The repository can set `model`, `effort`, `session-timeout` and `setup` too,
+for the whole pipeline and in stage tables, in `.linewright/config.toml` on its
+default branch. Its settings win over your file, and your flags and variables
+win over its whole-pipeline settings.
+
+### The setup command
+
+`setup` is a command that prepares each session's clone before the session
+starts, such as by installing dependencies. `bash` runs it in the root of the
+clone, with nothing on its standard input, in the session's environment (see
+[Variables your build needs](#variables-your-build-needs)). An empty one runs
+nothing, and wins over one set lower down.
+
+```toml
+setup = "npm ci"
+
+[stage.triage]
+setup = ""
+```
+
+- **Its timeout** is the session's, `session-timeout`.
+- **A command that fails**, exiting with a non-zero status, keeps its session
+  from starting. Linewright retries the run once, then hands the item back with
+  the end of the command's output. A command that times out hands back at once.
+- **What it leaves running**, such as a dev server, ends when the run is done
+  with the clone: Linewright sends its process group SIGTERM, then SIGKILL. A
+  process that leaves the group, or a container it starts, outlives the run.
+- **Its output** is kept with the run, redacted, in `setup.log` in the
+  session's directory under `sessions/` in the work directory.
+
+An automation's `setup` in its front matter wins over the whole pipeline's for
+its runs.
 
 ### Prompts
 

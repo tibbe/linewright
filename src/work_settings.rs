@@ -78,15 +78,17 @@ pub enum Setting {
     Model,
     Effort,
     SessionTimeout,
+    Setup,
     SessionEnv,
     SessionPassEnv,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 5] = [
+    pub const ALL: [Setting; 6] = [
         Setting::Model,
         Setting::Effort,
         Setting::SessionTimeout,
+        Setting::Setup,
         Setting::SessionEnv,
         Setting::SessionPassEnv,
     ];
@@ -97,6 +99,7 @@ impl Setting {
             Setting::Model => "model",
             Setting::Effort => "effort",
             Setting::SessionTimeout => "session-timeout",
+            Setting::Setup => "setup",
             Setting::SessionEnv => "session-env",
             Setting::SessionPassEnv => "session-pass-env",
         }
@@ -128,12 +131,43 @@ impl<'de> Deserialize<'de> for Setting {
     }
 }
 
+/// The `setup` setting: the setup command each session's clone is prepared
+/// with (`docs/specs/runs.md`, Setup).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Setup {
+    /// Runs nothing. Set in a layer, it wins over a command set below it.
+    Empty,
+    Command(SetupCommand),
+}
+
+/// A setup command, never empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetupCommand(String);
+
+impl SetupCommand {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// An empty string is [`Setup::Empty`].
+impl From<String> for Setup {
+    fn from(text: String) -> Setup {
+        if text.is_empty() {
+            Setup::Empty
+        } else {
+            Setup::Command(SetupCommand(text))
+        }
+    }
+}
+
 /// The settings one layer sets, `None` where it sets none.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Partial {
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub session_timeout: Option<Duration>,
+    pub setup: Option<Setup>,
 }
 
 /// A stage's table in the operator's file.
@@ -292,6 +326,8 @@ pub struct SessionSettings {
     pub effort: Option<Sourced<Effort>>,
     pub session_timeout: Sourced<Duration>,
     pub timeout_setting: TimeoutSetting,
+    /// The setup command, whose timeout is `session_timeout`'s.
+    pub setup: Sourced<Setup>,
     pub environment: Arc<Given>,
     pub env_layers: EnvLayers,
 }
@@ -323,6 +359,7 @@ impl SessionSettings {
                 Setting::SessionTimeout,
                 Source::Layer(self.session_timeout.layer),
             ),
+            (Setting::Setup, Source::Layer(self.setup.layer)),
             (Setting::SessionEnv, Source::Layer(self.env_layers.set)),
             (Setting::SessionPassEnv, Source::Layer(self.env_layers.pass)),
         ])
@@ -376,6 +413,7 @@ impl WorkSettings {
                     model: automation.model.clone(),
                     effort: automation.effort,
                     session_timeout: automation.timeout,
+                    setup: automation.setup.clone(),
                 },
                 None,
             ),
@@ -417,12 +455,17 @@ impl WorkSettings {
                     TimeoutSetting::Pipeline,
                 ),
             };
+        let setup = first(&ladder, |partial| partial.setup.clone()).map_or(
+            Sourced::new(Setup::Empty, Layer::Linewright),
+            |(setup, rung)| Sourced::new(setup, rung.layer),
+        );
         let staged_environment = stage.and_then(|stage| environments.stages.get(&stage));
         SessionSettings {
             model,
             effort,
             session_timeout,
             timeout_setting,
+            setup,
             environment: staged_environment.unwrap_or(&environments.pipeline).clone(),
             env_layers: self.env_layers.with(table),
         }

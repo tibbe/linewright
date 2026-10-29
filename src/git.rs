@@ -163,6 +163,17 @@ pub async fn update(dir: &Path, default_branch: &str, rule: UpdateRule) -> Resul
     }
 }
 
+/// Aborts the update that stopped on `conflict`, leaving the branch as it
+/// was before it.
+pub async fn abort_update(dir: &Path, conflict: &Conflict) -> Result<()> {
+    let operation = match conflict.method {
+        UpdateMethod::Rebase => "rebase",
+        UpdateMethod::Merge => "merge",
+    };
+    git(dir, &[operation, "--abort"]).await?;
+    Ok(())
+}
+
 /// Rebases the checked-out branch onto `origin/<default_branch>`, as fresh
 /// as the clone, even when it already contains it: replaying the branch's
 /// commits drops the merge commits on it. A branch with none that contains

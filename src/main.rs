@@ -595,9 +595,10 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             require_tool(HARNESS_PROGRAM).await?;
             let sessions = SessionCredentials::new(SessionToken::Withheld, &config.secrets)?;
             let environments = environments(&config, &sessions);
-            let harness = harness(bash, &sessions);
+            let harness = harness(bash.clone(), &sessions);
             let factory_config = factory_config(
                 &config,
+                bash,
                 prompts,
                 environments,
                 out.clone(),
@@ -759,8 +760,13 @@ fn prompts(config: &Config) -> Result<OperatorPrompts> {
     Ok(prompts)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "`serve` and `replay` each give most of them differently"
+)]
 fn factory_config(
     config: &Config,
+    bash: PathBuf,
     prompts: OperatorPrompts,
     environments: Environments,
     work_dir: std::path::PathBuf,
@@ -777,6 +783,7 @@ fn factory_config(
         ci_timeout: config.ci_timeout,
         ci_attempts: config.ci_attempts,
         result_retries: config.result_retries,
+        bash,
         work: config.work.clone(),
         environments,
         update_method: config.update_branch,
@@ -809,10 +816,11 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Res
         &config.secrets,
     )?;
     let environments = environments(config, &sessions);
-    let harness = harness(bash, &sessions);
+    let harness = harness(bash.clone(), &sessions);
     let github = connect(config, token).await?;
     let factory_config = factory_config(
         config,
+        bash,
         prompts,
         environments,
         work_dir(config, &github),

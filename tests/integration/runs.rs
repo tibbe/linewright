@@ -114,6 +114,7 @@ async fn an_items_runs_as_json_give_where_each_setting_and_prompt_file_came_from
             "model": "operator",
             "effort": "harness",
             "session-timeout": "operator",
+            "setup": "linewright",
             "session-env": "operator",
             "session-pass-env": "linewright",
         })

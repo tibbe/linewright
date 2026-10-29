@@ -2581,7 +2581,7 @@ async fn explain_names_the_file_of_the_repositorys_a_ticket_waits_for_and_its_er
         output.stdout.lines().any(|line| line
             == "waiting for: the default branch to fix `.linewright/config.toml`, which \
                 Linewright cannot use: the setting `max-runs` is the operator's: the \
-                repository's file holds `model`, `effort`, `session-timeout`"),
+                repository's file holds `model`, `effort`, `session-timeout`, `setup`"),
         "{}",
         output.stdout
     );

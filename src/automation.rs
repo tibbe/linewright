@@ -14,7 +14,7 @@ use crate::domain::Timestamp;
 use crate::records;
 use crate::repo_files;
 use crate::store::Store;
-use crate::work_settings::Effort;
+use crate::work_settings::{Effort, Setup};
 
 pub const DIR: &str = repo_files::linewright_path!("/automations");
 
@@ -30,6 +30,8 @@ pub struct Automation {
     pub model: Option<String>,
     /// `None` is the `effort` setting.
     pub effort: Option<Effort>,
+    /// `None` is the `setup` setting.
+    pub setup: Option<Setup>,
     pub max_issues: u32,
     pub instructions: String,
 }
@@ -233,6 +235,7 @@ struct FrontMatter {
     timeout: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    setup: Option<String>,
     max_issues: Option<u32>,
 }
 
@@ -264,6 +267,7 @@ pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
         timeout,
         model: front.model,
         effort,
+        setup: front.setup.map(Setup::from),
         max_issues: front.max_issues.unwrap_or(DEFAULT_MAX_ISSUES),
         instructions: body.to_string(),
     })

@@ -34,6 +34,7 @@ mod repository_files;
 mod required_label;
 mod runs;
 mod secrets;
+mod setup;
 mod startup;
 mod status;
 mod transcript;

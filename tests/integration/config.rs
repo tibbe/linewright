@@ -11,7 +11,7 @@ use linewright::reconcile::WorkKind;
 use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
 use linewright::variable_names::VariableNames;
 use linewright::work_settings::{
-    Effort, Environments, RepoSettings, RunKind, SessionSettings, Setting, Split, StageSet,
+    Effort, Environments, RepoSettings, RunKind, SessionSettings, Setting, Setup, Split, StageSet,
     TimeoutSetting,
 };
 
@@ -1379,4 +1379,128 @@ fn ui_hosts_with_no_web_ui_is_blamed_on_the_command_line_only_when_a_flag_emptie
 fn help_lists_the_ui_address_with_its_default() {
     let (help, line) = help_for("--ui-address");
     assert!(line.contains("127.0.0.1:8081"), "{help}");
+}
+
+#[test]
+fn setup_is_a_flag_a_variable_or_a_key_and_unset_runs_nothing() {
+    let setup = |args: &[&str], env: &[(&str, &str)], file| {
+        session(&resolve(args, env, file).unwrap()).setup
+    };
+    let file = Some("setup = \"make deps\"\n");
+    let command = |text: &str| Setup::from(text.to_string());
+
+    assert_eq!(
+        setup(&[], &[], None),
+        Sourced::new(Setup::Empty, Layer::Linewright)
+    );
+    assert_eq!(
+        setup(&[], &[], file),
+        Sourced::new(command("make deps"), Layer::Operator)
+    );
+    assert_eq!(
+        setup(&[], &[("LINEWRIGHT_SETUP", "npm ci")], file).value,
+        command("npm ci")
+    );
+    assert_eq!(
+        setup(
+            &["--setup", "cargo fetch"],
+            &[("LINEWRIGHT_SETUP", "npm ci")],
+            file
+        )
+        .value,
+        command("cargo fetch")
+    );
+    assert_eq!(setup(&["--setup", ""], &[], file).value, Setup::Empty);
+    assert_eq!(
+        session(&resolve(&[], &[], file).unwrap()).sources()[&Setting::Setup],
+        Source::Layer(Layer::Operator)
+    );
+}
+
+#[test]
+fn a_stages_setup_replaces_the_whole_pipelines_and_an_empty_one_runs_nothing() {
+    let config = resolve(
+        &[],
+        &[],
+        Some(
+            "setup = \"make deps\"\n\n[stage.implement]\nsetup = \"make all\"\n\n\
+             [stage.design]\nsetup = \"\"\n",
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(
+        stage_session(&config, WorkKind::Implement).setup,
+        Sourced::new(Setup::from("make all".to_string()), Layer::Operator)
+    );
+    assert_eq!(
+        stage_session(&config, WorkKind::Design).setup,
+        Sourced::new(Setup::Empty, Layer::Operator)
+    );
+    assert_eq!(
+        stage_session(&config, WorkKind::Triage).setup.value,
+        Setup::from("make deps".to_string())
+    );
+}
+
+#[test]
+fn the_repositorys_file_sets_setup_for_the_whole_pipeline_and_in_its_stage_tables() {
+    let config = resolve(&[], &[], Some("setup = \"make deps\"\n")).unwrap();
+    let repo = "setup = \"npm ci\"\n\n[stage.update]\nsetup = \"\"\n";
+
+    assert_eq!(
+        repo_session(&config, repo, WorkKind::Rework).setup,
+        Sourced::new(Setup::from("npm ci".to_string()), Layer::Repository)
+    );
+    assert_eq!(
+        repo_session(&config, repo, WorkKind::Update).setup,
+        Sourced::new(Setup::Empty, Layer::Repository)
+    );
+}
+
+#[test]
+fn an_unknown_key_in_a_stages_table_is_refused_with_the_keys_it_holds() {
+    let error = resolve(
+        &[],
+        &[],
+        Some("[stage.implement]\nsetup-command = \"make\"\n"),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("`setup-command`"), "{error}");
+    assert!(
+        error.contains(
+            "`model`, `effort`, `session-timeout`, `setup`, `session-env`, `session-pass-env`"
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_automations_setup_comes_before_the_stages_and_the_pipelines() {
+    let config = resolve(&["--setup", "make deps"], &[], None).unwrap();
+    let parse = |front: &str| {
+        automation::parse(
+            &"weekly".parse().unwrap(),
+            &format!("---\non:\n  schedule: \"0 9 * * 1\"\n{front}---\nLook around.\n"),
+        )
+        .unwrap()
+    };
+    let setup = |automation| {
+        config
+            .work
+            .for_run(
+                RunKind::Automation(&automation),
+                &RepoSettings::parse("setup = \"npm ci\"\n").unwrap(),
+                &Environments::default(),
+            )
+            .setup
+    };
+
+    assert_eq!(
+        setup(parse("setup: make lint\n")),
+        Sourced::new(Setup::from("make lint".to_string()), Layer::Repository)
+    );
+    assert_eq!(setup(parse("setup: \"\"\n")).value, Setup::Empty);
+    assert_eq!(setup(parse("")).value, Setup::from("make deps".to_string()));
 }

@@ -22,6 +22,34 @@ pub fn followup_file(n: usize) -> String {
     format!("followup-{n}.md")
 }
 
+/// The file in a session's record that holds its setup command's output,
+/// redacted, as it ran.
+pub const SETUP_OUTPUT: &str = "setup.log";
+
+/// The file in a session's record that holds [`SetupRecord`], written when
+/// the setup command ends.
+pub const SETUP_RECORD: &str = "setup.json";
+
+/// How a session's setup command ran (`docs/specs/runs.md`, Setup).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SetupRecord {
+    pub command: String,
+    pub status: SetupStatus,
+    pub duration_seconds: f64,
+}
+
+/// How a setup command ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SetupStatus {
+    /// It exited with this status.
+    Exited(i32),
+    /// A signal ended it, this one.
+    Signalled(i32),
+    TimedOut,
+    Cancelled,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StartedBy {

@@ -122,6 +122,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
         result_retries: 1,
+        bash: bash(),
         work: WorkSettings {
             file: Partial {
                 session_timeout: Some(std::time::Duration::from_mins(30)),
@@ -141,6 +142,16 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         secrets: Secrets::default(),
         ends: linewright::ending::Ends::new(),
     }
+}
+
+/// The `bash` on the path.
+pub fn bash() -> std::path::PathBuf {
+    std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .map(|dir| dir.join("bash"))
+        .find(|candidate| candidate.is_file())
+        .expect("`bash` is on the path")
 }
 
 impl World {

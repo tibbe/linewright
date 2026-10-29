@@ -29,6 +29,7 @@ use crate::results::{
 };
 use crate::runs::{Ending, Running, Runs, SessionRecorder};
 use crate::secrets::{Held, Secrets};
+use crate::setup;
 use crate::spec_gap::{self, FiledGaps};
 use crate::store::{
     AnyItem, AttachError, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError,
@@ -36,11 +37,15 @@ use crate::store::{
 };
 use crate::tracking::{self, FiledTicket};
 use crate::transcript;
-use crate::work_settings::{Environments, RunKind, SessionSettings, WorkSettings};
+use crate::work_settings::{
+    Environments, RunKind, SessionSettings, Setup, SetupCommand, WorkSettings,
+};
 
 pub(crate) struct Shell {
     pub store: Arc<dyn Store>,
     pub harness: Arc<dyn Harness>,
+    /// The `bash` that runs the setup command.
+    pub bash: PathBuf,
     pub clock: Arc<dyn Clock>,
     pub policy: Policy,
     /// The operator's settings for sessions, which each run resolves.
@@ -138,6 +143,7 @@ pub(crate) struct LogTail {
 /// What a log tail is the end of.
 pub(crate) enum Logged {
     Session,
+    Setup,
 }
 
 impl LogTail {
@@ -150,10 +156,21 @@ impl LogTail {
         })
     }
 
+    /// The end of the setup command's output `text`, unless it holds
+    /// nothing.
+    fn setup(text: &str) -> Option<LogTail> {
+        let text = text.trim();
+        (!text.is_empty()).then(|| LogTail {
+            of: Logged::Setup,
+            text: text.to_string(),
+        })
+    }
+
     /// What it is the end of, as a hand-back heads it.
     fn heading(&self) -> &'static str {
         match self.of {
             Logged::Session => "The end of the session's log",
+            Logged::Setup => "The end of the setup command's output",
         }
     }
 }
@@ -764,8 +781,13 @@ fn with_log(hand_back: &HandBack) -> String {
     }
 }
 
+/// A run's clone, removed when dropped: the run is done with it then.
 struct Workspace {
-    _temp: TempDir,
+    /// What the setup command left running, ended before the clone is
+    /// removed.
+    leftovers: Option<setup::Leftovers>,
+    /// `None` once dropped.
+    temp: Option<TempDir>,
     dir: PathBuf,
     scratch: PathBuf,
     plugin: PathBuf,
@@ -798,11 +820,30 @@ impl Workspace {
             .context("writing Linewright's plugin")
             .map_err(infra)?;
         Ok(Workspace {
-            _temp: temp,
+            leftovers: None,
+            temp: Some(temp),
             dir,
             scratch,
             plugin,
         })
+    }
+}
+
+impl Drop for Workspace {
+    fn drop(&mut self) {
+        let temp = self.temp.take();
+        let Some(leftovers) = self.leftovers.take() else {
+            return;
+        };
+        // Ending them waits out a grace, which the run's task does not.
+        let end = move || {
+            leftovers.end();
+            drop(temp);
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn_blocking(end)),
+            Err(_) => end(),
+        }
     }
 }
 
@@ -1160,12 +1201,14 @@ struct Opened<'a> {
 }
 
 /// Opens the session of `purpose` in `ws`: makes its record and its
-/// attachments directory, and registers it with the run.
-fn open_session<'a>(
+/// attachments directory, registers it with the run, and runs its setup
+/// command (docs/specs/runs.md, "Setup"), so that the command's output is
+/// under the session whether or not it starts.
+async fn open_session<'a>(
     shell: &Shell,
     ctx: &'a Ctx,
     purpose: Purpose,
-    ws: &Workspace,
+    ws: &mut Workspace,
 ) -> Result<Opened<'a>, Failure> {
     let settings = &ctx.with.settings;
     let record = record_dir(shell, &purpose, shell.clock.now())?;
@@ -1173,6 +1216,9 @@ fn open_session<'a>(
         .context("creating the attachments directory")
         .map_err(infra)?;
     let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
+    if let Setup::Command(command) = &settings.setup.value {
+        set_up(shell, ctx, command, &record, ws).await?;
+    }
     Ok(Opened {
         settings,
         purpose,
@@ -1182,6 +1228,69 @@ fn open_session<'a>(
         dir: ws.dir.clone(),
         scratch: ws.scratch.clone(),
         plugin: ws.plugin.clone(),
+    })
+}
+
+/// Runs the setup `command` in `ws`, which keeps what it leaves running.
+/// It fails as the session would not start.
+async fn set_up(
+    shell: &Shell,
+    ctx: &Ctx,
+    command: &SetupCommand,
+    record: &Path,
+    ws: &mut Workspace,
+) -> Result<(), Failure> {
+    let settings = &ctx.with.settings;
+    let request = setup::Request {
+        command,
+        dir: &ws.dir,
+        environment: shell.harness.environment(
+            &settings.environment,
+            &ws.scratch,
+            settings.effort_set(),
+        ),
+        timeout: settings.session_timeout.value,
+        record,
+    };
+    let (ran, leftovers) = setup::run(
+        &shell.bash,
+        request,
+        shell.secrets.redaction(),
+        ctx.cancel.cancelled(),
+    )
+    .await
+    .context("running the setup command")
+    .map_err(infra)?;
+    ws.leftovers = Some(leftovers);
+    set_up_failure(&ran, &ws.dir, settings).map_or(Ok(()), Err)
+}
+
+/// Why the session does not start after the setup command ran in `dir` as
+/// `ran`, if it does not (docs/specs/runs.md, "Setup", Failing).
+fn set_up_failure(ran: &setup::Ran, dir: &Path, settings: &SessionSettings) -> Option<Failure> {
+    let log_tail = || LogTail::setup(&scrub(&tail(&ran.output, 40), dir));
+    let failed = match ran.status {
+        setup::Status::Exited(0) => return None,
+        setup::Status::Exited(code) => format!("exited with status {code}"),
+        setup::Status::Signalled(signal) => format!("was ended by signal {signal}"),
+        setup::Status::TimedOut => {
+            return Some(Failure::HandBack(HandBack {
+                kind: HandBackKind::Stall,
+                reason: format!(
+                    "The setup command timed out after {}. It may need to do less, or {} \
+                     may need to be longer.",
+                    humantime::format_duration(settings.session_timeout.value),
+                    settings.timeout_setting
+                ),
+                log_tail: log_tail(),
+            }));
+        }
+        setup::Status::Cancelled => return Some(Failure::Cancelled),
+    };
+    Some(Failure::Infrastructure {
+        error: anyhow::anyhow!("the setup command {failed}"),
+        note: String::new(),
+        log_tail: log_tail(),
     })
 }
 
@@ -1300,9 +1409,9 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
         subject: Subject::Issue(issue.number),
         kind: WorkKind::Triage,
     };
-    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
+    let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
-    let opened = open_session(shell, ctx, purpose, &ws)?;
+    let opened = open_session(shell, ctx, purpose, &mut ws).await?;
     let (mut spec, dir) = opened.spec(|attachments| {
         prompts::triage(
             &ctx.with.briefs.prompts,
@@ -1403,8 +1512,8 @@ where
         subject,
         kind: WorkKind::Design,
     };
-    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    let opened = open_session(shell, ctx, purpose, &ws)?;
+    let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
+    let opened = open_session(shell, ctx, purpose, &mut ws).await?;
     let (mut spec, dir) = opened.spec(prompt);
     let dir = &dir;
     let begin = |mut result: DesignResult<C>| async move {
@@ -1881,7 +1990,7 @@ async fn implement(
         subject: Subject::Issue(ticket.number()),
         kind: WorkKind::Implement,
     };
-    let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
+    let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     // Where the run starts: docs/specs/implementation.md, "Working a
     // ticket". The clone, not the snapshot, says whether the branch exists: a
     // snapshot taken before an earlier run pushed it does not hold it.
@@ -1889,7 +1998,7 @@ async fn implement(
     let start = git::check_out_branch(&ws.dir, &branch, &upstream)
         .await
         .map_err(infra)?;
-    let opened = open_session(shell, ctx, purpose, &ws)?;
+    let opened = open_session(shell, ctx, purpose, &mut ws).await?;
     let (mut spec, attachments) = opened.spec(|attachments| {
         prompts::implement(
             &ctx.with.briefs.prompts,
@@ -2112,6 +2221,26 @@ async fn push_update(
     pushed(&pr.head_ref, outcome, TryAgain::Reassign)
 }
 
+/// Brings `pr`'s branch, checked out in `dir`, up to date with the default
+/// branch, and returns the conflict it stopped on, if any.
+async fn update_branch(
+    shell: &Shell,
+    pr: &Pull,
+    dir: &Path,
+) -> Result<Option<git::Conflict>, Failure> {
+    let default_branch = &shell.settings.default_branch;
+    let policy = &shell.policy;
+    let updated = if rebases_to_repair(pr, policy) {
+        git::rebase(dir, default_branch).await
+    } else {
+        git::update(dir, default_branch, policy.update_rule).await
+    };
+    Ok(match updated.map_err(infra)? {
+        Updated::Conflict(conflict) => Some(conflict),
+        Updated::UpToDate | Updated::Updated => None,
+    })
+}
+
 async fn pull_work(
     shell: &Shell,
     ctx: &Ctx,
@@ -2128,19 +2257,23 @@ async fn pull_work(
     };
     let linewright = &shell.policy.linewright;
     let purpose = Purpose::Work { subject, kind };
-    let ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
+    let mut ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
     let start = git::head(&ws.dir).await.map_err(infra)?;
-    let default_branch = &shell.settings.default_branch;
-    let policy = &shell.policy;
-    let updated = if rebases_to_repair(pr, policy) {
-        git::rebase(&ws.dir, default_branch).await
-    } else {
-        git::update(&ws.dir, default_branch, policy.update_rule).await
+    // The setup command runs on the branch as it was cloned, before the
+    // update (docs/specs/runs.md, "Setup"). An update run starts a session
+    // only on a conflict, so it updates first, and on a conflict aborts the
+    // update to run the command, then updates again.
+    let opened = match task {
+        Task::Update => match update_branch(shell, pr, &ws.dir).await? {
+            None => return push_update(shell, ctx, pr, &ws.dir, &start).await,
+            Some(conflict) => {
+                git::abort_update(&ws.dir, &conflict).await.map_err(infra)?;
+                open_session(shell, ctx, purpose, &mut ws).await?
+            }
+        },
+        Task::Rework | Task::FixCi(_) => open_session(shell, ctx, purpose, &mut ws).await?,
     };
-    let conflict = match updated.map_err(infra)? {
-        Updated::Conflict(conflict) => Some(conflict),
-        Updated::UpToDate | Updated::Updated => None,
-    };
+    let conflict = update_branch(shell, pr, &ws.dir).await?;
     let store = &shell.store;
     let lease = PushMode::Lease {
         expected: start.clone(),
@@ -2174,7 +2307,6 @@ async fn pull_work(
     let left_unfinished = git::unfinished_commits(dir, &upstream, tip)
         .await
         .map_err(infra)?;
-    let opened = open_session(shell, ctx, purpose, &ws)?;
     let (mut spec, attachments) = opened.spec(|attachments| {
         prompts::pull_work(
             &ctx.with.briefs.prompts,
@@ -2454,8 +2586,8 @@ pub(crate) async fn automation(
 ) -> Result<AutomationEnd> {
     let session = async {
         let purpose = Purpose::Automation(automation.name.clone());
-        let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-        let opened = open_session(shell, &ctx, purpose, &ws)?;
+        let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
+        let opened = open_session(shell, &ctx, purpose, &mut ws).await?;
         let (mut spec, dir) = opened.spec(|attachments| {
             prompts::automation(
                 &ctx.with.briefs.prompts,

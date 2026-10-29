@@ -21,7 +21,7 @@ use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
 use crate::work_settings::{
-    Effort, EnvLayers, Partial, RepoSettings, Setting, StageTable, WorkSettings,
+    Effort, EnvLayers, Partial, RepoSettings, Setting, Setup, StageTable, WorkSettings,
 };
 
 #[derive(Parser, Debug)]
@@ -285,6 +285,11 @@ pub struct Settings {
     /// `[stage.NAME]`, can set its own [default: 60m]
     #[arg(long, global = true)]
     pub session_timeout: Option<String>,
+    /// The command that prepares each agent session's clone before the
+    /// session starts, run by `bash`; a stage's table in the config file,
+    /// `[stage.NAME]`, can set its own [default: none]
+    #[arg(long, global = true, value_name = "COMMAND")]
+    pub setup: Option<String>,
     /// How often an unparseable result goes back to its session [default: 1]
     #[arg(long, global = true)]
     pub result_retries: Option<String>,
@@ -332,7 +337,7 @@ pub struct Config {
     pub done_window: TimeDelta,
     pub max_runs: usize,
     pub work_dir: PathBuf,
-    /// `model`, `effort`, `session-timeout` and the stages' tables, and
+    /// `model`, `effort`, `session-timeout`, `setup` and the stages' tables, and
     /// where `session-env` and `session-pass-env` came from.
     pub work: WorkSettings,
     pub prompts: Option<PathBuf>,
@@ -367,6 +372,7 @@ impl Settings {
             ("session-pass-env", &self.session_pass_env),
             ("secrets", &self.secrets),
             ("session-timeout", &self.session_timeout),
+            ("setup", &self.setup),
             ("result-retries", &self.result_retries),
             ("ci-grace", &self.ci_grace),
             ("ci-timeout", &self.ci_timeout),
@@ -427,7 +433,7 @@ const VARIABLE_NAME: &str = "a variable's name";
 /// The form of `setting`, a stage's setting.
 const fn stage_form(setting: Setting) -> Form {
     match setting {
-        Setting::Model | Setting::Effort | Setting::SessionTimeout => VALUE,
+        Setting::Model | Setting::Effort | Setting::SessionTimeout | Setting::Setup => VALUE,
         Setting::SessionPassEnv => list(VARIABLE_NAME),
         Setting::SessionEnv => Form::Table,
     }
@@ -439,7 +445,7 @@ const fn stage_entry(setting: Setting) -> (&'static str, Form) {
 }
 
 /// The operator's settings, each with its form.
-const SETTINGS: [(&str, Form); 26] = [
+const SETTINGS: [(&str, Form); 27] = [
     ("repo", VALUE),
     ("poll-interval", VALUE),
     ("webhook-address", VALUE),
@@ -457,6 +463,7 @@ const SETTINGS: [(&str, Form); 26] = [
     stage_entry(Setting::SessionPassEnv),
     ("secrets", list(VARIABLE_NAME)),
     stage_entry(Setting::SessionTimeout),
+    stage_entry(Setting::Setup),
     ("result-retries", VALUE),
     ("ci-grace", VALUE),
     ("ci-timeout", VALUE),
@@ -793,11 +800,13 @@ impl Config {
                 model: flags_and_env("model"),
                 effort: effort(flags_and_env("effort"))?,
                 session_timeout: session_timeout(flags_and_env("session-timeout"))?,
+                setup: flags_and_env("setup").map(Setup::from),
             },
             file: Partial {
                 model: file.get("model").cloned(),
                 effort: effort(in_file("effort"))?,
                 session_timeout: session_timeout(in_file("session-timeout"))?,
+                setup: in_file("setup").map(Setup::from),
             },
             stages,
             env_layers: EnvLayers {
@@ -891,8 +900,12 @@ const STAGE: &str = "stage";
 
 /// The settings of the repository's file, at its top level and in its
 /// stages' tables (`docs/specs/operation.md`, The repository's file).
-const REPOSITORY_SETTINGS: [Setting; 3] =
-    [Setting::Model, Setting::Effort, Setting::SessionTimeout];
+const REPOSITORY_SETTINGS: [Setting; 4] = [
+    Setting::Model,
+    Setting::Effort,
+    Setting::SessionTimeout,
+    Setting::Setup,
+];
 
 /// Whose config file a table is in.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -942,6 +955,7 @@ fn set(table: &mut StageTable, setting: Setting, value: toml::Value) -> Result<(
         Setting::SessionTimeout => {
             settings.session_timeout = Some(session_timeout(&text(Text::Value, value)?)?);
         }
+        Setting::Setup => settings.setup = Some(Setup::from(text(Text::Value, value)?)),
         Setting::SessionEnv => table.session_env = Some(set_env(setting.name(), value)?),
         Setting::SessionPassEnv => {
             let names = text(

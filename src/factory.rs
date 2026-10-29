@@ -47,6 +47,8 @@ pub struct FactoryConfig {
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
     pub result_retries: u32,
+    /// The `bash` that runs the setup command.
+    pub bash: PathBuf,
     /// The operator's settings for sessions.
     pub work: WorkSettings,
     /// What sessions are given of Linewright's environment.
@@ -277,6 +279,7 @@ impl Factory {
             },
             store,
             harness,
+            bash: config.bash,
             clock,
             work: config.work,
             environments: config.environments,
