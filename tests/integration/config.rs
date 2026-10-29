@@ -1159,20 +1159,50 @@ fn secrets(names: &[&str]) -> VariableNames {
 }
 
 #[test]
-fn secrets_is_a_flag_the_environment_or_the_file_naming_variables() {
+fn secrets_joins_the_names_of_the_flag_the_environment_and_the_file() {
     let file = Some("secrets = [\"AWS_SECRET_ACCESS_KEY\", \"NPM_*\"]\n");
     let env = [("LINEWRIGHT_SECRETS", "SENTRY_*,DATABASE_URL")];
 
     let from_file = resolve(&[], &[], file).unwrap();
-    let from_env = resolve(&[], &env, file).unwrap();
-    let from_flag = resolve(&["--secrets", "SIGNING_KEY"], &env, file).unwrap();
+    let from_env = resolve(&[], &env, None).unwrap();
+    let joined = resolve(&["--secrets", "SIGNING_KEY"], &env, file).unwrap();
 
     assert_eq!(
         from_file.secrets,
         secrets(&["AWS_SECRET_ACCESS_KEY", "NPM_*"])
     );
     assert_eq!(from_env.secrets, secrets(&["SENTRY_*", "DATABASE_URL"]));
-    assert_eq!(from_flag.secrets, secrets(&["SIGNING_KEY"]));
+    assert_eq!(
+        joined.secrets,
+        secrets(&[
+            "SIGNING_KEY",
+            "SENTRY_*",
+            "DATABASE_URL",
+            "AWS_SECRET_ACCESS_KEY",
+            "NPM_*"
+        ])
+    );
+}
+
+#[test]
+fn a_secret_named_at_two_layers_counts_once() {
+    let joined = resolve(
+        &["--secrets", "A,B"],
+        &[("LINEWRIGHT_SECRETS", "B")],
+        Some("secrets = [\"A\", \"C\"]\n"),
+    )
+    .unwrap();
+
+    assert_eq!(joined.secrets, secrets(&["A", "B", "C"]));
+}
+
+#[test]
+fn a_secret_that_is_not_a_name_is_an_error_naming_the_layer_that_gave_it() {
+    let file = Some("secrets = [\"*TOKEN\"]\n");
+
+    let error = resolve(&["--secrets", "A"], &[], file).unwrap_err();
+
+    assert!(error.contains("linewright.toml"), "{error}");
 }
 
 #[test]
@@ -1284,8 +1314,8 @@ fn ui_hosts_is_a_comma_separated_flag_or_variable_or_a_list_or_string_in_the_fil
 
     let from_list = resolve(&[], &[], list).unwrap();
     let from_string = resolve(&[], &[], string).unwrap();
-    let from_env = resolve(&[], &env, list).unwrap();
-    let from_flag = resolve(&["--ui-hosts", "f.example,g.example"], &env, list).unwrap();
+    let from_env = resolve(&[], &env, None).unwrap();
+    let from_flag = resolve(&["--ui-hosts", "f.example,g.example"], &[], None).unwrap();
 
     assert!(answers(&from_list, "a.example"));
     assert!(answers(&from_list, "b.example"));
@@ -1300,10 +1330,35 @@ fn ui_hosts_is_a_comma_separated_flag_or_variable_or_a_list_or_string_in_the_fil
 }
 
 #[test]
+fn ui_hosts_joins_the_hosts_of_the_flag_the_environment_and_the_file() {
+    let file = Some("ui-hosts = [\"a.example\", \"b.example\"]\n");
+    let env = [("LINEWRIGHT_UI_HOSTS", "b.example,c.example")];
+
+    let from_env_and_file = resolve(&[], &env, file).unwrap();
+    let joined = resolve(&["--ui-hosts", "d.example"], &env, file).unwrap();
+
+    for host in ["a.example", "b.example", "c.example"] {
+        assert!(answers(&from_env_and_file, host), "{host}");
+    }
+    assert!(!answers(&from_env_and_file, "d.example"));
+    for host in ["a.example", "b.example", "c.example", "d.example"] {
+        assert!(answers(&joined, host), "{host}");
+    }
+}
+
+#[test]
+fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_layer_that_gave_it() {
+    let file = Some("ui-hosts = [\"a.example:8081\"]\n");
+
+    let error = resolve(&["--ui-hosts", "b.example"], &[], file).unwrap_err();
+
+    assert!(error.contains("ui-hosts"), "{error}");
+    assert!(error.contains("linewright.toml"), "{error}");
+}
+
+#[test]
 fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_setting() {
     for bad in [
-        "a.example,",
-        "a.example,,b.example",
         "a.example:8081",
         "https://a.example",
         "*.example",
@@ -1346,6 +1401,21 @@ fn ui_hosts_with_no_web_ui_is_an_error_naming_both() {
              set `ui-address` to serve the web UI, or unset `ui-hosts`"
         );
     }
+}
+
+#[test]
+fn ui_hosts_in_the_file_with_no_web_ui_is_an_error_though_the_flag_names_no_host() {
+    let error = resolve(
+        &["--ui-address", "", "--ui-hosts", ""],
+        &[],
+        Some("ui-hosts = [\"a.example\"]\n"),
+    )
+    .unwrap_err();
+
+    assert!(
+        error.contains("the setting `ui-hosts` is set, but `ui-address` is empty"),
+        "{error}"
+    );
 }
 
 #[test]

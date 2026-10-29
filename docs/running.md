@@ -204,6 +204,9 @@ session-pass-env = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"]
 secrets = ["AWS_SECRET_ACCESS_KEY"]
 ```
 
+A `--secrets` flag and `LINEWRIGHT_SECRETS` add their names to those in
+`linewright.toml`.
+
 ### Credentials outside Linewright
 
 Sessions can read Claude Code's credential and every file of the user
@@ -251,7 +254,8 @@ gets `421 Misdirected Request`, and `serve` logs each with the `Host` it named.
   ```
 
   As a flag or variable, `ui-hosts` is comma-separated:
-  `--ui-hosts linewright.example.com,linewright.internal`.
+  `--ui-hosts linewright.example.com,linewright.internal`. A flag and the
+  variable add their names to those in `linewright.toml`.
 
 In a container, set `ui-address` to `0.0.0.0:8081`, so the UI answers outside
 the container, and publish the port on the host's loopback, such as

@@ -77,6 +77,17 @@ impl UiHosts {
             .map(UiHosts)
     }
 
+    /// These names and `more`'s, a layer below them, as a list combines.
+    #[must_use]
+    pub fn and(&self, more: &UiHosts) -> UiHosts {
+        UiHosts(
+            crate::layer::list([&self.0, &more.0], |name| name)
+                .into_iter()
+                .cloned()
+                .collect(),
+        )
+    }
+
     /// Whether the web UI answers a request whose `Host` is `host`: a local
     /// name, an IP address or one of these.
     pub fn answers(&self, host: &HostName) -> bool {

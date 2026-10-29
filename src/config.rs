@@ -230,7 +230,8 @@ pub struct Settings {
     #[arg(long, global = true)]
     pub ui_address: Option<String>,
     /// The host names the web UI answers besides the local ones and IP
-    /// addresses, comma-separated [default: none]
+    /// addresses, comma-separated, and added to those the environment and the
+    /// config file give [default: none]
     #[arg(long, global = true, value_name = "NAMES")]
     pub ui_hosts: Option<String>,
     /// The tracked Markdown files that are the spec [default: docs/**/*.md]
@@ -277,8 +278,9 @@ pub struct Settings {
     pub session_pass_env: Option<String>,
     /// The variables of Linewright's environment whose values are secrets,
     /// redacted and refused in commits, besides the ones Linewright reads a
-    /// credential from, comma-separated; a name ending in `*` names every
-    /// variable with that prefix [default: none]
+    /// credential from, comma-separated, and added to those the environment
+    /// and the config file name; a name ending in `*` names every variable
+    /// with that prefix [default: none]
     #[arg(long, global = true, value_name = "NAMES")]
     pub secrets: Option<String>,
     /// Each agent session's timeout; a stage's table in the config file,
@@ -570,6 +572,21 @@ impl Layers {
     }
 }
 
+/// A list setting's `entries`, each parsed by `parse` on its own, so that
+/// an error is blamed by `blame_on` on the layer that gave it, then joined
+/// by `and`.
+fn joined<T: Default>(
+    entries: Vec<Entry>,
+    blame_on: &dyn Fn(Option<OperatorLayer>, anyhow::Error) -> ResolveError,
+    parse: impl Fn(String) -> Result<T, String>,
+    and: fn(&T, &T) -> T,
+) -> Result<T, ResolveError> {
+    entries.into_iter().try_fold(T::default(), |joined, entry| {
+        let one = parse(entry.value).map_err(|e| blame_on(Some(entry.layer), anyhow!(e)))?;
+        Ok(and(&joined, &one))
+    })
+}
+
 /// A feature and what turns it on or off: a setting only it uses is an
 /// error while it is off unless the setting is at its default
 /// (`docs/specs/operation.md`, Configuration, A feature's settings).
@@ -724,11 +741,9 @@ impl Config {
             Combined::List(_) | Combined::Table(_) => panic!("`{key}` is not a value"),
         };
         let get = |key: &str| value_of(key).map(|entry| entry.value);
-        // `ui-hosts` and `secrets` are lists the highest layer replaces
-        // whole.
-        let replaced = |key: &str| match layers(key) {
-            Layers::Text { set, .. } => set.first().map(|(_, text)| text.clone()),
-            Layers::Table(_) => panic!("`{key}` is a table"),
+        let list_of = |key: &str| match combined(key) {
+            Combined::List(entries) => entries,
+            Combined::Value(_) | Combined::Table(_) => panic!("`{key}` is not a list"),
         };
         // A wrong value is blamed on the flag that gave it, and one the file
         // gave names the file.
@@ -864,18 +879,18 @@ impl Config {
             None => None,
         };
         let ui_address = value("ui-address", "127.0.0.1:8081");
-        // No names is its default, `""` as a flag or variable and `[]` in
-        // the file.
+        let hosts = joined(
+            list_of("ui-hosts"),
+            &blame_on,
+            |host| UiHosts::new([host.as_str()]).map_err(|e| format!("the setting `ui-hosts` {e}")),
+            UiHosts::and,
+        )?;
+        // No names at any layer is its default: `""` as a flag or variable
+        // and `[]` in the file.
         let ui_hosts = refuse_while_off(
             &FEATURES.ui,
             !ui_address.is_empty(),
-            replaced("ui-hosts")
-                .filter(|names| !names.is_empty())
-                .map(|names| {
-                    UiHosts::new(names.split(','))
-                        .map_err(|e| wrong("ui-hosts", format!("the setting `ui-hosts` {e}")))
-                })
-                .transpose()?,
+            (hosts != UiHosts::default()).then_some(hosts),
             blame,
         )?;
         let ui = match ui_address.as_str() {
@@ -887,20 +902,12 @@ impl Config {
                 hosts: ui_hosts.unwrap_or_default(),
             }),
         };
-        // Each entry is checked on its own, so that an error blames the
-        // layer that gave it.
-        let Combined::List(names) = combined(PASS_ENV) else {
-            panic!("`{PASS_ENV}` is a list");
-        };
-        let pass = names
-            .into_iter()
-            .try_fold(PassEnv::default(), |pass, name| {
-                let one: PassEnv = name
-                    .value
-                    .parse()
-                    .map_err(|e: String| blame_on(Some(name.layer), anyhow!(e)))?;
-                Ok(pass.and(&one))
-            })?;
+        let pass = joined(
+            list_of(PASS_ENV),
+            &blame_on,
+            |name| name.parse(),
+            PassEnv::and,
+        )?;
         let session_env_layers = table_layers(SESSION_ENV)?;
         let session_env_set = !session_env_layers.layers().is_empty();
         let Combined::Table(entries) = session_env_layers.combine() else {
@@ -909,11 +916,12 @@ impl Config {
         let values = SetEnv::new(entries.into_iter().map(|(name, entry)| (name, entry.value)))
             .expect("each layer's values were checked as it was read, and a name is set once");
         let session_env = SessionEnv::new(pass, values);
-        let secrets = VariableNames::new(
-            secrets::SETTING,
-            variable_names::comma_separated(&replaced(secrets::SETTING).unwrap_or_default()),
-        )
-        .map_err(|e| wrong(secrets::SETTING, e))?;
+        let secrets = joined(
+            list_of(secrets::SETTING),
+            &blame_on,
+            |name| VariableNames::new(secrets::SETTING, [name]),
+            VariableNames::and,
+        )?;
         let session_timeout = |set: Option<String>| {
             set.map(|text| session_timeout(&text).map_err(|e| refused("session-timeout", e)))
                 .transpose()
