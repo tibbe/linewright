@@ -339,22 +339,94 @@ pub fn json_value(message: &str) -> Option<serde_json::Value> {
     serde_json::from_str(extract_json(message)?).ok()
 }
 
+/// The result's JSON in `message`, found as docs/specs/runs.md ("Contract")
+/// says: the whole message when it is one object, else its last fenced code
+/// block when that holds one, else from its first `{` to its last `}`.
 fn extract_json(message: &str) -> Option<&str> {
     let trimmed = message.trim();
-    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+    if is_object(trimmed) {
         return Some(trimmed);
     }
-    if let Some(end) = trimmed.rfind("```") {
-        let before = &trimmed[..end];
-        if let Some(start) = before.rfind("```") {
-            let block = &before[start + 3..];
-            let block = block.strip_prefix("json").unwrap_or(block).trim();
-            if block.starts_with('{') {
-                return Some(block);
-            }
-        }
+    if let Some(block) = last_fenced_block(trimmed).map(str::trim)
+        && is_object(block)
+    {
+        return Some(block);
     }
     let start = trimmed.find('{')?;
     let end = trimmed.rfind('}')?;
     (start < end).then(|| &trimmed[start..=end])
+}
+
+fn is_object(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text).is_ok_and(|v| v.is_object())
+}
+
+/// The content of the last fenced code block in `text`, whatever its info
+/// string ([CommonMark](https://spec.commonmark.org/0.31.2/#fenced-code-blocks)).
+fn last_fenced_block(text: &str) -> Option<&str> {
+    let mut last = None;
+    // The open fence's character and length, and where its content starts.
+    let mut open: Option<(char, usize, usize)> = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let fence = line.trim_start();
+        let fence_char = fence.chars().next().filter(|c| *c == '`' || *c == '~');
+        let fence_len = fence_char.map_or(0, |c| fence.chars().take_while(|x| *x == c).count());
+        match (open, fence_char) {
+            (None, Some(c)) if fence_len >= 3 => open = Some((c, fence_len, offset + line.len())),
+            (Some((c, len, start)), Some(d))
+                if c == d && fence_len >= len && fence[fence_len..].trim().is_empty() =>
+            {
+                last = Some(&text[start..offset]);
+                open = None;
+            }
+            _ => {}
+        }
+        offset += line.len();
+    }
+    last
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RESULT: &str = r#"{"summary": "Ran."}"#;
+
+    #[test]
+    fn a_message_braced_but_not_one_object_falls_through_to_its_last_fenced_block() {
+        let message = format!(
+            "{{ a draft }}\n\n```json\n{{\"summary\": \"Draft.\"}}\n```\n\n```\n{RESULT}\n```\n\nThat is {{ it }}"
+        );
+        assert_eq!(
+            json_value(&message),
+            Some(serde_json::from_str(RESULT).unwrap())
+        );
+        assert_eq!(parse::<AutomationResult>(&message).unwrap().summary, "Ran.");
+    }
+
+    #[test]
+    fn a_last_fenced_block_with_any_info_string_is_found() {
+        for fence in ["```JSON", "```", "~~~ json"] {
+            let close = &fence[..3];
+            let message = format!("Here it is:\n\n{fence}\n{RESULT}\n{close}\n");
+            assert_eq!(
+                parse::<AutomationResult>(&message).map(|r| r.summary),
+                Ok("Ran.".to_string()),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn prose_around_a_bare_object_still_parses() {
+        let message = format!("Done. The result:\n{RESULT}\nThanks.");
+        assert_eq!(parse::<AutomationResult>(&message).unwrap().summary, "Ran.");
+    }
+
+    #[test]
+    fn a_message_with_no_object_is_sent_back() {
+        let error = parse::<AutomationResult>("I think it's a bug.").unwrap_err();
+        assert!(error.contains("holds no JSON object"), "{error}");
+    }
 }
