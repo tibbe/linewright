@@ -13,9 +13,11 @@ use linewright::domain::{
 use linewright::factory::Factory;
 use linewright::harness::{Harness, SessionError, SessionSpec, Turn};
 use linewright::reconcile::WorkKind;
+use linewright::session_env::Given;
 use linewright::store::Store;
 use linewright::store::local::LocalStore;
 use linewright::webhook::{Listener, Pending};
+use linewright::work_settings::Effort;
 use serde_json::json;
 
 /// A poll interval no test waits out: what such a test sees, deliveries did.
@@ -432,6 +434,15 @@ impl Drop for Stops {
 
 #[async_trait::async_trait]
 impl Harness for Endless {
+    fn environment(
+        &self,
+        given: &Given,
+        scratch: &std::path::Path,
+        _: Option<Effort>,
+    ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        fake_environment(given, scratch)
+    }
+
     async fn start(&self, _: &SessionSpec) -> Result<Turn, SessionError> {
         self.started.fetch_add(1, Ordering::SeqCst);
         let _stops = Stops(self.stopped.clone());

@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -12,6 +12,7 @@ use super::{Harness, Reported, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::child;
 use crate::domain::Timestamp;
 use crate::redaction::Redaction;
+use crate::session_env::Given;
 use crate::store::github::TOKEN_VARIABLES;
 use crate::transcript::{self, StartedBy};
 use crate::work_settings::Effort;
@@ -360,13 +361,7 @@ impl ClaudeCode {
             .args(session.args())
             .current_dir(&spec.dir)
             .env_clear()
-            .envs(spec.environment.iter())
-            .envs(set_for_session(
-                &spec.scratch,
-                &self.bash,
-                self.github_token.as_deref(),
-                spec.effort,
-            ))
+            .envs(self.environment(&spec.environment, &spec.scratch, spec.effort))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -548,6 +543,23 @@ async fn copy_transcript(session: &str, to: &Path, redaction: &Redaction) {
 
 #[async_trait]
 impl Harness for ClaudeCode {
+    fn environment(
+        &self,
+        given: &Given,
+        scratch: &Path,
+        effort: Option<Effort>,
+    ) -> Vec<(OsString, OsString)> {
+        let set = set_for_session(scratch, &self.bash, self.github_token.as_deref(), effort);
+        given
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .chain(
+                set.into_iter()
+                    .map(|(name, value)| (name.into(), value.to_os_string())),
+            )
+            .collect()
+    }
+
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError> {
         let session = uuid::Uuid::new_v4().to_string();
         self.turn(spec, Session::Start(&session), &spec.prompt)

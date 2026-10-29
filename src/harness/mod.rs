@@ -1,6 +1,7 @@
 pub mod claude;
 
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -148,6 +149,15 @@ impl SessionError {
 
 #[async_trait]
 pub trait Harness: Send + Sync {
+    /// The whole environment a session starts from, given `given`, its
+    /// scratch directory and its effort: `given`, then what Linewright sets
+    /// over it. A variable set twice takes its later value.
+    fn environment(
+        &self,
+        given: &Given,
+        scratch: &Path,
+        effort: Option<Effort>,
+    ) -> Vec<(OsString, OsString)>;
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError>;
     async fn resume(
         &self,

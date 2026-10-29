@@ -325,6 +325,73 @@ async fn a_session_is_given_the_values_session_env_sets_over_passed_ones_and_bel
 }
 
 #[tokio::test]
+async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = std::env::var("PATH").unwrap();
+    let session_env = SessionEnv::new(
+        PassEnv::new(["CARGO_HOME", "TMPDIR"].map(String::from)).unwrap(),
+        SetEnv::default(),
+    );
+    let harness = harness_without_token(dir.path());
+    let mut session = triage_session(dir.path());
+    session.effort = Some(Effort::High);
+    session.environment = Arc::new(
+        session_env
+            .split(
+                [
+                    ("PATH", path.as_str()),
+                    ("CARGO_HOME", "/usr/local/cargo"),
+                    ("TMPDIR", "/tmp"),
+                ]
+                .map(|(name, value)| (name.into(), value.into())),
+                &[],
+            )
+            .given,
+    );
+
+    let environment = harness.environment(&session.environment, &session.scratch, session.effort);
+    harness.start(&session).await.unwrap();
+
+    let scratch = session.scratch.to_str().unwrap();
+    let exposed: Vec<(&str, &str)> = environment
+        .iter()
+        .map(|(name, value)| (name.to_str().unwrap(), value.to_str().unwrap()))
+        .collect();
+    assert_eq!(
+        exposed,
+        [
+            ("PATH", path.as_str()),
+            ("CARGO_HOME", "/usr/local/cargo"),
+            ("TMPDIR", "/tmp"),
+            ("TMPDIR", scratch),
+            ("CLAUDE_CODE_SHELL", "/bin/bash"),
+            ("DISABLE_UPDATES", "1"),
+            ("CLAUDE_CODE_EFFORT_LEVEL", "high"),
+        ]
+    );
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    let mut spawned: Vec<&str> = env
+        .lines()
+        .filter(|line| {
+            !["PWD=", "OLDPWD=", "SHLVL=", "_="]
+                .iter()
+                .any(|own| line.starts_with(own))
+        })
+        .collect();
+    spawned.sort_unstable();
+    let mut expected = vec![
+        format!("PATH={path}"),
+        "CARGO_HOME=/usr/local/cargo".to_string(),
+        format!("TMPDIR={scratch}"),
+        "CLAUDE_CODE_SHELL=/bin/bash".to_string(),
+        "DISABLE_UPDATES=1".to_string(),
+        "CLAUDE_CODE_EFFORT_LEVEL=high".to_string(),
+    ];
+    expected.sort_unstable();
+    assert_eq!(spawned, expected);
+}
+
+#[tokio::test]
 async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_directory() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_without_token(dir.path());

@@ -27,7 +27,7 @@ use crate::results::{
     self, AutomationIssueLabel, AutomationResult, Contract, Cut, DesignResult, ImplementResult,
     IssueWork, Posts, PullWorkResult, SpecGap, SpecGaps, Tickets, TriageOutcome, TriageResult,
 };
-use crate::runs::{Ending, Running, Runs};
+use crate::runs::{Ending, Running, Runs, SessionRecorder};
 use crate::secrets::{Held, Secrets};
 use crate::spec_gap::{self, FiledGaps};
 use crate::store::{
@@ -106,6 +106,8 @@ enum Failure {
         error: anyhow::Error,
         /// What the hand-back adds after the reason.
         note: String,
+        /// The tail the hand-back gives, when the failure ends the run.
+        log_tail: Option<LogTail>,
     },
     HandBack(HandBack),
     Apply {
@@ -122,8 +124,38 @@ enum Failure {
 pub(crate) struct HandBack {
     pub(crate) kind: HandBackKind,
     pub(crate) reason: String,
-    /// The end of the session's log, when the session's end is the reason.
-    pub(crate) log_tail: Option<String>,
+    /// The end of a log, when what wrote it is the reason.
+    pub(crate) log_tail: Option<LogTail>,
+}
+
+/// The end of a log a hand-back gives, and what it is the end of. Its text
+/// is never empty.
+pub(crate) struct LogTail {
+    pub(crate) of: Logged,
+    pub(crate) text: String,
+}
+
+/// What a log tail is the end of.
+pub(crate) enum Logged {
+    Session,
+}
+
+impl LogTail {
+    /// The end of the session's log `text`, unless it holds nothing.
+    fn session(text: &str) -> Option<LogTail> {
+        let text = text.trim();
+        (!text.is_empty()).then(|| LogTail {
+            of: Logged::Session,
+            text: text.to_string(),
+        })
+    }
+
+    /// What it is the end of, as a hand-back heads it.
+    fn heading(&self) -> &'static str {
+        match self.of {
+            Logged::Session => "The end of the session's log",
+        }
+    }
 }
 
 /// What a run works with, from its start to its end.
@@ -232,9 +264,11 @@ impl Failure {
             Failure::Infrastructure {
                 error,
                 note: before,
+                log_tail,
             } => Failure::Infrastructure {
                 error,
                 note: before + note,
+                log_tail,
             },
             Failure::Apply {
                 error,
@@ -263,6 +297,7 @@ fn infra(error: anyhow::Error) -> Failure {
     Failure::Infrastructure {
         error,
         note: String::new(),
+        log_tail: None,
     }
 }
 
@@ -376,11 +411,15 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 warn!(subject = ?subject, error, "infrastructure failure; retrying once");
                 retried = true;
             }
-            Err(Failure::Infrastructure { error: e, note }) => {
+            Err(Failure::Infrastructure {
+                error: e,
+                note,
+                log_tail,
+            }) => {
                 break HandBack {
                     kind: HandBackKind::Stall,
                     reason: format!("The run failed twice on its infrastructure: {e:#}{note}"),
-                    log_tail: None,
+                    log_tail,
                 };
             }
             Err(Failure::Cancelled) => {
@@ -432,7 +471,10 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
     };
     let hand_back = HandBack {
         reason: posted(&hand_back.reason),
-        log_tail: hand_back.log_tail.map(|t| posted(&t)),
+        log_tail: hand_back.log_tail.map(|tail| LogTail {
+            text: posted(&tail.text),
+            ..tail
+        }),
         ..hand_back
     };
     info!(subject = ?subject, reason = hand_back.reason, "handing back");
@@ -712,14 +754,11 @@ fn stalls(hand_back: &HandBack) -> bool {
 
 fn with_log(hand_back: &HandBack) -> String {
     let reason = &hand_back.reason;
-    match hand_back
-        .log_tail
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-    {
+    match &hand_back.log_tail {
         Some(tail) => format!(
-            "{reason}\n\n<details><summary>The end of the session's log</summary>\n\n```\n{tail}\n```\n\n</details>"
+            "{reason}\n\n<details><summary>{}</summary>\n\n```\n{}\n```\n\n</details>",
+            tail.heading(),
+            tail.text
         ),
         None => reason.clone(),
     }
@@ -998,7 +1037,7 @@ fn send_back(
         reason: format!(
             "The session's result still could not be used after {retries} follow-up(s).\n\n{followup}"
         ),
-        log_tail: Some(tail(&scrub(&turn.message, &spec.dir), 40)),
+        log_tail: LogTail::session(&tail(&scrub(&turn.message, &spec.dir), 40)),
     }))
 }
 
@@ -1046,14 +1085,14 @@ async fn take_turn(
                          smaller, or {} may need to be longer.",
                         ctx.with.settings.timeout_setting
                     ),
-                    log_tail: Some(scrub(log_tail, &spec.dir)),
+                    log_tail: LogTail::session(&scrub(log_tail, &spec.dir)),
                 }));
             }
             Err(SessionError::Failed { reason, log_tail }) => {
                 return Err(Failure::HandBack(HandBack {
                     kind: HandBackKind::Stall,
                     reason: format!("The session ended unexpectedly: {reason}"),
-                    log_tail: Some(scrub(&log_tail, &spec.dir)),
+                    log_tail: LogTail::session(&scrub(&log_tail, &spec.dir)),
                 }));
             }
         };
@@ -1108,38 +1147,74 @@ fn tail(text: &str, lines: usize) -> String {
     all[all.len().saturating_sub(lines)..].join("\n")
 }
 
-/// The session of `purpose` in `ws`, sent the `prompt` made for its
-/// attachments directory, and that directory.
-fn session_spec(
+/// A session opened in its clone, whose prompt is still to be filled.
+struct Opened<'a> {
+    settings: &'a SessionSettings,
+    purpose: Purpose,
+    record: PathBuf,
+    attachments: Dir,
+    recorder: SessionRecorder,
+    dir: PathBuf,
+    scratch: PathBuf,
+    plugin: PathBuf,
+}
+
+/// Opens the session of `purpose` in `ws`: makes its record and its
+/// attachments directory, and registers it with the run.
+fn open_session<'a>(
     shell: &Shell,
-    ctx: &Ctx,
+    ctx: &'a Ctx,
     purpose: Purpose,
     ws: &Workspace,
-    prompt: impl FnOnce(&Path) -> String,
-) -> Result<(SessionSpec, Dir), Failure> {
+) -> Result<Opened<'a>, Failure> {
     let settings = &ctx.with.settings;
-    let now = shell.clock.now();
-    let record = record_dir(shell, &purpose, now)?;
+    let record = record_dir(shell, &purpose, shell.clock.now())?;
     let attachments = Dir::create(&record)
         .context("creating the attachments directory")
         .map_err(infra)?;
-    let prompt = prompt(attachments.path());
     let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
-    let spec = SessionSpec {
-        record,
-        attachments: attachments.path().to_path_buf(),
+    Ok(Opened {
+        settings,
         purpose,
+        record,
+        attachments,
+        recorder,
         dir: ws.dir.clone(),
         scratch: ws.scratch.clone(),
         plugin: ws.plugin.clone(),
-        prompt,
-        model: settings.model_set(),
-        effort: settings.effort_set(),
-        environment: settings.environment.clone(),
-        deadline: tokio::time::Instant::now() + settings.session_timeout.value,
-        report: Reporter::new(move |reported| recorder.reported(reported)),
-    };
-    Ok((spec, attachments))
+    })
+}
+
+impl Opened<'_> {
+    /// The session, sent the `prompt` made for its attachments directory,
+    /// and that directory.
+    fn spec(self, prompt: impl FnOnce(&Path) -> String) -> (SessionSpec, Dir) {
+        let Opened {
+            settings,
+            purpose,
+            record,
+            attachments,
+            recorder,
+            dir,
+            scratch,
+            plugin,
+        } = self;
+        let spec = SessionSpec {
+            record,
+            attachments: attachments.path().to_path_buf(),
+            prompt: prompt(attachments.path()),
+            purpose,
+            dir,
+            scratch,
+            plugin,
+            model: settings.model_set(),
+            effort: settings.effort_set(),
+            environment: settings.environment.clone(),
+            deadline: tokio::time::Instant::now() + settings.session_timeout.value,
+            report: Reporter::new(move |reported| recorder.reported(reported)),
+        };
+        (spec, attachments)
+    }
 }
 
 /// Uploads each attachment `result`'s posted Markdown refers to in `dir`
@@ -1227,7 +1302,8 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
-    let (mut spec, dir) = session_spec(shell, ctx, purpose, &ws, |attachments| {
+    let opened = open_session(shell, ctx, purpose, &ws)?;
+    let (mut spec, dir) = opened.spec(|attachments| {
         prompts::triage(
             &ctx.with.briefs.prompts,
             &shell.repo(),
@@ -1235,7 +1311,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
             &categories,
             attachments,
         )
-    })?;
+    });
     let (categories, dir) = (&categories, &dir);
     let (result, _) =
         converse(
@@ -1328,7 +1404,8 @@ where
         kind: WorkKind::Design,
     };
     let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    let (mut spec, dir) = session_spec(shell, ctx, purpose, &ws, prompt)?;
+    let opened = open_session(shell, ctx, purpose, &ws)?;
+    let (mut spec, dir) = opened.spec(prompt);
     let dir = &dir;
     let begin = |mut result: DesignResult<C>| async move {
         drop_filed_gaps(&mut result, filed_gaps);
@@ -1367,11 +1444,11 @@ async fn design_blocked(
     }))
 }
 
-fn design_gave_up(of: DesignOf, reason: &str, turn: Turn) -> Failure {
+fn design_gave_up(of: DesignOf, reason: &str, turn: &Turn) -> Failure {
     Failure::HandBack(HandBack {
         kind: HandBackKind::Decision,
         reason: format!("The designer handed the {} back:\n\n{reason}", of.noun()),
-        log_tail: Some(turn.log_tail),
+        log_tail: LogTail::session(&turn.log_tail),
     })
 }
 
@@ -1425,7 +1502,9 @@ async fn design_spec_change(
             question,
             spec_gaps,
         } => design_blocked(shell, &question, &spec_gaps, filed_gaps.item).await,
-        DesignResult::GaveUp { reason } => Err(design_gave_up(DesignOf::SpecChange, &reason, turn)),
+        DesignResult::GaveUp { reason } => {
+            Err(design_gave_up(DesignOf::SpecChange, &reason, &turn))
+        }
     }
 }
 
@@ -1506,7 +1585,7 @@ async fn design_issue(
             question,
             spec_gaps,
         } => design_blocked(shell, &question, &spec_gaps, filed_gaps.item).await,
-        DesignResult::GaveUp { reason } => Err(design_gave_up(DesignOf::Issue, &reason, turn)),
+        DesignResult::GaveUp { reason } => Err(design_gave_up(DesignOf::Issue, &reason, &turn)),
     }
 }
 
@@ -1810,7 +1889,8 @@ async fn implement(
     let start = git::check_out_branch(&ws.dir, &branch, &upstream)
         .await
         .map_err(infra)?;
-    let (mut spec, attachments) = session_spec(shell, ctx, purpose, &ws, |attachments| {
+    let opened = open_session(shell, ctx, purpose, &ws)?;
+    let (mut spec, attachments) = opened.spec(|attachments| {
         prompts::implement(
             &ctx.with.briefs.prompts,
             &shell.repo(),
@@ -1819,7 +1899,7 @@ async fn implement(
             &start,
             attachments,
         )
-    })?;
+    });
     let (dir, base) = (&ws.dir, &upstream);
     let accept = |message: String| async move {
         let result: ImplementResult = results::parse(&message).map_err(parse_retry(ctx))?;
@@ -1944,7 +2024,7 @@ async fn implement(
                     "The implementer handed the ticket back:\n\n{}{kept}",
                     reason.trim()
                 ),
-                log_tail: Some(turn.log_tail),
+                log_tail: LogTail::session(&turn.log_tail),
             }))
         }
     }
@@ -2094,7 +2174,8 @@ async fn pull_work(
     let left_unfinished = git::unfinished_commits(dir, &upstream, tip)
         .await
         .map_err(infra)?;
-    let (mut spec, attachments) = session_spec(shell, ctx, purpose, &ws, |attachments| {
+    let opened = open_session(shell, ctx, purpose, &ws)?;
+    let (mut spec, attachments) = opened.spec(|attachments| {
         prompts::pull_work(
             &ctx.with.briefs.prompts,
             &shell.repo(),
@@ -2104,7 +2185,7 @@ async fn pull_work(
             left_unfinished.as_ref(),
             attachments,
         )
-    })?;
+    });
     let before = git::work_state(dir).await.map_err(infra)?;
     let (upstream, base) = (&upstream, start.as_str());
     let check_result = |message: String, pr_threads: Vec<String>| async move {
@@ -2256,7 +2337,7 @@ async fn pull_work(
                     "The implementer handed the pull request back:\n\n{}{kept}",
                     reason.trim()
                 ),
-                log_tail: Some(turn.log_tail),
+                log_tail: LogTail::session(&turn.log_tail),
             }))
         }
     }
@@ -2374,14 +2455,15 @@ pub(crate) async fn automation(
     let session = async {
         let purpose = Purpose::Automation(automation.name.clone());
         let ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-        let (mut spec, dir) = session_spec(shell, &ctx, purpose, &ws, |attachments| {
+        let opened = open_session(shell, &ctx, purpose, &ws)?;
+        let (mut spec, dir) = opened.spec(|attachments| {
             prompts::automation(
                 &ctx.with.briefs.prompts,
                 &shell.repo(),
                 automation,
                 attachments,
             )
-        })?;
+        });
         let (ctx, dir) = (&ctx, &dir);
         let begin = |mut result: AutomationResult| async move {
             drop_past_max_issues(automation, &mut result);
@@ -2415,17 +2497,25 @@ pub(crate) async fn automation(
     match ended {
         Ok(result) => Ok(AutomationEnd::Finished(result)),
         Err(Failure::UsageLimit(limit)) => Ok(AutomationEnd::UsageLimit(limit)),
+        Err(Failure::Infrastructure {
+            error: e,
+            log_tail: Some(log_tail),
+            ..
+        }) => Err(with_tail(&e, &log_tail)),
         Err(Failure::Infrastructure { error: e, .. } | Failure::Apply { error: e, .. }) => Err(e),
         Err(Failure::HandBack(HandBack {
-            reason, log_tail, ..
-        })) => Err(
-            match log_tail.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-                Some(tail) => anyhow::anyhow!("{reason}\n\nThe end of the session's log:\n{tail}"),
-                None => anyhow::anyhow!(reason),
-            },
-        ),
+            reason,
+            log_tail: Some(log_tail),
+            ..
+        })) => Err(with_tail(&anyhow::anyhow!(reason), &log_tail)),
+        Err(Failure::HandBack(HandBack { reason, .. })) => Err(anyhow::anyhow!(reason)),
         Err(Failure::Cancelled) => Err(anyhow::anyhow!("the run was cancelled")),
     }
+}
+
+/// An automation run's `error`, with `log_tail` under it.
+fn with_tail(error: &anyhow::Error, log_tail: &LogTail) -> anyhow::Error {
+    anyhow::anyhow!("{error:#}\n\n{}:\n{}", log_tail.heading(), log_tail.text)
 }
 
 /// Drops the issues past `max-issues` from `result`, which are not filed.

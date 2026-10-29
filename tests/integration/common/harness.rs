@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -9,6 +10,8 @@ use linewright::harness::{
     Harness, Purpose, Reported, SessionError, SessionSpec, Turn, UsageLimit,
 };
 use linewright::reconcile::WorkKind;
+use linewright::session_env::Given;
+use linewright::work_settings::Effort;
 use serde_json::Value;
 
 pub struct Call<'a> {
@@ -197,8 +200,27 @@ impl ScriptedHarness {
     }
 }
 
+/// The environment a fake harness's session starts from: `given`, then
+/// `scratch` as its temporary directory.
+pub fn fake_environment(given: &Given, scratch: &Path) -> Vec<(OsString, OsString)> {
+    given
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .chain([("TMPDIR".into(), scratch.into())])
+        .collect()
+}
+
 #[async_trait]
 impl Harness for ScriptedHarness {
+    fn environment(
+        &self,
+        given: &Given,
+        scratch: &Path,
+        _: Option<Effort>,
+    ) -> Vec<(OsString, OsString)> {
+        fake_environment(given, scratch)
+    }
+
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError> {
         let n = self
             .started
