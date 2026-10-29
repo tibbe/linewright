@@ -1,20 +1,15 @@
 use crate::common;
 
-use std::time::Duration;
-
 use chrono::TimeDelta;
 use common::*;
+use linewright::board::{Column, board};
+use linewright::clock::Clock;
 use linewright::domain::{ClosedItem, ClosedKind, Number};
-use linewright::webhook::Pending;
+use linewright::store::Store;
 
 /// The closed items `serve` holds once its first poll took its snapshot.
 async fn closed_items_served(world: World) -> Vec<ClosedItem> {
-    let mut serving = Serving::start(world.factory, Duration::from_hours(1), Pending::default());
-    let served = serving.served.wait_for(Option::is_some).await.unwrap();
-    let closed = served.as_ref().unwrap().view().snapshot.closed.clone();
-    drop(served);
-    serving.stop().await;
-    closed
+    view_served(world).await.snapshot.closed.clone()
 }
 
 /// Each closed item's number, with how it closed: merged by a pull request,
@@ -90,4 +85,36 @@ async fn a_ticket_closed_before_the_done_window_is_held_closed_while_its_trackin
     let closed_items = closed_items_served(world).await;
 
     assert_eq!(endings(&closed_items), [(closed, "closed".to_string())]);
+}
+
+#[tokio::test]
+async fn a_ticket_of_an_unfinished_lane_a_person_unlabeled_and_closed_before_the_done_window_is_in_done()
+ {
+    let world = World::new().await;
+    let tracking = world.store.open_issue(
+        "maintainer",
+        "Big thing",
+        "Cut it.",
+        &["linewright:designed"],
+    );
+    let [closed, open] = ["Part one", "Part two"].map(|title| {
+        world
+            .store
+            .open_issue(LINEWRIGHT, title, "Of it.", &["ready-for-human"])
+    });
+    for ticket in [closed, open] {
+        world.store.add_sub_issue(tracking, ticket).await.unwrap();
+    }
+    world.store.unlabel_as(closed, "ready-for-human").unwrap();
+    world.store.close_issue_as_completed(closed).unwrap();
+    world.clock.advance(TimeDelta::days(8));
+    let now = world.clock.now();
+
+    let view = view_served(world).await;
+
+    let board = board(&view, &[], now);
+    assert_eq!(
+        board.card(closed).map(|(column, _)| column),
+        Some(Column::Done)
+    );
 }

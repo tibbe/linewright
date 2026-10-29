@@ -173,12 +173,14 @@ fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedI
         updated_at: at(closed_at),
         kind: ClosedKind::Issue {
             parent: None,
-            filed: None,
-            sub_issues: vec![],
-            labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
+            facts: ManagedFacts {
+                filed: None,
+                sub_issues: vec![],
+                labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
+                work: claimed(),
+            },
             merged_by: merged_by.map(Number),
             reason: None,
-            work: claimed(),
         },
     }
 }
@@ -618,12 +620,14 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
             number: Number(20),
             spec_change: Some(Number(19)),
         }),
-        filed: None,
-        sub_issues: vec![],
-        labels: vec![label::DESIGNED.into()],
+        facts: ManagedFacts {
+            filed: None,
+            sub_issues: vec![],
+            labels: vec![label::DESIGNED.into()],
+            work: claimed(),
+        },
         merged_by: Some(Number(40)),
         reason: None,
-        work: claimed(),
     };
     let view = with_closed(
         view(
@@ -766,12 +770,14 @@ fn closed_ticket(number: u64, tracking: u64, closed_at: &str) -> ClosedItem {
             number: Number(tracking),
             spec_change: Some(Number(tracking - 1)),
         }),
-        filed: None,
-        sub_issues: vec![],
-        labels: vec![label::DESIGNED.into()],
+        facts: ManagedFacts {
+            filed: None,
+            sub_issues: vec![],
+            labels: vec![label::DESIGNED.into()],
+            work: claimed(),
+        },
         merged_by: Some(Number(number + 100)),
         reason: None,
-        work: claimed(),
     };
     closed
 }
@@ -1838,9 +1844,9 @@ fn a_card_in_done_has_no_card_status() {
 /// within the window, that Linewright never worked.
 fn persons_closed_issue(number: u64) -> ClosedItem {
     let mut closed = closed_issue(number, "2026-09-30T12:00:00Z", None);
-    if let ClosedKind::Issue { labels, work, .. } = &mut closed.kind {
-        *labels = vec!["ready-for-agent".into()];
-        *work = WorkFacts::default();
+    if let ClosedKind::Issue { facts, .. } = &mut closed.kind {
+        facts.labels = vec!["ready-for-agent".into()];
+        facts.work = WorkFacts::default();
     }
     closed
 }
@@ -1856,8 +1862,8 @@ fn requiring_label(mut view: View) -> View {
 /// `work` tells.
 fn placed_requiring_label(work: WorkFacts) -> Vec<(u64, Column, u64)> {
     let mut closed = persons_closed_issue(1);
-    if let ClosedKind::Issue { work: held, .. } = &mut closed.kind {
-        *held = work;
+    if let ClosedKind::Issue { facts, .. } = &mut closed.kind {
+        facts.work = work;
     }
     let view = requiring_label(with_closed(view(vec![], vec![]), vec![closed]));
     placed(&board(&view, &[], at(NOW)))
@@ -1879,8 +1885,8 @@ fn with_a_required_label_a_closed_issue_without_it_that_linewright_never_worked_
 fn with_a_required_label_a_closed_issue_carrying_it_that_linewright_never_worked_is_not_on_the_board()
  {
     let mut closed = persons_closed_issue(1);
-    if let ClosedKind::Issue { labels, .. } = &mut closed.kind {
-        labels.push("linewright".into());
+    if let ClosedKind::Issue { facts, .. } = &mut closed.kind {
+        facts.labels.push("linewright".into());
     }
     let view = requiring_label(with_closed(view(vec![], vec![]), vec![closed]));
 

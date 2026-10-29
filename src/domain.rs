@@ -183,11 +183,6 @@ pub mod label {
     /// designed again; never set.
     pub const SPEC_PROCESSED: &str = "linewright:spec-processed";
 
-    /// The labels a snapshot reads issues by, of which it holds those
-    /// Linewright manages: those asking for Linewright's work, and the label
-    /// a tracking issue cut from an issue keeps when its status label goes.
-    pub const IN_VIEW: [&str; 4] = [NEEDS_TRIAGE, NEEDS_INFO, READY_FOR_AGENT, DESIGNED];
-
     pub const ANSWERS: [(&str, &str); 2] = [
         (READY_FOR_AGENT, "to implement it as decided"),
         (NEEDS_TRIAGE, "to triage it again"),
@@ -676,14 +671,7 @@ impl Issue {
     /// most recently (docs/specs/repository.md, "status labels"). One whose
     /// application fell out of the events read counts as older than the rest.
     pub fn status_label(&self) -> Option<StatusLabel> {
-        StatusLabel::ALL
-            .into_iter()
-            .filter_map(|status| {
-                let carried = self.labels.iter().position(|l| l == status.label())?;
-                Some((status, (self.last_labeling(status), carried)))
-            })
-            .max_by_key(|(_, order)| *order)
-            .map(|(status, _)| status)
+        status_label(&self.labels, &self.events)
     }
 
     /// Whether `status` is the status label the issue holds, rather than one it
@@ -786,18 +774,27 @@ impl Issue {
         self.assignees.contains(login)
     }
 
+    /// What tells whether `linewright` manages it, with `closing` the pull
+    /// requests that close it.
+    fn signs<'a>(&'a self, linewright: &Login, closing: &'a [ClosingPull]) -> ManagedSigns<'a> {
+        ManagedSigns {
+            open: self.open,
+            labels: &self.labels,
+            work: WorkSigns {
+                author: Some(&self.author),
+                assignees: &self.assignees,
+                events: &self.events,
+                closed_by: closing,
+                tracks: self.tracks(linewright).is_some(),
+            },
+        }
+    }
+
     /// Whether `linewright` has worked it (`GLOSSARY.md`, **Worked**), with
     /// `closing` the pull requests that close it, such as
     /// [`Snapshot::pulls_closing`] gives.
     pub fn worked_by(&self, linewright: &Login, closing: &[ClosingPull]) -> bool {
-        WorkSigns {
-            author: Some(&self.author),
-            assignees: &self.assignees,
-            events: &self.events,
-            closed_by: closing,
-            tracks: self.tracks(linewright).is_some(),
-        }
-        .worked_by(linewright)
+        self.signs(linewright, closing).work.worked_by(linewright)
     }
 
     /// Whether it waits on `linewright` to act next (`GLOSSARY.md`,
@@ -806,20 +803,15 @@ impl Issue {
     /// or `ready-for-agent`. A spec change waiting for design is a merged
     /// pull request, which `reconcile::spec_change` tells.
     pub fn waits_on_linewright(&self, linewright: &Login, marking: Marking) -> bool {
-        self.open
-            && (self.is_assigned(linewright)
-                || marking == Marking::Marked
-                    && matches!(
-                        self.status_label(),
-                        Some(StatusLabel::NeedsTriage | StatusLabel::ReadyForAgent)
-                    ))
+        self.signs(linewright, &self.closed_by)
+            .waits_on_linewright(linewright, marking)
     }
 
     /// Whether `linewright` manages it (`GLOSSARY.md`, **Managed**): it has
     /// worked it, as [`Issue::worked_by`] tells with `closing`, or it waits
     /// on Linewright, as [`Issue::waits_on_linewright`] tells with `marking`.
     pub fn managed(&self, linewright: &Login, closing: &[ClosingPull], marking: Marking) -> bool {
-        self.worked_by(linewright, closing) || self.waits_on_linewright(linewright, marking)
+        self.signs(linewright, closing).managed(linewright, marking)
     }
 
     pub fn last_reopened(&self) -> Option<Timestamp> {
@@ -1183,6 +1175,93 @@ pub fn last_labeling(events: &[IssueEvent], name: &str) -> Option<EventOrder> {
         .max()
 }
 
+/// The status label an issue labeled `labels`, with `events`, holds, as
+/// [`Issue::status_label`] tells.
+fn status_label(labels: &[String], events: &[IssueEvent]) -> Option<StatusLabel> {
+    StatusLabel::ALL
+        .into_iter()
+        .filter_map(|status| {
+            let carried = labels.iter().position(|l| l == status.label())?;
+            Some((status, (last_labeling(events, status.label()), carried)))
+        })
+        .max_by_key(|(_, order)| *order)
+        .map(|(status, _)| status)
+}
+
+/// What an issue, open or closed, holds that tells whether Linewright
+/// manages it (`GLOSSARY.md`, **Managed**) besides whether it is open, as
+/// [`Issue`]'s fields of the same names.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedFacts {
+    pub filed: Option<Filed>,
+    pub sub_issues: Vec<SubIssue>,
+    pub labels: Vec<String>,
+    /// None of it known in a snapshot taken before Linewright read it.
+    #[serde(default)]
+    pub work: WorkFacts,
+}
+
+impl ManagedFacts {
+    /// What it tracks, if it is a tracking issue, as [`Issue::tracks`] tells.
+    pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
+        tracks(self.filed, &self.labels, &self.sub_issues, linewright)
+    }
+
+    fn signs(&self, open: bool, linewright: &Login) -> ManagedSigns<'_> {
+        let work = &self.work;
+        ManagedSigns {
+            open,
+            labels: &self.labels,
+            work: WorkSigns {
+                author: work.author.as_ref(),
+                assignees: &work.assignees,
+                events: &work.events,
+                closed_by: &work.closed_by,
+                tracks: self.tracks(linewright).is_some(),
+            },
+        }
+    }
+
+    /// Whether `linewright` has worked it, as [`Issue::worked_by`] tells.
+    pub fn worked_by(&self, linewright: &Login) -> bool {
+        self.signs(false, linewright).work.worked_by(linewright)
+    }
+
+    /// Whether `linewright` manages it, `open` or not, as [`Issue::managed`]
+    /// tells of an issue marked for Linewright with the pull requests
+    /// closing it.
+    pub fn managed(&self, open: bool, linewright: &Login) -> bool {
+        self.signs(open, linewright)
+            .managed(linewright, Marking::Marked)
+    }
+}
+
+/// What tells whether Linewright manages an issue (`GLOSSARY.md`,
+/// **Managed**).
+struct ManagedSigns<'a> {
+    open: bool,
+    labels: &'a [String],
+    work: WorkSigns<'a>,
+}
+
+impl ManagedSigns<'_> {
+    /// As [`Issue::waits_on_linewright`].
+    fn waits_on_linewright(&self, linewright: &Login, marking: Marking) -> bool {
+        self.open
+            && (self.work.assignees.contains(linewright)
+                || marking == Marking::Marked
+                    && matches!(
+                        status_label(self.labels, self.work.events),
+                        Some(StatusLabel::NeedsTriage | StatusLabel::ReadyForAgent)
+                    ))
+    }
+
+    /// As [`Issue::managed`].
+    fn managed(&self, linewright: &Login, marking: Marking) -> bool {
+        self.work.worked_by(linewright) || self.waits_on_linewright(linewright, marking)
+    }
+}
+
 /// What tells whether Linewright has worked an issue, open or closed
 /// (`GLOSSARY.md`, **Worked**).
 struct WorkSigns<'a> {
@@ -1378,12 +1457,7 @@ impl ClosedItem {
     /// What it tracks, if it is a tracking issue, as [`Issue::tracks`] tells.
     pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
         match &self.kind {
-            ClosedKind::Issue {
-                filed,
-                labels,
-                sub_issues,
-                ..
-            } => tracks(*filed, labels, sub_issues, linewright),
+            ClosedKind::Issue { facts, .. } => facts.tracks(linewright),
             ClosedKind::Pull { .. } => None,
         }
     }
@@ -1393,14 +1467,7 @@ impl ClosedItem {
     /// opened it.
     pub fn worked_by(&self, linewright: &Login) -> bool {
         match &self.kind {
-            ClosedKind::Issue { work, .. } => WorkSigns {
-                author: work.author.as_ref(),
-                assignees: &work.assignees,
-                events: &work.events,
-                closed_by: &work.closed_by,
-                tracks: self.tracks(linewright).is_some(),
-            }
-            .worked_by(linewright),
+            ClosedKind::Issue { facts, .. } => facts.worked_by(linewright),
             ClosedKind::Pull { .. } => true,
         }
     }
@@ -1491,18 +1558,14 @@ pub fn closed_within(
 pub enum ClosedKind {
     Issue {
         parent: Option<Parent>,
-        filed: Option<Filed>,
-        sub_issues: Vec<SubIssue>,
-        labels: Vec<String>,
+        #[serde(flatten)]
+        facts: ManagedFacts,
         /// The pull request whose merge closed it.
         merged_by: Option<Number>,
         /// `None` where it is not known, as in a snapshot taken before
         /// Linewright read it.
         #[serde(default)]
         reason: Option<IssueCloseReason>,
-        /// None of it known in a snapshot taken before Linewright read it.
-        #[serde(default)]
-        work: WorkFacts,
     },
     /// Linewright's, closed without merging.
     Pull { closes: Vec<Number> },
@@ -1758,7 +1821,7 @@ impl Snapshot {
             .filter(|issue| issue.open)
             .filter_map(|issue| Some((issue.tracks(linewright)?, &issue.sub_issues)));
         let closed = self.closed.iter().filter_map(|item| match &item.kind {
-            ClosedKind::Issue { sub_issues, .. } => Some((item.tracks(linewright)?, sub_issues)),
+            ClosedKind::Issue { facts, .. } => Some((item.tracks(linewright)?, &facts.sub_issues)),
             ClosedKind::Pull { .. } => None,
         });
         open.chain(closed)
@@ -2031,7 +2094,11 @@ mod tests {
         )
         .unwrap();
 
-        let ClosedKind::Issue { work, .. } = &snapshot.closed[0].kind else {
+        let ClosedKind::Issue {
+            facts: ManagedFacts { work, .. },
+            ..
+        } = &snapshot.closed[0].kind
+        else {
             panic!("an issue");
         };
         assert_eq!(*work, WorkFacts::default());

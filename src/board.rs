@@ -566,14 +566,14 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         })
         .chain(closed.iter().filter_map(|item| {
             let tracks = item.tracks(linewright)?;
-            let ClosedKind::Issue { sub_issues, .. } = &item.kind else {
+            let ClosedKind::Issue { facts, .. } = &item.kind else {
                 return None;
             };
             Some(Tracker::new(
                 item.number,
                 &item.title,
                 tracks,
-                sub_issues,
+                &facts.sub_issues,
                 linewright,
             ))
         }))

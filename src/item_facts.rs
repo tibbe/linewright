@@ -171,10 +171,10 @@ fn tickets_of(number: Number, view: &View) -> Option<Vec<&SubIssue>> {
             (issue.tracks(linewright), &issue.sub_issues)
         } else {
             let closed = view.snapshot.closed.iter().find(|i| i.number == number)?;
-            let ClosedKind::Issue { sub_issues, .. } = &closed.kind else {
+            let ClosedKind::Issue { facts, .. } = &closed.kind else {
                 return None;
             };
-            (closed.tracks(linewright), sub_issues)
+            (closed.tracks(linewright), &facts.sub_issues)
         };
     Some(tracks?.tickets(sub_issues, linewright).collect())
 }

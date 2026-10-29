@@ -222,15 +222,17 @@ fn closed_ticket(number: u64, closed_at: &str) -> ClosedItem {
                 number: Number(20),
                 spec_change: Some(Number(15)),
             }),
-            filed: None,
-            sub_issues: vec![],
-            labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
+            facts: ManagedFacts {
+                filed: None,
+                sub_issues: vec![],
+                labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
+                work: WorkFacts {
+                    assignees: vec![Login::new("factory")],
+                    ..WorkFacts::default()
+                },
+            },
             merged_by: None,
             reason: Some(IssueCloseReason::Completed),
-            work: WorkFacts {
-                assignees: vec![Login::new("factory")],
-                ..WorkFacts::default()
-            },
         },
     }
 }

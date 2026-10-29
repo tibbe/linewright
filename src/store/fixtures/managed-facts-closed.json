@@ -1,0 +1,692 @@
+{
+  "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0yOVQyMjoxODo1NFrPAAAAAWwgnN4="
+  },
+  "nodes": [
+    {
+      "number": 746,
+      "title": "Say what a leftover LINEWRIGHT_SESSION_ENV does",
+      "body": "`session-env` has no environment variable now, so `LINEWRIGHT_SESSION_ENV` is no longer read. A deployment that set it to a list of names, its old form, silently stops passing those variables. In contrast, `session-env = [...]` in the file and `--session-env NAME` are errors at startup that point to `session-pass-env`.\n\nThe design leaves the variable unread. Should `docs/specs/operation.md`, under \"Configuration\", say that `LINEWRIGHT_SESSION_ENV` set in Linewright's environment is an error at startup?\n\nFound while working on #741.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T21:24:01Z",
+      "updatedAt": "2026-10-29T21:24:01Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-human"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T13:39:58Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-human"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 731,
+      "title": "The spec does not say which items Linewright reads",
+      "body": "## The gap\n\nNo spec says which items Linewright reads at all. Today it reads the issues carrying one of `needs-triage`, `needs-info`, `ready-for-agent` or `linewright:designed`, those assigned to it, and those it filed; an open issue outside that set has an item page saying \"Left alone · labeled none of …, and Linewright neither opened it nor is assigned to it\". Closed items are read only within a window.\n\nThat reach is a user-visible decision the spec leaves to the code. It shows in two places:\n\n- The item page's \"Left alone\" reasons name it (`docs/specs/design_system.md`, the State fact), with no rule behind them.\n- The board's Done: an issue Linewright claimed and handed back, whose status labels a person then removed before closing it, isn't read, so it isn't in Done although Linewright worked it (`GLOSSARY.md`, **Managed**).\n\n## What to settle\n\nWhat Linewright reads, stated as a rule in `docs/specs/repository.md` or `docs/specs/sources_of_work.md`: for example, every item that asks for a step of the pipeline or that Linewright has worked, with the item page's reasons following from it.\n\nFound while settling #729.\n",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T21:33:33Z",
+      "updatedAt": "2026-10-29T21:33:33Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "enhancement"
+          },
+          {
+            "name": "ready-for-human"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 784,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T21:33:31Z",
+            "closedAt": "2026-10-29T21:33:31Z",
+            "updatedAt": "2026-10-29T21:45:25Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T09:34:02Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-28T09:34:04Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T09:34:48Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "enhancement"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T09:34:49Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-human"
+            }
+          },
+          {
+            "__typename": "UnassignedEvent",
+            "createdAt": "2026-10-28T09:34:50Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 775,
+      "title": "Spec: whether a running setup command shows in a followed transcript",
+      "body": "`docs/specs/design_system.md` (Transcripts, Followed) has a followed transcript show each entry as it happens. `docs/specs/monitoring.md` gives the setup command in `logs --json` once it ends, but says nothing of a setup command that is still running.\n\nThe design shows the setup line only once the command has ended. While a long install runs, `logs --follow` and the run page show nothing for the run. A maintainer might want a `running` line instead, as a tool call has. If so, add to Transcripts, Setup: \"While it runs, its line shows `running`.\"\n\nFound while working on #770.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T21:33:33Z",
+      "updatedAt": "2026-10-29T21:33:33Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-human"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 784,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T21:33:31Z",
+            "closedAt": "2026-10-29T21:33:31Z",
+            "updatedAt": "2026-10-29T21:45:25Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T16:04:58Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-human"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 723,
+      "title": "Say whether a session refused for the usage limit counts as started",
+      "body": "`runs.md` gives the outcome `usage-limit` as \"its session was refused for the usage limit\". Two clauses turn on whether a run started a session:\n\n- `monitoring.md`, No session: \"For a run that started no session, `logs` says so.\"\n- `design_system.md`, The run page, Heading: \"(it started no session)\" for a run that ended without one.\n\nNothing says whether a refused session counts as started, so neither decides what a `usage-limit` run shows.\n\nFound while working on #708.\n",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T21:33:34Z",
+      "updatedAt": "2026-10-29T21:33:34Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 784,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T21:33:31Z",
+            "closedAt": "2026-10-29T21:33:31Z",
+            "updatedAt": "2026-10-29T21:45:25Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": []
+      }
+    },
+    {
+      "number": 745,
+      "title": "Say whether a flag adds to the file's session-env and session-pass-env or replaces them",
+      "body": "The Combining bullet under \"Stage settings\" in `docs/specs/operation.md` says \"a list holds every name set at any layer, and a table every name set at any layer, each name's value chosen as a setting's is\". The design reads \"any layer\" as the configuration's layers too, not only a stage's table against the whole pipeline's:\n\n- `--session-env A=1` adds to the operator's file's `session-env` instead of replacing it;\n- `--session-pass-env` or `LINEWRIGHT_SESSION_PASS_ENV` adds to the file's names.\n\nThe code made a flag replace the file's list until now, so this changes what an operator sees.\n\nPlease confirm, or say otherwise, in the Configuration section: a setting that holds a list or a table of values joins every layer's entries, and for a table, a name's value comes from the highest layer that sets it. The alternative is that the first layer to set it gives all of it.\n\nFound while working on #741.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T21:33:34Z",
+      "updatedAt": "2026-10-29T21:33:34Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-human"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 784,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T21:33:31Z",
+            "closedAt": "2026-10-29T21:33:31Z",
+            "updatedAt": "2026-10-29T21:45:25Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T13:39:58Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-human"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 781,
+      "title": "Say whether a run whose setup command failed \"started no session\"",
+      "body": "`runs.md`, Setup, Failing says a setup command that fails means \"its session does not start\". The run page's Heading (`design_system.md`) says \"(it started no session)\" \"for a run that ended without one\", and `monitoring.md`, logs, No session says \"For a run that started no session, `logs` says so.\"\n\nA run whose setup command failed every time therefore started no session. Yet its transcripts show each of its sessions' headers and setup lines (Transcripts, Setup: \"under that session whether or not it started\").\n\nToday such a run's header reads `run: 1/triage-1`, with no note, followed by `session 1` and its setup line. That is because the session is registered before setup runs.\n\nThe spec should say which it wants:\n\n- the heading and `logs` note \"(it started no session)\", even though session headers with setup lines follow; or\n- \"No session\" and the Heading apply only to a run with no session at all, setup included, for example \"for a run that ended without a session or a setup command\".\n\nFound while working on #774.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T21:33:34Z",
+      "updatedAt": "2026-10-29T21:33:34Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-human"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 784,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T21:33:31Z",
+            "closedAt": "2026-10-29T21:33:31Z",
+            "updatedAt": "2026-10-29T21:45:25Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T17:36:30Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-human"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 732,
+      "title": "Add setup/teardown script support",
+      "body": "These would work like other settings, in that they could be either global and/or per stage. They would run some command that (presumably) would target e.g. a script in the repo.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T21:35:28Z",
+      "updatedAt": "2026-10-29T21:35:28Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "enhancement"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T10:17:04Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe"
+            },
+            "label": {
+              "name": "enhancement"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 786,
+      "title": "Resolve every operator setting through one combiner by what it holds",
+      "body": "Part of the spec change #784 (`docs/specs/operation.md`, Configuration, Combining layers). This ticket only changes structure: what an operator sees stays the same.\n\n## What to build\n\nIn `src/config.rs`, replace the per-setting resolution in `Config::resolve` with one function that does two things:\n\n- It gathers what each operator layer sets: flag, environment (`LINEWRIGHT_<FLAG>` where the form has one) and the operator's file. Each entry keeps the layer it came from.\n- It combines them by the setting's `Form`. A value is the highest layer's. A list is every layer's entries, highest first, without repeats. A table is every layer's names, each with the highest layer's value.\n\nRoute the value settings, `session-env` (table) and `session-pass-env` (list) through it, and drop their own joining code. Leave `ui-hosts` and `secrets` on the current replace behavior for now. The next ticket moves them onto the list rule.\n\n`WorkSettings::for_run` (`src/work_settings.rs`) keeps its per-run ladder. Make sure its `session-env` and `session-pass-env` joining is the same rule, the table and list cases, rather than a copy of it.\n\n## Acceptance criteria\n\n- [ ] One function in `config.rs` combines a setting's layers by its `Form`. No setting has merge code of its own, except `ui-hosts` and `secrets` until the next ticket.\n- [ ] A wrong value is still blamed on the flag (`ResolveError::CommandLine`) or on the file, named in the error, as today.\n- [ ] Existing tests of configuration pass unchanged.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T22:09:22Z",
+      "updatedAt": "2026-10-29T22:09:22Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 794,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T22:09:21Z",
+            "closedAt": "2026-10-29T22:09:21Z",
+            "updatedAt": "2026-10-29T22:09:23Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:06Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:07Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T21:45:13Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 759,
+      "title": "Keep only how Linewright is built in architecture.md",
+      "body": "`architecture.md` holds the architecturally significant decisions: how Linewright is built, and what is costly to change. Beyond the **Agent sessions** section and the manager–agent protocol, the whole file mixes in decisions about what Linewright does: some restate an area (lookback, webhook hints, transcripts kept, credentials from the environment, SIGTERM), some are decided nowhere else (write order, one writer, redaction, what a session has, isolation, the local API's access and `Host` check, web UI access), and three contradict an area (configuration precedence, sessions lacking a writing token, `lw mcp`).\n\nKeep in `architecture.md` only what a user can't observe, such as the harness being Claude Code, a clone per session and briefs as files, naming a structural choice and linking to the area that says what users see of it. Move each behaviour decision, word for word, to the area that owns it, or drop it where an area already decides it. Behaviour no area owns may show an area is missing.\n\nRaised while reviewing the spec change for #728.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T22:16:27Z",
+      "updatedAt": "2026-10-29T22:16:27Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": []
+      }
+    },
+    {
+      "number": 789,
+      "title": "Show the setup command as its session's first entry, running until it ends",
+      "body": "Part of the spec change #784 (`docs/specs/design_system.md`, Transcripts: Times, Setup, Running, Followed; The run page, Folding; `docs/specs/monitoring.md`, logs, Setup). It settles #775: a running setup command shows `running`.\n\n## What to build\n\nFollow the design posted on the tracking issue: \"How is the setup command recorded…\" and \"How does the transcript model a setup command?\"\n\n- **Events.** `setup::run` appends a typed start event (`linewright-setup`: when, redacted command) to the session's `output.jsonl` before the command runs. It appends an end event (`linewright-setup-ended`: when, status, duration) once `setup.log` holds all the output.\n- **Parsing.** The transcript parser makes the setup command the session's first entry (`What::Setup`), touched as added on its start and as ended on its end, as a tool call is.\n- **Lines.** Replace `Line::Setup` and `SetupLine` with `EntryLine::Setup`. It carries the command, and then, once the command ends, its status, duration and output.\n- **Times.** A session's `started_at` is its setup's start when it has one, so the setup line shows `0:00` and every entry's time counts from the session's start.\n- **CLI.** The setup line shows `running` until the command ends. A followed transcript shows the line when the command starts, and again with its account, at its time, when it ends. `logs --json` gives one object as it starts (the command) and one as it ends (exit status, duration, output).\n- **Run page.** The setup command is an entry in the session's entry list, with its time. Its line is patched in place when it ends, and it opens on click to its output, already open when it failed or with Verbose. The separate `s{n}-setup` section goes.\n- **Cleanup.** Remove the \"shows once it has ended\" special cases in `Follower::read`, `Followed::open`, `lines()` and `logs::answer`, and fix `Which::Item`'s comment (\"its latest run that started a session\").\n- **Old records.** A session record from before this change has `setup.json` and no events. Read it as a setup entry at the session's start, with no time.\n\n## Acceptance criteria\n\n- [ ] While a run's setup command runs, `logs --follow` and the run page show its line with `running`.\n- [ ] When the command ends, the line shows its exit status and duration. Its output shows in full or when it failed.\n- [ ] `logs --json --follow` gives the setup command as one object at its start and one at its end.\n- [ ] The session's header shows when the setup command started, and the setup line's time is `0:00`.\n- [ ] A transcript recorded before this change still shows its setup command.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T22:17:53Z",
+      "updatedAt": "2026-10-29T22:17:53Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 798,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T22:17:52Z",
+            "closedAt": "2026-10-29T22:17:52Z",
+            "updatedAt": "2026-10-29T22:17:54Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:13Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:14Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T21:45:17Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 791,
+      "title": "Decide Worked and Managed from GitHub's facts in one place, with the new Left alone reasons",
+      "body": "Part of the spec change #784 (`GLOSSARY.md`, **Worked** and **Managed**; `docs/specs/design_system.md`, the item page's State fact). This ticket changes structure: the domain's predicates decide what is managed everywhere, including in the store.\n\n## What to build\n\nFollow the design on the tracking issue: \"Where is managed decided, and by what?\"\n\n- **Labeling actor.** Read the actor of each `LabeledEvent` in `src/store/github.rs` (`labeling_fields!`), and keep it on `IssueEvent::Labeled`. The local store (`src/store/local.rs`) records who applied each label.\n- **Worked.** `WorkSigns::worked_by` (`src/domain.rs`) counts a label Linewright applied, beside opening, assigning itself and a closing pull request it opened.\n- **Waits on Linewright.** A new `waits_on_linewright` covers:\n  - an open issue marked for Linewright and labeled `needs-triage` or `ready-for-agent`;\n  - an item assigned to Linewright by hand;\n  - a spec change waiting for design.\n- **Managed.** `managed` is worked, or waits on Linewright.\n- **Standing.** `status::standing` and the board take managed items from these predicates. An unworked issue labeled `needs-info` or `ready-for-human` is no longer managed. A worked one is, for example one Linewright handed back.\n- **Left alone reasons.** These are \"closed\", \"not marked for Linewright\" and \"waits on a person, and Linewright has not worked it\". They are worded on the item page (`src/web/item_page.rs`) and by `explain` (`src/explain.rs`, with its \"it is\" prefix). `OpenIssueExclusion::NotInView` goes. A worked open issue that no board column holds (no status label, unclaimed, no open pull request) keeps today's \"labeled none of …\" reason (see the spec gap).\n- **Store filter.** The GitHub store classifies the items it reads (`any_item`, `issue`, and the closed and numbered reads) with these predicates, through the facts it reads, instead of `in_view_if_open`. Which items it fetches is the next ticket's.\n\n## Acceptance criteria\n\n- [ ] An issue a person filed, that Linewright labeled `ready-for-human` in a hand-back and is no longer assigned to, is on the board in Needs a person.\n- [ ] An open, unworked issue labeled `needs-info` is left alone: \"waits on a person, and Linewright has not worked it\".\n- [ ] With `require-label` set, an unworked, unmarked `needs-triage` issue is left alone: \"not marked for Linewright\".\n- [ ] The GitHub adapter reads a labeling's actor from a recorded payload.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T22:18:54Z",
+      "updatedAt": "2026-10-29T22:18:54Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 799,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T22:18:52Z",
+            "closedAt": "2026-10-29T22:18:52Z",
+            "updatedAt": "2026-10-29T22:18:55Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:18Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:19Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T21:45:21Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

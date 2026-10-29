@@ -13,7 +13,7 @@ use linewright::redaction::Redaction;
 use linewright::runs::{Ending, Runs, State};
 use linewright::secrets::Secrets;
 use linewright::spec_glob::SpecGlob;
-use linewright::status::{FailedPolls, Polling};
+use linewright::status::{FailedPolls, Polling, View};
 use linewright::store::Store;
 use linewright::store::local::{CheckRecord, LocalStore, Paused, Seed, Write};
 use linewright::variable_names::VariableNames;
@@ -737,4 +737,18 @@ pub fn placeholders_only() -> std::sync::Arc<linewright::briefs::Briefs> {
     linewright::briefs::OperatorPrompts::read(Some(dir.path()))
         .unwrap()
         .briefs()
+}
+
+/// The view `serve` holds once its first poll took its snapshot.
+pub async fn view_served(world: World) -> View {
+    let mut serving = Serving::start(
+        world.factory,
+        std::time::Duration::from_hours(1),
+        Pending::default(),
+    );
+    let served = serving.served.wait_for(Option::is_some).await.unwrap();
+    let view = served.as_ref().unwrap().view();
+    drop(served);
+    serving.stop().await;
+    view
 }

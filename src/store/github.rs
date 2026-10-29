@@ -20,9 +20,10 @@ use super::{job_log, rate_limit};
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Linked, Login,
-    MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
-    Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, SubIssueState,
-    Thread, TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within, label,
+    ManagedFacts, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
+    Rebaseability, Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue,
+    SubIssueState, Thread, TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts,
+    closed_within, label,
 };
 use crate::git;
 
@@ -47,6 +48,9 @@ pub struct GitHub {
     viewer: Viewer,
     /// The repository's numeric id, read once.
     repository_id: Arc<tokio::sync::OnceCell<u64>>,
+    /// The issues Linewright manages, which each snapshot keeps up to date
+    /// and reads in full.
+    index: Arc<tokio::sync::Mutex<Option<ManagedIndex>>>,
 }
 
 macro_rules! closes_field {
@@ -232,6 +236,7 @@ impl GitHub {
                 id: 0,
             },
             repository_id: Arc::default(),
+            index: Arc::default(),
         };
         github.viewer = github
             .rest(Method::GET, "/user", None)
@@ -460,7 +465,9 @@ impl GitHub {
             .body(bytes)
     }
 
-    /// The issues `filter` finds, each read with `fields`.
+    /// The issues `filter` finds, oldest updated first, each read with
+    /// `fields`. An issue updated while its pages are read moves to the end,
+    /// where it is read again rather than missed.
     async fn issues<T: DeserializeOwned>(&self, fields: Fragment, filter: Value) -> Result<Vec<T>> {
         #[derive(Deserialize)]
         struct IssuesData<T> {
@@ -470,7 +477,8 @@ impl GitHub {
         let query = format!(
             "query($owner: String!, $name: String!, $filter: IssueFilters, $cursor: String) {{
               repository(owner: $owner, name: $name) {{
-                issues(first: 20, after: $cursor, filterBy: $filter) {{
+                issues(first: 25, after: $cursor, filterBy: $filter,
+                       orderBy: {{field: UPDATED_AT, direction: ASC}}) {{
                   pageInfo {{ hasNextPage endCursor }}
                   nodes {{ ...{name} }}
                 }}
@@ -496,46 +504,46 @@ impl GitHub {
         }
     }
 
-    /// The closed issues updated since `since`, which hold every one closed
-    /// since then, among those the snapshot's filters read, that Linewright
-    /// manages ([`ClosedItem::managed`]).
-    async fn closed_issues(&self, since: Timestamp) -> Result<Vec<ClosedItem>> {
-        let linewright = self.linewright();
-        let mut closed: BTreeMap<Number, ClosedItem> = BTreeMap::new();
-        // Closing updates an issue
-        // (<https://docs.github.com/en/graphql/reference/input-objects#issuefilters>).
-        for mut filter in in_view_filters(IssueState::Closed, &linewright) {
-            filter["since"] = json!(since);
-            let issues: Vec<GqlClosedIssue> = self.issues(CLOSED_ISSUE_FIELDS, filter).await?;
-            for issue in issues {
-                if let Some(item) = issue
-                    .into_closed(&linewright)
-                    .filter(|item| item.managed(&linewright))
-                {
-                    closed.insert(item.number, item);
-                }
-            }
-        }
-        Ok(closed.into_values().collect())
+    /// The managed issues' numbers, open and closed since `read_since`, with
+    /// the index brought up to date first ([`refreshed`]).
+    async fn managed_issues(&self, read_since: Timestamp) -> Result<ManagedIndex> {
+        let mut index = self.index.lock().await;
+        let now = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now(), 0);
+        let read = |filter| self.issues(MANAGED_FACTS_FIELDS, filter);
+        let refreshed = refreshed(index.clone(), read_since, now, &self.linewright(), read).await?;
+        *index = Some(refreshed.clone());
+        Ok(refreshed)
     }
 
-    /// The closed issues of `numbers` that Linewright manages
-    /// ([`ClosedItem::managed`]), as [`Store::issue`] reads them, twenty to a query by
-    /// aliases, which costs about a point
+    /// The issues of `numbers` that GitHub has, each read with `fields`,
+    /// twenty to a query by aliases. Twenty
+    /// with seven connections each cost 140 requests, which rounds to 1 point
     /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
-    async fn closed_issues_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<ClosedItem>> {
+    async fn issues_numbered<T: DeserializeOwned>(
+        &self,
+        numbers: &BTreeSet<Number>,
+        fields: Fragment,
+    ) -> Result<Vec<T>> {
         let numbers: Vec<Number> = numbers.iter().copied().collect();
-        let mut closed = vec![];
+        let mut items = vec![];
         for batch in numbers.chunks(20) {
-            let response: GqlResponse<RepoData<BTreeMap<String, Option<GqlClosedIssue>>>> = self
+            let response = self
                 .graphql_response(
-                    &numbered_query(batch, CLOSED_ISSUE_FIELDS),
+                    &numbered_query(batch, fields),
                     json!({"owner": self.owner, "name": self.name}),
                 )
                 .await?;
-            closed.extend(closed_of_numbered(response, &self.linewright())?);
+            items.extend(found_of_numbered(response)?);
         }
-        Ok(closed)
+        Ok(items)
+    }
+
+    /// The closed issues of `numbers` that Linewright manages
+    /// ([`ClosedItem::managed`]), as [`Store::issue`] reads them.
+    async fn closed_issues_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<ClosedItem>> {
+        let issues: Vec<GqlClosedIssue> =
+            self.issues_numbered(numbers, CLOSED_ISSUE_FIELDS).await?;
+        Ok(managed_closed(issues, &self.linewright()))
     }
 
     /// Linewright's pull requests closed without merging, among those
@@ -1656,25 +1664,27 @@ impl GqlClosedIssue {
             updated_at: self.updated_at,
             kind: ClosedKind::Issue {
                 parent: self.parent.map(|p| p.into_parent(linewright)),
-                filed: Filed::read(&author, &self.title, &self.body, linewright),
-                sub_issues: sub_issues(self.sub_issues),
-                labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
+                facts: ManagedFacts {
+                    filed: Filed::read(&author, &self.title, &self.body, linewright),
+                    sub_issues: sub_issues(self.sub_issues),
+                    labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
+                    work: WorkFacts {
+                        author: Some(author),
+                        assignees: logins(self.assignees),
+                        events: events(self.assignments.nodes),
+                        closed_by: closing_pulls(self.closed_by_pull_requests_references),
+                    },
+                },
                 merged_by,
                 reason: self.state_reason.and_then(GqlStateReason::reason),
-                work: WorkFacts {
-                    author: Some(author),
-                    assignees: logins(self.assignees),
-                    events: events(self.assignments.nodes),
-                    closed_by: closing_pulls(self.closed_by_pull_requests_references),
-                },
             },
             title: self.title,
         })
     }
 }
 
-/// A query for the issues `numbers`, each read with `fields` under the alias
-/// `i` and its number
+/// A query for the issues `numbers`, each read with `fields` under the
+/// alias `i` and its number
 /// (<https://docs.github.com/en/graphql/guides/using-the-explorer#aliases>).
 fn numbered_query(numbers: &[Number], fields: Fragment) -> String {
     let Fragment { name, text } = fields;
@@ -1690,24 +1700,199 @@ fn numbered_query(numbers: &[Number], fields: Fragment) -> String {
     )
 }
 
-/// The closed issues `response` to a [`numbered_query`] holds that
-/// `linewright` manages ([`ClosedItem::managed`]). GitHub resolves a deleted
-/// issue to null, with an error saying so.
-fn closed_of_numbered(
-    response: GqlResponse<RepoData<BTreeMap<String, Option<GqlClosedIssue>>>>,
-    linewright: &Login,
-) -> Result<Vec<ClosedItem>> {
+/// The issues `response` to a [`numbered_query`] holds. GitHub resolves a
+/// deleted one to null, with an error saying so.
+fn found_of_numbered<T>(
+    response: GqlResponse<RepoData<BTreeMap<String, Option<T>>>>,
+) -> Result<Vec<T>> {
     if !response.errors.iter().all(|e| e["type"] == "NOT_FOUND") {
         bail!("GraphQL errors: {}", Value::Array(response.errors));
     }
-    let issues = response.data.context("GraphQL returned no data")?;
-    Ok(issues
-        .repository
-        .into_values()
-        .flatten()
+    let items = response.data.context("GraphQL returned no data")?;
+    Ok(items.repository.into_values().flatten().collect())
+}
+
+/// Those of `issues` that `linewright` manages ([`ClosedItem::managed`]).
+fn managed_closed(issues: Vec<GqlClosedIssue>, linewright: &Login) -> Vec<ClosedItem> {
+    issues
+        .into_iter()
         .filter_map(|issue| issue.into_closed(linewright))
         .filter(|item| item.managed(linewright))
-        .collect())
+        .collect()
+}
+
+/// What tells whether Linewright manages an issue ([`ManagedFacts`]), and
+/// whether and when it closed. Twenty-five issues with the five connections
+/// each cost 126 requests, which rounds to 1 point
+/// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
+const MANAGED_FACTS_FIELDS: Fragment = Fragment {
+    name: "ManagedFactsFields",
+    text: concat!(
+        "fragment ManagedFactsFields on Issue {
+  number title body state closedAt updatedAt
+  author { __typename login }
+  labels(first: 50) { nodes { name } }
+  assignees(first: 20) { nodes { login } }
+  subIssues(first: 100) { nodes { number state closedAt author { __typename login } } }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
+  timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+    nodes {
+      __typename
+      ... on LabeledEvent { ",
+        labeling_fields!(),
+        " }
+      ",
+        assignment_fields!(),
+        "
+    }
+  }
+}"
+    ),
+};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlFactsIssue {
+    number: u64,
+    title: String,
+    body: String,
+    state: IssueState,
+    closed_at: Option<Timestamp>,
+    author: Option<Actor>,
+    labels: Nodes<Name>,
+    assignees: Nodes<LoginNode>,
+    sub_issues: Option<Nodes<SubIssueNode>>,
+    closed_by_pull_requests_references: Option<Nodes<GqlClosingPull>>,
+    timeline_items: Nodes<GqlEvent>,
+}
+
+impl GqlFactsIssue {
+    fn into_facts(self, linewright: &Login) -> ManagedFacts {
+        let author = login(self.author);
+        ManagedFacts {
+            filed: Filed::read(&author, &self.title, &self.body, linewright),
+            labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
+            sub_issues: sub_issues(self.sub_issues),
+            work: WorkFacts {
+                author: Some(author),
+                assignees: logins(self.assignees),
+                events: events(self.timeline_items.nodes),
+                closed_by: closing_pulls(self.closed_by_pull_requests_references),
+            },
+        }
+    }
+}
+
+/// The issues Linewright manages ([`ManagedFacts::managed`]), by number, as
+/// GitHub last said: a cache rebuilt on every start, not a record.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ManagedIndex {
+    open: BTreeSet<Number>,
+    /// Each with when it closed.
+    closed: BTreeMap<Number, Timestamp>,
+    /// It holds the closed issues updated since then.
+    read_since: Timestamp,
+    /// The next update reads the issues updated since then.
+    watermark: Timestamp,
+}
+
+impl ManagedIndex {
+    /// Keeps `issue` as GitHub now says it is.
+    fn keep(&mut self, issue: GqlFactsIssue, linewright: &Login) {
+        let number = Number(issue.number);
+        self.open.remove(&number);
+        self.closed.remove(&number);
+        let open = issue.state == IssueState::Open;
+        let closed_at = issue.closed_at;
+        if !issue.into_facts(linewright).managed(open, linewright) {
+            return;
+        }
+        match (open, closed_at) {
+            (true, _) => {
+                self.open.insert(number);
+            }
+            (false, Some(at)) => {
+                self.closed.insert(number, at);
+            }
+            // As [`GqlClosedIssue::into_closed`], one GitHub gives no time
+            // it closed is left out.
+            (false, None) => {}
+        }
+    }
+
+    /// The closed issues it holds that closed since `since`.
+    fn closed_since(&self, since: Timestamp) -> BTreeSet<Number> {
+        self.closed
+            .iter()
+            .filter(|(_, at)| **at >= since)
+            .map(|(number, _)| *number)
+            .collect()
+    }
+}
+
+/// How far before the time it started the next update of a [`ManagedIndex`]
+/// reads back, against a difference between the host's clock and GitHub's.
+const WATERMARK_OVERLAP: chrono::TimeDelta = chrono::TimeDelta::minutes(1);
+
+/// `kept` brought up to date at `now`, with closed issues read back to
+/// `read_since`, through `read`, which reads the issues an [`IssueFilters`]
+/// filter finds:
+///
+/// - with no index, or one that read closed issues back less far, it is
+///   rebuilt from every open issue and the closed ones updated since
+///   `read_since`;
+/// - otherwise only the issues updated since its watermark are read.
+///
+/// Closing, labeling and assigning update an issue, so the issues updated
+/// since the watermark hold every change to what tells whether Linewright
+/// manages it.
+///
+/// [`IssueFilters`]: https://docs.github.com/en/graphql/reference/input-objects#issuefilters
+async fn refreshed<F, Fut>(
+    kept: Option<ManagedIndex>,
+    read_since: Timestamp,
+    now: Timestamp,
+    linewright: &Login,
+    mut read: F,
+) -> Result<ManagedIndex>
+where
+    F: FnMut(Value) -> Fut,
+    Fut: Future<Output = Result<Vec<GqlFactsIssue>>>,
+{
+    let (mut index, filters, rebuilt) = match kept {
+        Some(index) if index.read_since <= read_since => {
+            let filter = json!({"since": index.watermark});
+            (index, vec![filter], false)
+        }
+        _ => (
+            ManagedIndex::default(),
+            vec![
+                json!({"states": [IssueState::Open]}),
+                json!({"states": [IssueState::Closed], "since": read_since}),
+            ],
+            true,
+        ),
+    };
+    let mut issues = 0;
+    for filter in filters {
+        for issue in read(filter).await? {
+            issues += 1;
+            index.keep(issue, linewright);
+        }
+    }
+    index.closed.retain(|_, at| *at >= read_since);
+    index.read_since = read_since;
+    index.watermark = now - WATERMARK_OVERLAP;
+    if rebuilt {
+        tracing::info!(
+            issues,
+            open = index.open.len(),
+            closed = index.closed.len(),
+            since = %read_since,
+            "read every open issue, and those closed since, to find the managed ones"
+        );
+    }
+    Ok(index)
 }
 
 /// <https://docs.github.com/en/graphql/reference/enums#issuestatereason>
@@ -1829,16 +2014,6 @@ impl GqlAssignment {
 enum IssueState {
     Open,
     Closed,
-}
-
-/// The filters the snapshot reads the issues in `state` through, of which it
-/// holds those Linewright manages.
-fn in_view_filters(state: IssueState, linewright: &Login) -> [Value; 3] {
-    [
-        json!({"states": [state], "labels": label::IN_VIEW}),
-        json!({"states": [state], "assignee": linewright.as_str()}),
-        json!({"states": [state], "createdBy": linewright.as_str()}),
-    ]
 }
 
 impl GqlIssue {
@@ -2524,18 +2699,10 @@ impl Store for GitHub {
             .context("the repository has a default branch")?
             .to_string();
         let linewright = self.linewright();
-        let mut read: BTreeMap<u64, GqlIssue> = BTreeMap::new();
-        for filter in in_view_filters(IssueState::Open, &linewright) {
-            // Twenty issues with the seven connections each cost 141
-            // requests, which rounds to 1 point; fifty cost 4
-            // (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
-            let open: Vec<GqlIssue> = self.issues(ISSUE_FIELDS, filter).await?;
-            for issue in open {
-                read.insert(issue.number, issue);
-            }
-        }
-        let issues: Vec<Issue> = read
-            .into_values()
+        let index = self.managed_issues(windows.read_since()).await?;
+        let open: Vec<GqlIssue> = self.issues_numbered(&index.open, ISSUE_FIELDS).await?;
+        let issues: Vec<Issue> = open
+            .into_iter()
             .map(|issue| issue.into_issue(&linewright))
             .filter(|issue| holds(issue, &linewright))
             .collect();
@@ -2554,7 +2721,9 @@ impl Store for GitHub {
         for number in closed {
             pulls.push(self.pull(number).await?);
         }
-        let closed_issues = self.closed_issues(windows.read_since()).await?;
+        let closed_issues = self
+            .closed_issues_numbered(&index.closed_since(windows.read_since()))
+            .await?;
         let closed_pulls = self.closed_pulls(windows.read_since()).await?;
         let held = issues.iter().map(|issue| issue.number).collect();
         let mut snapshot = Snapshot {
@@ -2565,7 +2734,7 @@ impl Store for GitHub {
             issues,
             pulls,
         };
-        let tickets = snapshot.unheld_closed_tickets(&self.linewright());
+        let tickets = snapshot.unheld_closed_tickets(&linewright);
         for ticket in self.closed_issues_numbered(&tickets).await? {
             snapshot.put_closed(ticket);
         }
@@ -4001,20 +4170,22 @@ mod tests {
                     updated_at: at("2026-10-20T14:10:39Z"),
                     kind: ClosedKind::Issue {
                         parent: None,
-                        filed: Some(Filed::Tracking {
-                            spec_change: Number(386)
-                        }),
-                        sub_issues: vec![
-                            ticket(388, "2026-10-20T13:49:33Z"),
-                            ticket(389, "2026-10-20T14:10:32Z"),
-                        ],
-                        labels: vec![],
-                        merged_by: None,
-                        reason: Some(IssueCloseReason::Completed),
-                        work: WorkFacts {
-                            author: Some(Login::new("tibbe-bot")),
-                            ..WorkFacts::default()
+                        facts: ManagedFacts {
+                            filed: Some(Filed::Tracking {
+                                spec_change: Number(386)
+                            }),
+                            sub_issues: vec![
+                                ticket(388, "2026-10-20T13:49:33Z"),
+                                ticket(389, "2026-10-20T14:10:32Z"),
+                            ],
+                            labels: vec![],
+                            work: WorkFacts {
+                                author: Some(Login::new("tibbe-bot")),
+                                ..WorkFacts::default()
+                            }
                         },
+                        merged_by: None,
+                        reason: Some(IssueCloseReason::Completed)
                     },
                 },
                 ClosedItem {
@@ -4029,28 +4200,30 @@ mod tests {
                             number: Number(387),
                             spec_change: Some(Number(386)),
                         }),
-                        filed: None,
-                        sub_issues: vec![],
-                        labels: vec!["ready-for-agent".into(), "linewright:designed".into()],
-                        merged_by: Some(Number(391)),
-                        reason: Some(IssueCloseReason::Completed),
-                        work: WorkFacts {
-                            author: Some(Login::new("tibbe-bot")),
-                            assignees: vec![Login::new("tibbe-bot")],
-                            events: vec![IssueEvent::Assignment(Assignment::Assigned {
-                                assignee: Login::new("tibbe-bot"),
-                                actor: Login::new("tibbe-bot"),
-                                at: at("2026-10-20T13:49:39Z"),
-                            })],
-                            closed_by: vec![ClosingPull {
-                                number: Number(391),
-                                author: Login::new("tibbe-bot"),
-                                state: PullState::Merged {
-                                    at: at("2026-10-20T14:10:30Z"),
-                                },
-                                updated_at: at("2026-10-20T14:10:34Z"),
-                            }],
+                        facts: ManagedFacts {
+                            filed: None,
+                            sub_issues: vec![],
+                            labels: vec!["ready-for-agent".into(), "linewright:designed".into()],
+                            work: WorkFacts {
+                                author: Some(Login::new("tibbe-bot")),
+                                assignees: vec![Login::new("tibbe-bot")],
+                                events: vec![IssueEvent::Assignment(Assignment::Assigned {
+                                    assignee: Login::new("tibbe-bot"),
+                                    actor: Login::new("tibbe-bot"),
+                                    at: at("2026-10-20T13:49:39Z"),
+                                })],
+                                closed_by: vec![ClosingPull {
+                                    number: Number(391),
+                                    author: Login::new("tibbe-bot"),
+                                    state: PullState::Merged {
+                                        at: at("2026-10-20T14:10:30Z"),
+                                    },
+                                    updated_at: at("2026-10-20T14:10:34Z"),
+                                }],
+                            }
                         },
+                        merged_by: Some(Number(391)),
+                        reason: Some(IssueCloseReason::Completed)
                     },
                 },
             ]
@@ -4067,7 +4240,10 @@ mod tests {
         let response =
             serde_json::from_str(include_str!("fixtures/closed-issues-numbered.json")).unwrap();
 
-        let closed = closed_of_numbered(response, &Login::new("tibbe-bot")).unwrap();
+        let closed = managed_closed(
+            found_of_numbered(response).unwrap(),
+            &Login::new("tibbe-bot"),
+        );
 
         let read: Vec<(Number, Timestamp, Option<Number>)> = closed
             .iter()
@@ -4084,6 +4260,139 @@ mod tests {
         );
     }
 
+    /// The issues of a recorded page of `ManagedFactsFields`.
+    fn facts_page(recorded: &str) -> Vec<GqlFactsIssue> {
+        serde_json::from_str::<Page<GqlFactsIssue>>(recorded)
+            .unwrap()
+            .nodes
+    }
+
+    const OPEN_FACTS: &str = include_str!("fixtures/managed-facts-open.json");
+    const CLOSED_FACTS: &str = include_str!("fixtures/managed-facts-closed.json");
+    const UPDATED_FACTS: &str = include_str!("fixtures/managed-facts-updated.json");
+
+    /// The index rebuilt at 22:01 with closed issues read back to 21:00,
+    /// with each filter it read through: the open issues of
+    /// `fixtures/managed-facts-open.json`, and the closed ones of
+    /// `fixtures/managed-facts-closed.json` as GitHub held them at 22:01,
+    /// those closed before then, each last updated when it closed.
+    async fn started() -> (ManagedIndex, Vec<Value>) {
+        let mut asked = vec![];
+        let index = refreshed(
+            None,
+            at("2026-10-29T21:00:00Z"),
+            at("2026-10-29T22:01:00Z"),
+            &Login::new("tibbe-bot"),
+            |filter: Value| {
+                let issues = if filter["states"] == json!(["OPEN"]) {
+                    facts_page(OPEN_FACTS)
+                } else {
+                    let mut closed = facts_page(CLOSED_FACTS);
+                    closed.retain(|issue| issue.closed_at < Some(at("2026-10-29T22:01:00Z")));
+                    closed
+                };
+                asked.push(filter);
+                async move { Ok(issues) }
+            },
+        )
+        .await
+        .unwrap();
+        (index, asked)
+    }
+
+    fn numbers(numbers: &[u64]) -> BTreeSet<Number> {
+        numbers.iter().copied().map(Number).collect()
+    }
+
+    /// `fixtures/managed-facts-open.json` is the page of `ManagedFactsFields`
+    /// GitHub returned for the open issues of
+    /// <https://github.com/tibbe/linewright> on 2026-10-29 at 22:28, and
+    /// `fixtures/managed-facts-closed.json` for its closed issues updated
+    /// since 21:00 that day, of which #786, #789 and #791 closed after 22:01.
+    /// Of these, #758, #779 and #796 are a person's,
+    /// labeled by that person alone, and #723, #732 and #759 likewise, so
+    /// Linewright never worked them. #731 is a person's issue that Linewright,
+    /// as `tibbe-bot`, claimed, labeled `ready-for-human` in a hand-back and
+    /// let go of, which no filter by its labels, assignees or author finds.
+    #[tokio::test]
+    async fn startup_reads_every_open_issue_and_the_closed_ones_since_the_windows_to_index_the_managed_ones()
+     {
+        let (index, asked) = started().await;
+
+        assert_eq!(
+            asked,
+            [
+                json!({"states": ["OPEN"]}),
+                json!({"states": ["CLOSED"], "since": "2026-10-29T21:00:00Z"}),
+            ]
+        );
+        assert_eq!(index.open, numbers(&[785, 787, 788, 790, 792, 793, 797]));
+        assert_eq!(
+            index.closed_since(at("2026-10-29T21:00:00Z")),
+            numbers(&[731, 745, 746, 775, 781])
+        );
+    }
+
+    /// #731 of `fixtures/managed-facts-closed.json`, as it would read open,
+    /// with its labels removed: a person's issue Linewright claimed and
+    /// labeled, then let go of.
+    #[test]
+    fn an_open_issue_linewright_labeled_and_claimed_is_indexed_once_its_labels_and_assignment_are_gone()
+     {
+        let page: Value = serde_json::from_str(CLOSED_FACTS).unwrap();
+        let mut handed_back = page["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|issue| issue["number"] == 731)
+            .unwrap()
+            .clone();
+        handed_back["state"] = json!("OPEN");
+        handed_back["closedAt"] = Value::Null;
+        handed_back["labels"]["nodes"] = json!([]);
+        let mut index = ManagedIndex::default();
+
+        index.keep(
+            serde_json::from_value(handed_back).unwrap(),
+            &Login::new("tibbe-bot"),
+        );
+
+        assert_eq!(index.open, numbers(&[731]));
+        assert_eq!(index.closed, BTreeMap::new());
+    }
+
+    /// `fixtures/managed-facts-updated.json` is the page of
+    /// `ManagedFactsFields` GitHub returned on 2026-10-29 at 22:28 for the
+    /// issues of <https://github.com/tibbe/linewright> updated since 22:00:
+    /// among them #786, #789 and #791, closed since startup, and #796, a
+    /// person's.
+    #[tokio::test]
+    async fn a_poll_after_startup_reads_only_the_issues_updated_since_the_last_poll_to_keep_the_index()
+     {
+        let (started, _) = started().await;
+        let mut asked = vec![];
+
+        let polled = refreshed(
+            Some(started.clone()),
+            at("2026-10-29T21:30:00Z"),
+            at("2026-10-29T22:29:00Z"),
+            &Login::new("tibbe-bot"),
+            |filter: Value| {
+                asked.push(filter);
+                async { Ok(facts_page(UPDATED_FACTS)) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(asked, [json!({"since": "2026-10-29T22:00:00Z"})]);
+        assert_eq!(polled.open, started.open);
+        assert_eq!(
+            polled.closed_since(at("2026-10-29T21:30:00Z")),
+            numbers(&[731, 745, 775, 781, 786, 789, 791])
+        );
+    }
+
     /// `fixtures/closed-issue-worked.json` is `ClosedIssueFields` as GitHub
     /// returned it for <https://github.com/tibbe/linewright/issues/673>, a
     /// person's issue Linewright claimed, let go of, claimed again and closed
@@ -4095,7 +4404,11 @@ mod tests {
 
         let closed = issue.into_closed(&Login::new("tibbe-bot")).unwrap();
 
-        let ClosedKind::Issue { work, .. } = closed.kind else {
+        let ClosedKind::Issue {
+            facts: ManagedFacts { work, .. },
+            ..
+        } = closed.kind
+        else {
             panic!("an issue");
         };
         let bot = || Login::new("tibbe-bot");
@@ -4144,7 +4457,11 @@ mod tests {
 
         let closed = issue.into_closed(&Login::new("tibbe-bot")).unwrap();
 
-        let ClosedKind::Issue { work, .. } = closed.kind else {
+        let ClosedKind::Issue {
+            facts: ManagedFacts { work, .. },
+            ..
+        } = closed.kind
+        else {
             panic!("an issue");
         };
         assert_eq!(
@@ -4415,6 +4732,7 @@ mod tests {
                 id: 1,
             },
             repository_id: Arc::default(),
+            index: Arc::default(),
         }
     }
 

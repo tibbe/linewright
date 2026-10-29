@@ -20,6 +20,7 @@ mod live_runs;
 mod local_api;
 mod local_store;
 mod logs;
+mod managed_items;
 mod phrase;
 mod pipeline;
 mod posted_attachments;

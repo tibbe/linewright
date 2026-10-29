@@ -1,0 +1,608 @@
+{
+  "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0yOVQyMjoxODo1N1rPAAAAAWwgng0="
+  },
+  "nodes": [
+    {
+      "number": 796,
+      "title": "Decide whether an agent's own GitHub writes are Linewright's or a person's",
+      "body": "Without a sessions' token, sessions are given Linewright's token, and an agent writing to GitHub outside its result is not prevented ([What a session has](https://github.com/tibbe/linewright/blob/main/docs/specs/sessions.md#what-a-session-has)). So an agent can comment on or relabel an item during a run, under Linewright's own account.\n\nRepository's [Writes](https://github.com/tibbe/linewright/blob/main/docs/specs/repository.md#writes) doesn't decide that case:\n\n- **Its own writes** tells Linewright's writes from a person's by their author, which makes the agent's write Linewright's.\n- **One writer** says one of Linewright's runs or actions writes an item at a time, which the agent's write breaks while its run also writes.\n- Rework acts on a comment \"from anyone other than Linewright\", so an agent's comment under Linewright's account is never feedback.\n\nThe same question holds for a sessions' token belonging to another account: are its writes a person's change during a run?\n\nFound while reviewing #795.",
+      "state": "OPEN",
+      "closedAt": null,
+      "updatedAt": "2026-10-29T22:06:46Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": []
+      }
+    },
+    {
+      "number": 786,
+      "title": "Resolve every operator setting through one combiner by what it holds",
+      "body": "Part of the spec change #784 (`docs/specs/operation.md`, Configuration, Combining layers). This ticket only changes structure: what an operator sees stays the same.\n\n## What to build\n\nIn `src/config.rs`, replace the per-setting resolution in `Config::resolve` with one function that does two things:\n\n- It gathers what each operator layer sets: flag, environment (`LINEWRIGHT_<FLAG>` where the form has one) and the operator's file. Each entry keeps the layer it came from.\n- It combines them by the setting's `Form`. A value is the highest layer's. A list is every layer's entries, highest first, without repeats. A table is every layer's names, each with the highest layer's value.\n\nRoute the value settings, `session-env` (table) and `session-pass-env` (list) through it, and drop their own joining code. Leave `ui-hosts` and `secrets` on the current replace behavior for now. The next ticket moves them onto the list rule.\n\n`WorkSettings::for_run` (`src/work_settings.rs`) keeps its per-run ladder. Make sure its `session-env` and `session-pass-env` joining is the same rule, the table and list cases, rather than a copy of it.\n\n## Acceptance criteria\n\n- [ ] One function in `config.rs` combines a setting's layers by its `Form`. No setting has merge code of its own, except `ui-hosts` and `secrets` until the next ticket.\n- [ ] A wrong value is still blamed on the flag (`ResolveError::CommandLine`) or on the file, named in the error, as today.\n- [ ] Existing tests of configuration pass unchanged.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T22:09:22Z",
+      "updatedAt": "2026-10-29T22:09:22Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 794,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T22:09:21Z",
+            "closedAt": "2026-10-29T22:09:21Z",
+            "updatedAt": "2026-10-29T22:09:23Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:06Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:07Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T21:45:13Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 787,
+      "title": "Join ui-hosts and secrets across every layer",
+      "body": "Part of the spec change #784 (`docs/specs/operation.md`, Configuration, Combining layers). A list holds the entries of every layer. Today a `--ui-hosts` or `--secrets` flag, or their environment variables, replace the file's list.\n\n## What to build\n\n- Resolve `ui-hosts` and `secrets` through the combiner's list rule, so that the flag, the environment and the operator's file each add their entries.\n- Update their flags' help text in `src/config.rs` to say the entries are added to those the environment and the config file give, as `--session-pass-env`'s help does.\n- Update `docs/running.md` where it describes these settings. This is user-facing documentation, so it needs human approval: say so in the PR.\n- `ui-hosts` set at any layer while `ui-address` is empty is still the feature error (A feature's settings).\n\n## Acceptance criteria\n\n- [ ] With `secrets = [\"A\"]` in the file and `--secrets B`, both A and B are secrets.\n- [ ] With `ui-hosts` in the file and `LINEWRIGHT_UI_HOSTS` set, the UI answers the hosts of both.\n- [ ] A name given at two layers counts once.",
+      "state": "OPEN",
+      "closedAt": null,
+      "updatedAt": "2026-10-29T22:09:28Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 800,
+            "state": "OPEN",
+            "isDraft": false,
+            "mergedAt": null,
+            "closedAt": null,
+            "updatedAt": "2026-10-29T22:26:36Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:08Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:09Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T22:09:29Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 797,
+      "title": "Say whether `logs --json` of a run that has ended gives the setup command as one object or two",
+      "body": "`docs/specs/monitoring.md`, logs, Setup reads: \"`logs --json` gives the setup command as objects of its own: one as it starts, with the command, and one as it ends, with its exit status, how long it ran and its output.\"\n\nRead literally, this asks for two objects even when `logs --json` reads a run that has ended. Ticket #789 only asks for two objects from `logs --json --follow`. The rest of a transcript works the same way: a tool call shows twice only when followed (Transcripts, Followed) and once in a transcript read whole.\n\nThe implementation (#789) gives two objects when following: the first with the command, the second with the command, status, duration and output. Read whole, it gives one object with all of these.\n\nThe spec change needed: put the two objects under following, for example: \"**Setup.** `logs --json` gives the setup command as an object of its own, with the command and, once it has ended, its exit status, how long it ran and its output; followed, it gives one as it starts and one as it ends.\" Or, if the maintainer wants two objects in a transcript read whole too, say that, and it becomes a follow-up ticket.\n\nFound while working on #789.",
+      "state": "OPEN",
+      "closedAt": null,
+      "updatedAt": "2026-10-29T22:15:05Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-human"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T22:15:06Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-human"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 759,
+      "title": "Keep only how Linewright is built in architecture.md",
+      "body": "`architecture.md` holds the architecturally significant decisions: how Linewright is built, and what is costly to change. Beyond the **Agent sessions** section and the manager–agent protocol, the whole file mixes in decisions about what Linewright does: some restate an area (lookback, webhook hints, transcripts kept, credentials from the environment, SIGTERM), some are decided nowhere else (write order, one writer, redaction, what a session has, isolation, the local API's access and `Host` check, web UI access), and three contradict an area (configuration precedence, sessions lacking a writing token, `lw mcp`).\n\nKeep in `architecture.md` only what a user can't observe, such as the harness being Claude Code, a clone per session and briefs as files, naming a structural choice and linking to the area that says what users see of it. Move each behaviour decision, word for word, to the area that owns it, or drop it where an area already decides it. Behaviour no area owns may show an area is missing.\n\nRaised while reviewing the spec change for #728.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T22:16:27Z",
+      "updatedAt": "2026-10-29T22:16:27Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": []
+      }
+    },
+    {
+      "number": 789,
+      "title": "Show the setup command as its session's first entry, running until it ends",
+      "body": "Part of the spec change #784 (`docs/specs/design_system.md`, Transcripts: Times, Setup, Running, Followed; The run page, Folding; `docs/specs/monitoring.md`, logs, Setup). It settles #775: a running setup command shows `running`.\n\n## What to build\n\nFollow the design posted on the tracking issue: \"How is the setup command recorded…\" and \"How does the transcript model a setup command?\"\n\n- **Events.** `setup::run` appends a typed start event (`linewright-setup`: when, redacted command) to the session's `output.jsonl` before the command runs. It appends an end event (`linewright-setup-ended`: when, status, duration) once `setup.log` holds all the output.\n- **Parsing.** The transcript parser makes the setup command the session's first entry (`What::Setup`), touched as added on its start and as ended on its end, as a tool call is.\n- **Lines.** Replace `Line::Setup` and `SetupLine` with `EntryLine::Setup`. It carries the command, and then, once the command ends, its status, duration and output.\n- **Times.** A session's `started_at` is its setup's start when it has one, so the setup line shows `0:00` and every entry's time counts from the session's start.\n- **CLI.** The setup line shows `running` until the command ends. A followed transcript shows the line when the command starts, and again with its account, at its time, when it ends. `logs --json` gives one object as it starts (the command) and one as it ends (exit status, duration, output).\n- **Run page.** The setup command is an entry in the session's entry list, with its time. Its line is patched in place when it ends, and it opens on click to its output, already open when it failed or with Verbose. The separate `s{n}-setup` section goes.\n- **Cleanup.** Remove the \"shows once it has ended\" special cases in `Follower::read`, `Followed::open`, `lines()` and `logs::answer`, and fix `Which::Item`'s comment (\"its latest run that started a session\").\n- **Old records.** A session record from before this change has `setup.json` and no events. Read it as a setup entry at the session's start, with no time.\n\n## Acceptance criteria\n\n- [ ] While a run's setup command runs, `logs --follow` and the run page show its line with `running`.\n- [ ] When the command ends, the line shows its exit status and duration. Its output shows in full or when it failed.\n- [ ] `logs --json --follow` gives the setup command as one object at its start and one at its end.\n- [ ] The session's header shows when the setup command started, and the setup line's time is `0:00`.\n- [ ] A transcript recorded before this change still shows its setup command.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T22:17:53Z",
+      "updatedAt": "2026-10-29T22:17:53Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 798,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T22:17:52Z",
+            "closedAt": "2026-10-29T22:17:52Z",
+            "updatedAt": "2026-10-29T22:17:54Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:13Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:14Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T21:45:17Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 790,
+      "title": "Bound the setup command by its session's timeout",
+      "body": "Part of the spec change #784 (`docs/specs/runs.md`, Setup and Limits). A session starts with its setup command, and `session-timeout` bounds the whole session. The setup command no longer has a timeout of its own.\n\n## What to build\n\n- `open_session` (`src/run.rs`) sets the session's deadline, `now + session_timeout`, before it runs the setup command. `Opened::spec` uses the same deadline for `SessionSpec.deadline`, rather than starting a new one after setup.\n- `setup::Request` takes that `deadline: Instant` in place of `timeout`.\n- A setup command still running at the deadline is the session timing out. Give the session-timeout stall hand-back (\"The session ended unexpectedly: it timed out. The work may need cutting smaller, or `…` may need to be longer.\"), with the tail of the setup command's output as its log. It is not retried.\n- A non-zero exit or a signal stays an infrastructure failure, retried once. Cancelling still ends the command at once.\n- Update the comments in `setup.rs` and `run.rs` that speak of the setup command's own timeout.\n\n## Acceptance criteria\n\n- [ ] With a 10-minute `session-timeout`, a setup command that takes 6 minutes leaves the agent 4 minutes before the session times out.\n- [ ] A setup command that outlasts the session's timeout hands the item back as a stall with the session-timeout wording and the setup output's tail, and the run is not retried.\n- [ ] A setup command that exits non-zero is an infrastructure failure, as today.",
+      "state": "OPEN",
+      "closedAt": null,
+      "updatedAt": "2026-10-29T22:18:00Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 801,
+            "state": "OPEN",
+            "isDraft": true,
+            "mergedAt": null,
+            "closedAt": null,
+            "updatedAt": "2026-10-29T22:27:39Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:15Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:16Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T22:18:00Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 791,
+      "title": "Decide Worked and Managed from GitHub's facts in one place, with the new Left alone reasons",
+      "body": "Part of the spec change #784 (`GLOSSARY.md`, **Worked** and **Managed**; `docs/specs/design_system.md`, the item page's State fact). This ticket changes structure: the domain's predicates decide what is managed everywhere, including in the store.\n\n## What to build\n\nFollow the design on the tracking issue: \"Where is managed decided, and by what?\"\n\n- **Labeling actor.** Read the actor of each `LabeledEvent` in `src/store/github.rs` (`labeling_fields!`), and keep it on `IssueEvent::Labeled`. The local store (`src/store/local.rs`) records who applied each label.\n- **Worked.** `WorkSigns::worked_by` (`src/domain.rs`) counts a label Linewright applied, beside opening, assigning itself and a closing pull request it opened.\n- **Waits on Linewright.** A new `waits_on_linewright` covers:\n  - an open issue marked for Linewright and labeled `needs-triage` or `ready-for-agent`;\n  - an item assigned to Linewright by hand;\n  - a spec change waiting for design.\n- **Managed.** `managed` is worked, or waits on Linewright.\n- **Standing.** `status::standing` and the board take managed items from these predicates. An unworked issue labeled `needs-info` or `ready-for-human` is no longer managed. A worked one is, for example one Linewright handed back.\n- **Left alone reasons.** These are \"closed\", \"not marked for Linewright\" and \"waits on a person, and Linewright has not worked it\". They are worded on the item page (`src/web/item_page.rs`) and by `explain` (`src/explain.rs`, with its \"it is\" prefix). `OpenIssueExclusion::NotInView` goes. A worked open issue that no board column holds (no status label, unclaimed, no open pull request) keeps today's \"labeled none of …\" reason (see the spec gap).\n- **Store filter.** The GitHub store classifies the items it reads (`any_item`, `issue`, and the closed and numbered reads) with these predicates, through the facts it reads, instead of `in_view_if_open`. Which items it fetches is the next ticket's.\n\n## Acceptance criteria\n\n- [ ] An issue a person filed, that Linewright labeled `ready-for-human` in a hand-back and is no longer assigned to, is on the board in Needs a person.\n- [ ] An open, unworked issue labeled `needs-info` is left alone: \"waits on a person, and Linewright has not worked it\".\n- [ ] With `require-label` set, an unworked, unmarked `needs-triage` issue is left alone: \"not marked for Linewright\".\n- [ ] The GitHub adapter reads a labeling's actor from a recorded payload.",
+      "state": "CLOSED",
+      "closedAt": "2026-10-29T22:18:54Z",
+      "updatedAt": "2026-10-29T22:18:54Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 799,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-29T22:18:52Z",
+            "closedAt": "2026-10-29T22:18:52Z",
+            "updatedAt": "2026-10-29T22:18:55Z",
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:18Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:19Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T21:45:21Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 792,
+      "title": "Read every managed item from GitHub, closed ones in unfinished lanes included",
+      "body": "Part of the spec change #784, settling #731: the board's managed items are what Linewright reads, and the code must read every managed item, including closed ones in unfinished lanes.\n\n## What to build\n\nFollow the design on the tracking issue: \"How does the GitHub store find every managed item?\"\n\n- **Index.** In `src/store/github.rs`, keep an in-memory index of the managed issue numbers.\n  - On startup, rebuild it with one pass over every open issue, and over closed issues back to the windows' `read_since`. The pass reads only the fields the predicates need: author, assignees, labels, the timeline's labelings and assignments with their actors, and the authors of closing pull requests.\n  - Each poll, update it from the issues updated since the last watermark (`filterBy: {since}`, ordered by update).\n  - It holds only what GitHub says and is not persisted.\n- **Snapshot.** The snapshot reads the indexed managed issues in full, by number. Remove the three `in_view_filters` passes and `in_view_if_open`.\n- **Unfinished lanes.** Closed tickets of unfinished lanes, and Linewright's pull requests that close them, are read whenever they closed, not only within the windows.\n- **Cost.** Keep the paged reads within the rate limit as the current reads do. Log the startup pass's size.\n\n## Acceptance criteria\n\n- [ ] An open issue that Linewright once labeled and claimed, whose labels and assignment a person then removed, is read and managed.\n- [ ] A ticket of an unfinished lane, closed before the Done window by a person after removing its labels, is in Done.\n- [ ] A poll after startup reads only the issues updated since the last poll to keep the index (an adapter test on recorded payloads).",
+      "state": "OPEN",
+      "closedAt": null,
+      "updatedAt": "2026-10-29T22:18:57Z",
+      "author": {
+        "__typename": "User",
+        "login": "tibbe-bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ready-for-agent"
+          },
+          {
+            "name": "linewright:designed"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "tibbe-bot"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:20Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "linewright:designed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T21:45:21Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "label": {
+              "name": "ready-for-agent"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-29T22:18:57Z",
+            "actor": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

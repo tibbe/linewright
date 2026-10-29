@@ -16,11 +16,11 @@ use super::{
 use crate::clock::Clock;
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
-    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, MergeMethod,
-    MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push, Rebaseability,
-    Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue, SubIssueState,
-    Thread, TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within,
-    closing_references, label,
+    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, ManagedFacts,
+    MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
+    Rebaseability, Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue,
+    SubIssueState, Thread, TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts,
+    closed_within, closing_references, label,
 };
 use crate::git::{self, Merged};
 
@@ -1226,16 +1226,18 @@ impl State {
             updated_at: issue.updated_at,
             kind: ClosedKind::Issue {
                 parent: issue.parent,
-                filed: issue.filed,
-                sub_issues: issue.sub_issues,
-                labels: issue.labels,
                 merged_by: closing.merged_by,
                 reason: Some(closing.reason),
-                work: WorkFacts {
-                    author: Some(issue.author),
-                    assignees: issue.assignees,
-                    events: issue.events,
-                    closed_by: issue.closed_by,
+                facts: ManagedFacts {
+                    filed: issue.filed,
+                    sub_issues: issue.sub_issues,
+                    labels: issue.labels,
+                    work: WorkFacts {
+                        author: Some(issue.author),
+                        assignees: issue.assignees,
+                        events: issue.events,
+                        closed_by: issue.closed_by,
+                    },
                 },
             },
         })
