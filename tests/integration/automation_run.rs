@@ -233,8 +233,9 @@ async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_
     let prompts = world.harness.automation_prompts();
     assert_eq!(prompts.len(), 2);
     assert!(
-        prompts[1]
-            .contains("unknown variant `bug`, expected `ready-for-agent` or `ready-for-human`"),
+        prompts[1].contains(
+            r#"`/issues/0/label`: "bug" is not one of "ready-for-agent" or "ready-for-human""#
+        ),
         "{}",
         prompts[1]
     );

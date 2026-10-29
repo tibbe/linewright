@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use serde::de::DeserializeOwned;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -23,8 +22,8 @@ use crate::reconcile::{
 };
 use crate::repo_files::RepoLayer;
 use crate::results::{
-    self, AutomationIssueLabel, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork,
-    PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
+    self, AutomationIssueLabel, AutomationResult, Contract, Cut, DesignResult, ImplementResult,
+    IssueWork, PullWorkResult, SpecGap, Tickets, TriageOutcome, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs};
 use crate::secrets::{Held, Secrets};
@@ -1120,12 +1119,15 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
 
 /// Runs a design session on `subject`, sent `prompt`, and begins applying
 /// its result.
-async fn design_session<C: DeserializeOwned>(
+async fn design_session<C>(
     shell: &Shell,
     ctx: &Ctx,
     subject: Subject,
     prompt: String,
-) -> Result<(DesignResult<C>, Turn), Failure> {
+) -> Result<(DesignResult<C>, Turn), Failure>
+where
+    DesignResult<C>: Contract,
+{
     let purpose = Purpose::Work {
         subject,
         kind: WorkKind::Design,
@@ -1688,7 +1690,7 @@ async fn implement(
             let pr = store
                 .open_pull(NewPull {
                     head: branch.clone(),
-                    title: pr_title.into(),
+                    title: pr_title,
                     body: closing(&pr_body, &[ticket.number()]),
                 })
                 .await

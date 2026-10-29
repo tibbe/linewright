@@ -714,7 +714,7 @@ async fn a_result_asking_something_that_is_not_a_login_is_sent_back() {
     let prompts = world.harness.prompts(WorkKind::Triage);
     assert_eq!(prompts.len(), 2);
     assert!(
-        prompts[1].contains("\"the reporter\" is not a GitHub login"),
+        prompts[1].contains("`/ask/0`: \"the reporter\" does not match"),
         "{}",
         prompts[1]
     );
@@ -2220,7 +2220,7 @@ async fn a_spec_change_with_nothing_to_build_is_labeled_designed_with_why_and_fi
 async fn a_design_with_no_tickets_is_sent_back_to_its_session() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |call| {
-        let result = if call.followup.is_some_and(|f| f.contains("`tickets` is empty")) {
+        let result = if call.followup.is_some_and(|f| f.contains("`/tickets`: [] has less than 1 item")) {
             one_ticket()
         } else {
             json!({"outcome": "designed", "design": "Nothing new.", "tickets": [], "comment": "None."})
@@ -3002,7 +3002,7 @@ async fn the_pull_request_is_titled_as_the_session_wrote_and_a_blank_title_is_se
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("`pr_title` is empty"));
+    assert!(prompts[1].contains("`/pr_title`: \" \" does not match"));
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(pr.title, "Report gadgets");
 }
