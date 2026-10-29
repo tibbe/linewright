@@ -27,6 +27,11 @@ user-visible behavior changes.
 
 Changes to specs require human approval.
 
+## Briefs
+
+Edit `briefs/` only in an interactive session. Changes to briefs require human
+approval.
+
 ## Coding standards
 
 `CODING_STANDARDS.md` should always be read before any code review.
