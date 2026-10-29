@@ -1,6 +1,7 @@
+use linewright::domain::Timestamp;
 use linewright::runs::{RunId, Started};
 use linewright::transcript::{
-    self, After, Follower, SessionRecord, Setup, SetupRecord, SetupStatus, Transcript, Verbosity,
+    self, After, Follower, SessionRecord, SetupRecord, SetupStatus, Transcript, Verbosity,
 };
 use serde_json::json;
 
@@ -14,6 +15,7 @@ fn recorded() -> SessionRecord {
         brief: Some("/linewright:implement\n\n# Your task\n\nShip gh.\n".into()),
         followups: vec!["Your answer did not parse as the result.\n\nSend it again.\n".into()],
         ran: None,
+        setup_output: None,
         setup: None,
     }
 }
@@ -698,48 +700,65 @@ fn an_entry_that_says_no_time_shows_the_time_of_the_one_the_agent_wrote_before_i
     assert_eq!(started(&followed).as_deref(), Some(" 2:00"));
 }
 
-/// A setup command `command` that ran for `seconds` and ended as `status`,
+fn time(at: &str) -> Timestamp {
+    at.parse().unwrap()
+}
+
+/// The record of a session whose setup command `command` started at
+/// `start`, then, if it has, ended as `ended` gives, `(status, seconds)`,
 /// having written `output`.
-fn set_up(command: &str, status: SetupStatus, seconds: f64, output: &str) -> Setup {
-    Setup {
-        ran: SetupRecord {
-            command: command.into(),
-            status,
-            duration_seconds: seconds,
-        },
-        output: output.into(),
+fn setting_up(
+    start: &str,
+    command: &str,
+    ended: Option<(SetupStatus, f64)>,
+    output: &str,
+) -> SessionRecord {
+    let start = time(start);
+    let mut events = transcript::setup_started(start, command) + "\n";
+    let mut setup_output = None;
+    if let Some((status, seconds)) = ended {
+        let at = start
+            + chrono::TimeDelta::from_std(std::time::Duration::from_secs_f64(seconds)).unwrap();
+        events += &(transcript::setup_ended(at, status, seconds) + "\n");
+        setup_output = Some(output.to_string());
+    }
+    SessionRecord {
+        output: events,
+        setup_output,
+        ..SessionRecord::default()
     }
 }
 
 /// The recorded session after a setup command that succeeded, then one
 /// whose setup command failed, so that it never started.
 fn after_setting_up() -> [SessionRecord; 2] {
+    let set_up = setting_up(
+        "2026-10-13T10:08:56Z",
+        "npm ci",
+        Some((SetupStatus::Exited(0), 12.4)),
+        "added 3 packages\nin 12s\n",
+    );
     [
         SessionRecord {
-            setup: Some(set_up(
-                "npm ci",
-                SetupStatus::Exited(0),
-                12.4,
-                "added 3 packages\nin 12s\n",
-            )),
-            ..recorded()
+            output: set_up.output.clone() + &recorded().output,
+            ..SessionRecord {
+                setup_output: set_up.setup_output,
+                ..recorded()
+            }
         },
-        SessionRecord {
-            setup: Some(set_up(
-                "npm ci",
-                SetupStatus::Exited(1),
-                3.0,
-                "npm ERR! missing lockfile\n",
-            )),
-            ..SessionRecord::default()
-        },
+        setting_up(
+            "2026-10-13T10:20:00Z",
+            "npm ci",
+            Some((SetupStatus::Exited(1), 3.0)),
+            "npm ERR! missing lockfile\n",
+        ),
     ]
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Setup.
+/// `docs/specs/design_system.md`, Transcripts, Times and Setup.
 #[test]
-fn a_setup_command_shows_under_its_sessions_header_with_its_output_only_in_full_or_when_it_failed()
-{
+fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only_in_full_or_when_it_failed()
+ {
     let transcript = of(&after_setting_up());
 
     let compact = transcript::render(&transcript, Verbosity::Compact, false);
@@ -750,16 +769,17 @@ fn a_setup_command_shows_under_its_sessions_header_with_its_output_only_in_full_
         compact[..3],
         [
             "run: 105/implement-1",
-            "session 1: started 2026-10-13 10:09:08 UTC",
-            "       setup: npm ci → exit 0, 12s",
+            "session 1: started 2026-10-13 10:08:56 UTC",
+            " 0:00  setup: npm ci → exit 0, 12s",
         ]
     );
-    assert!(compact[3].starts_with(" 0:03  Bash(ls;"), "{compact:#?}");
+    // The agent's first call, at 10:09:11, counts from the setup's start.
+    assert!(compact[3].starts_with(" 0:15  Bash(ls;"), "{compact:#?}");
     assert_eq!(
         compact[compact.len() - 3..],
         [
-            "session 2",
-            "       setup: npm ci → exit 1, 3s",
+            "session 2: started 2026-10-13 10:20:00 UTC",
+            " 0:00  setup: npm ci → exit 1, 3s",
             "         npm ERR! missing lockfile",
         ]
     );
@@ -767,56 +787,98 @@ fn a_setup_command_shows_under_its_sessions_header_with_its_output_only_in_full_
     assert_eq!(
         full[2..5],
         [
-            "       setup: npm ci → exit 0, 12s",
+            " 0:00  setup: npm ci → exit 0, 12s",
             "         added 3 packages",
             "         in 12s",
         ]
     );
-    assert!(full[5].starts_with(" 0:00  brief: "), "{full:#?}");
+    assert!(full[5].starts_with(" 0:12  brief: "), "{full:#?}");
 }
 
 #[test]
 fn a_setup_command_shows_how_it_ended_and_its_output_unless_it_succeeded_or_was_cancelled() {
     let shown = |status| {
-        let record = SessionRecord {
-            setup: Some(set_up("make deps", status, 61.0, "fetching\n")),
-            ..SessionRecord::default()
-        };
+        let record = setting_up(
+            "2026-10-13T10:00:00Z",
+            "make deps",
+            Some((status, 61.0)),
+            "fetching\n",
+        );
         let shown = transcript::render(&of(&[record]), Verbosity::Compact, false);
         shown.lines().skip(2).collect::<Vec<_>>().join("\n")
     };
 
     assert_eq!(
         shown(SetupStatus::Signalled(9)),
-        "       setup: make deps → signal 9, 1m 1s\n         fetching"
+        " 0:00  setup: make deps → signal 9, 1m 1s\n         fetching"
     );
     assert_eq!(
         shown(SetupStatus::TimedOut),
-        "       setup: make deps → timed out, 1m 1s\n         fetching"
+        " 0:00  setup: make deps → timed out, 1m 1s\n         fetching"
     );
     assert_eq!(
         shown(SetupStatus::Cancelled),
-        "       setup: make deps → cancelled, 1m 1s"
+        " 0:00  setup: make deps → cancelled, 1m 1s"
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running.
+#[test]
+fn a_setup_command_shows_running_until_it_ends() {
+    let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
+    let transcript = Transcript {
+        in_flight: Some(transcript::InFlight::ReadTo(transcript::ReadTo {
+            session: 1,
+            line: 1,
+        })),
+        ..of(&[running])
+    };
+
+    let shown = transcript::render(&transcript, Verbosity::Full, false);
+
+    assert_eq!(
+        shown,
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:00  setup: npm ci → running\n"
     );
 }
 
 /// `docs/specs/monitoring.md`, logs, Setup.
 #[test]
-fn json_gives_a_setup_command_as_one_object_with_its_output_before_its_sessions_entries() {
-    let transcript = of(&after_setting_up());
+fn json_gives_a_setup_command_with_its_account_and_output_once_it_has_ended() {
+    let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
+    let [succeeded, failed] = after_setting_up();
 
-    for verbosity in [Verbosity::Compact, Verbosity::Full] {
-        let lines: Vec<serde_json::Value> = transcript::json_lines(&transcript, verbosity)
+    let json = |records: &[SessionRecord], verbosity| -> Vec<serde_json::Value> {
+        transcript::json_lines(&of(records), verbosity)
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
+            .collect()
+    };
 
+    assert_eq!(
+        json(&[running], Verbosity::Compact)[2],
+        json!({
+            "type": "setup",
+            "session": 1,
+            "at": "2026-10-13T10:00:00Z",
+            "elapsed_seconds": 0,
+            "depth": 0,
+            "command": "npm ci",
+        })
+    );
+    for verbosity in [Verbosity::Compact, Verbosity::Full] {
+        let lines = json(&[succeeded.clone(), failed.clone()], verbosity);
         assert_eq!(lines[1]["type"], "session");
         assert_eq!(
             lines[2],
             json!({
                 "type": "setup",
                 "session": 1,
+                "at": "2026-10-13T10:08:56Z",
+                "elapsed_seconds": 0,
+                "depth": 0,
                 "command": "npm ci",
                 "status": {"exited": 0},
                 "duration_seconds": 12.4,
@@ -826,10 +888,13 @@ fn json_gives_a_setup_command_as_one_object_with_its_output_before_its_sessions_
         assert_eq!(
             lines[lines.len() - 2..],
             [
-                json!({"type": "session", "session": 2, "started_at": null}),
+                json!({"type": "session", "session": 2, "started_at": "2026-10-13T10:20:00Z"}),
                 json!({
                     "type": "setup",
                     "session": 2,
+                    "at": "2026-10-13T10:20:00Z",
+                    "elapsed_seconds": 0,
+                    "depth": 0,
                     "command": "npm ci",
                     "status": {"exited": 1},
                     "duration_seconds": 3.0,
@@ -838,12 +903,14 @@ fn json_gives_a_setup_command_as_one_object_with_its_output_before_its_sessions_
             ]
         );
     }
-    let timed_out = SessionRecord {
-        setup: Some(set_up("sleep 9", SetupStatus::TimedOut, 1.0, "")),
-        ..SessionRecord::default()
-    };
-    let json = transcript::json_lines(&of(&[timed_out]), Verbosity::Compact);
-    let line = json.lines().nth(2).unwrap();
+    let timed_out = setting_up(
+        "2026-10-13T10:00:00Z",
+        "sleep 9",
+        Some((SetupStatus::TimedOut, 1.0)),
+        "",
+    );
+    let timed_out = transcript::json_lines(&of(&[timed_out]), Verbosity::Compact);
+    let line = timed_out.lines().nth(2).unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(line).unwrap()["status"],
         "timed-out"
@@ -854,45 +921,20 @@ fn json_gives_a_setup_command_as_one_object_with_its_output_before_its_sessions_
             Verbosity::Compact,
             false
         ),
-        "       setup: sleep 9 → timed out, 1s\n"
-    );
-}
-
-#[test]
-fn of_a_run_in_flight_the_current_session_shows_once_its_setup_command_has_ended() {
-    let in_flight = |sessions: &[SessionRecord]| Transcript {
-        in_flight: Some(transcript::InFlight::Unread),
-        ..of(sessions)
-    };
-    let [_, failed] = after_setting_up();
-
-    let setting_up = transcript::render(
-        &in_flight(&[SessionRecord::default()]),
-        Verbosity::Compact,
-        false,
-    );
-    let set_up = transcript::render(&in_flight(&[failed]), Verbosity::Compact, false);
-
-    assert_eq!(setting_up, "run: 105/implement-1\n");
-    assert_eq!(
-        set_up,
-        "run: 105/implement-1\n\
-         session 1\n       \
-         setup: npm ci → exit 1, 3s\n         \
-         npm ERR! missing lockfile\n"
+        " 0:00  setup: sleep 9 → timed out, 1s\n"
     );
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Followed.
 #[test]
-fn following_shows_a_setup_command_with_its_sessions_header_ahead_of_its_entries() {
+fn following_shows_a_setup_command_as_it_starts_and_again_at_its_end_with_its_account() {
     let [succeeded, failed] = after_setting_up();
-    let setting_up = SessionRecord {
-        setup: None,
-        output: String::new(),
-        ..succeeded.clone()
+    let started = succeeded.output.find('\n').unwrap() + 1;
+    let ended = started + succeeded.output[started..].find('\n').unwrap() + 1;
+    let running = SessionRecord {
+        setup_output: None,
+        ..written(&succeeded, started)
     };
-    let first_line = succeeded.output.find('\n').unwrap() + 1;
     let follow = |after| {
         Follower::new(
             item_run("105/implement-1".parse().unwrap()),
@@ -902,64 +944,135 @@ fn following_shows_a_setup_command_with_its_sessions_header_ahead_of_its_entries
     };
     let mut follower = follow(None);
 
-    let while_setting_up = follower.update(std::slice::from_ref(&setting_up));
-    let once_set_up = follower.update(&[written(&succeeded, 0)]);
-    let once_started = follower.update(&[written(&succeeded, first_line)]);
+    let before = follower.update(&[written(&running, 0)]);
+    let once_started = follower.update(std::slice::from_ref(&running));
+    let once_ended = follower.update(&[written(&succeeded, ended)]);
     let mut rest = follower.update(std::slice::from_ref(&succeeded));
-    let ended = follower.end(&[succeeded.clone(), failed.clone()]);
-    rest.extend(ended.clone());
+    rest.extend(follower.end(&[succeeded.clone(), failed.clone()]));
     let all = [
-        while_setting_up.clone(),
-        once_set_up.clone(),
+        before.clone(),
         once_started.clone(),
+        once_ended,
         rest.clone(),
     ]
     .concat();
 
-    assert_eq!(text(&while_setting_up), "run: 105/implement-1\n");
-    // Before the session has started, its header cannot say when it did.
+    assert_eq!(text(&before), "run: 105/implement-1\n");
     assert_eq!(
-        text(&once_set_up),
-        "session 1\n       setup: npm ci → exit 0, 12s\n"
+        text(&once_started),
+        "session 1: started 2026-10-13 10:08:56 UTC\n 0:00  setup: npm ci → running\n"
     );
-    let at = |session, line| transcript::ReadTo { session, line };
-    assert_eq!(once_set_up[1].made.read, at(1, 0));
-    // In compact, its first line, the turn's start, shows nothing, and its
-    // entries are timed from that start all the same.
-    assert_eq!(once_started, []);
+    assert_eq!(text(&all[3..4]), " 0:12  setup: npm ci → exit 0, 12s\n");
     assert!(
-        text(&rest[..1]).starts_with(" 0:03  Bash(ls;"),
+        text(&all[4..5]).starts_with(" 0:15  Bash(ls;"),
         "{}",
-        text(&rest)
+        text(&all)
     );
-    // A session that never started shows its header and its setup line.
     assert_eq!(
-        text(&ended[ended.len() - 2..]),
-        "session 2\n       setup: npm ci → exit 1, 3s\n         npm ERR! missing lockfile\n"
+        text(&rest[rest.len() - 3..]),
+        "session 2: started 2026-10-13 10:20:00 UTC\n \
+         0:00  setup: npm ci → running\n \
+         0:03  setup: npm ci → exit 1, 3s\n         \
+         npm ERR! missing lockfile\n"
     );
-    // Read at once, the session's header gives when it started, as `logs`
-    // does; the run's header counts the sessions it was first read with.
+    // Read at once, it shows the same lines, made at the same points; the
+    // run's header counts the sessions it was first read with.
     let at_once = follow(None).end(&[succeeded.clone(), failed.clone()]);
-    let logs = transcript::render(
+    assert_eq!(all[1..], at_once[1..]);
+    // From a line, or from where a transcript was read to, it shows the
+    // lines after it.
+    let after_running =
+        follow(Some(After::Line(all[2].made))).end(&[succeeded.clone(), failed.clone()]);
+    assert_eq!(after_running, all[3..]);
+    let after_read = follow(Some(After::Read(all[2].made.read))).end(&[succeeded, failed]);
+    assert_eq!(after_read, all[3..]);
+}
+
+/// A session recorded before a setup command's start and end were: its
+/// record holds `setup.json`, written once the command ended.
+fn recorded_before_setup_events(status: SetupStatus, output: &str) -> SessionRecord {
+    SessionRecord {
+        setup: Some(SetupRecord {
+            command: "npm ci".into(),
+            status,
+            duration_seconds: 12.4,
+        }),
+        setup_output: Some(output.into()),
+        ..SessionRecord::default()
+    }
+}
+
+#[test]
+fn a_setup_command_recorded_before_its_start_and_end_were_shows_with_no_time() {
+    let succeeded = SessionRecord {
+        output: recorded().output,
+        ..recorded_before_setup_events(SetupStatus::Exited(0), "added 3 packages\n")
+    };
+    let failed =
+        recorded_before_setup_events(SetupStatus::Exited(1), "npm ERR! missing lockfile\n");
+
+    let shown = transcript::render(
         &of(&[succeeded.clone(), failed.clone()]),
         Verbosity::Compact,
         false,
     );
-    assert!(logs.starts_with(&text(&at_once[..3])), "{logs}");
-    assert_eq!(
-        text(&at_once[1..3]),
-        "session 1: started 2026-10-13 10:09:08 UTC\n       setup: npm ci → exit 0, 12s\n"
+    let followed = text(
+        &Follower::new(
+            item_run("105/implement-1".parse().unwrap()),
+            Verbosity::Compact,
+            None,
+        )
+        .end(&[succeeded, failed]),
     );
-    assert_eq!(all[3..], at_once[3..]);
-    let made = |lines: &[transcript::FollowedLine]| -> Vec<transcript::Made> {
-        lines.iter().map(|line| line.made).collect()
-    };
-    assert_eq!(made(&all), made(&at_once));
-    // From a line or from where a transcript was read to, the setup line
-    // shows once.
-    let after_header =
-        follow(Some(After::Line(once_set_up[0].made))).end(&[succeeded.clone(), failed.clone()]);
-    assert_eq!(after_header, all[2..]);
-    let after_read = follow(Some(After::Read(at(1, 0)))).end(&[succeeded, failed]);
-    assert_eq!(after_read, all[3..]);
+
+    let shown: Vec<&str> = shown.lines().collect();
+    assert_eq!(
+        shown[1..4],
+        [
+            "session 1: started 2026-10-13 10:09:08 UTC",
+            "       setup: npm ci → exit 0, 12s",
+            " 0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines",
+        ]
+    );
+    assert_eq!(
+        shown[shown.len() - 3..],
+        [
+            "session 2",
+            "       setup: npm ci → exit 1, 12s",
+            "         npm ERR! missing lockfile",
+        ]
+    );
+    let followed: Vec<&str> = followed.lines().collect();
+    assert_eq!(followed[1..3], shown[1..3]);
+    assert_eq!(followed[followed.len() - 3..], shown[shown.len() - 3..]);
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Followed: a setup command's
+/// output shows once it has ended, however its end is read.
+#[test]
+fn a_setup_commands_output_is_read_once_its_end_is_even_when_a_read_stops_inside_the_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join(transcript::OUTPUT);
+    let ended =
+        transcript::setup_ended(time("2026-10-13T10:00:03Z"), SetupStatus::Exited(1), 3.0) + "\n";
+    std::fs::write(dir.path().join(transcript::SETUP_OUTPUT), "npm ERR!\n").unwrap();
+    std::fs::write(
+        &output,
+        transcript::setup_started(time("2026-10-13T10:00:00Z"), "npm ci") + "\n" + &ended[..5],
+    )
+    .unwrap();
+    let mut record = SessionRecord::read(dir.path()).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&output)
+        .unwrap();
+    std::io::Write::write_all(&mut file, &ended.as_bytes()[5..]).unwrap();
+
+    record.read_more(dir.path()).unwrap();
+
+    assert_eq!(record.setup_output.as_deref(), Some("npm ERR!\n"));
+    assert!(
+        transcript::render(&of(&[record]), Verbosity::Compact, false)
+            .ends_with(" 0:00  setup: npm ci → exit 1, 3s\n         npm ERR!\n")
+    );
 }

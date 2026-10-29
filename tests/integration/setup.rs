@@ -449,9 +449,12 @@ async fn a_secret_in_the_setup_commands_output_is_redacted_in_its_log_and_the_ha
     for log in logs {
         assert_eq!(std::fs::read_to_string(log).unwrap(), "token [redacted]\n");
     }
-    for record in records_named(&world, "setup.json") {
-        let record = std::fs::read_to_string(record).unwrap();
-        assert!(!record.contains(secret), "{record}");
+    let transcripts = records_named(&world, linewright::transcript::OUTPUT);
+    assert_eq!(transcripts.len(), 2, "one for each attempt");
+    for transcript in transcripts {
+        let transcript = std::fs::read_to_string(transcript).unwrap();
+        assert!(transcript.contains("token [redacted]"), "{transcript}");
+        assert!(!transcript.contains(secret), "{transcript}");
     }
 }
 

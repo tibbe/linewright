@@ -2588,30 +2588,72 @@ async fn explain_names_the_file_of_the_repositorys_a_ticket_waits_for_and_its_er
     answering.stop().await;
 }
 
-/// `docs/specs/monitoring.md`, logs, `--follow`: a session whose setup
-/// command has ended shows, and following it carries on from there.
+/// `docs/specs/design_system.md`, Transcripts, Running and Followed;
+/// `docs/specs/monitoring.md`, logs, `--follow` and Setup.
 #[tokio::test]
-async fn logs_follow_shows_a_sessions_setup_command_once_and_then_its_entries() {
-    let world = with_issue_for_triage_setting_up_with("echo installing").await;
+async fn logs_follow_shows_a_setup_command_running_then_with_its_account_then_the_sessions_entries()
+{
+    let marks = tempfile::tempdir().unwrap();
+    let go = marks.path().join("go");
+    let command = format!(
+        "until [ -e {} ]; do sleep 0.05; done; echo installing",
+        go.display()
+    );
+    let world = with_issue_for_triage_setting_up_with(&command).await;
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
-    let setup = "       setup: echo installing → exit 0, 0s\n";
-    eventually_async(|| async { answering.lw(&["logs", "1"]).await.stdout.contains(setup) }).await;
+    eventually_async(|| async {
+        answering
+            .lw(&["logs", "1"])
+            .await
+            .stdout
+            .contains("→ running\n")
+    })
+    .await;
 
     let follow = Watching::start(answering.runtime_dir.path(), &["logs", "1", "--follow"]);
-    follow.shows(setup).await;
+    let json = Watching::start(
+        answering.runtime_dir.path(),
+        &["logs", "1", "--follow", "--json"],
+    );
+    follow.shows("→ running\n").await;
+    json.shows("\"command\"").await;
+    std::fs::write(&go, "").unwrap();
+    follow.shows("→ exit 0, ").await;
     agent.writes(&turn_1()[..4].concat());
     follow.shows("→ exit 0, 19 lines\n").await;
     drop(agent);
     let (code, shown, stderr) = follow.exits().await;
+    let (_, json, _) = json.exits().await;
 
     assert_eq!(code, Some(0), "{stderr}");
+    let shown: Vec<&str> = shown.lines().collect();
+    assert!(shown[1].starts_with("session 1: started "), "{shown:#?}");
     assert!(
-        shown.starts_with(&format!(
-            "run: 1/triage-1\nsession 1\n{setup} 0:03  Bash(ls;"
-        )),
-        "{shown}"
+        shown[2].starts_with(" 0:00  setup: until [ -e ") && shown[2].ends_with(" → running"),
+        "{shown:#?}"
     );
-    assert_eq!(shown.matches("setup:").count(), 1, "{shown}");
+    assert!(
+        shown[3].contains("  setup: until [ -e ") && shown[3].contains(" → exit 0, "),
+        "{shown:#?}"
+    );
+    assert!(shown[4].contains("  Bash(ls;"), "{shown:#?}");
+    assert_eq!(
+        shown.iter().filter(|line| line.contains("setup:")).count(),
+        2,
+        "{shown:#?}"
+    );
+    let setups: Vec<serde_json::Value> = json
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|line| line["type"] == "setup")
+        .collect();
+    assert_eq!(setups.len(), 2, "{setups:#?}");
+    assert_eq!(setups[0]["command"], command);
+    assert!(setups[0].get("status").is_none(), "{setups:#?}");
+    assert_eq!(setups[1]["command"], command);
+    assert_eq!(setups[1]["status"], serde_json::json!({"exited": 0}));
+    assert_eq!(setups[1]["output"], "installing\n");
+    assert!(setups[1]["duration_seconds"].is_f64(), "{setups:#?}");
     answering.stop().await;
 }

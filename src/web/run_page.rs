@@ -30,7 +30,7 @@ use crate::logs::{Following, LogsError, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
-    self, EntryLine, FollowedLine, Header, Line, Made, Setup, SetupLine, Stamped, ToolLine, Under,
+    self, EntryLine, FollowedLine, Header, Line, Made, SetupEnded, Stamped, ToolLine, Under,
     Verbosity,
 };
 
@@ -81,8 +81,6 @@ struct SessionView {
     started_at: Option<Timestamp>,
     /// `None` for a session recorded before Linewright kept it.
     ran: Option<Ran>,
-    /// Its setup command, once its line has come.
-    setup: Option<Setup>,
     /// In the order they first appeared, so that each keeps its anchor
     /// however the transcript is read: the `k`th is `s{number}-e{k}`.
     entries: Vec<EntryView>,
@@ -90,6 +88,8 @@ struct SessionView {
     own: Vec<usize>,
     /// Each call's entry, by the ID the agent gives it.
     calls: HashMap<String, usize>,
+    /// Its setup command's entry, once its line has come.
+    setup: Option<usize>,
 }
 
 struct EntryView {
@@ -142,10 +142,10 @@ impl RunView {
                     number: *session,
                     started_at: *started_at,
                     ran: following.ran(*session).cloned(),
-                    setup: None,
                     entries: vec![],
                     own: vec![],
                     calls: HashMap::new(),
+                    setup: None,
                 });
                 let added = self.sessions.last().expect("just pushed");
                 vec![Patch::Append {
@@ -153,24 +153,8 @@ impl RunView {
                     html: self.session_html(added),
                 }]
             }
-            Line::Setup(line) => self.setup(line),
             Line::Entry(stamped) => self.entry(stamped),
         }
-    }
-
-    fn setup(&mut self, line: &SetupLine) -> Vec<Patch> {
-        let Some(session) = line
-            .session
-            .checked_sub(1)
-            .and_then(|i| self.sessions.get_mut(i))
-        else {
-            return vec![];
-        };
-        session.setup = Some(line.setup.clone());
-        vec![Patch::Replace {
-            id: format!("s{}-setup", session.number),
-            html: setup_html(session, self.verbose),
-        }]
     }
 
     fn entry(&mut self, stamped: &Stamped) -> Vec<Patch> {
@@ -183,13 +167,35 @@ impl RunView {
         else {
             return vec![];
         };
-        if let EntryLine::Tool(call) = &stamped.what
-            && let Some(&i) = session.calls.get(&call.tool_use_id)
-        {
-            session.entries[i].what = stamped.what.clone();
-            return account_patches(session, i, call, verbose);
-        }
         let i = session.entries.len();
+        match &stamped.what {
+            EntryLine::Tool(call) => {
+                if let Some(&known) = session.calls.get(&call.tool_use_id) {
+                    session.entries[known].what = stamped.what.clone();
+                    return account_patches(session, known, call, verbose);
+                }
+                session.calls.insert(call.tool_use_id.clone(), i);
+            }
+            EntryLine::Setup { .. } => {
+                // Its line once it has ended takes the place of its line as
+                // it ran, which had nothing to open to.
+                if let Some(known) = session.setup {
+                    session.entries[known].what = stamped.what.clone();
+                    return vec![Patch::Replace {
+                        id: entry_id(session, known),
+                        html: entry_html(session, known, verbose),
+                    }];
+                }
+                session.setup = Some(i);
+            }
+            EntryLine::Brief { .. }
+            | EntryLine::FollowUp { .. }
+            | EntryLine::Message { .. }
+            | EntryLine::Thinking { .. }
+            | EntryLine::Context { .. }
+            | EntryLine::Event { .. }
+            | EntryLine::Other { .. } => {}
+        }
         session.entries.push(EntryView {
             stamp: StampView {
                 at: stamped.stamp.at,
@@ -198,9 +204,6 @@ impl RunView {
             what: stamped.what.clone(),
             children: vec![],
         });
-        if let EntryLine::Tool(call) = &stamped.what {
-            session.calls.insert(call.tool_use_id.clone(), i);
-        }
         let parent = match &stamped.stamp.under {
             Under::Session => None,
             Under::SubAgent { parent, .. } => session.calls.get(parent).copied(),
@@ -272,9 +275,8 @@ impl RunView {
             .map(|&i| entry_html(session, i, self.verbose))
             .collect();
         let ran = ran_html(session.ran.as_ref());
-        let setup = setup_html(session, self.verbose);
         format!(
-            r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2>{ran}{setup}<ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
+            r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2>{ran}<ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
         )
     }
 
@@ -322,36 +324,34 @@ fn ran_html(ran: Option<&Ran>) -> String {
     )
 }
 
-/// The session's setup command, in a section of its own: its line, opening
-/// to its output, open from the start when it failed, and with `verbose`;
-/// empty until its line has come.
-fn setup_html(session: &SessionView, verbose: bool) -> String {
-    let n = session.number;
-    let Some(setup) = &session.setup else {
-        return format!(r#"<div class="setup" id="s{n}-setup"></div>"#);
+/// A setup command's line, opening to its output once it has ended, open
+/// from the start when it failed, and with `verbose`.
+fn setup_html(stamp: &str, command: &str, ended: Option<&SetupEnded>, verbose: bool) -> String {
+    let command = html::escape(&transcript::shown_command(command));
+    let Some(ended) = ended else {
+        let running = status_html(Tone::InProgress, "running");
+        return format!(r#"<div class="line">{stamp} setup: {command} → {running}</div>"#);
     };
-    let Setup { ran, output } = setup;
-    let account = if ran.status.failed() {
-        status_html(Tone::Failure, &ran.account())
+    let account = if ended.status.failed() {
+        status_html(Tone::Failure, &ended.account())
     } else {
-        html::escape(&ran.account()).to_string()
+        html::escape(&ended.account()).to_string()
     };
-    let open = if setup.output_shown(verbose) {
+    let open = if ended.output_shown(verbose) {
         " open"
     } else {
         ""
     };
-    let output = if output.trim().is_empty() {
+    let output = if ended.output.trim().is_empty() {
         String::new()
     } else {
         format!(
             r#"<pre class="output my-1 ml-[4.5em] max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre>"#,
-            html::escape(output.trim_end())
+            html::escape(ended.output.trim_end())
         )
     };
     format!(
-        r#"<div class="setup font-mono text-sm" id="s{n}-setup"><details{open}><summary class="cursor-pointer wrap-anywhere"><span class="line"><span class="inline-block min-w-[4em]"></span> setup: {command} → {account}</span></summary>{output}</details></div>"#,
-        command = html::escape(&ran.shown_command()),
+        r#"<details{open}><summary class="cursor-pointer wrap-anywhere"><span class="line">{stamp} setup: {command} → {account}</span></summary>{output}</details>"#
     )
 }
 
@@ -381,7 +381,10 @@ fn account_patches(session: &SessionView, i: usize, call: &ToolLine, verbose: bo
 /// `verbose` as a transcript in full does.
 fn shown(what: &EntryLine, verbose: bool) -> bool {
     match what {
-        EntryLine::Message { .. } | EntryLine::FollowUp { .. } | EntryLine::Tool(_) => true,
+        EntryLine::Message { .. }
+        | EntryLine::FollowUp { .. }
+        | EntryLine::Tool(_)
+        | EntryLine::Setup { .. } => true,
         EntryLine::Brief { .. }
         | EntryLine::Thinking { .. }
         | EntryLine::Context { .. }
@@ -414,6 +417,10 @@ fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
     let stamp = stamp_html(&id, entry.stamp);
     let (kind, body) = match &entry.what {
         EntryLine::Tool(call) => ("tool", call_html(session, i, call, verbose)),
+        EntryLine::Setup { command, ended } => (
+            "setup",
+            setup_html(&stamp, command, ended.as_ref(), verbose),
+        ),
         EntryLine::Message { text } => ("message", line_html(&stamp, "", text)),
         EntryLine::Thinking { text } => ("thinking", line_html(&stamp, "thinking: ", text)),
         EntryLine::Context { text } => ("context", line_html(&stamp, "context: ", text)),

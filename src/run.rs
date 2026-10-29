@@ -1250,6 +1250,7 @@ async fn set_up(
             settings.effort_set(),
         ),
         timeout: settings.session_timeout.value,
+        started_at: shell.clock.now(),
         record,
     };
     let (ran, leftovers) = setup::run(

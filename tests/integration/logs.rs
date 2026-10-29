@@ -488,10 +488,10 @@ fn json_lines(output: &Output) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Setup; `docs/specs/monitoring.md`,
-/// logs, Setup.
+/// `docs/specs/design_system.md`, Transcripts, Times and Setup;
+/// `docs/specs/monitoring.md`, logs, Setup.
 #[tokio::test]
-async fn logs_shows_a_setup_command_under_its_sessions_header_with_its_output_only_in_full() {
+async fn logs_shows_a_setup_command_as_its_sessions_first_entry_with_its_output_only_in_full() {
     let (mut world, work_dir) = world_setting_up_with("echo 'added 3 packages'").await;
     implement_as_recorded(&world);
     world.store.open_issue(
@@ -508,23 +508,25 @@ async fn logs_shows_a_setup_command_under_its_sessions_header_with_its_output_on
 
     assert_eq!(compact.code, Some(0), "{}", compact.stderr);
     let compact: Vec<&str> = compact.stdout.lines().collect();
-    assert_eq!(
-        compact[1..3],
-        [
-            "session 1: started 2026-10-13 10:09:08 UTC",
-            "       setup: echo 'added 3 packages' → exit 0, 0s",
-        ]
+    // The session started with its setup command, when the clock said.
+    assert!(
+        compact[1].starts_with("session 1: started 2026-10-01 12:00:"),
+        "{compact:#?}"
     );
-    assert!(compact[3].starts_with(" 0:03  Bash(ls;"), "{compact:#?}");
+    assert_eq!(
+        compact[2],
+        " 0:00  setup: echo 'added 3 packages' → exit 0, 0s"
+    );
+    assert!(compact[3].contains("  Bash(ls;"), "{compact:#?}");
     let verbose: Vec<&str> = verbose.stdout.lines().collect();
     assert_eq!(
         verbose[2..4],
         [
-            "       setup: echo 'added 3 packages' → exit 0, 0s",
+            " 0:00  setup: echo 'added 3 packages' → exit 0, 0s",
             "         added 3 packages",
         ]
     );
-    assert!(verbose[4].starts_with(" 0:00  brief: "), "{verbose:#?}");
+    assert!(verbose[4].contains("  brief: "), "{verbose:#?}");
     let json = json_lines(&json);
     let mut setup = json[2].clone();
     assert!(
@@ -537,6 +539,9 @@ async fn logs_shows_a_setup_command_under_its_sessions_header_with_its_output_on
         json!({
             "type": "setup",
             "session": 1,
+            "at": json[1]["started_at"],
+            "elapsed_seconds": 0,
+            "depth": 0,
             "command": "echo 'added 3 packages'",
             "status": {"exited": 0},
             "duration_seconds": 0,
@@ -546,8 +551,8 @@ async fn logs_shows_a_setup_command_under_its_sessions_header_with_its_output_on
     assert_eq!(json[3]["type"], "tool");
 }
 
-/// `docs/specs/monitoring.md`, logs: the run picked is the latest that ran
-/// a setup command or started a session.
+/// `docs/specs/monitoring.md`, logs: the run picked is the latest that
+/// started a session, as one whose setup command failed did.
 #[tokio::test]
 async fn a_run_whose_setup_command_failed_shows_it_under_each_session_and_is_the_one_logs_shows() {
     let (mut world, work_dir) =
@@ -561,12 +566,17 @@ async fn a_run_whose_setup_command_failed_shows_it_under_each_session_and_is_the
     let json = lw_in(work_dir.path(), &["logs", "1", "--json"]).await;
 
     assert_eq!(shown.code, Some(0), "{}", shown.stderr);
-    let setup = "       setup: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s\n         \
+    let setup = " 0:00  setup: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s\n         \
                  npm ERR! missing lockfile\n";
-    assert_eq!(
-        shown.stdout,
-        format!("run: 1/triage-1\nsession 1\n{setup}session 2\n{setup}")
-    );
+    let shown: Vec<&str> = shown.stdout.split_inclusive('\n').collect();
+    assert_eq!(shown[0], "run: 1/triage-1\n");
+    // Each session started with its setup command, when the clock said.
+    for (session, lines) in shown[1..].chunks(3).enumerate() {
+        let started = format!("session {}: started 2026-10-01 12:00:", session + 1);
+        assert!(lines[0].starts_with(&started), "{shown:#?}");
+        assert_eq!(lines[1..].concat(), setup);
+    }
+    assert_eq!(shown.len(), 7, "{shown:#?}");
     let lines = json_lines(&json);
     let types: Vec<&str> = lines
         .iter()

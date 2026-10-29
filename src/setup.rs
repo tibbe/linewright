@@ -1,6 +1,7 @@
-//! Running a session's setup command in its clone before the session starts
+//! Running a session's setup command in its clone, as the session starts
 //! (`docs/specs/runs.md`, Setup): in a process group of its own, its output
-//! on one pipe, redacted line by line into the session's record.
+//! on one pipe, redacted line by line into the session's record, and its
+//! start and end in the session's transcript.
 
 use std::ffi::OsString;
 use std::io::Write as _;
@@ -18,8 +19,9 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::child;
+use crate::domain::Timestamp;
 use crate::redaction::Redaction;
-use crate::transcript::{self, SetupRecord};
+use crate::transcript;
 use crate::work_settings::SetupCommand;
 
 pub use crate::transcript::SetupStatus as Status;
@@ -35,6 +37,8 @@ pub struct Request<'a> {
     /// The whole environment the command runs in.
     pub environment: Vec<(OsString, OsString)>,
     pub timeout: Duration,
+    /// When it starts.
+    pub started_at: Timestamp,
     /// The session's record directory.
     pub record: &'a Path,
 }
@@ -49,10 +53,10 @@ pub struct Ran {
 
 /// Runs `bash -c command` with stdin from `/dev/null` and stdout and stderr
 /// on one pipe, in a process group of its own. `cancelled` ending first ends
-/// the group at once, as a timeout does. Its output is appended to
-/// [`transcript::SETUP_OUTPUT`] in the record as it arrives, and
-/// [`transcript::SETUP_RECORD`] is written when it ends. `Err` is a failure
-/// to start the command or to keep its record.
+/// the group at once, as a timeout does. Its start and end are appended to
+/// [`transcript::OUTPUT`] in the record, and its output to
+/// [`transcript::SETUP_OUTPUT`] as it arrives, all of it before its end.
+/// `Err` is a failure to start the command or to keep its record.
 pub async fn run(
     bash: &Path,
     request: Request<'_>,
@@ -60,6 +64,18 @@ pub async fn run(
     cancelled: impl Future<Output = ()>,
 ) -> Result<(Ran, Leftovers)> {
     let started = Instant::now();
+    let redacted = redaction.apply(request.command.as_str());
+    let mut transcript = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(request.record.join(transcript::OUTPUT))
+        .context("creating the session's transcript")?;
+    writeln!(
+        transcript,
+        "{}",
+        transcript::setup_started(request.started_at, &redacted)
+    )
+    .context("writing the setup command's start")?;
     let mut log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -139,16 +155,15 @@ pub async fn run(
             () = async { while let Ok(1..) = receiver.read(&mut buffer).await {} } => {}
         }
     });
-    let record = SetupRecord {
-        command: redaction.apply(request.command.as_str()),
-        status,
-        duration_seconds: started.elapsed().as_secs_f64(),
-    };
-    std::fs::write(
-        request.record.join(transcript::SETUP_RECORD),
-        serde_json::to_string(&record).expect("a setup record serializes"),
+    let ran_for = started.elapsed();
+    let ended_at =
+        request.started_at + chrono::TimeDelta::from_std(ran_for).unwrap_or(chrono::TimeDelta::MAX);
+    writeln!(
+        transcript,
+        "{}",
+        transcript::setup_ended(ended_at, status, ran_for.as_secs_f64())
     )
-    .context("writing the setup command's record")?;
+    .context("writing the setup command's end")?;
     Ok((
         Ran {
             status,
