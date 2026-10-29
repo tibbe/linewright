@@ -235,7 +235,10 @@ impl Printing {
 
     fn line(self, line: &transcript::Line) {
         match self.format {
-            Format::Text => print!("{}", transcript::render_line(line, colour())),
+            Format::Text => print!(
+                "{}",
+                transcript::render_line(line, self.verbosity, colour())
+            ),
             Format::Json => print!("{}", transcript::json_line(line)),
         }
         let _ = std::io::stdout().flush();

@@ -50,6 +50,40 @@ pub enum SetupStatus {
     Cancelled,
 }
 
+impl SetupStatus {
+    /// Whether the command failed (`docs/specs/runs.md`, Setup, Failing):
+    /// a cancelled one did not.
+    pub fn failed(self) -> bool {
+        !matches!(self, SetupStatus::Exited(0) | SetupStatus::Cancelled)
+    }
+
+    fn account(self) -> String {
+        match self {
+            SetupStatus::Exited(code) => format!("exit {code}"),
+            SetupStatus::Signalled(signal) => format!("signal {signal}"),
+            SetupStatus::TimedOut => "timed out".into(),
+            SetupStatus::Cancelled => "cancelled".into(),
+        }
+    }
+}
+
+/// A session's setup command as it ran, with its output.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Setup {
+    #[serde(flatten)]
+    pub ran: SetupRecord,
+    /// Redacted, as [`SETUP_OUTPUT`] holds it.
+    pub output: String,
+}
+
+impl Setup {
+    /// Whether its output shows from the start: in `full`, or when it
+    /// failed (`docs/specs/design_system.md`, Transcripts, Setup).
+    pub(crate) fn output_shown(&self, full: bool) -> bool {
+        full || self.ran.status.failed()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StartedBy {
@@ -90,6 +124,9 @@ pub struct SessionRecord {
     /// What the session ran with, from its run's record: `None` for a
     /// session recorded before Linewright kept it.
     pub ran: Option<Ran>,
+    /// Its setup command, once it has ended: `None` until then, and for a
+    /// session that ran none.
+    pub setup: Option<Setup>,
 }
 
 impl SessionRecord {
@@ -110,6 +147,16 @@ impl SessionRecord {
         };
         if self.brief.is_none() {
             self.brief = read(BRIEF)?;
+        }
+        // The output is whole once the record is written, so the record is
+        // read first.
+        if self.setup.is_none()
+            && let Some(record) = read(SETUP_RECORD)?
+        {
+            let ran = serde_json::from_str(&record)
+                .with_context(|| format!("reading {}", dir.join(SETUP_RECORD).display()))?;
+            let output = read(SETUP_OUTPUT)?.unwrap_or_default();
+            self.setup = Some(Setup { ran, output });
         }
         while let Some(followup) = read(&followup_file(self.followups.len() + 1))? {
             self.followups.push(followup);
@@ -151,6 +198,7 @@ pub struct Transcript {
 pub struct Session {
     pub started_at: Option<Timestamp>,
     pub dir: Option<String>,
+    pub setup: Option<Setup>,
     pub turns: Vec<Turn>,
 }
 
@@ -301,7 +349,10 @@ pub fn parse(record: &SessionRecord) -> Session {
     for line in record.output.lines() {
         parser.line(line, record);
     }
-    parser.finish()
+    Session {
+        setup: record.setup.clone(),
+        ..parser.finish()
+    }
 }
 
 fn is_progress(event: &Value) -> bool {
@@ -563,7 +614,36 @@ impl Verbosity {
 #[serde(untagged)]
 pub enum Line {
     Header(Header),
+    Setup(Box<SetupLine>),
     Entry(Box<Stamped>),
+}
+
+/// A session's setup command, after its header and before its entries
+/// (`docs/specs/design_system.md`, Transcripts, Setup).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SetupLine {
+    #[serde(rename = "type")]
+    kind: SetupKind,
+    /// The session's number in the run, from 1.
+    pub session: usize,
+    #[serde(flatten)]
+    pub setup: Setup,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum SetupKind {
+    Setup,
+}
+
+impl SetupLine {
+    fn of(session: usize, setup: &Setup) -> Line {
+        Line::Setup(Box::new(SetupLine {
+            kind: SetupKind::Setup,
+            session,
+            setup: setup.clone(),
+        }))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -708,14 +788,17 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
         sessions: transcript.sessions.len(),
     })];
     for (i, session) in transcript.sessions.iter().enumerate() {
-        // Of a run in flight, the session it is in shows once it starts a
-        // turn, as following it does.
+        // Of a run in flight, the session it is in shows once its setup
+        // command has ended or it starts a turn, as following it does.
         let current = transcript.in_flight.is_some() && i + 1 == transcript.sessions.len();
-        if current && session.turns.is_empty() {
+        if current && session.setup.is_none() && session.turns.is_empty() {
             continue;
         }
         let mut stamper = Stamper::new(i + 1, session.started_at);
         lines.push(stamper.header());
+        if let Some(setup) = &session.setup {
+            lines.push(SetupLine::of(i + 1, setup));
+        }
         for turn in &session.turns {
             if let Some(what) = prompt_line(turn, verbosity) {
                 lines.push(stamper.line(turn.started_at, Under::Session, what));
@@ -771,6 +854,14 @@ impl Stamper {
             number,
             started_at,
             last: started_at,
+        }
+    }
+
+    /// That the session started at `at`, unless when is already known.
+    fn started(&mut self, at: Option<Timestamp>) {
+        if self.started_at.is_none() {
+            self.started_at = at;
+            self.last = self.last.or(at);
         }
     }
 
@@ -848,6 +939,9 @@ pub struct Follower {
     verbosity: Verbosity,
     sessions: Vec<Followed>,
     after: Option<After>,
+    /// Where the last line was made, so that the lines made at the same
+    /// point by a later read number on from it.
+    last: Option<Made>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -916,6 +1010,7 @@ impl Follower {
             verbosity,
             sessions: vec![],
             after,
+            last: None,
         }
     }
 
@@ -931,7 +1026,8 @@ impl Follower {
                 session: 1,
                 line: 0,
             };
-            lines.extend(made(self.after, read, vec![self.header(0)]));
+            let header = vec![self.header(0)];
+            lines.extend(made(self.after, &mut self.last, read, header));
         }
         lines
     }
@@ -958,39 +1054,64 @@ impl Follower {
             let whole = ended || i + 1 < sessions.len();
             let unread = &record.output[followed.bytes_read.min(record.output.len())..];
             let complete = if whole { unread } else { whole_lines(unread) };
+            // A setup command shows once it has ended, with its session's
+            // header, before the session has started.
+            if complete.is_empty() && record.setup.is_some() {
+                followed.open(record, &mut shown);
+            }
             for line in complete.lines() {
+                followed.parser.line(line, record);
+                // Its header gives when it started, which its first line
+                // says, unless it showed before, and its setup command comes
+                // with it, ahead of what that line shows.
+                followed.open(record, &mut shown);
                 let read = ReadTo {
                     session,
                     line: followed.lines_read,
                 };
-                lines.extend(made(self.after, read, std::mem::take(&mut shown)));
-                followed.parser.line(line, record);
+                lines.extend(made(
+                    self.after,
+                    &mut self.last,
+                    read,
+                    std::mem::take(&mut shown),
+                ));
                 followed.lines_read += 1;
                 followed.show(self.verbosity, &mut shown);
             }
             followed.bytes_read += complete.len();
             // A session that ended having shown nothing shows as a
-            // transcript shows it: its header alone.
+            // transcript shows it: its header, and its setup command if it
+            // ran one.
             if whole {
-                followed.open(&mut shown);
+                followed.open(record, &mut shown);
             }
             let read = ReadTo {
                 session,
                 line: followed.lines_read,
             };
-            lines.extend(made(self.after, read, shown));
+            lines.extend(made(self.after, &mut self.last, read, shown));
         }
         lines
     }
 }
 
-fn made(after: Option<After>, read: ReadTo, lines: Vec<Line>) -> Vec<FollowedLine> {
+/// `lines` as made at `read`, after the `last` made, those after `after`.
+fn made(
+    after: Option<After>,
+    last: &mut Option<Made>,
+    read: ReadTo,
+    lines: Vec<Line>,
+) -> Vec<FollowedLine> {
+    let mut nth = last
+        .filter(|last| last.read == read)
+        .map_or(0, |last| last.nth);
     lines
         .into_iter()
-        .enumerate()
-        .map(|(i, line)| FollowedLine {
-            made: Made { read, nth: i + 1 },
-            line,
+        .map(|line| {
+            nth += 1;
+            let made = Made { read, nth };
+            *last = Some(made);
+            FollowedLine { made, line }
         })
         .filter(|followed| after.is_none_or(|after| after.precedes(followed.made)))
         .collect()
@@ -1007,14 +1128,23 @@ impl Followed {
         }
     }
 
-    fn open(&mut self, lines: &mut Vec<Line>) {
+    /// Shows its header and its setup command, unless they have shown.
+    fn open(&mut self, record: &SessionRecord, lines: &mut Vec<Line>) {
+        if self.stamper.is_some() {
+            return;
+        }
         open(&mut self.stamper, self.number, &self.parser.session, lines);
+        if let Some(setup) = &record.setup {
+            lines.push(SetupLine::of(self.number, setup));
+        }
     }
 
     fn show(&mut self, verbosity: Verbosity, lines: &mut Vec<Line>) {
         let session = &self.parser.session;
         for touch in std::mem::take(&mut self.parser.touched) {
             let stamper = open(&mut self.stamper, self.number, session, lines);
+            // Shown before it started, it times its entries from its start.
+            stamper.started(started_at(session));
             let (at, ended_at) = match touch {
                 Touch::Turn(turn) => {
                     let turn = &session.turns[turn];
@@ -1189,15 +1319,17 @@ fn account(call: &Call) -> String {
 pub fn render(transcript: &Transcript, verbosity: Verbosity, colour: bool) -> String {
     lines(transcript, verbosity)
         .iter()
-        .map(|line| render_line(line, colour))
+        .map(|line| render_line(line, verbosity, colour))
         .collect()
 }
 
-/// `line` as text, coloured if `colour`, ending in a newline.
-pub fn render_line(line: &Line, colour: bool) -> String {
+/// `line` as text, coloured if `colour`, ending in a newline. `verbosity`
+/// is that of the transcript `line` is of.
+pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
     let paint = Paint(colour);
     let mut shown = String::new();
     let Stamped { stamp, what } = match line {
+        Line::Setup(setup) => return render_setup(&setup.setup, verbosity, paint),
         Line::Header(header) => {
             let _ = match header {
                 Header::Run { run, sessions } => {
@@ -1280,6 +1412,41 @@ pub fn render_line(line: &Line, colour: bool) -> String {
             shown.push('\n');
         } else {
             let _ = writeln!(shown, "       {indent}{more}");
+        }
+    }
+    shown
+}
+
+impl SetupRecord {
+    /// The command, as its line shows it.
+    pub(crate) fn shown_command(&self) -> String {
+        one_line(&self.command, ARGUMENT_CHARS)
+    }
+
+    /// How it ended and how long it ran, as its line shows them.
+    pub(crate) fn account(&self) -> String {
+        // Whole seconds, as durations show.
+        let seconds = std::time::Duration::try_from_secs_f64(self.duration_seconds)
+            .map_or(0, |duration| duration.as_secs());
+        Phrase::from(format!("{}, ", self.status.account()))
+            .duration(seconds, None)
+            .to_string()
+    }
+}
+
+/// A setup command's line, with no time, then its output under it in full
+/// or when it failed.
+fn render_setup(setup: &Setup, verbosity: Verbosity, paint: Paint) -> String {
+    let Setup { ran, output } = setup;
+    let account = if ran.status.failed() {
+        paint.red(ran.account())
+    } else {
+        ran.account()
+    };
+    let mut shown = format!("       setup: {} → {account}\n", ran.shown_command());
+    if setup.output_shown(verbosity == Verbosity::Full) {
+        for line in output.trim_end().lines() {
+            let _ = writeln!(shown, "         {line}");
         }
     }
     shown

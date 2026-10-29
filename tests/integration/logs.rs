@@ -468,3 +468,111 @@ async fn following_a_run_that_has_ended_shows_its_transcript_and_exits() {
         assert_eq!(followed.stdout, shown.stdout, "{way:?}");
     }
 }
+
+/// `world_in_work_dir`'s, with `setup` the setup command of every stage.
+async fn world_setting_up_with(setup: &str) -> (World, tempfile::TempDir) {
+    let work_dir = tempfile::tempdir().unwrap();
+    let world = World::with(|config| {
+        config.work_dir = work_dir.path().join(REPO);
+        setting_up_with(config, setup);
+    })
+    .await;
+    (world, work_dir)
+}
+
+fn json_lines(output: &Output) -> Vec<serde_json::Value> {
+    output
+        .stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Setup; `docs/specs/monitoring.md`,
+/// logs, Setup.
+#[tokio::test]
+async fn logs_shows_a_setup_command_under_its_sessions_header_with_its_output_only_in_full() {
+    let (mut world, work_dir) = world_setting_up_with("echo 'added 3 packages'").await;
+    implement_as_recorded(&world);
+    world.store.open_issue(
+        "maintainer",
+        "Ship gh",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.poll().await;
+
+    let compact = lw_in(work_dir.path(), &["logs", "1"]).await;
+    let verbose = lw_in(work_dir.path(), &["logs", "1", "--verbose"]).await;
+    let json = lw_in(work_dir.path(), &["logs", "1", "--json"]).await;
+
+    assert_eq!(compact.code, Some(0), "{}", compact.stderr);
+    let compact: Vec<&str> = compact.stdout.lines().collect();
+    assert_eq!(
+        compact[1..3],
+        [
+            "session 1: started 2026-10-13 10:09:08 UTC",
+            "       setup: echo 'added 3 packages' → exit 0, 0s",
+        ]
+    );
+    assert!(compact[3].starts_with(" 0:03  Bash(ls;"), "{compact:#?}");
+    let verbose: Vec<&str> = verbose.stdout.lines().collect();
+    assert_eq!(
+        verbose[2..4],
+        [
+            "       setup: echo 'added 3 packages' → exit 0, 0s",
+            "         added 3 packages",
+        ]
+    );
+    assert!(verbose[4].starts_with(" 0:00  brief: "), "{verbose:#?}");
+    let json = json_lines(&json);
+    let mut setup = json[2].clone();
+    assert!(
+        setup["duration_seconds"].as_f64().is_some_and(|s| s < 10.0),
+        "{setup}"
+    );
+    setup["duration_seconds"] = json!(0);
+    assert_eq!(
+        setup,
+        json!({
+            "type": "setup",
+            "session": 1,
+            "command": "echo 'added 3 packages'",
+            "status": {"exited": 0},
+            "duration_seconds": 0,
+            "output": "added 3 packages\n",
+        })
+    );
+    assert_eq!(json[3]["type"], "tool");
+}
+
+/// `docs/specs/monitoring.md`, logs: the run picked is the latest that ran
+/// a setup command or started a session.
+#[tokio::test]
+async fn a_run_whose_setup_command_failed_shows_it_under_each_session_and_is_the_one_logs_shows() {
+    let (mut world, work_dir) =
+        world_setting_up_with("echo 'npm ERR! missing lockfile'; exit 3").await;
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    world.poll().await;
+
+    let shown = lw_in(work_dir.path(), &["logs", "1"]).await;
+    let json = lw_in(work_dir.path(), &["logs", "1", "--json"]).await;
+
+    assert_eq!(shown.code, Some(0), "{}", shown.stderr);
+    let setup = "       setup: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s\n         \
+                 npm ERR! missing lockfile\n";
+    assert_eq!(
+        shown.stdout,
+        format!("run: 1/triage-1\nsession 1\n{setup}session 2\n{setup}")
+    );
+    let lines = json_lines(&json);
+    let types: Vec<&str> = lines
+        .iter()
+        .map(|line| line["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["run", "session", "setup", "session", "setup"]);
+    assert_eq!(lines[2]["status"], json!({"exited": 3}));
+    assert_eq!(lines[2]["output"], "npm ERR! missing lockfile\n");
+}

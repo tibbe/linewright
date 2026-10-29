@@ -716,3 +716,148 @@ async fn the_run_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_un
     assert_passes_through_a_proxy(response.headers());
     web.stop().await;
 }
+
+/// `implemented_by`'s, with `setup` the setup command of every stage.
+async fn implemented_setting_up_with(setup: &str, implement: fn(&World)) -> World {
+    let world = World::with(|config| {
+        config.work_dir = config.work_dir.join(REPO);
+        setting_up_with(config, setup);
+    })
+    .await;
+    implement(&world);
+    world.store.open_issue(
+        "maintainer",
+        "Ship gh",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world
+}
+
+/// Each session's setup command, as its line, the output it opens to, and
+/// whether it starts open.
+fn setups_shown(html: &Html) -> Vec<(String, String, bool)> {
+    select(html, ".setup details")
+        .into_iter()
+        .map(|setup| {
+            let line = text(select_in(setup, "summary")[0]);
+            let output = select_in(setup, ".output")
+                .into_iter()
+                .map(text)
+                .collect::<String>();
+            (line, output, setup.attr("open").is_some())
+        })
+        .collect()
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Setup; The run page,
+/// Folding and Verbose.
+#[tokio::test]
+async fn the_run_page_shows_a_setup_command_before_its_sessions_entries_folded_to_its_line() {
+    let world = implemented_setting_up_with(
+        "echo 'added 3 packages'",
+        crate::logs::implement_as_recorded,
+    )
+    .await;
+    let (web, html) = run_page_of(world).await;
+    let verbose = web.page("/runs/1/implement-1?verbose=").await;
+
+    let line = "setup: echo 'added 3 packages' → exit 0, 0s".to_string();
+    assert_eq!(
+        setups_shown(&html),
+        [(line.clone(), "added 3 packages".to_string(), false)]
+    );
+    assert_eq!(
+        setups_shown(&verbose),
+        [(line, "added 3 packages".to_string(), true)]
+    );
+    // In its own section, after the session's header and before its entries.
+    let order: Vec<String> = select(&html, "#s1 h2, #s1 .setup, #s1 .entry")
+        .into_iter()
+        .take(3)
+        .map(|part| {
+            let part = part.value();
+            ["setup", "entry"]
+                .into_iter()
+                .find(|class| part.has_class(class, scraper::CaseSensitivity::CaseSensitive))
+                .unwrap_or(part.name())
+                .to_string()
+        })
+        .collect();
+    assert_eq!(order, ["h2", "setup", "entry"]);
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_page_of_a_run_whose_setup_command_failed_shows_it_open_under_each_session() {
+    let world =
+        with_issue_for_triage_setting_up_with("echo 'npm ERR! missing lockfile'; exit 3").await;
+    let web = Web::start(world).await;
+    web.eventually_page("/runs?item=1", |html| {
+        has_run(&runs_shown(html), "handed back", "1/triage-1")
+    })
+    .await;
+
+    let html = web.page("/runs/1/triage-1").await;
+
+    assert_eq!(heading(&html), ["1/triage-1", "session 1", "session 2"]);
+    let failed = (
+        "setup: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s".to_string(),
+        "npm ERR! missing lockfile".to_string(),
+        true,
+    );
+    assert_eq!(setups_shown(&html), [failed.clone(), failed]);
+    assert_no_status_by_colour_alone(&html);
+    web.stop().await;
+}
+
+/// `docs/specs/design_system.md`, The run page, Following.
+#[tokio::test]
+async fn the_run_page_follows_a_setup_command_once_it_has_ended_and_resumes_after_it_once() {
+    let world = with_issue_for_triage_setting_up_with("echo installing").await;
+    let agent = world.harness.hold();
+    let web = Web::start(world).await;
+    let installed = (
+        "setup: echo installing → exit 0, 0s".to_string(),
+        "installing".to_string(),
+        false,
+    );
+
+    // Ended, before its session has started.
+    let read = web
+        .eventually_page("/runs/1/triage-1", |html| !setups_shown(html).is_empty())
+        .await;
+    let events_path = events_path(&read).unwrap().to_string();
+    let mut events = stream_with_ids(&web, &events_path, None).await;
+    let mut from_the_start =
+        stream_with_ids(&web, "/events/runs/1/triage-1?follow=start", None).await;
+    agent.writes(&crate::local_api::turn_1()[..4].concat());
+    let after_the_page = transcript_events(&mut events, |sent| {
+        sent.iter().any(|(_, data)| data.contains("Bash"))
+    })
+    .await;
+    let followed = transcript_events(&mut from_the_start, |sent| {
+        sent.iter().any(|(_, data)| data.contains("Bash"))
+    })
+    .await;
+    // Resumed after the session's header, the run's heading coming first.
+    let mut resumed = stream_with_ids(&web, &events_path, Some(&followed[1].0)).await;
+    let again = transcript_events(&mut resumed, |sent| sent.len() >= followed.len() - 2).await;
+    drop(agent);
+
+    assert_eq!(heading(&read), ["1/triage-1", "session 1"]);
+    assert_eq!(setups_shown(&read), std::slice::from_ref(&installed));
+    assert!(
+        after_the_page
+            .iter()
+            .all(|(_, data)| !data.contains("s1-setup")),
+        "{after_the_page:?}"
+    );
+    let [(target, swap, html)] = &patches(&followed[2].1)[..] else {
+        panic!("{followed:?}")
+    };
+    assert_eq!((target.as_str(), swap.as_str()), ("#s1-setup", "outerHTML"));
+    assert_eq!(setups_shown(html), [installed]);
+    assert_eq!(again, followed[2..]);
+    web.stop().await;
+}

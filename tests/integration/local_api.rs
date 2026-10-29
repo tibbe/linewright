@@ -1462,7 +1462,7 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
                 r#"{"type":"run","run":"1/triage-1","sessions":1}"#
             ),
             event(
-                Some("1/triage-1:1.1.1"),
+                Some("1/triage-1:1.0.2"),
                 "line",
                 r#"{"type":"session","session":1,"started_at":"2026-10-13T10:09:08Z"}"#
             ),
@@ -2585,5 +2585,33 @@ async fn explain_names_the_file_of_the_repositorys_a_ticket_waits_for_and_its_er
         "{}",
         output.stdout
     );
+    answering.stop().await;
+}
+
+/// `docs/specs/monitoring.md`, logs, `--follow`: a session whose setup
+/// command has ended shows, and following it carries on from there.
+#[tokio::test]
+async fn logs_follow_shows_a_sessions_setup_command_once_and_then_its_entries() {
+    let world = with_issue_for_triage_setting_up_with("echo installing").await;
+    let agent = world.harness.hold();
+    let answering = Answering::start(world, false).await;
+    let setup = "       setup: echo installing → exit 0, 0s\n";
+    eventually_async(|| async { answering.lw(&["logs", "1"]).await.stdout.contains(setup) }).await;
+
+    let follow = Watching::start(answering.runtime_dir.path(), &["logs", "1", "--follow"]);
+    follow.shows(setup).await;
+    agent.writes(&turn_1()[..4].concat());
+    follow.shows("→ exit 0, 19 lines\n").await;
+    drop(agent);
+    let (code, shown, stderr) = follow.exits().await;
+
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(
+        shown.starts_with(&format!(
+            "run: 1/triage-1\nsession 1\n{setup} 0:03  Bash(ls;"
+        )),
+        "{shown}"
+    );
+    assert_eq!(shown.matches("setup:").count(), 1, "{shown}");
     answering.stop().await;
 }

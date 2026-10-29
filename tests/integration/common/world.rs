@@ -18,7 +18,7 @@ use linewright::store::Store;
 use linewright::store::local::{CheckRecord, LocalStore, Paused, Seed, Write};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::Pending;
-use linewright::work_settings::{Environments, Partial, WorkSettings};
+use linewright::work_settings::{Environments, Partial, Setup, WorkSettings};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -385,10 +385,29 @@ pub fn gated(world: &World, kind: WorkKind) -> Gate {
     gate
 }
 
+/// Sets `setup` as the setup command of every stage.
+pub fn setting_up_with(config: &mut FactoryConfig, setup: &str) {
+    config.work.flags_and_env.setup = Some(Setup::from(setup.to_string()));
+}
+
 /// A world whose work dir is `REPO`'s, holding an issue that needs triage,
 /// which each triage answers is ready for an agent.
 pub async fn with_issue_for_triage() -> World {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    with_issue_for_triage_where(|_| {}).await
+}
+
+/// [`with_issue_for_triage`]'s, with `setup` the setup command of every
+/// stage.
+pub async fn with_issue_for_triage_setting_up_with(setup: &str) -> World {
+    with_issue_for_triage_where(|config| setting_up_with(config, setup)).await
+}
+
+async fn with_issue_for_triage_where(adjust: impl FnOnce(&mut FactoryConfig)) -> World {
+    let world = World::with(|config| {
+        config.work_dir = config.work_dir.join(REPO);
+        adjust(config);
+    })
+    .await;
     world.harness.on(WorkKind::Triage, |_| {
         Ok(serde_json::json!({
             "outcome": "ready-for-agent",

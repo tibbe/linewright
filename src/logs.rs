@@ -12,8 +12,9 @@ use crate::transcript::{
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "QueryString", into = "QueryString")]
 pub enum Which {
-    /// The item's run in flight, or else its latest run that started a
-    /// session.
+    /// The item's run in flight, or else its latest run that ran a setup
+    /// command or started a session: a session is recorded before its setup
+    /// command runs.
     Item(Number),
     /// The run `id`, which must be a run on `item` when one is given.
     Run { id: RunId, item: Option<Number> },
@@ -148,7 +149,11 @@ pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsE
             last.output
                 .truncate(transcript::whole_lines(&last.output).len());
         }
-        let written = records.iter().rposition(|record| !record.output.is_empty());
+        // A session's setup command shows ahead of its output, as made
+        // before its first line.
+        let written = records
+            .iter()
+            .rposition(|record| record.setup.is_some() || !record.output.is_empty());
         written.map_or(InFlight::Unread, |i| {
             InFlight::ReadTo(ReadTo {
                 session: i + 1,

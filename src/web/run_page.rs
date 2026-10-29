@@ -30,7 +30,8 @@ use crate::logs::{Following, LogsError, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
-    self, EntryLine, FollowedLine, Header, Line, Made, Stamped, ToolLine, Under, Verbosity,
+    self, EntryLine, FollowedLine, Header, Line, Made, Setup, SetupLine, Stamped, ToolLine, Under,
+    Verbosity,
 };
 
 /// A change to the page's transcript that a line of it makes.
@@ -80,6 +81,8 @@ struct SessionView {
     started_at: Option<Timestamp>,
     /// `None` for a session recorded before Linewright kept it.
     ran: Option<Ran>,
+    /// Its setup command, once its line has come.
+    setup: Option<Setup>,
     /// In the order they first appeared, so that each keeps its anchor
     /// however the transcript is read: the `k`th is `s{number}-e{k}`.
     entries: Vec<EntryView>,
@@ -139,6 +142,7 @@ impl RunView {
                     number: *session,
                     started_at: *started_at,
                     ran: following.ran(*session).cloned(),
+                    setup: None,
                     entries: vec![],
                     own: vec![],
                     calls: HashMap::new(),
@@ -149,8 +153,24 @@ impl RunView {
                     html: self.session_html(added),
                 }]
             }
+            Line::Setup(line) => self.setup(line),
             Line::Entry(stamped) => self.entry(stamped),
         }
+    }
+
+    fn setup(&mut self, line: &SetupLine) -> Vec<Patch> {
+        let Some(session) = line
+            .session
+            .checked_sub(1)
+            .and_then(|i| self.sessions.get_mut(i))
+        else {
+            return vec![];
+        };
+        session.setup = Some(line.setup.clone());
+        vec![Patch::Replace {
+            id: format!("s{}-setup", session.number),
+            html: setup_html(session, self.verbose),
+        }]
     }
 
     fn entry(&mut self, stamped: &Stamped) -> Vec<Patch> {
@@ -252,8 +272,9 @@ impl RunView {
             .map(|&i| entry_html(session, i, self.verbose))
             .collect();
         let ran = ran_html(session.ran.as_ref());
+        let setup = setup_html(session, self.verbose);
         format!(
-            r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2>{ran}<ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
+            r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2>{ran}{setup}<ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
         )
     }
 
@@ -298,6 +319,39 @@ fn ran_html(ran: Option<&Ran>) -> String {
         .collect();
     format!(
         r#"{said}<div class="layers text-sm text-muted"><ul class="ml-4">{settings}</ul><ul class="ml-4 font-mono">{prompts}</ul></div>"#
+    )
+}
+
+/// The session's setup command, in a section of its own: its line, opening
+/// to its output, open from the start when it failed, and with `verbose`;
+/// empty until its line has come.
+fn setup_html(session: &SessionView, verbose: bool) -> String {
+    let n = session.number;
+    let Some(setup) = &session.setup else {
+        return format!(r#"<div class="setup" id="s{n}-setup"></div>"#);
+    };
+    let Setup { ran, output } = setup;
+    let account = if ran.status.failed() {
+        status_html(Tone::Failure, &ran.account())
+    } else {
+        html::escape(&ran.account()).to_string()
+    };
+    let open = if setup.output_shown(verbose) {
+        " open"
+    } else {
+        ""
+    };
+    let output = if output.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<pre class="output my-1 ml-[4.5em] max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre>"#,
+            html::escape(output.trim_end())
+        )
+    };
+    format!(
+        r#"<div class="setup font-mono text-sm" id="s{n}-setup"><details{open}><summary class="cursor-pointer wrap-anywhere"><span class="line"><span class="inline-block min-w-[4em]"></span> setup: {command} → {account}</span></summary>{output}</details></div>"#,
+        command = html::escape(&ran.shown_command()),
     )
 }
 
