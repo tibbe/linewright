@@ -51,6 +51,10 @@ A template holding a session's task and result contract, which Linewright
 fills in and sends the session.
 _Avoid_: instructions, brief
 
+**Attachment**:
+A file a session makes for Linewright to post with the Markdown of its result.
+_Avoid_: artifact, asset, media
+
 ### Work
 
 **Item**:

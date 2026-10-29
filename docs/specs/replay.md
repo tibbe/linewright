@@ -28,8 +28,8 @@ spec change (the PR's title, body and the commits it merged) or an issue (its
 text and comments).
 
 - **Capturing.** `lw capture <repo>#<N> DIR` writes one from GitHub; run on
-  the factory's machine it includes the transcripts of the sessions that
-  handled it.
+  the factory's machine it includes the transcripts and attachments of the
+  sessions that handled it.
 - **Transcripts.** Linewright keeps every run's transcripts (see
   [Runs](runs.md)), so a case can be captured with its transcripts later.
 
@@ -49,6 +49,8 @@ seeded from the case.
 - **The output.** The output directory holds everything the replay produced,
   as plain files a coding agent reads directly. Replay runs the whole
   pipeline; what a stage did is read from its transcript.
+- **Attachments.** The local store keeps each attachment once, as a file,
+  and the Markdown that refers to it points at it by a relative path.
 - **What agents see.** Agents see only the case: a session reads issues,
   comments and spec diffs from its brief and hands back tickets, comments and
   PR bodies in its result, and the manager alone writes to the store. In

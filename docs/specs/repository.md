@@ -34,7 +34,8 @@ Linewright needs a GitHub repository and a GitHub user account of its own in
 it.
 
 - **Linewright's account.** Its token lets it push branches, open pull
-  requests, and read and write issues and labels. Everything Linewright does
+  requests, read and write issues and labels, and attach files to what it
+  posts ([Attachments](runs.md#attachments)). Everything Linewright does
   on GitHub carries that identity, so a maintainer can review its PRs and
   see its claims as assignments. With `--auto-merge`, the account must not be
   able to bypass the default branch's rules (no admin rights, not on a

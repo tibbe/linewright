@@ -86,7 +86,8 @@ only the manager writes to the store.
 1. The manager puts what the session needs from the store (issue, comments, spec
    diff, PR comments) into its brief.
 2. The session works in its own clone under the work directory and commits
-   there.
+   there, and puts its attachments in its attachments directory
+   ([Attachments](runs.md#attachments)).
 3. The session's final message is JSON: the outcome, tickets, comments, the PR's
    title and body.
 4. The manager accepts the result and applies it through the store
@@ -112,8 +113,9 @@ their work nothing.
   else, such as an agent writing to GitHub outside its result, is not
   prevented.
 - **Secrets are redacted.** What Linewright keeps, logs or posts has secrets
-  replaced by `[redacted]`, except the commits it pushes: a commit holding a
-  secret is refused ([Runs](runs.md)). Redaction is best effort. A secret of 1
+  replaced by `[redacted]`, except the commits it pushes and the attachments
+  it uploads: a commit or an attachment holding a secret is refused
+  ([Runs](runs.md)). Redaction is best effort. A secret of 1
   to 5 characters is neither redacted nor refused, which Linewright warns of at
   startup, naming its variable; an empty one is ignored.
 - **A secret** is the value of a variable Linewright reads a credential from
