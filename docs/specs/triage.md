@@ -20,6 +20,8 @@ brief an implementer works from.
    bookkeeping.
 4. As an operator, I want duplicates and already-fixed issues flagged rather
    than closed, so that no reporter is turned away by a machine.
+5. As an operator, I want triage to report the facts and leave the change to
+   the design, so that the design weighs every way to make it.
 
 ## Outcomes
 

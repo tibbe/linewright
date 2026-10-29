@@ -5,7 +5,7 @@ description: Move issues and external PRs through a state machine of triage role
 
 # Triage
 
-You triage one issue: categorize it, verify its claim and end in one of three
+You triage one issue: verify its claim, categorize it and end in one of three
 outcomes, with the comment that explains it. The issue, its comments and the
 categories you may choose from are in your task. You may read GitHub but
 must not write to it: everything you want posted goes in your result, and
@@ -49,10 +49,7 @@ only after driving it as far as it goes.
    - **Prior rejection**: read `.out-of-scope/*.md` if present. A match by
      concept (not keyword) means `ready-for-human`, quoting the earlier
      decision and its reason.
-2. **Categorize.** Choose exactly one category from your task's list: a bug
-   when something is broken, otherwise the category for new features or
-   improvements (or tasks, where the repository has that type).
-3. **Verify the claim.** For a bug, reproduce it yourself, with whatever your
+2. **Verify the claim.** For a bug, reproduce it yourself, with whatever your
    environment gives you: the repository and its history, the tools and
    credentials installed and configured, production where you have access.
    Check what you have rather than assume, and follow the repository's agent
@@ -63,7 +60,17 @@ only after driving it as far as it goes.
    check whether the behavior already exists. Note the result: confirmed (with
    the code path), or failed, with what you tried. A confirmed claim makes a
    much stronger brief.
-4. **Decide.** Weigh the issue against the spec. Work the spec already asks for,
+3. **Find the cause.** For a reproduced bug, generate 3–5 ranked hypotheses
+   before testing any of them. Each must be falsifiable: state the prediction
+   it makes ("If <X> is the cause, then <changing Y> will make the bug
+   disappear"). Test them one variable at a time. Note the hypothesis that
+   turned out correct and the probe that showed it; one you could not test
+   stays a hypothesis.
+4. **Categorize.** Choose exactly one category from your task's list, from
+   what you found: a bug when something is broken, otherwise the category for
+   new features or improvements (or tasks, where the repository has that
+   type).
+5. **Decide.** Weigh the issue against the spec. Work the spec already asks for,
    or that it leaves to the implementer and that is unambiguous, is
    `ready-for-agent`. An issue that asks for behavior the spec rules out, or
    that needs the spec to change, is `ready-for-human`: the spec is the
@@ -74,53 +81,41 @@ only after driving it as far as it goes.
    decision will follow, because that decision usually depends on the facts.
    A fact you could find yourself is not owed.
    Sharpen fuzzy terms against `GLOSSARY.md` in your comment; don't edit it.
-5. **Write the comment** for the outcome. Don't add a disclaimer or say who
+6. **Write the comment** for the outcome. Don't add a disclaimer or say who
    wrote it: the comment is posted as Linewright.
 
 ## Writing the agent brief
 
-The brief is the authoritative specification an agent will work from; the
-issue body and discussion are context. It states **what the agent should
-do**.
+The brief establishes the facts, so that the design that follows doesn't
+have to do the research. The decisions, what to change and how to test it,
+stay the design's. Issue readiness is separate from PR acceptance: the brief
+requires no tests of an unwritten fix.
 
 - **Durability over precision.** The issue may wait days or weeks while the
   code changes. Describe interfaces, types and behavioral contracts; name
   types, function signatures or config shapes to look for. Don't reference
   file paths or line numbers, and don't assume today's structure will stay.
 - **Behavioral, not procedural.** Say what the system should do, not how to
-  implement it. Good: "The `SkillConfig` type should accept an optional
-  `schedule` field of type `CronExpression`". Bad: "Open src/types/skill.ts and
-  add a field on line 42".
-- **Complete acceptance criteria.** Concrete, testable, each independently
-  verifiable. Good: "Running `triage list --json` emits valid JSON for both
-  success and error cases". Bad: "Triage should work correctly".
-- **Explicit scope boundaries.** State what is out of scope, so the agent
-  doesn't gold-plate or assume adjacent features.
+  implement it. Good: "When a user runs `/triage` with no arguments, they
+  should see a summary of issues needing attention". Bad: "Add a switch
+  statement in the main handler function".
 
 ```markdown
 ## Agent Brief
 
 **Category:** <category>
-**Summary:** one-line description of what needs to happen
+**Summary:** one line: what happens, and what should happen instead
 
 **Current behavior:**
 What happens now. For bugs, the broken behavior (and how you reproduced it).
 For enhancements, the status quo the feature builds on.
 
-**Desired behavior:**
-What should happen once the work is done, including edge cases and errors.
+**Expected behavior:**
+What should happen, as the spec (quoted) or the reporter states it. Mark each
+case neither settles as [NEEDS CLARIFICATION: specific question].
 
-**Key interfaces:**
-- `TypeName`: what needs to change and why
-- `functionName()` return type: what it returns now vs what it should return
-- Config shape: any new options
-
-**Acceptance criteria:**
-- [ ] Specific, testable criterion 1
-- [ ] Specific, testable criterion 2
-
-**Out of scope:**
-- What should NOT be changed or addressed here
+**Cause:**
+For bugs, the hypothesis that turned out correct, and the probe that showed it.
 ```
 
 ## Needs-info notes
