@@ -37,12 +37,12 @@ fn not_a_prompt(path: &str) -> Unusable {
 fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     let repository = layer(
         Layer::Repository,
-        &[("follow-ups/parse-error.md", "The repository's: {{error}}")],
+        &[("follow-ups/result-error.md", "The repository's: {{error}}")],
     );
     let operator = layer(
         Layer::Operator,
         &[
-            ("follow-ups/parse-error.md", "The operator's: {{error}}"),
+            ("follow-ups/result-error.md", "The operator's: {{error}}"),
             ("follow-ups/loose-ends.md", "The operator's: {{problem}}"),
         ],
     );
@@ -52,7 +52,7 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     assert_eq!(resolved.unusable, []);
     let briefs = resolved.briefs;
     assert_eq!(
-        prompts::parse_error(&briefs.prompts, "no JSON"),
+        prompts::result_error(&briefs.prompts, "no JSON"),
         "The repository's: no JSON"
     );
     assert_eq!(
@@ -64,7 +64,7 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
         .iter()
         .map(|(path, layer)| (path.as_str(), *layer))
         .collect();
-    assert_eq!(layers["follow-ups/parse-error.md"], Layer::Repository);
+    assert_eq!(layers["follow-ups/result-error.md"], Layer::Repository);
     assert_eq!(layers["follow-ups/loose-ends.md"], Layer::Operator);
     assert_eq!(layers["triage.md"], Layer::Linewright);
     assert_eq!(layers.len(), 11);
@@ -76,11 +76,11 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
 fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
     let repository = layer(
         Layer::Repository,
-        &[("follow-ups/parse-error.md", "No placeholder.")],
+        &[("follow-ups/result-error.md", "No placeholder.")],
     );
     let operator = layer(
         Layer::Operator,
-        &[("follow-ups/parse-error.md", "The operator's: {{error}}")],
+        &[("follow-ups/result-error.md", "The operator's: {{error}}")],
     );
 
     let resolved = Briefs::resolve(&[&repository, &operator]);
@@ -88,18 +88,18 @@ fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
     assert_eq!(
         resolved.unusable,
         [Unusable {
-            path: "follow-ups/parse-error.md".into(),
+            path: "follow-ups/result-error.md".into(),
             layer: Layer::Repository,
             error: "it lacks the placeholders `{{error}}`".into(),
             holds: Readers::Every,
         }]
     );
     assert_eq!(
-        prompts::parse_error(&resolved.briefs.prompts, "no JSON"),
+        prompts::result_error(&resolved.briefs.prompts, "no JSON"),
         "The operator's: no JSON"
     );
     assert_eq!(
-        resolved.briefs.layers()["follow-ups/parse-error.md"],
+        resolved.briefs.layers()["follow-ups/result-error.md"],
         Layer::Operator
     );
 }
@@ -116,7 +116,7 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
             (".DS_Store", "Finder's."),
             (".git/HEAD", "ref: refs/heads/main"),
             ("parts/.facts.md.swp", "An editor's."),
-            ("follow-ups/parse-error.md", "Ours: {{error}}"),
+            ("follow-ups/result-error.md", "Ours: {{error}}"),
         ])
         .into_iter()
         .chain([
@@ -131,7 +131,7 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
 
     assert_eq!(
         layer.files.keys().collect::<Vec<_>>(),
-        ["follow-ups/parse-error.md"]
+        ["follow-ups/result-error.md"]
     );
     assert_eq!(
         unusable,
@@ -312,7 +312,7 @@ fn the_prompts_a_layer_may_override_are_the_stage_prompts_and_the_follow_ups() {
             "fix-ci.md",
             "update.md",
             "automation.md",
-            "follow-ups/parse-error.md",
+            "follow-ups/result-error.md",
             "follow-ups/loose-ends.md",
             "follow-ups/usage-limit-reset.md",
             "follow-ups/late-feedback.md",
@@ -334,7 +334,7 @@ fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
     let fix_ci = RunKind::Stage(WorkKind::FixCi);
     let implement = RunKind::Stage(WorkKind::Implement);
     let fix_ci_prompt = prompts::readers("fix-ci.md").unwrap();
-    let parse_error = prompts::readers("follow-ups/parse-error.md").unwrap();
+    let result_error = prompts::readers("follow-ups/result-error.md").unwrap();
     let automation = linewright::automation::parse(
         &"weekly".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\n---\nLook.\n",
@@ -344,5 +344,5 @@ fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
     assert!(fix_ci_prompt.read_by(&fix_ci));
     assert!(!fix_ci_prompt.read_by(&implement));
     assert!(!fix_ci_prompt.read_by(&RunKind::Automation(&automation)));
-    assert!(parse_error.read_by(&RunKind::Automation(&automation)));
+    assert!(result_error.read_by(&RunKind::Automation(&automation)));
 }

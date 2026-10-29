@@ -208,7 +208,7 @@ values!(Stopped {
 });
 values!(FullLog { job, repo });
 values!(FiledGapsPart { gaps });
-values!(ParseError { error });
+values!(ResultError { error });
 values!(LooseEnds { problem });
 values!(HeldSecret {
     commit,
@@ -379,7 +379,7 @@ pub struct Prompts {
     fix_ci: Template<FixCi>,
     update: Template<PullRequest>,
     automation: Template<AutomationRun>,
-    parse_error: Template<ParseError>,
+    result_error: Template<ResultError>,
     loose_ends: Template<LooseEnds>,
     usage_limit_reset: Template<NoValues>,
     late_feedback: Template<LateFeedback>,
@@ -483,7 +483,7 @@ impl Prompts {
             fix_ci: template!(reader, "fix-ci.md", FIX_CI),
             update: template!(reader, "update.md", UPDATE),
             automation: template!(reader, "automation.md", AUTOMATIONS),
-            parse_error: template!(reader, "follow-ups/parse-error.md", Readers::Every),
+            result_error: template!(reader, "follow-ups/result-error.md", Readers::Every),
             loose_ends: template!(reader, "follow-ups/loose-ends.md", BRANCH_WORK),
             usage_limit_reset: template!(reader, "follow-ups/usage-limit-reset.md", Readers::Every),
             late_feedback: template!(reader, "follow-ups/late-feedback.md", PULL_WORK),
@@ -822,8 +822,8 @@ pub fn automation(prompts: &Prompts, repo: &Repo, automation: &Automation) -> St
     })
 }
 
-pub fn parse_error(prompts: &Prompts, error: &str) -> String {
-    prompts.parse_error.fill(&ParseError {
+pub fn result_error(prompts: &Prompts, error: &str) -> String {
+    prompts.result_error.fill(&ResultError {
         error: error.into(),
     })
 }

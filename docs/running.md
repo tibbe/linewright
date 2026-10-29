@@ -67,7 +67,7 @@ pipeline's for its runs.
 `prompts` names a directory of your own versions of the prompts Linewright sends
 sessions, laid out as Linewright's own in
 [`briefs/prompts/`](../briefs/prompts/), such as `implement.md` or
-`follow-ups/parse-error.md`. Each file in it is taken in place of Linewright's,
+`follow-ups/result-error.md`. Each file in it is taken in place of Linewright's,
 and the rest stay Linewright's. Linewright logs at startup which files it takes
 from the directory, and exits with an error naming every file in it that is not
 one of its prompts, is not UTF-8 text, or whose placeholders are not the

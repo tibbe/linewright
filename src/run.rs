@@ -820,7 +820,7 @@ impl From<anyhow::Error> for Rejection {
 
 /// Sends a result that does not parse back to the session with its `error`.
 fn parse_retry(ctx: &Ctx) -> impl Fn(String) -> Rejection + '_ {
-    |error| Rejection::Retry(prompts::parse_error(&ctx.with.briefs.prompts, &error))
+    |error| Rejection::Retry(prompts::result_error(&ctx.with.briefs.prompts, &error))
 }
 
 async fn converse<T, F, Fut>(

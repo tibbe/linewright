@@ -471,7 +471,7 @@ async fn the_files_asked_for_are_read_from_the_head_of_the_branch_leaving_out_pa
                 (".linewright/config.toml", "model = \"opus\"\n"),
                 (".linewright/prompts/triage.md", "Triage it.\n"),
                 (
-                    ".linewright/prompts/follow-ups/parse-error.md",
+                    ".linewright/prompts/follow-ups/result-error.md",
                     "Parse error.\n",
                 ),
             ],
@@ -491,7 +491,7 @@ async fn the_files_asked_for_are_read_from_the_head_of_the_branch_leaving_out_pa
         .unwrap();
     let paths = [
         ".linewright/config.toml",
-        ".linewright/prompts/follow-ups/parse-error.md",
+        ".linewright/prompts/follow-ups/result-error.md",
         ".linewright/prompts/design.md",
         ".linewright/prompts/follow-ups",
     ]
@@ -507,7 +507,7 @@ async fn the_files_asked_for_are_read_from_the_head_of_the_branch_leaving_out_pa
                 Blob::Text("model = \"opus\"\n".into())
             ),
             (
-                ".linewright/prompts/follow-ups/parse-error.md".to_string(),
+                ".linewright/prompts/follow-ups/result-error.md".to_string(),
                 Blob::Text("Parse error.\n".into())
             ),
         ])
@@ -550,7 +550,7 @@ async fn every_file_under_a_directory_is_listed_by_its_path_under_it() {
                 (".linewright/config.toml", "model = \"opus\"\n"),
                 (".linewright/prompts/triage.md", "Triage it.\n"),
                 (
-                    ".linewright/prompts/follow-ups/parse-error.md",
+                    ".linewright/prompts/follow-ups/result-error.md",
                     "Parse error.\n",
                 ),
                 ("README.md", "Read me.\n"),
@@ -567,7 +567,7 @@ async fn every_file_under_a_directory_is_listed_by_its_path_under_it() {
         files,
         [
             "config.toml",
-            "prompts/follow-ups/parse-error.md",
+            "prompts/follow-ups/result-error.md",
             "prompts/triage.md"
         ]
     );

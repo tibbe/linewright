@@ -1,11 +1,11 @@
 # Tuning the briefs
 
-Each stage's agent works from a brief in [`briefs/`](../briefs/): the skills
-in `plugin/` and the prompts in `prompts/`, as its README describes. A
-`--prompts` directory is laid out as `prompts/` is, such as `implement.md` and
-`follow-ups/parse-error.md`, and holds only the prompts it changes: the rest are
-Linewright's own. Any other file in it is an error. The skills are built in, so
-a change to one is tried by editing `briefs/plugin/` and rebuilding. To try a
+Each stage's agent works from a brief in [`briefs/`](../briefs/): the skills in
+`plugin/` and the prompts in `prompts/`, as its README describes. A `--prompts`
+directory is laid out as `prompts/` is, such as `implement.md` and
+`follow-ups/result-error.md`, and holds only the prompts it changes: the rest
+are Linewright's own. Any other file in it is an error. The skills are built in,
+so a change to one is tried by editing `briefs/plugin/` and rebuilding. To try a
 change to a prompt against a real case:
 
 ```sh

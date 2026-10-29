@@ -1121,7 +1121,7 @@ async fn a_spec_changes_runs_recorded_as_tickets_by_the_previous_version_are_des
 #[tokio::test]
 async fn an_operators_prompt_is_sent_and_recorded_as_the_operators() {
     let work_dir = tempfile::tempdir().unwrap();
-    let operators = prompts_with("follow-ups/parse-error.md", |text| {
+    let operators = prompts_with("follow-ups/result-error.md", |text| {
         format!("The operator's follow-up.\n\n{text}")
     });
     let mut world = World::with(|config| {
@@ -1148,7 +1148,7 @@ async fn an_operators_prompt_is_sent_and_recorded_as_the_operators() {
     );
     let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
     let prompts = &answer["runs"][0]["sessions"][0]["layers"]["prompts"];
-    assert_eq!(prompts["follow-ups/parse-error.md"], "operator");
+    assert_eq!(prompts["follow-ups/result-error.md"], "operator");
     assert_eq!(prompts["triage.md"], "linewright");
 }
 
