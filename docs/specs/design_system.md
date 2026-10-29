@@ -73,12 +73,18 @@
   it.
 - **Times.** Each entry starts with the time since its session started, as
   h:mm:ss with the hours left out under an hour, such as `2:10` or
-  `1:02:10`, not as a duration is shown, so that the entries align.
+  `1:02:10`, not as a duration is shown, so that the entries align. A setup
+  command has none.
 - **Entries.** The agent's messages show in full. Each tool call shows on one
   line: the tool, its main argument and a short account of its result, such
   as the lines read, the exit status or, for a sub-agent, the count of its
   tool calls and how long it ran, or `running` while the call has not
   returned. A sub-agent's work shows under the call that started it.
+- **Setup.** A session's setup command ([Setup](runs.md#setup)) shows before
+  its transcript in a section of its own, under that session whether or not
+  it started: a line with the command, its exit status and how long it ran,
+  then its output, which shows only in full or when the command failed. An
+  empty one shows nothing.
 - **In full.** A transcript in full shows everything it holds, including the
   agent's thinking, each tool's full input and result, and the brief and
   follow-ups.
@@ -298,7 +304,9 @@ came from.
   them the run's item as in the Item column of [Lists of runs](#lists-of-runs).
 - **Folding.** A tool call's line opens on click to the tool's full input and
   result; a call that failed starts open. A sub-agent's work starts folded to
-  the line of the call that started it, with the count of its entries.
+  the line of the call that started it, with the count of its entries. A
+  setup command's line opens on click to its output; one that failed starts
+  open.
 - **Verbose.** A switch, set once for the page, shows the transcripts in full,
   with everything open.
 - **Following.** A run in flight is followed. The page stays at the bottom

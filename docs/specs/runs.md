@@ -43,6 +43,34 @@ has no item.
   clone, or in none where its work needs no agent, such as an update without
   a conflict.
 
+## Setup
+
+Linewright runs the setup command in each session's clone before the session
+starts.
+
+- **The command.** The `setup` setting
+  ([Stage settings](operation.md#stage-settings)), run by `bash` in the root of
+  the clone, with nothing on its standard input, in the session's environment
+  ([Sessions' environment](operation.md#sessions-environment)). An empty one
+  runs nothing.
+- **When.** Once in each clone a session works in, on the branch as the clone
+  checked it out, before the run brings the branch up to date with the default
+  branch ([Keeping up to date](pull_requests.md#keeping-up-to-date)). A run
+  that starts no session, such as an update without a conflict, runs none.
+- **Its timeout.** The setup command has a timeout of its own, as long as its
+  session's.
+- **Failing.** A setup command that exits with a non-zero status or times out
+  has failed, and its session does not start. Its failure is an
+  infrastructure failure ([Ending](#ending)), but one from a timeout is not
+  retried, and a hand-back for it gives the tail of the setup command's
+  output.
+- **Cancelling.** A run cancelled while its setup command runs ends the
+  command at once.
+- **What it leaves running.** Processes the setup command leaves running end
+  once the run is done with the clone.
+- **Its output** is kept with the run's transcripts
+  ([Transcripts](design_system.md#transcripts)).
+
 ## Contract
 
 Each stage's area decides its session's contract: the value Linewright fills
@@ -188,3 +216,5 @@ tickets.
 
 - Resuming, after a restart, a session that was waiting out the usage limit.
 - Slowing down as the usage limit approaches, before a session is refused.
+- A teardown command, run as a clone is removed to release what lives outside
+  it, such as a container its setup command started.

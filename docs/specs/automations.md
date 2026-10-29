@@ -37,13 +37,14 @@ max-issues: 3
 Look at the bugs fixed in the past week ...
 ```
 
-| key           | meaning                                 | default           |
-| ------------- | --------------------------------------- | ----------------- |
-| `on.schedule` | when it runs: a cron expression, in UTC | required          |
-| `timeout`     | the session timeout of its runs         | `session-timeout` |
-| `model`       | the model of its runs                   | `model`           |
-| `effort`      | the effort of its runs                  | `effort`          |
-| `max-issues`  | the most issues one run files           | 3                 |
+| key           | meaning                                                | default           |
+| ------------- | ------------------------------------------------------ | ----------------- |
+| `on.schedule` | when it runs: a cron expression, in UTC                | required          |
+| `timeout`     | the session timeout of its runs                        | `session-timeout` |
+| `model`       | the model of its runs                                  | `model`           |
+| `effort`      | the effort of its runs                                 | `effort`          |
+| `setup`       | the setup command of its runs ([Setup](runs.md#setup)) | `setup`           |
+| `max-issues`  | the most issues one run files                          | 3                 |
 
 - **A file that does not parse.** Every file in `.linewright/automations/`,
   hidden files aside, is an automation file; one that does not parse is

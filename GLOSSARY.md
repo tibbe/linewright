@@ -55,6 +55,13 @@ _Avoid_: instructions, brief
 A file a session makes for Linewright to post with the Markdown of its result.
 _Avoid_: artifact, asset, media
 
+**Setup command**:
+The command that prepares a session's clone before the session starts, such
+as by installing dependencies.
+_Avoid_: setup script, setup steps, setup hook, init script, install script,
+bootstrap, provisioning, lifecycle script, post-create command, pre-start
+hook, build script
+
 ### Work
 
 **Item**:

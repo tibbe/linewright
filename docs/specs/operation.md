@@ -103,6 +103,7 @@ operator's file, then default.
 | `session-pass-env` (variable names)          | none                                        |
 | `secrets` (variable names)                   | none                                        |
 | `session-timeout`                            | 60m                                         |
+| `setup` (a command, [Setup](runs.md#setup))  | none                                        |
 | `result-retries`                             | 1                                           |
 | `ci-grace`                                   | 5m                                          |
 | `ci-timeout`                                 | 6h                                          |
@@ -158,6 +159,7 @@ stage's own table sets them.
 | `model`            | replaces the whole pipeline's           |
 | `effort`           | replaces the whole pipeline's           |
 | `session-timeout`  | replaces the whole pipeline's           |
+| `setup`            | replaces the whole pipeline's           |
 | `session-env`      | adds its values to the whole pipeline's |
 | `session-pass-env` | adds its names to the whole pipeline's  |
 
@@ -175,10 +177,10 @@ stage's own table sets them.
 The repository configures the work its agents do in `.linewright/config.toml`
 on its default branch, the same TOML as the operator's file.
 
-- **Its keys.** `model`, `effort` and `session-timeout`, for the whole
+- **Its keys.** `model`, `effort`, `session-timeout` and `setup`, for the whole
   pipeline and in stage tables. Any other key is an error: the deployment's
-  settings are the operator's, and so are `session-env`, `session-pass-env`
-  and `secrets`.
+  settings are the operator's, and so are `session-env`, `session-pass-env` and
+  `secrets`.
 - **When it is read, and a file with an error.** As for every file of
   Linewright's in the repository
   ([Linewright's files](repository.md#linewrights-files)).

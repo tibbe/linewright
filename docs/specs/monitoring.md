@@ -112,7 +112,7 @@ its run ID, item, stage, start, duration and outcome.
 ## logs
 
 `logs N` shows the transcript of #N's run in flight, or else of its latest run
-that started a session.
+that ran a setup command or started a session.
 
 - **Another run.** `--run ID` picks another run.
 - **The transcripts.** `logs` shows the run's transcripts as
@@ -123,6 +123,8 @@ that started a session.
 - **`--verbose`.** It shows the transcripts in full.
 - **`--follow`.** It shows the transcripts so far, then follows them, and ends
   when the run ends.
+- **Setup.** `logs --json` gives a setup command as one object of its own
+  once it ends: the command, its exit status, how long it ran and its output.
 - **No session.** For a run that started no session, `logs` says so.
 
 ## Output

@@ -63,10 +63,12 @@ during the session.
 - **Each session is in its own clone**, without permission prompts, behind
   one harness interface. The model and effort are configuration, set for the
   session; its sub-agents' the harness settles.
-- **Isolation.** Sessions running at once cannot disturb each other, and a
-  session never depends on what an earlier session left behind or on the host's
-  user-level setup. Isolation is of what sessions can observe of each other, not
-  of where they run.
+- **Isolation.** Linewright keeps sessions running at once from disturbing
+  each other, and a session from depending on what an earlier session left
+  behind or on the host's user-level setup. Isolation is best effort, of what
+  sessions can observe of each other, not of where they run: sessions share the
+  host and its user, so what a session or its setup command
+  ([Setup](runs.md#setup)) reaches outside its clone is not isolated.
 - **Briefs are files**: the skills in `briefs/plugin/`, given to every
   session, and the prompts in `briefs/prompts/`, in layers
   ([Prompts](operation.md#prompts)).
