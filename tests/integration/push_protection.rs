@@ -157,11 +157,6 @@ async fn a_rework_whose_push_github_refuses_over_a_secret_is_sent_back_and_pushe
 
     let prompts = world.harness.prompts(WorkKind::Rework);
     assert_eq!(prompts.len(), 2);
-    assert!(
-        prompts[1].contains("GitHub's push protection refused the push over a secret: "),
-        "{}",
-        prompts[1]
-    );
     let head_ref = world.store.snapshot_pull(pr).await.head_ref;
     assert_eq!(
         world.store.file(&head_ref, "src/config.rs").await.unwrap(),

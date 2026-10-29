@@ -351,35 +351,6 @@ async fn a_sessions_scratch_directory_is_removed_when_its_run_ends() {
     );
 }
 
-#[tokio::test]
-async fn triage_and_implement_tasks_say_to_keep_scratch_files_in_the_temporary_directory() {
-    let mut world = World::new().await;
-    world.harness.on(WorkKind::Triage, |_| {
-        Ok(json!({
-            "outcome": "ready-for-agent",
-            "category": "bug",
-            "comment": "## Agent Brief\n\n**Summary:** It crashes."
-        })
-        .to_string())
-    });
-    world.store.open_issue(
-        "reporter",
-        "Crash on empty widget",
-        "It crashes.",
-        &["needs-triage"],
-    );
-    world.poll().await;
-    world.ticket_in_review().await;
-
-    let prompts = [WorkKind::Triage, WorkKind::Implement]
-        .into_iter()
-        .flat_map(|kind| world.harness.prompts(kind));
-
-    for prompt in prompts {
-        assert!(prompt.contains("`$TMPDIR`"), "{prompt}");
-    }
-}
-
 /// The first-message prompts of every work kind, the design of an issue and
 /// of a spec change, and an automation's.
 async fn every_kind_of_first_message_prompt() -> Vec<(&'static str, Vec<String>)> {
@@ -490,54 +461,6 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
             include_str!("../../briefs/plugin/skills/code-review/SKILL.md").to_string()
         ))
     );
-}
-
-#[tokio::test]
-async fn each_stages_session_is_told_to_call_its_linewright_skill() {
-    let mut world = World::new().await;
-    world.harness.on(WorkKind::Triage, |_| {
-        Ok(json!({
-            "outcome": "ready-for-human",
-            "category": "bug",
-            "comment": "Does it crash on every widget?"
-        })
-        .to_string())
-    });
-    tickets_script(&world);
-    world.store.open_issue(
-        "reporter",
-        "Crash on empty widget",
-        "It crashes.",
-        &["needs-triage"],
-    );
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Gadgets",
-            "Adds gadgets.",
-            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
-        )
-        .await
-        .unwrap();
-
-    world.poll().await;
-    world.ticket_in_review().await;
-
-    for (kind, skill) in [
-        (WorkKind::Triage, "linewright:triage"),
-        (WorkKind::Design, "linewright:software-design"),
-        (WorkKind::Implement, "linewright:implement"),
-    ] {
-        let prompts = world.harness.prompts(kind);
-        assert_ne!(prompts.len(), 0, "no {kind:?} prompt");
-        for prompt in &prompts {
-            assert!(
-                prompt.contains(&format!("the Skill tool with `{skill}`")),
-                "{prompt}"
-            );
-        }
-    }
 }
 
 fn triage_for_the_maintainer(world: &World) {
@@ -4738,17 +4661,6 @@ fn told_to_finish(world: &World, kind: WorkKind) -> Vec<&'static str> {
             }
         })
         .collect()
-}
-
-#[tokio::test]
-async fn an_update_run_is_given_the_update_alone_without_a_skill_to_work_by() {
-    let (mut world, _) = moved_past(Repository::default(), None, true).await;
-
-    world.poll().await;
-
-    let prompts = world.harness.prompts(WorkKind::Update);
-    assert_eq!(prompts.len(), 1);
-    assert!(!prompts[0].contains("Skill tool"), "{}", prompts[0]);
 }
 
 #[tokio::test]

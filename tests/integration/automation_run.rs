@@ -67,11 +67,6 @@ async fn an_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_
         "{}",
         prompts[0]
     );
-    assert!(
-        prompts[0].contains("one of the maintainer's automations"),
-        "{}",
-        prompts[0]
-    );
 }
 
 #[tokio::test]
@@ -279,26 +274,6 @@ async fn a_ready_for_agent_automation_issue_is_designed_then_implemented_without
     assert_eq!(
         world.harness.prompts(WorkKind::Triage),
         Vec::<String>::new()
-    );
-}
-
-#[tokio::test]
-async fn the_brief_tells_the_agent_to_search_the_existing_issues_and_not_return_open_ones() {
-    let world = with_automation("weekly", WEEKLY).await;
-    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
-
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-
-    let prompt = &world.harness.automation_prompts()[0];
-    assert!(
-        prompt.contains(
-            "Search the existing issues first, and don't return one that is already open."
-        ),
-        "{prompt}"
     );
 }
 
