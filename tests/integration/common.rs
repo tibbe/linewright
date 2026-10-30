@@ -128,10 +128,9 @@
 //! - `fake_claude_streaming`: a stand-in `claude` program that streams events.
 //! - `fake_claude_saying`: a stand-in `claude` that streams, keeps and writes errors.
 //! - `fake_claude_running`: the one fake `claude`, carrying out a `Scenario`
-//!   of `Step`s.
+//!   of `Step`s; `fake_claude_turning`, carrying out `Step`s on each turn.
 //! - `Scenario`, `Step`: what the fake `claude` does on `--version` and on a
 //!   turn.
-//! - `write_program`: writes an executable script safely while other tests run.
 //! - `nothing_needs_doing`: an automation's answer that it found nothing to do.
 //!
 //! # `clock`: clocks and times

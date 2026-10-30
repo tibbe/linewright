@@ -1026,12 +1026,12 @@ fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signa
     link_from_path(bin.path(), "bash");
     let started = bin.path().join("claude.started");
     // Startup waits on `claude --version`, which hangs.
-    write_program(
-        &bin.path().join("claude"),
-        &format!(
-            "#!/bin/sh\n: > '{}'\nexec /bin/sleep 30\n",
-            started.display()
-        ),
+    fake_claude_running(
+        bin.path(),
+        &Scenario {
+            version: vec![Step::Touch(started.clone()), Step::Hang],
+            ..Scenario::default()
+        },
     );
     let runtime_dir = tempfile::tempdir().unwrap();
     let log = runtime_dir.path().join("serve.log");

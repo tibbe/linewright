@@ -351,6 +351,11 @@ pub fn fake_claude_saying(
         turn.push(Step::Stderr(format!("{errors}\n")));
     }
     turn.push(Step::Stream(events.to_vec()));
+    fake_claude_turning(dir, turn)
+}
+
+/// The one fake `claude`, as `dir/claude`, carrying out `turn` on each turn.
+pub fn fake_claude_turning(dir: &Path, turn: Vec<Step>) -> std::path::PathBuf {
     fake_claude_running(
         dir,
         &Scenario {
@@ -372,22 +377,6 @@ pub fn fake_claude_running(dir: &Path, scenario: &Scenario) -> std::path::PathBu
     .unwrap();
     std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_fake-claude"), &program).unwrap();
     program
-}
-
-/// Writes the program `path` with `script` in it. A child process writes
-/// it, as Linux refuses to run a program that is open for writing
-/// (`ETXTBSY`), and a process another test starts holds open each file the
-/// tests' process has open until it starts its own program.
-pub fn write_program(path: &Path, script: &str) {
-    let source = path.with_extension("source");
-    std::fs::write(&source, script).unwrap();
-    let status = Command::new("install")
-        .args(["-m", "755"])
-        .arg(&source)
-        .arg(path)
-        .status()
-        .unwrap();
-    assert!(status.success(), "install {} failed", path.display());
 }
 
 pub fn rejected(reason: &str) -> String {
