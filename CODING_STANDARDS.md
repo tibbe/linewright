@@ -27,11 +27,17 @@ where the code makes it, with expected values taken from that party, never
 from the code. Everything else (helpers, private functions, one module's
 internals) is covered through these tests and gets no test of its own.
 
+A test checks each case at the narrowest of these seams that decides it. A
+test through the system covers a path, such as a stage's outcome, once, and
+checks only what no narrower seam can show: the wiring, the order of writes
+and races. It leaves out every case a narrower test checks. Where only the
+system reaches a decision, the decision moves into the functional core.
+
 - **The user, through the system**: drive it as a user would (a labeled issue,
   a merged PR) against a fake of each external system (GitHub, the harness,
   the clock) and check what the user would see. The web UI is driven
   through its router, in-process.
-- **The user, through the functional core**: give the decision function a
+- **The user, through the functional core**: give a decision function a
   state of the world and check the decisions it returns. Every case is cheap
   to reach there.
 - **An external system, through its adapter**: what the adapter reads from or
