@@ -9,11 +9,7 @@ use linewright::store::{FoundSecret, FoundSecrets};
 use linewright::work_settings::TimeoutSetting;
 use rstest::rstest;
 
-use crate::common::LINEWRIGHT;
-
-fn linewright() -> Login {
-    Login::new(LINEWRIGHT)
-}
+use crate::common::linewright;
 
 fn issue(author: &str, parent: Option<Parent>) -> Box<Issue> {
     let at: DateTime<Utc> = "2026-10-01T12:00:00Z".parse().unwrap();
