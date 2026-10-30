@@ -2,8 +2,10 @@
 //! them back.
 
 use anyhow::{Context, Result, bail, ensure};
-use linewright::domain::{Assignment, Mergeability, Number, Pull, PullState, Rebaseability};
-use linewright::store::{AnyItem, IssueRead, NewIssue, NewPull, PeoplesPullRead, PushMode};
+use linewright::domain::{
+    Assignment, ClosedKind, IssueCloseReason, Mergeability, Number, Pull, PullState, Rebaseability,
+};
+use linewright::store::{AnyItem, IssueRead, NewPull, PeoplesPullRead, PushMode};
 
 use crate::check::{contracts, equal};
 use crate::sandbox::{NewCommit, Opened, Sandbox, commit, recent};
@@ -13,6 +15,7 @@ contracts![
     a_snapshot_holds_an_open_pull_request_of_linewrights,
     a_pull_request_marked_ready_is_no_longer_a_draft,
     a_closed_pull_request_reads_back_closed_unmerged,
+    a_snapshot_holds_linewrights_pull_request_closed_unmerged_as_closing_its_closed_ticket,
     a_pull_request_lists_the_issues_it_closes,
     a_push_to_a_pull_requests_branch_is_listed_with_who_pushed_it,
     a_pull_request_read_again_lists_its_assignments_as_a_snapshot_does,
@@ -178,30 +181,45 @@ async fn a_closed_pull_request_reads_back_closed_unmerged(sandbox: Sandbox) -> R
         .await
 }
 
-async fn a_pull_request_lists_the_issues_it_closes(sandbox: Sandbox) -> Result<()> {
-    let issue = sandbox
+async fn a_snapshot_holds_linewrights_pull_request_closed_unmerged_as_closing_its_closed_ticket(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let (issue, Opened { pr, .. }) = sandbox.open_pull_closing_an_issue("closes-ticket").await?;
+    sandbox.linked(pr, issue).await?;
+
+    sandbox.store().close_pull(pr).await?;
+    sandbox
         .store()
-        .create_issue(NewIssue {
-            title: sandbox.unique("closed-by"),
-            body: "Opened for a pull request to close.".into(),
-            labels: vec![],
-        })
-        .await?;
-    sandbox.made_issue(issue);
-    let path = format!("{}.txt", sandbox.unique("closes"));
-    let branch = sandbox
-        .push_branch(
-            "closes",
-            &[NewCommit {
-                message: "Add a file",
-                files: &[(&path, b"added\n")],
-            }],
-        )
+        .close_issue(issue, IssueCloseReason::Completed)
         .await?;
 
-    let Opened { pr, .. } = sandbox
-        .open_pull_with(branch, "closes", &format!("Closes {issue}."))
-        .await?;
+    let linewright = sandbox.store().identity().await?.login;
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(recent()).await?;
+            ensure!(
+                snapshot.closed.iter().any(|item| item.number == issue),
+                "the snapshot does not hold {issue} closed"
+            );
+            let closed = snapshot
+                .closed
+                .iter()
+                .find(|item| item.number == pr)
+                .with_context(|| format!("the snapshot does not hold {pr} closed"))?;
+            equal(
+                "the closed pull request",
+                &closed.kind,
+                &ClosedKind::Pull {
+                    closes: vec![issue],
+                    author: Some(linewright.clone()),
+                },
+            )
+        })
+        .await
+}
+
+async fn a_pull_request_lists_the_issues_it_closes(sandbox: Sandbox) -> Result<()> {
+    let (issue, Opened { pr, .. }) = sandbox.open_pull_closing_an_issue("closes").await?;
 
     // GitHub links the issue moments after the pull request opens.
     sandbox

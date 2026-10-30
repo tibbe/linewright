@@ -14,7 +14,7 @@ use linewright::domain::{
 use linewright::git;
 use linewright::store::github::GitHub;
 use linewright::store::local::{LocalStore, Seed};
-use linewright::store::{NewPull, PushMode, Store};
+use linewright::store::{NewIssue, NewPull, PushMode, Store};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -299,6 +299,45 @@ impl Sandbox {
             .await?;
         self.made_pull(pr);
         Ok(Opened { branch, pr })
+    }
+
+    /// Opens an issue titled for `what`, and a pull request closing it from a
+    /// branch named for `what` that adds a file of its own, and returns the
+    /// issue.
+    pub async fn open_pull_closing_an_issue(&self, what: &str) -> Result<(Number, Opened)> {
+        let issue = self
+            .store()
+            .create_issue(NewIssue {
+                title: self.unique(&format!("{what}-issue")),
+                body: "Opened for a pull request to close.".into(),
+                labels: vec![],
+            })
+            .await?;
+        self.made_issue(issue);
+        let path = format!("{}.txt", self.unique(what));
+        let branch = self
+            .push_branch(
+                what,
+                &[NewCommit {
+                    message: "Add a file",
+                    files: &[(&path, b"added\n")],
+                }],
+            )
+            .await?;
+        let opened = self
+            .open_pull_with(branch, what, &format!("Closes {issue}."))
+            .await?;
+        Ok((issue, opened))
+    }
+
+    /// Waits until #`pr` lists `issue` as the one it closes: GitHub links the
+    /// issue moments after the pull request opens.
+    pub async fn linked(&self, pr: Number, issue: Number) -> Result<()> {
+        self.eventually(async || {
+            let pull = self.store().pull(pr).await?;
+            crate::check::equal("the issues it closes", &pull.closes, &vec![issue])
+        })
+        .await
     }
 
     /// Has the harness close the issue #`issue` once the contract ends.

@@ -2,7 +2,7 @@
 //! and their changes read back.
 
 use anyhow::{Context, Result, bail, ensure};
-use linewright::domain::{MergeMethod, Mergeability, Number, PullState};
+use linewright::domain::{ClosedKind, MergeMethod, Mergeability, Number, PullState};
 use linewright::git;
 use linewright::store::{AnyItem, PushMode};
 
@@ -19,6 +19,7 @@ contracts![
     a_merge_is_refused_once_the_head_has_moved,
     a_draft_is_refused_merging,
     a_merged_pull_request_reads_back_merged_with_its_files,
+    a_snapshot_holds_an_issue_a_merge_closed_with_the_pull_request_that_closed_it,
     the_diff_of_a_pull_request_holds_its_changes_to_the_paths_asked,
     the_diff_of_a_merged_pull_request_holds_its_changes_to_the_paths_asked,
 ];
@@ -551,6 +552,35 @@ async fn a_merged_pull_request_reads_back_merged_with_its_files(sandbox: Sandbox
     // no ticket.
     let read = sandbox.store().linewright_pull(pr).await?;
     equal("Linewright's pull request", &read, &None)
+}
+
+async fn a_snapshot_holds_an_issue_a_merge_closed_with_the_pull_request_that_closed_it(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let (issue, Opened { branch, pr }) = sandbox.open_pull_closing_an_issue("merge-closes").await?;
+    sandbox.store().mark_ready(pr).await?;
+    // A merge before GitHub links the issue closes nothing.
+    sandbox.linked(pr, issue).await?;
+    let method = sandbox.merge_method().await?;
+
+    merge(&sandbox, pr, &branch.head, method).await?;
+
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let closed = snapshot
+                .closed
+                .iter()
+                .find(|item| item.number == issue)
+                .with_context(|| format!("the snapshot does not hold {issue} closed"))?;
+            match &closed.kind {
+                ClosedKind::Issue { merged_by, .. } => {
+                    equal("the merge that closed it", merged_by, &Some(pr))
+                }
+                ClosedKind::Pull { .. } => bail!("{issue} is held as a pull request"),
+            }
+        })
+        .await
 }
 
 /// Checks that `diff` holds the change adding `added`, which holds `line`,

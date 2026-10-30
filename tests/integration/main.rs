@@ -9,6 +9,7 @@ mod committed_secrets;
 mod common;
 mod config;
 mod deliveries;
+mod domain;
 mod drain;
 mod ending;
 mod explain;
