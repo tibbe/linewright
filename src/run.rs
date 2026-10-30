@@ -2036,14 +2036,16 @@ async fn implement(
                 &problem,
             )));
         }
-        if git::commits_ahead(dir, base).await? == 0 {
+        // One log of the branch's commits says both whether it has any and
+        // which are unfinished.
+        let commits = git::commits_past(dir, base, "HEAD").await?;
+        if commits.is_empty() {
             return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.prompts,
                 "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
             )));
         }
-        let unfinished = git::unfinished_commits(dir, base, "HEAD").await?;
-        if let Some(unfinished) = unfinished {
+        if let Some(unfinished) = git::unfinished_of(&commits) {
             return Err(Rejection::retry(prompts::fold_unfinished(
                 &ctx.with.briefs.prompts,
                 &unfinished,

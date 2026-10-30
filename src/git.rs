@@ -537,30 +537,53 @@ pub struct UnfinishedCommits {
     pub rest: Vec<String>,
 }
 
-/// The unfinished commits on `tip` past `base`, if any.
-pub async fn unfinished_commits(
-    dir: &Path,
-    base: &str,
-    tip: &str,
-) -> Result<Option<UnfinishedCommits>> {
+/// A commit on a branch: its abbreviated name, and whether it is an
+/// unfinished commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Commit {
+    pub name: String,
+    pub unfinished: bool,
+}
+
+/// The commits on `tip` past `base`, oldest first.
+pub async fn commits_past(dir: &Path, base: &str, tip: &str) -> Result<Vec<Commit>> {
     let format =
         format!("--format=%h %(trailers:key={UNFINISHED_TRAILER},valueonly,separator=%x2C)");
-    let mut commits = git(
+    Ok(git(
         dir,
         &["log", "--reverse", &format, &format!("{base}..{tip}")],
     )
     .await?
     .lines()
     .filter_map(|line| {
-        let (commit, marked) = line.split_once(' ')?;
-        (!marked.trim().is_empty()).then(|| commit.to_string())
+        let (name, marked) = line.split_once(' ')?;
+        Some(Commit {
+            name: name.to_string(),
+            unfinished: !marked.trim().is_empty(),
+        })
     })
-    .collect::<Vec<_>>()
-    .into_iter();
-    Ok(commits.next().map(|first| UnfinishedCommits {
+    .collect())
+}
+
+/// The unfinished ones of `commits`, if any.
+pub fn unfinished_of(commits: &[Commit]) -> Option<UnfinishedCommits> {
+    let mut unfinished = commits
+        .iter()
+        .filter(|commit| commit.unfinished)
+        .map(|commit| commit.name.clone());
+    unfinished.next().map(|first| UnfinishedCommits {
         first,
-        rest: commits.collect(),
-    }))
+        rest: unfinished.collect(),
+    })
+}
+
+/// The unfinished commits on `tip` past `base`, if any.
+pub async fn unfinished_commits(
+    dir: &Path,
+    base: &str,
+    tip: &str,
+) -> Result<Option<UnfinishedCommits>> {
+    Ok(unfinished_of(&commits_past(dir, base, tip).await?))
 }
 
 /// Lines a commit adds to a file, one after another.
