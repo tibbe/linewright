@@ -25,6 +25,8 @@
 //!   - `rework_asked`: a maintainer asks for rework and the agent does it.
 //! - `Repository`: the repository settings a `World` starts with; `allowing`
 //!   some merge methods.
+//! - `local_store`: an empty local store of `REPO`, with a `Repository`'s
+//!   settings, as a `World` starts with.
 //! - `config`: the factory config a `World` starts with.
 //! - `ended_runs`: how each of a world's runs ended.
 //! - `labels`: an issue's labels, sorted.
