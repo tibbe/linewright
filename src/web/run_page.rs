@@ -14,7 +14,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
@@ -30,8 +29,8 @@ use crate::logs::{Following, LogsError, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
-    self, EntryLine, FollowedLine, Header, Line, Made, SetupEnded, Stamped, ToolLine, Under,
-    Verbosity,
+    self, EntryLine, FollowedLine, Header, Line, Made, SetupEnded, SetupLine, Stamped, ToolLine,
+    Under, Verbosity,
 };
 
 /// A change to the page's transcript that a line of it makes.
@@ -359,7 +358,7 @@ fn setup_html(stamp: &str, command: &str, ended: Option<&SetupEnded>, verbose: b
 /// as the reader left it, unless it failed, which opens it.
 fn account_patches(session: &SessionView, i: usize, call: &ToolLine, verbose: bool) -> Vec<Patch> {
     let id = entry_id(session, i);
-    if call.error {
+    if call.failed() {
         return vec![Patch::Replace {
             id: format!("{id}-call"),
             html: call_html(session, i, call, verbose),
@@ -417,7 +416,7 @@ fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
     let stamp = stamp_html(&id, entry.stamp);
     let (kind, body) = match &entry.what {
         EntryLine::Tool(call) => ("tool", call_html(session, i, call, verbose)),
-        EntryLine::Setup { command, ended } => (
+        EntryLine::Setup(SetupLine { command, ended }) => (
             "setup",
             setup_html(&stamp, command, ended.as_ref(), verbose),
         ),
@@ -471,7 +470,11 @@ fn call_html(session: &SessionView, i: usize, call: &ToolLine, verbose: bool) ->
     } else {
         (String::new(), String::new())
     };
-    let open = if call.error || verbose { " open" } else { "" };
+    let open = if call.failed() || verbose {
+        " open"
+    } else {
+        ""
+    };
     format!(
         r#"<details class="call" id="{id}-call"{open}><summary class="cursor-pointer wrap-anywhere" id="{id}-summary">{line}{count}</summary>{io}{entries}</details>"#,
         line = call_line_html(session, i, call),
@@ -482,10 +485,9 @@ fn call_html(session: &SessionView, i: usize, call: &ToolLine, verbose: bool) ->
 fn call_line_html(session: &SessionView, i: usize, call: &ToolLine) -> String {
     let id = entry_id(session, i);
     let stamp = stamp_html(&id, session.entries[i].stamp);
-    let account = if call.error {
+    let account = if call.failed() {
         status_html(Tone::Failure, &call.account)
-    } else if call.result.is_none() {
-        // Read at full verbosity, a call has a result once it returns.
+    } else if call.running() {
         status_html(Tone::InProgress, &call.account)
     } else {
         html::escape(&call.account).to_string()
@@ -499,27 +501,13 @@ fn call_line_html(session: &SessionView, i: usize, call: &ToolLine) -> String {
 
 /// A call's full input and result, as a transcript in full shows them.
 fn io_html(id: &str, call: &ToolLine) -> String {
-    let pretty = |value: &Value| serde_json::to_string_pretty(value).unwrap_or_default();
     let mut io = String::new();
-    let mut part = |label: &str, text: &str| {
+    for (label, text) in call.shown.parts() {
         let _ = writeln!(
             io,
             r#"<div>{label}: <pre class="mt-0.5 mb-1.5 max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre></div>"#,
             html::escape(text.trim_end())
         );
-    };
-    if let Some(input) = &call.input {
-        part("input", &pretty(input));
-    }
-    if let Some(result) = &call.result {
-        part("result", result);
-    }
-    if let Some(content) = &call.content {
-        let content: Vec<String> = content.iter().map(Value::to_string).collect();
-        part("content", &content.join("\n"));
-    }
-    if let Some(details) = &call.details {
-        part("details", &pretty(details));
     }
     format!(r#"<div class="io my-1 ml-[4.5em]" id="{id}-io">{io}</div>"#)
 }

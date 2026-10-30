@@ -1244,18 +1244,34 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     .await;
 
     let follow = Watching::start(answering.runtime_dir.path(), &["logs", "1", "--follow"]);
+    let json = Watching::start(
+        answering.runtime_dir.path(),
+        &["logs", "1", "--follow", "--json", "--verbose"],
+    );
     follow.shows("→ exit 0, 19 lines\n").await;
+    json.shows("\"exit 0, 19 lines\"").await;
     let so_far = follow.shown();
     // The second Bash call, its result still to come.
     agent.writes(&turn[4..6].concat());
     follow.shows("2>&1) → running\n").await;
+    json.shows("\"running\"").await;
     let before_its_result = follow.shown();
+    let running = answering
+        .lw(&["logs", "1", "--json", "--verbose"])
+        .await
+        .stdout;
     agent.writes(&turn[6]);
     follow.shows("2>&1) → exit 2\n").await;
+    json.shows("\"exit 2\"").await;
+    let ended = answering
+        .lw(&["logs", "1", "--json", "--verbose"])
+        .await
+        .stdout;
     agent.writes(&turn[7..].concat());
     follow.shows(" 2:59  {\"outcome\"").await;
     drop(agent);
     let (code, shown, _) = follow.exits().await;
+    let (_, json, _) = json.exits().await;
 
     assert_eq!(
         so_far,
@@ -1275,6 +1291,34 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
         shown.contains("\n 2:16  Agent(Standards review) → done, 2 tool uses, 16s\n"),
         "{shown}"
     );
+    // `docs/specs/monitoring.md`, logs, Following in JSON and Running in
+    // JSON: the second call's objects, as it ran and once it returned, are
+    // those `logs --json` gave it then, but for when its end was.
+    let second_call = |lines: &str| -> Vec<serde_json::Value> {
+        json_objects(lines)
+            .into_iter()
+            .filter(|line| line["tool_use_id"] == "toolu_01WZp27kcvbZoQtwuKJUvLUt")
+            .map(|mut line| {
+                line.as_object_mut().unwrap().remove("at");
+                line.as_object_mut().unwrap().remove("elapsed_seconds");
+                line
+            })
+            .collect()
+    };
+    let followed = second_call(&json);
+    assert_eq!(followed.len(), 2, "{json}");
+    assert_eq!(
+        followed[0]["error"],
+        serde_json::Value::Null,
+        "{followed:#?}"
+    );
+    assert_eq!(
+        followed[0]["result"],
+        serde_json::Value::Null,
+        "{followed:#?}"
+    );
+    assert_eq!(followed[..1], second_call(&running));
+    assert_eq!(followed[1..], second_call(&ended));
     answering.stop().await;
 }
 
@@ -2590,7 +2634,8 @@ async fn explain_names_the_file_of_the_repositorys_a_ticket_waits_for_and_its_er
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Running and Followed;
-/// `docs/specs/monitoring.md`, logs, `--follow` and Setup.
+/// `docs/specs/monitoring.md`, logs, `--follow`, Following in JSON, Running in
+/// JSON and Setup.
 #[tokio::test]
 async fn logs_follow_shows_a_setup_command_running_then_with_its_account_then_the_sessions_entries()
 {
@@ -2611,6 +2656,7 @@ async fn logs_follow_shows_a_setup_command_running_then_with_its_account_then_th
             .contains("→ running\n")
     })
     .await;
+    let snapshot = answering.lw(&["logs", "1", "--json"]).await.stdout;
 
     let follow = Watching::start(answering.runtime_dir.path(), &["logs", "1", "--follow"]);
     let json = Watching::start(
@@ -2651,7 +2697,14 @@ async fn logs_follow_shows_a_setup_command_running_then_with_its_account_then_th
         .collect();
     assert_eq!(setups.len(), 2, "{setups:#?}");
     assert_eq!(setups[0]["command"], command);
-    assert!(setups[0].get("status").is_none(), "{setups:#?}");
+    let running: Vec<serde_json::Value> = json_objects(&snapshot)
+        .into_iter()
+        .filter(|line| line["type"] == "setup")
+        .collect();
+    assert_eq!(running, setups[..1], "{snapshot}");
+    assert_eq!(setups[0]["status"], serde_json::Value::Null, "{setups:#?}");
+    assert_eq!(setups[0]["duration_seconds"], serde_json::Value::Null);
+    assert_eq!(setups[0]["output"], serde_json::Value::Null);
     assert_eq!(setups[1]["command"], command);
     assert_eq!(setups[1]["status"], serde_json::json!({"exited": 0}));
     assert_eq!(setups[1]["output"], "installing\n");

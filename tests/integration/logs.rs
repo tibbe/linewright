@@ -481,11 +481,7 @@ async fn world_setting_up_with(setup: &str) -> (World, tempfile::TempDir) {
 }
 
 fn json_lines(output: &Output) -> Vec<serde_json::Value> {
-    output
-        .stdout
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect()
+    json_objects(&output.stdout)
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Times and Setup;

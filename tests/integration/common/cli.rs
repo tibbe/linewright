@@ -12,6 +12,14 @@ pub async fn world_in_work_dir() -> (World, tempfile::TempDir) {
     (world, work_dir)
 }
 
+/// The objects of JSON `lines`, one per line, as `logs --json` prints them.
+pub fn json_objects(lines: &str) -> Vec<serde_json::Value> {
+    lines
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
 pub struct Output {
     pub code: Option<i32>,
     pub stdout: String,

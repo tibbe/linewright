@@ -904,32 +904,310 @@ pub(crate) enum EntryLine {
         other: Value,
     },
     Tool(ToolLine),
-    /// A session's setup command: the command, and how it ended once it
-    /// has.
-    Setup {
-        command: String,
-        #[serde(flatten)]
-        ended: Option<SetupEnded>,
-    },
+    Setup(SetupLine),
+}
+
+/// A session's setup command's line: the command, and how it ended once it
+/// has.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "SetupFields", into = "SetupFields")]
+pub(crate) struct SetupLine {
+    pub(crate) command: String,
+    pub(crate) ended: Option<SetupEnded>,
+}
+
+/// A setup line as JSON: what it holds once the command has ended is null
+/// until then (`docs/specs/monitoring.md`, logs, Running in JSON).
+#[derive(Serialize, Deserialize)]
+struct SetupFields {
+    command: String,
+    status: Option<SetupStatus>,
+    duration_seconds: Option<f64>,
+    output: Option<String>,
+}
+
+impl From<SetupLine> for SetupFields {
+    fn from(line: SetupLine) -> SetupFields {
+        let ended = line.ended;
+        SetupFields {
+            command: line.command,
+            status: ended.as_ref().map(|ended| ended.status),
+            duration_seconds: ended.as_ref().map(|ended| ended.duration_seconds),
+            output: ended.map(|ended| ended.output),
+        }
+    }
+}
+
+impl TryFrom<SetupFields> for SetupLine {
+    type Error = &'static str;
+
+    fn try_from(fields: SetupFields) -> Result<SetupLine, &'static str> {
+        let ended = match (fields.status, fields.duration_seconds, fields.output) {
+            (None, None, None) => None,
+            (Some(status), Some(duration_seconds), Some(output)) => Some(SetupEnded {
+                status,
+                duration_seconds,
+                output,
+            }),
+            _ => {
+                return Err(
+                    "a setup line must have a status, a duration and an output, or none of them",
+                );
+            }
+        };
+        Ok(SetupLine {
+            command: fields.command,
+            ended,
+        })
+    }
 }
 
 /// A tool call's line.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "ToolFields", into = "ToolFields")]
 pub(crate) struct ToolLine {
     pub(crate) tool_use_id: String,
     pub(crate) tool: String,
     pub(crate) argument: String,
     pub(crate) account: String,
+    pub(crate) shown: ToolShown,
+}
+
+/// What a tool call's line shows beyond its account, by verbosity.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ToolShown {
+    /// Whether it failed, once it has returned.
+    Compact { error: Option<bool> },
+    /// Its input, and what it returned once it has.
+    Full {
+        input: Value,
+        returned: Option<ToolReturned>,
+    },
+}
+
+/// What a tool call returned, as a transcript in full shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ToolReturned {
     pub(crate) error: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) input: Option<Value>,
-    /// `None` while it runs, or unless at full verbosity.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) result: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) content: Option<Vec<Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) details: Option<Value>,
+    pub(crate) result: String,
+    /// Empty when it returned none.
+    pub(crate) content: Vec<Value>,
+    /// Null when it returned none.
+    pub(crate) details: Value,
+}
+
+impl ToolShown {
+    /// Its parts as a transcript in full shows them, each with its label:
+    /// none at compact verbosity.
+    pub(crate) fn parts(&self) -> Vec<(&'static str, String)> {
+        let pretty = |value: &Value| serde_json::to_string_pretty(value).unwrap_or_default();
+        let ToolShown::Full { input, returned } = self else {
+            return vec![];
+        };
+        let mut parts = vec![("input", pretty(input))];
+        if let Some(returned) = returned {
+            parts.push(("result", returned.result.clone()));
+            if let Some(content) = returned.content() {
+                let content: Vec<String> = content.iter().map(Value::to_string).collect();
+                parts.push(("content", content.join("\n")));
+            }
+            if let Some(details) = returned.details() {
+                parts.push(("details", pretty(details)));
+            }
+        }
+        parts
+    }
+}
+
+impl ToolReturned {
+    /// Its content, unless it returned none.
+    fn content(&self) -> Option<&[Value]> {
+        Some(self.content.as_slice()).filter(|content| !content.is_empty())
+    }
+
+    /// Its details, unless it returned none.
+    fn details(&self) -> Option<&Value> {
+        Some(&self.details).filter(|details| !details.is_null())
+    }
+}
+
+impl ToolLine {
+    /// Whether it has returned an error.
+    pub(crate) fn failed(&self) -> bool {
+        self.error() == Some(true)
+    }
+
+    /// Whether it has yet to return.
+    pub(crate) fn running(&self) -> bool {
+        self.error().is_none()
+    }
+
+    fn error(&self) -> Option<bool> {
+        match &self.shown {
+            ToolShown::Compact { error } => *error,
+            ToolShown::Full { returned, .. } => returned.as_ref().map(|returned| returned.error),
+        }
+    }
+}
+
+/// A tool line as JSON: `error`, and in full `result`, `content` and
+/// `details`, are null while the call runs, and `content` and `details`
+/// also when it returned none (`docs/specs/monitoring.md`, logs, Running in
+/// JSON). A compact line has none of the keys only a line in full has.
+#[derive(Serialize, Deserialize)]
+struct ToolFields {
+    tool_use_id: String,
+    tool: String,
+    argument: String,
+    account: String,
+    error: Option<bool>,
+    #[serde(default, skip_serializing_if = "InFull::is_absent")]
+    input: InFull<Value>,
+    #[serde(default, skip_serializing_if = "InFull::is_absent")]
+    result: InFull<String>,
+    #[serde(default, skip_serializing_if = "InFull::is_absent")]
+    content: InFull<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "InFull::is_absent")]
+    details: InFull<Value>,
+}
+
+/// A key only a tool line in full has: there in full, even when null.
+#[derive(Default)]
+enum InFull<T> {
+    #[default]
+    Absent,
+    Null,
+    Is(T),
+}
+
+impl<T> InFull<T> {
+    fn is_absent(&self) -> bool {
+        matches!(self, InFull::Absent)
+    }
+
+    fn or_null(value: Option<T>) -> InFull<T> {
+        value.map_or(InFull::Null, InFull::Is)
+    }
+
+    /// Its value, or `T`'s default when it is null or not there.
+    fn unwrap_or_default(self) -> T
+    where
+        T: Default,
+    {
+        match self {
+            InFull::Is(value) => value,
+            InFull::Absent | InFull::Null => T::default(),
+        }
+    }
+}
+
+impl<T: Serialize> Serialize for InFull<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            InFull::Is(value) => value.serialize(serializer),
+            InFull::Absent | InFull::Null => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for InFull<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<InFull<T>, D::Error> {
+        Option::deserialize(deserializer).map(InFull::or_null)
+    }
+}
+
+impl From<ToolLine> for ToolFields {
+    fn from(line: ToolLine) -> ToolFields {
+        let (error, input, content, details, result) = match line.shown {
+            ToolShown::Compact { error } => (
+                error,
+                InFull::Absent,
+                InFull::Absent,
+                InFull::Absent,
+                InFull::Absent,
+            ),
+            ToolShown::Full {
+                input,
+                returned: None,
+            } => (
+                None,
+                InFull::Is(input),
+                InFull::Null,
+                InFull::Null,
+                InFull::Null,
+            ),
+            ToolShown::Full {
+                input,
+                returned: Some(returned),
+            } => (
+                Some(returned.error),
+                InFull::Is(input),
+                InFull::or_null(returned.content().map(<[Value]>::to_vec)),
+                InFull::or_null(returned.details().cloned()),
+                InFull::Is(returned.result),
+            ),
+        };
+        ToolFields {
+            tool_use_id: line.tool_use_id,
+            tool: line.tool,
+            argument: line.argument,
+            account: line.account,
+            error,
+            input,
+            result,
+            content,
+            details,
+        }
+    }
+}
+
+impl TryFrom<ToolFields> for ToolLine {
+    type Error = &'static str;
+
+    fn try_from(fields: ToolFields) -> Result<ToolLine, &'static str> {
+        use InFull::{Absent, Is, Null};
+        let shown = match (
+            fields.error,
+            fields.input,
+            fields.result,
+            fields.content,
+            fields.details,
+        ) {
+            (error, Absent, Absent, Absent, Absent) => ToolShown::Compact { error },
+            (None, called @ (Is(_) | Null), Null, Null, Null) => ToolShown::Full {
+                input: called.unwrap_or_default(),
+                returned: None,
+            },
+            (
+                Some(error),
+                called @ (Is(_) | Null),
+                Is(result),
+                content @ (Is(_) | Null),
+                details @ (Is(_) | Null),
+            ) => ToolShown::Full {
+                input: called.unwrap_or_default(),
+                returned: Some(ToolReturned {
+                    error,
+                    result,
+                    content: content.unwrap_or_default(),
+                    details: details.unwrap_or_default(),
+                }),
+            },
+            _ => {
+                return Err(
+                    "a tool line in full must have an input, a result, content and details, \
+                     null until the call returns and only then with an error",
+                );
+            }
+        };
+        Ok(ToolLine {
+            tool_use_id: fields.tool_use_id,
+            tool: fields.tool,
+            argument: fields.argument,
+            account: fields.account,
+            shown,
+        })
+    }
 }
 
 fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
@@ -1043,10 +1321,10 @@ impl Stamper {
     /// The line of `setup` at `at`, or with no time for one recorded
     /// before its start was.
     fn setup(&mut self, setup: &Setup, at: Option<Timestamp>) -> Line {
-        let what = EntryLine::Setup {
+        let what = EntryLine::Setup(SetupLine {
             command: setup.command.clone(),
             ended: setup.ended().cloned(),
-        };
+        });
         match setup.ran {
             SetupRan::Started { .. } => self.line(at, Under::Session, what),
             SetupRan::Recorded(_) => self.stamped(None, Under::Session, what),
@@ -1080,21 +1358,27 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
         },
         What::Thinking(_) | What::Context(_) | What::Event(_) | What::Other(_) => return None,
         What::Tool(call) => {
-            let shown = call.result.as_ref().filter(|_| full);
+            let returned = |result: &CallResult| ToolReturned {
+                error: result.error,
+                result: result.text.clone(),
+                content: result.other.clone(),
+                details: result.details.clone(),
+            };
             EntryLine::Tool(ToolLine {
                 tool_use_id: call.id.clone(),
                 tool: call.tool.name().to_string(),
                 argument: argument(call, session.dir.as_deref()),
                 account: account(call),
-                error: call.result.as_ref().is_some_and(|result| result.error),
-                input: full.then(|| call.input.clone()),
-                result: shown.map(|result| result.text.clone()),
-                content: shown
-                    .map(|result| result.other.clone())
-                    .filter(|other| !other.is_empty()),
-                details: shown
-                    .map(|result| result.details.clone())
-                    .filter(|details| !details.is_null()),
+                shown: if full {
+                    ToolShown::Full {
+                        input: call.input.clone(),
+                        returned: call.result.as_ref().map(returned),
+                    }
+                } else {
+                    ToolShown::Compact {
+                        error: call.result.as_ref().map(|result| result.error),
+                    }
+                },
             })
         }
     })
@@ -1535,44 +1819,28 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
             text: Some(text), ..
         } => block("follow-up: ", text),
         EntryLine::FollowUp { summary, .. } => (format!("follow-up: {summary}"), vec![]),
-        EntryLine::Tool(ToolLine {
-            tool_use_id: _,
-            tool,
-            argument,
-            account,
-            error,
-            input,
-            result,
-            content,
-            details,
-        }) => {
-            let account = if *error {
+        EntryLine::Tool(call) => {
+            let ToolLine {
+                tool,
+                argument,
+                account,
+                ..
+            } = call;
+            let account = if call.failed() {
                 paint.red(account)
             } else {
                 account.clone()
             };
-            let pretty = |value: &Value| serde_json::to_string_pretty(value).unwrap_or_default();
-            let input = input
-                .as_ref()
-                .map(|input| indented("input: ", &pretty(input)));
-            let result = result.as_ref().map(|result| indented("result: ", result));
-            let content = content.as_ref().map(|content| {
-                let content: Vec<String> = content.iter().map(Value::to_string).collect();
-                indented("content: ", &content.join("\n"))
-            });
-            let details = details
-                .as_ref()
-                .map(|details| indented("details: ", &pretty(details)));
             (
                 format!("{}({argument}) → {account}", paint.bold(tool)),
-                [input, result, content, details]
+                call.shown
+                    .parts()
                     .into_iter()
-                    .flatten()
-                    .flatten()
+                    .flat_map(|(label, text)| indented(&format!("{label}: "), &text))
                     .collect(),
             )
         }
-        EntryLine::Setup { command, ended } => {
+        EntryLine::Setup(SetupLine { command, ended }) => {
             let command = shown_command(command);
             let (account, output) = match ended {
                 None => ("running".to_string(), vec![]),
