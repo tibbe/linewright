@@ -19,9 +19,14 @@ use linewright::store::Store;
 use linewright::store::github::{GitHub, TOKEN_VARIABLES};
 use tokio::runtime::Runtime;
 
+mod attachments;
+mod branches;
 mod check;
+mod files;
 mod issues;
 mod labels;
+mod merges;
+mod pulls;
 mod repository;
 mod sandbox;
 
@@ -36,6 +41,11 @@ fn areas() -> Vec<(&'static str, Vec<(&'static str, Contract)>)> {
         ("repository", repository::contracts()),
         ("labels", labels::contracts()),
         ("issues", issues::contracts()),
+        ("branches", branches::contracts()),
+        ("files", files::contracts()),
+        ("pulls", pulls::contracts()),
+        ("merges", merges::contracts()),
+        ("attachments", attachments::contracts()),
     ]
 }
 
@@ -65,8 +75,9 @@ fn main() -> ExitCode {
         for (name, contract) in contracts {
             let local = runtime.clone();
             trials.push(Trial::test(format!("local::{area}::{name}"), move || {
-                let sandbox = Sandbox::local();
-                run(&local, async move { contract(sandbox.await?).await })
+                run(&local, async move {
+                    checked(contract, Sandbox::local().await?).await
+                })
             }));
             let on_github = runtime.clone();
             let reached = reached.clone();
@@ -74,7 +85,7 @@ fn main() -> ExitCode {
                 let reached = reached.with_context(|| format!("{REPO_VARIABLE} is not set"));
                 run(&on_github, async move {
                     let Reached { github, repo } = &*reached?;
-                    contract(Sandbox::github(github.clone(), repo.clone())?).await
+                    checked(contract, Sandbox::github(github.clone(), repo.clone())?).await
                 })
             });
             trials.push(trial.with_ignored_flag(named.is_none()));
@@ -101,6 +112,18 @@ async fn reach(repo: &str) -> Result<Reached> {
         eprintln!("cannot close what earlier runs left open in {repo}: {error:#}");
     }
     Ok(Reached { github, repo })
+}
+
+/// Runs `contract` in `sandbox`, then cleans up what it made, which is no
+/// part of what it checks: a cleanup that fails is reported, and leaves what
+/// it could not close to the next run's sweep.
+async fn checked(contract: Contract, sandbox: Sandbox) -> Result<()> {
+    let made = sandbox.made();
+    let checked = contract(sandbox).await;
+    if let Err(error) = made.clean_up().await {
+        eprintln!("cannot clean up after a contract: {error:#}");
+    }
+    checked
 }
 
 fn run(
