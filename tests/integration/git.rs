@@ -4,7 +4,8 @@ use common::{
     UNFINISHED, UNFINISHED_MESSAGE, assert_in_a_process_group_of_its_own, commit_in, git_in,
     git_output,
 };
-use linewright::git::{self, Addition, BranchStart, Commit, UnfinishedCommits};
+use linewright::domain::{UpdateMethod, UpdateRule};
+use linewright::git::{self, Addition, BranchStart, Commit, UnfinishedCommits, Updated};
 use std::path::{Path, PathBuf};
 
 /// So the SIGINT a terminal sends `serve`'s process group on Ctrl-C, which
@@ -420,5 +421,68 @@ async fn lines_added_one_after_another_are_one_addition() {
                 text: "three".to_string(),
             },
         ]
+    );
+}
+
+/// A clone on the branch `12-gadgets`, with a commit to `src/gadgets.txt`,
+/// after `main` moved on with a commit to `path`.
+fn behind_main(path: &str) -> Repository {
+    let repository = Repository::new();
+    repository.main_moved_on(&[(path, "theirs\n")], "Move on");
+    repository.branch("12-gadgets", &[(&[("src/gadgets.txt", "ours\n")], "Start")]);
+    repository
+}
+
+/// The method of the update `git::update` stops in on a conflict in
+/// `src/gadgets.txt`, if it stops, and the subjects of the commits then on
+/// the branch's first-parent line, oldest first.
+async fn updated(repository: &Repository, rule: UpdateRule) -> (Option<UpdateMethod>, Vec<String>) {
+    let stopped = match git::update(&repository.clone, "main", rule).await.unwrap() {
+        Updated::Conflict(conflict) => {
+            assert_eq!(conflict.files, ["src/gadgets.txt"]);
+            assert!(repository.mid_operation());
+            Some(conflict.method)
+        }
+        Updated::Updated => None,
+        Updated::UpToDate => panic!("the branch is behind"),
+    };
+    let range = format!("{}..HEAD", repository.begin);
+    let subjects = repository.git(&["log", "--first-parent", "--reverse", "--format=%s", &range]);
+    (stopped, subjects.lines().map(str::to_string).collect())
+}
+
+#[tokio::test]
+async fn an_update_always_merging_merges_the_default_branch_in_and_stops_in_a_merge_on_a_conflict()
+{
+    let rule = UpdateRule::Always(UpdateMethod::Merge);
+
+    assert_eq!(
+        updated(&behind_main("src/other.txt"), rule).await,
+        (
+            None,
+            vec![
+                "Start".to_string(),
+                "Merge remote-tracking branch 'origin/main' into 12-gadgets".to_string(),
+            ]
+        )
+    );
+    assert_eq!(
+        updated(&behind_main("src/gadgets.txt"), rule).await.0,
+        Some(UpdateMethod::Merge)
+    );
+}
+
+#[tokio::test]
+async fn an_update_always_rebasing_rebases_onto_the_default_branch_and_stops_in_a_rebase_on_a_conflict()
+ {
+    let rule = UpdateRule::Always(UpdateMethod::Rebase);
+
+    assert_eq!(
+        updated(&behind_main("src/other.txt"), rule).await,
+        (None, vec!["Move on".to_string(), "Start".to_string()])
+    );
+    assert_eq!(
+        updated(&behind_main("src/gadgets.txt"), rule).await.0,
+        Some(UpdateMethod::Rebase)
     );
 }

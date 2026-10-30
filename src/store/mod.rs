@@ -10,9 +10,9 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking, MergeMethod,
-    MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule, Windows,
-    label,
+    AutoMerge, CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking,
+    MergeMethod, MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule,
+    Windows, label,
 };
 pub use crate::domain::{IssueRead, PeoplesPullRead};
 use crate::redaction::Redaction;
@@ -88,7 +88,27 @@ impl RepoSettings {
         }
     }
 
-    pub fn check_auto_merge(&self, update_branch: Option<UpdateMethod>) -> Result<()> {
+    /// The settings with the `update-branch` and, with auto-merge, the
+    /// `merge-method` settings applied over the repository's, refused where
+    /// auto-merge cannot work with them.
+    pub fn configured(
+        mut self,
+        update_branch: Option<UpdateMethod>,
+        auto_merge: Option<AutoMerge>,
+    ) -> Result<RepoSettings> {
+        if let Some(method) = update_branch {
+            self.update_rule = UpdateRule::Always(method);
+        }
+        if let Some(auto_merge) = auto_merge {
+            if let Some(method) = auto_merge.merge_method {
+                self.merge_method = method;
+            }
+            self.check_auto_merge(update_branch)?;
+        }
+        Ok(self)
+    }
+
+    fn check_auto_merge(&self, update_branch: Option<UpdateMethod>) -> Result<()> {
         let method = self.merge_method;
         let allowed = &self.allowed_merge_methods;
         if !allowed.contains(method) {
@@ -240,7 +260,7 @@ fn found_secrets(output: &str) -> Option<FoundSecrets> {
 /// or no write access to the repository, reported as `remote: Permission to
 /// <repo> denied to <user>.`. Refusals that do not name a missing permission
 /// are not recognized.
-fn missing_permission(output: &str) -> Option<String> {
+pub fn missing_permission(output: &str) -> Option<String> {
     output.lines().find_map(|line| {
         if let Some(at) = line.find("[remote rejected] ") {
             let (_, reason) = line[at..].split_once(" (")?;

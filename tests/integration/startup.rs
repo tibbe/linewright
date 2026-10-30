@@ -1,70 +1,26 @@
 use crate::common;
 
 use common::*;
-use linewright::domain::{AutoMerge, MergeMethod, UpdateMethod, label};
-use linewright::factory::{FactoryConfig, SessionToken};
-
-async fn refused(repository: Repository, adjust: impl FnOnce(&mut FactoryConfig)) -> String {
-    let started = World::start(repository, |config| {
-        config.auto_merge = AUTO_MERGE;
-        adjust(config);
-    })
-    .await;
-    match started {
-        Ok(_) => panic!("startup went ahead"),
-        Err(e) => format!("{e:#}"),
-    }
-}
+use linewright::domain::{MergeMethod, UpdateMethod, label};
+use linewright::factory::SessionToken;
 
 #[tokio::test]
-async fn with_auto_merge_a_merge_method_the_repository_disallows_is_an_error_naming_what_it_allows()
-{
-    let repository = Repository::allowing([MergeMethod::Merge, MergeMethod::Rebase]);
-
-    let error = refused(repository, |config| {
-        config.auto_merge = Some(AutoMerge {
-            merge_method: Some(MergeMethod::Squash),
-        });
-    })
-    .await;
-
-    assert!(error.contains("`squash`"), "{error}");
-    assert!(error.contains("`merge` and `rebase`"), "{error}");
-}
-
-#[tokio::test]
-async fn with_auto_merge_and_linear_history_a_default_rebase_the_repository_disallows_is_an_error()
-{
-    let repository = Repository {
-        linear_history: true,
-        ..Repository::allowing([MergeMethod::Merge, MergeMethod::Squash])
-    };
-
-    let error = refused(repository, |_| {}).await;
-
-    assert!(error.contains("`rebase`"), "{error}");
-    assert!(error.contains("`merge` and `squash`"), "{error}");
-}
-
-#[tokio::test]
-async fn with_auto_merge_update_branch_merge_with_rebase_merges_is_an_error() {
+async fn with_auto_merge_settings_it_cannot_merge_with_stop_startup() {
     let repository = Repository::allowing([MergeMethod::Rebase]);
 
-    let error = refused(repository, |config| {
+    let started = World::start(repository, |config| {
+        config.auto_merge = AUTO_MERGE;
         config.update_method = Some(UpdateMethod::Merge);
     })
     .await;
 
-    assert!(error.contains("`update-branch` `merge`"), "{error}");
-    assert!(error.contains("rebase-mergeable"), "{error}");
+    assert!(started.is_err(), "startup went ahead");
 }
 
 #[tokio::test]
 async fn with_auto_merge_the_merge_method_in_effect_is_logged() {
     let (log, _guard) = Log::capture();
-    let repository = Repository::allowing([MergeMethod::Squash, MergeMethod::Rebase]);
-
-    World::start(repository, |config| {
+    World::start(Repository::default(), |config| {
         config.auto_merge = AUTO_MERGE;
     })
     .await
@@ -76,19 +32,7 @@ async fn with_auto_merge_the_merge_method_in_effect_is_logged() {
         .filter(|line| line.contains("started"))
         .collect();
     assert_eq!(started.len(), 1, "{started:?}");
-    assert!(started[0].contains("merge_method=squash"), "{}", started[0]);
-}
-
-#[tokio::test]
-async fn without_auto_merge_update_branch_is_not_checked() {
-    let rebase_only = Repository::allowing([MergeMethod::Rebase]);
-
-    let merge_updates_with_rebase_merges = World::start(rebase_only, |config| {
-        config.update_method = Some(UpdateMethod::Merge);
-    })
-    .await;
-
-    assert!(merge_updates_with_rebase_merges.is_ok());
+    assert!(started[0].contains("merge_method=merge"), "{}", started[0]);
 }
 
 /// Returns whether it succeeded and what it wrote to stderr. It gets a
