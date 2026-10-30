@@ -167,7 +167,7 @@ The board shows managed items as cards in six columns, in this order:
 | Ready          | holds `ready-for-agent` and is not claimed, or is a spec change not yet designed                     |
 | Working        | is claimed for design or implementation, or has a run in flight that no other column shows           |
 | In review      | has an open pull request that closes it, or is a pull request of Linewright's that closes no issue on the board |
-| Done           | is worked and closed                                                                                 |
+| Done           | is worked, and is closed or has had a pull request that closes it merge into the default branch since it was last opened |
 
 - **Two columns.** An item that fits two columns is in the one further
   right.
@@ -181,7 +181,7 @@ The board shows managed items as cards in six columns, in this order:
   its tickets as its cards; otherwise headed by the item's number and title,
   with the item as its one card.
 - **Finished lanes.** A lane whose cards are all in Done is finished. It shows
-  as its head alone, with when it finished: when its last card closed, or,
+  as its head alone, with when it finished: when its last card entered Done, or,
   for a spec change designed with nothing to build, when it was designed. It
   opens on click. The finished lanes sit together under one fold that says
   how many there are and opens on click. A finished lane leaves the board
@@ -212,9 +212,9 @@ to add is the title alone.
   statuses, most pressing first: failed, waiting for a person, in flight,
   paused or queued.
 - **Done.** A card in Done is quieter than the rest.
-- **When.** In Done, the line ends with when the item closed. In Triage,
-  Needs a person and Ready, it ends with when the item entered its column,
-  or when it was created where that is not known.
+- **When.** In Triage, Needs a person, Ready and Done, the line ends with
+  when the item entered its column, or when it was created where that is not
+  known.
 
 | Column         | The line                                                                                                                                                                                                                                                               | When                                                                                                                                                    | Card status |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
@@ -232,7 +232,7 @@ to add is the title alone.
 | Working        | its stage and how long it has run, "implementation · 12m"                                                                                                                                                                                                              | a run is in flight                                                                                                                                      | in flight |
 |                | "paused for the usage limit", "paused for the drain", "queued"                                                                                                                                                                                                         | no run is in flight, as in Ready                                                                                                                        | paused or queued |
 | In review      | its pull request, where the card is not the pull request itself, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" | that of what stops it merging |
-| Done           | "closed in #42"                                                                                                                                                                                                                                                        | an issue closed by a merged pull request                                                                                                                |  |
+| Done           | "closed in #42", the first pull request that closes it to merge since it was last opened                                                                                                                                                                              | an issue a merged pull request closes                                                                                                                   |  |
 |                | "closed as completed", "closed as not planned" or "closed as a duplicate", GitHub's reason; "closed" where the reason is not known                                                                                                                                     | an issue closed otherwise                                                                                                                               |  |
 |                | "merged"                                                                                                                                                                                                                                                               | a pull request of Linewright's merged                                                                                                                   |  |
 |                | "closed without merging"                                                                                                                                                                                                                                               | a pull request of Linewright's closed unmerged                                                                                                          |  |
