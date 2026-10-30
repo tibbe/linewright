@@ -16,6 +16,13 @@ doctest = false
 name = "lw"
 path = "src/main.rs"
 
+# The store's contracts, run against the local store and, given a sandbox
+# repository, GitHub (`tests/contract/main.rs`).
+[[test]]
+name = "contract"
+path = "tests/contract/main.rs"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 
@@ -91,6 +98,8 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 # Runs the web UI's script, against stand-ins for the browser and htmx.
 boa_engine = { version = "0.22", default-features = false }
+# The contract tests' harness: one named trial per contract and store.
+libtest-mimic = "0.8"
 # Reads the web UI's pages as a reader sees them.
 scraper = "0.27"
 # Paused time, for the session timeout under the usage limit.
