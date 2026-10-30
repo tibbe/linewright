@@ -47,6 +47,7 @@ pub(super) fn lane_head(heading: &LaneHeading, repo: &str) -> Html {
             title,
             tickets_closed,
             tickets,
+            ..
         } => html::titled(*number, title, repo).then(&html::escape(&format!(
             " — {tickets_closed}/{tickets} tickets closed"
         ))),

@@ -150,6 +150,11 @@ pub fn item_facts(
     let card = card_of(number);
     let lane = board.lane_headed_by(number);
     let state = match (answer, &card) {
+        // An open tracking issue with no open ticket is not managed, but
+        // still heads its lane, unfinished until it closes.
+        (Answer::LeftAlone(_), _) if lane.is_some() => StateFact::Tracking {
+            finished: lane.and_then(Lane::finished),
+        },
         (Answer::LeftAlone(left_alone), _) => StateFact::LeftAlone(left_alone.item.clone()),
         (Answer::Managed(_), Some((column, card))) => StateFact::Card {
             column: *column,
@@ -157,11 +162,13 @@ pub fn item_facts(
         },
         // Of the items Linewright manages, only a tracking issue has no
         // card: its lane's finish time while it is on the board; off it,
-        // its tickets'.
+        // once it is closed, the later of its tickets' and its own.
         (Answer::Managed(_), None) => StateFact::Tracking {
-            finished: lane
-                .and_then(Lane::finished)
-                .or_else(|| all_tickets.as_deref().and_then(tickets_finished)),
+            finished: lane.and_then(Lane::finished).or_else(|| {
+                let closed = view.snapshot.closed_item(number)?.closed_at;
+                let last_ticket = tickets_finished(all_tickets.as_deref()?)?;
+                Some(last_ticket.max(closed))
+            }),
         },
     };
     ItemFacts {

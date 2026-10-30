@@ -857,13 +857,15 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
                 number: Number(10),
                 title: "Tracking 10".into(),
                 tickets_closed: 1,
-                tickets: 2
+                tickets: 2,
+                closed: None
             },
             LaneHead::Tracking {
                 number: Number(20),
                 title: "Tracking 20".into(),
                 tickets_closed: 1,
-                tickets: 3
+                tickets: 3,
+                closed: None
             },
         ]
     );
@@ -915,7 +917,8 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
             number: Number(30),
             title: "Cut".into(),
             tickets_closed: 1,
-            tickets: 2
+            tickets: 2,
+            closed: None
         }
     );
     assert_eq!(
@@ -2433,5 +2436,109 @@ fn a_pull_request_linewright_worked_that_merged_or_closed_unmerged_is_in_done_wh
                 at: at("2026-09-30T12:00:00Z"),
             }),
         ]
+    );
+}
+
+/// `docs/specs/design_system.md`, The board, Finished lanes: a lane with a
+/// tracking issue is finished only once that issue is closed.
+#[test]
+fn a_lane_whose_tickets_are_all_closed_is_unfinished_while_its_tracking_issue_is_open() {
+    let view = with_closed(
+        view(
+            vec![
+                tracking_issue(10, 9, &[(11, false)]),
+                updated(labeled(2, &["needs-triage"]), "2026-09-29T12:00:00Z"),
+            ],
+            vec![],
+        ),
+        vec![
+            closed_ticket(11, 10, "2026-09-30T12:00:00Z"),
+            closed_tracking_issue(30, 29, &[(31, false)], "2026-10-01T08:00:00Z"),
+            closed_ticket(31, 30, "2026-10-01T07:00:00Z"),
+        ],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        lanes(&board),
+        [
+            (10, None),
+            (2, None),
+            (30, Some(at("2026-10-01T08:00:00Z"))),
+        ]
+    );
+    assert_eq!(
+        placed(&board),
+        [
+            (10, Column::Done, 11),
+            (2, Column::Triage, 2),
+            (30, Column::Done, 31),
+        ]
+    );
+}
+
+/// `docs/specs/design_system.md`, The board, Finished lanes: when the last
+/// of its cards entered Done or its tracking issue closed, whichever is
+/// later.
+#[test]
+fn a_lane_finished_when_its_last_card_entered_done_or_its_tracking_issue_closed_whichever_is_later()
+{
+    let view = with_closed(
+        view(vec![], vec![]),
+        vec![
+            closed_tracking_issue(10, 9, &[(11, false)], "2026-09-30T15:00:00Z"),
+            closed_ticket(11, 10, "2026-09-30T12:00:00Z"),
+            closed_tracking_issue(20, 19, &[(21, false)], "2026-09-29T12:00:00Z"),
+            closed_ticket(21, 20, "2026-09-30T09:00:00Z"),
+        ],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        lanes(&board),
+        [
+            (10, Some(at("2026-09-30T15:00:00Z"))),
+            (20, Some(at("2026-09-30T09:00:00Z"))),
+        ]
+    );
+    assert_eq!(
+        board.lanes[0].head,
+        LaneHead::Tracking {
+            number: Number(10),
+            title: "Tracking 10".into(),
+            tickets_closed: 1,
+            tickets: 1,
+            closed: Some(at("2026-09-30T15:00:00Z")),
+        }
+    );
+}
+
+/// `docs/specs/design_system.md`, The board, Lanes: a lane's cards are its
+/// managed tickets, and its head counts every ticket.
+#[test]
+fn a_ticket_that_is_not_managed_has_no_card_in_its_lane_and_its_head_still_counts_it() {
+    let view = view(
+        vec![
+            tracking_issue(10, 9, &[(11, true), (12, true)]),
+            cut_from(ticket(11, "Managed"), 10, 9),
+            cut_from(taken_back(12), 10, 9),
+        ],
+        vec![],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(placed(&board), [(10, Column::Ready, 11)]);
+    assert_eq!(
+        heads(&board),
+        [LaneHead::Tracking {
+            number: Number(10),
+            title: "Tracking 10".into(),
+            tickets_closed: 0,
+            tickets: 2,
+            closed: None,
+        }]
     );
 }
