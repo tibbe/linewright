@@ -54,8 +54,9 @@ struct State {
     issue_types: Option<Vec<String>>,
     linear_history: bool,
     allowed_merge_methods: MergeMethods,
-    /// Each label by name, with its description.
-    labels: BTreeMap<String, String>,
+    /// Each label by name, with its description: `None` for one created by
+    /// labeling an item, as GitHub gives it none.
+    labels: BTreeMap<String, Option<String>>,
     next_number: u64,
     issues: BTreeMap<Number, IssueRecord>,
     pulls: BTreeMap<Number, PullRecord>,
@@ -830,15 +831,16 @@ impl LocalStore {
     }
 
     pub fn create_label(&self, name: &str) {
-        self.state().labels.insert(name.to_string(), String::new());
+        self.state().labels.insert(name.to_string(), None);
     }
 
+    /// Whether the repository has a label spelled exactly `name`.
     pub fn has_label(&self, name: &str) -> bool {
         self.state().labels.contains_key(name)
     }
 
     pub fn label_description(&self, name: &str) -> Option<String> {
-        self.state().labels.get(name).cloned()
+        self.state().labels.get(name).cloned().flatten()
     }
 
     pub fn issue(&self, number: Number) -> Option<Issue> {
@@ -1184,6 +1186,25 @@ fn url(repo: &Path) -> Result<&str> {
 }
 
 impl State {
+    /// The label `name`, as the repository spells it: GitHub matches label
+    /// names regardless of case
+    /// (<https://docs.github.com/en/rest/issues/labels#get-a-label>).
+    fn label(&self, name: &str) -> Option<String> {
+        self.labels
+            .keys()
+            .find(|label| label.to_lowercase() == name.to_lowercase())
+            .cloned()
+    }
+
+    /// Creates the label `name`, without a description, unless the
+    /// repository has it, as labeling an item with it does
+    /// (<https://docs.github.com/en/rest/issues/labels#add-labels-to-an-issue>).
+    fn ensure_label(&mut self, name: &str) {
+        if self.label(name).is_none() {
+            self.labels.insert(name.into(), None);
+        }
+    }
+
     fn take_number(&mut self) -> Number {
         let number = Number(self.next_number);
         self.next_number += 1;
@@ -1659,30 +1680,35 @@ impl Store for LocalStore {
             .iter()
             .map(|(name, description)| label::RepoLabel {
                 name: name.clone(),
-                description: Some(description.clone()).filter(|d| !d.is_empty()),
+                description: description.clone(),
             })
             .collect())
     }
 
+    /// GitHub refuses a label whose name another has, regardless of case
+    /// (<https://docs.github.com/en/rest/issues/labels#create-a-label>).
     async fn create_label(&self, label: &label::Label) -> Result<()> {
-        self.state()
+        let mut state = self.state();
+        if let Some(taken) = state.label(label.name) {
+            bail!("the repository has the label {taken}");
+        }
+        state
             .labels
-            .insert(label.name.to_string(), label.description.to_string());
+            .insert(label.name.to_string(), Some(label.description.to_string()));
         Ok(())
     }
 
     async fn describe_label(&self, name: &str, description: &str) -> Result<()> {
         let mut state = self.state();
-        let label = state
-            .labels
-            .get_mut(name)
+        let spelled = state
+            .label(name)
             .with_context(|| format!("no label {name}"))?;
-        *label = description.to_string();
+        state.labels.insert(spelled, Some(description.to_string()));
         Ok(())
     }
 
     async fn label_exists(&self, name: &str) -> Result<bool> {
-        Ok(self.has_label(name))
+        Ok(self.state().label(name).is_some())
     }
 
     async fn snapshot(&self, windows: Windows) -> Result<Snapshot> {
@@ -2071,6 +2097,7 @@ impl Store for LocalStore {
         let then = {
             let mut state = self.state();
             let linewright = state.linewright.clone();
+            state.ensure_label(label);
             state.add_label(number, label, &linewright, now)?;
             match state.after_labeling.take() {
                 Some(hook) if hook.number == number && hook.label == label => Some(hook.then),
@@ -2160,7 +2187,13 @@ impl Store for LocalStore {
     }
 
     async fn create_issue(&self, issue: NewIssue) -> Result<Number> {
-        let linewright = self.state().linewright.clone();
+        let linewright = {
+            let mut state = self.state();
+            for label in &issue.labels {
+                state.ensure_label(label);
+            }
+            state.linewright.clone()
+        };
         let labels: Vec<&str> = issue.labels.iter().map(String::as_str).collect();
         Ok(self.open_issue(linewright.as_str(), &issue.title, &issue.body, &labels))
     }
