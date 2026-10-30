@@ -29,7 +29,8 @@ internals) is covered through these tests and gets no test of its own.
 
 - **The user, through the system**: drive it as a user would (a labeled issue,
   a merged PR) against a fake of each external system (GitHub, the harness,
-  the clock) and check what the user would see.
+  the clock) and check what the user would see. The web UI is driven
+  through its router, in-process.
 - **The user, through the functional core**: give the decision function a
   state of the world and check the decisions it returns. Every case is cheap
   to reach there.
@@ -39,6 +40,22 @@ internals) is covered through these tests and gets no test of its own.
   by hand. The fakes stand in for the adapters, so no other test runs them.
 - **An internal library's callers, through its interface**: for a library used
   throughout the code, not a helper function.
+- **A fake, against its adapter**: the local store passes the same tests as
+  the GitHub store, so the fake stays faithful to what it stands in for.
+  Against GitHub, a daily automation runs them and files an issue for each
+  one that fails.
+
+### Setting up
+
+A test sets up its state through the back door, and runs only the behaviour it
+checks through the front door.
+
+- **The back door.** A test writes the state it starts from, such as a
+  repository's history or a pull request Linewright opened, straight into the
+  fakes.
+- **The front door.** Where the back door writes what a stage would leave, a
+  test runs the stage and checks that it leaves the same, field for field.
+- **Real git.** Tests run real git, in the code under test and in the fakes.
 
 ### Anti-patterns
 
