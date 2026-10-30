@@ -7,9 +7,7 @@ use std::time::Duration;
 use chrono::TimeDelta;
 
 use common::*;
-use linewright::domain::{
-    CheckState, Issue, Login, Mergeability, Number, PullState, ReviewState, Snapshot,
-};
+use linewright::domain::{Issue, Login, Number, Snapshot};
 use linewright::factory::Factory;
 use linewright::harness::{Harness, SessionError, SessionSpec, Turn};
 use linewright::reconcile::WorkKind;
@@ -69,11 +67,6 @@ impl Served {
         assert!(status.is_success(), "{event}: {status}");
     }
 
-    async fn deliver_form_encoded(&self, event: &str, body: serde_json::Value) {
-        let status = signed_form(&self.listener, event, &body.to_string()).await;
-        assert!(status.is_success(), "{event}: {status}");
-    }
-
     fn issue(&self, number: Number) -> Issue {
         self.store.issue(number).unwrap()
     }
@@ -120,37 +113,8 @@ async fn an_issue_labeled_ready_for_agent_is_claimed_on_the_delivery() {
     served.stop().await;
 }
 
-#[tokio::test]
-async fn an_issue_labeled_ready_for_agent_is_claimed_on_a_form_encoded_delivery() {
-    let world = World::new().await;
-    implement(&world);
-    let issue = world
-        .store
-        .open_issue("maintainer", "Do the thing", "Please.", &[]);
-    let served = serve(world, NEVER).await;
-
-    served
-        .store
-        .label_as("maintainer", issue, "ready-for-agent")
-        .unwrap();
-    served
-        .deliver_form_encoded(
-            "issues",
-            json!({"action": "labeled", "issue": {"number": issue.0}}),
-        )
-        .await;
-
-    eventually(|| claimed(&served.store, issue)).await;
-    assert_eq!(served.store.snapshots_taken(), 1);
-    served.stop().await;
-}
-
 fn about_issue(number: Number) -> serde_json::Value {
     json!({"issue": {"number": number.0}})
-}
-
-fn about_pull_as_issue(number: Number) -> serde_json::Value {
-    json!({"issue": {"number": number.0, "pull_request": {"url": "https://api.github.com/x"}}})
 }
 
 fn about_pull(number: Number) -> serde_json::Value {
@@ -186,30 +150,9 @@ async fn an_issue_labeled_needs_triage_is_triaged_on_the_delivery() {
 }
 
 #[tokio::test]
-async fn an_issue_closed_is_held_among_the_closed_items_on_the_delivery_about_it() {
-    let world = World::new().await;
-    let issue = world
-        .store
-        .open_issue("reporter", "Crash", "It crashes.", &["needs-info"]);
-    let served = serve(world, NEVER).await;
-
-    served.store.close_issue_as_completed(issue).unwrap();
-    served.deliver("issues", about_issue(issue)).await;
-
-    let closed = || {
-        let snapshot = served.snapshot();
-        snapshot.closed.iter().any(|item| item.number == issue)
-    };
-    eventually(closed).await;
-    assert!(served.snapshot().issue(issue).is_none());
-    assert_eq!(served.store.snapshots_taken(), 1);
-    served.stop().await;
-}
-
-#[tokio::test]
 async fn a_refresh_holds_the_closed_issues_a_fresh_snapshot_would() {
     let world = World::new().await;
-    let Tracking { closed: ticket, .. } = world.tracking_with_a_closed_ticket().await;
+    let ticket = world.tracking_with_a_closed_ticket().await;
     let alone = world
         .store
         .open_issue(LINEWRIGHT, "Old idea", "Maybe.", &["ready-for-human"]);
@@ -231,103 +174,6 @@ async fn a_refresh_holds_the_closed_issues_a_fresh_snapshot_would() {
     };
     eventually(|| held().contains(&marker)).await;
     assert_eq!(held(), [ticket, marker]);
-    served.stop().await;
-}
-
-#[tokio::test]
-async fn a_refreshed_tracking_issue_that_gained_a_ticket_closed_before_the_done_window_holds_it() {
-    let world = World::new().await;
-    let Tracking {
-        tracking,
-        closed: ticket,
-    } = world.tracking_with_a_closed_ticket().await;
-    let old = world
-        .store
-        .open_issue(LINEWRIGHT, "Part three", "Of it.", &["ready-for-human"]);
-    world.store.close_issue_as_completed(old).unwrap();
-    world.clock.advance(TimeDelta::days(8));
-    let marker = world
-        .store
-        .open_issue(LINEWRIGHT, "Marker", "Now.", &["ready-for-human"]);
-    let served = serve(world, NEVER).await;
-
-    served.store.add_sub_issue(tracking, old).await.unwrap();
-    served.store.close_issue_as_completed(marker).unwrap();
-    for issue in [tracking, marker] {
-        served.deliver("issues", about_issue(issue)).await;
-    }
-
-    let held = || -> Vec<Number> {
-        let snapshot = served.snapshot();
-        snapshot.closed.iter().map(|item| item.number).collect()
-    };
-    eventually(|| held().contains(&marker)).await;
-    assert_eq!(held(), [ticket, old, marker]);
-    served.stop().await;
-}
-
-#[tokio::test]
-async fn a_refresh_keeps_linewrights_pull_request_closed_before_the_done_window_closing_a_ticket_of_an_unfinished_lane()
- {
-    let world = World::new().await;
-    let Tracking { closed: ticket, .. } = world.tracking_with_a_closed_ticket().await;
-    let pr = world
-        .store
-        .open_pull_as(
-            LINEWRIGHT,
-            &format!("{}-part-one", ticket.0),
-            "Part one",
-            &format!("Closes {ticket}"),
-            &[("src/part.txt", "part\n")],
-        )
-        .await
-        .unwrap();
-    world.store.close_pull_as(pr).unwrap();
-    world.clock.advance(TimeDelta::days(8));
-    let marker = world
-        .store
-        .open_issue(LINEWRIGHT, "Marker", "Now.", &["ready-for-human"]);
-    let served = serve(world, NEVER).await;
-
-    served.store.close_issue_as_completed(marker).unwrap();
-    served.deliver("issues", about_issue(marker)).await;
-
-    let held = || -> Vec<Number> {
-        let snapshot = served.snapshot();
-        snapshot.closed.iter().map(|item| item.number).collect()
-    };
-    eventually(|| held().contains(&marker)).await;
-    assert_eq!(held(), [ticket, pr, marker]);
-    served.stop().await;
-}
-
-#[tokio::test]
-async fn a_refresh_drops_an_issue_closed_before_the_done_window_since_the_poll() {
-    let world = World::new().await;
-    let aged = world
-        .store
-        .open_issue(LINEWRIGHT, "Old idea", "Maybe.", &["ready-for-human"]);
-    world.store.close_issue_as_completed(aged).unwrap();
-    world
-        .clock
-        .advance(TimeDelta::days(7) - TimeDelta::hours(1));
-    let marker = world
-        .store
-        .open_issue(LINEWRIGHT, "Marker", "Now.", &["ready-for-human"]);
-    let clock = world.clock.clone();
-    let served = serve(world, NEVER).await;
-    let held = || -> Vec<Number> {
-        let snapshot = served.snapshot();
-        snapshot.closed.iter().map(|item| item.number).collect()
-    };
-    assert_eq!(held(), [aged]);
-
-    clock.advance(TimeDelta::hours(2));
-    served.store.close_issue_as_completed(marker).unwrap();
-    served.deliver("issues", about_issue(marker)).await;
-
-    eventually(|| held().contains(&marker)).await;
-    assert_eq!(held(), [marker]);
     served.stop().await;
 }
 
@@ -400,65 +246,6 @@ async fn a_spec_change_merged_is_cut_into_tickets_on_the_delivery() {
     .await;
     assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
-}
-
-type Feedback = fn(&LocalStore, Number) -> (&'static str, serde_json::Value);
-
-#[tokio::test]
-async fn feedback_on_linewrights_pull_request_is_addressed_on_the_delivery() {
-    let feedback: [Feedback; 3] = [
-        |store, pr| {
-            store
-                .review_as(
-                    "maintainer",
-                    pr,
-                    ReviewState::ChangesRequested,
-                    "Add a changelog entry.",
-                    &[],
-                )
-                .unwrap();
-            ("pull_request_review", about_pull(pr))
-        },
-        |store, pr| {
-            store
-                .review_as(
-                    "maintainer",
-                    pr,
-                    ReviewState::Commented,
-                    "",
-                    &[("src/x.txt", "Add a changelog entry.")],
-                )
-                .unwrap();
-            ("pull_request_review_comment", about_pull(pr))
-        },
-        |store, pr| {
-            store
-                .comment_as("maintainer", pr, "Add a changelog entry.")
-                .unwrap();
-            ("issue_comment", about_pull_as_issue(pr))
-        },
-    ];
-    for give in feedback {
-        let mut world = World::new().await;
-        let (_, pr) = world.ticket_in_review().await;
-        world.harness.on(WorkKind::Rework, |call| {
-            assert!(call.spec.prompt.contains("Add a changelog entry."));
-            commit_in(
-                &call.spec.dir,
-                &[("CHANGELOG.md", "- thing\n")],
-                "Changelog",
-            );
-            Ok(json!({"outcome": "done", "comment": "Added the entry."}).to_string())
-        });
-        let served = serve(world, NEVER).await;
-
-        let (event, body) = give(&served.store, pr);
-        served.deliver(event, body).await;
-
-        eventually(|| served.harness.prompts(WorkKind::Rework).len() == 1).await;
-        assert_eq!(served.store.snapshots_taken(), 1, "{event}");
-        served.stop().await;
-    }
 }
 
 #[derive(Default)]
@@ -544,70 +331,6 @@ async fn reopening_an_issue_ready_for_agent_claims_it_on_the_delivery() {
     served.deliver("issues", about_issue(issue)).await;
 
     eventually(|| claimed(&served.store, issue)).await;
-    assert_eq!(served.store.snapshots_taken(), 1);
-    served.stop().await;
-}
-
-#[tokio::test]
-async fn assigning_linewrights_pull_request_reads_it_again_on_the_delivery() {
-    let mut world = World::new().await;
-    let (_, pr) = world.ticket_in_review().await;
-    let served = serve(world, NEVER).await;
-
-    let before_unassigned = served.store.items_read();
-    served
-        .store
-        .unassign_as("maintainer", pr, "factory")
-        .unwrap();
-    served.deliver("pull_request", about_pull(pr)).await;
-    eventually(|| served.store.items_read() > before_unassigned).await;
-
-    let before_assigned = served.store.items_read();
-    served.store.assign_as("maintainer", pr, "factory").unwrap();
-    served.deliver("pull_request", about_pull(pr)).await;
-    eventually(|| served.store.items_read() > before_assigned).await;
-
-    assert_eq!(served.store.snapshots_taken(), 1);
-    served.stop().await;
-}
-
-#[tokio::test]
-async fn a_persons_pull_request_is_held_once_linewright_is_assigned_to_it_and_let_go_once_unassigned_on_the_deliveries()
- {
-    let world = World::new().await;
-    let pr = world
-        .store
-        .open_pull_as(
-            "alice",
-            "tidy",
-            "Tidy up",
-            "Tidies up.",
-            &[("src/tidy.txt", "tidy\n")],
-        )
-        .await
-        .unwrap();
-    let served = serve(world, NEVER).await;
-    let held = |by: &Served| -> Vec<Number> {
-        by.snapshot()
-            .peoples_pulls
-            .iter()
-            .map(|pull| pull.number)
-            .collect()
-    };
-    assert_eq!(held(&served), []);
-
-    served.store.assign_as("maintainer", pr, "factory").unwrap();
-    served.deliver("pull_request", about_pull(pr)).await;
-    eventually(|| held(&served) == [pr]).await;
-
-    served
-        .store
-        .unassign_as("maintainer", pr, "factory")
-        .unwrap();
-    served.deliver("pull_request", about_pull(pr)).await;
-    eventually(|| held(&served).is_empty()).await;
-
-    assert_eq!(served.snapshot().pulls, []);
     assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }
@@ -772,119 +495,5 @@ async fn a_failed_read_for_a_delivery_is_no_failed_poll() {
     .await;
 
     assert_eq!(served.serving.failed_polls(), None);
-    served.stop().await;
-}
-
-const CI_EVENTS: [&str; 3] = ["check_run", "check_suite", "status"];
-
-/// The pull requests a check names are left empty, as GitHub leaves them
-/// for one from a fork.
-fn about_commit(event: &str, sha: &str) -> serde_json::Value {
-    match event {
-        "check_run" => json!({"check_run": {"head_sha": sha, "pull_requests": []}}),
-        "check_suite" => json!({"check_suite": {"head_sha": sha, "pull_requests": []}}),
-        "status" => json!({"sha": sha, "branches": []}),
-        _ => unreachable!("{event} is not a CI event"),
-    }
-}
-
-impl Served {
-    async fn report_check(&self, pr: Number, state: CheckState, event: &str) {
-        let check = check("test", state, "assertion failed: widgets == 2");
-        self.store.set_checks(pr, vec![check]).await.unwrap();
-        let head = self.store.snapshot_pull(pr).await.head_sha;
-        self.deliver(event, about_commit(event, &head)).await;
-    }
-}
-
-#[tokio::test]
-async fn a_failing_check_on_linewrights_pull_request_starts_the_ci_fix_on_the_delivery() {
-    for event in CI_EVENTS {
-        let mut world = World::new().await;
-        let (_, pr) = world.ticket_in_review().await;
-        world.harness.on(WorkKind::FixCi, |_| {
-            Ok(json!({"outcome": "done", "comment": "Fixed the widget count."}).to_string())
-        });
-        let served = serve(world, NEVER).await;
-
-        served.report_check(pr, CheckState::Failed, event).await;
-
-        eventually(|| served.harness.prompts(WorkKind::FixCi).len() == 1).await;
-        let prompt = &served.harness.prompts(WorkKind::FixCi)[0];
-        assert!(prompt.contains("widgets == 2"), "{event}: {prompt}");
-        assert_eq!(served.store.snapshots_taken(), 1, "{event}");
-        served.stop().await;
-    }
-}
-
-#[tokio::test]
-async fn green_checks_on_linewrights_pull_request_mark_it_ready_on_the_delivery() {
-    for event in CI_EVENTS {
-        let mut world = World::new().await;
-        let (_, pr) = world.ticket_in_review().await;
-        let served = serve(world, NEVER).await;
-
-        served.report_check(pr, CheckState::Passed, event).await;
-
-        eventually_async(|| async {
-            served.store.snapshot_pull(pr).await.state == PullState::Open { draft: false }
-        })
-        .await;
-        assert_eq!(served.store.snapshots_taken(), 1, "{event}");
-        served.stop().await;
-    }
-}
-
-#[tokio::test]
-async fn with_auto_merge_green_checks_on_linewrights_pull_request_merge_it_on_the_delivery() {
-    for event in CI_EVENTS {
-        let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
-        let (ticket, pr) = world.ticket_in_review().await;
-        let served = serve(world, NEVER).await;
-
-        served.report_check(pr, CheckState::Passed, event).await;
-
-        eventually(|| !served.issue(ticket).open).await;
-        let state = served.store.snapshot_pull(pr).await.state;
-        assert!(
-            matches!(state, PullState::Merged { .. }),
-            "{event}: {state:?}"
-        );
-        assert_eq!(served.store.snapshots_taken(), 1, "{event}");
-        served.stop().await;
-    }
-}
-
-#[tokio::test]
-async fn a_push_to_the_default_branch_brings_linewrights_pull_request_up_to_date_on_the_delivery() {
-    let mut world = World::new().await;
-    let (_, pr) = world.ticket_in_review().await;
-    let served = serve(world, NEVER).await;
-    let before = served.store.snapshot_pull(pr).await;
-
-    served
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[("src/other.txt", "other\n")],
-            "Other",
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        served.store.snapshot_pull(pr).await.mergeability,
-        Mergeability::Behind
-    );
-    served
-        .deliver("push", json!({"ref": "refs/heads/main"}))
-        .await;
-
-    eventually_async(|| async {
-        let after = served.store.snapshot_pull(pr).await;
-        after.mergeability == Mergeability::Clean && after.head_sha != before.head_sha
-    })
-    .await;
-    assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }

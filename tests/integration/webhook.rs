@@ -1,7 +1,8 @@
 use crate::common;
 
 use common::*;
-use linewright::webhook::{Listener, Pending};
+use linewright::domain::{Item, Number, Pull, PullState, Snapshot};
+use linewright::webhook::{Listener, Pending, Subject};
 
 async fn listen() -> Listener {
     Listener::bind(
@@ -428,4 +429,75 @@ async fn a_stopped_listener_takes_no_more_deliveries() {
 
     let refused = tokio::net::TcpStream::connect(address).await;
     assert!(refused.is_err(), "still listening on {address}");
+}
+
+/// Linewright's pull request #`number`, open or not, whose head is `head`.
+fn linewrights_pull(number: u64, head: &str, open: bool) -> Pull {
+    let pull = open_pull(number, LINEWRIGHT, &[], &[]);
+    Pull {
+        head_sha: head.into(),
+        state: if open {
+            pull.state
+        } else {
+            PullState::Closed {
+                at: at("2026-10-01T11:00:00Z"),
+            }
+        },
+        ..pull
+    }
+}
+
+#[test]
+fn a_delivery_names_its_item_the_open_pull_request_whose_head_its_commit_is_or_on_a_push_to_the_default_branch_every_open_one()
+ {
+    let snapshot = Snapshot {
+        default_branch: "main".into(),
+        pulls: vec![
+            linewrights_pull(50, "9b2c4f1", true),
+            linewrights_pull(51, "7e8e2de", true),
+            linewrights_pull(52, "6dcb09b", false),
+        ],
+        ..Snapshot::default()
+    };
+    let cases = [
+        (
+            "an issue",
+            Subject::Item(Item::Issue(Number(7))),
+            vec![Item::Issue(Number(7))],
+        ),
+        (
+            "a pull request",
+            Subject::Item(Item::Pull(Number(9))),
+            vec![Item::Pull(Number(9))],
+        ),
+        (
+            "the head of an open pull request",
+            Subject::Commit("7e8e2de".into()),
+            vec![Item::Pull(Number(51))],
+        ),
+        (
+            "the head of a closed pull request",
+            Subject::Commit("6dcb09b".into()),
+            vec![],
+        ),
+        (
+            "the head of no pull request",
+            Subject::Commit("0123456".into()),
+            vec![],
+        ),
+        (
+            "a push to the default branch",
+            Subject::Push("main".into()),
+            vec![Item::Pull(Number(50)), Item::Pull(Number(51))],
+        ),
+        (
+            "a push to a pull request's branch",
+            Subject::Push("50-pull".into()),
+            vec![],
+        ),
+    ];
+
+    for (case, subject, items) in cases {
+        assert_eq!(subject.items(&snapshot), items, "{case}");
+    }
 }
