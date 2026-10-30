@@ -238,6 +238,8 @@ image the operator builds with those in it.
   address it listens on for them, each delivery and what it names, and each
   delivery refused and why.
 - **Systems.** Unix-like systems: Linux and macOS.
+- **git.** Linewright finds, once, the git binary that the `git` on its path
+  runs, and runs that binary directly from then on.
 
 ## Out of scope
 
