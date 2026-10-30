@@ -572,6 +572,47 @@ async fn assigning_linewrights_pull_request_reads_it_again_on_the_delivery() {
 }
 
 #[tokio::test]
+async fn a_persons_pull_request_is_held_once_linewright_is_assigned_to_it_and_let_go_once_unassigned_on_the_deliveries()
+ {
+    let world = World::new().await;
+    let pr = world
+        .store
+        .open_pull_as(
+            "alice",
+            "tidy",
+            "Tidy up",
+            "Tidies up.",
+            &[("src/tidy.txt", "tidy\n")],
+        )
+        .await
+        .unwrap();
+    let served = serve(world, NEVER).await;
+    let held = |by: &Served| -> Vec<Number> {
+        by.snapshot()
+            .peoples_pulls
+            .iter()
+            .map(|pull| pull.number)
+            .collect()
+    };
+    assert_eq!(held(&served), []);
+
+    served.store.assign_as("maintainer", pr, "factory").unwrap();
+    served.deliver("pull_request", about_pull(pr)).await;
+    eventually(|| held(&served) == [pr]).await;
+
+    served
+        .store
+        .unassign_as("maintainer", pr, "factory")
+        .unwrap();
+    served.deliver("pull_request", about_pull(pr)).await;
+    eventually(|| held(&served).is_empty()).await;
+
+    assert_eq!(served.snapshot().pulls, []);
+    assert_eq!(served.store.snapshots_taken(), 1);
+    served.stop().await;
+}
+
+#[tokio::test]
 async fn closing_linewrights_pull_request_hands_its_ticket_back_on_the_delivery() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;

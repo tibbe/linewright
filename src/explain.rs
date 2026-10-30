@@ -491,9 +491,11 @@ pub fn fresh_view(view: &View, read: &AnyItem, now: Timestamp) -> View {
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
             held.put_issue(issue.as_ref().clone());
         }
-        AnyItem::Pull(pull) if &pull.author == linewright => held.put_pull(pull.as_ref().clone()),
-        AnyItem::Merged { pull, .. } => held.put_merged(pull.as_ref().clone()),
-        AnyItem::Pull(_) => {}
+        AnyItem::Pull(pull) => held.put_read_pull(pull.as_ref().clone(), linewright),
+        AnyItem::Merged { pull, .. } => {
+            held.remove_peoples_pull(pull.number);
+            held.put_merged(pull.as_ref().clone());
+        }
     }
     fresh.read_at.insert(read.item(), now);
     fresh

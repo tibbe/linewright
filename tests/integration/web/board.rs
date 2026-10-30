@@ -1198,7 +1198,6 @@ async fn with_a_required_label_done_holds_only_the_closed_issues_linewright_work
         shown,
         [
             "Done: #4: Filed by Linewright",
-            "Done: #5: Assigned",
             "Done: #6: Handed back",
             "Done: #7: Closed by ours",
         ]

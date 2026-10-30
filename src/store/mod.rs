@@ -264,6 +264,17 @@ pub enum IssueRead {
     Gone,
 }
 
+/// What [`Store::peoples_pull`] reads.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PeoplesPullRead {
+    /// The issues it closes while it is open: none when it is not open, or
+    /// the store has no such pull request.
+    pub closes: Vec<Number>,
+    /// `None` when a snapshot leaves it out of the people's pull requests,
+    /// as it does Linewright's own.
+    pub pull: Option<Pull>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnyItem {
     HeldIssue(Box<Issue>),
@@ -276,12 +287,12 @@ pub enum AnyItem {
     },
 }
 
-/// Whether a snapshot holds open `issue`: whether `linewright` manages it
-/// ([`Issue::managed`]), with the pull requests GitHub says close it. A store
+/// Whether a snapshot holds open `issue`: whether `linewright` may manage it
+/// ([`Issue::candidate`]), with the pull requests GitHub says close it. A store
 /// does not know the required label, so it counts every issue marked, and
 /// `managed::classify` leaves one that is not alone.
 pub fn holds(issue: &Issue, linewright: &Login) -> bool {
-    issue.open && issue.managed(linewright, &issue.closed_by, Marking::Marked)
+    issue.open && issue.candidate(linewright, &issue.closed_by, Marking::Marked)
 }
 
 impl AnyItem {
@@ -394,10 +405,10 @@ pub trait Store: Send + Sync {
     /// requests: `None` when the snapshot leaves it out, as it does anyone else's
     /// and one the store does not have.
     async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>>;
-    /// The issues the pull request #`number` closes while it is open,
-    /// whoever opened it: none when it is not open, or the store has no such
-    /// pull request.
-    async fn open_pull_closes(&self, number: Number) -> Result<Vec<Number>>;
+    /// The pull request #`number` as a snapshot taken now holds it among the
+    /// people's pull requests, read in full only then, with the issues it
+    /// closes while it is open, whoever opened it.
+    async fn peoples_pull(&self, number: Number) -> Result<PeoplesPullRead>;
     /// The pull request as a snapshot taken now, over `windows`, holds it
     /// among the merged ones: `None` when the snapshot leaves it out of them,
     /// as it does one the store does not have.

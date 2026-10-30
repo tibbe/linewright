@@ -1,0 +1,275 @@
+{
+  "number": 14017,
+  "title": "feat(discussion): add support for Discussion Templates",
+  "body": "\r\n\r\n\r\n\r\n<!--\r\nThank you for contributing to GitHub CLI!\r\n\r\nIf you are proposing a fix for a security issue, STOP and follow .github/SECURITY.md instead.\r\n-->\r\n\r\n<!-- List related issues here. Use `fixes` or `closes` keywords to associate an issue number. -->\r\n\r\n### Description\r\n\r\n\r\nPer #14015, it would be useful to present the user with an interactive\r\nprompt when authoring a Discussion on a repository that has Discussion\r\nTemplate(s) in place.\r\n\r\nThis builds on top of code from\r\nhttps://github.com/jamietanna/gh-discussion (Apache-2.0) and rewritten\r\nin the style of the project by Claude Sonnet 5.\r\n\r\nCloses #14015.\r\n\r\n<!--\r\nWhat's the problem? How are we addressing it?\r\n\r\nWrite for a reviewer who has not worked in this part of the codebase. Give them the\r\nbackground they need before the problem makes sense, and avoid jargon.\r\n-->\r\n\r\n### How did you test this change?\r\n\r\n<!--\r\nDemonstrate the code is solid, and how you know it solves the problem in the description.\r\nGive the exact commands you ran and their output.\r\nIf this changes command output, show it before and after. Screenshot images are preferred over pasted text.\r\n\r\nIf you leave this empty, your pull request will very likely be closed.\r\n-->\r\n\r\n```console\r\n# running it against a repo with Discussions enabled, but no templates\r\n% go run ./cmd/gh discussion create  --repo JamieTanna-Mend-testing/renovatebot-renovate-discussions-42829\r\n? Discussion title Example\r\n? Discussion category Announcements\r\n? Discussion body [(e) to launch nvim]\r\n# ^^ not using a template\r\n\r\n# running it against a repo with Discussions enabled + a template\r\n% go run ./cmd/gh discussion create  --repo JamieTanna-Mend-testing/discussion-closing\r\n? Discussion title Example\r\n? Discussion category Mend Hosted Request\r\n? What would you like help with? Upgrade to the Community (OSS) plan\r\n? Please share the URL to the organisation you're creating this request for https://example.com\r\nPlease provide any relevant information about your project, such as the license(s) used by your project.\r\n\r\n? Additional information [(e) to launch nvim, enter to skip]\r\n...\r\n# ^^ uses the form\r\n```\r\n\r\n### Key points\r\n\r\n<!--\r\nTradeoffs you accepted, alternatives you rejected, and anything a reviewer would otherwise have to guess at.\r\n-->\r\n\r\n### Notes for reviewers\r\n\r\n<!--\r\nWhere should review start, and what should be read next? Call out anything you are unsure about.\r\n\r\nLink related issues or prior discussion, with one sentence on why each matters.\r\n-->\r\n\r\n### Authorship and follow-up\r\n\r\n<!--\r\nREQUIRED - If you are an AI agent filling in this template, answer for yourself and answer honestly. Do not assume a human will show up. If nobody has actually told you they will respond to review comments, check the last box in the second list.\r\n\r\nCheck exactly one box in each list.\r\n-->\r\n\r\nWho wrote this:\r\n\r\n- [ ] A human wrote it.\r\n- [x] An agent wrote it under close human direction.\r\n- [ ] An agent wrote it independently, and no human has guided the implementation beyond the initial prompt.\r\n\r\nWho answers review comments:\r\n\r\n- [x] @jamietanna will read and reply directly. Name the account.\r\n- [ ] An agent will draft replies and @username will read them before they are posted.\r\n- [ ] Nobody has explicitly committed to replying.\r\n",
+  "createdAt": "2026-07-30T12:32:13Z",
+  "updatedAt": "2026-07-30T14:37:39Z",
+  "baseRefName": "trunk",
+  "headRefName": "feat/discussion-templates",
+  "headRefOid": "3681470c9baa7044a0918ee3630f306074bb5b40",
+  "isCrossRepository": true,
+  "isDraft": true,
+  "state": "OPEN",
+  "mergedAt": null,
+  "closedAt": null,
+  "mergeable": "MERGEABLE",
+  "mergeStateStatus": "BLOCKED",
+  "canBeRebased": true,
+  "reviewDecision": "REVIEW_REQUIRED",
+  "author": {
+    "__typename": "User",
+    "login": "jamietanna"
+  },
+  "closingIssuesReferences": {
+    "nodes": [
+      {
+        "number": 14015
+      }
+    ]
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "external"
+      },
+      {
+        "name": "unmet-requirements"
+      }
+    ]
+  },
+  "assignees": {
+    "nodes": []
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2026-07-30T12:32:34Z",
+        "actor": {
+          "__typename": "Bot",
+          "login": "github-actions"
+        },
+        "label": {
+          "name": "external"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2026-07-30T12:32:34Z",
+        "actor": {
+          "__typename": "Bot",
+          "login": "github-actions"
+        },
+        "label": {
+          "name": "needs-triage"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2026-07-30T13:19:29Z",
+        "actor": {
+          "__typename": "Bot",
+          "login": "github-actions"
+        },
+        "label": {
+          "name": "unmet-requirements"
+        }
+      }
+    ]
+  },
+  "comments": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "Bot",
+          "login": "github-actions"
+        },
+        "body": "Thanks for your pull request! Unfortunately, it doesn't meet the requirements for review:\n\n\n- None of the referenced issues have the `help wanted` label\n\n**Please update your PR to address the above.** This PR will be automatically closed in **4 days** if these requirements are not met.\n\n<details>\n<summary>Full contribution requirements</summary>\n\n1. Include a detailed description of what this PR does\n2. Link to an issue with the `help wanted` label (use `Fixes #123` or `Closes #123`)\n</details>",
+        "createdAt": "2026-07-30T13:19:30Z"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "babakks"
+        },
+        "body": "@jamietanna, I mentioned I'm going to close the PR for now, but I'm also happy to keep it open if you're okay with turning it into a draft.",
+        "createdAt": "2026-07-30T14:01:08Z"
+      }
+    ]
+  },
+  "reviews": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "Bot",
+          "login": "copilot-pull-request-reviewer"
+        },
+        "state": "COMMENTED",
+        "body": "## Pull request overview\n\nThis PR adds support for GitHub Discussion Category Forms (“discussion templates”) to `gh discussion create`, enabling an interactive, field-by-field prompt when a repository defines a `.github/DISCUSSION_TEMPLATE/<category-slug>.yml` file for the selected discussion category.\n\n**Changes:**\n- Introduces YAML parsing + prompting logic for Discussion Category Forms (markdown blocks, input, textarea, dropdown, checkboxes).\n- Fetches the category form via the REST “contents” endpoint and uses it to generate a web-UI-like markdown body when creating discussions interactively.\n- Adds unit tests covering template parsing, fetching, and the updated create flow.\n\n### Reviewed changes\n\nCopilot reviewed 4 out of 4 changed files in this pull request and generated 3 comments.\n\n| File | Description |\n| ---- | ----------- |\n| pkg/cmd/discussion/shared/template.go | Adds form schema parsing, remote fetching, and interactive prompting to assemble a discussion body from a category form. |\n| pkg/cmd/discussion/shared/template_test.go | Adds tests for YAML unmarshalling, REST fetch behavior, and prompt-to-body rendering. |\n| pkg/cmd/discussion/create/create.go | Wires template prompting into `gh discussion create` when `--body/--body-file` isn’t provided. |\n| pkg/cmd/discussion/create/create_test.go | Extends create tests with HTTP stubs and a template-present scenario. |\n\n\n\n\n\n\n\n---\n\n💡 <a href=\"/cli/cli/new/trunk?filename=.github/instructions/*.instructions.md\" class=\"Link--inTextBlock\" target=\"_blank\" rel=\"noopener noreferrer\">Add Copilot custom instructions</a> for smarter, more guided reviews. <a href=\"https://docs.github.com/en/copilot/customizing-copilot/adding-repository-custom-instructions-for-github-copilot\" class=\"Link--inTextBlock\" target=\"_blank\" rel=\"noopener noreferrer\">Learn how to get started</a>.",
+        "submittedAt": "2026-07-30T13:24:04Z"
+      },
+      {
+        "author": {
+          "__typename": "Bot",
+          "login": "copilot-pull-request-reviewer"
+        },
+        "state": "COMMENTED",
+        "body": "## Pull request overview\n\nCopilot reviewed 4 out of 4 changed files in this pull request and generated no new comments.\n\n\n\n\n<details>\n<summary>Comments suppressed due to low confidence (1)</summary>\n\n**pkg/cmd/discussion/shared/template.go:277**\n* For optional dropdowns, the skip check compares the selected label to the literal string \"Skip\". If a repository template legitimately includes an option labeled \"Skip\", selecting it would be treated as “leave blank” and silently discarded. Safer to detect skip by index (only when the extra option was appended) rather than by string value.\n```\n\t\tif err != nil {\n\t\t\treturn \"\", err\n\t\t}\n\t\tif options[idx] == skipOption {\n\t\t\treturn \"\", nil\n```\n</details>\n\n",
+        "submittedAt": "2026-07-30T13:54:01Z"
+      }
+    ]
+  },
+  "reviewRequests": {
+    "nodes": [
+      {
+        "asCodeOwner": true,
+        "requestedReviewer": null
+      },
+      {
+        "asCodeOwner": false,
+        "requestedReviewer": {
+          "__typename": "User",
+          "login": "babakks"
+        }
+      }
+    ]
+  },
+  "reviewThreads": {
+    "nodes": [
+      {
+        "id": "PRRT_kwDODKw3uc6VHMTo",
+        "path": "pkg/cmd/discussion/shared/template.go",
+        "isResolved": false,
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "__typename": "Bot",
+                "login": "copilot-pull-request-reviewer"
+              },
+              "body": "TemplateElement.UnmarshalYAML does not reset the receiver before decoding. If a TemplateElement value is reused across unmarshals (e.g., when unmarshalling into a preallocated slice), fields not set for a given type (like Label/Description for \"markdown\") can incorrectly retain values from a previous element/type.",
+              "createdAt": "2026-07-30T13:24:03Z"
+            }
+          ]
+        }
+      },
+      {
+        "id": "PRRT_kwDODKw3uc6VHMUD",
+        "path": "pkg/cmd/discussion/create/create.go",
+        "isResolved": false,
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "__typename": "Bot",
+                "login": "copilot-pull-request-reviewer"
+              },
+              "body": "The help text references `.github/DISCUSSION_TEMPLATE/<category>.yml`, but the implementation fetches by category *slug* (e.g., `q-a.yml` for \"Q&A\"). Using `<category-slug>` here would better match the actual behavior and GitHub's naming convention.",
+              "createdAt": "2026-07-30T13:24:04Z"
+            }
+          ]
+        }
+      },
+      {
+        "id": "PRRT_kwDODKw3uc6VHMUa",
+        "path": "pkg/cmd/discussion/create/create.go",
+        "isResolved": false,
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "__typename": "Bot",
+                "login": "copilot-pull-request-reviewer"
+              },
+              "body": "promptBody can be reached even when prompting is not possible (e.g., `--body-file` provided but the file/stdin is empty in a non-interactive context). In that case it will try to fetch a template and/or open an editor, contradicting the non-interactive contract. Consider failing fast when `!opts.IO.CanPrompt()` and `opts.Body` is empty.",
+              "createdAt": "2026-07-30T13:24:04Z"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "statusCheckRollup": {
+    "contexts": {
+      "nodes": [
+        {
+          "__typename": "CheckRun",
+          "name": "CodeQL-Build (go)",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "build (ubuntu-latest)",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": true
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "CodeQL-Build (actions)",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "build (windows-latest)",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": true
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "build (macos-latest)",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": true
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "govulncheck",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "integration-tests (ubuntu-latest)",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "integration-tests (windows-latest)",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "integration-tests (macos-latest)",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "CodeQL",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        }
+      ]
+    }
+  }
+}

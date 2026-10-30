@@ -139,6 +139,7 @@ fn pull(number: u64, closes: &[u64], checks: &[CheckState]) -> Pull {
         threads: vec![],
         labels: vec![],
         assignees: vec![Login::new("factory")],
+        labelings: vec![],
         assignments: vec![],
         review_decision: None,
     }
@@ -161,6 +162,7 @@ fn with_closed(mut view: View, closed: Vec<ClosedItem>) -> View {
 fn claimed() -> WorkFacts {
     WorkFacts {
         assignees: vec![Login::new("factory")],
+        events: vec![assigning_linewright("2026-09-20T10:00:00Z")],
         ..WorkFacts::default()
     }
 }
@@ -449,6 +451,7 @@ fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
     let mut closed_pull = closed_issue(30, "2026-09-29T12:00:00Z", None);
     closed_pull.kind = ClosedKind::Pull {
         closes: vec![Number(99)],
+        author: Some(Login::new("factory")),
     };
     let view = with_merged(
         with_closed(
@@ -2001,6 +2004,7 @@ fn a_card_in_done_has_no_card_status() {
     let mut closed_pull = closed_issue(30, "2026-09-29T12:00:00Z", None);
     closed_pull.kind = ClosedKind::Pull {
         closes: vec![Number(99)],
+        author: Some(Login::new("factory")),
     };
     let view = with_merged(
         with_closed(
@@ -2098,13 +2102,32 @@ fn with_a_required_label_a_closed_issue_without_it_that_linewright_filed_is_in_d
 }
 
 #[test]
-fn with_a_required_label_a_closed_issue_without_it_assigned_to_linewright_is_in_done() {
+fn with_a_required_label_a_closed_issue_without_it_assigned_to_linewright_by_hand_and_never_worked_is_not_on_the_board()
+ {
     let assigned = WorkFacts {
         assignees: vec![Login::new("factory")],
+        events: vec![IssueEvent::Assignment(Assignment::Assigned {
+            assignee: Login::new("factory"),
+            actor: Login::new("maintainer"),
+            at: at("2026-09-29T10:00:00Z"),
+        })],
         ..WorkFacts::default()
     };
 
-    assert_eq!(placed_requiring_label(assigned), [(1, Column::Done, 1)]);
+    assert_eq!(placed_requiring_label(assigned), []);
+}
+
+#[test]
+fn with_a_required_label_a_closed_issue_without_it_linewright_only_commented_on_is_in_done() {
+    let commented = WorkFacts {
+        events: vec![IssueEvent::Commented {
+            by: Login::new("factory"),
+            at: at("2026-09-29T10:00:00Z"),
+        }],
+        ..WorkFacts::default()
+    };
+
+    assert_eq!(placed_requiring_label(commented), [(1, Column::Done, 1)]);
 }
 
 #[test]

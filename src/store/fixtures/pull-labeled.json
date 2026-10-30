@@ -1,0 +1,190 @@
+{
+  "number": 817,
+  "title": "Decide which items Linewright manages in the spec, by what each item asks",
+  "body": "## Summary\n\nManaged had four definitions in nine days (#473, #688, #729, #731). Then #793 found an open issue that was managed but that no board column held. The cause: the glossary admitted items by their history (\"worked\"), while the board placed them by their state, and nothing made the two agree.\n\n```diff\n GLOSSARY.md\n-  Worked, Managed, Stall: the rules that decide their cases\n+  Worked, Managed, Stall: their meaning only\n\n repository.md\n+  Managed items: worked or asking for Linewright's work,\n+    except an open issue with no status label, no run in flight,\n+    no open PR closing it, not the tracking issue of an open ticket\n+  Labels table: which status labels ask for Linewright's work\n~  Claiming, Cancelling: use it; a relabel cancels the run it no longer asks for\n+  Lifecycle: status label removed → —\n~  Stalls: the \"judged nothing\" rule, moved from the glossary\n\n design_system.md, the board\n~  every managed item but a tracking issue is in a column\n~  In review: any open PR      Done: closed or merged, but for an undesigned spec change\n~  a lane shows its managed tickets, and finishes once its tracking issue closes\n~  item page: a managed item's column on or off the board; \"Left alone\" = not managed\n\n user-guide.md\n~  Stopping work: a relabel stops the run it no longer asks for\n```\n\n| Issue | Settled by |\n| ----- | ---------- |\n| #793 | An issue a person took back by removing its status label is not managed. Its item page says \"Left alone · labeled none of …\". |\n\nCloses #793.\n\n## Evidence\n\n- **Before:** in #793's case, an item was managed but had no column. The item page said \"Left alone\" for it, while `explain` said it was managed.\n  **After:** every managed item has a column, and both say \"Left alone\" only for an item that is not managed.\n- **Review:** a two-axis spec review, run twice with the new \"leans on the glossary\" test (tibbe/skills#9).\n  - Fixed: two contradictions, three undecided cases, one restatement, the redesign of a tracking issue, and a pull request that had no card.\n  - Left as they are: the remaining style and possibly-implied findings.\n- `scripts/check`: `ok: fmt markdown compose css clippy test doc` (1441 tests passed).\n\n## Merge Danger\n\n**Door:** two-way\n\nSpec and user guide only. The code follows once Linewright designs the change.\n\n**Blast Radius:** board\n\nOnce the code follows:\n\n- An issue whose status label a person removed leaves the board.\n- A person's pull request that Linewright worked shows in In review.\n- A lane finishes only once its tracking issue closes.\n- Relabeling an issue `ready-for-agent` during triage cancels the triage run.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+  "createdAt": "2026-10-30T09:03:36Z",
+  "updatedAt": "2026-10-30T09:14:47Z",
+  "baseRefName": "main",
+  "headRefName": "793-worked-glossary",
+  "headRefOid": "8f28c910a9bbf612e3c4e2853674c40fc34b2c74",
+  "isCrossRepository": false,
+  "isDraft": false,
+  "state": "MERGED",
+  "mergedAt": "2026-10-30T09:05:41Z",
+  "closedAt": "2026-10-30T09:05:41Z",
+  "mergeable": "UNKNOWN",
+  "mergeStateStatus": "UNKNOWN",
+  "canBeRebased": false,
+  "reviewDecision": null,
+  "author": {
+    "__typename": "User",
+    "login": "tibbe"
+  },
+  "closingIssuesReferences": {
+    "nodes": [
+      {
+        "number": 793
+      }
+    ]
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "linewright:designed"
+      }
+    ]
+  },
+  "assignees": {
+    "nodes": []
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "AssignedEvent",
+        "createdAt": "2026-10-30T09:05:47Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2026-10-30T09:14:46Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "label": {
+          "name": "linewright:designed"
+        }
+      },
+      {
+        "__typename": "UnassignedEvent",
+        "createdAt": "2026-10-30T09:14:47Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  },
+  "comments": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "body": "I cut the work into four tickets, because the change reshapes the code. Membership is decided in five places today, and the board's column function is partial. That structure is how #793 happened. So, as the design says, the structure change comes first, and the behavior follows. The four tickets run one after another, because each changes files the next one changes too:\n\n1. **One classifier and a total placement.** No behavior changes. One `managed` module decides membership, `board::placement` is total, and the board and the item page share `board::card`. Without this, the new rule would land in all five places.\n2. **The snapshot reads the candidates.** The store reads the items the new rule judges: people's pull requests that Linewright worked or is assigned to, its comments as a sign of work, and worked pull requests closed unmerged. It is kept apart from the next ticket because its GitHub queries and their costs are review work of their own.\n3. **The rule and the columns.** The rule replaces the old one, In review and Done follow it, and `explain` and the item page say \"Left alone\" only for an item that is not managed. This ticket closes #793.\n4. **Lanes.** A lane shows its managed tickets and finishes once its tracking issue closes. It is small and changes the same board code as ticket 3, so it comes after it.\n\nTracked in #818:\n\n1. #819 Decide managed items in one classifier, and place them on the board by a total mapping\n2. #820 Hold every item the managed-items rule judges in the snapshot\n3. #821 Manage items by what each asks, and give every managed item a column\n4. #822 Show a lane's managed tickets, and finish it once its tracking issue closes\n",
+        "createdAt": "2026-10-30T09:14:45Z"
+      }
+    ]
+  },
+  "reviews": {
+    "nodes": []
+  },
+  "reviewRequests": {
+    "nodes": []
+  },
+  "reviewThreads": {
+    "nodes": []
+  },
+  "statusCheckRollup": {
+    "contexts": {
+      "nodes": [
+        {
+          "__typename": "CheckRun",
+          "name": "markdown",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "compose",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "css",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "changes",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "fmt",
+          "status": "COMPLETED",
+          "conclusion": "SKIPPED",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "clippy",
+          "status": "COMPLETED",
+          "conclusion": "SKIPPED",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "SKIPPED",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "doc",
+          "status": "COMPLETED",
+          "conclusion": "SKIPPED",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "base-image",
+          "status": "COMPLETED",
+          "conclusion": "SKIPPED",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "deploy-images",
+          "status": "COMPLETED",
+          "conclusion": "SKIPPED",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "binaries",
+          "status": "COMPLETED",
+          "conclusion": "SKIPPED",
+          "isRequired": false
+        },
+        {
+          "__typename": "CheckRun",
+          "name": "ci",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS",
+          "isRequired": true
+        }
+      ]
+    }
+  }
+}

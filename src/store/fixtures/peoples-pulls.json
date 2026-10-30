@@ -1,0 +1,172 @@
+{
+  "data": {
+    "repository": {
+      "i13017": {
+        "number": 13017,
+        "state": "OPEN",
+        "author": {
+          "__typename": "Bot",
+          "login": "copilot-swe-agent"
+        },
+        "assignees": {
+          "nodes": [
+            {
+              "login": "babakks"
+            },
+            {
+              "login": "Copilot"
+            }
+          ]
+        },
+        "closingIssuesReferences": {
+          "nodes": [
+            {
+              "number": 13016
+            }
+          ]
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "AssignedEvent",
+              "createdAt": "2026-03-24T10:33:37Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "copilot-swe-agent"
+              },
+              "assignee": {
+                "__typename": "Bot",
+                "login": "copilot-swe-agent"
+              }
+            },
+            {
+              "__typename": "AssignedEvent",
+              "createdAt": "2026-03-24T10:33:37Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "copilot-swe-agent"
+              },
+              "assignee": {
+                "__typename": "User",
+                "login": "babakks"
+              }
+            }
+          ]
+        }
+      },
+      "i9847": {
+        "number": 9847,
+        "state": "OPEN",
+        "author": {
+          "__typename": "User",
+          "login": "Shion1305"
+        },
+        "assignees": {
+          "nodes": []
+        },
+        "closingIssuesReferences": {
+          "nodes": [
+            {
+              "number": 9828
+            }
+          ]
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "IssueComment",
+              "createdAt": "2024-10-30T05:50:33Z",
+              "author": {
+                "__typename": "User",
+                "login": "Shion1305"
+              }
+            },
+            {
+              "__typename": "IssueComment",
+              "createdAt": "2024-12-16T14:56:46Z",
+              "author": {
+                "__typename": "User",
+                "login": "williammartin"
+              }
+            },
+            {
+              "__typename": "IssueComment",
+              "createdAt": "2025-04-09T06:26:32Z",
+              "author": {
+                "__typename": "User",
+                "login": "Shion1305"
+              }
+            }
+          ]
+        }
+      },
+      "i14664": {
+        "number": 14664,
+        "state": "CLOSED",
+        "author": {
+          "__typename": "User",
+          "login": "astrojuanlu"
+        },
+        "assignees": {
+          "nodes": []
+        },
+        "closingIssuesReferences": {
+          "nodes": []
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-10-13T16:32:16Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "label": {
+                "name": "external"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-10-13T16:32:16Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "label": {
+                "name": "needs-triage"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-10-13T16:32:18Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "label": {
+                "name": "ready-for-review"
+              }
+            },
+            {
+              "__typename": "IssueComment",
+              "createdAt": "2026-10-13T16:32:21Z",
+              "author": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              }
+            },
+            {
+              "__typename": "IssueComment",
+              "createdAt": "2026-10-13T16:42:02Z",
+              "author": {
+                "__typename": "User",
+                "login": "babakks"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
