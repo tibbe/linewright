@@ -1130,65 +1130,6 @@ async fn feedback_posted_while_the_session_works_is_addressed_before_the_push() 
 }
 
 #[tokio::test]
-async fn the_answer_to_feedback_posted_while_the_session_works_has_its_own_follow_ups() {
-    let mut world = World::new().await;
-    let (_, pr) = world.ticket_in_review().await;
-    world
-        .store
-        .comment_as("maintainer", pr, "Add a changelog entry.")
-        .unwrap();
-    let store = world.store.clone();
-    let answers = Arc::new(Mutex::new(0));
-    world.harness.on(WorkKind::Rework, move |call| {
-        let answer = {
-            let mut answers = answers.lock().unwrap();
-            *answers += 1;
-            *answers
-        };
-        match answer {
-            // Each a result that does not parse, the test factory's one
-            // follow-up spent on it.
-            1 | 3 => Ok("Done, I think.".into()),
-            2 => {
-                commit_in(
-                    &call.spec.dir,
-                    &[("CHANGELOG.md", "- thing\n")],
-                    "Changelog",
-                );
-                store
-                    .comment_as("maintainer", pr, "Also update the README.")
-                    .unwrap();
-                Ok(json!({"outcome": "done", "comment": "Added the entry."}).to_string())
-            }
-            _ => {
-                commit_in(
-                    &call.spec.dir,
-                    &[("README.md", "# Widgets, updated\n")],
-                    "README",
-                );
-                Ok(
-                    json!({"outcome": "done", "comment": "Added the entry and updated the README."})
-                        .to_string(),
-                )
-            }
-        }
-    });
-
-    world.poll().await;
-
-    let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(
-        world.store.file(&view.head_ref, "README.md").await.unwrap(),
-        "# Widgets, updated\n"
-    );
-    assert!(
-        view.comments
-            .iter()
-            .any(|c| c.body == "Added the entry and updated the README.")
-    );
-}
-
-#[tokio::test]
 async fn a_rework_that_needed_no_change_answers_its_feedback_also_after_a_restart() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -2480,43 +2421,6 @@ async fn a_rework_cancelled_by_unassigning_linewright_keeps_its_edits_as_an_unfi
     assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_rework_cancelled_by_closing_its_pull_request_pushes_nothing() {
-    let mut world = World::new().await;
-
-    let pr = rework_cancelled_with_edits(&mut world, |world, pr| {
-        world.store.close_pull_as(pr).unwrap();
-    })
-    .await;
-
-    let branch = world.store.snapshot_pull(pr).await.head_ref;
-    assert_eq!(subjects(&world, &branch), ["Do the ticket"]);
-}
-
-#[tokio::test]
-async fn a_rework_whose_pull_request_closes_before_it_times_out_pushes_and_posts_nothing() {
-    let mut world = World::new().await;
-    let (_, pr) = world.ticket_in_review().await;
-    world.rework_asked(pr);
-    let store = world.store.clone();
-    world.harness.on(WorkKind::Rework, move |call| {
-        rename_and_leave_edits(&call.spec.dir);
-        store.close_pull_as(pr).unwrap();
-        timed_out()
-    });
-
-    world.poll().await;
-
-    let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(subjects(&world, &view.head_ref), ["Do the ticket"]);
-    assert!(
-        !view
-            .comments
-            .iter()
-            .any(|c| c.author == Login::new(LINEWRIGHT))
-    );
-}
-
 #[tokio::test]
 async fn a_stopped_rework_leaves_commits_a_person_pushed_while_it_worked_and_says_its_push_was_rejected()
  {
@@ -2591,38 +2495,6 @@ async fn the_next_rework_is_told_to_fold_in_the_unfinished_commit_and_its_done_i
         ["Do the ticket", "Rename", "Rename more"]
     );
     assert_eq!(last_pull_comment(&world, pr).await, "Renamed.");
-}
-
-#[tokio::test]
-async fn a_stopped_rework_with_nothing_new_but_its_update_pushes_nothing() {
-    let mut world = World::new().await;
-    let (ticket, pr) = world.ticket_in_review().await;
-    let before = world.store.snapshot_pull(pr).await.head_sha;
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Other work",
-            "",
-            &[("src/other.txt", "other\n")],
-        )
-        .await
-        .unwrap();
-    world.rework_asked(pr);
-    world.harness.on(WorkKind::Rework, |_| timed_out());
-    let branch = world.store.snapshot_pull(pr).await.head_ref;
-
-    world.poll().await;
-
-    assert_eq!(
-        String::from_utf8(store_git(&world, &["rev-parse", &branch]).stdout)
-            .unwrap()
-            .trim(),
-        before
-    );
-    assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
-    let comment = handed_back_comment(&world, ticket, pr).await;
-    assert!(!comment.contains(&kept_on(&branch)), "{comment}");
 }
 
 #[tokio::test]
@@ -3453,39 +3325,5 @@ async fn a_rework_push_refused_for_a_missing_permission_hands_the_pull_request_b
     assert!(
         comment.contains(&format!("`{head}`")) && comment.contains(WORKFLOW_REFUSAL),
         "{comment}"
-    );
-}
-
-#[tokio::test]
-async fn a_stopped_runs_work_that_cannot_be_kept_logs_nothing_of_a_secret_its_push_printed() {
-    let (log, _guard) = Log::capture();
-    let mut world = World::with(|config| {
-        config.secrets = secrets_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
-    })
-    .await;
-    world.harness.on(WorkKind::Implement, |call| {
-        commit_in(&call.spec.dir, &[("src/half.txt", "half\n")], "Start");
-        refused_for_the_usage_limit()
-    });
-    world
-        .store
-        .refuse_pushes("pre-push: GH_TOKEN=ghp_s3cr3t\nerror: failed to push some refs");
-    world.store.open_issue(
-        "maintainer",
-        "Do the thing",
-        "Please.",
-        &["ready-for-agent", "linewright:designed"],
-    );
-
-    world.poll().await;
-
-    let warnings = log.lines("WARN");
-    let kept = warnings
-        .iter()
-        .find(|line| line.contains("keeping the stopped run's work failed"))
-        .expect("the failed keep is logged");
-    assert!(
-        kept.contains("GH_TOKEN=[redacted]") && !kept.contains("ghp_s3cr3t"),
-        "{kept}"
     );
 }

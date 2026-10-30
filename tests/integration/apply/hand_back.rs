@@ -198,8 +198,8 @@ fn numbered_lines(to: u32) -> String {
 }
 
 #[rstest]
-#[case::the_first_of_one_is_sent_back(0, 1, SendBack::Retry { retries: 1 })]
-#[case::the_second_of_two_is_sent_back(1, 2, SendBack::Retry { retries: 2 })]
+#[case::the_first_of_one_is_sent_back(0, 1, SendBack::Retry)]
+#[case::the_second_of_two_is_sent_back(1, 2, SendBack::Retry)]
 #[case::past_the_retries_it_is_handed_back(
     1,
     1,
@@ -219,16 +219,16 @@ fn numbered_lines(to: u32) -> String {
     ))
 )]
 fn a_result_sent_back(
-    #[case] retries: u32,
+    #[case] sent_before: u32,
     #[case] result_retries: u32,
     #[case] expected: SendBack,
 ) {
-    let sent = send_back(
-        retries,
-        result_retries,
-        "Answer with JSON.",
-        "I think it's a bug.\n",
-    );
+    let mut follow_ups = FollowUps::default();
+    for _ in 0..sent_before {
+        follow_ups.send_back(result_retries, "Answer with JSON.", "Done.\n");
+    }
+
+    let sent = follow_ups.send_back(result_retries, "Answer with JSON.", "I think it's a bug.\n");
 
     assert_eq!(sent, expected);
 }
@@ -249,7 +249,9 @@ fn a_result_handed_back_gives_the_end_of_the_sessions_message(
     #[case] message: &str,
     #[case] expected: Option<(Logged, &str)>,
 ) {
-    let SendBack::HandBack(handed) = send_back(1, 1, "Answer with JSON.", message) else {
+    let SendBack::HandBack(handed) =
+        FollowUps::default().send_back(0, "Answer with JSON.", message)
+    else {
         panic!("the result is not handed back");
     };
 
@@ -647,4 +649,47 @@ fn a_run_whose_recording_failed_stalls(#[case] note: &str, #[case] reason: &str)
         recording_failed(&error, note),
         hand_back_of(HandBackKind::Stall, reason, None)
     );
+}
+
+#[rstest]
+#[case::work_kept_is_as_it_was(Ok(Kept::Pushed), Kept::Pushed)]
+#[case::a_refusal_has_the_secret_it_printed_redacted(
+    Ok(Kept::Refused("pre-push: GH_TOKEN=ghp_s3cr3t".into())),
+    Kept::Refused("pre-push: GH_TOKEN=[redacted]".into())
+)]
+#[case::a_failure_says_why_with_its_context_and_the_secret_redacted(
+    Err(anyhow::anyhow!("pre-push: GH_TOKEN=ghp_s3cr3t").context("pushing 7-gadgets")),
+    Kept::Failed("pushing 7-gadgets: pre-push: GH_TOKEN=[redacted]".into())
+)]
+fn what_a_stopped_runs_keep_gives(#[case] keep: anyhow::Result<Kept>, #[case] expected: Kept) {
+    let redaction = crate::common::redaction_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
+
+    assert_eq!(Kept::redacted(keep, &redaction), expected);
+}
+
+#[rstest]
+#[case::a_first_failure_is_retried(0, true)]
+#[case::a_failure_of_the_retry_is_not(1, false)]
+fn an_infrastructure_failure_is_retried(#[case] retries: u32, #[case] retried: bool) {
+    assert_eq!(retries_infrastructure_failure(retries), retried);
+}
+
+/// Sends a result back once more with `follow_ups` against a
+/// `result-retries` of one, and says whether it went back to the session.
+fn sent_back(follow_ups: &mut FollowUps) -> bool {
+    match follow_ups.send_back(1, "Answer with JSON.", "Done.") {
+        SendBack::Retry => true,
+        SendBack::HandBack(_) => false,
+    }
+}
+
+#[test]
+fn the_answer_to_a_new_question_has_follow_ups_of_its_own() {
+    let mut follow_ups = FollowUps::default();
+    assert!(sent_back(&mut follow_ups));
+
+    follow_ups.resumed();
+
+    assert!(sent_back(&mut follow_ups));
+    assert!(!sent_back(&mut follow_ups));
 }

@@ -12,10 +12,10 @@ use crate::apply::filing::{
     self, AlreadyFiled, Comment, CutUnder, NewTicket, TrackingIssue, spec_gap_issues,
 };
 use crate::apply::hand_back::{
-    self, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail, SendBack, Stopped,
-    TryAgain,
+    self, FollowUps, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail, SendBack,
+    Stopped, TryAgain,
 };
-use crate::apply::pull_work::{self, PullWorkWrites, feedback_people, late};
+use crate::apply::pull_work::{self, PullJob, PullWorkWrites, feedback_people, late};
 use crate::apply::triage::{self, CategoryChange};
 use crate::apply::{Asks, Designed, StatusTo};
 use crate::attachments::{self, Dir, Refusal};
@@ -26,7 +26,9 @@ use crate::domain::{
     Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp, Windows, label,
 };
 use crate::git::{self, Updated, WorkState};
-use crate::harness::{Harness, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit};
+use crate::harness::{
+    Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
+};
 use crate::prompts::{self, DesignOf, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
@@ -369,14 +371,17 @@ pub(crate) async fn run(shell: Arc<Shell>, work: Work, snapshot: Arc<Snapshot>, 
 
 async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Ending {
     let subject = work.subject();
-    let mut retried = false;
+    let mut retries = 0;
     let hand_back = loop {
         match attempt(shell, work, snapshot, ctx).await {
             Ok(()) => {
                 info!(subject = ?subject, kind = ?work.kind(), "run finished");
                 return Ending::Done;
             }
-            Err(Failure::Infrastructure { error: e, .. }) if !retried => {
+            Err(Failure::Infrastructure { error: e, .. })
+                if hand_back::retries_infrastructure_failure(retries) =>
+            {
+                retries += 1;
                 let error = shell.secrets.redaction().apply(&format!("{e:#}"));
                 // The retry is a new session, so a cancel can stop it again,
                 // and one that came while the attempt applied its result
@@ -386,7 +391,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                     return Ending::Cancelled;
                 }
                 warn!(subject = ?subject, error, "infrastructure failure; retrying once");
-                retried = true;
             }
             Err(Failure::Infrastructure {
                 error: e,
@@ -843,7 +847,7 @@ async fn converse<T, U, F, Fut, B, BFut>(
     shell: &Shell,
     ctx: &Ctx,
     spec: &mut SessionSpec,
-    first: Step,
+    first: NextTurn,
     accept: F,
     begin: B,
 ) -> Result<(U, Turn), Unbegun>
@@ -853,26 +857,7 @@ where
     B: Fn(T) -> BFut,
     BFut: Future<Output = Result<U, Refused>>,
 {
-    converse_counting(shell, ctx, spec, first, &mut 0, accept, begin).await
-}
-
-/// As [`converse`], counting the follow-ups the result is sent back with in
-/// `retries`, which holds those it was sent back with before.
-async fn converse_counting<T, U, F, Fut, B, BFut>(
-    shell: &Shell,
-    ctx: &Ctx,
-    spec: &mut SessionSpec,
-    first: Step,
-    retries: &mut u32,
-    accept: F,
-    begin: B,
-) -> Result<(U, Turn), Unbegun>
-where
-    F: Fn(String) -> Fut,
-    Fut: Future<Output = Result<T, Rejection>>,
-    B: Fn(T) -> BFut,
-    BFut: Future<Output = Result<U, Refused>>,
-{
+    let mut follow_ups = FollowUps::default();
     let in_session = Unbegun::InSession;
     let mut turn = take_turn(shell, ctx, spec, first)
         .await
@@ -913,15 +898,11 @@ where
             Rejection::Fail(failure) => return Err(unbegun(failure)),
             Rejection::Retry { followup, note } => {
                 let session_log = scrub(&turn.message, &spec.dir);
-                match hand_back::send_back(*retries, shell.result_retries, &followup, &session_log)
-                {
-                    SendBack::Retry { retries: sent } => {
-                        *retries = sent;
-                        Step::Resume {
-                            session: turn.session.clone(),
-                            prompt: followup,
-                        }
-                    }
+                match follow_ups.send_back(shell.result_retries, &followup, &session_log) {
+                    SendBack::Retry => NextTurn::Resume {
+                        session: turn.session.clone(),
+                        prompt: followup,
+                    },
                     SendBack::HandBack(hand_back) => {
                         let failure = Failure::HandBack(hand_back);
                         return Err(unbegun(failure.noted(note.as_deref().unwrap_or_default())));
@@ -929,8 +910,8 @@ where
                 }
             }
             Rejection::Resume(followup) => {
-                *retries = 0;
-                Step::Resume {
+                follow_ups.resumed();
+                NextTurn::Resume {
                     session: turn.session.clone(),
                     prompt: followup,
                 }
@@ -942,11 +923,6 @@ where
     }
 }
 
-enum Step {
-    Start,
-    Resume { session: String, prompt: String },
-}
-
 fn record(spec: &SessionSpec, name: &str, text: &str) {
     let _ = std::fs::write(spec.record.join(name), text);
 }
@@ -955,16 +931,16 @@ async fn take_turn(
     shell: &Shell,
     ctx: &Ctx,
     spec: &mut SessionSpec,
-    mut step: Step,
+    mut next: NextTurn,
 ) -> Result<Turn, Failure> {
     let subject = purpose_name(&spec.purpose);
     loop {
-        let turn = match &step {
-            Step::Start => {
+        let turn = match &next {
+            NextTurn::Start => {
                 record(spec, transcript::BRIEF, &spec.prompt);
                 cancellable(ctx, shell.harness.start(spec)).await?
             }
-            Step::Resume { session, prompt } => {
+            NextTurn::Resume { session, prompt } => {
                 record(spec, &followup_name(&spec.record), prompt);
                 cancellable(ctx, shell.harness.resume(spec, session, prompt)).await?
             }
@@ -993,24 +969,22 @@ async fn take_turn(
             return Err(Failure::UsageLimit(limit));
         }
         let resets_at = limit.resets_at;
-        let left = spec
-            .deadline
-            .saturating_duration_since(tokio::time::Instant::now());
+        let refused_at = tokio::time::Instant::now();
         let until = limit.wait_until(shell.clock.now());
         warn!(subject, %resets_at, "session refused for the usage limit");
         info!(subject, %resets_at, %until, "waiting out the usage limit");
         cancellable(ctx, shell.clock.sleep_until(until)).await?;
-        spec.deadline = tokio::time::Instant::now() + left;
-        match underway {
-            Some(session) => {
-                info!(subject, %resets_at, "usage limit reset; resuming the session");
-                step = Step::Resume {
-                    session,
-                    prompt: prompts::usage_limit_reset(&ctx.with.briefs.prompts),
-                };
-            }
-            None => info!(subject, %resets_at, "usage limit reset; taking the refused turn again"),
+        spec.deadline =
+            UsageLimit::deadline_after_wait(spec.deadline, refused_at, tokio::time::Instant::now());
+        if underway.is_some() {
+            info!(subject, %resets_at, "usage limit reset; resuming the session");
+        } else {
+            info!(subject, %resets_at, "usage limit reset; taking the refused turn again");
         }
+        next = next.after_refusal(
+            underway,
+            &prompts::usage_limit_reset(&ctx.with.briefs.prompts),
+        );
     }
 }
 
@@ -1261,7 +1235,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
             shell,
             ctx,
             &mut spec,
-            Step::Start,
+            NextTurn::Start,
             |message| async move {
                 results::parse_triage(&message, categories).map_err(parse_retry(ctx))
             },
@@ -1337,7 +1311,7 @@ where
         shell,
         ctx,
         &mut spec,
-        Step::Start,
+        NextTurn::Start,
         |message| async move {
             results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
         },
@@ -1599,10 +1573,10 @@ async fn keep_unfinished_pull_work(
     before: &WorkState,
 ) -> Kept {
     let kept = async {
-        if git::work_state(dir).await? == *before {
-            return Ok(Kept::Nothing);
-        }
-        if !still_open(shell, pr.number).await? {
+        let changed = git::work_state(dir).await? != *before;
+        // GitHub is asked only of work there is to keep.
+        let open = changed && still_open(shell, pr.number).await?;
+        if !pull_work::keeps_work(changed, open) {
             return Ok(Kept::Nothing);
         }
         let lease = PushMode::Lease {
@@ -1649,16 +1623,10 @@ async fn held_secret(shell: &Shell, dir: &Path, past: &[&str]) -> Result<Option<
     Ok(shell.secrets.held(&additions))
 }
 
-/// What became of a stopped run's work on `branch`, logged when it was not
-/// kept. Git's output is redacted, as hooks the session left in its clone
-/// can print a secret.
+/// What became of a stopped run's work on `branch`, redacted, logged when
+/// it was not kept.
 fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
-    let redacted = |text: &str| shell.secrets.redaction().apply(text);
-    let kept = match kept {
-        Ok(Kept::Refused(reason)) => Kept::Refused(redacted(&reason)),
-        Ok(kept) => kept,
-        Err(e) => Kept::Failed(redacted(&format!("{e:#}"))),
-    };
+    let kept = Kept::redacted(kept, shell.secrets.redaction());
     match &kept {
         Kept::Refused(reason) => warn!(
             branch,
@@ -1769,7 +1737,8 @@ async fn implement(
         pushing.await.map_err(Refused::Writing)?;
         Ok(result)
     };
-    let (result, turn) = match converse(shell, ctx, &mut spec, Step::Start, accept, begin).await {
+    let (result, turn) = match converse(shell, ctx, &mut spec, NextTurn::Start, accept, begin).await
+    {
         Ok(conversation) => conversation,
         Err(unbegun) => {
             return Err(unbegun.keeping(keep).await);
@@ -1934,16 +1903,16 @@ async fn pull_work(
     // update (docs/specs/runs.md, "Setup"). An update run starts a session
     // only on a conflict, so it updates first, and on a conflict aborts the
     // update to run the command, then updates again.
-    let opened = match task {
-        Task::Update => match update_branch(shell, pr, &ws.dir).await? {
-            None => return push_update(shell, ctx, pr, &ws.dir, &start).await,
-            Some(conflict) => {
-                git::abort_update(&ws.dir, &conflict).await.map_err(infra)?;
-                open_session(shell, ctx, purpose, &mut ws).await?
-            }
-        },
-        Task::Rework | Task::FixCi(_) => open_session(shell, ctx, purpose, &mut ws).await?,
-    };
+    if let Task::Update = task {
+        let conflict = update_branch(shell, pr, &ws.dir).await?;
+        let Some(PullTask::Update(conflict)) =
+            pull_work::session_task(PullJob::Update, conflict.as_ref())
+        else {
+            return push_update(shell, ctx, pr, &ws.dir, &start).await;
+        };
+        git::abort_update(&ws.dir, conflict).await.map_err(infra)?;
+    }
+    let opened = open_session(shell, ctx, purpose, &mut ws).await?;
     let conflict = update_branch(shell, pr, &ws.dir).await?;
     let store = &shell.store;
     let lease = PushMode::Lease {
@@ -1958,17 +1927,13 @@ async fn pull_work(
     };
     let feedback = new_feedback(pr, linewright, ctx.reworked);
     let briefed_authors = feedback_people(&feedback, linewright);
-    let pull_task = match (task, &conflict) {
-        (Task::Rework, conflict) => PullTask::Rework {
-            feedback,
-            conflict: conflict.as_ref(),
-        },
-        (Task::FixCi(_), conflict) => PullTask::FixCi {
-            failures: &failures,
-            conflict: conflict.as_ref(),
-        },
-        (Task::Update, Some(conflict)) => PullTask::Update(conflict),
-        (Task::Update, None) => return push_update(shell, ctx, pr, &ws.dir, &start).await,
+    let job = match task {
+        Task::Rework => PullJob::Rework(feedback),
+        Task::FixCi(_) => PullJob::FixCi(&failures),
+        Task::Update => PullJob::Update,
+    };
+    let Some(pull_task) = pull_work::session_task(job, conflict.as_ref()) else {
+        return push_update(shell, ctx, pr, &ws.dir, &start).await;
     };
     let dir = &ws.dir;
     let upstream = shell.upstream();
@@ -2089,7 +2054,7 @@ async fn pull_work(
         Ok((result, pr_now, read_at))
     };
     let ((result, pr_now, read_at), turn) =
-        match converse(shell, ctx, &mut spec, Step::Start, accept, begin).await {
+        match converse(shell, ctx, &mut spec, NextTurn::Start, accept, begin).await {
             Ok(conversation) => conversation,
             Err(unbegun) => {
                 return Err(unbegun.keeping(keep).await);
@@ -2209,7 +2174,7 @@ pub(crate) async fn automation(
             shell,
             ctx,
             &mut spec,
-            Step::Start,
+            NextTurn::Start,
             |message| async move { results::parse(&message).map_err(parse_retry(ctx)) },
             begin,
         )

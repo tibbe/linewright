@@ -186,6 +186,7 @@ pub enum Updated {
 
 /// A rebase or merge of the default branch that stopped on conflicts in
 /// `files` and is left in progress.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Conflict {
     pub method: UpdateMethod,
     pub files: Vec<String>,

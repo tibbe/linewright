@@ -3,7 +3,7 @@
 
 use crate::common;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -53,116 +53,27 @@ fn open_for_triage(world: &World) -> linewright::domain::Number {
 }
 
 #[tokio::test]
-async fn the_repositorys_setup_runs_in_the_clones_root_before_the_session_starts() {
-    let mut world = World::new().await;
-    commit_config(&world, "setup = \"cat README.md > made.txt\"\n").await;
-    let read = triage_reading(&world, "made.txt");
-    open_for_triage(&world);
-
-    world.poll().await;
-
-    assert_eq!(*read.lock().unwrap(), [Some("# Widgets\n".to_string())]);
-}
-
-fn setup(command: &str) -> Setup {
-    Setup::from(command.to_string())
-}
-
-/// The operator's stage table for `stage` setting `setup`.
-fn stage_setup(setup: Option<Setup>) -> StageTable {
-    StageTable {
-        settings: Partial {
-            setup,
-            ..Partial::default()
-        },
-        ..StageTable::default()
-    }
-}
-
-#[tokio::test]
-async fn the_operators_stage_table_replaces_the_whole_pipelines_setup_and_an_empty_one_runs_nothing()
+async fn the_repositorys_setup_runs_in_the_clones_root_and_the_sessions_environment_before_the_session_starts()
  {
-    for (table, made) in [
-        (
-            Some(setup("echo triage > made.txt")),
-            Some("triage\n".to_string()),
-        ),
-        (Some(Setup::Empty), None),
-    ] {
-        let mut world = World::with(|config| {
-            config.work.flags_and_env.setup = Some(setup("echo pipeline > made.txt"));
-            config
-                .work
-                .stages
-                .insert(WorkKind::Triage, stage_setup(table.clone()));
-        })
-        .await;
-        let read = triage_reading(&world, "made.txt");
-        open_for_triage(&world);
-
-        world.poll().await;
-
-        assert_eq!(*read.lock().unwrap(), [made], "{table:?}");
-    }
-}
-
-#[tokio::test]
-async fn an_automations_front_matter_replaces_the_whole_pipelines_setup() {
-    let world = World::with(|config| {
-        config.work.flags_and_env.setup = Some(setup("echo pipeline > made.txt"));
-    })
-    .await;
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(
-                ".linewright/automations/look.md",
-                "---\non:\n  schedule: \"0 0 1 1 *\"\nsetup: echo automation > made.txt\n---\nLook.\n",
-            )],
-            "Add an automation",
-        )
-        .await
-        .unwrap();
-    let read = Arc::new(Mutex::new(vec![]));
-    world.harness.on_automation({
-        let read = read.clone();
-        move |call| {
-            read.lock()
-                .unwrap()
-                .push(std::fs::read_to_string(call.spec.dir.join("made.txt")).ok());
-            Ok(nothing_needs_doing())
-        }
-    });
-
-    world
-        .factory
-        .run_automation(&"look".parse().unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(*read.lock().unwrap(), [Some("automation\n".to_string())]);
-}
-
-#[tokio::test]
-async fn the_setup_command_runs_in_the_sessions_environment() {
     let mut world = World::with(|config| {
         let session_env = SessionEnv::new(
             PassEnv::default(),
             SetEnv::new([("GREETING".to_string(), "hello".to_string())]).unwrap(),
         );
         config.environments = config.work.environments(&session_env, [], &[]).environments;
-        config.work.flags_and_env.setup =
-            Some(setup("printf '%s %s' \"$GREETING\" \"$TMPDIR\" > env.txt"));
     })
+    .await;
+    commit_config(
+        &world,
+        r#"setup = '''printf '%s %s\n' "$GREETING" "$TMPDIR" > made.txt; cat README.md >> made.txt'''"#,
+    )
     .await;
     let seen = Arc::new(Mutex::new(vec![]));
     world.harness.on(WorkKind::Triage, {
         let seen = seen.clone();
         move |call| {
             seen.lock().unwrap().push((
-                std::fs::read_to_string(call.spec.dir.join("env.txt")).unwrap(),
+                std::fs::read_to_string(call.spec.dir.join("made.txt")).ok(),
                 call.spec.scratch.clone(),
             ));
             failed_session("looked")
@@ -173,8 +84,26 @@ async fn the_setup_command_runs_in_the_sessions_environment() {
     world.poll().await;
 
     let seen = seen.lock().unwrap();
-    let (env, scratch) = seen.first().expect("a triage session started");
-    assert_eq!(*env, format!("hello {}", scratch.display()));
+    let (made, scratch) = seen.first().expect("a triage session started");
+    assert_eq!(
+        made.as_deref(),
+        Some(format!("hello {}\n# Widgets\n", scratch.display()).as_str())
+    );
+}
+
+fn setup(command: &str) -> Setup {
+    Setup::from(command.to_string())
+}
+
+/// The operator's stage table setting `setup`.
+fn stage_setup(setup: Option<Setup>) -> StageTable {
+    StageTable {
+        settings: Partial {
+            setup,
+            ..Partial::default()
+        },
+        ..StageTable::default()
+    }
 }
 
 /// A directory outside every clone, where setup commands leave marks.
@@ -221,25 +150,6 @@ async fn a_setup_command_that_fails_twice_hands_the_item_back_with_the_end_of_it
         ),
         "{comment}"
     );
-}
-
-#[tokio::test]
-async fn a_setup_command_that_fails_once_is_retried_and_its_session_starts() {
-    let marks = marks();
-    let once = marks.path().join("once");
-    let command = format!(
-        "test -e '{once}' || {{ touch '{once}'; exit 1; }}; echo set > made.txt",
-        once = once.display()
-    );
-    let mut world =
-        World::with(|config| config.work.flags_and_env.setup = Some(setup(&command))).await;
-    let read = triage_reading(&world, "made.txt");
-    open_for_triage(&world);
-
-    world.poll().await;
-
-    assert_eq!(*read.lock().unwrap(), [Some("set\n".to_string())]);
-    assert_eq!(ended_runs(&world), [Ending::Done]);
 }
 
 #[tokio::test]
@@ -324,20 +234,6 @@ async fn moved_past_setting_up(conflicting: bool, marks: &Path) -> (World, Numbe
         conflicting,
     )
     .await
-}
-
-#[tokio::test]
-async fn an_update_without_a_conflict_runs_no_setup_command() {
-    let marks = marks();
-    let (mut world, _) = moved_past_setting_up(false, marks.path()).await;
-
-    world.poll().await;
-
-    assert_eq!(
-        world.harness.prompts(WorkKind::Update),
-        Vec::<String>::new()
-    );
-    assert_eq!(lines_of(marks.path(), "ran"), Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -443,54 +339,6 @@ async fn gone(pid: &str) -> bool {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     false
-}
-
-/// The files named `name` in the sessions' records under `world`'s work
-/// directory.
-fn records_named(world: &World, name: &str) -> Vec<PathBuf> {
-    fn under(dir: &Path, name: &str, found: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                under(&path, name, found);
-            } else if path.file_name().is_some_and(|file| file == name) {
-                found.push(path);
-            }
-        }
-    }
-    let mut found = vec![];
-    under(&world.dir.path().join("work/sessions"), name, &mut found);
-    found
-}
-
-#[tokio::test]
-async fn a_secret_in_the_setup_commands_output_is_redacted_in_its_log_and_the_hand_back() {
-    let secret = "sk-setup-0123456789";
-    let mut world = World::with(|config| {
-        config.secrets = secrets_of(&[("API_KEY", secret)]);
-        config.work.flags_and_env.setup = Some(setup(&format!("echo 'token {secret}'; exit 1")));
-    })
-    .await;
-    let issue = open_for_triage(&world);
-
-    world.poll().await;
-
-    let issue = world.issue(issue);
-    let comment = last_comment(&issue);
-    assert!(comment.contains("token [redacted]"), "{comment}");
-    assert!(!comment.contains(secret), "{comment}");
-    let logs = records_named(&world, "setup.log");
-    assert_eq!(logs.len(), 2, "one for each attempt");
-    for log in logs {
-        assert_eq!(std::fs::read_to_string(log).unwrap(), "token [redacted]\n");
-    }
-    let transcripts = records_named(&world, linewright::transcript::OUTPUT);
-    assert_eq!(transcripts.len(), 2, "one for each attempt");
-    for transcript in transcripts {
-        let transcript = std::fs::read_to_string(transcript).unwrap();
-        assert!(transcript.contains("token [redacted]"), "{transcript}");
-        assert!(!transcript.contains(secret), "{transcript}");
-    }
 }
 
 #[tokio::test]

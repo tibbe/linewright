@@ -433,7 +433,8 @@ impl Factory {
             }));
             publish.served.send_replace(self.served(next_poll_at));
             loop {
-                if self.drained() {
+                // A run waiting out the usage limit is still in the set.
+                if self.memory.drained(self.runs.len()) {
                     info!("drained: no run is in flight");
                     return ServeEnd::Drained;
                 }
@@ -465,10 +466,6 @@ impl Factory {
             }
         }
         ServeEnd::Stop
-    }
-
-    fn drained(&self) -> bool {
-        self.memory.drain.is_some() && self.runs.is_empty()
     }
 
     /// Takes a drain asked for into memory, once.

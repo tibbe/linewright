@@ -330,3 +330,63 @@ impl Group {
         rustix::process::test_kill_process_group(self.id).is_ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::secrets::Secrets;
+    use crate::variable_names::VariableNames;
+    use crate::work_settings::Setup;
+
+    /// The `bash` on the `PATH`.
+    fn bash() -> std::path::PathBuf {
+        std::env::var_os("PATH")
+            .iter()
+            .flat_map(std::env::split_paths)
+            .map(|dir| dir.join("bash"))
+            .find(|candidate| candidate.is_file())
+            .expect("bash on the PATH")
+    }
+
+    #[tokio::test]
+    async fn a_secret_in_the_command_or_its_output_is_redacted_where_it_is_kept() {
+        let secret = "sk-setup-0123456789";
+        let secrets = Secrets::of(
+            &VariableNames::new("secrets", ["API_KEY".to_string()]).unwrap(),
+            [("API_KEY".into(), secret.into())],
+        )
+        .unwrap();
+        let Setup::Command(command) = Setup::from(format!("echo 'token {secret}'; exit 1")) else {
+            panic!("a command");
+        };
+        let clone = tempfile::tempdir().unwrap();
+        let record = tempfile::tempdir().unwrap();
+        let request = Request {
+            command: &command,
+            dir: clone.path(),
+            environment: vec![],
+            deadline: Instant::now() + Duration::from_secs(30),
+            started_at: "2026-10-01T12:00:00Z".parse().unwrap(),
+            record: record.path(),
+        };
+
+        let (ran, _leftovers) = run(
+            &bash(),
+            request,
+            secrets.redaction(),
+            std::future::pending(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(ran.output, "token [redacted]\n");
+        let log = std::fs::read_to_string(record.path().join(transcript::SETUP_OUTPUT));
+        assert_eq!(log.unwrap(), "token [redacted]\n");
+        let transcript = std::fs::read_to_string(record.path().join(transcript::OUTPUT)).unwrap();
+        assert!(
+            transcript.contains("echo 'token [redacted]'; exit 1"),
+            "{transcript}"
+        );
+        assert!(!transcript.contains(secret), "{transcript}");
+    }
+}

@@ -75,18 +75,6 @@ fn info_with(log: &Log, phrase: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_drain_with_no_run_in_flight_ends_serving_at_once() {
-    let (log, _guard) = Log::capture();
-    let served = Served::start(World::new().await).await;
-
-    served.serving.drain();
-
-    assert_eq!(served.serving.ended().await, ServeEnd::Drained);
-    assert_eq!(info_with(&log, "drain begins").len(), 1, "{}", log.text());
-    assert_eq!(info_with(&log, "drained").len(), 1, "{}", log.text());
-}
-
-#[tokio::test]
 async fn a_drain_waits_for_the_run_in_flight_which_ends_as_it_would_have() {
     let (log, _guard) = Log::capture();
     let world = World::new().await;

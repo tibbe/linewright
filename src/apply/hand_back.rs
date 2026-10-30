@@ -5,6 +5,7 @@ use super::{Asks, Designed, StatusTo};
 use crate::domain::{HandBackKind, Issue, Login, StatusLabel, label};
 use crate::harness;
 use crate::prompts::DesignOf;
+use crate::redaction::Redaction;
 use crate::secrets::Held;
 use crate::store::FoundSecrets;
 use crate::work_settings::TimeoutSetting;
@@ -163,29 +164,47 @@ fn with_log(hand_back: &HandBack) -> String {
 /// What becomes of a result the run sends back to its session.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SendBack {
-    /// Sent back, which makes `retries` follow-ups.
-    Retry { retries: u32 },
+    /// Sent back with a follow-up.
+    Retry,
     /// Past `result-retries`: handed back.
     HandBack(HandBack),
 }
 
-/// Sends a result back to its session with `followup`, counted in
-/// `retries`, the follow-ups it was sent back with before, until they reach
-/// `result_retries`; then hands it back with the end of `session_log`, the
-/// session's last message.
-pub fn send_back(retries: u32, result_retries: u32, followup: &str, session_log: &str) -> SendBack {
-    if retries < result_retries {
-        return SendBack::Retry {
-            retries: retries + 1,
-        };
+/// The follow-ups a session's result was sent back with, counted against
+/// `result-retries` (docs/specs/runs.md, Ending, "A result Linewright can't
+/// accept").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FollowUps(u32);
+
+impl FollowUps {
+    /// Sends the result back to its session with `followup`, counting the
+    /// follow-up, until they reach `result_retries`; then hands it back
+    /// with the end of `session_log`, the session's last message.
+    pub fn send_back(
+        &mut self,
+        result_retries: u32,
+        followup: &str,
+        session_log: &str,
+    ) -> SendBack {
+        let FollowUps(sent) = *self;
+        if sent < result_retries {
+            *self = FollowUps(sent + 1);
+            return SendBack::Retry;
+        }
+        SendBack::HandBack(HandBack {
+            kind: HandBackKind::Stall,
+            reason: format!(
+                "The session's result still could not be used after {sent} follow-up(s).\n\n{followup}"
+            ),
+            log_tail: LogTail::session(&tail(session_log)),
+        })
     }
-    SendBack::HandBack(HandBack {
-        kind: HandBackKind::Stall,
-        reason: format!(
-            "The session's result still could not be used after {retries} follow-up(s).\n\n{followup}"
-        ),
-        log_tail: LogTail::session(&tail(session_log)),
-    })
+
+    /// The session was asked a new question, whose answer is a new result
+    /// with follow-ups of its own.
+    pub fn resumed(&mut self) {
+        *self = FollowUps::default();
+    }
 }
 
 /// How to try again after GitHub refused a push.
@@ -211,6 +230,19 @@ pub enum Kept {
     Refused(String),
     /// Committing or pushing the work failed, saying why.
     Failed(String),
+}
+
+impl Kept {
+    /// What became of the work, as keeping it gave `kept`, with what Git or
+    /// GitHub said redacted: hooks the session left in its clone can print
+    /// a secret.
+    pub fn redacted(kept: anyhow::Result<Kept>, redaction: &Redaction) -> Kept {
+        match kept {
+            Ok(Kept::Refused(reason)) => Kept::Refused(redaction.apply(&reason)),
+            Ok(kept) => kept,
+            Err(e) => Kept::Failed(redaction.apply(&format!("{e:#}"))),
+        }
+    }
 }
 
 /// The work of a run that stopped before it finished: what was `kept` of
@@ -403,6 +435,13 @@ pub fn session_failed(reason: &str, session_log: &str) -> HandBack {
         reason: format!("The session ended unexpectedly: {reason}"),
         log_tail: LogTail::session(session_log),
     }
+}
+
+/// Whether a run that failed on its infrastructure, having tried again
+/// `retries` times, tries again: once (docs/specs/runs.md, Ending,
+/// "Retries").
+pub fn retries_infrastructure_failure(retries: u32) -> bool {
+    retries < 1
 }
 
 /// The hand-back of a run whose retry failed on its infrastructure too, with
