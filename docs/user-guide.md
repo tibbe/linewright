@@ -203,12 +203,13 @@ no longer handled by that pull request, so Linewright works on it again.
 
 ## Stopping work on an issue
 
-Change or remove its label, unassign Linewright or close the issue. Once the
-label no longer asks for Linewright's work, such as when you relabel the issue
-`ready-for-human`, Linewright stops any run on it and unassigns itself. Once
-unassigned, by you or by itself, Linewright leaves the issue until
-`ready-for-agent`, or the required label, is applied again, or until you
-assign it again.
+Change or remove its label, unassign Linewright or close the issue. Linewright
+stops a run on the issue when the label no longer asks for that run's work.
+Relabeling the issue `ready-for-human` stops any run, and relabeling it
+`ready-for-agent` stops a triage run. When the label asks for none of
+Linewright's work, Linewright also unassigns itself. Once unassigned, by you
+or by itself, Linewright leaves the issue until `ready-for-agent`, or the
+required label, is applied again, or until you assign it again.
 
 An issue reopened after its pull request merged is worked again while
 Linewright is still assigned to it, without applying the label again.

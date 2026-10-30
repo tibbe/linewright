@@ -108,8 +108,8 @@ person to take on.
 _Avoid_: handoff, escalation, reassignment
 
 **Stall**:
-A hand-back in which Linewright judged nothing: something it relies on
-failed it, and a person fixes what failed or has Linewright try again.
+A hand-back forced on Linewright by a failure of something it relies on,
+rather than by its own judgement.
 _Avoid_: blocked, broken, stuck, failed, errored, error, action required,
 needs attention
 
@@ -145,11 +145,12 @@ How pressing what a board card's line reports is.
 _Avoid_: state, flag, priority
 
 **Worked**:
-Of an item: Linewright has opened it, assigned itself to it, labeled it, or
-opened a pull request that closes it.
+Of an item: Linewright has done work on it, such as triaging, designing or
+implementing it.
 
 **Managed**:
-Of an item: Linewright has worked it, or it waits on Linewright to act next.
+Of an item: one Linewright counts as its work, whether to come, under way or
+done.
 _Avoid_: tracked, watched, monitored, in the pool
 
 **Usage limit**:
