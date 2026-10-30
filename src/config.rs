@@ -33,9 +33,24 @@ use crate::work_settings::{
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub invocation: Invocation,
     #[command(flatten)]
     pub settings: Settings,
+}
+
+/// What `lw` is run for: a command of the operator's, or Linewright's own
+/// wrapper for its sessions, which reads no settings.
+#[derive(Subcommand, Debug)]
+pub enum Invocation {
+    /// Run PROGRAM, and end everything it starts once it ends or `serve`
+    /// ends it (`crate::contain`).
+    #[command(hide = true)]
+    Contain {
+        #[arg(last = true, required = true, value_name = "PROGRAM")]
+        program: Vec<std::ffi::OsString>,
+    },
+    #[command(flatten)]
+    Command(Command),
 }
 
 #[derive(Subcommand, Debug)]
