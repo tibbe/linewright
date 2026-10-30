@@ -1,11 +1,11 @@
 use linewright::domain::Timestamp;
-use linewright::runs::{RunId, Started};
+use linewright::runs::{RunId, Started, StartedBy};
 use linewright::transcript::{
     self, After, Follower, SessionRecord, SetupRecord, SetupStatus, Transcript, Verbosity,
 };
 use serde_json::json;
 
-use crate::common::json_objects;
+use crate::common::{json_objects, output_of};
 
 fn recorded() -> SessionRecord {
     SessionRecord {
@@ -1264,5 +1264,133 @@ fn a_setup_commands_output_is_read_once_its_end_is_even_when_a_read_stops_inside
     assert!(
         transcript::render(&of(&[record]), Verbosity::Compact, false)
             .ends_with(" 0:00  setup: npm ci → exit 1, 3s\n         npm ERR!\n")
+    );
+}
+
+/// The output of a session that starts a sub-agent which runs for 3h 2m 9s
+/// and makes 3 tool calls, then answers.
+pub(crate) fn with_a_sub_agent_of_3h_2m_9s() -> String {
+    let message = |kind: &str, at: &str, content: serde_json::Value| json!({"type": kind, "timestamp": at, "message": {"content": content}});
+    let mut returned = message(
+        "user",
+        "2026-10-13T13:02:11Z",
+        json!([{"type": "tool_result", "tool_use_id": "a1", "content": "Clean."}]),
+    );
+    returned["tool_use_result"] = json!({
+        "status": "completed",
+        "totalDurationMs": 10_929_400,
+        "totalToolUseCount": 3,
+    });
+    output_of(&[
+        json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+        message(
+            "assistant",
+            "2026-10-13T10:00:02Z",
+            json!([{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"description": "Review"}}]),
+        ),
+        returned,
+        message(
+            "assistant",
+            "2026-10-13T13:02:15Z",
+            json!([{"type": "text", "text": "The review came back clean."}]),
+        ),
+    ])
+}
+
+/// `docs/specs/design_system.md`, Transcripts; Time, Durations.
+#[test]
+fn a_sub_agent_that_ran_for_hours_shows_how_long_as_a_duration_and_each_line_its_time_past_the_hour()
+ {
+    let record = SessionRecord {
+        output: with_a_sub_agent_of_3h_2m_9s(),
+        ..SessionRecord::default()
+    };
+
+    let shown = transcript::render(&of(&[record]), Verbosity::Compact, false);
+
+    assert_eq!(
+        shown,
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:02  Agent(Review) → done, 3 tool uses, 3h 2m\n\
+         3:02:15  The review came back clean.\n"
+    );
+}
+
+fn automations_run(n: u32, by: StartedBy) -> Transcript {
+    Transcript {
+        run: Started::new(format!("hourly/{n}").parse().unwrap(), Some(by)).unwrap(),
+        ..of(&[recorded()])
+    }
+}
+
+#[test]
+fn an_automations_run_by_hand_says_so_in_its_header_and_a_scheduled_one_does_not() {
+    let by_hand = automations_run(2, StartedBy::Hand);
+    let scheduled = automations_run(1, StartedBy::Schedule);
+    let header = |transcript: &Transcript| {
+        let shown = transcript::render(transcript, Verbosity::Compact, false);
+        let json = transcript::json_lines(transcript, Verbosity::Compact);
+        (
+            shown.lines().next().unwrap().to_string(),
+            serde_json::from_str::<serde_json::Value>(json.lines().next().unwrap()).unwrap(),
+        )
+    };
+
+    assert_eq!(
+        [header(&by_hand), header(&scheduled)],
+        [
+            (
+                "run: hourly/2, by hand".to_string(),
+                json!({"type": "run", "run": "hourly/2", "started_by": "hand", "sessions": 1}),
+            ),
+            (
+                "run: hourly/1".to_string(),
+                json!({"type": "run", "run": "hourly/1", "started_by": "schedule", "sessions": 1}),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_run_that_started_no_session_says_so() {
+    let transcript = Transcript {
+        run: item_run("2/update-1".parse().unwrap()),
+        ..of(&[])
+    };
+
+    assert_eq!(
+        transcript::render(&transcript, Verbosity::Compact, false),
+        "run: 2/update-1 (it started no session)\n"
+    );
+    assert_eq!(
+        transcript::json_lines(&transcript, Verbosity::Compact),
+        "{\"type\":\"run\",\"run\":\"2/update-1\",\"sessions\":0}\n"
+    );
+}
+
+#[test]
+fn following_a_session_yet_to_write_anything_shows_the_runs_header_once() {
+    let record = recorded();
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
+    let third_line = record.output.match_indices('\n').nth(2).unwrap().0 + 1;
+
+    let before = text(&follower.update(&[SessionRecord::default()]));
+    let still = text(&follower.update(&[SessionRecord::default()]));
+    let written = text(&follower.update(&[written(&record, third_line)]));
+
+    assert_eq!(
+        [before, still, written],
+        [
+            "run: 105/implement-1\n".to_string(),
+            String::new(),
+            "session 1: started 2026-10-13 10:09:08 UTC\n \
+             0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → running\n"
+                .to_string(),
+        ]
     );
 }

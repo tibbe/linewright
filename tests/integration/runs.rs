@@ -1,16 +1,18 @@
 use crate::common;
 
-use std::path::Path;
+use std::collections::BTreeMap;
 
 use chrono::TimeDelta;
 use common::*;
 use linewright::domain::Number;
+use linewright::layer::{Layer, Source};
 use linewright::reconcile::WorkKind;
 use linewright::runs::{
-    self, Ending, Listing, NoRuns, Query, Recorded, RunId, RunOf, Runs, Started, StartedBy, State,
+    self, Ending, Layers, Listing, NoRuns, Query, Ran, Recorded, RunId, RunOf, Runs, SessionEntry,
+    Started, StartedBy, State,
 };
 use linewright::session_env::SetEnv;
-use linewright::work_settings::{Partial, StageTable};
+use linewright::work_settings::{Effort, Partial, Setting, StageTable};
 use serde_json::json;
 
 fn triage_ready(world: &World) {
@@ -100,41 +102,10 @@ async fn an_items_runs_show_each_sessions_model_and_effort() {
     );
 }
 
-#[tokio::test]
-async fn an_items_runs_as_json_give_where_each_setting_and_prompt_file_came_from() {
-    let (_world, work_dir) = triage_on_opus().await;
-
-    let output = lw_in(work_dir.path(), &["runs", "1", "--json"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
-    let session = &answer["runs"][0]["sessions"][0];
-    assert_eq!(session["model"], "opus");
-    assert_eq!(session["effort"], serde_json::Value::Null);
-    assert_eq!(
-        session["layers"]["settings"],
-        json!({
-            "model": "operator",
-            "effort": "harness",
-            "session-timeout": "operator",
-            "setup": "linewright",
-            "session-env": "operator",
-            "session-pass-env": "linewright",
-        })
-    );
-    assert_eq!(session["layers"]["prompts"]["triage.md"], "linewright");
-    assert_eq!(session["layers"]["prompts"].get("prompts/triage.md"), None);
-}
-
-/// A world whose triage sessions run with the operator's `set`, if any,
-/// on a harness that reports running `claude-opus-5-5`.
-async fn triage_reporting_opus(set: Option<&str>) -> (World, tempfile::TempDir) {
-    let work_dir = tempfile::tempdir().unwrap();
-    let mut world = World::with(|config| {
-        config.work_dir = work_dir.path().join(REPO);
-        config.work.flags_and_env.model = set.map(str::to_string);
-    })
-    .await;
+/// A world whose triage sessions run with no model set, on a harness that
+/// reports running `claude-opus-5-5`.
+async fn triage_reporting_opus() -> (World, tempfile::TempDir) {
+    let (mut world, work_dir) = world_in_work_dir().await;
     world.harness.reports_model("claude-opus-5-5");
     triage_ready(&world);
     world
@@ -145,197 +116,18 @@ async fn triage_reporting_opus(set: Option<&str>) -> (World, tempfile::TempDir) 
 }
 
 #[tokio::test]
-async fn a_session_with_no_model_set_shows_the_model_the_harness_reported_and_the_harness_as_its_source()
+async fn a_session_with_no_model_set_records_the_model_the_harness_reported_and_the_harness_as_its_source()
  {
-    let (_world, work_dir) = triage_reporting_opus(None).await;
+    let (_world, work_dir) = triage_reporting_opus().await;
 
-    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
     let json = lw_in(work_dir.path(), &["runs", "1", "--json"]).await;
 
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(
-        output.stdout.lines().nth(1),
-        Some("  session 1: model claude-opus-5-5, effort the harness's choice"),
-        "{}",
-        output.stdout
-    );
+    assert_eq!(json.code, Some(0), "{}", json.stderr);
     let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
     let session = &answer["runs"][0]["sessions"][0];
     assert_eq!(session["model"], serde_json::Value::Null);
     assert_eq!(session["reported_model"], "claude-opus-5-5");
-    assert_eq!(session["effort"], serde_json::Value::Null);
     assert_eq!(session["layers"]["settings"]["model"], "harness");
-    assert_eq!(session["layers"]["settings"]["effort"], "harness");
-}
-
-#[tokio::test]
-async fn a_session_shows_the_model_the_harness_reported_and_keeps_the_one_set() {
-    let (_world, work_dir) = triage_reporting_opus(Some("opus")).await;
-
-    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
-    let json = lw_in(work_dir.path(), &["runs", "1", "--json"]).await;
-
-    assert_eq!(
-        output.stdout.lines().nth(1),
-        Some("  session 1: model claude-opus-5-5, effort the harness's choice"),
-        "{}",
-        output.stdout
-    );
-    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
-    let session = &answer["runs"][0]["sessions"][0];
-    assert_eq!(session["model"], "opus");
-    assert_eq!(session["reported_model"], "claude-opus-5-5");
-    assert_eq!(session["layers"]["settings"]["model"], "operator");
-}
-
-#[tokio::test]
-async fn a_session_that_times_out_keeps_the_model_the_harness_reported() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    world.harness.reports_model("claude-opus-5-5");
-    world.harness.on(WorkKind::Triage, |_| {
-        Err(linewright::harness::SessionError::TimedOut {
-            log_tail: String::new(),
-        })
-    });
-    world
-        .store
-        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
-    world.poll().await;
-
-    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
-
-    assert_eq!(
-        output.stdout.lines().nth(1),
-        Some("  session 1: model claude-opus-5-5, effort the harness's choice"),
-        "{}",
-        output.stdout
-    );
-}
-
-#[tokio::test]
-async fn a_run_recorded_before_the_harness_was_a_source_gives_it_as_an_unset_models_and_efforts() {
-    let work_dir = tempfile::tempdir().unwrap();
-    let dir = work_dir.path().join(REPO).join("runs/items/5");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("triage-1.json"),
-        r#"{
-  "item": 5,
-  "stage": "triage",
-  "n": 1,
-  "started_at": "2026-10-14T12:00:00Z",
-  "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
-  "sessions": [{
-    "dir": "sessions/5/triage-1",
-    "model": null,
-    "effort": null,
-    "layers": {
-      "settings": {
-        "model": "linewright",
-        "effort": "linewright",
-        "session-timeout": "linewright",
-        "session-env": "linewright"
-      },
-      "prompts": {"triage.md": "linewright"}
-    }
-  }]
-}"#,
-    )
-    .unwrap();
-
-    let output = lw_in(work_dir.path(), &["runs", "5"]).await;
-    let json = lw_in(work_dir.path(), &["runs", "5", "--json"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(
-        output.stdout.lines().nth(1),
-        Some("  session 1: model the harness's choice, effort the harness's choice"),
-        "{}",
-        output.stdout
-    );
-    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
-    assert_eq!(
-        answer["runs"][0]["sessions"][0]["layers"]["settings"],
-        json!({
-            "model": "harness",
-            "effort": "harness",
-            "session-timeout": "linewright",
-            "session-env": "linewright",
-        })
-    );
-    assert_eq!(answer["runs"][0]["sessions"][0].get("reported_model"), None);
-}
-
-#[tokio::test]
-async fn the_whole_list_of_runs_leaves_their_sessions_out() {
-    let (_world, work_dir) = triage_on_opus().await;
-
-    let output = lw_in(work_dir.path(), &["runs"]).await;
-    let json = lw_in(work_dir.path(), &["runs", "--json"]).await;
-
-    assert_eq!(output.stdout.lines().count(), 1, "{}", output.stdout);
-    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
-    assert_eq!(answer["runs"][0].get("sessions"), None);
-}
-
-#[tokio::test]
-async fn what_a_runs_sessions_ran_with_is_kept_across_a_restart() {
-    let (mut world, work_dir) = triage_on_opus().await;
-
-    let config = common::config(&work_dir.path().join(REPO));
-    world.factory = linewright::factory::Factory::start(
-        world.store.clone(),
-        world.harness.clone(),
-        world.clock.clone(),
-        config,
-    )
-    .await
-    .unwrap();
-    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(
-        lines[1..],
-        ["  session 1: model opus, effort the harness's choice"],
-        "{}",
-        output.stdout
-    );
-}
-
-#[tokio::test]
-async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    triage_ready(&world);
-    let issue =
-        world
-            .store
-            .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
-    world.poll().await;
-    triage_again(&world, issue);
-    world.poll().await;
-
-    let config = common::config(&work_dir.path().join(REPO));
-    world.factory = linewright::factory::Factory::start(
-        world.store.clone(),
-        world.harness.clone(),
-        world.clock.clone(),
-        config,
-    )
-    .await
-    .unwrap();
-    triage_again(&world, issue);
-    world.poll().await;
-
-    let output = lw_in(work_dir.path(), &["runs"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(
-        run_ids(&output.stdout),
-        ["1/triage-3", "1/triage-2", "1/triage-1"],
-        "{}",
-        output.stdout
-    );
 }
 
 #[tokio::test]
@@ -355,21 +147,8 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     // Brought up to date without a session: nothing conflicts.
     world.poll().await;
 
-    let output = lw_in(work_dir.path(), &["runs"]).await;
     let recorded = Runs::new(&work_dir.path().join(REPO)).read().unwrap();
 
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{}", output.stdout);
-    assert!(
-        lines[0].starts_with("2/update-1: done — #2 update, started "),
-        "{}",
-        output.stdout
-    );
-    assert!(
-        lines[1].starts_with("1/implement-1: done — "),
-        "{}",
-        output.stdout
-    );
     let sessions = |id: &str| {
         let run = recorded
             .iter()
@@ -378,48 +157,6 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
         run.sessions.len()
     };
     assert_eq!((sessions("2/update-1"), sessions("1/implement-1")), (0, 1));
-}
-
-#[tokio::test]
-async fn an_automations_runs_are_numbered_under_its_name_with_their_outcomes() {
-    let (world, work_dir) = world_in_work_dir().await;
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(
-                ".linewright/automations/weekly.md",
-                "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
-            )],
-            "Add an automation",
-        )
-        .await
-        .unwrap();
-    let weekly = "weekly".parse().unwrap();
-    world
-        .harness
-        .on_automation(|_| Ok(json!({"summary": "Nothing to do.", "issues": []}).to_string()));
-    world.factory.run_automation(&weekly).await.unwrap();
-    world
-        .harness
-        .on_automation(|_| Ok(json!({"not": "a result"}).to_string()));
-    assert!(world.factory.run_automation(&weekly).await.is_err());
-
-    let output = lw_in(work_dir.path(), &["runs"]).await;
-
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{}", output.stdout);
-    assert!(
-        lines[0].starts_with("weekly/2: failed — automation weekly by hand, started "),
-        "{}",
-        output.stdout
-    );
-    assert!(
-        lines[1].starts_with("weekly/1: done — automation weekly by hand, started "),
-        "{}",
-        output.stdout
-    );
 }
 
 async fn hourly_by_schedule_then_by_hand() -> (World, tempfile::TempDir) {
@@ -432,56 +169,18 @@ async fn hourly_by_schedule_then_by_hand() -> (World, tempfile::TempDir) {
 async fn an_automations_run_by_hand_is_marked_as_one_and_a_scheduled_one_is_not() {
     let (_world, work_dir) = hourly_by_schedule_then_by_hand().await;
 
-    let output = lw_in(work_dir.path(), &["runs"]).await;
+    let recorded = Runs::new(&work_dir.path().join(REPO)).read().unwrap();
 
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{}", output.stdout);
-    assert!(
-        lines[0]
-            .starts_with("hourly/2: done — automation hourly by hand, started 2026-10-01 13:05:"),
-        "{}",
-        output.stdout
-    );
-    assert!(
-        lines[1].starts_with("hourly/1: done — automation hourly, started 2026-10-01 13:00:"),
-        "{}",
-        output.stdout
-    );
-}
-
-#[tokio::test]
-async fn runs_json_says_how_each_automation_run_started_and_nothing_of_work_runs() {
-    let (mut world, work_dir) = hourly_by_schedule_then_by_hand().await;
-    triage_ready(&world);
-    let issue =
-        world
-            .store
-            .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
-    world.poll().await;
-
-    let output = lw_in(work_dir.path(), &["runs", "--json"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
-    let triage = format!("{}/triage-1", issue.0);
-    let started_by: Vec<(&str, Option<&str>)> = answer["runs"]
-        .as_array()
-        .unwrap()
+    let mut started: Vec<(String, Option<StartedBy>)> = recorded
         .iter()
-        .map(|run| {
-            let run = run.as_object().unwrap();
-            (
-                run["id"].as_str().unwrap(),
-                run.get("started_by").map(|by| by.as_str().unwrap()),
-            )
-        })
+        .map(|run| (run.id.to_string(), run.started().by()))
         .collect();
+    started.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
-        started_by,
+        started,
         [
-            (triage.as_str(), None),
-            ("hourly/2", Some("hand")),
-            ("hourly/1", Some("schedule")),
+            ("hourly/1".to_string(), Some(StartedBy::Schedule)),
+            ("hourly/2".to_string(), Some(StartedBy::Hand)),
         ]
     );
 }
@@ -548,7 +247,6 @@ async fn runs_of_an_item_with_none_exits_4_saying_so() {
     world.poll().await;
 
     let output = lw_in(work_dir.path(), &["runs", "7"]).await;
-    let narrowed = lw_in(work_dir.path(), &["runs", "1", "--stage", "rework"]).await;
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert_eq!(output.stdout, "");
@@ -557,8 +255,6 @@ async fn runs_of_an_item_with_none_exits_4_saying_so() {
         "{}",
         output.stderr
     );
-    assert_eq!(narrowed.code, Some(0), "{}", narrowed.stderr);
-    assert_eq!(narrowed.stdout, "");
 }
 
 #[tokio::test]
@@ -574,192 +270,7 @@ async fn runs_json_prints_the_answer_as_json() {
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
-    let run = &answer["runs"][0];
-    assert_eq!(run["id"], "1/triage-1");
-    assert_eq!(run["item"], 1);
-    assert_eq!(run["stage"], "triage");
-    assert_eq!(run["outcome"], "done");
-    assert!(
-        run["started_at"]
-            .as_str()
-            .unwrap()
-            .starts_with("2026-10-01T12:00:")
-    );
-    assert!(run["duration_seconds"].as_i64().unwrap() > 0);
-    assert_eq!(answer["left_out"], 0);
-}
-
-async fn listed(dir: &Path, item: Number) -> Vec<String> {
-    let text = lw_in(dir, &["runs", &item.0.to_string()]).await;
-    let json = lw_in(dir, &["runs", &item.0.to_string(), "--json"]).await;
-
-    assert_eq!(text.code, Some(0), "{}", text.stderr);
-    let ids: Vec<String> = run_ids(&text.stdout)
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
-    let json_ids: Vec<String> = answer["runs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|run| run["id"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(ids, json_ids);
-    ids
-}
-
-#[tokio::test]
-async fn a_pull_requests_runs_are_its_own_and_its_tickets_are_the_tickets() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let (issue, pr) = world.implement_a_ticket().await;
-    world.rework_asked(pr);
-    world.poll().await;
-    let dir = work_dir.path();
-
-    assert_eq!(listed(dir, pr).await, [format!("{}/rework-1", pr.0)]);
-    assert_eq!(listed(dir, issue).await, ["1/implement-1"]);
-    world.store.merge_pull(pr).await.unwrap();
-    assert_eq!(listed(dir, pr).await, [format!("{}/rework-1", pr.0)]);
-    assert_eq!(listed(dir, issue).await, ["1/implement-1"]);
-}
-
-#[tokio::test]
-async fn a_pull_requests_runs_are_counted_per_stage_on_it() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let (_, pr) = world.ticket_in_review().await;
-    world.rework_asked(pr);
-    world.poll().await;
-    world
-        .store
-        .comment_as("maintainer", pr, "Rename it again.")
-        .unwrap();
-    world.harness.on(WorkKind::Rework, |call| {
-        commit_in(
-            &call.spec.dir,
-            &[("src/renamed.txt", "renamed again\n")],
-            "Rename again",
-        );
-        Ok(json!({"outcome": "done", "comment": "Renamed again."}).to_string())
-    });
-    world.poll().await;
-
-    assert_eq!(
-        listed(work_dir.path(), pr).await,
-        [format!("{}/rework-2", pr.0), format!("{}/rework-1", pr.0)]
-    );
-}
-
-#[tokio::test]
-async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let (issue, closed) = world.implement_a_ticket().await;
-    world.store.close_pull_as(closed).unwrap();
-    world.poll().await;
-    world.store.unlabel_as(issue, "ready-for-human").unwrap();
-    world
-        .store
-        .label_as("maintainer", issue, "ready-for-agent")
-        .unwrap();
-    design_issues(&world);
-    world.poll().await;
-    world.poll().await;
-    let next = *world.store.pulls().last().unwrap();
-    assert_ne!(next, closed);
-    let dir = work_dir.path();
-
-    let of_closed = lw_in(dir, &["runs", &closed.0.to_string()]).await;
-
-    assert_eq!(
-        listed(dir, issue).await,
-        ["1/implement-2", "1/design-1", "1/implement-1"]
-    );
-    assert_eq!(of_closed.code, Some(4), "{}", of_closed.stdout);
-    assert!(
-        of_closed
-            .stderr
-            .contains(&format!("#{} has no runs", closed.0)),
-        "{}",
-        of_closed.stderr
-    );
-}
-
-#[tokio::test]
-async fn a_pull_requests_runs_narrow_from_the_command_line() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let (_, pr) = world.ticket_in_review().await;
-    world.rework_asked(pr);
-    world.poll().await;
-    let pr = pr.0.to_string();
-
-    let rework = lw_in(work_dir.path(), &["runs", &pr, "--stage", "rework"]).await;
-    let implement = lw_in(work_dir.path(), &["runs", &pr, "--stage", "implement"]).await;
-    let later = lw_in(work_dir.path(), &["runs", &pr, "--since", "2026-10-02"]).await;
-
-    assert_eq!(
-        run_ids(&rework.stdout),
-        [format!("{pr}/rework-1")],
-        "{}",
-        rework.stdout
-    );
-    assert_eq!((implement.code, implement.stdout.as_str()), (Some(0), ""));
-    assert_eq!((later.code, later.stdout.as_str()), (Some(0), ""));
-}
-
-#[tokio::test]
-async fn a_run_recorded_before_runs_kept_their_pull_request_is_listed() {
-    let work_dir = tempfile::tempdir().unwrap();
-    let dir = work_dir.path().join(REPO).join("runs/items/5");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("rework-1.json"),
-        r#"{
-  "item": 5,
-  "stage": "rework",
-  "n": 1,
-  "started_at": "2026-10-14T12:00:00Z",
-  "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
-  "sessions": []
-}"#,
-    )
-    .unwrap();
-
-    let output = lw_in(work_dir.path(), &["runs", "5"]).await;
-
-    assert_eq!(
-        output.stdout,
-        "5/rework-1: done — #5 rework, started 2026-10-14 12:00:00 UTC, ran 1m\n"
-    );
-}
-
-#[tokio::test]
-async fn a_run_recorded_before_sessions_kept_what_they_ran_with_lists_none_of_it() {
-    let work_dir = tempfile::tempdir().unwrap();
-    let dir = work_dir.path().join(REPO).join("runs/items/5");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("rework-1.json"),
-        r#"{
-  "item": 5,
-  "stage": "rework",
-  "n": 1,
-  "started_at": "2026-10-14T12:00:00Z",
-  "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
-  "sessions": ["sessions/5/rework-1"]
-}"#,
-    )
-    .unwrap();
-
-    let output = lw_in(work_dir.path(), &["runs", "5"]).await;
-    let json = lw_in(work_dir.path(), &["runs", "5", "--json"]).await;
-
-    assert_eq!(
-        output.stdout,
-        "5/rework-1: done — #5 rework, started 2026-10-14 12:00:00 UTC, ran 1m\n\
-         \x20 session 1: model and effort not recorded\n"
-    );
-    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
-    assert_eq!(answer["runs"][0]["sessions"], json!([null]));
+    assert_eq!(answer["runs"][0]["id"], "1/triage-1");
 }
 
 fn ended(of: RunOf, n: u32, by: Option<StartedBy>, start: &str) -> Recorded {
@@ -1017,115 +528,6 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
 }
 
 #[tokio::test]
-async fn an_automations_runs_recorded_by_the_previous_version_still_show_and_are_counted_on_from() {
-    let (world, work_dir) = world_in_work_dir().await;
-    // Where, and as what, the previous version recorded an automation's run.
-    let old = work_dir.path().join(REPO).join("runs/workflows/weekly");
-    std::fs::create_dir_all(&old).unwrap();
-    std::fs::write(
-        old.join("1.json"),
-        json!({
-            "workflow": "weekly",
-            "n": 1,
-            "started_at": "2026-09-28T06:00:00Z",
-            "end": {"at": "2026-09-28T06:05:00Z", "ending": "done"},
-            "sessions": [],
-        })
-        .to_string(),
-    )
-    .unwrap();
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(
-                ".linewright/automations/weekly.md",
-                "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
-            )],
-            "Add an automation",
-        )
-        .await
-        .unwrap();
-    world
-        .harness
-        .on_automation(|_| Ok(json!({"summary": "Nothing to do.", "issues": []}).to_string()));
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-
-    let output = lw_in(work_dir.path(), &["runs"]).await;
-
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{}", output.stdout);
-    assert!(
-        lines[0].starts_with("weekly/2: done — automation weekly by hand, started "),
-        "{}",
-        output.stdout
-    );
-    assert!(
-        lines[1].starts_with("weekly/1: done — automation weekly, started 2026-09-28"),
-        "{}",
-        output.stdout
-    );
-    let json = lw_in(work_dir.path(), &["runs", "--json"]).await;
-    let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
-    assert_eq!(answer["runs"][1]["started_by"], "schedule");
-}
-
-#[tokio::test]
-async fn a_spec_changes_runs_recorded_as_tickets_by_the_previous_version_are_design_runs() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    world.harness.on(WorkKind::Design, |_| {
-        Ok(json!({"outcome": "nothing-to-build", "reason": "Nothing to build."}).to_string())
-    });
-    let pr = world
-        .store
-        .merge_change(
-            "maintainer",
-            "Gadgets",
-            "Adds gadgets.",
-            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
-        )
-        .await
-        .unwrap();
-    // Where, and as what, the previous version recorded a spec change's run.
-    let old = work_dir
-        .path()
-        .join(REPO)
-        .join(format!("runs/items/{}", pr.0));
-    std::fs::create_dir_all(&old).unwrap();
-    std::fs::write(
-        old.join("tickets-1.json"),
-        json!({
-            "item": pr.0,
-            "stage": "tickets",
-            "n": 1,
-            "started_at": "2026-09-28T06:00:00Z",
-            "end": {"at": "2026-09-28T06:05:00Z", "ending": "handed-back"},
-            "sessions": [],
-        })
-        .to_string(),
-    )
-    .unwrap();
-    world.poll().await;
-
-    let output = lw_in(
-        work_dir.path(),
-        &["runs", &pr.0.to_string(), "--stage", "design"],
-    )
-    .await;
-    let tickets = lw_in(work_dir.path(), &["runs", "--stage", "tickets"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let ids = [2, 1].map(|n| format!("{}/design-{n}", pr.0));
-    assert_eq!(run_ids(&output.stdout), ids, "{}", output.stdout);
-    assert_eq!(tickets.code, Some(2), "{}", tickets.stderr);
-}
-
-#[tokio::test]
 async fn an_operators_prompt_is_sent_and_recorded_as_the_operators() {
     let work_dir = tempfile::tempdir().unwrap();
     let operators = prompts_with("follow-ups/result-error.md", |text| {
@@ -1156,47 +558,469 @@ async fn an_operators_prompt_is_sent_and_recorded_as_the_operators() {
     let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
     let prompts = &answer["runs"][0]["sessions"][0]["layers"]["prompts"];
     assert_eq!(prompts["follow-ups/result-error.md"], "operator");
-    assert_eq!(prompts["triage.md"], "linewright");
 }
 
-#[tokio::test]
-async fn a_run_recorded_when_skills_came_in_layers_shows_its_layers_as_kept() {
-    let work_dir = tempfile::tempdir().unwrap();
-    let dir = work_dir.path().join(REPO).join("runs/items/5");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("rework-1.json"),
-        r#"{
-  "item": 5,
-  "stage": "rework",
-  "n": 1,
-  "started_at": "2026-10-14T12:00:00Z",
-  "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
-  "sessions": [{
-    "dir": "sessions/5/rework-1",
-    "model": "opus",
-    "effort": null,
-    "layers": {
-      "settings": {"model": "operator", "effort": "linewright"},
-      "briefs": {
-        "prompts/rework.md": "operator",
-        "plugin/skills/tdd/SKILL.md": "linewright"
-      }
+fn ran(model: Option<&str>, reported_model: Option<&str>, effort: Option<Effort>) -> Ran {
+    Ran {
+        model: model.map(str::to_string),
+        reported_model: reported_model.map(str::to_string),
+        effort,
+        layers: Layers {
+            settings: BTreeMap::new(),
+            prompts: BTreeMap::new(),
+        },
     }
-  }]
-}"#,
-    )
-    .unwrap();
+}
 
-    let output = lw_in(work_dir.path(), &["runs", "5", "--json"]).await;
+#[test]
+fn a_session_ran_the_model_the_harness_reported_or_else_the_one_set() {
+    let sessions = [
+        ran(Some("opus"), Some("claude-opus-5-5"), None),
+        ran(Some("opus"), None, None),
+        ran(None, Some("claude-opus-5-5"), None),
+        ran(None, None, None),
+    ];
 
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
     assert_eq!(
-        answer["runs"][0]["sessions"][0]["layers"]["prompts"],
+        sessions.iter().map(Ran::model_ran).collect::<Vec<_>>(),
+        [
+            Some("claude-opus-5-5"),
+            Some("opus"),
+            Some("claude-opus-5-5"),
+            None
+        ]
+    );
+}
+
+fn session(n: usize, ran: Option<Ran>) -> SessionEntry {
+    SessionEntry {
+        dir: format!("sessions/1/triage-1/{n}").into(),
+        ran,
+    }
+}
+
+fn of_item(item: u64) -> Query {
+    Query {
+        item: Some(Number(item)),
+        ..Query::default()
+    }
+}
+
+#[test]
+fn an_items_runs_show_what_each_session_ran_with_or_that_it_was_not_recorded() {
+    let mut run = work(1, WorkKind::Triage, 1, "2026-10-14T12:00:00Z");
+    run.sessions = vec![
+        session(
+            1,
+            Some(ran(
+                Some("opus"),
+                Some("claude-opus-5-5"),
+                Some(Effort::High),
+            )),
+        ),
+        session(2, Some(ran(None, None, None))),
+        session(3, None),
+    ];
+
+    let listing = runs::list(vec![run], &of_item(1), at("2026-10-14T13:00:00Z")).unwrap();
+
+    assert_eq!(
+        runs::render(&listing, false),
+        "1/triage-1: done — #1 triage, started 2026-10-14 12:00:00 UTC, ran 1m\n  \
+         session 1: model claude-opus-5-5, effort high\n  \
+         session 2: model the harness's choice, effort the harness's choice\n  \
+         session 3: model and effort not recorded\n"
+    );
+}
+
+#[test]
+fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_and_prompts_came_from()
+ {
+    let mut run = work(1, WorkKind::Triage, 1, "2026-10-14T12:00:00Z");
+    run.sessions = vec![
+        session(
+            1,
+            Some(Ran {
+                layers: Layers {
+                    settings: BTreeMap::from([
+                        (Setting::MODEL, Source::Layer(Layer::Operator)),
+                        (Setting::EFFORT, Source::Harness),
+                        (Setting::SESSION_TIMEOUT, Source::Layer(Layer::Repository)),
+                    ]),
+                    prompts: BTreeMap::from([
+                        ("triage.md".to_string(), Layer::Linewright),
+                        ("follow-ups/result-error.md".to_string(), Layer::Operator),
+                    ]),
+                },
+                ..ran(Some("opus"), Some("claude-opus-5-5"), None)
+            }),
+        ),
+        session(2, None),
+    ];
+
+    let listing = runs::list(vec![run], &of_item(1), at("2026-10-14T13:00:00Z")).unwrap();
+
+    assert_eq!(
+        serde_json::to_value(&listing).unwrap(),
         json!({
-            "prompts/rework.md": "operator",
-            "plugin/skills/tdd/SKILL.md": "linewright",
+            "runs": [{
+                "id": "1/triage-1",
+                "item": 1,
+                "stage": "triage",
+                "started_at": "2026-10-14T12:00:00Z",
+                "duration_seconds": 60,
+                "outcome": "done",
+                "sessions": [
+                    {
+                        "model": "opus",
+                        "reported_model": "claude-opus-5-5",
+                        "effort": null,
+                        "layers": {
+                            "settings": {
+                                "model": "operator",
+                                "effort": "harness",
+                                "session-timeout": "repository",
+                            },
+                            "prompts": {
+                                "follow-ups/result-error.md": "operator",
+                                "triage.md": "linewright",
+                            },
+                        },
+                    },
+                    null,
+                ],
+            }],
+            "left_out": 0,
         })
     );
+}
+
+fn weekly_by_hand(n: u32, start: &str, ending: Ending) -> Recorded {
+    let of = RunOf::Automation {
+        automation: "weekly".parse().unwrap(),
+    };
+    let mut run = ended(of, n, Some(StartedBy::Hand), start);
+    run.state = State::Ended {
+        at: at(start) + TimeDelta::minutes(1),
+        ending,
+    };
+    run
+}
+
+#[test]
+fn an_automations_run_says_whether_it_was_by_hand_and_how_it_ended() {
+    let recorded = vec![
+        weekly(1, "2026-10-14T09:00:00Z"),
+        weekly_by_hand(2, "2026-10-14T10:00:00Z", Ending::Failed),
+    ];
+
+    let listing = runs::list(recorded, &Query::default(), at("2026-10-14T13:00:00Z")).unwrap();
+
+    assert_eq!(
+        runs::render(&listing, false),
+        "weekly/2: failed — automation weekly by hand, started 2026-10-14 10:00:00 UTC, ran 1m\n\
+         weekly/1: done — automation weekly, started 2026-10-14 09:00:00 UTC, ran 1m\n"
+    );
+}
+
+#[test]
+fn the_whole_list_as_json_says_how_each_automations_run_started_and_leaves_the_sessions_out() {
+    let mut triage = work(1, WorkKind::Triage, 1, "2026-10-14T08:00:00Z");
+    triage.sessions = vec![session(1, Some(ran(Some("opus"), None, None)))];
+    let recorded = vec![
+        triage,
+        weekly(1, "2026-10-14T09:00:00Z"),
+        weekly_by_hand(2, "2026-10-14T10:00:00Z", Ending::Done),
+    ];
+
+    let listing = runs::list(recorded, &Query::default(), at("2026-10-14T13:00:00Z")).unwrap();
+
+    assert_eq!(
+        serde_json::to_value(&listing).unwrap(),
+        json!({
+            "runs": [
+                {
+                    "id": "weekly/2",
+                    "automation": "weekly",
+                    "started_by": "hand",
+                    "started_at": "2026-10-14T10:00:00Z",
+                    "duration_seconds": 60,
+                    "outcome": "done",
+                },
+                {
+                    "id": "weekly/1",
+                    "automation": "weekly",
+                    "started_by": "schedule",
+                    "started_at": "2026-10-14T09:00:00Z",
+                    "duration_seconds": 60,
+                    "outcome": "done",
+                },
+                {
+                    "id": "1/triage-1",
+                    "item": 1,
+                    "stage": "triage",
+                    "started_at": "2026-10-14T08:00:00Z",
+                    "duration_seconds": 60,
+                    "outcome": "done",
+                },
+            ],
+            "left_out": 0,
+        })
+    );
+}
+
+#[test]
+fn an_items_runs_narrowed_to_none_are_no_runs_to_list_not_none_at_all() {
+    let query = Query {
+        stage: Some(WorkKind::FixCi),
+        ..of_item(1)
+    };
+
+    let listed = runs::list(morning(), &query, at("2026-10-14T13:00:00Z"));
+
+    assert_eq!(
+        listed,
+        Ok(Listing {
+            runs: vec![],
+            left_out: 0,
+        })
+    );
+}
+
+/// What `Runs` reads from a work directory holding each of `files`.
+fn read(files: &[(&str, &str)]) -> (tempfile::TempDir, Vec<Recorded>) {
+    let (base, work_dir) = work_dir_holding(files);
+    let recorded = Runs::new(&work_dir.resolve()).read().unwrap();
+    (base, recorded)
+}
+
+/// What `Runs` reads of #5's first rework, done in a minute, whose record
+/// gives its sessions as `sessions`.
+fn rework_of_5_read(sessions: &serde_json::Value) -> (tempfile::TempDir, Vec<Recorded>) {
+    let record = item_run_record(5, "rework", 1, Some("done"), sessions);
+    read(&[("runs/items/5/rework-1.json", &record)])
+}
+
+fn rework_of_5(sessions: Vec<SessionEntry>) -> Recorded {
+    Recorded::new(
+        Started::new("5/rework-1".parse().unwrap(), None).unwrap(),
+        at("2026-10-14T12:00:00Z"),
+        State::Ended {
+            at: at("2026-10-14T12:01:00Z"),
+            ending: Ending::Done,
+        },
+        sessions,
+        None,
+    )
+}
+
+#[test]
+fn a_record_from_before_runs_kept_their_pull_request_reads_as_its_run() {
+    let (_base, recorded) = rework_of_5_read(&json!([]));
+
+    assert_eq!(recorded, [rework_of_5(vec![])]);
+}
+
+#[test]
+fn a_record_from_before_sessions_kept_what_they_ran_with_reads_none_of_it() {
+    let (base, recorded) = rework_of_5_read(&json!(["sessions/5/rework-1"]));
+
+    assert_eq!(
+        recorded,
+        [rework_of_5(vec![SessionEntry {
+            dir: base.path().join(REPO).join("sessions/5/rework-1"),
+            ran: None,
+        }])]
+    );
+}
+
+/// What the one session of #5's first rework ran with, as read from a record
+/// giving its sessions as `sessions`.
+fn ran_as_read(sessions: &serde_json::Value) -> Ran {
+    let (_base, recorded) = rework_of_5_read(sessions);
+    let [run] = &recorded[..] else {
+        panic!("one run: {recorded:#?}");
+    };
+    let [SessionEntry { ran: Some(ran), .. }] = &run.sessions[..] else {
+        panic!("one session with what it ran with: {run:#?}");
+    };
+    ran.clone()
+}
+
+#[test]
+fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_set_as_the_harnesss()
+{
+    let read = ran_as_read(&json!([{
+        "dir": "sessions/5/rework-1",
+        "model": null,
+        "effort": null,
+        "layers": {
+            "settings": {
+                "model": "linewright",
+                "effort": "linewright",
+                "session-timeout": "linewright",
+                "session-env": "linewright"
+            },
+            "prompts": {"rework.md": "linewright"}
+        }
+    }]));
+
+    assert_eq!(
+        read,
+        Ran {
+            layers: Layers {
+                settings: BTreeMap::from([
+                    (Setting::MODEL, Source::Harness),
+                    (Setting::EFFORT, Source::Harness),
+                    (Setting::SESSION_TIMEOUT, Source::Layer(Layer::Linewright)),
+                    (Setting::SessionEnv, Source::Layer(Layer::Linewright)),
+                ]),
+                prompts: BTreeMap::from([("rework.md".to_string(), Layer::Linewright)]),
+            },
+            ..ran(None, None, None)
+        }
+    );
+}
+
+#[test]
+fn a_record_from_when_skills_came_in_layers_reads_its_layers_as_kept() {
+    let ran = ran_as_read(&json!([{
+        "dir": "sessions/5/rework-1",
+        "model": "opus",
+        "effort": null,
+        "layers": {
+            "settings": {"model": "operator", "effort": "linewright"},
+            "briefs": {
+                "prompts/rework.md": "operator",
+                "plugin/skills/tdd/SKILL.md": "linewright"
+            }
+        }
+    }]));
+
+    assert_eq!(
+        ran.layers.prompts,
+        BTreeMap::from([
+            ("prompts/rework.md".to_string(), Layer::Operator),
+            ("plugin/skills/tdd/SKILL.md".to_string(), Layer::Linewright),
+        ])
+    );
+}
+
+/// What run each record read is, how it started and how it ended, in the
+/// order of their IDs.
+fn runs_read(recorded: &[Recorded]) -> Vec<(String, Option<StartedBy>, State)> {
+    let mut read: Vec<_> = recorded
+        .iter()
+        .map(|run| (run.id.to_string(), run.started().by(), run.state))
+        .collect();
+    read.sort_by(|a, b| a.0.cmp(&b.0));
+    read
+}
+
+fn done_at(time: &str) -> State {
+    State::Ended {
+        at: at(time),
+        ending: Ending::Done,
+    }
+}
+
+#[test]
+fn an_automations_runs_read_from_where_the_previous_version_kept_them_as_scheduled_and_from_where_they_are_kept()
+ {
+    let old = json!({
+        "workflow": "weekly",
+        "n": 1,
+        "started_at": "2026-09-28T06:00:00Z",
+        "end": {"at": "2026-09-28T06:05:00Z", "ending": "done"},
+        "sessions": [],
+    });
+    let new = json!({
+        "automation": "weekly",
+        "n": 2,
+        "started_by": "hand",
+        "started_at": "2026-10-05T06:00:00Z",
+        "end": {"at": "2026-10-05T06:05:00Z", "ending": "done"},
+        "sessions": [],
+    });
+
+    let (_base, recorded) = read(&[
+        ("runs/workflows/weekly/1.json", &old.to_string()),
+        ("runs/automations/weekly/2.json", &new.to_string()),
+    ]);
+
+    assert_eq!(
+        runs_read(&recorded),
+        [
+            (
+                "weekly/1".to_string(),
+                Some(StartedBy::Schedule),
+                done_at("2026-09-28T06:05:00Z"),
+            ),
+            (
+                "weekly/2".to_string(),
+                Some(StartedBy::Hand),
+                done_at("2026-10-05T06:05:00Z"),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_spec_changes_run_the_previous_version_recorded_as_tickets_reads_as_a_design_run() {
+    let record = item_run_record(4, "tickets", 1, Some("handed-back"), &json!([]));
+
+    let (_base, recorded) = read(&[("runs/items/4/tickets-1.json", &record)]);
+
+    assert_eq!(
+        runs_read(&recorded),
+        [(
+            "4/design-1".to_string(),
+            None,
+            State::Ended {
+                at: at("2026-10-14T12:01:00Z"),
+                ending: Ending::HandedBack,
+            },
+        )]
+    );
+}
+
+#[test]
+fn a_stage_the_previous_version_named_tickets_is_none_to_ask_for() {
+    assert_eq!(
+        "tickets".parse::<WorkKind>(),
+        Err(
+            "\"tickets\" is not a stage: one of triage, design, implement, rework, \
+             fix-ci, update"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_once_it_is_not() {
+    let record = item_run_record(1, "triage", 1, None, &json!([]));
+    let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);
+    let runs = Runs::new(&work_dir.resolve());
+    let lock = lock_of(&base.path().join(REPO).join("runs/items/1/triage-1.json"));
+
+    let held = runs_read(&runs.read().unwrap());
+    drop(lock);
+    let released = runs_read(&runs.read().unwrap());
+
+    assert_eq!(
+        [held, released],
+        [
+            [("1/triage-1".to_string(), None, State::InFlight)],
+            [("1/triage-1".to_string(), None, State::Interrupted)],
+        ]
+    );
+}
+
+#[test]
+fn runs_whose_records_cannot_be_read_are_none_to_an_answer_that_does_without_them() {
+    let (_base, work_dir) = work_dir_holding(&[("runs/items", "not a directory")]);
+    let runs = Runs::new(&work_dir.resolve());
+
+    assert!(runs.read().is_err());
+    assert_eq!(runs.read_or_none(), []);
 }
