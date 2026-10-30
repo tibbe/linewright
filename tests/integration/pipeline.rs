@@ -444,25 +444,6 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
     );
 }
 
-fn triage_for_the_maintainer(world: &World) {
-    world.harness.on(WorkKind::Triage, |call| {
-        let outcome = if call.spec.prompt.contains("Yes, make them resizable.") {
-            json!({
-                "outcome": "ready-for-agent",
-                "category": "enhancement",
-                "comment": "## Agent Brief\n\n**Summary:** Make widgets resizable."
-            })
-        } else {
-            json!({
-                "outcome": "ready-for-human",
-                "category": "enhancement",
-                "comment": "Should widgets be resizable?"
-            })
-        };
-        Ok(outcome.to_string())
-    });
-}
-
 #[tokio::test]
 async fn an_issue_triaged_for_the_maintainer_says_a_label_answers_it() {
     let mut world = World::new().await;
@@ -486,11 +467,7 @@ async fn an_issue_triaged_for_the_maintainer_says_a_label_answers_it() {
 #[tokio::test]
 async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again_once_they_label_it() {
     let mut world = World::new().await;
-    triage_for_the_maintainer(&world);
-    let issue = world
-        .store
-        .open_issue("reporter", "Resize widgets", "", &["needs-triage"]);
-    world.poll().await;
+    let issue = world.issue_triaged_for_the_maintainer().await;
 
     world
         .store
@@ -598,17 +575,6 @@ async fn an_issue_linewright_filed_with_needs_triage_is_triaged() {
     assert_eq!(last_comment(&issue), "Triaged.");
 }
 
-fn asks(world: &World, ask: Value, comment: &'static str) {
-    world.harness.on(WorkKind::Triage, move |call| {
-        let outcome = if call.spec.prompt.contains("Version 3.") {
-            json!({"outcome": "ready-for-agent", "category": "bug", "comment": "Triaged again."})
-        } else {
-            json!({"outcome": "needs-info", "category": "bug", "ask": ask, "comment": comment})
-        };
-        Ok(outcome.to_string())
-    });
-}
-
 fn assignees(issue: &Issue) -> Vec<&str> {
     issue.assignees.iter().map(Login::as_str).collect()
 }
@@ -616,7 +582,7 @@ fn assignees(issue: &Issue) -> Vec<&str> {
 #[tokio::test]
 async fn needs_info_assigns_the_people_asked_and_names_them_all_even_one_github_refuses() {
     let mut world = World::new().await;
-    asks(
+    triage_asking(
         &world,
         json!(["tester", "@outsider"]),
         "Which version, @tester?",
@@ -642,7 +608,7 @@ async fn needs_info_assigns_the_people_asked_and_names_them_all_even_one_github_
 #[tokio::test]
 async fn needs_info_naming_no_one_asks_the_reporter() {
     let mut world = World::new().await;
-    asks(&world, json!([]), "Which version?");
+    triage_asking(&world, json!([]), "Which version?");
     let issue = world
         .store
         .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
@@ -657,7 +623,7 @@ async fn needs_info_naming_no_one_asks_the_reporter() {
 #[tokio::test]
 async fn a_comment_mentioning_a_person_asked_in_another_case_names_them() {
     let mut world = World::new().await;
-    asks(&world, json!(["tester"]), "Which version, @Tester?");
+    triage_asking(&world, json!(["tester"]), "Which version, @Tester?");
     let issue = world
         .store
         .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
@@ -672,7 +638,7 @@ async fn a_comment_mentioning_a_person_asked_in_another_case_names_them() {
 #[tokio::test]
 async fn linewright_never_asks_itself() {
     let mut world = World::new().await;
-    asks(&world, json!([LINEWRIGHT]), "Which version?");
+    triage_asking(&world, json!([LINEWRIGHT]), "Which version?");
     let issue = world
         .store
         .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
@@ -714,12 +680,7 @@ async fn a_result_asking_something_that_is_not_a_login_is_sent_back() {
 #[tokio::test]
 async fn a_reply_unassigns_the_people_asked_and_linewright_claims_the_issue_to_triage_it_again() {
     let mut world = World::new().await;
-    asks(&world, json!(["reporter"]), "Which version, @reporter?");
-    let issue = world
-        .store
-        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
-    world.poll().await;
-    assert_eq!(assignees(&world.issue(issue)), ["reporter"]);
+    let issue = world.issue_asking_its_reporter().await;
 
     world
         .store
@@ -736,11 +697,7 @@ async fn a_reply_unassigns_the_people_asked_and_linewright_claims_the_issue_to_t
 #[tokio::test]
 async fn a_reply_leaves_a_person_someone_else_assigned_and_linewright_does_not_claim_over_them() {
     let mut world = World::new().await;
-    asks(&world, json!(["reporter"]), "Which version, @reporter?");
-    let issue = world
-        .store
-        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
-    world.poll().await;
+    let issue = world.issue_asking_its_reporter().await;
     world
         .store
         .assign_as("maintainer", issue, "maintainer")
@@ -795,34 +752,12 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
     assert_eq!(issue.assignees, []);
 }
 
-fn tickets_script(world: &World) {
-    world.harness.on(WorkKind::Design, |_| {
-        Ok(json!({
-            "outcome": "designed",
-            "design": "A gadget store, and a listing that reads it.",
-            "tickets": [
-                {"id": "store", "title": "Store gadgets", "body": "## What to build\n\nGadgets persist.", "blocked_by": []},
-                {"id": "list", "title": "List gadgets", "body": "## What to build\n\nList them.", "blocked_by": ["store"]}
-            ],
-            "comment": "Two slices: storing, then listing."
-        }).to_string())
-    });
-}
-
-fn implement_script(world: &World) {
-    world.harness.on(WorkKind::Implement, |call| {
-        let file = format!("src/{}.txt", subject_file(call));
-        commit_in(&call.spec.dir, &[(&file, "gadget\n")], "Add gadgets");
-        Ok(json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "## Summary\n\nGadgets."}).to_string())
-    });
-}
-
 #[tokio::test]
 async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_ready_pull_requests()
 {
     let mut world = World::new().await;
     tickets_script(&world);
-    implement_script(&world);
+    implement_gadgets(&world);
     let spec_pr = world
         .store
         .merge_change(
@@ -944,42 +879,26 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
 }
 
 /// A world whose spec change, to the spec and to code, was cut into tickets,
-/// the first of which is in review; and that spec change.
-async fn ticket_cut_from_a_spec_change_of_spec_and_code() -> (World, Number) {
+/// the first of which a poll implemented; and that cut.
+async fn implemented_a_ticket_cut_from_a_spec_change() -> (World, SpecCut) {
     let mut world = World::new().await;
-    tickets_script(&world);
-    implement_script(&world);
-    let spec_pr = world
-        .store
-        .merge_change(
-            "maintainer",
-            "Gadgets",
-            "Adds gadgets.",
-            &[
-                ("docs/spec.md", "# Spec\n\nGadgets exist.\n"),
-                ("src/gadgets.rs", "// Gadgets live here.\n"),
-            ],
-        )
-        .await
-        .unwrap();
+    let cut = world.spec_change_cut_into_tickets().await;
     world.poll().await;
-    world.poll().await;
-    (world, spec_pr)
+    (world, cut)
 }
 
 #[tokio::test]
 async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_requests_closed_but_not_a_persons_sub_issue()
  {
-    let (mut world, spec_pr) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
-    let tracking = world.store.issues()[0].clone();
-    let tickets: Vec<_> = tracking.sub_issues.iter().map(|s| s.number).collect();
-    let pr = *world.store.pulls().last().expect("a ticket is in review");
+    let mut world = World::new().await;
+    let (cut, pr) = world.spec_change_ticket_in_review().await;
+    let spec_pr = cut.spec_change;
     let persons = world
         .store
         .open_issue("maintainer", "Paint gadgets", "", &[]);
     world
         .store
-        .add_sub_issue(tracking.number, persons)
+        .add_sub_issue(cut.tracking, persons)
         .await
         .unwrap();
     world
@@ -990,8 +909,8 @@ async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_reque
 
     world.poll().await;
 
-    for ticket in &tickets {
-        let discarded = world.issue(*ticket);
+    for ticket in cut.tickets {
+        let discarded = world.issue(ticket);
         assert!(!discarded.open, "{discarded:#?}");
         assert_eq!(
             last_comment(&discarded),
@@ -1003,7 +922,7 @@ async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_reque
     }
     let pull = world.store.snapshot_pull(pr).await;
     assert!(matches!(pull.state, PullState::Closed { .. }), "{pull:#?}");
-    let tracking = world.issue(tracking.number);
+    let tracking = world.issue(cut.tracking);
     assert!(!tracking.open);
     assert_eq!(
         last_comment(&tracking),
@@ -1016,8 +935,8 @@ async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_reque
 }
 
 /// That `brief` holds the spec diff of the spec change from
-/// [`ticket_cut_from_a_spec_change_of_spec_and_code`], after the pointer to
-/// it, and none of its changes to code.
+/// [`World::spec_change_cut_into_tickets`], after the pointer to it, and none
+/// of its changes to code.
 fn assert_briefed_with_the_spec_diff(brief: &str) {
     let parent = brief.find("### Parent issue").expect(brief);
     let diff = brief.find("```diff\n").expect(brief);
@@ -1028,17 +947,15 @@ fn assert_briefed_with_the_spec_diff(brief: &str) {
 
 #[tokio::test]
 async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_the_spec_change() {
-    let (world, spec_pr) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
+    let (world, cut) = implemented_a_ticket_cut_from_a_spec_change().await;
 
-    let issues = world.store.issues();
-    let tracking = &issues[0];
     let prompts = world.harness.prompts(WorkKind::Implement);
     let brief = &prompts[0];
     assert!(brief.contains("Gadgets persist."), "{brief}");
     assert!(
         brief.contains(&format!(
-            "### Parent issue\n\n{}, the tracking issue of the spec change {spec_pr}.\n",
-            tracking.number
+            "### Parent issue\n\n{}, the tracking issue of the spec change {}.\n",
+            cut.tracking, cut.spec_change
         )),
         "{brief}"
     );
@@ -1048,7 +965,7 @@ async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issue_and_
 
 #[tokio::test]
 async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issues_comments() {
-    let (world, _) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
+    let (world, _) = implemented_a_ticket_cut_from_a_spec_change().await;
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     let brief = &prompts[0];
@@ -1065,7 +982,7 @@ async fn a_ticket_cut_from_a_spec_change_is_briefed_with_its_tracking_issues_com
 
 #[tokio::test]
 async fn a_ticket_cut_from_a_spec_change_is_briefed_with_the_spec_changes_spec_diff() {
-    let (world, _) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
+    let (world, _) = implemented_a_ticket_cut_from_a_spec_change().await;
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_briefed_with_the_spec_diff(&prompts[0]);
@@ -1174,8 +1091,8 @@ async fn sessions_on_a_tickets_pull_request_are_briefed_with_its_parent_issue_an
 #[tokio::test]
 async fn sessions_on_the_pull_request_of_a_ticket_cut_from_a_spec_change_are_briefed_with_its_spec_diff()
  {
-    let (mut world, _) = ticket_cut_from_a_spec_change_of_spec_and_code().await;
-    let pr = *world.store.pulls().last().unwrap();
+    let mut world = World::new().await;
+    let (_, pr) = world.spec_change_ticket_in_review().await;
     world.rework_asked(pr);
 
     world.poll().await;
@@ -1210,12 +1127,7 @@ async fn a_green_pull_request_is_marked_ready_for_review_with_no_one_asked_to_re
 async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_requested_again() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
-    world
-        .store
-        .set_checks(pr, vec![check("test", CheckState::Passed, "")])
-        .await
-        .unwrap();
-    world.poll().await;
+    world.ready_for_review(pr).await;
     world
         .store
         .review_as(
@@ -1441,24 +1353,7 @@ async fn pull_request_closing_another_issue(world: &mut World) -> (Number, Numbe
     let other = world
         .store
         .open_issue("maintainer", "Old invoices", "Please.", &[]);
-    world.harness.on(WorkKind::Implement, move |call| {
-        let file = format!("src/{}.txt", subject_file(call));
-        commit_in(&call.spec.dir, &[(&file, "done\n")], "Do the ticket");
-        let body = format!("Does it.\n\nCloses {other}");
-        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": body}).to_string())
-    });
-    let ticket = world.store.open_issue(
-        "maintainer",
-        "Do the thing",
-        "Please.",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world.poll().await;
-    let pr = *world
-        .store
-        .pulls()
-        .last()
-        .expect("a pull request was opened");
+    let (ticket, pr) = world.ticket_in_review_closing(other).await;
     world
         .store
         .label_as("maintainer", other, "ready-for-agent")
@@ -1494,7 +1389,7 @@ async fn a_pull_request_whose_ticket_is_unlabeled_and_unassigned_is_still_worked
     assert_eq!(world.issue(other).assignees, []);
     assert_eq!(world.issue(ticket).assignees, []);
     assert_eq!(labels(&world.issue(ticket)), ["linewright:designed"]);
-    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 0);
 }
 
 #[tokio::test]
@@ -1506,7 +1401,7 @@ async fn a_pull_request_is_worked_while_each_issue_it_closes_waits_for_it() {
 
     assert_eq!(world.harness.prompts(WorkKind::FixCi).len(), 1);
     assert_eq!(world.issue(other).assignees, []);
-    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 0);
 }
 
 #[tokio::test]
@@ -1514,7 +1409,6 @@ async fn a_pull_request_closed_unmerged_hands_back_its_claimed_ticket_and_an_unc
  {
     let mut world = World::new().await;
     let (ticket, other, pr) = pull_request_closing_another_issue(&mut world).await;
-    world.poll().await;
     world.store.close_pull_as(pr).unwrap();
 
     world.poll().await;
@@ -1525,7 +1419,7 @@ async fn a_pull_request_closed_unmerged_hands_back_its_claimed_ticket_and_an_unc
         ["linewright:designed", "ready-for-agent"]
     );
     assert_eq!(world.issue(other).assignees, [Login::new(LINEWRIGHT)]);
-    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
 }
 
 fn refusals(world: &World, issue: Number, pr: Number) -> usize {
@@ -1577,7 +1471,7 @@ async fn a_pull_request_closed_unmerged_hands_back_each_claimed_ticket_it_closes
         assert_eq!(refusals(&world, issue, pr), 1);
         assert_eq!(world.issue(issue).assignees, [Login::new(LINEWRIGHT)]);
     }
-    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 3);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     assert_eq!(world.store.pulls().len(), 3);
 }
 
@@ -2061,9 +1955,6 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
     assert!(world.factory.is_idle());
 }
 
-const TIMED_OUT: &str = "The session ended unexpectedly: it timed out. The work may need \
-                         cutting smaller, or `session-timeout` may need to be longer.";
-
 #[tokio::test]
 async fn a_ticket_whose_session_times_out_is_handed_back_once_saying_to_cut_the_work_or_lengthen_the_timeout()
  {
@@ -2174,7 +2065,9 @@ async fn a_ticket_whose_session_times_out_is_marked_stalled_until_relabeling_it_
         ["linewright:stalled", "ready-for-human"]
     );
 
-    relabel_ready_for_agent(&mut world, ticket).await;
+    relabel_ready_for_agent(&world, ticket);
+    design_issues(&world);
+    world.poll().await;
 
     let issue = world.issue(ticket);
     assert!(issue.is_assigned(&Login::new(LINEWRIGHT)));
@@ -2197,19 +2090,6 @@ async fn a_pull_request_whose_session_times_out_is_handed_back_saying_to_cut_the
 
     assert_stalled(&world, ticket, pr, &format!("{TIMED_OUT}{TRY_AGAIN}")).await;
     assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
-}
-
-async fn merge_spec_change(world: &World) -> Number {
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Gadgets",
-            "Adds gadgets.",
-            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
-        )
-        .await
-        .unwrap()
 }
 
 /// A design that cuts one ticket.
@@ -2367,17 +2247,7 @@ async fn a_handed_back_spec_change_loses_its_design_label() {
 #[tokio::test]
 async fn a_spec_gap_that_does_not_block_a_design_is_filed_once_for_the_spec_change() {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Design, |_| {
-        Ok(json!({
-            "outcome": "blocked",
-            "question": "Should gadgets expire?",
-            "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
-        })
-        .to_string())
-    });
-    let spec_pr = merge_spec_change(&world).await;
-    world.poll().await;
-    world.poll().await;
+    let spec_pr = world.spec_change_blocked_filing_a_spec_gap().await;
     world
         .store
         .assign_as("maintainer", spec_pr, LINEWRIGHT)
@@ -2386,9 +2256,8 @@ async fn a_spec_gap_that_does_not_block_a_design_is_filed_once_for_the_spec_chan
     world.poll().await;
 
     let prompts = world.harness.prompts(WorkKind::Design);
-    assert_eq!(prompts.len(), 2);
-    assert!(!prompts[0].contains("Spec: gadget colors"));
-    assert!(prompts[1].contains("Spec: gadget colors"));
+    assert_eq!(prompts.len(), 1);
+    assert!(prompts[0].contains("Spec: gadget colors"));
     let gaps: Vec<_> = world
         .store
         .issues()
@@ -2430,16 +2299,6 @@ async fn a_design_files_its_spec_gaps_and_its_tickets() {
     );
 }
 
-/// A `ready-for-agent` issue not designed yet.
-fn readied_issue(world: &World) -> Number {
-    world.store.open_issue(
-        "maintainer",
-        "Gadgets",
-        "Add gadgets.",
-        &["ready-for-agent"],
-    )
-}
-
 fn design_answering(world: &World, result: Value) {
     world
         .harness
@@ -2454,7 +2313,7 @@ async fn a_readied_issue_is_designed_on_the_issue_and_the_next_poll_implements_i
         json!({"outcome": "designed", "design": "A gadget store."}),
     );
     implement(&world);
-    let issue = readied_issue(&world);
+    let issue = open_undesigned_gadgets(&world);
 
     world.poll().await;
 
@@ -2484,14 +2343,23 @@ async fn a_readied_issue_is_designed_on_the_issue_and_the_next_poll_implements_i
     );
 }
 
-/// A world whose readied issue was designed into the two tickets of
-/// [`tickets_script`]: the issue, and its tickets in order.
+/// A world holding an issue cut into the two tickets of [`tickets_script`]:
+/// the issue, and its tickets in order.
 async fn issue_cut_into_tickets() -> (World, Number, [Number; 2]) {
+    let world = World::new().await;
+    let (issue, tickets) = world.issue_cut_into_tickets().await;
+    (world, issue, tickets)
+}
+
+#[tokio::test]
+async fn an_issue_designed_into_tickets_files_them_under_it_and_lets_go_of_it_as_their_tracking_issue()
+ {
     let mut world = World::new().await;
     tickets_script(&world);
-    implement_script(&world);
-    let issue = readied_issue(&world);
+    let issue = open_undesigned_gadgets(&world);
+
     world.poll().await;
+
     let tickets: Vec<Number> = world
         .issue(issue)
         .sub_issues
@@ -2501,14 +2369,6 @@ async fn issue_cut_into_tickets() -> (World, Number, [Number; 2]) {
     let [store_ticket, list_ticket] = tickets[..] else {
         panic!("expected two tickets, got {tickets:?}");
     };
-    (world, issue, [store_ticket, list_ticket])
-}
-
-#[tokio::test]
-async fn an_issue_designed_into_tickets_files_them_under_it_and_lets_go_of_it_as_their_tracking_issue()
- {
-    let (world, issue, [store_ticket, list_ticket]) = issue_cut_into_tickets().await;
-
     let issues = world.store.issues();
     let titles: Vec<&str> = issues.iter().map(|i| i.title.as_str()).collect();
     assert_eq!(titles, ["Gadgets", "Store gadgets", "List gadgets"]);
@@ -2537,7 +2397,7 @@ async fn an_issue_designed_into_tickets_files_them_under_it_and_lets_go_of_it_as
 async fn the_tickets_of_an_issue_are_readied_only_once_their_design_is_on_it() {
     let mut world = World::new().await;
     tickets_script(&world);
-    let issue = readied_issue(&world);
+    let issue = open_undesigned_gadgets(&world);
     let (at_comment, on_comment) = seen(&world, LocalStore::issues);
     world.store.after_linewrights_next_comment(on_comment);
     let (at_designed, on_designed) = seen(&world, LocalStore::issues);
@@ -2575,7 +2435,7 @@ async fn the_tickets_of_an_issue_are_implemented_in_order_briefed_with_its_desig
         implementation.contains("A gadget store, and a listing that reads it."),
         "{implementation}"
     );
-    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 0);
 }
 
 #[tokio::test]
@@ -2614,7 +2474,7 @@ async fn an_issue_cut_into_tickets_is_closed_once_all_of_them_are() {
 async fn a_cut_of_an_issue_stopped_after_its_label_is_let_go_of_as_the_cut_would_have() {
     let mut world = World::new().await;
     tickets_script(&world);
-    implement_script(&world);
+    implement_gadgets(&world);
     let issue = world.store.open_issue(
         "maintainer",
         "Gadgets",
@@ -2649,7 +2509,7 @@ async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_their
         &world,
         json!({"outcome": "designed", "design": "A gadget store."}),
     );
-    let issue = readied_issue(&world);
+    let issue = open_undesigned_gadgets(&world);
     world
         .store
         .assign_as(LINEWRIGHT, issue, LINEWRIGHT)
@@ -2739,7 +2599,7 @@ async fn an_issue_whose_design_ends_without_one_is_handed_back_with_why() {
     ] {
         let mut world = World::new().await;
         design_answering(&world, result);
-        let issue = readied_issue(&world);
+        let issue = open_undesigned_gadgets(&world);
 
         world.poll().await;
 
@@ -2762,7 +2622,7 @@ async fn a_blocked_issue_design_files_its_other_spec_gaps_for_the_issue() {
             "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
         }),
     );
-    let issue = readied_issue(&world);
+    let issue = open_undesigned_gadgets(&world);
 
     world.poll().await;
 
@@ -2785,42 +2645,29 @@ async fn a_blocked_issue_design_files_its_other_spec_gaps_for_the_issue() {
 #[tokio::test]
 async fn an_issue_handed_back_after_its_design_loses_it_and_is_designed_again() {
     let mut world = World::new().await;
-    design_issues(&world);
+    let issue = open_undesigned_gadgets(&world);
+    world.designed_on_the_issue(issue).await;
     world.harness.on(WorkKind::Implement, |_| {
         Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string())
     });
-    let issue = readied_issue(&world);
-    world.poll().await;
     world.poll().await;
     assert_eq!(labels(&world.issue(issue)), ["ready-for-human"]);
 
-    world.store.unlabel_as(issue, "ready-for-human").unwrap();
-    world
-        .store
-        .label_as("maintainer", issue, "ready-for-agent")
-        .unwrap();
+    relabel_ready_for_agent(&world, issue);
     world.poll().await;
 
-    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
 }
 
 #[tokio::test]
 async fn a_spec_change_ticket_handed_back_keeps_the_design_of_its_spec_change() {
     let mut world = World::new().await;
-    design_answering(&world, one_ticket());
+    let cut = world.spec_change_cut_into_tickets().await;
     world.harness.on(WorkKind::Implement, |_| {
         Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string())
     });
-    merge_spec_change(&world).await;
-    world.poll().await;
-    let ticket = world
-        .store
-        .issues()
-        .into_iter()
-        .find(|i| i.title == "Store gadgets")
-        .expect("the ticket was filed")
-        .number;
+    let ticket = cut.tickets[0];
 
     world.poll().await;
 
@@ -2834,10 +2681,9 @@ async fn a_spec_change_ticket_handed_back_keeps_the_design_of_its_spec_change() 
 #[tokio::test]
 async fn removing_the_design_label_from_an_issue_with_no_pull_request_designs_it_again() {
     let mut world = World::new().await;
-    design_issues(&world);
     implement(&world);
-    let issue = readied_issue(&world);
-    world.poll().await;
+    let issue = open_undesigned_gadgets(&world);
+    world.designed_on_the_issue(issue).await;
 
     world
         .store
@@ -2845,7 +2691,7 @@ async fn removing_the_design_label_from_an_issue_with_no_pull_request_designs_it
         .unwrap();
     world.poll().await;
 
-    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 0);
     assert_eq!(
         labels(&world.issue(issue)),
@@ -2884,12 +2730,7 @@ async fn a_spec_change_whose_session_times_out_is_handed_back_saying_to_cut_the_
 #[tokio::test]
 async fn a_handed_back_spec_change_is_designed_again_once_linewright_is_assigned_again() {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Design, |_| {
-        Ok(json!({"outcome": "gave-up", "reason": "Not now."}).to_string())
-    });
-    let spec_pr = merge_spec_change(&world).await;
-    world.poll().await;
-    world.poll().await;
+    let spec_pr = world.spec_change_handed_back().await;
     let seen = design_noting_assignees(&world, one_ticket());
 
     world
@@ -3122,29 +2963,14 @@ async fn a_blocking_spec_gap_hands_the_ticket_back_keeping_the_branch_and_a_non_
 #[tokio::test]
 async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions_and_not_filed_again() {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Implement, |_| {
-        Ok(json!({
-            "outcome": "blocked",
-            "question": "Should gadgets expire?",
-            "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
-        })
-        .to_string())
-    });
-    let ticket = world.store.open_issue(
-        "maintainer",
-        "Gadgets",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world.poll().await;
-    relabel_ready_for_agent(&mut world, ticket).await;
+    let ticket = world.ticket_blocked_filing_a_spec_gap().await;
+    relabeled_and_designed_again(&world, ticket).await;
 
     world.poll().await;
 
     let prompts = world.harness.prompts(WorkKind::Implement);
-    assert_eq!(prompts.len(), 2);
-    assert!(!prompts[0].contains("Spec: gadget colors"));
-    assert!(prompts[1].contains("Spec: gadget colors"));
+    assert_eq!(prompts.len(), 1);
+    assert!(prompts[0].contains("Spec: gadget colors"));
     let gaps = world
         .store
         .issues()
@@ -3449,27 +3275,6 @@ async fn reassigning_linewright_after_unassigning_it_implements_the_ticket_again
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
 }
 
-/// The file the run [`ticket_handed_back_with_its_branch`] hands back
-/// leaves on the ticket's branch.
-const EARLIER_WORK: &str = "src/partial.txt";
-
-async fn ticket_handed_back_with_its_branch(world: &mut World) -> (Number, String) {
-    world.harness.on(WorkKind::Implement, |call| {
-        commit_in(&call.spec.dir, &[(EARLIER_WORK, "half\n")], "Start");
-        Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string())
-    });
-    let ticket = world.store.open_issue(
-        "maintainer",
-        "Gadgets",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world.poll().await;
-    let branch = format!("{}-gadgets", ticket.0);
-    assert!(has_branch(world, &branch), "the work so far is kept");
-    (ticket, branch)
-}
-
 /// Relabels the handed-back ticket for a poll to start its next run, which
 /// does `work` and answers `done`.
 async fn worked_again(
@@ -3478,7 +3283,7 @@ async fn worked_again(
     work: impl Fn(&std::path::Path) + Send + Sync + 'static,
 ) -> NextRun {
     let next = script_next_run(world, work);
-    relabel_ready_for_agent(world, ticket).await;
+    relabeled_and_designed_again(world, ticket).await;
     world.poll().await;
     next
 }
@@ -3506,17 +3311,11 @@ fn script_next_run(
     next
 }
 
-/// Relabels the handed-back ticket `ready-for-agent`, and has a poll design
-/// it again: the hand-back took its design with it.
-async fn relabel_ready_for_agent(world: &mut World, ticket: Number) {
-    world.store.unlabel_as(ticket, "ready-for-human").unwrap();
-    world
-        .store
-        .label_as("maintainer", ticket, "ready-for-agent")
-        .unwrap();
-    design_issues(world);
-    world.poll().await;
-    assert!(labels(&world.issue(ticket)).contains(&"linewright:designed"));
+/// Relabels the handed-back ticket `ready-for-agent`, and designs it again:
+/// the hand-back took its design with it.
+async fn relabeled_and_designed_again(world: &World, ticket: Number) {
+    relabel_ready_for_agent(world, ticket);
+    world.designed_on_the_issue(ticket).await;
 }
 
 fn finish_gadgets(dir: &std::path::Path) {
@@ -3526,12 +3325,12 @@ fn finish_gadgets(dir: &std::path::Path) {
 #[tokio::test]
 async fn a_handed_back_tickets_next_run_starts_from_its_branch_and_is_told_it_holds_earlier_work() {
     let mut world = World::new().await;
-    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+    let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
 
     let next = worked_again(&mut world, ticket, finish_gadgets).await;
 
     assert!(next.held_earlier_work());
-    let prompt = &world.harness.prompts(WorkKind::Implement)[1];
+    let prompt = &world.harness.prompts(WorkKind::Implement)[0];
     assert!(prompt.contains(&branch), "{prompt}");
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(pr.head_ref, branch);
@@ -3548,10 +3347,10 @@ async fn a_handed_back_tickets_next_run_starts_from_its_branch_and_is_told_it_ho
 #[tokio::test]
 async fn a_handed_back_ticket_relabeled_before_the_next_poll_starts_from_its_branch() {
     let mut world = World::new().await;
-    let (ticket, _) = ticket_handed_back_with_its_branch(&mut world).await;
+    let (ticket, _) = world.ticket_handed_back_with_its_branch().await;
 
     let next = script_next_run(&world, finish_gadgets);
-    relabel_ready_for_agent(&mut world, ticket).await;
+    relabeled_and_designed_again(&world, ticket).await;
     world
         .factory
         .refresh([linewright::domain::Item::Issue(ticket)])
@@ -3566,7 +3365,7 @@ async fn a_handed_back_ticket_relabeled_before_the_next_poll_starts_from_its_bra
 async fn a_handed_back_tickets_next_run_starts_from_the_default_branch_once_its_branch_is_deleted()
 {
     let mut world = World::new().await;
-    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+    let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
     assert!(
         store_git(&world, &["branch", "-D", &branch])
             .status
@@ -3576,14 +3375,14 @@ async fn a_handed_back_tickets_next_run_starts_from_the_default_branch_once_its_
     let next = worked_again(&mut world, ticket, finish_gadgets).await;
 
     assert!(!next.held_earlier_work());
-    let prompt = &world.harness.prompts(WorkKind::Implement)[1];
+    let prompt = &world.harness.prompts(WorkKind::Implement)[0];
     assert!(prompt.contains(&branch), "{prompt}");
 }
 
 #[tokio::test]
 async fn a_run_that_resets_its_tickets_branch_to_the_default_branch_replaces_the_earlier_work() {
     let mut world = World::new().await;
-    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+    let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
 
     worked_again(&mut world, ticket, |dir| {
         git_in(dir, &["reset", "--quiet", "--hard", "origin/main"]);
@@ -3596,23 +3395,6 @@ async fn a_run_that_resets_its_tickets_branch_to_the_default_branch_replaces_the
         world.store.file(&branch, "src/gadgets.txt").await.unwrap(),
         "gadgets\n"
     );
-}
-
-/// The subject of the commit Linewright makes of what a stopped run's
-/// session left uncommitted.
-const UNFINISHED: &str = "Unfinished work, kept when its run stopped";
-
-/// Commits a start, then leaves an edit to it, a new file and an ignored
-/// file uncommitted.
-fn start_and_leave_edits(dir: &std::path::Path) {
-    commit_in(
-        dir,
-        &[(".gitignore", "*.log\n"), ("src/partial.txt", "half\n")],
-        "Start",
-    );
-    std::fs::write(dir.join("src/partial.txt"), "half and more\n").unwrap();
-    std::fs::write(dir.join("src/new.txt"), "new\n").unwrap();
-    std::fs::write(dir.join("build.log"), "noise\n").unwrap();
 }
 
 /// The subjects of the commits on `branch` past `main`, oldest first.
@@ -3643,10 +3425,6 @@ async fn assert_edits_kept_as_unfinished(world: &World, branch: &str) {
     );
     assert_eq!(file("src/new.txt").await.as_deref(), Some("new\n"));
     assert_eq!(file("build.log").await, None, "ignored files are left out");
-}
-
-fn kept_on(branch: &str) -> String {
-    format!("\n\nThe work so far is on the branch `{branch}`.")
 }
 
 #[tokio::test]
@@ -3883,28 +3661,11 @@ async fn a_run_that_stops_mid_rebase_leaves_its_work_and_resolution_as_an_unfini
     assert!(last_comment(&world.issue(ticket)).ends_with(&kept_on(&branch)));
 }
 
-async fn ticket_timed_out_with_edits(world: &mut World) -> (Number, String) {
-    world.harness.on(WorkKind::Implement, |call| {
-        start_and_leave_edits(&call.spec.dir);
-        Err(linewright::harness::SessionError::TimedOut {
-            log_tail: String::new(),
-        })
-    });
-    let ticket = world.store.open_issue(
-        "maintainer",
-        "Gadgets",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world.poll().await;
-    (ticket, format!("{}-gadgets", ticket.0))
-}
-
 #[tokio::test]
 async fn the_next_run_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_sent_back_until_it_does()
  {
     let mut world = World::new().await;
-    let (ticket, branch) = ticket_timed_out_with_edits(&mut world).await;
+    let (ticket, branch) = world.ticket_timed_out_with_edits().await;
     let unfinished = store_git(&world, &["log", "-1", "--format=%h", &branch]).stdout;
     let unfinished = String::from_utf8(unfinished).unwrap();
     let unfinished = unfinished.trim();
@@ -3922,13 +3683,13 @@ async fn the_next_run_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_s
         )
     });
 
-    relabel_ready_for_agent(&mut world, ticket).await;
+    relabeled_and_designed_again(&world, ticket).await;
     world.poll().await;
 
     let prompts = world.harness.prompts(WorkKind::Implement);
+    assert!(prompts[0].contains(unfinished), "{}", prompts[0]);
     assert!(prompts[1].contains(unfinished), "{}", prompts[1]);
-    assert!(prompts[2].contains(unfinished), "{}", prompts[2]);
-    assert_eq!(prompts.len(), 3);
+    assert_eq!(prompts.len(), 2);
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(pr.head_ref, branch);
     assert_eq!(subjects(&world, &branch), ["Add gadgets"]);
@@ -3941,7 +3702,7 @@ async fn the_next_run_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_s
 #[tokio::test]
 async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_request() {
     let mut world = World::new().await;
-    let (ticket, branch) = ticket_timed_out_with_edits(&mut world).await;
+    let (ticket, branch) = world.ticket_timed_out_with_edits().await;
     world.harness.on(WorkKind::Implement, |_| {
         Ok(
             json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Gadgets."})
@@ -3949,7 +3710,7 @@ async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_r
         )
     });
 
-    relabel_ready_for_agent(&mut world, ticket).await;
+    relabeled_and_designed_again(&world, ticket).await;
     world.poll().await;
 
     assert_eq!(world.store.pulls(), []);
@@ -3963,7 +3724,7 @@ async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_r
 #[tokio::test]
 async fn a_run_that_stops_again_without_committing_keeps_one_unfinished_commit() {
     let mut world = World::new().await;
-    let (ticket, branch) = ticket_timed_out_with_edits(&mut world).await;
+    let (ticket, branch) = world.ticket_timed_out_with_edits().await;
     world.harness.on(WorkKind::Implement, |call| {
         std::fs::write(call.spec.dir.join("src/new.txt"), "newer\n").unwrap();
         Err(linewright::harness::SessionError::TimedOut {
@@ -3971,7 +3732,7 @@ async fn a_run_that_stops_again_without_committing_keeps_one_unfinished_commit()
         })
     });
 
-    relabel_ready_for_agent(&mut world, ticket).await;
+    relabeled_and_designed_again(&world, ticket).await;
     world.poll().await;
 
     assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
@@ -4023,13 +3784,6 @@ async fn a_run_that_fails_on_its_infrastructure_is_retried_from_its_unfinished_c
     );
 }
 
-/// Commits a rename, then leaves an edit to it and a new file uncommitted.
-fn rename_and_leave_edits(dir: &std::path::Path) {
-    commit_in(dir, &[("src/renamed.txt", "renamed\n")], "Rename");
-    std::fs::write(dir.join("src/renamed.txt"), "renamed and more\n").unwrap();
-    std::fs::write(dir.join("src/new.txt"), "new\n").unwrap();
-}
-
 async fn assert_pull_edits_kept_as_unfinished(world: &World, branch: &str) {
     assert_eq!(
         subjects(world, branch),
@@ -4041,12 +3795,6 @@ async fn assert_pull_edits_kept_as_unfinished(world: &World, branch: &str) {
         Some("renamed and more\n")
     );
     assert_eq!(file("src/new.txt").await.as_deref(), Some("new\n"));
-}
-
-fn timed_out() -> Result<String, linewright::harness::SessionError> {
-    Err(linewright::harness::SessionError::TimedOut {
-        log_tail: String::new(),
-    })
 }
 
 const TRY_AGAIN: &str = "\n\nAssign @factory to this pull request again to try again.";
@@ -4295,22 +4043,11 @@ async fn a_stopped_rework_leaves_commits_a_person_pushed_while_it_worked_and_say
     );
 }
 
-async fn rework_timed_out_with_edits(world: &mut World) -> (Number, String) {
-    let (_, pr) = world.ticket_in_review().await;
-    world.rework_asked(pr);
-    world.harness.on(WorkKind::Rework, |call| {
-        rename_and_leave_edits(&call.spec.dir);
-        timed_out()
-    });
-    world.poll().await;
-    (pr, world.store.snapshot_pull(pr).await.head_ref)
-}
-
 #[tokio::test]
 async fn the_next_rework_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_sent_back_until_it_does()
  {
     let mut world = World::new().await;
-    let (pr, branch) = rework_timed_out_with_edits(&mut world).await;
+    let (_, pr, branch) = world.rework_timed_out_with_edits().await;
     let unfinished = store_git(&world, &["log", "-1", "--format=%h", &branch]).stdout;
     let unfinished = String::from_utf8(unfinished).unwrap();
     let unfinished = unfinished.trim().to_string();
@@ -4330,9 +4067,9 @@ async fn the_next_rework_is_told_to_fold_in_the_unfinished_commit_and_its_done_i
     world.poll().await;
 
     let prompts = world.harness.prompts(WorkKind::Rework);
+    assert!(prompts[0].contains(&unfinished), "{}", prompts[0]);
     assert!(prompts[1].contains(&unfinished), "{}", prompts[1]);
-    assert!(prompts[2].contains(&unfinished), "{}", prompts[2]);
-    assert_eq!(prompts.len(), 3);
+    assert_eq!(prompts.len(), 2);
     assert_eq!(
         subjects(&world, &branch),
         ["Do the ticket", "Rename", "Rename more"]
@@ -4457,7 +4194,7 @@ async fn an_update_stopped_mid_rebase_keeps_its_resolution_as_an_unfinished_comm
 #[tokio::test]
 async fn closing_a_ticket_with_no_open_pull_request_deletes_its_branch() {
     let mut world = World::new().await;
-    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+    let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
 
     world.store.close_issue_as_completed(ticket).unwrap();
     world.poll().await;
@@ -4535,7 +4272,7 @@ async fn only_a_branch_named_as_linewright_names_a_closed_tickets_branch_is_dele
 #[tokio::test]
 async fn the_branch_of_a_ticket_closed_while_linewright_was_stopped_is_deleted_after_a_restart() {
     let mut world = World::new().await;
-    let (ticket, branch) = ticket_handed_back_with_its_branch(&mut world).await;
+    let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
 
     world.store.close_issue_as_completed(ticket).unwrap();
     world.restart(|_| {}).await;
@@ -4979,28 +4716,15 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
         });
     })
     .await;
-    implement_script(&world);
-    let first = world.store.open_issue(
-        "maintainer",
-        "Store gadgets",
-        "Gadgets persist.",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    let second = world.store.open_issue(
-        "maintainer",
-        "List gadgets",
-        "List them.",
-        &["ready-for-agent", "linewright:designed"],
-    );
+    let (first, pr) = world.ticket_in_review().await;
+    let second = open_ticket(&world, "List gadgets");
     Store::add_blocked_by(world.store.as_ref(), second, first)
         .await
         .unwrap();
-    world.poll().await;
     world
         .store
         .assign_as("maintainer", first, "maintainer")
         .unwrap();
-    let pr = *world.store.pulls().last().unwrap();
 
     world.clock.advance(chrono::TimeDelta::minutes(6));
     world.poll().await;
@@ -5009,7 +4733,7 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     assert!(matches!(view.state, PullState::Merged { .. }));
     assert_eq!(
         history(&world)[0],
-        (format!("Add gadgets ({pr})"), 1),
+        (format!("Do the ticket ({pr})"), 1),
         "squashed onto the default branch"
     );
     assert!(!world.issue(first).open);
@@ -5125,21 +4849,10 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_ac
 #[tokio::test]
 async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_holds_is_not_held_again()
  {
-    use linewright::domain::Requirement;
-
     let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (_, pr) = world.ticket_in_review().await;
-    world.store.block_merge(
-        pr,
-        vec![Requirement::CodeOwnerReview {
-            owners: vec!["alice".into()],
-        }],
-    );
-    world.clock.advance(chrono::TimeDelta::minutes(6));
-    world.poll().await;
-    std::fs::remove_file(world.dir.path().join("work/held-for-review.json")).unwrap();
+    world.held_for_a_code_owners_review(pr).await;
 
-    world.restart(|config| config.auto_merge = AUTO_MERGE).await;
     world.poll().await;
     world.poll().await;
 
@@ -5149,22 +4862,11 @@ async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_hold
 #[tokio::test]
 async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_holds_is_not_held_again_once_github_works_out_its_merge_state()
  {
-    use linewright::domain::Requirement;
-
     let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (_, pr) = world.ticket_in_review().await;
-    world.store.block_merge(
-        pr,
-        vec![Requirement::CodeOwnerReview {
-            owners: vec!["alice".into()],
-        }],
-    );
-    world.clock.advance(chrono::TimeDelta::minutes(6));
-    world.poll().await;
-    std::fs::remove_file(world.dir.path().join("work/held-for-review.json")).unwrap();
+    world.held_for_a_code_owners_review(pr).await;
     world.store.pend_merge_state(pr);
 
-    world.restart(|config| config.auto_merge = AUTO_MERGE).await;
     world.poll().await;
     world.store.work_out_merge_state(pr);
     world.poll().await;
@@ -5179,7 +4881,8 @@ async fn with_auto_merge_a_pull_request_github_blocks_while_linewright_is_stoppe
 
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
-    world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.ready_for_review(pr).await;
+    // Linewright runs, keeping its record of what it holds, before it stops.
     world.poll().await;
     world.store.block_merge(
         pr,

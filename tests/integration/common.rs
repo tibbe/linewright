@@ -19,7 +19,8 @@
 //!   - `issue`: an issue as the store holds it.
 //!   - `implement_a_ticket`: runs the implement stage on a ticket.
 //!   - `ticket_in_review`: a ticket implemented and its pull request opened,
-//!     written straight into the store.
+//!     written straight into the store; `ticket_in_review_closing`, its pull
+//!     request also closing another issue.
 //!   - `persons_pull_closing`: a person's pull request that closes an issue.
 //!   - `rework_asked`: a maintainer asks for rework and the agent does it.
 //! - `Repository`: the repository settings a `World` starts with; `allowing`
@@ -30,11 +31,15 @@
 //! - `last_comment`: the body of an issue's last comment.
 //! - `last_pull_comment`: the body of a pull request's last comment.
 //! - `check`: a check record with its name, state and log, for the store.
-//! - `implement`: scripts each implement run to add to its ticket's branch.
+//! - `implement`: scripts each implement run to add to its ticket's branch;
+//!   `implement_closing`, describing its pull request as also closing another
+//!   issue.
 //! - `design_issues`: scripts each design to answer that the issue is designed.
 //! - `with_issue_for_triage`: a world, its work dir `REPO`'s, holding an issue
 //!   needing triage that each triage answers is ready for an agent.
 //! - `open_ticket`: opens a ticket, ready for an agent and designed.
+//! - `relabel_ready_for_agent`: a maintainer relabels a handed-back issue
+//!   `ready-for-agent`.
 //! - `triage_paused_after_removing_needs_triage`: an issue needing triage,
 //!   its triage paused once it removes `needs-triage`, and `TRIAGE_BRIEF`,
 //!   the comment it posts.
@@ -51,6 +56,49 @@
 //! - `prompts_with`: a `prompts` directory with one shipped prompt edited.
 //! - `placeholders_only`: the briefs with each first-message prompt replaced
 //!   by its placeholders, each under a heading naming it.
+//!
+//! # `back_door`: Creation Methods
+//!
+//! Each writes into the fakes the state a stage leaves, with the scripts its
+//! sessions answered with; `front_door` checks it against the stage.
+//!
+//! - `World`:
+//!   - `issue_triaged_for_the_maintainer`, `issue_asking_its_reporter`: an
+//!     issue triage handed to the maintainer, or asked its reporter about.
+//!   - `spec_change_cut_into_tickets`: a spec change cut into two tickets
+//!     under a tracking issue, as a `SpecCut`; `spec_change_ticket_in_review`,
+//!     its first ticket implemented and its pull request opened.
+//!   - `issue_cut_into_tickets`: an issue cut into two tickets filed under it.
+//!   - `designed_on_the_issue`: an issue designed on the issue.
+//!   - `ticket_handed_back_with_its_branch`, `ticket_timed_out_with_edits`,
+//!     `ticket_blocked_filing_a_spec_gap`: a ticket the implement stage handed
+//!     back.
+//!   - `spec_change_handed_back`, `spec_change_blocked_filing_a_spec_gap`: a
+//!     spec change design handed back.
+//!   - `ready_for_review`, `held_for_a_code_owners_review`: a pull request
+//!     marked ready, or held by auto-merge for a code owner's review.
+//!   - `rework_timed_out_with_edits`: a ticket in review whose rework timed
+//!     out.
+//! - `triage_for_the_maintainer`, `triage_asking`: script each triage to ask
+//!   the maintainer, or to ask people which version.
+//! - `tickets_script`: scripts each design to cut two tickets.
+//! - `implement_gadgets`: scripts each implement run to commit gadgets to its
+//!   ticket's file.
+//! - `implement_giving_up_with_earlier_work`, `implement_timing_out_with_edits`,
+//!   `implement_blocked_filing_a_spec_gap`, `rework_timing_out_with_edits`,
+//!   `design_giving_up`, `design_blocked_filing_a_spec_gap`: script each
+//!   session of a stage to end that way.
+//! - `start_and_leave_edits`, `rename_and_leave_edits`: commit, then leave
+//!   edits uncommitted, in a clone.
+//! - `merge_spec_change`, `merge_spec_and_code_change`: merge a spec change
+//!   of the spec, or of the spec and code.
+//! - `open_undesigned_gadgets`, `open_designed_gadgets`: open an issue ready
+//!   for an agent, not designed or designed.
+//! - `UNFINISHED`, `TIMED_OUT`, `kept_on`: the unfinished commit's subject,
+//!   and how a hand-back says the session timed out and where the work is.
+//! - `timed_out`: a session's answer that it timed out.
+//! - `EARLIER_WORK`, `SPEC_GAP`: the file a handed-back ticket's branch keeps,
+//!   and the spec gap sessions file.
 //!
 //! # `harness`: the scripted agent
 //!
@@ -144,6 +192,7 @@
 //!   a back door wrote in another, naming the first field that differs.
 
 mod assert;
+mod back_door;
 mod cli;
 mod clock;
 mod files;
@@ -155,6 +204,7 @@ mod webhooks;
 mod world;
 
 pub use assert::*;
+pub use back_door::*;
 pub use cli::*;
 pub use clock::*;
 pub use files::*;

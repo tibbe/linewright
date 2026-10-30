@@ -7,7 +7,6 @@ use crate::common;
 
 use common::*;
 use linewright::domain::{Login, Number};
-use linewright::harness::SessionError;
 use linewright::reconcile::WorkKind;
 use linewright::store::local::Write;
 use serde_json::json;
@@ -32,12 +31,6 @@ fn linewright_assigned(world: &World, issue: Number) -> bool {
 
 /// How a hand-back for a timed-out session begins.
 const TIMED_OUT_OPENING: &str = "The session ended unexpectedly: it timed out.";
-
-fn timed_out() -> Result<String, SessionError> {
-    Err(SessionError::TimedOut {
-        log_tail: String::new(),
-    })
-}
 
 #[tokio::test]
 async fn a_triage_run_readying_an_issue_adds_its_label_after_the_comment_and_category_and_before_removing_needs_triage()
