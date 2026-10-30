@@ -128,9 +128,16 @@ that started a session.
 - **`--verbose`.** It shows the transcripts in full.
 - **`--follow`.** It shows the transcripts so far, then follows them, and ends
   when the run ends.
-- **Setup.** `logs --json` gives the setup command as objects of its own: one
-  as it starts, with the command, and one as it ends, with its exit status,
-  how long it ran and its output.
+- **Following in JSON.** `logs --json --follow` gives an entry that runs as
+  two objects, at the times [Followed](design_system.md#transcripts) says:
+  one as it starts, with what it holds then, and one as it ends, with the
+  whole entry.
+- **Running in JSON.** Read without following, `logs --json` gives an entry
+  still running as one object with what it holds so far and null for the
+  rest.
+- **Setup.** In `logs --json`, the setup command's object holds the command,
+  its exit status, how long it ran and its output, even where the transcript
+  as text wouldn't show the output.
 - **No session.** For a run that started no session, `logs` says so.
 
 ## Output
@@ -142,9 +149,9 @@ a terminal.
 - **Cut lists.** A list cut to a limit ends with a line saying how many
   entries it left out and how to show them.
 - **`--json`.** It prints the same answer as JSON; `logs --json` prints one
-  JSON object per transcript entry and line. Each of a tool call's objects
-  carries the ID the agent gives the call, and a sub-agent's objects carry
-  the ID of the call that started it.
+  JSON object per transcript entry and line, two for an entry that runs when
+  followed. Each of a tool call's objects carries the ID the agent gives the
+  call, and a sub-agent's objects carry the ID of the call that started it.
 - **Errors.** They go to standard error. The exit status is:
 
   | status | meaning                                      |
