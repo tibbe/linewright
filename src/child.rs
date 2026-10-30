@@ -6,11 +6,11 @@ use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::process::ExitStatus;
 
-use tokio::io::{AsyncBufReadExt as _, BufReader};
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
-use crate::contain::{CONTROL_VARIABLE, Report};
+use crate::contain::{CONTROL_VARIABLE, GO_AHEAD, Report};
 
 /// A command for `program` run as a child of `serve`. It runs in a process
 /// group of its own, out of the reach of the SIGINT a terminal sends
@@ -98,8 +98,13 @@ impl ContainedCommand {
             tokio::select! {
                 accepted = listener.accept() => {
                     let (control, _) = accepted?;
-                    // Another process of the same user may connect too.
-                    if control.peer_cred()?.pid() == wrapper_pid {
+                    // Another process of the same user may connect too, and
+                    // be gone before it is checked. The wrapper is not: see
+                    // [`GO_AHEAD`].
+                    if control
+                        .peer_cred()
+                        .is_ok_and(|cred| cred.pid() == wrapper_pid)
+                    {
                         break control;
                     }
                 }
@@ -113,9 +118,15 @@ impl ContainedCommand {
         };
         drop(listener);
         drop(dir);
-        let mut report = String::new();
-        BufReader::new(&mut control).read_line(&mut report).await?;
-        let report = Report::parse(&report);
+        // A wrapper gone before it has the go-ahead has started nothing.
+        let report = match control.write_all(GO_AHEAD.as_bytes()).await {
+            Ok(()) => {
+                let mut report = String::new();
+                BufReader::new(&mut control).read_line(&mut report).await?;
+                Report::parse(&report)
+            }
+            Err(_) => None,
+        };
         if report == Some(Report::Started) {
             return Ok(Contained {
                 wrapper,
