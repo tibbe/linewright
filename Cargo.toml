@@ -6,6 +6,10 @@ description = "A spec-driven software factory: a server that turns spec changes 
 license = "MIT"
 publish = false
 
+# No doc comment holds an example, so there are no doctests to build.
+[lib]
+doctest = false
+
 # The command, `linewright::COMMAND` (`docs/specs/operation.md`); the package
 # and library keep the Linewright name.
 [[bin]]

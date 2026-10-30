@@ -194,10 +194,7 @@ check_clippy() {
   cargo clippy "${args[@]}"
 }
 check_test() { nextest run --locked --cargo-quiet --no-input-handler; }
-# nextest doesn't run doctests.
-check_doc() {
-  cargo doc --no-deps --locked --quiet && cargo test --doc --locked --quiet
-}
+check_doc() { cargo doc --no-deps --locked --quiet; }
 
 stages=("fmt markdown compose css" "clippy" "test doc")
 
