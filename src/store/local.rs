@@ -10,17 +10,17 @@ use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
 use super::{
-    AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError,
-    PushMode, RepoSettings, Store,
+    AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
+    PeoplesPullRead, PushError, PushMode, RepoSettings, Store,
 };
 use crate::clock::Clock;
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
-    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Linked, Login, ManagedFacts,
-    MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
-    Rebaseability, Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue,
-    SubIssueState, Thread, TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts,
-    closed_within, closing_references, label,
+    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Labeling, Linked, Login,
+    ManagedFacts, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull,
+    PullHeld, PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review, ReviewDecision,
+    ReviewState, Snapshot, SubIssue, SubIssueState, Thread, TicketBranch, TicketBranchName,
+    Timestamp, Windows, WorkFacts, closed_within, closing_references, label, pull_events,
 };
 use crate::git::{self, Merged};
 
@@ -190,14 +190,6 @@ pub struct CheckRecord {
     pub name: String,
     pub state: CheckState,
     pub log: String,
-}
-
-/// A label applied to a pull request.
-#[derive(Clone, Serialize)]
-struct Labeling {
-    label: String,
-    by: Login,
-    at: Timestamp,
 }
 
 #[derive(Clone, Serialize)]
@@ -1106,6 +1098,7 @@ impl LocalStore {
             reviews: record.reviews,
             threads: record.threads,
             labels: record.labels,
+            labelings: record.labelings,
             assignees: record.assignees,
             assignments: record.assignments,
             review_decision,
@@ -1285,7 +1278,13 @@ impl State {
                     work: WorkFacts {
                         author: Some(issue.author),
                         assignees: issue.assignees,
-                        events: issue.events,
+                        // As GitHub's timeline, comments among the events.
+                        events: {
+                            let mut events = issue.events;
+                            events.extend(issue.comments.iter().map(Comment::event));
+                            events.sort_by_key(IssueEvent::at);
+                            events
+                        },
                         closed_by: issue.closed_by,
                     },
                 },
@@ -1323,7 +1322,7 @@ impl State {
                 pull.labels.push(label.into());
                 pull.labelings.push(Labeling {
                     label: label.into(),
-                    by: by.clone(),
+                    by: Some(by.clone()),
                     at: now,
                 });
             }
@@ -1465,20 +1464,45 @@ impl IssueRecord {
 
 impl PullRecord {
     /// The pull request as the snapshot holds it among its closed items:
-    /// `None` unless it is `linewright`'s, closed without merging.
+    /// `None` unless `linewright` worked it and it closed without merging.
     fn closed_unmerged(&self, linewright: &Login) -> Option<ClosedItem> {
         let PullState::Closed { at } = self.state else {
             return None;
         };
-        (&self.author == linewright).then(|| ClosedItem {
-            number: self.number,
-            title: self.title.clone(),
-            closed_at: at,
-            updated_at: self.updated_at,
-            kind: ClosedKind::Pull {
-                closes: closing_references(&self.body),
-            },
-        })
+        let events = self.events();
+        self.signs(&events)
+            .worked_by(linewright)
+            .then(|| ClosedItem {
+                number: self.number,
+                title: self.title.clone(),
+                closed_at: at,
+                updated_at: self.updated_at,
+                kind: ClosedKind::Pull {
+                    closes: closing_references(&self.body),
+                    author: Some(self.author.clone()),
+                },
+            })
+    }
+
+    /// What tells whether Linewright worked it, or it asks for its work,
+    /// with `events` its [`PullRecord::events`].
+    fn signs<'a>(&'a self, events: &'a [IssueEvent]) -> PullSigns<'a> {
+        PullSigns {
+            author: &self.author,
+            assignees: &self.assignees,
+            events,
+        }
+    }
+
+    /// Among which pull requests a snapshot holds it: unlike GitHub's
+    /// snapshot, this one holds Linewright's open or not; a person's it
+    /// holds while open, as [`PullSigns::held`] tells.
+    fn held(&self, linewright: &Login) -> Option<PullHeld> {
+        let events = self.events();
+        match self.signs(&events).held(linewright) {
+            Some(PullHeld::Peoples) if !self.is_open() => None,
+            held => held,
+        }
     }
 
     fn is_open(&self) -> bool {
@@ -1522,17 +1546,9 @@ impl PullRecord {
         closing_references(&self.body).contains(&number)
     }
 
-    /// Its labelings and assignments, oldest first.
+    /// Its labelings, assignments and comments, oldest first.
     fn events(&self) -> Vec<IssueEvent> {
-        let labelings = self.labelings.iter().map(|l| IssueEvent::Labeled {
-            label: l.label.clone(),
-            by: Some(l.by.clone()),
-            at: l.at,
-        });
-        let assignments = self.assignments.iter().cloned().map(IssueEvent::Assignment);
-        let mut events: Vec<IssueEvent> = labelings.chain(assignments).collect();
-        events.sort_by_key(IssueEvent::at);
-        events
+        pull_events(&self.labelings, &self.assignments, &self.comments)
     }
 
     /// The pull request as the snapshot holds it among the merged ones:
@@ -1683,10 +1699,11 @@ impl Store for LocalStore {
                 .values()
                 .filter_map(|p| p.closed_unmerged(&state.linewright));
             let closed = closed_within(closed_issues.chain(closed_pulls), windows);
-            let pulls: Vec<(Number, Login)> = state
+            // Each pull request, with among which a snapshot holds it.
+            let pulls: Vec<(Number, Option<PullHeld>)> = state
                 .pulls
                 .values()
-                .map(|p| (p.number, p.author.clone()))
+                .map(|p| (p.number, p.held(&state.linewright)))
                 .collect();
             (
                 state.default_branch.clone(),
@@ -1700,16 +1717,23 @@ impl Store for LocalStore {
             default_branch: default_branch.clone(),
             issues,
             pulls: vec![],
+            peoples_pulls: vec![],
             merged: vec![],
             closed,
             ticket_branches: self.ticket_branches().await?,
         };
-        for (number, author) in pulls {
+        for (number, held) in pulls {
             if let Some(merged) = self.merged_pull(number, windows).await? {
                 snapshot.merged.push(merged);
             }
-            if author == linewright {
-                snapshot.pulls.push(self.pull_view(number).await?);
+            match held {
+                Some(PullHeld::Peoples) => {
+                    snapshot.peoples_pulls.push(self.pull_view(number).await?);
+                }
+                Some(PullHeld::Linewrights) => {
+                    snapshot.pulls.push(self.pull_view(number).await?);
+                }
+                None => {}
             }
         }
         let state = self.state();
@@ -1806,15 +1830,22 @@ impl Store for LocalStore {
         Ok(Some(self.pull_view(number).await?))
     }
 
-    async fn open_pull_closes(&self, number: Number) -> Result<Vec<Number>> {
+    async fn peoples_pull(&self, number: Number) -> Result<PeoplesPullRead> {
         self.read_item()?;
-        let state = self.state();
-        Ok(state
-            .pulls
-            .get(&number)
-            .filter(|p| p.is_open())
-            .map(|p| closing_references(&p.body))
-            .unwrap_or_default())
+        let (closes, peoples) = {
+            let state = self.state();
+            let Some(record) = state.pulls.get(&number).filter(|p| p.is_open()) else {
+                return Ok(PeoplesPullRead::default());
+            };
+            let peoples = record.held(&state.linewright) == Some(PullHeld::Peoples);
+            (closing_references(&record.body), peoples)
+        };
+        let pull = if peoples {
+            Some(self.pull_view(number).await?)
+        } else {
+            None
+        };
+        Ok(PeoplesPullRead { closes, pull })
     }
 
     async fn merged_pull(&self, number: Number, windows: Windows) -> Result<Option<MergedPull>> {

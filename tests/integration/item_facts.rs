@@ -150,6 +150,7 @@ fn pull(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         threads: vec![],
         labels: vec![],
         assignees: vec![Login::new("factory")],
+        labelings: vec![],
         assignments: vec![],
         review_decision: None,
     }
@@ -230,6 +231,7 @@ fn closed_ticket(number: u64, closed_at: &str) -> ClosedItem {
                 labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
                 work: WorkFacts {
                     assignees: vec![Login::new("factory")],
+                    events: vec![common::assigning_linewright("2026-09-28T10:00:00Z")],
                     ..WorkFacts::default()
                 },
             },

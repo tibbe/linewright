@@ -1,0 +1,2765 @@
+{
+  "pageInfo": {
+    "hasNextPage": true,
+    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0wOS0xM1QwNjowNjowM1rPAAAAAQregdo="
+  },
+  "nodes": [
+    {
+      "number": 14872,
+      "title": "Remove memory.md and SECURITY.md files",
+      "closedAt": "2026-10-30T08:21:54Z",
+      "updatedAt": "2026-10-30T08:21:54Z",
+      "author": {
+        "__typename": "User",
+        "login": "arletteramosg26-ux"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T07:11:16Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T07:11:16Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T07:11:18Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-30T07:11:19Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14867,
+      "title": "issue create: validate issue type before creating issue",
+      "closedAt": "2026-10-29T16:15:32Z",
+      "updatedAt": "2026-10-29T16:15:32Z",
+      "author": {
+        "__typename": "User",
+        "login": "AdamMagued"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14703
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T13:06:11Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T13:06:11Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T13:06:17Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-29T13:06:18Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14860,
+      "title": "fix(issue develop): don't fail --base outside a git repository",
+      "closedAt": "2026-10-29T03:59:04Z",
+      "updatedAt": "2026-10-29T03:59:04Z",
+      "author": {
+        "__typename": "User",
+        "login": "Sun-Wukhan"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14856
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T03:45:18Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T03:45:18Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14857,
+      "title": "pkg/cmd/auth: validate advertised required scopes in token flow",
+      "closedAt": "2026-10-28T19:00:23Z",
+      "updatedAt": "2026-10-28T19:00:23Z",
+      "author": {
+        "__typename": "User",
+        "login": "AdamMagued"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14754
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T18:35:17Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T18:35:17Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T18:35:19Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T18:35:20Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14848,
+      "title": "ci: verify lint workflow on trunk",
+      "closedAt": "2026-10-28T02:54:04Z",
+      "updatedAt": "2026-10-28T02:56:15Z",
+      "author": {
+        "__typename": "User",
+        "login": "joshuarli"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T02:54:03Z",
+            "author": {
+              "__typename": "User",
+              "login": "joshuarli"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T02:54:05Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T02:54:05Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T02:54:09Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T02:54:10Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14837,
+      "title": "Use separate Go caches for race and non-race builds",
+      "closedAt": "2026-10-27T13:58:13Z",
+      "updatedAt": "2026-10-27T13:58:13Z",
+      "author": {
+        "__typename": "User",
+        "login": "williammartin"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14836
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T13:58:12Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14727,
+      "title": "fix(issue create): resolve --type before creating the issue",
+      "closedAt": "2026-10-26T19:15:15Z",
+      "updatedAt": "2026-10-26T19:15:15Z",
+      "author": {
+        "__typename": "User",
+        "login": "umairnaeem0309"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14703
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-17T15:22:08Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-17T15:22:08Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-17T15:22:12Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "ready-for-review"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-17T15:22:13Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14823,
+      "title": "fix(issue create): print issue URL when post-creation mutations fail (#14367)",
+      "closedAt": "2026-10-26T09:50:46Z",
+      "updatedAt": "2026-10-26T09:50:58Z",
+      "author": {
+        "__typename": "User",
+        "login": "Hrushikesh-ramilla"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14367
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-26T09:48:07Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-26T09:48:07Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-26T09:48:09Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-26T09:48:10Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 7,
+      "title": "Start on context package",
+      "closedAt": "2019-10-14T16:57:19Z",
+      "updatedAt": "2026-10-24T16:46:34Z",
+      "author": {
+        "__typename": "User",
+        "login": "vilmibm"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2019-10-09T20:18:14Z",
+            "author": {
+              "__typename": "User",
+              "login": "probablycorey"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2019-10-10T18:56:34Z",
+            "author": {
+              "__typename": "User",
+              "login": "vilmibm"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14765,
+      "title": "Add --json and --jq flags to pr create (#11247)",
+      "closedAt": "2026-10-20T16:45:49Z",
+      "updatedAt": "2026-10-20T16:45:49Z",
+      "author": {
+        "__typename": "User",
+        "login": "MauroDruwel"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 11247
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-20T14:02:03Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-20T14:02:03Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14763,
+      "title": "Fix local branch deletion for PR URLs",
+      "closedAt": "2026-10-20T12:38:22Z",
+      "updatedAt": "2026-10-20T12:38:22Z",
+      "author": {
+        "__typename": "User",
+        "login": "r4venrudy"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14550
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-20T09:35:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-20T09:35:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-20T09:35:14Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-20T09:35:16Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14700,
+      "title": "docs(gh-skill): document gh api field passing pitfalls",
+      "closedAt": "2026-10-20T04:05:02Z",
+      "updatedAt": "2026-10-20T04:05:02Z",
+      "author": {
+        "__typename": "User",
+        "login": "MatiasOlivera"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14701
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T10:31:43Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T10:31:43Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T10:31:45Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-15T10:31:46Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14710,
+      "title": "Fix omitting body and metadata with --comments in non-TTY mode",
+      "closedAt": "2026-10-15T23:49:29Z",
+      "updatedAt": "2026-10-16T11:35:01Z",
+      "author": {
+        "__typename": "User",
+        "login": "arsalanyavari"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14692
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T23:41:46Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T23:41:46Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T23:41:50Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-15T23:41:51Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-15T23:54:41Z",
+            "author": {
+              "__typename": "User",
+              "login": "arsalanyavari"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-16T08:25:21Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14713,
+      "title": "feat: add --json and --jq to gh pr create (#11247)",
+      "closedAt": "2026-10-16T07:39:53Z",
+      "updatedAt": "2026-10-16T07:39:53Z",
+      "author": {
+        "__typename": "User",
+        "login": "manish-9245"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 11247
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-16T07:14:18Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-16T07:14:18Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14709,
+      "title": "secret set: treat --body - as stdin",
+      "closedAt": "2026-10-15T21:47:28Z",
+      "updatedAt": "2026-10-15T21:47:28Z",
+      "author": {
+        "__typename": "User",
+        "login": "intrepid37"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14708
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T21:43:43Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "ready-for-review"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-15T21:43:44Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T21:43:47Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-15T21:43:47Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14659,
+      "title": "chore(deps): bump golang.org/x/text from 0.42.0 to 0.43.0",
+      "closedAt": "2026-10-14T13:17:20Z",
+      "updatedAt": "2026-10-14T13:17:24Z",
+      "author": {
+        "__typename": "Bot",
+        "login": "dependabot"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T15:11:06Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "dependabot"
+            },
+            "label": {
+              "name": "dependencies"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T15:11:06Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "dependabot"
+            },
+            "label": {
+              "name": "go"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-13T15:56:48Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-14T13:17:15Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "dependabot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14658,
+      "title": "chore(deps): bump golang.org/x/term from 0.46.0 to 0.47.0",
+      "closedAt": "2026-10-14T13:17:14Z",
+      "updatedAt": "2026-10-14T13:17:18Z",
+      "author": {
+        "__typename": "Bot",
+        "login": "dependabot"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T15:11:00Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "dependabot"
+            },
+            "label": {
+              "name": "dependencies"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T15:11:00Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "dependabot"
+            },
+            "label": {
+              "name": "go"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-13T15:56:49Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-14T13:17:09Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "dependabot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14676,
+      "title": "Fix: `gh auth login --with-token` hangs",
+      "closedAt": "2026-10-14T02:35:13Z",
+      "updatedAt": "2026-10-14T11:21:26Z",
+      "author": {
+        "__typename": "User",
+        "login": "goransh-walia"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 9789
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-14T00:48:27Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-14T00:48:27Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-14T00:54:20Z",
+            "author": {
+              "__typename": "User",
+              "login": "technothatch"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14664,
+      "title": "Update snap installation instructions",
+      "closedAt": "2026-10-13T16:42:02Z",
+      "updatedAt": "2026-10-13T17:01:17Z",
+      "author": {
+        "__typename": "User",
+        "login": "astrojuanlu"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T16:32:16Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T16:32:16Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T16:32:18Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "ready-for-review"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-13T16:32:21Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-13T16:42:02Z",
+            "author": {
+              "__typename": "User",
+              "login": "babakks"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14651,
+      "title": "fix: `gh auth login --with-token` hangs",
+      "closedAt": "2026-10-13T05:56:17Z",
+      "updatedAt": "2026-10-13T05:56:17Z",
+      "author": {
+        "__typename": "User",
+        "login": "vimalyad"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 9789
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T03:57:44Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-13T03:57:44Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14646,
+      "title": "fix(pr): resolve cross-repo PRs when branch selector tracks a fork remote",
+      "closedAt": "2026-10-11T23:03:09Z",
+      "updatedAt": "2026-10-11T23:03:09Z",
+      "author": {
+        "__typename": "User",
+        "login": "735yarik"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 11942
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-11T14:19:17Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-11T14:19:17Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-11T14:19:20Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-11T14:19:21Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 13318,
+      "title": "Surface keyring access failures from ActiveToken",
+      "closedAt": "2026-10-09T17:59:47Z",
+      "updatedAt": "2026-10-09T17:59:47Z",
+      "author": {
+        "__typename": "User",
+        "login": "Iron-Ham"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 13317
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-04-29T21:59:58Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-04-29T21:59:58Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-05-26T21:32:09Z",
+            "author": {
+              "__typename": "User",
+              "login": "Iron-Ham"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-05-26T22:31:29Z",
+            "author": {
+              "__typename": "User",
+              "login": "babakks"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-05-26T22:32:21Z",
+            "author": {
+              "__typename": "User",
+              "login": "Iron-Ham"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-05-26T22:32:45Z",
+            "author": {
+              "__typename": "User",
+              "login": "babakks"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-05-29T13:19:11Z",
+            "actor": {
+              "__typename": "User",
+              "login": "niik"
+            },
+            "label": {
+              "name": "ready-for-review"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-08-04T16:54:09Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-08-05T11:06:13Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14636,
+      "title": "fix(auth): reject terminal stdin for --with-token",
+      "closedAt": "2026-10-09T16:24:42Z",
+      "updatedAt": "2026-10-09T16:24:42Z",
+      "author": {
+        "__typename": "User",
+        "login": "ump45nose"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 9789
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-09T16:13:43Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-09T16:13:44Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14630,
+      "title": "Bump golang.org/x/net to v0.60.0",
+      "closedAt": "2026-10-09T09:30:36Z",
+      "updatedAt": "2026-10-09T09:30:36Z",
+      "author": {
+        "__typename": "User",
+        "login": "williammartin"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": []
+      }
+    },
+    {
+      "number": 11000,
+      "title": "Eugene/release verify",
+      "closedAt": "2025-05-19T15:43:02Z",
+      "updatedAt": "2026-10-09T08:03:49Z",
+      "author": {
+        "__typename": "User",
+        "login": "ejahnGithub"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": []
+      }
+    },
+    {
+      "number": 14628,
+      "title": "pr merge: skip local cleanup outside the pull request's repository",
+      "closedAt": "2026-10-09T01:44:47Z",
+      "updatedAt": "2026-10-09T01:44:47Z",
+      "author": {
+        "__typename": "User",
+        "login": "entity-0-0-2"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14537
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-08T22:57:26Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-08T22:57:26Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-08T23:34:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-08T23:34:11Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14617,
+      "title": "fix(auth): fail fast when --with-token is used with terminal stdin",
+      "closedAt": "2026-10-08T16:39:58Z",
+      "updatedAt": "2026-10-08T16:39:58Z",
+      "author": {
+        "__typename": "User",
+        "login": "bingtang9"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 9789
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-07T08:31:07Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-07T08:31:07Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14602,
+      "title": "Restore terminal cursor when interrupted while the spinner is running",
+      "closedAt": "2026-10-05T15:13:24Z",
+      "updatedAt": "2026-10-05T15:13:24Z",
+      "author": {
+        "__typename": "User",
+        "login": "Kshot3000"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14601
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-05T14:35:09Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-05T14:35:09Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-05T14:35:12Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-05T14:35:13Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-05T15:13:23Z",
+            "author": {
+              "__typename": "User",
+              "login": "Kshot3000"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14333,
+      "title": "Add GitHub request ID telemetry",
+      "closedAt": "2026-09-03T13:36:13Z",
+      "updatedAt": "2026-10-04T23:58:19Z",
+      "author": {
+        "__typename": "User",
+        "login": "williammartin"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-03T13:36:13Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14590,
+      "title": "feat: Add/update AGENTS.md for AI agent guidance",
+      "closedAt": "2026-10-04T20:48:10Z",
+      "updatedAt": "2026-10-04T20:48:10Z",
+      "author": {
+        "__typename": "User",
+        "login": "jaykrishna316"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-04T05:48:08Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-04T05:48:09Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-04T05:49:14Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-04T05:49:14Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14585,
+      "title": "git: sanitize subprocess environment to prevent ambient token leaks",
+      "closedAt": "2026-10-03T14:26:42Z",
+      "updatedAt": "2026-10-03T14:26:42Z",
+      "author": {
+        "__typename": "User",
+        "login": "zainnadeem786"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14584
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-03T08:49:36Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-03T08:49:37Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-03T08:49:40Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-03T08:49:41Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14586,
+      "title": "Preserve percent-encoded path in DisplayURL",
+      "closedAt": "2026-10-03T14:26:29Z",
+      "updatedAt": "2026-10-03T14:26:30Z",
+      "author": {
+        "__typename": "User",
+        "login": "bodapatisaikrishna"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 13546
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-03T12:29:37Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-03T12:29:37Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-03T12:29:39Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-03T12:29:41Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14575,
+      "title": "Rename SECURITY.md to SECURITY.mdbrew install gh",
+      "closedAt": "2026-10-02T05:06:00Z",
+      "updatedAt": "2026-10-02T05:06:00Z",
+      "author": {
+        "__typename": "User",
+        "login": "gaelreyes0318-netizen"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-02T03:54:05Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-02T03:54:05Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-02T03:54:07Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "ready-for-review"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-02T03:54:08Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14556,
+      "title": "pr close: skip local branch delete in unrelated repos",
+      "closedAt": "2026-09-30T17:49:55Z",
+      "updatedAt": "2026-09-30T17:49:55Z",
+      "author": {
+        "__typename": "User",
+        "login": "wangyusheng1985"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14550
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-30T08:40:51Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-30T08:40:51Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-30T08:40:53Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-30T08:40:55Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14544,
+      "title": "fix(pr/merge): only clean up local branches in the pull request's own repository",
+      "closedAt": "2026-09-28T14:48:17Z",
+      "updatedAt": "2026-09-28T14:48:17Z",
+      "author": {
+        "__typename": "User",
+        "login": "wippa-studios"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14537
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-28T14:24:37Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-28T14:24:37Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-28T14:24:41Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-28T14:24:44Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-28T14:48:13Z",
+            "author": {
+              "__typename": "User",
+              "login": "wippa-studios"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14536,
+      "title": "docs: clarify --allow-update-branch help to match web UI",
+      "closedAt": "2026-09-27T15:45:59Z",
+      "updatedAt": "2026-09-27T15:45:59Z",
+      "author": {
+        "__typename": "User",
+        "login": "SatvikMishra08"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 7428
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-27T12:02:27Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-27T12:02:27Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-27T12:02:30Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "ready-for-review"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-27T12:02:32Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14515,
+      "title": "Patch 1",
+      "closedAt": "2026-09-24T20:30:31Z",
+      "updatedAt": "2026-09-24T20:34:20Z",
+      "author": {
+        "__typename": "User",
+        "login": "DynamoIVII"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-24T20:29:04Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-24T20:29:04Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-24T20:29:08Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-24T20:29:10Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14502,
+      "title": "Distinguish rate-limit/network errors from invalid token in gh auth status",
+      "closedAt": "2026-09-22T21:16:20Z",
+      "updatedAt": "2026-09-22T21:16:20Z",
+      "author": {
+        "__typename": "User",
+        "login": "00200200"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-22T21:06:18Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-22T21:06:18Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-22T21:06:22Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-22T21:06:24Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14482,
+      "title": "Post --comment before the already-closed early return in pr close",
+      "closedAt": "2026-09-21T06:22:01Z",
+      "updatedAt": "2026-09-22T07:58:49Z",
+      "author": {
+        "__typename": "User",
+        "login": "ege-arhan"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14374
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-21T06:04:06Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-21T06:04:06Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-21T06:04:08Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-21T06:04:09Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-21T06:22:00Z",
+            "author": {
+              "__typename": "User",
+              "login": "ege-arhan"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 13250,
+      "title": "Include categorized host in telemetry",
+      "closedAt": "2026-09-21T18:06:39Z",
+      "updatedAt": "2026-09-21T18:06:39Z",
+      "author": {
+        "__typename": "User",
+        "login": "williammartin"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-05-14T05:28:58Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-05-14T07:41:40Z",
+            "author": {
+              "__typename": "User",
+              "login": "babakks"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-05-14T11:51:29Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-21T18:06:39Z",
+            "author": {
+              "__typename": "User",
+              "login": "BagToad"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14484,
+      "title": "Add --error-body so gh api -q does not capture HTTP error JSON",
+      "closedAt": "2026-09-21T15:26:34Z",
+      "updatedAt": "2026-09-21T15:26:34Z",
+      "author": {
+        "__typename": "User",
+        "login": "ArjunCodess"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 5209
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-21T11:27:59Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-21T11:27:59Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-21T11:27:59Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-21T11:28:00Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-21T11:28:26Z",
+            "author": {
+              "__typename": "User",
+              "login": "ArjunCodess"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14481,
+      "title": "Authorship and follow-up",
+      "closedAt": "2026-09-20T08:21:11Z",
+      "updatedAt": "2026-09-20T08:21:31Z",
+      "author": {
+        "__typename": "User",
+        "login": "HIHACK1911"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-20T08:21:10Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-20T08:21:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-20T08:21:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14478,
+      "title": "pr checks: prioritize re-queued check runs in eliminateDuplicates (#14371)",
+      "closedAt": "2026-09-19T14:36:13Z",
+      "updatedAt": "2026-09-19T14:36:13Z",
+      "author": {
+        "__typename": "User",
+        "login": "aadieng100"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14371
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-19T10:29:51Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-19T10:29:51Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-19T10:29:55Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-19T10:29:56Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14471,
+      "title": "Create generator-generic-ossf-slsa3-publish.yml",
+      "closedAt": "2026-09-18T20:37:08Z",
+      "updatedAt": "2026-09-18T20:37:08Z",
+      "author": {
+        "__typename": "User",
+        "login": "zskbot"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-18T19:00:28Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-18T19:00:28Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-18T19:00:32Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-18T19:00:34Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 10783,
+      "title": "fix: `gh cs logs` to use automatic ssh key pair",
+      "closedAt": "2026-09-18T19:43:09Z",
+      "updatedAt": "2026-09-18T19:43:09Z",
+      "author": {
+        "__typename": "User",
+        "login": "franciscoj"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2025-04-14T10:42:29Z",
+            "actor": {
+              "__typename": "User",
+              "login": "cliAutomation"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2025-08-01T18:03:48Z",
+            "author": {
+              "__typename": "User",
+              "login": "BagToad"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 6630,
+      "title": "Add `codespaces-keypair` flag to `gh cs ssh` command to always use codespaces generated keypair",
+      "closedAt": "2023-09-29T03:26:52Z",
+      "updatedAt": "2026-09-17T08:37:30Z",
+      "author": {
+        "__typename": "User",
+        "login": "thomas-sickert"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 6636
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2022-11-17T16:27:15Z",
+            "actor": {
+              "__typename": "User",
+              "login": "cliAutomation"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2022-11-17T16:27:16Z",
+            "author": {
+              "__typename": "User",
+              "login": "cliAutomation"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2022-11-17T16:42:58Z",
+            "author": {
+              "__typename": "User",
+              "login": "cmbrose"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2022-11-17T17:06:42Z",
+            "author": {
+              "__typename": "User",
+              "login": "thomas-sickert"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2022-11-17T22:22:52Z",
+            "author": {
+              "__typename": "User",
+              "login": "githubdlke"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2022-12-13T19:17:36Z",
+            "author": {
+              "__typename": "User",
+              "login": "mmrobins"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14448,
+      "title": "Add option to leave issue type unset when creating interactively",
+      "closedAt": "2026-09-14T14:41:58Z",
+      "updatedAt": "2026-09-14T14:41:58Z",
+      "author": {
+        "__typename": "User",
+        "login": "vimalyad"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 14386
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-14T14:39:13Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-14T14:39:13Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-14T14:39:15Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-14T14:39:16Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14440,
+      "title": "chore: apply go fix (go1.26)",
+      "closedAt": "2026-09-14T13:14:45Z",
+      "updatedAt": "2026-09-14T13:14:46Z",
+      "author": {
+        "__typename": "User",
+        "login": "babakks"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-14T13:14:45Z",
+            "author": {
+              "__typename": "User",
+              "login": "babakks"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14393,
+      "title": "issue create: output URL and prevent recovery prompt when post-creation fails (#14367)",
+      "closedAt": "2026-09-08T15:43:11Z",
+      "updatedAt": "2026-09-14T09:05:34Z",
+      "author": {
+        "__typename": "User",
+        "login": "kishansaaai"
+      },
+      "closingIssuesReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-08T14:53:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-08T14:53:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-08T14:53:15Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "unmet-requirements"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-08T14:53:16Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14398,
+      "title": "Check for merged state when viewing a PR via the issues command",
+      "closedAt": "2026-09-13T06:06:03Z",
+      "updatedAt": "2026-09-13T06:06:03Z",
+      "author": {
+        "__typename": "User",
+        "login": "timmattison"
+      },
+      "closingIssuesReferences": {
+        "nodes": [
+          {
+            "number": 12195
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-08T18:25:29Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "external"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-08T18:25:29Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-09-08T18:25:34Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "ready-for-review"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-09-08T18:25:35Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

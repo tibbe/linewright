@@ -368,7 +368,7 @@ fn judge(
         },
         Held::Closed(item) => {
             let closes = match &item.kind {
-                ClosedKind::Pull { closes } => Some(&closes[..]),
+                ClosedKind::Pull { closes, .. } => Some(&closes[..]),
                 ClosedKind::Issue { .. } => None,
             };
             match (
@@ -389,8 +389,8 @@ fn judge(
 }
 
 /// Where open `issue` stands, or why Linewright leaves it alone: it is
-/// managed (`GLOSSARY.md`, **Managed**) or left alone by
-/// [`Issue::managed`].
+/// managed (`GLOSSARY.md`, **Managed**) or left alone as
+/// [`Issue::candidate`] tells.
 fn standing(
     issue: &Issue,
     snapshot: &Snapshot,
@@ -400,11 +400,11 @@ fn standing(
     let linewright = &policy.linewright;
     let marking = policy.marking(&issue.labels);
     let closing = snapshot.pulls_closing(issue);
-    if !issue.managed(linewright, &closing, marking) {
+    if !issue.candidate(linewright, &closing, marking) {
         return Err(match &policy.require_label {
             Some(label)
                 if marking == Marking::Unmarked
-                    && issue.waits_on_linewright(linewright, Marking::Marked) =>
+                    && issue.asks_for_work(linewright, Marking::Marked) =>
             {
                 IssueExclusion::NotMarked {
                     label: label.clone(),
@@ -588,10 +588,15 @@ fn closed_standing(
             let (ended, at) = issue_ended(merge, closing);
             Some(ItemState::Ended { ended, at })
         }
-        ClosedKind::Pull { .. } => Some(ItemState::Ended {
-            ended: Ended::ClosedUnmerged,
-            at: item.closed_at,
-        }),
+        // Of the pull requests closed unmerged, only Linewright's own have
+        // ended under its work; a person's that it worked is left alone.
+        ClosedKind::Pull { author, .. } => author
+            .as_ref()
+            .is_none_or(|author| author == linewright)
+            .then_some(ItemState::Ended {
+                ended: Ended::ClosedUnmerged,
+                at: item.closed_at,
+            }),
     }
 }
 

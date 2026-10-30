@@ -13,17 +13,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull, PushError,
-    PushMode, RepoSettings, Store, holds,
+    AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
+    PeoplesPullRead, PushError, PushMode, RepoSettings, Store, holds,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
-    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Linked, Login,
-    ManagedFacts, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullState, Push,
-    Rebaseability, Repo, Requirement, Review, ReviewDecision, ReviewState, Snapshot, SubIssue,
-    SubIssueState, Thread, TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts,
-    closed_within, label,
+    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Labeling, Linked,
+    Login, ManagedFacts, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullHeld,
+    PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review, ReviewDecision,
+    ReviewState, Snapshot, SubIssue, SubIssueState, Thread, TicketBranch, TicketBranchName,
+    Timestamp, Windows, WorkFacts, closed_within, label,
 };
 use crate::git;
 
@@ -56,6 +56,57 @@ pub struct GitHub {
 macro_rules! closes_field {
     () => {
         "closingIssuesReferences(first: 20) { nodes { number } }"
+    };
+}
+
+macro_rules! assignment_fields {
+    () => {
+        "... on AssignedEvent {
+        createdAt
+        actor { __typename login }
+        assignee { __typename ... on Actor { login } }
+      }
+      ... on UnassignedEvent {
+        createdAt
+        actor { __typename login }
+        assignee { __typename ... on Actor { login } }
+      }"
+    };
+}
+
+macro_rules! labeling_fields {
+    () => {
+        "createdAt actor { __typename login } label { name }"
+    };
+}
+
+/// A comment as a timeline item, read as a [`GqlEvent`].
+macro_rules! comment_fields {
+    () => {
+        "... on IssueComment { createdAt author { __typename login } }"
+    };
+}
+
+/// A pull request's labelings, assignments and comments, which tell whether
+/// Linewright worked it ([`PullSigns`]), read as [`GqlEvent`]s.
+macro_rules! work_timeline {
+    () => {
+        concat!(
+            "timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, ISSUE_COMMENT]) {
+    nodes {
+      __typename
+      ... on LabeledEvent { ",
+            labeling_fields!(),
+            " }
+      ",
+            assignment_fields!(),
+            "
+      ",
+            comment_fields!(),
+            "
+    }
+  }"
+        )
     };
 }
 
@@ -540,7 +591,7 @@ impl GitHub {
     }
 
     /// The closed issues of `numbers` that Linewright manages
-    /// ([`ClosedItem::managed`]), as [`Store::issue`] reads them.
+    /// ([`ClosedItem::candidate`]), as [`Store::issue`] reads them.
     async fn closed_issues_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<ClosedItem>> {
         let issues: Vec<GqlClosedIssue> = self
             .numbered(ItemKind::Issue, numbers, CLOSED_ISSUE_FIELDS)
@@ -548,8 +599,8 @@ impl GitHub {
         Ok(managed_closed(issues, &self.linewright()))
     }
 
-    /// Those of the pull requests `numbers` that are Linewright's and closed
-    /// without merging.
+    /// Those of the pull requests `numbers` that Linewright worked and that
+    /// closed without merging.
     async fn closed_pulls_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<ClosedItem>> {
         let pulls: Vec<GqlNumberedPull> = self
             .numbered(ItemKind::PullRequest, numbers, CLOSED_PULL_FIELDS)
@@ -557,10 +608,10 @@ impl GitHub {
         Ok(closed_unmerged(pulls, &self.linewright()))
     }
 
-    /// Linewright's pull requests closed without merging, among those
-    /// updated since `since`.
+    /// The pull requests closed without merging that Linewright worked,
+    /// whoever opened them, among those updated since `since`.
     async fn closed_pulls(&self, since: Timestamp) -> Result<Vec<ClosedItem>> {
-        // Fifty pull requests with one connection each cost 51 requests,
+        // Fifty pull requests with two connections each cost 101 requests,
         // which rounds to 1 point.
         let query = concat!(
             "query($owner: String!, $name: String!, $cursor: String) {
@@ -570,6 +621,8 @@ impl GitHub {
                   pageInfo { hasNextPage endCursor }
                   nodes { number title closedAt updatedAt author { __typename login } ",
             closes_field!(),
+            " ",
+            work_timeline!(),
             " }
                 }
               }
@@ -599,17 +652,23 @@ impl GitHub {
         }
     }
 
-    /// Number and author only: the full fields cost points per pull request,
-    /// so only Linewright's are read in full.
+    /// What tells which to read in full ([`GqlOpenPull`]): the full fields
+    /// cost points per pull request, so only Linewright's, and the people's
+    /// it may manage, are read in full. Fifty pull requests with two
+    /// connections each cost 101 requests, which rounds to 1 point.
     async fn open_pulls(&self) -> Result<Vec<GqlOpenPull>> {
-        let query = "query($owner: String!, $name: String!, $cursor: String) {
+        let query = concat!(
+            "query($owner: String!, $name: String!, $cursor: String) {
               repository(owner: $owner, name: $name) {
-                pullRequests(first: 100, after: $cursor, states: [OPEN]) {
+                pullRequests(first: 50, after: $cursor, states: [OPEN]) {
                   pageInfo { hasNextPage endCursor }
-                  nodes { number author { __typename login } }
+                  nodes { number author { __typename login } assignees(first: 20) { nodes { login } } ",
+            work_timeline!(),
+            " }
                 }
               }
-            }";
+            }"
+        );
         let mut pulls = vec![];
         let mut cursor = Value::Null;
         loop {
@@ -709,6 +768,8 @@ impl GitHub {
 
     /// The pull requests merged into `base` that `windows` holds.
     async fn merged_within(&self, base: &str, windows: Windows) -> Result<Vec<MergedPull>> {
+        // Twenty-five pull requests with the five connections of
+        // `MergedFields` each cost 126 requests, which rounds to 1 point.
         let query = "query($owner: String!, $name: String!, $base: String!, $cursor: String) {
               repository(owner: $owner, name: $name) {
                 pullRequests(first: 25, after: $cursor, states: [MERGED], baseRefName: $base,
@@ -902,7 +963,7 @@ impl GitHub {
     }
 
     async fn pull_view(&self, pr: GqlPull) -> Result<Pull> {
-        let pushes = if pr.state == "OPEN" {
+        let pushes = if pr.pushes_readable() {
             self.pushes(&pr.head_ref_name).await?
         } else {
             vec![]
@@ -1134,10 +1195,64 @@ struct PullsData<T> {
     pull_requests: Page<T>,
 }
 
+/// An open pull request as listed, with what tells whether to read it in
+/// full.
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GqlOpenPull {
     number: u64,
     author: Option<Actor>,
+    assignees: Nodes<LoginNode>,
+    timeline_items: Nodes<GqlEvent>,
+}
+
+impl GqlOpenPull {
+    /// Among which pull requests the snapshot holds it ([`PullSigns::held`]).
+    fn held(self, linewright: &Login) -> Option<PullHeld> {
+        PullSigns {
+            author: &login(self.author),
+            assignees: &logins(self.assignees),
+            events: &events(self.timeline_items.nodes),
+        }
+        .held(linewright)
+    }
+}
+
+/// What tells whether to read a pull request in full among the people's
+/// ([`Store::peoples_pull`]): as listed, with its state and the issues it
+/// closes. Its three connections cost 1 point.
+const PEOPLES_PULL_FIELDS: &str = concat!(
+    "fragment PeoplesPullFields on PullRequest {
+  number state author { __typename login }
+  assignees(first: 20) { nodes { login } }
+  ",
+    closes_field!(),
+    "
+  ",
+    work_timeline!(),
+    "
+}"
+);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlPeoplesPull {
+    state: GqlPullState,
+    closing_issues_references: Option<Nodes<NumberNode>>,
+    #[serde(flatten)]
+    listed: GqlOpenPull,
+}
+
+impl GqlPeoplesPull {
+    /// The issues it closes while it is open, and whether to read it in
+    /// full: while it is open, among the people's pull requests.
+    fn read(self, linewright: &Login) -> (Vec<Number>, bool) {
+        if self.state != GqlPullState::Open {
+            return (vec![], false);
+        }
+        let peoples = self.listed.held(linewright) == Some(PullHeld::Peoples);
+        (closes(self.closing_issues_references), peoples)
+    }
 }
 
 #[derive(Deserialize)]
@@ -1457,27 +1572,6 @@ fn tracking_issues_among(
         .collect()
 }
 
-macro_rules! assignment_fields {
-    () => {
-        "... on AssignedEvent {
-        createdAt
-        actor { __typename login }
-        assignee { __typename ... on Actor { login } }
-      }
-      ... on UnassignedEvent {
-        createdAt
-        actor { __typename login }
-        assignee { __typename ... on Actor { login } }
-      }"
-    };
-}
-
-macro_rules! labeling_fields {
-    () => {
-        "createdAt actor { __typename login } label { name }"
-    };
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GqlLabeling {
@@ -1487,10 +1581,15 @@ struct GqlLabeling {
 }
 
 /// An issue's or pull request's labelings, assignments and reopenings, and
-/// with `unlabelings` its unlabelings too, read as [`GqlEvent`]s.
+/// with `unlabelings` its unlabelings too, or with `comments` its comments
+/// too, read as [`GqlEvent`]s.
 macro_rules! assignment_timeline {
-    () => {
-        assignment_timeline!(@ "",)
+    (comments) => {
+        assignment_timeline!(@ ", ISSUE_COMMENT",
+            "
+      ",
+            comment_fields!(),
+        )
     };
     (unlabelings) => {
         assignment_timeline!(@ ", UNLABELED_EVENT",
@@ -1593,11 +1692,11 @@ struct GqlClosingPull {
 /// latest closing: the pull request whose merge closed it, a commit, or none
 /// when a person closed it
 /// (<https://docs.github.com/en/graphql/reference/objects#closedevent>).
-/// With its assignees, labelings, assignments and the pull requests closing
-/// it, which tell whether Linewright worked it, and its reopenings, which
-/// with those pull requests' merges tell when it entered Done. Twenty
-/// issues with the six connections each cost 121 requests, which rounds to
-/// 1 point
+/// With its assignees, labelings, assignments, comments and the pull
+/// requests closing it, which tell whether Linewright worked it, and its
+/// reopenings, which with those pull requests' merges tell when it entered
+/// Done. Twenty issues with the six connections each cost 121 requests,
+/// which rounds to 1 point
 /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
 const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
     name: "ClosedIssueFields",
@@ -1611,7 +1710,7 @@ const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
   parent { number title body author { __typename login } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt baseRefName author { __typename login } } }
   timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) { nodes { ... on ClosedEvent { closer { __typename ... on PullRequest { number } } } } }
-  assignments: timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, REOPENED_EVENT]) {
+  assignments: timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, REOPENED_EVENT, ISSUE_COMMENT]) {
     nodes {
       __typename
       ... on LabeledEvent { ",
@@ -1620,6 +1719,9 @@ const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
       ... on ReopenedEvent { createdAt }
       ",
         assignment_fields!(),
+        "
+      ",
+        comment_fields!(),
         "
     }
   }
@@ -1740,16 +1842,19 @@ fn found_of_numbered<T>(
     Ok(items.repository.into_values().flatten().collect())
 }
 
-/// Those of `issues` that `linewright` manages ([`ClosedItem::managed`]).
+/// Those of `issues` that `linewright` may manage
+/// ([`ClosedItem::candidate`]).
 fn managed_closed(issues: Vec<GqlClosedIssue>, linewright: &Login) -> Vec<ClosedItem> {
     issues
         .into_iter()
         .filter_map(|issue| issue.into_closed(linewright))
-        .filter(|item| item.managed(linewright))
+        .filter(|item| item.candidate(linewright))
         .collect()
 }
 
-/// What [`GitHub::closed_pulls_numbered`] reads of a pull request.
+/// What [`GitHub::closed_pulls_numbered`] reads of a pull request: with
+/// what tells whether Linewright worked it. Twenty with the two connections
+/// each cost 40 requests, which comes to 1 point, the least a query costs.
 const CLOSED_PULL_FIELDS: Fragment = Fragment {
     name: "ClosedPullFields",
     text: concat!(
@@ -1758,6 +1863,9 @@ const CLOSED_PULL_FIELDS: Fragment = Fragment {
   author { __typename login }
   ",
         closes_field!(),
+        "
+  ",
+        work_timeline!(),
         "
 }"
     ),
@@ -1779,7 +1887,8 @@ enum GqlPullState {
     Merged,
 }
 
-/// Those of `pulls` that are `linewright`'s and closed without merging.
+/// Those of `pulls` that `linewright` worked and that closed without
+/// merging.
 fn closed_unmerged(pulls: Vec<GqlNumberedPull>, linewright: &Login) -> Vec<ClosedItem> {
     pulls
         .into_iter()
@@ -1788,9 +1897,10 @@ fn closed_unmerged(pulls: Vec<GqlNumberedPull>, linewright: &Login) -> Vec<Close
         .collect()
 }
 
-/// What tells whether Linewright manages an issue ([`ManagedFacts`]), and
-/// whether and when it closed. Twenty-five issues with the five connections
-/// each cost 126 requests, which rounds to 1 point
+/// What tells whether Linewright may manage an issue ([`ManagedFacts`]),
+/// its comments among them, and whether and when it closed. Twenty-five
+/// issues with the five connections each cost 126 requests, which rounds to
+/// 1 point
 /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
 const MANAGED_FACTS_FIELDS: Fragment = Fragment {
     name: "ManagedFactsFields",
@@ -1802,7 +1912,7 @@ const MANAGED_FACTS_FIELDS: Fragment = Fragment {
   assignees(first: 20) { nodes { login } }
   subIssues(first: 100) { nodes { number state closedAt author { __typename login } } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt baseRefName author { __typename login } } }
-  timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+  timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, ISSUE_COMMENT]) {
     nodes {
       __typename
       ... on LabeledEvent { ",
@@ -1810,6 +1920,9 @@ const MANAGED_FACTS_FIELDS: Fragment = Fragment {
         " }
       ",
         assignment_fields!(),
+        "
+      ",
+        comment_fields!(),
         "
     }
   }
@@ -1850,7 +1963,7 @@ impl GqlFactsIssue {
     }
 }
 
-/// The issues Linewright manages ([`ManagedFacts::managed`]), by number, as
+/// The issues Linewright may manage ([`ManagedFacts::candidate`]), by number, as
 /// GitHub last said: a cache rebuilt on every start, not a record.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct ManagedIndex {
@@ -1871,7 +1984,7 @@ impl ManagedIndex {
         self.closed.remove(&number);
         let open = issue.state == IssueState::Open;
         let closed_at = issue.closed_at;
-        if !issue.into_facts(linewright).managed(open, linewright) {
+        if !issue.into_facts(linewright).candidate(open, linewright) {
             return;
         }
         match (open, closed_at) {
@@ -1994,12 +2107,20 @@ struct GqlClosedPull {
     updated_at: Timestamp,
     author: Option<Actor>,
     closing_issues_references: Option<Nodes<NumberNode>>,
+    timeline_items: Nodes<GqlEvent>,
 }
 
 impl GqlClosedPull {
-    /// `None` when it is not Linewright's.
+    /// `None` when Linewright did not work it ([`PullSigns::worked_by`]).
     fn into_closed(self, linewright: &Login) -> Option<ClosedItem> {
-        if login(self.author) != *linewright {
+        let author = login(self.author);
+        let worked = PullSigns {
+            author: &author,
+            assignees: &[],
+            events: &events(self.timeline_items.nodes),
+        }
+        .worked_by(linewright);
+        if !worked {
             return None;
         }
         Some(ClosedItem {
@@ -2009,6 +2130,7 @@ impl GqlClosedPull {
             updated_at: self.updated_at,
             kind: ClosedKind::Pull {
                 closes: closes(self.closing_issues_references),
+                author: Some(author),
             },
         })
     }
@@ -2023,6 +2145,11 @@ enum GqlEvent {
     Unlabeled(GqlLabeling),
     #[serde(rename = "ReopenedEvent", rename_all = "camelCase")]
     Reopened { created_at: Timestamp },
+    #[serde(rename = "IssueComment", rename_all = "camelCase")]
+    Commented {
+        created_at: Timestamp,
+        author: Option<Actor>,
+    },
     #[serde(untagged)]
     Assignment(GqlAssignment),
 }
@@ -2139,6 +2266,10 @@ fn events(nodes: Vec<GqlEvent>) -> Vec<IssueEvent> {
                 at: labeling.created_at,
             }),
             GqlEvent::Reopened { created_at } => Some(IssueEvent::Reopened { at: created_at }),
+            GqlEvent::Commented { created_at, author } => Some(IssueEvent::Commented {
+                by: login(author),
+                at: created_at,
+            }),
             GqlEvent::Assignment(assignment) => assignment.read().map(IssueEvent::Assignment),
         })
         .collect()
@@ -2167,7 +2298,7 @@ fn pull_state(
 
 const PULL_FIELDS: &str = concat!(
     "fragment PullFields on PullRequest {
-  number title body createdAt updatedAt baseRefName headRefName headRefOid isDraft state mergedAt closedAt
+  number title body createdAt updatedAt baseRefName headRefName headRefOid isCrossRepository isDraft state mergedAt closedAt
   mergeable mergeStateStatus canBeRebased reviewDecision
   author { __typename login }
   ",
@@ -2175,9 +2306,12 @@ const PULL_FIELDS: &str = concat!(
     "
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
-  timelineItems(last: 100, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+  timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
     nodes {
       __typename
+      ... on LabeledEvent { ",
+    labeling_fields!(),
+    " }
       ",
     assignment_fields!(),
     "
@@ -2214,6 +2348,10 @@ struct GqlPull {
     base_ref_name: String,
     head_ref_name: String,
     head_ref_oid: String,
+    /// Whether its head is in another repository, such as a fork; `false`
+    /// in a payload recorded before Linewright read it.
+    #[serde(default)]
+    is_cross_repository: bool,
     is_draft: bool,
     state: String,
     merged_at: Option<Timestamp>,
@@ -2231,7 +2369,7 @@ struct GqlPull {
     status_check_rollup: Option<Rollup>,
     labels: Nodes<Name>,
     assignees: Nodes<LoginNode>,
-    timeline_items: Nodes<GqlAssignment>,
+    timeline_items: Nodes<GqlEvent>,
 }
 
 /// <https://docs.github.com/en/graphql/reference/enums#pullrequestreviewdecision>
@@ -2370,6 +2508,13 @@ impl GqlContext {
 }
 
 impl GqlPull {
+    /// Whether its pushes are read: while it is open, from a branch of this
+    /// repository, whose activity holds the pushes to its own branches
+    /// alone, not a fork's.
+    fn pushes_readable(&self) -> bool {
+        self.state == "OPEN" && !self.is_cross_repository
+    }
+
     /// GitHub reports no review decision when the rules require a code
     /// owner's review but no approvals, so the rules say that review is
     /// needed then.
@@ -2450,6 +2595,18 @@ impl GqlPull {
             (_, false) => Rebaseability::NotRebaseable,
         };
         let review_decision = self.review_decision.and_then(GqlReviewDecision::decision);
+        let (mut labelings, mut assignments) = (vec![], vec![]);
+        for event in events(self.timeline_items.nodes) {
+            match event {
+                IssueEvent::Labeled { label, by, at } => {
+                    labelings.push(Labeling { label, by, at });
+                }
+                IssueEvent::Assignment(assignment) => assignments.push(assignment),
+                IssueEvent::Unlabeled { .. }
+                | IssueEvent::Reopened { .. }
+                | IssueEvent::Commented { .. } => {}
+            }
+        }
         Pull {
             number: Number(self.number),
             title: self.title,
@@ -2502,18 +2659,14 @@ impl GqlPull {
                 .collect(),
             review_decision,
             labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
+            labelings,
             assignees: self
                 .assignees
                 .nodes
                 .into_iter()
                 .map(|a| Login::new(a.login))
                 .collect(),
-            assignments: self
-                .timeline_items
-                .nodes
-                .into_iter()
-                .filter_map(GqlAssignment::read)
-                .collect(),
+            assignments,
         }
     }
 }
@@ -2529,7 +2682,7 @@ const MERGED_FIELDS: &str = concat!(
   assignees(first: 20) { nodes { login } }
   files(first: 100) { pageInfo { hasNextPage } nodes { path } }
   ",
-    assignment_timeline!(),
+    assignment_timeline!(comments),
     "
 }"
 );
@@ -2778,9 +2931,13 @@ impl Store for GitHub {
             .filter(|issue| holds(issue, &linewright))
             .collect();
         let mut pulls = vec![];
+        let mut peoples_pulls = vec![];
         for pr in self.open_pulls().await? {
-            if self.by_linewright(pr.author.as_ref()) {
-                pulls.push(self.pull(Number(pr.number)).await?);
+            let number = Number(pr.number);
+            match pr.held(&linewright) {
+                Some(PullHeld::Linewrights) => pulls.push(self.pull(number).await?),
+                Some(PullHeld::Peoples) => peoples_pulls.push(self.pull(number).await?),
+                None => {}
             }
         }
         let closed: BTreeSet<Number> = issues
@@ -2804,6 +2961,7 @@ impl Store for GitHub {
             default_branch,
             issues,
             pulls,
+            peoples_pulls,
         };
         // An unfinished lane holds its closed tickets, and Linewright's pull
         // requests closing them, whenever they closed.
@@ -2881,6 +3039,36 @@ impl Store for GitHub {
         Ok(Some(self.pull_view(pr).await?))
     }
 
+    async fn peoples_pull(&self, number: Number) -> Result<PeoplesPullRead> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct One {
+            pull_request: GqlPeoplesPull,
+        }
+        let query = format!(
+            "query($owner: String!, $name: String!, $number: Int!) {{
+              repository(owner: $owner, name: $name) {{ pullRequest(number: $number) {{ ...PeoplesPullFields }} }}
+            }}
+            {PEOPLES_PULL_FIELDS}"
+        );
+        let data: Option<RepoData<One>> = self
+            .graphql_found(
+                &query,
+                json!({"owner": self.owner, "name": self.name, "number": number.0}),
+            )
+            .await?;
+        let Some(pr) = data.map(|d| d.repository.pull_request) else {
+            return Ok(PeoplesPullRead::default());
+        };
+        let (closes, peoples) = pr.read(&self.linewright());
+        let pull = if peoples {
+            Some(self.pull(number).await?)
+        } else {
+            None
+        };
+        Ok(PeoplesPullRead { closes, pull })
+    }
+
     async fn issue(&self, number: Number) -> Result<IssueRead> {
         let Some(issue) = self.gql_issue(number).await? else {
             return Ok(IssueRead::Gone);
@@ -2892,7 +3080,7 @@ impl Store for GitHub {
             return Ok(
                 match closed
                     .and_then(|i| i.into_closed(&linewright))
-                    .filter(|closed| closed.managed(&linewright))
+                    .filter(|closed| closed.candidate(&linewright))
                 {
                     Some(closed) => IssueRead::Closed(Box::new(closed)),
                     None => IssueRead::LeftOut { open: false },
@@ -2912,38 +3100,6 @@ impl Store for GitHub {
             issue: Box::new(issue),
             pulls,
         })
-    }
-
-    async fn open_pull_closes(&self, number: Number) -> Result<Vec<Number>> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Closing {
-            state: String,
-            closing_issues_references: Option<Nodes<NumberNode>>,
-        }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct One {
-            pull_request: Closing,
-        }
-        let query = concat!(
-            "query($owner: String!, $name: String!, $number: Int!) {
-              repository(owner: $owner, name: $name) { pullRequest(number: $number) { state ",
-            closes_field!(),
-            " } }
-            }"
-        );
-        let data: Option<RepoData<One>> = self
-            .graphql_found(
-                query,
-                json!({"owner": self.owner, "name": self.name, "number": number.0}),
-            )
-            .await?;
-        Ok(data
-            .map(|d| d.repository.pull_request)
-            .filter(|pr| pr.state == "OPEN")
-            .map(|pr| closes(pr.closing_issues_references))
-            .unwrap_or_default())
     }
 
     async fn merged_pull(&self, number: Number, windows: Windows) -> Result<Option<MergedPull>> {
@@ -4648,20 +4804,30 @@ mod tests {
         assert_eq!(reason(json!(null)), None);
     }
 
+    /// The pull requests closed without merging of the page `recorded`,
+    /// closed since `since`, that `linewright` worked.
+    fn closed_pulls_held(recorded: &str, since: &str, linewright: &str) -> Vec<ClosedItem> {
+        let page: Page<GqlClosedPull> = serde_json::from_str(recorded).unwrap();
+        let read = page
+            .nodes
+            .into_iter()
+            .filter_map(|pr| pr.into_closed(&Login::new(linewright)));
+        closed_within(read, opened(since))
+    }
+
     /// `fixtures/closed-pulls.json` is the page of closed pull requests
     /// GitHub returned for <https://github.com/tibbe/linewright>: the one,
-    /// #321, its maintainer closed without merging.
+    /// #321, its maintainer opened and closed without merging, which no one
+    /// labeled, assigned or commented on.
     #[test]
-    fn linewrights_pull_requests_closed_unmerged_since_the_window_opened_are_held() {
-        let page = || -> Page<GqlClosedPull> {
-            serde_json::from_str(include_str!("fixtures/closed-pulls.json")).unwrap()
-        };
-        let closed = |since: &str, linewright: &str| -> Vec<ClosedItem> {
-            let read = page()
-                .nodes
-                .into_iter()
-                .filter_map(|pr| pr.into_closed(&Login::new(linewright)));
-            closed_within(read, opened(since))
+    fn pull_requests_closed_unmerged_since_the_window_opened_are_held_when_linewright_opened_them()
+    {
+        let closed = |since, linewright| {
+            closed_pulls_held(
+                include_str!("fixtures/closed-pulls.json"),
+                since,
+                linewright,
+            )
         };
 
         // The maintainer's account standing in for Linewright's.
@@ -4673,11 +4839,207 @@ mod tests {
                     .into(),
                 closed_at: at("2026-10-18T07:30:05Z"),
                 updated_at: at("2026-10-18T07:30:05Z"),
-                kind: ClosedKind::Pull { closes: vec![] },
+                kind: ClosedKind::Pull {
+                    closes: vec![],
+                    author: Some(Login::new("tibbe")),
+                },
             }]
         );
         assert_eq!(closed("2026-10-18T08:00:00Z", "tibbe"), []);
         assert_eq!(closed("2026-10-18T07:00:00Z", "tibbe-bot"), []);
+    }
+
+    /// `fixtures/closed-pulls-commented.json` is the first page of closed
+    /// pull requests GitHub returned for <https://github.com/cli/cli> on
+    /// 2026-10-30. Of those closed since 1 October, its maintainer `babakks`
+    /// only commented on #13318 and #14664, people's, and did nothing on the
+    /// rest.
+    #[test]
+    fn pull_requests_closed_unmerged_that_linewright_worked_are_held_whoever_opened_them() {
+        // `babakks` standing in for Linewright.
+        let closed = closed_pulls_held(
+            include_str!("fixtures/closed-pulls-commented.json"),
+            "2026-10-01T00:00:00Z",
+            "babakks",
+        );
+
+        let held: Vec<(Number, Option<&Login>)> = closed
+            .iter()
+            .map(|item| match &item.kind {
+                ClosedKind::Pull { author, .. } => (item.number, author.as_ref()),
+                ClosedKind::Issue { .. } => panic!("a pull request"),
+            })
+            .collect();
+        assert_eq!(
+            held,
+            [
+                (Number(13318), Some(&Login::new("Iron-Ham"))),
+                (Number(14664), Some(&Login::new("astrojuanlu"))),
+            ]
+        );
+    }
+
+    /// `fixtures/open-pulls-listed.json` is the first page of the open pull
+    /// requests listed for <https://github.com/cli/cli> on 2026-10-30. Of
+    /// them, its maintainer `babakks` opened #11500, labeled #13013, was
+    /// assigned by another to #13017, only commented on #14017, and did
+    /// nothing on #9847.
+    #[test]
+    fn listed_open_pull_requests_are_held_as_linewrights_own_or_as_a_persons_linewright_worked_or_is_assigned_to()
+     {
+        let page: Page<GqlOpenPull> =
+            serde_json::from_str(include_str!("fixtures/open-pulls-listed.json")).unwrap();
+
+        // `babakks` standing in for Linewright.
+        let held: BTreeMap<u64, Option<PullHeld>> = page
+            .nodes
+            .into_iter()
+            .map(|pr| (pr.number, pr.held(&Login::new("babakks"))))
+            .collect();
+
+        let of = |numbers: &[u64]| -> Vec<Option<PullHeld>> {
+            numbers.iter().map(|n| held[n]).collect()
+        };
+        assert_eq!(
+            of(&[11500, 13013, 13017, 14017, 9847]),
+            [
+                Some(PullHeld::Linewrights),
+                Some(PullHeld::Peoples),
+                Some(PullHeld::Peoples),
+                Some(PullHeld::Peoples),
+                None,
+            ]
+        );
+    }
+
+    /// `fixtures/peoples-pulls.json` is `PeoplesPullFields` as GitHub
+    /// returned it, by number, for pull requests of
+    /// <https://github.com/cli/cli> on 2026-10-30: #13017, open, which
+    /// `babakks` was assigned to; #9847, open, which `babakks` did nothing
+    /// on; and #14664, which `babakks` commented on, closed.
+    #[test]
+    fn a_persons_pull_request_is_read_in_full_while_it_is_open_and_linewright_may_manage_it() {
+        let response: GqlResponse<RepoData<BTreeMap<String, Option<GqlPeoplesPull>>>> =
+            serde_json::from_str(include_str!("fixtures/peoples-pulls.json")).unwrap();
+        let mut pulls = response.data.unwrap().repository;
+        let mut read = |alias: &str| {
+            pulls
+                .remove(alias)
+                .flatten()
+                .unwrap()
+                .read(&Login::new("babakks"))
+        };
+
+        assert_eq!(read("i13017"), (vec![Number(13016)], true));
+        assert_eq!(read("i9847"), (vec![Number(9828)], false));
+        assert_eq!(read("i14664"), (vec![], false));
+    }
+
+    /// `fixtures/pull-labeled.json` is `PullFields` as GitHub returned it
+    /// for <https://github.com/tibbe/linewright/pull/817>, a spec change of
+    /// `tibbe`'s that `tibbe-bot` assigned itself to and labeled designed.
+    #[test]
+    fn a_pull_request_lists_who_applied_each_label_when_and_is_worked_by_who_applied_one() {
+        let pr: GqlPull = serde_json::from_str(include_str!("fixtures/pull-labeled.json")).unwrap();
+
+        let pull = pr.into_pull(vec![], &BranchRules::default());
+
+        assert_eq!(
+            pull.labelings,
+            [Labeling {
+                label: "linewright:designed".into(),
+                by: Some(Login::new("tibbe-bot")),
+                at: at("2026-10-30T09:14:46Z"),
+            }]
+        );
+        assert_eq!(pull.assignments.len(), 2);
+        assert!(pull.worked_by(&Login::new("tibbe-bot")));
+        assert!(!pull.worked_by(&Login::new("alice")));
+    }
+
+    /// `fixtures/pull-from-fork.json` is `PullFields` as GitHub returned it
+    /// for <https://github.com/cli/cli/pull/14017>, open from a fork;
+    /// `fixtures/pull-labeled.json`, as above, merged from a branch of the
+    /// repository itself; and
+    /// `fixtures/pull-check-run-concluded-in-progress.json` an open pull
+    /// request from a branch of the repository itself.
+    #[test]
+    fn the_pushes_of_a_pull_request_are_read_only_while_it_is_open_from_a_branch_of_the_repository()
+    {
+        let read = |recorded: &str| serde_json::from_str::<GqlPull>(recorded).unwrap();
+
+        assert!(!read(include_str!("fixtures/pull-from-fork.json")).pushes_readable());
+        assert!(!read(include_str!("fixtures/pull-labeled.json")).pushes_readable());
+        assert!(
+            read(include_str!(
+                "fixtures/pull-check-run-concluded-in-progress.json"
+            ))
+            .pushes_readable()
+        );
+    }
+
+    /// `fixtures/merged-pull-commented.json` is `MergedFields` as GitHub
+    /// returned it for <https://github.com/tibbe/linewright/pull/817>, as
+    /// above, which `tibbe-bot` also commented on. Its timeline is kept to
+    /// that comment.
+    #[test]
+    fn a_merged_pull_request_lists_its_comments_and_is_worked_by_who_commented_on_it() {
+        let mut pr: Value =
+            serde_json::from_str(include_str!("fixtures/merged-pull-commented.json")).unwrap();
+        pr["timelineItems"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|item| item["__typename"] == "IssueComment");
+        let pr: GqlMerged = serde_json::from_value(pr).unwrap();
+
+        let merged = pr.into_merged(at("2026-10-30T09:05:41Z"), vec![]);
+
+        assert_eq!(
+            merged.events,
+            [IssueEvent::Commented {
+                by: Login::new("tibbe-bot"),
+                at: at("2026-10-30T09:14:45Z"),
+            }]
+        );
+        assert!(merged.worked_by(&Login::new("tibbe-bot")));
+        assert!(!merged.worked_by(&Login::new("alice")));
+    }
+
+    /// `fixtures/managed-facts-commented.json` is the page of
+    /// `ManagedFactsFields` GitHub returned for the open issues of
+    /// <https://github.com/cli/cli> last updated on 2026-10-30. Its
+    /// maintainer `mislav` only commented on #5773 of them; #14822, #14827,
+    /// #14841, #14842, #14855, #14856 and #14868 are labeled `needs-triage`,
+    /// which asks for the work of whoever triages.
+    #[test]
+    fn an_open_issue_linewright_only_commented_on_is_indexed() {
+        let mut index = ManagedIndex::default();
+
+        // `mislav` standing in for Linewright.
+        for issue in facts_page(include_str!("fixtures/managed-facts-commented.json")) {
+            index.keep(issue, &Login::new("mislav"));
+        }
+
+        assert_eq!(
+            index.open,
+            numbers(&[5773, 14822, 14827, 14841, 14842, 14855, 14856, 14868])
+        );
+    }
+
+    /// `fixtures/closed-issues-commented.json` is the page of
+    /// `ClosedIssueFields` GitHub returned for the closed issues of
+    /// <https://github.com/cli/cli> last updated on 2026-10-30. Of them, its
+    /// maintainer `BagToad` only commented on #14711.
+    #[test]
+    fn a_closed_issue_linewright_only_commented_on_is_held() {
+        let page: Page<GqlClosedIssue> =
+            serde_json::from_str(include_str!("fixtures/closed-issues-commented.json")).unwrap();
+
+        // `BagToad` standing in for Linewright.
+        let closed = managed_closed(page.nodes, &Login::new("BagToad"));
+
+        let held: Vec<Number> = closed.iter().map(|item| item.number).collect();
+        assert_eq!(held, [Number(14711)]);
     }
 
     /// `fixtures/labels.json` is the example response GitHub documents for

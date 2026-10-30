@@ -47,6 +47,7 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
         default_branch: "main".into(),
         issues,
         pulls: vec![],
+        peoples_pulls: vec![],
         merged: vec![],
         ticket_branches: vec![],
         closed: vec![],
@@ -1844,6 +1845,7 @@ fn pull(number: u64, closes: u64) -> Pull {
         threads: vec![],
         labels: vec![],
         assignees: vec![Login::new(LINEWRIGHT)],
+        labelings: vec![],
         assignments: vec![Assignment::Assigned {
             assignee: Login::new(LINEWRIGHT),
             actor: Login::new("maintainer"),

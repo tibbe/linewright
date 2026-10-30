@@ -359,6 +359,16 @@ pub struct Comment {
     pub created_at: Timestamp,
 }
 
+impl Comment {
+    /// Its writing, as an event.
+    pub fn event(&self) -> IssueEvent {
+        IssueEvent::Commented {
+            by: self.author.clone(),
+            at: self.created_at,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Linked {
     pub number: Number,
@@ -468,6 +478,11 @@ pub enum IssueEvent {
     Reopened {
         at: Timestamp,
     },
+    /// A comment written on it.
+    Commented {
+        by: Login,
+        at: Timestamp,
+    },
     #[serde(untagged)]
     Assignment(Assignment),
 }
@@ -493,7 +508,8 @@ impl IssueEvent {
         match self {
             IssueEvent::Labeled { at, .. }
             | IssueEvent::Unlabeled { at, .. }
-            | IssueEvent::Reopened { at } => *at,
+            | IssueEvent::Reopened { at }
+            | IssueEvent::Commented { at, .. } => *at,
             IssueEvent::Assignment(
                 Assignment::Assigned { at, .. } | Assignment::Unassigned { at, .. },
             ) => *at,
@@ -790,7 +806,9 @@ impl Issue {
             match event {
                 IssueEvent::Labeled { label, .. } => then.labels.retain(|l| l != label),
                 IssueEvent::Unlabeled { label, .. } => then.labels.push(label.clone()),
-                IssueEvent::Reopened { .. } | IssueEvent::Assignment(_) => {}
+                IssueEvent::Reopened { .. }
+                | IssueEvent::Commented { .. }
+                | IssueEvent::Assignment(_) => {}
             }
         }
         then.events = before.into_iter().map(|(_, e)| e.clone()).collect();
@@ -856,16 +874,28 @@ impl Issue {
         self.assignees.contains(login)
     }
 
+    /// Its events with its comments among them, as GitHub's timeline holds
+    /// them.
+    fn timeline(&self) -> Vec<IssueEvent> {
+        let comments = self.comments.iter().map(Comment::event);
+        self.events.iter().cloned().chain(comments).collect()
+    }
+
     /// What tells whether `linewright` manages it, with `closing` the pull
-    /// requests that close it.
-    fn signs<'a>(&'a self, linewright: &Login, closing: &'a [ClosingPull]) -> ManagedSigns<'a> {
+    /// requests that close it and `timeline` its [`Issue::timeline`].
+    fn signs<'a>(
+        &'a self,
+        linewright: &Login,
+        closing: &'a [ClosingPull],
+        timeline: &'a [IssueEvent],
+    ) -> ManagedSigns<'a> {
         ManagedSigns {
             open: self.open,
             labels: &self.labels,
+            assignees: &self.assignees,
             work: WorkSigns {
                 author: Some(&self.author),
-                assignees: &self.assignees,
-                events: &self.events,
+                events: timeline,
                 closed_by: closing,
                 tracks: self.tracks(linewright).is_some(),
             },
@@ -876,24 +906,33 @@ impl Issue {
     /// `closing` the pull requests that close it, such as
     /// [`Snapshot::pulls_closing`] gives.
     pub fn worked_by(&self, linewright: &Login, closing: &[ClosingPull]) -> bool {
-        self.signs(linewright, closing).work.worked_by(linewright)
+        let timeline = self.timeline();
+        self.signs(linewright, closing, &timeline)
+            .work
+            .worked_by(linewright)
     }
 
-    /// Whether it waits on `linewright` to act next (`GLOSSARY.md`,
-    /// **Managed**): it is open, and assigned to Linewright, such as by
-    /// hand, or, with `marking` [`Marking::Marked`], labeled `needs-triage`
-    /// or `ready-for-agent`. A spec change waiting for design is a merged
-    /// pull request, which `reconcile::spec_change` tells.
-    pub fn waits_on_linewright(&self, linewright: &Login, marking: Marking) -> bool {
-        self.signs(linewright, &self.closed_by)
-            .waits_on_linewright(linewright, marking)
+    /// Whether it asks for `linewright`'s work (`docs/specs/repository.md`,
+    /// Managed items): it is open, and assigned to Linewright, such as by
+    /// hand, or, with `marking` [`Marking::Marked`], labeled with a status
+    /// label that asks for Linewright's work. A spec change waiting for
+    /// design is a merged pull request, which `reconcile::spec_change`
+    /// tells.
+    pub fn asks_for_work(&self, linewright: &Login, marking: Marking) -> bool {
+        let timeline = self.timeline();
+        self.signs(linewright, &self.closed_by, &timeline)
+            .asks_for_work(linewright, marking)
     }
 
-    /// Whether `linewright` manages it (`GLOSSARY.md`, **Managed**): it has
-    /// worked it, as [`Issue::worked_by`] tells with `closing`, or it waits
-    /// on Linewright, as [`Issue::waits_on_linewright`] tells with `marking`.
-    pub fn managed(&self, linewright: &Login, closing: &[ClosingPull], marking: Marking) -> bool {
-        self.signs(linewright, closing).managed(linewright, marking)
+    /// Whether `linewright` may manage it (`docs/specs/repository.md`,
+    /// Managed items): it has worked it, as [`Issue::worked_by`] tells with
+    /// `closing`, or it asks for Linewright's work, as
+    /// [`Issue::asks_for_work`] tells with `marking`. Whether it is managed
+    /// is `managed::classify`'s to decide.
+    pub fn candidate(&self, linewright: &Login, closing: &[ClosingPull], marking: Marking) -> bool {
+        let timeline = self.timeline();
+        self.signs(linewright, closing, &timeline)
+            .candidate(linewright, marking)
     }
 
     pub fn last_reopened(&self) -> Option<Timestamp> {
@@ -1095,12 +1134,25 @@ pub struct Pull {
     pub reviews: Vec<Review>,
     pub threads: Vec<Thread>,
     pub labels: Vec<String>,
+    /// Oldest first; none known in a snapshot written before Linewright
+    /// read them.
+    #[serde(default)]
+    pub labelings: Vec<Labeling>,
     pub assignees: Vec<Login>,
     /// Oldest first.
     pub assignments: Vec<Assignment>,
     /// `None` where no review decides whether it merges.
     #[serde(default)]
     pub review_decision: Option<ReviewDecision>,
+}
+
+/// A label applied to a pull request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Labeling {
+    pub label: String,
+    /// As [`IssueEvent::Labeled`]'s.
+    pub by: Option<Login>,
+    pub at: Timestamp,
 }
 
 /// Where a pull request stands with its reviews, as GitHub decides it
@@ -1132,6 +1184,32 @@ impl Pull {
         self.assignees.contains(login)
     }
 
+    /// Whether `linewright` has worked it, as [`PullSigns::worked_by`]
+    /// tells.
+    pub fn worked_by(&self, linewright: &Login) -> bool {
+        let events = pull_events(&self.labelings, &self.assignments, &self.comments);
+        self.signs(&events).worked_by(linewright)
+    }
+
+    /// Among which pull requests a snapshot holds it: open, as
+    /// [`PullSigns::held`] tells; closed, among Linewright's when it is
+    /// Linewright's.
+    pub fn held(&self, linewright: &Login) -> Option<PullHeld> {
+        let events = pull_events(&self.labelings, &self.assignments, &self.comments);
+        match self.signs(&events).held(linewright) {
+            Some(PullHeld::Peoples) if !self.is_open() => None,
+            held => held,
+        }
+    }
+
+    fn signs<'a>(&'a self, events: &'a [IssueEvent]) -> PullSigns<'a> {
+        PullSigns {
+            author: &self.author,
+            assignees: &self.assignees,
+            events,
+        }
+    }
+
     /// Whether GitHub requires a review before it merges, such as a code
     /// owner's, that it has not had (`docs/specs/design_system.md`, Cards).
     /// GitHub decides no review when its rules require a code owner's review
@@ -1143,6 +1221,74 @@ impl Pull {
                 requirement,
                 Requirement::Approval | Requirement::CodeOwnerReview { .. }
             )))
+    }
+}
+
+/// A pull request's `labelings`, `assignments` and `comments` as events,
+/// oldest first.
+pub fn pull_events(
+    labelings: &[Labeling],
+    assignments: &[Assignment],
+    comments: &[Comment],
+) -> Vec<IssueEvent> {
+    let labelings = labelings.iter().map(|l| IssueEvent::Labeled {
+        label: l.label.clone(),
+        by: l.by.clone(),
+        at: l.at,
+    });
+    let assignments = assignments.iter().cloned().map(IssueEvent::Assignment);
+    let mut events: Vec<IssueEvent> = labelings
+        .chain(assignments)
+        .chain(comments.iter().map(Comment::event))
+        .collect();
+    events.sort_by_key(IssueEvent::at);
+    events
+}
+
+/// What tells whether Linewright worked a pull request, or it asks for
+/// Linewright's work (`docs/specs/repository.md`, Managed items): who
+/// opened it, who it is assigned to and its labelings, assignments and
+/// comments as `events`.
+pub struct PullSigns<'a> {
+    pub author: &'a Login,
+    pub assignees: &'a [Login],
+    pub events: &'a [IssueEvent],
+}
+
+/// Among which pull requests a snapshot holds an open one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PullHeld {
+    /// Linewright's own, which reconcile acts on ([`Snapshot::pulls`]).
+    Linewrights,
+    /// A person's that Linewright may manage ([`Snapshot::peoples_pulls`]).
+    Peoples,
+}
+
+impl PullSigns<'_> {
+    /// Whether `linewright` worked it, as [`Issue::worked_by`] tells: it
+    /// opened it, assigned itself to it, labeled it or commented on it.
+    pub fn worked_by(&self, linewright: &Login) -> bool {
+        WorkSigns {
+            author: Some(self.author),
+            events: self.events,
+            closed_by: &[],
+            tracks: false,
+        }
+        .worked_by(linewright)
+    }
+
+    /// Among which pull requests a snapshot holds it while it is open: among
+    /// Linewright's when Linewright opened it; among the people's when
+    /// Linewright is assigned to it, which asks for its work, or worked it;
+    /// otherwise among none.
+    pub fn held(&self, linewright: &Login) -> Option<PullHeld> {
+        if self.author == linewright {
+            Some(PullHeld::Linewrights)
+        } else if self.assignees.contains(linewright) || self.worked_by(linewright) {
+            Some(PullHeld::Peoples)
+        } else {
+            None
+        }
     }
 }
 
@@ -1195,7 +1341,7 @@ pub struct MergedPull {
     pub files: Vec<String>,
     #[serde(default)]
     pub assignees: Vec<Login>,
-    /// Its assignments and labelings.
+    /// Its assignments, labelings and comments.
     #[serde(default)]
     pub events: Vec<IssueEvent>,
 }
@@ -1220,6 +1366,16 @@ impl MergedPull {
 
     pub fn is_assigned(&self, login: &Login) -> bool {
         self.assignees.contains(login)
+    }
+
+    /// Whether `linewright` has worked it, as [`Pull::worked_by`] tells.
+    pub fn worked_by(&self, linewright: &Login) -> bool {
+        PullSigns {
+            author: &self.author,
+            assignees: &self.assignees,
+            events: &self.events,
+        }
+        .worked_by(linewright)
     }
 
     /// When `linewright` was last unassigned from it, by anyone, if
@@ -1313,9 +1469,9 @@ impl ManagedFacts {
         ManagedSigns {
             open,
             labels: &self.labels,
+            assignees: &work.assignees,
             work: WorkSigns {
                 author: work.author.as_ref(),
-                assignees: &work.assignees,
                 events: &work.events,
                 closed_by: &work.closed_by,
                 tracks: self.tracks(linewright).is_some(),
@@ -1328,46 +1484,45 @@ impl ManagedFacts {
         self.signs(false, linewright).work.worked_by(linewright)
     }
 
-    /// Whether `linewright` manages it, `open` or not, as [`Issue::managed`]
-    /// tells of an issue marked for Linewright with the pull requests
-    /// closing it.
-    pub fn managed(&self, open: bool, linewright: &Login) -> bool {
+    /// Whether `linewright` may manage it, `open` or not, as
+    /// [`Issue::candidate`] tells of an issue marked for Linewright with the
+    /// pull requests closing it.
+    pub fn candidate(&self, open: bool, linewright: &Login) -> bool {
         self.signs(open, linewright)
-            .managed(linewright, Marking::Marked)
+            .candidate(linewright, Marking::Marked)
     }
 }
 
-/// What tells whether Linewright manages an issue (`GLOSSARY.md`,
-/// **Managed**).
+/// What tells whether Linewright may manage an issue
+/// (`docs/specs/repository.md`, Managed items).
 struct ManagedSigns<'a> {
     open: bool,
     labels: &'a [String],
+    assignees: &'a [Login],
     work: WorkSigns<'a>,
 }
 
 impl ManagedSigns<'_> {
-    /// As [`Issue::waits_on_linewright`].
-    fn waits_on_linewright(&self, linewright: &Login, marking: Marking) -> bool {
+    /// As [`Issue::asks_for_work`].
+    fn asks_for_work(&self, linewright: &Login, marking: Marking) -> bool {
         self.open
-            && (self.work.assignees.contains(linewright)
+            && (self.assignees.contains(linewright)
                 || marking == Marking::Marked
-                    && matches!(
-                        status_label(self.labels, self.work.events),
-                        Some(StatusLabel::NeedsTriage | StatusLabel::ReadyForAgent)
-                    ))
+                    && status_label(self.labels, self.work.events)
+                        .is_some_and(|status| matches!(status.asks(), Asks::Linewright(_))))
     }
 
-    /// As [`Issue::managed`].
-    fn managed(&self, linewright: &Login, marking: Marking) -> bool {
-        self.work.worked_by(linewright) || self.waits_on_linewright(linewright, marking)
+    /// As [`Issue::candidate`].
+    fn candidate(&self, linewright: &Login, marking: Marking) -> bool {
+        self.work.worked_by(linewright) || self.asks_for_work(linewright, marking)
     }
 }
 
-/// What tells whether Linewright has worked an issue, open or closed
+/// What tells whether Linewright has worked an item, open or closed
 /// (`GLOSSARY.md`, **Worked**).
 struct WorkSigns<'a> {
     author: Option<&'a Login>,
-    assignees: &'a [Login],
+    /// Its comments among them.
     events: &'a [IssueEvent],
     closed_by: &'a [ClosingPull],
     /// Whether it is a tracking issue.
@@ -1375,18 +1530,21 @@ struct WorkSigns<'a> {
 }
 
 impl WorkSigns<'_> {
-    /// Whether `linewright` worked it:
+    /// Whether `linewright` worked it (`docs/specs/repository.md`, Managed
+    /// items):
     ///
     /// - it filed it, or tracks tickets with it: it opened it;
-    /// - it is assigned to it, or assigned itself to it once: it assigned
-    ///   itself;
-    /// - it applied one of its labels: it labeled it;
+    /// - it assigned itself to it once;
+    /// - it applied a label to it;
+    /// - it wrote a comment on it;
     /// - it wrote a pull request closing it: it opened that pull request.
+    ///
+    /// Being assigned alone is not working it: that asks for its work.
     fn worked_by(&self, linewright: &Login) -> bool {
         self.author == Some(linewright)
-            || self.assignees.contains(linewright)
             || self.events.iter().any(|event| match event {
                 IssueEvent::Labeled { by, .. } => by.as_ref() == Some(linewright),
+                IssueEvent::Commented { by, .. } => by == linewright,
                 IssueEvent::Assignment(Assignment::Assigned {
                     assignee, actor, ..
                 }) => assignee == linewright && actor == linewright,
@@ -1526,17 +1684,24 @@ pub enum BranchIssue {
 pub struct Snapshot {
     pub default_branch: String,
     pub issues: Vec<Issue>,
+    /// Linewright's open pull requests, and those of its closed ones that
+    /// close an issue it holds. Reconcile acts on these as Linewright's own.
     pub pulls: Vec<Pull>,
+    /// Other people's open pull requests that Linewright may manage
+    /// ([`Pull::held`]). Reconcile does not act on them.
+    #[serde(default)]
+    pub peoples_pulls: Vec<Pull>,
     pub merged: Vec<MergedPull>,
     #[serde(default)]
     pub ticket_branches: Vec<TicketBranch>,
     /// The issues closed within the Done window that Linewright manages
-    /// ([`ClosedItem::managed`]), every closed ticket of a tracking issue it
-    /// holds and Linewright's pull requests closed without merging that
-    /// close one, whenever they closed, and Linewright's pull requests closed
-    /// without merging within the Done window, for the board's Done column
-    /// (`docs/specs/design_system.md`, "The board"), which keeps only those
-    /// worked. The reconcile ignores them.
+    /// ([`ClosedItem::candidate`]), every closed ticket of a tracking issue
+    /// it holds and Linewright's pull requests closed without merging that
+    /// close one, whenever they closed, and the pull requests Linewright
+    /// worked closed without merging within the Done window, whoever opened
+    /// them, for the board's Done column (`docs/specs/design_system.md`,
+    /// "The board"), which keeps only those worked. The reconcile ignores
+    /// them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
 }
@@ -1565,8 +1730,8 @@ impl ClosedItem {
     }
 
     /// Whether `linewright` has worked it (`GLOSSARY.md`, **Worked**), as
-    /// [`Issue::worked_by`] tells. A pull request is Linewright's own: it
-    /// opened it.
+    /// [`Issue::worked_by`] tells. A pull request is held only when
+    /// Linewright worked it.
     pub fn worked_by(&self, linewright: &Login) -> bool {
         match &self.kind {
             ClosedKind::Issue { facts, .. } => facts.worked_by(linewright),
@@ -1574,10 +1739,10 @@ impl ClosedItem {
         }
     }
 
-    /// Whether `linewright` manages it (`GLOSSARY.md`, **Managed**), as
-    /// [`Issue::managed`] tells: closed, it waits on Linewright for nothing,
-    /// so it is managed when Linewright has worked it.
-    pub fn managed(&self, linewright: &Login) -> bool {
+    /// Whether `linewright` may manage it, as [`Issue::candidate`] tells:
+    /// closed, it asks for no work, so it may be managed when Linewright has
+    /// worked it.
+    pub fn candidate(&self, linewright: &Login) -> bool {
         self.worked_by(linewright)
     }
 }
@@ -1669,8 +1834,14 @@ pub enum ClosedKind {
         #[serde(default)]
         reason: Option<IssueCloseReason>,
     },
-    /// Linewright's, closed without merging.
-    Pull { closes: Vec<Number> },
+    /// One Linewright worked, closed without merging.
+    Pull {
+        closes: Vec<Number>,
+        /// Who opened it; `None` in a snapshot written before Linewright
+        /// read it, which held only Linewright's.
+        #[serde(default)]
+        author: Option<Login>,
+    },
 }
 
 /// What a closed issue holds that tells whether Linewright has worked it, as
@@ -1863,6 +2034,27 @@ impl Snapshot {
         self.pulls.retain(|p| p.number != number);
     }
 
+    pub fn put_peoples_pull(&mut self, pull: Pull) {
+        put(&mut self.peoples_pulls, pull, |p| p.number);
+    }
+
+    pub fn remove_peoples_pull(&mut self, number: Number) {
+        self.peoples_pulls.retain(|p| p.number != number);
+    }
+
+    /// Puts `pull`, read now, among the pull requests a snapshot taken now
+    /// holds it among ([`Pull::held`]), and out of the people's otherwise.
+    pub fn put_read_pull(&mut self, pull: Pull, linewright: &Login) {
+        match pull.held(linewright) {
+            Some(PullHeld::Linewrights) => {
+                self.remove_peoples_pull(pull.number);
+                self.put_pull(pull);
+            }
+            Some(PullHeld::Peoples) => self.put_peoples_pull(pull),
+            None => self.remove_peoples_pull(pull.number),
+        }
+    }
+
     pub fn put_merged(&mut self, pull: MergedPull) {
         put(&mut self.merged, pull, |p| p.number);
     }
@@ -1892,7 +2084,7 @@ impl Snapshot {
         };
         windows.holds_closed(item.closed_at)
             || held_ticket(item.number)
-            || matches!(&item.kind, ClosedKind::Pull { closes } if closes.iter().any(|&n| held_ticket(n)))
+            || matches!(&item.kind, ClosedKind::Pull { closes, .. } if closes.iter().any(|&n| held_ticket(n)))
     }
 
     /// Drops the closed items it would not keep ([`Snapshot::keeps_closed`]),
@@ -2284,6 +2476,45 @@ mod tests {
         assert_eq!(snapshot.pulls[0].updated_at, epoch);
         assert_eq!(snapshot.merged[0].updated_at, epoch);
         assert_eq!(snapshot.closed[0].updated_at, epoch);
+    }
+
+    /// A snapshot as Linewright wrote it before it held people's pull
+    /// requests, a pull request's labelings and the author of a pull request
+    /// closed unmerged, which was then always Linewright's.
+    #[test]
+    fn a_snapshot_written_before_peoples_pull_requests_loads_with_none_and_no_labelings_or_author_known()
+     {
+        let snapshot: Snapshot = serde_json::from_str(
+            r#"{
+              "default_branch": "main",
+              "issues": [],
+              "pulls": [{
+                "number": 10, "title": "Pull 10", "body": "", "author": "factory",
+                "created_at": "2026-10-01T11:58:00Z", "head_ref": "10-pull",
+                "head_sha": "abc123", "state": {"state": "open", "draft": false},
+                "closes": [1], "pushes": [], "mergeability": "unknown",
+                "rebaseability": "unknown", "checks": [], "comments": [], "reviews": [],
+                "threads": [], "labels": ["linewright:stalled"], "assignees": ["factory"],
+                "assignments": []
+              }],
+              "merged": [],
+              "closed": [{
+                "number": 11, "title": "Pull 11", "closed_at": "2026-09-28T13:00:00Z",
+                "updated_at": "2026-09-28T13:00:00Z", "kind": "pull", "closes": [2]
+              }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.peoples_pulls, []);
+        assert_eq!(snapshot.pulls[0].labelings, []);
+        assert_eq!(
+            snapshot.closed[0].kind,
+            ClosedKind::Pull {
+                closes: vec![Number(2)],
+                author: None,
+            }
+        );
     }
 
     fn existing(names: &[&str]) -> Vec<label::RepoLabel> {

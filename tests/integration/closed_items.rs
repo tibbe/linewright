@@ -26,7 +26,7 @@ fn endings(closed: &[ClosedItem]) -> Vec<(Number, String)> {
                 ClosedKind::Issue {
                     merged_by: None, ..
                 } => "closed".to_string(),
-                ClosedKind::Pull { closes } => {
+                ClosedKind::Pull { closes, .. } => {
                     let closes: Vec<String> = closes.iter().map(ToString::to_string).collect();
                     format!("pull request closing {}", closes.join(", "))
                 }

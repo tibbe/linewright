@@ -1,0 +1,1805 @@
+{
+  "pageInfo": {
+    "hasNextPage": true,
+    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0yNlQxODowMjo0OVrPAAAAAWaXeHg="
+  },
+  "nodes": [
+    {
+      "number": 14871,
+      "title": "test",
+      "body": "",
+      "closedAt": "2026-10-30T03:10:17Z",
+      "updatedAt": "2026-10-30T03:10:17Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "Bot",
+        "login": "ai-monitoring-agent"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T03:07:27Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T03:10:05Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-30T03:10:14Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14870,
+      "title": "malik",
+      "body": "<!--\nFor security vulnerabilities, first report through GitHub's bug bounty program:\nhttps://hackerone.com/github\nFor other security-related concerns or questions, report privately through GitHub\nSecurity Advisories: https://github.com/cli/cli/security/advisories\nDo not use public issues for security reports or questions.\n-->\n\n### Describe the bug\n\nA clear and concise description of what the bug is. \n\n### Affected version\n\nPlease run `gh version` and paste the output below.\n\n### Steps to reproduce the behavior\n\n1. Type this '...'\n2. View the output '....'\n3. See error\n\n### Expected vs actual behavior\n\nA clear and concise description of what you expected to happen and what actually happened.\n\n### Logs\n\nPaste the activity from your command line. Redact if needed.\n\n<!-- Note: Set `GH_DEBUG=true` for verbose logs or `GH_DEBUG=api` for verbose logs with HTTP traffic details. -->\n",
+      "closedAt": "2026-10-30T02:16:48Z",
+      "updatedAt": "2026-10-30T02:16:48Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "m9120212-prog"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T02:13:48Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T02:16:35Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-30T02:16:45Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14869,
+      "title": "malikali35gmale.com@gmail.com",
+      "body": "<!--\nFor security vulnerabilities, first report through GitHub's bug bounty program:\nhttps://hackerone.com/github\nFor other security-related concerns or questions, report privately through GitHub\nSecurity Advisories: https://github.com/cli/cli/security/advisories\nDo not use public issues for security reports or questions.\n-->\n\n### Describe the bug\n\nA clear and concise description of what the bug is. \n\n### Affected version\n\nPlease run `gh version` and paste the output below.\n\n### Steps to reproduce the behavior\n\n1. Type this '...'\n2. View the output '....'\n3. See error\n\n### Expected vs actual behavior\n\nA clear and concise description of what you expected to happen and what actually happened.\n\n### Logs\n\nPaste the activity from your command line. Redact if needed.\n\n<!-- Note: Set `GH_DEBUG=true` for verbose logs or `GH_DEBUG=api` for verbose logs with HTTP traffic details. -->\n",
+      "closedAt": "2026-10-30T02:14:13Z",
+      "updatedAt": "2026-10-30T02:14:13Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "m9120212-prog"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T02:11:08Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-30T02:12:36Z",
+            "author": {
+              "__typename": "User",
+              "login": "m9120212-prog"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-30T02:14:02Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-30T02:14:10Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14609,
+      "title": "gh release list -R https://github.com/cli/cli/ -> error",
+      "body": "### Describe the bug\n\n`gh release list -R https://github.com/cli/cli/` gives back:\n\n```\nnon-200 OK status code: 401 Unauthorized body: \"{\\r\\n  \\\"message\\\": \\\"Requires authentication\\\",\\r\\n  \\\"documentation_url\\\": \\\"https://docs.github.com/rest\\\",\\r\\n  \\\"status\\\": \\\"401\\\"\\r\\n}\"\n```\nInstead of listing available releases.\n\n### Affected version\n\n```\ngh version 2.102.0 (2026-09-30)\nhttps://github.com/cli/cli/releases/tag/v2.102.0\n```\n\nRunning on\n```\nDISTRIB_ID=Ubuntu\nDISTRIB_RELEASE=26.04\nDISTRIB_CODENAME=resolute\nDISTRIB_DESCRIPTION=\"Ubuntu 26.04.1 LTS\"\n```\n\n### Steps to reproduce the behavior\n\n1. Download `gh` using any browser from \"https://github.com/cli/cli/release\"\n2. Install `gh` using `dpkg -i gh_2.102.0_linux_amd64.deb`\n3. Try `gh release list -R https://github.com/cli/cli/`\n\n### Expected vs actual behavior\n\nShow list of available releases.\n\n### Logs\n\n```\n$ GH_DEBUG=api gh release list -R https://github.com/cli/cli/\n* Request at 2026-10-06 11:11:31.899403718 +0200 CEST m=+0.078085442\n* Request to https://api.github.com/graphql\n> POST /graphql HTTP/1.1\n> Host: api.github.com\n> Accept: application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview\n> Authorization: \n> Content-Length: 83\n> Content-Type: application/json\n> Graphql-Features: merge_queue\n> Time-Zone: Europe/Berlin\n> User-Agent: GitHub CLI 2.102.0\n> X-Gh-Cache-Ttl: 24h0m0s\n> X-Github-Api-Version: 2022-11-28\n\n{\n  \"query\": \"query Release_fields{Release: __type(name: \\\"Release\\\"){fields{name}}}\"\n}\n\n< HTTP/2.0 401 Unauthorized\n< Access-Control-Allow-Origin: *\n< Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, X-GitHub-Edge-Region, Deprecation, Sunset\n< Content-Security-Policy: default-src 'none'\n< Content-Type: application/json; charset=utf-8\n< Date: Tue, 06 Oct 2026 08:43:02 GMT\n< Referrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin\n< Server: github.com\n< Strict-Transport-Security: max-age=31536000; includeSubdomains; preload\n< Vary: Accept-Encoding, Accept, X-Requested-With\n< X-Content-Type-Options: nosniff\n< X-Frame-Options: deny\n< X-Github-Edge-Region: fra\n< X-Github-Media-Type: github.v3; format=json\n< X-Github-Request-Id: 4463:28F8AA:30393A0:3039C5E:6AC4B496\n< X-Xss-Protection: 0\n\n{\n  \"message\": \"Requires authentication\",\n  \"documentation_url\": \"https://docs.github.com/rest\",\n  \"status\": \"401\"\n}\n\n* Request took 1.298098ms\nnon-200 OK status code: 401 Unauthorized body: \"{\\r\\n  \\\"message\\\": \\\"Requires authentication\\\",\\r\\n  \\\"documentation_url\\\": \\\"https://docs.github.com/rest\\\",\\r\\n  \\\"status\\\": \\\"401\\\"\\r\\n}\"\n```\n",
+      "closedAt": "2026-10-29T10:36:36Z",
+      "updatedAt": "2026-10-29T10:36:45Z",
+      "stateReason": "COMPLETED",
+      "author": {
+        "__typename": "User",
+        "login": "tps800"
+      },
+      "labels": {
+        "nodes": []
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-06T09:15:15Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-06T09:23:56Z",
+            "author": {
+              "__typename": "User",
+              "login": "tps800"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-06T09:29:25Z",
+            "author": {
+              "__typename": "User",
+              "login": "babakks"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-06T09:29:36Z",
+            "actor": {
+              "__typename": "User",
+              "login": "babakks"
+            },
+            "label": {
+              "name": "more-info-needed"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-06T09:54:10Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-08T08:55:29Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-16T05:39:51Z",
+            "author": {
+              "__typename": "User",
+              "login": "tps800"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-16T07:44:15Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-16T07:44:20Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "more-info-needed"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-29T10:36:36Z",
+            "author": {
+              "__typename": "User",
+              "login": "tps800"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14861,
+      "title": "brew install gh",
+      "body": "<!--\nFor security vulnerabilities, first report through GitHub's bug bounty program:\nhttps://hackerone.com/github\nFor other security-related concerns or questions, report privately through GitHub\nSecurity Advisories: https://github.com/cli/cli/security/advisories\nDo not use public issues for security reports or questions.\n-->\n\n### Describe the bug\n\nA clear and concise description of what the bug is. \n\n### Affected version\n\nPlease run `gh version` and paste the output below.\n\n### Steps to reproduce the behavior\n\n1. Type this '...'\n2. View the output '....'\n3. See error\n\n### Expected vs actual behavior\n\nA clear and concise description of what you expected to happen and what actually happened.\n\n### Logs\n\nPaste the activity from your command line. Redact if needed.\n\n<!-- Note: Set `GH_DEBUG=true` for verbose logs or `GH_DEBUG=api` for verbose logs with HTTP traffic details. -->\n",
+      "closedAt": "2026-10-29T04:35:12Z",
+      "updatedAt": "2026-10-29T04:35:12Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "romancebung-ui"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T04:31:46Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-29T04:34:57Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-29T04:35:09Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14859,
+      "title": "Hanvantinh9",
+      "body": "<!--\nFor security vulnerabilities, first report through GitHub's bug bounty program:\nhttps://hackerone.com/github\nFor other security-related concerns or questions, report privately through GitHub\nSecurity Advisories: https://github.com/cli/cli/security/advisories\nDo not use public issues for security reports or questions.\n-->\n\n### Describe the bug\n\nA clear and concise description of what the bug is. \n\n### Affected version\n\nPlease run `gh version` and paste the output below.\n\n### Steps to reproduce the behavior\n\n1. Type this '...'\n2. View the output '....'\n3. See error\n\n### Expected vs actual behavior\n\nA clear and concise description of what you expected to happen and what actually happened.\n\n### Logs\n\nPaste the activity from your command line. Redact if needed.\n\n<!-- Note: Set `GH_DEBUG=true` for verbose logs or `GH_DEBUG=api` for verbose logs with HTTP traffic details. -->\n",
+      "closedAt": "2026-10-28T20:32:05Z",
+      "updatedAt": "2026-10-28T20:32:05Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "nguyenhan148194-cyber"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T20:28:56Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T20:31:55Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T20:32:03Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14843,
+      "title": "gh pr merge --squash can land the commit while the pull request stays open",
+      "body": "### Describe the bug\n\n`gh pr merge --squash` can update the base branch with the squash commit and leave the pull request open, with no merged event and no workflow run for that commit. The same pull request merged from the website behaves correctly, and three earlier pull requests merged with the same command behaved correctly, so the failure is intermittent.\n\n### Affected version\n\n```\ngh version 2.102.0 (2026-09-30)\nhttps://github.com/cli/cli/releases/tag/v2.102.0\n```\n\n### Steps to reproduce the behavior\n\nNot reproducible on demand: the same command succeeded on three earlier pull requests in the same repository and failed on one, with the same ruleset and the same pull request state.\n\n1. Merge a pull request with `gh pr merge <number> --squash --match-head-commit <sha> --body-file <file>`, against a base branch protected by a ruleset that requires a pull request and allows only the squash merge method.\n2. Run `gh pr view <number> --json state,mergedAt,mergeCommit` — the pull request still reports `state: OPEN`, `mergedAt: null` and a null merge commit.\n3. Run `gh api repos/<owner>/<repo>/pulls/<number>` — the same, and `merge_commit_sha` still holds the synthetic test-merge commit.\n4. Run `gh api repos/<owner>/<repo>/issues/<number>/timeline` — there is no `merged` event.\n5. Run `git ls-remote origin refs/heads/<base>` — the base branch does point at the new squash commit, whose message carries the pull request reference and the body passed with `--body-file`.\n6. Run `gh run list --branch <base>` — no workflow run exists for that commit.\n\n### Expected vs actual behavior\n\nThe pull request is marked as merged, a `merged` event appears in its timeline, and the push to the base branch triggers the workflows configured for it.\n\nWhat happened instead: the squash commit landed on the base branch and the pull request stayed open and unmerged, so the history and the pull request disagreed about what had landed. The merge button on that pull request had nothing left to merge, because the base already contained the branch. No workflow ran for the commit, so the change sat on the base branch ungated.\n\nMerging the same pull request from the website produced all three: the record flipped to merged, the `merged` event was written, and the push triggered the quality gate by itself.\n\n### Logs\n\nThe command was not run with `GH_DEBUG=api`, so there is no request trace to attach.\n\n```\n$ gh pr merge 25 --squash --match-head-commit 4e078b84e4cd24b40847ab0b216b4140abfa5c5d --body-file commit-body.txt\n$ echo $?\n0\n\n$ gh pr view 25 --json state,mergedAt,mergeCommit\n{\"state\":\"OPEN\",\"mergedAt\":null,\"mergeCommit\":null}\n\n$ gh api repos/pablocru/portfolio/pulls/25 --jq '{state, merged, merged_at, base: .base.sha, merge_commit_sha}'\n{\"state\":\"open\",\"merged\":false,\"merged_at\":null,\"base\":\"14ca0357e5ebe5f294743895d39e366f1b4b12bc\",\"merge_commit_sha\":\"e120cff96b4645e74080606a1ffd2de24d95e0ca\"}\n\n$ gh api repos/pablocru/portfolio/issues/25/timeline --jq '.[] | select(.event==\"merged\")'\n(no output)\n\n$ git ls-remote origin refs/heads/main\n179415c8d3a3d578cfcd93dd86cfdaba85398ee1\trefs/heads/main\n\n$ git log -1 --format='%H %s' origin/main\n179415c8d3a3d578cfcd93dd86cfdaba85398ee1 perf(ui): deliver the avatar eagerly and at the display density (#25)\n\n$ gh run list --branch main --limit 3\ncompleted success 14ca0357 chore(deps): update the node runtime to 24.22.1 (#24)\ncompleted success 8c5f01dd docs: align the readme with the publication workflow (#23)\n```\n",
+      "closedAt": "2026-10-28T09:42:31Z",
+      "updatedAt": "2026-10-28T09:42:31Z",
+      "stateReason": "COMPLETED",
+      "author": {
+        "__typename": "User",
+        "login": "pablocru"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "blocked"
+          },
+          {
+            "name": "platform"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T15:29:28Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T15:37:17Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T15:41:52Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T15:59:34Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T15:59:41Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "blocked"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T15:59:41Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "platform"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T16:37:56Z",
+            "author": {
+              "__typename": "User",
+              "login": "pablocru"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T09:42:31Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14851,
+      "title": "Jijo",
+      "body": "<!-- See [CONTRIBUTING.md](../CONTRIBUTING.md#proposing-a-design) for more information.-->\n\n### Link to issue for design submission\n\n<!-- \nProvide a link to the issue this design is for.\n\nAll design submissions must be linked to an open issue that\nhas both the `needs-design` and `help-wanted` labels.\n-->\n\n### Proposed Design\n\n<!--\nDescribe the design you are proposing to resolve the issue.\n\nAll CLI designs must adhere to the [Primer CLI design reference](https://primer.style/cli/).\n-->\n\n### Mockup\n\n<!--\nProvide a mockup of the design you are proposing. All mockups should clearly illustrate the command(s) being run and the expected output(s). \n\nWhen color and formatting are important, consider using our [CLI design Google Docs Template](https://docs.google.com/document/d/1JIRErIUuJ6fTgabiFYfCH3x91pyHuytbfa0QLnTfXKM/edit#heading=h.or54sa47ylpg).\n\nCode blocks can also be used to submit a design mockup - remember to include the command(s) being run. Example:\n\n```shell\n$ gh issue list --json title -L 5\n[\n  {\n    \"title\": \"`gh pr checks <pr> --required` should not fail when there are no required checks\"\n  },\n  {\n    \"title\": \"gh pr view commits should include commit description\"\n  },\n  {\n    \"title\": \"Adapt the color of the device code to the color used by the terminal\"\n  },\n  {\n    \"title\": \"`gh pr create` does not default to fork when user has write access to upstream\"\n  },\n  {\n    \"title\": \"First party discussions support\"\n  }\n]\n```\n-->",
+      "closedAt": "2026-10-28T04:11:38Z",
+      "updatedAt": "2026-10-28T04:11:38Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "jijosijikallur04-source"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T04:08:05Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T04:11:26Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T04:11:35Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14852,
+      "title": "Jijo",
+      "body": "",
+      "closedAt": "2026-10-28T04:10:54Z",
+      "updatedAt": "2026-10-28T04:10:54Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "jijosijikallur04-source"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T04:08:23Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T04:10:44Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T04:10:52Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14850,
+      "title": "Jijokj",
+      "body": "> (fgg) \n\n _Originally posted by @jijosijikallur04-source in [#14849](https://github.com/cli/cli/issues/14849#issuecomment-6460382339)_",
+      "closedAt": "2026-10-28T04:09:50Z",
+      "updatedAt": "2026-10-28T04:09:50Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "jijosijikallur04-source"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T04:06:48Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T04:07:12Z",
+            "author": {
+              "__typename": "User",
+              "login": "jijosijikallur04-source"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T04:07:32Z",
+            "author": {
+              "__typename": "User",
+              "login": "jijosijikallur04-source"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T04:09:41Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T04:09:48Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14849,
+      "title": "jijo",
+      "body": "<!--\nFor security vulnerabilities, first report through GitHub's bug bounty program:\nhttps://hackerone.com/github\nFor other security-related concerns or questions, report privately through GitHub\nSecurity Advisories: https://github.com/cli/cli/security/advisories\nDo not use public issues for security reports or questions.\n-->\n\n### Describe the bug\n\nA clear and concise description of what the bug is. \n\n### Affected version\n\nPlease run `gh version` and paste the output below.\n\n### Steps to reproduce the behavior\n\n1. Type this '...'\n2. View the output '....'\n3. See error\n\n### Expected vs actual behavior\n\nA clear and concise description of what you expected to happen and what actually happened.\n\n### Logs\n\nPaste the activity from your command line. Redact if needed.\n\n<!-- Note: Set `GH_DEBUG=true` for verbose logs or `GH_DEBUG=api` for verbose logs with HTTP traffic details. -->\n",
+      "closedAt": "2026-10-28T04:09:08Z",
+      "updatedAt": "2026-10-28T04:09:08Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "jijosijikallur04-source"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T04:05:17Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T04:05:51Z",
+            "author": {
+              "__typename": "User",
+              "login": "jijosijikallur04-source"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-28T04:08:56Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-28T04:09:05Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14836,
+      "title": "Investigate reducing Windows test-runner time through better caching",
+      "body": "### Describe the feature or problem you’d like to solve\n\nI think we can reduce Windows test-runner time by improving reuse of Go build artifacts.\n\nThe Windows race-test job failed to save its cache because the key had already been reserved:\n\n```shell\n$ gh api --allow-escape-sequences repos/cli/cli/actions/jobs/120072805549/logs | rg 'Cache is not found|Failed to save'\n2026-10-22T20:33:42.2167267Z Cache is not found\n2026-10-22T20:41:00.8761645Z Failed to save: Unable to reserve cache with key setup-go-Windows-x64-go-1.27.3-78fa9ce8bdbe17159635de6cdb60b8f679d867cfc54100974fc19f19cdf6292b, another job may be creating this cache.\n```\n\nThere are two Windows build workloads involved:\n\n* The [`build` job](https://github.com/cli/cli/blob/63837fb778d6a39f02be0ce76ff89f2bc8d74bdc/.github/workflows/go.yml#L12-L35) runs `go test -race -tags=integration ./...`, then `go build -v ./cmd/gh`.\n* The [`integration-tests` job](https://github.com/cli/cli/blob/63837fb778d6a39f02be0ce76ff89f2bc8d74bdc/.github/workflows/go.yml#L41-L65) runs `make`, then exercises the attestation commands against the resulting executable.\n\nThe attestation job built without `-race`, using `-trimpath`, and saved the same cache key before the race-test job finished:\n\n```shell\n$ gh api --allow-escape-sequences repos/cli/cli/actions/jobs/120072805565/logs | rg 'go build -trimpath|Cache saved with the key'\n2026-10-22T20:34:04.5029539Z go build -trimpath -ldflags \"-X github.com/cli/cli/v2/internal/build.Date=2026-10-22 -X github.com/cli/cli/v2/internal/build.Version=ed84a97 \" -o bin/gh.exe ./cmd/gh\n2026-10-22T20:36:28.6170907Z Cache saved with the key: setup-go-Windows-x64-go-1.27.3-78fa9ce8bdbe17159635de6cdb60b8f679d867cfc54100974fc19f19cdf6292b\n```\n\nGo cannot reuse ordinary compiled packages as race-instrumented packages. The `-trimpath` setting also affects compilation cache entries, so these workloads need different build artifacts even when their dependencies are identical.\n\nA later race-test job restored that cache and skipped saving its newly compiled artifacts because the key was an exact hit:\n\n```shell\n$ gh api --allow-escape-sequences repos/cli/cli/actions/jobs/121619521094/logs | rg 'Cache restored from key|not saving cache'\n2026-10-26T14:07:48.1819774Z Cache restored from key: setup-go-Windows-x64-go-1.27.3-78fa9ce8bdbe17159635de6cdb60b8f679d867cfc54100974fc19f19cdf6292b\n2026-10-26T14:15:42.6970760Z Cache hit occurred on the primary key setup-go-Windows-x64-go-1.27.3-78fa9ce8bdbe17159635de6cdb60b8f679d867cfc54100974fc19f19cdf6292b, not saving cache.\n```\n\nI suspect the shared key is giving us successful cache restores without preserving the compilation work needed by the race-test job.\n\n### Proposed solution\n\nInvestigate whether a cache populated by the Windows test job reduces its running time compared with the current shared cache.\n\nCompare both approaches on fresh runners using the same source revision, Go version and test commands. Measure the cost of populating and restoring the cache as well as running the tests and building the executable.\n\nAny proposed change should preserve race detection, test selection and failure reporting. Cached test results should not be mistaken for faster compilation.\n\n### Additional context\n\nI don't know how much time a workload-specific cache would save once restoration costs are included.\n\nMeasurements using an unchanged source revision would not establish the benefit across normal PR traffic. The report should state that limitation and identify any follow-up questions about cache refresh or changing source revisions.\n\n### Expected Output\n\nThe expected output for this issue is:\n\n* A closing comment on this issue with a report explaining the current cache keys, which jobs populate them, and whether restored artifacts match the Windows test workload.\n* Measurements comparing the existing cache with a cache populated by the test job, including end-to-end runner time, cache overhead, storage costs, test equivalence and limitations.\n* A recommendation for whether to change the cache strategy, with any questions about cache refresh or changing source revisions identified as follow-up work.\n* Optionally, a PR implementing an improvement if the evidence supports it. A report concluding that no change is worthwhile is also a valid outcome.",
+      "closedAt": "2026-10-27T14:00:05Z",
+      "updatedAt": "2026-10-27T14:00:06Z",
+      "stateReason": "COMPLETED",
+      "author": {
+        "__typename": "User",
+        "login": "williammartin"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "tech-debt"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": [
+          {
+            "login": "williammartin"
+          }
+        ]
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 14837,
+            "state": "CLOSED",
+            "isDraft": false,
+            "mergedAt": null,
+            "closedAt": "2026-10-27T13:58:13Z",
+            "updatedAt": "2026-10-27T13:58:13Z",
+            "baseRefName": "trunk",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T10:42:35Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "createdAt": "2026-10-27T10:45:45Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "assignee": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T10:45:48Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "tech-debt"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T10:46:53Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T10:51:45Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T14:00:06Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14800,
+      "title": "Replace github.com/vmihailenco/msgpack/v5",
+      "body": "### Describe the feature or problem you’d like to solve\n\nmsgpack v5.4.1 is flagged for CVE-2026-2454, and upstream has been inactive since 2023, so a fix is unlikely.\n\n### Proposed solution\n\ngh only uses msgpack to encode `PR_`, `U_` and `DC_` node IDs from small int arrays. A ~20-line encoder in `api` produces identical output and drops the dependency. PR: #14801.",
+      "closedAt": "2026-10-27T10:12:24Z",
+      "updatedAt": "2026-10-27T13:21:43Z",
+      "stateReason": "COMPLETED",
+      "author": {
+        "__typename": "User",
+        "login": "tj-smith47"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "tech-debt"
+          },
+          {
+            "name": "help wanted"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 14801,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-27T10:12:22Z",
+            "closedAt": "2026-10-27T10:12:22Z",
+            "updatedAt": "2026-10-27T10:12:22Z",
+            "baseRefName": "trunk",
+            "author": {
+              "__typename": "User",
+              "login": "tj-smith47"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": {
+              "__typename": "PullRequest",
+              "number": 14801
+            }
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-23T17:02:01Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-23T17:07:01Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-23T18:04:08Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-23T18:10:03Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "more-info-needed"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-23T18:14:51Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-23T18:46:07Z",
+            "author": {
+              "__typename": "User",
+              "login": "tj-smith47"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-26T16:01:52Z",
+            "author": {
+              "__typename": "User",
+              "login": "tj-smith47"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T09:03:26Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "tech-debt"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T09:03:36Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "help wanted"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T10:16:48Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T13:21:43Z",
+            "author": {
+              "__typename": "User",
+              "login": "tj-smith47"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14838,
+      "title": "new",
+      "body": "### Describe the feature or problem you’d like to solve\n\nA clear and concise description of what the feature or problem is.\n\n### Proposed solution\n\nHow will it benefit CLI and its users?\n\n### Additional context\n\nAdd any other context like screenshots or mockups are helpful, if applicable.\n",
+      "closedAt": "2026-10-27T12:44:53Z",
+      "updatedAt": "2026-10-27T12:44:53Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "expertayaz651-web"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T12:42:11Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T12:44:39Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T12:44:49Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14835,
+      "title": "automatize e testes seguindo nossa linguagem aqui",
+      "body": "",
+      "closedAt": "2026-10-27T06:54:23Z",
+      "updatedAt": "2026-10-27T06:54:23Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "fabricinhopremium-code"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T06:51:31Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T06:54:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T06:54:20Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14834,
+      "title": "JB89",
+      "body": "<!--\nFor security vulnerabilities, first report through GitHub's bug bounty program:\nhttps://hackerone.com/github\nFor other security-related concerns or questions, report privately through GitHub\nSecurity Advisories: https://github.com/cli/cli/security/advisories\nDo not use public issues for security reports or questions.\n-->\n\n### Describe the bug\n\nA clear and concise description of what the bug is. \n\n### Affected version\n\nPlease run `gh version` and paste the output below.\n\n### Steps to reproduce the behavior\n\n1. Type this '...'\n2. View the output '....'\n3. See error\n\n### Expected vs actual behavior\n\nA clear and concise description of what you expected to happen and what actually happened.\n\n### Logs\n\nPaste the activity from your command line. Redact if needed.\n\n<!-- Note: Set `GH_DEBUG=true` for verbose logs or `GH_DEBUG=api` for verbose logs with HTTP traffic details. -->\n",
+      "closedAt": "2026-10-27T06:43:37Z",
+      "updatedAt": "2026-10-27T06:46:28Z",
+      "stateReason": "COMPLETED",
+      "author": {
+        "__typename": "User",
+        "login": "gypsyface8-netizen"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T06:43:32Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T06:46:20Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T06:46:28Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14711,
+      "title": "gh pr merge reports a bogus \"invalid email address\"",
+      "body": "### Describe the bug\n\nWhen I run `gh pr merge --auto --squash \"$PR_URL\" -A \"sass.bot.beep.boop@gmail.com\"` through GitHub actions, I see the error `GraphQL: Invalid email address (mergePullRequest)`. See [this action](https://github.com/sass/dart-sass/actions/runs/38829304699/job/116746699927?pr=2879) as an example.\n\nI've also reproduced this locally.\n\n### Affected version\n\nI've verified this with gh version 2.102.0 (2026-09-30).\n\n### Steps to reproduce the behavior\n\n1. Run `gh pr merge -A \"sass.bot.beep.boop@gmail.com\"`\n2. See the error message\n\n### Expected vs actual behavior\n\nI would expect the (fully valid, used by the GitHub account) email address to be allowed.\n\n### Logs\n\nPaste the activity from your command line. Redact if needed.\n\n```\n* Request at 2026-10-15 18:10:56.129708051 -0700 PDT m=+0.046507253\n* Request to https://api.github.com/graphql\n> POST /graphql HTTP/1.1\n> Host: api.github.com\n> Accept: application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview\n> Authorization: token ████████████████████\n> Content-Length: 121\n> Content-Type: application/json\n> Graphql-Features: merge_queue\n* Request at 2026-10-15 18:10:56.129707697 -0700 PDT m=+0.046506899\n* Request to https://api.github.com/graphql\n> POST /graphql HTTP/1.1\n> Time-Zone: America/Los_Angeles\n> User-Agent: GitHub CLI 2.102.0\n> X-Gh-Cache-Ttl: 24h0m0s\n> X-Github-Api-Version: 2022-11-28\n\n> Host: api.github.com\n> Accept: application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview\n> Authorization: token ████████████████████\n> Content-Length: 248\n> Content-Type: application/json\n> Graphql-Features: merge_queue\n> Time-Zone: America/Los_Angeles\n> User-Agent: GitHub CLI 2.102.0\n> X-Gh-Cache-Ttl: 24h0m0s\n> X-Github-Api-Version: 2022-11-28\n\n{\n  \"query\": \"query PullRequest_fields2{WorkflowRun: __type(name: \\\"WorkflowRun\\\"){fields(includeDeprecated: true){name}}}\"\n}\n\n{\n  \"query\": \"query PullRequest_fields{PullRequest: __type(name: \\\"PullRequest\\\"){fields(includeDeprecated: true){name}},StatusCheckRollupContextConnection: __type(name: \\\"StatusCheckRollupContextConnection\\\"){fields(includeDeprecated: true){name}}}\"\n}\n\n< HTTP/2.0 200 OK\n< Access-Control-Allow-Origin: *\n< HTTP/2.0 200 OK\n< Access-Control-Allow-Origin: *\n< Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning\n< Content-Security-Policy: default-src 'none'\n< Content-Type: application/json; charset=utf-8\n< Date: Fri, 16 Oct 2026 01:08:51 GMT\n< Referrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin\n< Server: github.com\n< Strict-Transport-Security: max-age=31536000; includeSubdomains; preload\n< Vary: Accept-Encoding, Accept, X-Requested-With\n< X-Accepted-Oauth-Scopes: repo\n< X-Content-Type-Options: nosniff\n< Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning\n< Content-Security-Policy: default-src 'none'\n< X-Frame-Options: deny\n< X-Github-Edge-Region: westus2\n< X-Github-Media-Type: github.v4; param=merge-info-preview.nebula-preview; format=json\n< X-Github-Request-Id: B99E:E6359:448B5:6B918:6AD17923\n< X-Oauth-Client-Id: 178c6fc778ccc68e1d6a\n< Content-Type: application/json; charset=utf-8\n< Date: Fri, 16 Oct 2026 01:08:51 GMT\n< X-Oauth-Scopes: gist, read:org, repo\n< X-Ratelimit-Limit: 5000\n< X-Ratelimit-Remaining: 4997\n< X-Ratelimit-Reset: 1792116528\n< Referrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin\n< X-Ratelimit-Resource: graphql\n< X-Ratelimit-Used: 3\n< X-Xss-Protection: 0\n\n< Server: github.com\n< Strict-Transport-Security: max-age=31536000; includeSubdomains; preload\n< Vary: Accept-Encoding, Accept, X-Requested-With\n< X-Accepted-Oauth-Scopes: repo\n< X-Content-Type-Options: nosniff\n< X-Frame-Options: deny\n< X-Github-Edge-Region: westus2\n< X-Github-Media-Type: github.v4; param=merge-info-preview.nebula-preview; format=json\n< X-Github-Request-Id: B99E:E6359:448B5:6B917:6AD17923\n< X-Oauth-Client-Id: 178c6fc778ccc68e1d6a\n< X-Oauth-Scopes: gist, read:org, repo\n< X-Ratelimit-Limit: 5000\n< X-Ratelimit-Remaining: 4998\n< X-Ratelimit-Reset: 1792116528\n< X-Ratelimit-Resource: graphql\n< X-Ratelimit-Used: 2\n< X-Xss-Protection: 0\n\n{\n  \"data\": {\n    \"WorkflowRun\": {\n      \"fields\": [\n        {\n          \"name\": \"checkSuite\"\n        },\n        {\n          \"name\": \"createdAt\"\n        },\n        {\n          \"name\": \"databaseId\"\n        },\n        {\n          \"name\": \"deploymentReviews\"\n        },\n        {\n          \"name\": \"displayTitle\"\n        },\n        {\n          \"name\": \"event\"\n        },\n        {\n          \"name\": \"file\"\n        },\n        {\n          \"name\": \"id\"\n        },\n        {\n          \"name\": \"pendingDeploymentRequests\"\n        },\n        {\n          \"name\": \"resourcePath\"\n        },\n        {\n          \"name\": \"runAttempt\"\n        },\n        {\n          \"name\": \"runNumber\"\n        },\n        {\n          \"name\": \"updatedAt\"\n        },\n        {\n          \"name\": \"url\"\n        },\n        {\n          \"name\": \"workflow\"\n        }\n      ]\n    }\n  }\n}\n\n* Request took 970.027µs\n{\n  \"data\": {\n    \"PullRequest\": {\n      \"fields\": [\n        {\n          \"name\": \"activeLockReason\"\n        },\n        {\n          \"name\": \"additions\"\n        },\n        {\n          \"name\": \"assignedActors\"\n        },\n        {\n          \"name\": \"assignees\"\n        },\n        {\n          \"name\": \"author\"\n        },\n        {\n          \"name\": \"authorAssociation\"\n        },\n        {\n          \"name\": \"autoMergeRequest\"\n        },\n        {\n          \"name\": \"baseRef\"\n        },\n        {\n          \"name\": \"baseRefName\"\n        },\n        {\n          \"name\": \"baseRefOid\"\n        },\n        {\n          \"name\": \"baseRepository\"\n        },\n        {\n          \"name\": \"body\"\n        },\n        {\n          \"name\": \"bodyHTML\"\n        },\n        {\n          \"name\": \"bodyText\"\n        },\n        {\n          \"name\": \"canBeRebased\"\n        },\n        {\n          \"name\": \"changedFiles\"\n        },\n        {\n          \"name\": \"checksResourcePath\"\n        },\n        {\n          \"name\": \"checksUrl\"\n        },\n        {\n          \"name\": \"closed\"\n        },\n        {\n          \"name\": \"closedAt\"\n        },\n        {\n          \"name\": \"closingIssuesReferences\"\n        },\n        {\n          \"name\": \"comments\"\n        },\n        {\n          \"name\": \"commits\"\n        },\n        {\n          \"name\": \"createdAt\"\n        },\n        {\n          \"name\": \"createdViaEmail\"\n        },\n        {\n          \"name\": \"databaseId\"\n        },\n        {\n          \"name\": \"deletions\"\n        },\n        {\n          \"name\": \"editor\"\n        },\n        {\n          \"name\": \"files\"\n        },\n        {\n          \"name\": \"fullDatabaseId\"\n        },\n        {\n          \"name\": \"headRef\"\n        },\n        {\n          \"name\": \"headRefName\"\n        },\n        {\n          \"name\": \"headRefOid\"\n        },\n        {\n          \"name\": \"headRepository\"\n        },\n        {\n          \"name\": \"headRepositoryOwner\"\n        },\n        {\n          \"name\": \"hovercard\"\n        },\n        {\n          \"name\": \"id\"\n        },\n        {\n          \"name\": \"includesCreatedEdit\"\n        },\n        {\n          \"name\": \"isCrossRepository\"\n        },\n        {\n          \"name\": \"isDraft\"\n        },\n        {\n          \"name\": \"isInMergeQueue\"\n        },\n        {\n          \"name\": \"isMergeQueueEnabled\"\n        },\n        {\n          \"name\": \"isReadByViewer\"\n        },\n        {\n          \"name\": \"labels\"\n        },\n        {\n          \"name\": \"lastEditedAt\"\n        },\n        {\n          \"name\": \"latestOpinionatedReviews\"\n        },\n        {\n          \"name\": \"latestReviews\"\n        },\n        {\n          \"name\": \"locked\"\n        },\n        {\n          \"name\": \"maintainerCanModify\"\n        },\n        {\n          \"name\": \"mergeCommit\"\n        },\n        {\n          \"name\": \"mergeQueue\"\n        },\n        {\n          \"name\": \"mergeQueueEntry\"\n        },\n        {\n          \"name\": \"mergeStateStatus\"\n        },\n        {\n          \"name\": \"mergeable\"\n        },\n        {\n          \"name\": \"merged\"\n        },\n        {\n          \"name\": \"mergedAt\"\n        },\n        {\n          \"name\": \"mergedBy\"\n        },\n        {\n          \"name\": \"milestone\"\n        },\n        {\n          \"name\": \"number\"\n        },\n        {\n          \"name\": \"participants\"\n        },\n        {\n          \"name\": \"permalink\"\n        },\n        {\n          \"name\": \"potentialMergeCommit\"\n        },\n        {\n          \"name\": \"projectCards\"\n        },\n        {\n          \"name\": \"projectItems\"\n        },\n        {\n          \"name\": \"projectV2\"\n        },\n        {\n          \"name\": \"projectsV2\"\n        },\n        {\n          \"name\": \"publishedAt\"\n        },\n        {\n          \"name\": \"reactionGroups\"\n        },\n        {\n          \"name\": \"reactions\"\n        },\n        {\n          \"name\": \"repository\"\n        },\n        {\n          \"name\": \"resourcePath\"\n        },\n        {\n          \"name\": \"revertResourcePath\"\n        },\n        {\n          \"name\": \"revertUrl\"\n        },\n        {\n          \"name\": \"reviewDecision\"\n        },\n        {\n          \"name\": \"reviewRequests\"\n        },\n        {\n          \"name\": \"reviewThreads\"\n        },\n        {\n          \"name\": \"reviews\"\n        },\n        {\n          \"name\": \"stack\"\n        },\n        {\n          \"name\": \"stackEntry\"\n        },\n        {\n          \"name\": \"state\"\n        },\n        {\n          \"name\": \"statusCheckRollup\"\n        },\n        {\n          \"name\": \"suggestedActors\"\n        },\n        {\n          \"name\": \"suggestedReviewerActors\"\n        },\n        {\n          \"name\": \"suggestedReviewers\"\n        },\n        {\n          \"name\": \"timeline\"\n        },\n        {\n          \"name\": \"timelineItems\"\n        },\n        {\n          \"name\": \"title\"\n        },\n        {\n          \"name\": \"titleHTML\"\n        },\n        {\n          \"name\": \"totalCommentsCount\"\n        },\n        {\n          \"name\": \"updatedAt\"\n        },\n        {\n          \"name\": \"url\"\n        },\n        {\n          \"name\": \"userContentEdits\"\n        },\n        {\n          \"name\": \"viewerCanAddAndRemoveFromMergeQueue\"\n        },\n        {\n          \"name\": \"viewerCanApplySuggestion\"\n        },\n        {\n          \"name\": \"viewerCanAssign\"\n        },\n        {\n          \"name\": \"viewerCanClose\"\n        },\n        {\n          \"name\": \"viewerCanDeleteHeadRef\"\n        },\n        {\n          \"name\": \"viewerCanDisableAutoMerge\"\n        },\n        {\n          \"name\": \"viewerCanEditFiles\"\n        },\n        {\n          \"name\": \"viewerCanEnableAutoMerge\"\n        },\n        {\n          \"name\": \"viewerCanLabel\"\n        },\n        {\n          \"name\": \"viewerCanMergeAsAdmin\"\n        },\n        {\n          \"name\": \"viewerCanReact\"\n        },\n        {\n          \"name\": \"viewerCanReopen\"\n        },\n        {\n          \"name\": \"viewerCanSubscribe\"\n        },\n        {\n          \"name\": \"viewerCanUpdate\"\n        },\n        {\n          \"name\": \"viewerCanUpdateBranch\"\n        },\n        {\n          \"name\": \"viewerCannotUpdateReasons\"\n        },\n        {\n          \"name\": \"viewerDidAuthor\"\n        },\n        {\n          \"name\": \"viewerLatestReview\"\n        },\n        {\n          \"name\": \"viewerLatestReviewRequest\"\n        },\n        {\n          \"name\": \"viewerMergeBodyText\"\n        },\n        {\n          \"name\": \"viewerMergeHeadlineText\"\n        },\n        {\n          \"name\": \"viewerSubscription\"\n        }\n      ]\n    },\n    \"StatusCheckRollupContextConnection\": {\n      \"fields\": [\n        {\n          \"name\": \"checkRunCount\"\n        },\n        {\n          \"name\": \"checkRunCountsByState\"\n        },\n        {\n          \"name\": \"edges\"\n        },\n        {\n          \"name\": \"nodes\"\n        },\n        {\n          \"name\": \"pageInfo\"\n        },\n        {\n          \"name\": \"statusContextCount\"\n        },\n        {\n          \"name\": \"statusContextCountsByState\"\n        },\n        {\n          \"name\": \"totalCount\"\n        }\n      ]\n    }\n  }\n}\n\n* Request took 1.099696ms\n* Request at 2026-10-15 18:10:56.132533612 -0700 PDT m=+0.049332815\n* Request to https://api.github.com/graphql\n> POST /graphql HTTP/1.1\n> Host: api.github.com\n> Accept: application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview\n> Authorization: token ████████████████████\n> Content-Length: 421\n> Content-Type: application/json; charset=utf-8\n> Graphql-Features: merge_queue\n> Time-Zone: America/Los_Angeles\n> User-Agent: GitHub CLI 2.102.0\n> X-Github-Api-Version: 2022-11-28\n\nGraphQL query:\nquery PullRequestByNumber($owner: String!, $repo: String!, $pr_number: Int!) {\n    repository(owner: $owner, name: $repo) {\n      pullRequest(number: $pr_number) {id,number,state,title,commits(last:1){nodes{commit{oid}}},mergeStateStatus,headRefName,baseRefName,headRefOid,isCrossRepository,isInMergeQueue,isMergeQueueEnabled}\n    }\n  }\nGraphQL variables: {\"owner\":\"sass\",\"pr_number\":2880,\"repo\":\"dart-sass\"}\n\n< HTTP/2.0 200 OK\n< Access-Control-Allow-Origin: *\n< Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning\n< Content-Security-Policy: default-src 'none'\n< Content-Type: application/json; charset=utf-8\n< Date: Fri, 16 Oct 2026 01:10:56 GMT\n< Referrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin\n< Server: github.com\n< Strict-Transport-Security: max-age=31536000; includeSubdomains; preload\n< Vary: Accept-Encoding, Accept, X-Requested-With\n< X-Accepted-Oauth-Scopes: repo\n< X-Content-Type-Options: nosniff\n< X-Frame-Options: deny\n< X-Github-Edge-Region: westus2\n< X-Github-Media-Type: github.v4; param=merge-info-preview.nebula-preview; format=json\n< X-Github-Request-Id: A112:1137E4:40005:69217:6AD179A0\n< X-Oauth-Client-Id: 178c6fc778ccc68e1d6a\n< X-Oauth-Scopes: gist, read:org, repo\n< X-Ratelimit-Limit: 5000\n< X-Ratelimit-Remaining: 4990\n< X-Ratelimit-Reset: 1792116528\n< X-Ratelimit-Resource: graphql\n< X-Ratelimit-Used: 10\n< X-Xss-Protection: 0\n\n{\n  \"data\": {\n    \"repository\": {\n      \"pullRequest\": {\n        \"id\": \"PR_kwDOBFHeo88AAAABIhMFyQ\",\n        \"number\": 2880,\n        \"state\": \"OPEN\",\n        \"title\": \"Only normalize escapes at the expression level\",\n        \"commits\": {\n          \"nodes\": [\n            {\n              \"commit\": {\n                \"oid\": \"137822d027fb893fa441c60f0fc5087a81105e56\"\n              }\n            }\n          ]\n        },\n        \"mergeStateStatus\": \"UNSTABLE\",\n        \"headRefName\": \"escape-parsing\",\n        \"baseRefName\": \"main\",\n        \"headRefOid\": \"137822d027fb893fa441c60f0fc5087a81105e56\",\n        \"isCrossRepository\": false,\n        \"isInMergeQueue\": false,\n        \"isMergeQueueEnabled\": false\n      }\n    }\n  }\n}\n\n* Request took 525.683515ms\n[git rev-parse --verify refs/heads/escape-parsing]\n* Request at 2026-10-15 18:10:56.66545793 -0700 PDT m=+0.582257134\n* Request to https://api.github.com/graphql\n> POST /graphql HTTP/1.1\n> Host: api.github.com\n> Accept: application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview\n> Authorization: token ████████████████████\n> Content-Length: 256\n> Content-Type: application/json\n> Graphql-Features: merge_queue\n> Time-Zone: America/Los_Angeles\n> User-Agent: GitHub CLI 2.102.0\n> X-Github-Api-Version: 2022-11-28\n\nGraphQL query:\nmutation PullRequestMerge($input:MergePullRequestInput!){mergePullRequest(input: $input){clientMutationId}}\nGraphQL variables: {\"input\":{\"pullRequestId\":\"PR_kwDOBFHeo88AAAABIhMFyQ\",\"mergeMethod\":\"SQUASH\",\"authorEmail\":\"sass.bot.beep.boop@gmail.com\"}}\n\n< HTTP/2.0 200 OK\n< Access-Control-Allow-Origin: *\n< Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning\n< Content-Security-Policy: default-src 'none'\n< Content-Type: application/json; charset=utf-8\n< Date: Fri, 16 Oct 2026 01:10:57 GMT\n< Referrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin\n< Server: github.com\n< Strict-Transport-Security: max-age=31536000; includeSubdomains; preload\n< Vary: Accept-Encoding, Accept, X-Requested-With\n< X-Accepted-Oauth-Scopes: repo\n< X-Content-Type-Options: nosniff\n< X-Frame-Options: deny\n< X-Github-Edge-Region: westus2\n< X-Github-Media-Type: github.v4; param=merge-info-preview.nebula-preview; format=json\n< X-Github-Request-Id: A112:1137E4:40028:69252:6AD179A0\n< X-Oauth-Client-Id: 178c6fc778ccc68e1d6a\n< X-Oauth-Scopes: gist, read:org, repo\n< X-Ratelimit-Limit: 5000\n< X-Ratelimit-Remaining: 4989\n< X-Ratelimit-Reset: 1792116528\n< X-Ratelimit-Resource: graphql\n< X-Ratelimit-Used: 11\n< X-Xss-Protection: 0\n\n{\n  \"data\": {\n    \"mergePullRequest\": null\n  },\n  \"errors\": [\n    {\n      \"type\": \"UNPROCESSABLE\",\n      \"path\": [\n        \"mergePullRequest\"\n      ],\n      \"locations\": [\n        {\n          \"line\": 1,\n          \"column\": 58\n        }\n      ],\n      \"message\": \"Invalid email address\"\n    }\n  ]\n}\n\n* Request took 707.453263ms\nGraphQL: Invalid email address (mergePullRequest)\n```",
+      "closedAt": "2026-10-20T10:37:08Z",
+      "updatedAt": "2026-10-27T05:11:55Z",
+      "stateReason": "COMPLETED",
+      "author": {
+        "__typename": "User",
+        "login": "nex3"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "gh-pr"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-16T01:11:52Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-16T01:16:20Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-16T13:16:29Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-16T13:16:36Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "more-info-needed"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-16T13:16:36Z",
+            "actor": {
+              "__typename": "User",
+              "login": "williammartin"
+            },
+            "label": {
+              "name": "gh-pr"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-19T22:34:09Z",
+            "author": {
+              "__typename": "User",
+              "login": "nex3"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-20T00:03:07Z",
+            "author": {
+              "__typename": "User",
+              "login": "BagToad"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-20T09:11:02Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-20T10:37:08Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-20T23:57:34Z",
+            "author": {
+              "__typename": "User",
+              "login": "nex3"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-21T07:43:16Z",
+            "author": {
+              "__typename": "User",
+              "login": "williammartin"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14829,
+      "title": ".github/CONTRIBUTING.md",
+      "body": "### Describe the feature or problem you’d like to solve\n\nA clear and concise description of what the feature or problem is.\n\n### Proposed solution\n\nHow will it benefit CLI and its users?\n\n### Additional context\n\nAdd any other context like screenshots or mockups are helpful, if applicable.\n",
+      "closedAt": "2026-10-27T02:20:25Z",
+      "updatedAt": "2026-10-27T02:20:25Z",
+      "stateReason": "NOT_PLANNED",
+      "author": {
+        "__typename": "User",
+        "login": "apuzser331-prog"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T02:17:32Z",
+            "author": {
+              "__typename": "User",
+              "login": "apuzser331-prog"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T02:17:38Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-27T02:20:10Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-27T02:20:23Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14826,
+      "title": "Ni te van a oir",
+      "body": "<!--\nFor security vulnerabilities, first report through GitHub's bug bounty program:\nhttps://hackerone.com/github\nFor other security-related concerns or questions, report privately through GitHub\nSecurity Advisories: https://github.com/cli/cli/security/advisories\nDo not use public issues for security reports or questions.\n-->\n\n### Describe the bug\n\nA clear and concise description of what the bug is. \n\n### Affected version\n\nPlease run `gh version` and paste the output below.\n\n### Steps to reproduce the behavior\n\n1. Type this '...'\n2. View the output '....'\n3. See error\n\n### Expected vs actual behavior\n\nA clear and concise description of what you expected to happen and what actually happened.\n\n### Logs\n\nPaste the activity from your command line. Redact if needed.\n\n<!-- Note: Set `GH_DEBUG=true` for verbose logs or `GH_DEBUG=api` for verbose logs with HTTP traffic details. -->\n",
+      "closedAt": "2026-10-26T22:37:59Z",
+      "updatedAt": "2026-10-26T22:39:43Z",
+      "stateReason": "COMPLETED",
+      "author": {
+        "__typename": "User",
+        "login": "pabloenriquevenegassoto-spec"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "suspected-spam"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": []
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": null
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-26T22:36:33Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-26T22:37:59Z",
+            "author": {
+              "__typename": "User",
+              "login": "pabloenriquevenegassoto-spec"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-26T22:39:31Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "label": {
+              "name": "suspected-spam"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-26T22:39:43Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "number": 14814,
+      "title": "`gh auth status --no-refresh` shows a misleading error for expired tokens",
+      "body": "### Describe the bug\n\nWhen the active account uses an expiring OAuth token (`gh auth login --expiring`) and the access token has expired, `gh auth status --no-refresh` reports the token as invalid and suggests `gh auth refresh`. Running `gh auth status` without `--no-refresh` immediately refreshes the token and reports success, so the credential was never invalid; it had just expired.\n\nThe output is misleading in three ways:\n\n1. It says \"The token in keyring is invalid\", although the token has only expired and gh can renew it automatically.\n2. It suggests `gh auth refresh -h github.com`, which runs the full interactive OAuth flow again (it is meant for changing scopes). Simply dropping `--no-refresh`, or running any other gh command, is enough to renew the token.\n3. It hides the expiry details (token expiry and refresh token expiry) that are shown for a healthy expiring token, so there is no hint about why the check failed.\n\n### Affected version\n\n`gh` v2.103.1 (trunk at `64d175234`).\n\n### Steps to reproduce the behavior\n\nThis is how I ran into it:\n\n1. Logged in with an expiring token: `gh auth login --expiring`\n2. Did not run any gh command for longer than the access token lifetime (about 8 hours), so the token expired.\n3. Ran `gh auth status --no-refresh`, which reported the token as invalid (see below).\n4. Ran `gh auth status`, which refreshed the token and reported success.\n\n### Expected vs actual behavior\n\nActual:\n\n```\n$ gh auth status --no-refresh\ngithub.com\n  X Failed to log in to github.com account monalisa (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n  - To re-authenticate, run: gh auth refresh -h github.com\n  - To forget about this account, run: gh auth logout -h github.com -u monalisa\n```\n\nThe JSON output already carries enough to tell that the token has expired (`refreshable` and a past `tokenExpiresAt`), but the `error` message is the raw API response:\n\n```\n$ gh auth status --json hosts --no-refresh\n{\n  \"hosts\": {\n    \"github.com\": [\n      {\n        \"state\": \"error\",\n        \"error\": \"HTTP 401: Bad credentials (https://api.github.com/)\",\n        \"active\": true,\n        \"host\": \"github.com\",\n        \"login\": \"monalisa\",\n        \"tokenSource\": \"keyring\",\n        \"gitProtocol\": \"https\",\n        \"refreshable\": true,\n        \"tokenExpiresAt\": \"2026-10-24T17:50:55.996654037Z\",\n        \"refreshTokenExpiresAt\": \"2027-04-24T09:50:54.996654037Z\"\n      }\n    ]\n  }\n}\n```\n\nExpected: when `--no-refresh` is given and the credential is an expiring token whose expiry time has passed, `gh auth status` should say the token has expired, keep showing the expiry details, and hint at dropping `--no-refresh` to let gh refresh it. For example:\n\n```\n$ gh auth status --no-refresh\ngithub.com\n  X Token for github.com account monalisa (keyring) has expired\n  - Active account: true\n  - Expiring token that gh refreshes automatically\n  - Token expires: 2026-10-24T17:50:55Z (expired about 1 hour ago)\n  - Refresh token expires: 2027-04-24T09:50:54Z (in about 6 months)\n  - To refresh it, run gh auth status without --no-refresh\n```\n\nNotes:\n\n- If the refresh token has also expired, the hint should point at `gh auth login -h <host>` instead.\n- Tokens that fail for other reasons (for example, revoked tokens) should keep the current \"invalid\" wording.\n\n### Logs\n\nThe failure comes from the scope check in `buildEntry` (`pkg/cmd/auth/status/status.go`): with `--no-refresh`, the expired token is sent as is, the request fails, and the entry falls into the generic `authEntryStateError` branch. `shared.AuthTokenRefreshable` matches the `gho_` prefix, which is why `gh auth refresh` is suggested.\n",
+      "closedAt": "2026-10-26T18:02:49Z",
+      "updatedAt": "2026-10-26T18:02:49Z",
+      "stateReason": "COMPLETED",
+      "author": {
+        "__typename": "User",
+        "login": "babakks"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "bug"
+          },
+          {
+            "name": "priority-3"
+          },
+          {
+            "name": "gh-auth"
+          }
+        ]
+      },
+      "assignees": {
+        "nodes": []
+      },
+      "subIssues": {
+        "nodes": []
+      },
+      "parent": null,
+      "closedByPullRequestsReferences": {
+        "nodes": [
+          {
+            "number": 14815,
+            "state": "MERGED",
+            "isDraft": false,
+            "mergedAt": "2026-10-26T18:02:47Z",
+            "closedAt": "2026-10-26T18:02:47Z",
+            "updatedAt": "2026-10-26T18:02:50Z",
+            "baseRefName": "trunk",
+            "author": {
+              "__typename": "User",
+              "login": "babakks"
+            }
+          }
+        ]
+      },
+      "timelineItems": {
+        "nodes": [
+          {
+            "closer": {
+              "__typename": "PullRequest",
+              "number": 14815
+            }
+          }
+        ]
+      },
+      "assignments": {
+        "nodes": [
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-24T18:24:27Z",
+            "actor": {
+              "__typename": "Bot",
+              "login": "github-actions"
+            },
+            "label": {
+              "name": "needs-triage"
+            }
+          },
+          {
+            "__typename": "IssueComment",
+            "createdAt": "2026-10-24T18:28:07Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-24T18:28:32Z",
+            "actor": {
+              "__typename": "User",
+              "login": "babakks"
+            },
+            "label": {
+              "name": "bug"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-24T18:28:33Z",
+            "actor": {
+              "__typename": "User",
+              "login": "babakks"
+            },
+            "label": {
+              "name": "priority-3"
+            }
+          },
+          {
+            "__typename": "LabeledEvent",
+            "createdAt": "2026-10-24T18:28:34Z",
+            "actor": {
+              "__typename": "User",
+              "login": "babakks"
+            },
+            "label": {
+              "name": "gh-auth"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

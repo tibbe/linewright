@@ -33,7 +33,7 @@ use crate::secrets::Secrets;
 use crate::spec_glob::SpecGlob;
 use crate::status::{FailedPolls, Poll, Polling, Polls, View};
 use crate::store::github::SESSION_TOKEN_VARIABLE;
-use crate::store::{IssueRead, Store};
+use crate::store::{IssueRead, PeoplesPullRead, Store};
 use crate::webhook::{self, Pending};
 use crate::work_settings::{Environments, RunKind, WorkSettings};
 
@@ -1207,8 +1207,12 @@ async fn read_into(
                 Some(pull) => snapshot.put_pull(pull),
                 None => {
                     snapshot.remove_pull(number);
-                    let closes = store.open_pull_closes(number).await?;
+                    let PeoplesPullRead { closes, pull } = store.peoples_pull(number).await?;
                     closing.extend(snapshot.issues_closing(number, &closes));
+                    match pull {
+                        Some(pull) => snapshot.put_peoples_pull(pull),
+                        None => snapshot.remove_peoples_pull(number),
+                    }
                 }
             }
             match store.merged_pull(number, windows).await? {

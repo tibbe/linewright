@@ -170,6 +170,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
             default_branch: "main".into(),
             issues,
             pulls,
+            peoples_pulls: vec![],
             merged: vec![],
             ticket_branches: vec![],
             closed: vec![],

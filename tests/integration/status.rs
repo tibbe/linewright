@@ -1059,6 +1059,7 @@ fn linewrights_pull_request_is_managed_with_its_own_waits_and_its_ticket_waits_f
         threads: vec![],
         labels: vec![],
         assignees: vec![],
+        labelings: vec![],
         assignments: vec![Assignment::Unassigned {
             assignee: Login::new("factory"),
             actor: Login::new("maintainer"),
