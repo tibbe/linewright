@@ -1052,10 +1052,28 @@ impl LocalStore {
             (state.pull(number)?.clone(), default_branch)
         };
         let head_sha = self.rev(&record.head_ref).await.unwrap_or_default();
+        // Whether the head contains the default branch, which both its
+        // mergeability and its rebaseability start from.
+        let up_to_date = match record.state {
+            PullState::Open { .. } => git::git(
+                &self.repository(),
+                &[
+                    "merge-base",
+                    "--is-ancestor",
+                    &default_branch,
+                    &record.head_ref,
+                ],
+            )
+            .await
+            .is_ok(),
+            PullState::Merged { .. } | PullState::Closed { .. } => false,
+        };
         let mergeability = match record.state {
             PullState::Open { .. } if record.merge_state_pending => Mergeability::Unknown,
             PullState::Open { .. } => {
-                let found = self.mergeability(&default_branch, &record.head_ref).await?;
+                let found = self
+                    .mergeability(&default_branch, &record.head_ref, up_to_date)
+                    .await?;
                 match &record.blocked {
                     Some(requires) if found == Mergeability::Clean => Mergeability::Blocked {
                         requires: requires.clone(),
@@ -1067,7 +1085,7 @@ impl LocalStore {
         };
         let rebaseability = match record.state {
             PullState::Open { .. } => {
-                self.rebaseability(&default_branch, &record.head_ref)
+                self.rebaseability(&default_branch, &record.head_ref, up_to_date)
                     .await?
             }
             PullState::Merged { .. } | PullState::Closed { .. } => Rebaseability::Unknown,
@@ -1112,15 +1130,15 @@ impl LocalStore {
         })
     }
 
-    async fn mergeability(&self, default_branch: &str, head: &str) -> Result<Mergeability> {
+    /// `up_to_date` says whether `head` contains the default branch.
+    async fn mergeability(
+        &self,
+        default_branch: &str,
+        head: &str,
+        up_to_date: bool,
+    ) -> Result<Mergeability> {
         let repo = self.repository();
-        if git::git(
-            &repo,
-            &["merge-base", "--is-ancestor", default_branch, head],
-        )
-        .await
-        .is_ok()
-        {
+        if up_to_date {
             return Ok(Mergeability::Clean);
         }
         Ok(
@@ -1134,15 +1152,15 @@ impl LocalStore {
     /// Whether the commits of `head` replay onto the default branch without
     /// a conflict, as a rebase merge replays them: a merge commit that
     /// resolved a conflict is dropped, and its resolution with it.
-    async fn rebaseability(&self, default_branch: &str, head: &str) -> Result<Rebaseability> {
+    /// `up_to_date` says whether `head` contains the default branch.
+    async fn rebaseability(
+        &self,
+        default_branch: &str,
+        head: &str,
+        up_to_date: bool,
+    ) -> Result<Rebaseability> {
         let repo = self.repository();
         let range = format!("{default_branch}..{head}");
-        let up_to_date = git::git(
-            &repo,
-            &["merge-base", "--is-ancestor", default_branch, head],
-        )
-        .await
-        .is_ok();
         let merges = git::git(&repo, &["rev-list", "--merges", "--count", &range]).await?;
         if up_to_date && merges.trim() == "0" {
             return Ok(Rebaseability::Rebaseable);
@@ -1876,13 +1894,13 @@ impl Store for LocalStore {
     async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>> {
         let object = format!("{branch}:{path}");
         let repository = self.repository();
-        if git::git(&repository, &["cat-file", "-e", &object])
-            .await
-            .is_err()
-        {
-            return Ok(None);
+        match git::object(&repository, &object).await? {
+            None => Ok(None),
+            Some((kind, contents)) if kind == "blob" => {
+                Ok(Some(String::from_utf8_lossy(&contents).into_owned()))
+            }
+            Some(_) => git::git(&repository, &["show", &object]).await.map(Some),
         }
-        git::git(&repository, &["show", &object]).await.map(Some)
     }
 
     async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>> {
@@ -1913,19 +1931,25 @@ impl Store for LocalStore {
     }
 
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {
-        let object = format!("{branch}:{dir}");
         let repository = self.repository();
-        if git::git(&repository, &["cat-file", "-e", &object])
-            .await
-            .is_err()
-        {
-            return Ok(vec![]);
-        }
         // Each entry is `<mode> <type> <object>\t<name>`
-        // (<https://git-scm.com/docs/git-ls-tree#_output_format>).
+        // (<https://git-scm.com/docs/git-ls-tree#_output_format>). A
+        // directory the branch lacks lists nothing; only a branch that
+        // doesn't exist fails, and is checked for once it has.
         let prefix = format!("{dir}/");
         let listing =
-            git::git(&repository, &["ls-tree", "-r", "-z", branch, "--", &prefix]).await?;
+            match git::git(&repository, &["ls-tree", "-r", "-z", branch, "--", &prefix]).await {
+                Ok(listing) => listing,
+                Err(error) => {
+                    if git::git(&repository, &["cat-file", "-e", branch])
+                        .await
+                        .is_err()
+                    {
+                        return Ok(vec![]);
+                    }
+                    return Err(error);
+                }
+            };
         Ok(listing
             .split('\0')
             .filter_map(|entry| {
@@ -1936,8 +1960,8 @@ impl Store for LocalStore {
             .collect())
     }
 
-    async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()> {
-        git::clone(url(&self.repository())?, dir, branch, &[]).await
+    async fn clone_repo(&self, dir: &Path, branch: &str, config: &[(&str, &str)]) -> Result<()> {
+        git::clone(url(&self.repository())?, dir, branch, config, &[]).await
     }
 
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {

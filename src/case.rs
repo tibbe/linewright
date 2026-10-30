@@ -144,7 +144,9 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
     };
     let work = tempfile::tempdir()?;
     let clone = work.path().join("repo");
-    github.clone_repo(&clone, &settings.default_branch).await?;
+    github
+        .clone_repo(&clone, &settings.default_branch, &[])
+        .await?;
     git::git(&clone, &["update-ref", BASE_REF, &base]).await?;
     let mut refs = vec![BASE_REF];
     if let Some(merge) = &merge {

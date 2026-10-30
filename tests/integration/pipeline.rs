@@ -4836,10 +4836,11 @@ async fn merge_default_branch_in(world: &World, branch: &str, files: &[(&str, &s
     let work = tempfile::tempdir().unwrap();
     let dir = work.path().join("clone");
     let url = world.store.repository();
-    git::clone(url.to_str().unwrap(), &dir, branch, &[])
-        .await
-        .unwrap();
-    git::set_identity(&dir, "maintainer", "maintainer@example.com")
+    let identity = [
+        ("user.name", "maintainer"),
+        ("user.email", "maintainer@example.com"),
+    ];
+    git::clone(url.to_str().unwrap(), &dir, branch, &identity, &[])
         .await
         .unwrap();
     assert!(
