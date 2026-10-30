@@ -249,7 +249,10 @@ What stops a pull request merging, in the order the line picks from:
 | "conflicts"                                               | it cannot merge cleanly                    | failed |
 | "behind main", naming the default branch                  | it is behind the default branch            |  |
 | "draft"                                                   | it is a draft                              |  |
-| "changes requested", "review required" or "approved"      | the review decision, as GitHub words it    | waiting for a person, but none for "approved" |
+| "changes requested"                                       | GitHub's review decision is that changes are requested | waiting for a person |
+| "review required"                                         | GitHub requires a review before it merges, such as a code owner's, that it has not had | waiting for a person |
+| "approved"                                                | GitHub's review decision is approved    |  |
+| nothing                                                   | otherwise                                  |  |
 
 ### The item page
 
