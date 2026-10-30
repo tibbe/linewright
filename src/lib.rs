@@ -33,6 +33,7 @@ pub mod item_facts;
 pub mod layer;
 pub mod listening;
 pub mod logs;
+pub mod managed;
 pub mod phrase;
 pub mod prompts;
 pub mod reconcile;

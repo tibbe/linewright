@@ -5,13 +5,14 @@
 use std::cmp::Reverse;
 
 use crate::domain::{
-    CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, Login, Merge, Mergeability,
-    Number, Pull, PullState, ReviewDecision, StatusLabel, SubIssue, Timestamp, Tracks,
-    last_labeling, last_unassigned,
+    CheckState, ClosedKind, Issue, Login, Mergeability, Number, Pull, PullState, ReviewDecision,
+    StatusLabel, SubIssue, Timestamp, Tracks, last_labeling, last_unassigned,
 };
-use crate::reconcile::{NotSpecChange, Wait, WorkKind};
+pub use crate::managed::Ended;
+use crate::managed::{self, ItemState, Managed};
+use crate::reconcile::{Wait, WorkKind};
 use crate::runs::{Ending, Recorded, RunOf, State};
-use crate::status::{self, ItemState, Managed, View};
+use crate::status::View;
 
 /// In the board's order, left to right.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -51,24 +52,26 @@ pub struct Board {
     pub lanes: Vec<Lane>,
     /// The count of cards in Needs a person.
     pub needing_a_person: usize,
-    /// The cards Linewright's pull requests would have on their own, where
-    /// each shows on the card of an issue it closes instead
-    /// (`docs/specs/design_system.md`, The item page, Its card), which no
-    /// lane or count holds.
-    own_cards: Vec<(Column, Card)>,
+    /// The managed items, of which it shows those with a card on it.
+    managed: Vec<Managed>,
 }
 
 impl Board {
-    /// The card #`number` has on the board, or for a pull request shown on
-    /// the card of an issue it closes, the card it would have on its own.
+    /// The managed items it was built from.
+    pub fn managed(&self) -> &[Managed] {
+        &self.managed
+    }
+
+    /// The card #`number` has on the board.
     pub fn card(&self, number: Number) -> Option<(Column, &Card)> {
-        let on_lanes = self.lanes.iter().flat_map(|lane| {
-            Column::ALL
-                .into_iter()
-                .flat_map(move |column| lane.cards(column).iter().map(move |card| (column, card)))
-        });
-        let own = self.own_cards.iter().map(|(column, card)| (*column, card));
-        on_lanes.chain(own).find(|(_, card)| card.number == number)
+        self.lanes
+            .iter()
+            .flat_map(|lane| {
+                Column::ALL.into_iter().flat_map(move |column| {
+                    lane.cards(column).iter().map(move |card| (column, card))
+                })
+            })
+            .find(|(_, card)| card.number == number)
     }
 
     /// The lane the tracking issue #`number` heads.
@@ -204,40 +207,9 @@ pub struct Card {
 }
 
 impl Card {
-    fn new(
-        number: Number,
-        title: &str,
-        pull_request: bool,
-        line: Option<CardLine>,
-        changed: Timestamp,
-    ) -> Card {
-        Card {
-            number,
-            title: title.to_string(),
-            pull_request,
-            line,
-            entered: None,
-            changed,
-        }
-    }
-
     /// Its card status, that of its line.
     pub fn status(&self) -> Option<CardStatus> {
         self.line.as_ref().and_then(CardLine::status)
-    }
-
-    /// The card in Done of an item that ended as `ended`, entering Done at
-    /// `at`.
-    fn ended(
-        number: Number,
-        title: &str,
-        ended: Ended,
-        at: Timestamp,
-        changed: Timestamp,
-    ) -> (Column, Card) {
-        let line = CardLine::Ended { ended, at };
-        let card = Card::new(number, title, ended.of_pull_request(), Some(line), changed);
-        (Column::Done, card)
     }
 }
 
@@ -379,255 +351,161 @@ impl Stop {
     }
 }
 
-/// How an item in Done ended.
+/// Where a managed item goes on the board (`docs/specs/design_system.md`,
+/// The board).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ended {
-    /// An issue the pull request closes, the first to merge since it was
-    /// last opened.
-    ClosedIn(Number),
-    /// An issue closed otherwise, with GitHub's reason where it is known.
-    Closed(Option<IssueCloseReason>),
-    /// A pull request of Linewright's, merged.
-    Merged,
-    /// A pull request of Linewright's, closed without merging.
-    ClosedUnmerged,
-    /// A spec change designed with nothing to build.
-    NothingToBuild,
+pub enum Placement {
+    Column(Column),
+    /// A tracking issue, which heads its lane.
+    HeadsLane,
 }
 
-impl Ended {
-    /// Whether it is how a pull request ended, rather than an issue.
-    fn of_pull_request(self) -> bool {
-        match self {
-            Ended::ClosedIn(_) | Ended::Closed(_) => false,
-            Ended::Merged | Ended::ClosedUnmerged | Ended::NothingToBuild => true,
+/// Where an item in `state` goes, with a run in flight on it or not: the
+/// rightmost column whose facts hold of it.
+pub fn placement(state: &ItemState, run_in_flight: bool) -> Placement {
+    use ItemState as S;
+    let column = match state {
+        S::Tracking { .. } => return Placement::HeadsLane,
+        S::Ended { .. } | S::MergedInto { .. } => Column::Done,
+        S::InReview(_) | S::InReviewElsewhere { .. } | S::PullRequest { .. } => Column::InReview,
+        S::Claimed | S::BeingDesigned => Column::Working,
+        S::ReadyToClaim | S::ReadyToDesign | S::WaitingForDesign => Column::Ready,
+        S::WaitingOnThePeopleAsked | S::WithTheMaintainer => Column::NeedsAPerson,
+        S::WaitingForTriage | S::BeingTriaged => Column::Triage,
+    };
+    // A run in flight holds it in Working, unless a column further right
+    // does.
+    Placement::Column(if run_in_flight {
+        column.max(Column::Working)
+    } else {
+        column
+    })
+}
+
+/// Why a managed item has no card of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoCard {
+    /// A tracking issue, which heads its lane.
+    HeadsLane,
+    /// A spec change cut into tickets, whose card is its tracking issue's
+    /// lane.
+    CutIntoTickets,
+}
+
+/// The column and card of `managed`, on the board or off it. `recorded` is
+/// every run's record, which tells whether a run handed an issue back.
+pub fn card(
+    managed: &Managed,
+    view: &View,
+    recorded: &[Recorded],
+    now: Timestamp,
+) -> Result<(Column, Card), NoCard> {
+    card_among(managed, &managed::managed(view, now), view, recorded, now)
+}
+
+/// [`card`], with `all` the managed items, which hold the pull requests shown
+/// on its card.
+fn card_among(
+    managed: &Managed,
+    all: &[Managed],
+    view: &View,
+    recorded: &[Recorded],
+    now: Timestamp,
+) -> Result<(Column, Card), NoCard> {
+    let snapshot = &view.snapshot;
+    let linewright = &view.policy.linewright;
+    if matches!(
+        managed.state,
+        ItemState::Ended {
+            ended: Ended::Merged,
+            ..
         }
+    ) && snapshot.merged_pull(managed.number).is_some()
+        && managed::is_cut(snapshot, managed.number, linewright)
+    {
+        return Err(NoCard::CutIntoTickets);
     }
+    // A pull request, or an item in Done, shows no other.
+    let in_done = placement(&managed.state, false) == Placement::Column(Column::Done);
+    let folded: Vec<&Managed> = if managed.is_pull_request() || in_done {
+        vec![]
+    } else {
+        all.iter()
+            .filter(|pull| {
+                matches!(pull.state, ItemState::PullRequest { .. })
+                    && pull.closes.contains(&managed.number)
+            })
+            .collect()
+    };
+    let mut on: Vec<Number> = vec![managed.number];
+    on.extend(folded.iter().map(|pull| pull.number));
+    let run = run_on(view, &on, now);
+    let Placement::Column(column) = placement(&managed.state, run.is_some()) else {
+        return Err(NoCard::HeadsLane);
+    };
+    let waits: Vec<Wait> = managed
+        .waiting_for
+        .iter()
+        .chain(folded.iter().flat_map(|pull| &pull.waiting_for))
+        .cloned()
+        .collect();
+    let issue = snapshot.issue(managed.number);
+    let line = match column {
+        Column::Triage => None,
+        Column::NeedsAPerson => needs_a_person_line(
+            &managed.state,
+            snapshot.is_stalled(managed.number),
+            issue,
+            recorded,
+            linewright,
+        ),
+        Column::Ready => ready_line(issue, &waits),
+        Column::Working => working_line(run, &waits),
+        Column::InReview => review_line(managed, issue, run, view),
+        Column::Done => done_line(&managed.state),
+    };
+    let card = Card {
+        number: managed.number,
+        title: managed.title.clone(),
+        pull_request: managed.is_pull_request(),
+        line,
+        entered: entered(column, managed.number, view),
+        changed: last_change(view, recorded, &on, now),
+    };
+    Ok((column, card))
 }
 
 /// `recorded` is every run's record, which tells whether a run handed an
 /// issue back.
 pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
-    let snapshot = &view.snapshot;
-    let linewright = &view.policy.linewright;
-    let closed: Vec<&ClosedItem> = snapshot.closed.iter().collect();
-    // Linewright's worked pull requests are managed items of their own; the
-    // rest are issues and spec changes.
-    let (pulls, items): (Vec<Managed>, Vec<Managed>) = status::managed(view, now)
-        .into_iter()
-        .partition(|managed| snapshot.pull(managed.number).is_some());
-    let changed = |on: &[Number]| last_change(view, recorded, on, now);
-    let pulls_closing = |item: Number| -> Vec<&Managed> {
-        pulls
-            .iter()
-            .filter(|pull| {
-                snapshot
-                    .pull(pull.number)
-                    .is_some_and(|p| p.closes.contains(&item))
-            })
-            .collect()
-    };
-
-    let default_branch = &snapshot.default_branch;
-    // An open issue with a pull request that closes it merged is in Done, the
-    // rightmost column, whatever else holds of it, so `column` never sees it.
-    let merged: Vec<(&Issue, Ended, Timestamp)> = snapshot
-        .issues
-        .iter()
-        .filter(|issue| issue.open && issue.tracks(linewright).is_none())
-        .filter_map(|issue| {
-            let closed_by = snapshot.pulls_closing(issue);
-            let merge = issue.merged_since_opened(&closed_by, default_branch);
-            let (ended, at) = issue_ended(merge, None)?;
-            issue
-                .worked_by(linewright, &closed_by)
-                .then_some((issue, ended, at))
-        })
-        .collect();
-
+    let all = managed::managed(view, now);
     let mut cards: Vec<(Column, Card)> = vec![];
-    let mut own_cards: Vec<(Column, Card)> = vec![];
-    for &(issue, ended, at) in &merged {
-        cards.push(Card::ended(
-            issue.number,
-            &issue.title,
-            ended,
-            at,
-            changed(&[issue.number]),
-        ));
-    }
-    let in_done = |number: Number| merged.iter().any(|(issue, ..)| issue.number == number);
-    for managed in items.iter().filter(|managed| !in_done(managed.number)) {
-        let folded = pulls_closing(managed.number);
-        let mut on: Vec<Number> = vec![managed.number];
-        on.extend(folded.iter().map(|pull| pull.number));
-        let run = run_on(view, &on, now);
-        let Some(column) = column(&managed.state, run.is_some()) else {
+    // A pull request of Linewright's shows on the card of each issue it
+    // closes that is on the board, and has a card of its own otherwise.
+    let mut pulls: Vec<(&[Number], (Column, Card))> = vec![];
+    for managed in &all {
+        let Ok(card) = card_among(managed, &all, view, recorded, now) else {
             continue;
         };
-        let waits: Vec<Wait> = managed
-            .waiting_for
-            .iter()
-            .chain(folded.iter().flat_map(|pull| &pull.waiting_for))
-            .cloned()
-            .collect();
-        let issue = snapshot.issue(managed.number);
-        let line = match column {
-            Column::Triage | Column::Done => None,
-            Column::NeedsAPerson => needs_a_person_line(
-                &managed.state,
-                snapshot.is_stalled(managed.number),
-                issue,
-                recorded,
-                linewright,
-            ),
-            Column::Ready => ready_line(issue, &waits),
-            Column::Working => working_line(run, &waits),
-            Column::InReview => review_line(&managed.state, issue, run, view),
-        };
-        // A spec change not yet designed is its merged pull request.
-        let pull_request = snapshot.merged_pull(managed.number).is_some();
-        let card = Card {
-            entered: entered(column, managed.number, view),
-            ..Card::new(
-                managed.number,
-                &managed.title,
-                pull_request,
-                line,
-                changed(&on),
-            )
-        };
-        cards.push((column, card));
-    }
-    for item in &closed {
-        let ClosedKind::Issue {
-            facts,
-            merged_by,
-            reason,
-            ..
-        } = &item.kind
-        else {
-            continue;
-        };
-        if item.tracks(linewright).is_some() || !item.worked_by(linewright) {
-            continue;
+        match folds_onto(managed) {
+            Some(closes) => pulls.push((closes, card)),
+            None => cards.push(card),
         }
-        let closing = Closing {
-            at: item.closed_at,
-            merged_by: *merged_by,
-            reason: *reason,
-        };
-        let merge = facts.work.merged_since_opened(default_branch);
-        let Some((ended, at)) = issue_ended(merge, Some(closing)) else {
-            continue;
-        };
-        cards.push(Card::ended(
-            item.number,
-            &item.title,
-            ended,
-            at,
-            changed(&[item.number]),
-        ));
     }
     let on_the_board: Vec<Number> = cards.iter().map(|(_, card)| card.number).collect();
-    let closes_none = |closes: &[Number]| !closes.iter().any(|n| on_the_board.contains(n));
-    // A pull request of Linewright's closing an issue on the board shows on
-    // that issue's card, and keeps the card it would have on its own apart.
-    let mut place = |closes: &[Number], card: (Column, Card)| {
-        if closes_none(closes) {
-            cards.push(card);
-        } else {
-            own_cards.push(card);
-        }
-    };
-    for managed in &pulls {
-        let Some(pull) = snapshot.pull(managed.number) else {
-            continue;
-        };
-        let run = run_on(view, &[managed.number], now);
-        let line = merge_stop(managed.number, None, run, view).map(CardLine::MergeStop);
-        let pull_request = true;
-        let changed = changed(&[managed.number]);
-        let card = Card::new(managed.number, &managed.title, pull_request, line, changed);
-        place(&pull.closes, (Column::InReview, card));
-    }
-    for item in &closed {
-        let ClosedKind::Pull { closes } = &item.kind else {
-            continue;
-        };
-        let card = Card::ended(
-            item.number,
-            &item.title,
-            Ended::ClosedUnmerged,
-            item.closed_at,
-            changed(&[item.number]),
-        );
-        place(closes, card);
-    }
-    for pr in &snapshot.merged {
-        if &pr.author == linewright {
-            let card = Card::ended(
-                pr.number,
-                &pr.title,
-                Ended::Merged,
-                pr.merged_at,
-                changed(&[pr.number]),
-            );
-            place(&pr.closes, card);
-        }
-    }
+    cards.extend(
+        pulls
+            .into_iter()
+            .filter(|(closes, _)| !closes.iter().any(|n| on_the_board.contains(n)))
+            .map(|(_, card)| card),
+    );
 
-    let mut trackers: Vec<Tracker> = snapshot
-        .issues
+    let mut trackers: Vec<Tracker> = all
         .iter()
-        .filter(|issue| issue.open)
-        .filter_map(|issue| {
-            let tracks = issue.tracks(linewright)?;
-            Some(Tracker::new(
-                issue.number,
-                &issue.title,
-                tracks,
-                &issue.sub_issues,
-                linewright,
-            ))
-        })
-        .chain(closed.iter().filter_map(|item| {
-            let tracks = item.tracks(linewright)?;
-            let ClosedKind::Issue { facts, .. } = &item.kind else {
-                return None;
-            };
-            Some(Tracker::new(
-                item.number,
-                &item.title,
-                tracks,
-                &facts.sub_issues,
-                linewright,
-            ))
-        }))
+        .filter(|managed| placement(&managed.state, false) == Placement::HeadsLane)
+        .filter_map(|managed| Tracker::of(managed.number, view))
         .collect();
     trackers.sort_by_key(|tracker| tracker.number);
-
-    for pr in &snapshot.merged {
-        let Err(NotSpecChange::Designed { label }) =
-            status::spec_change_standing(pr, snapshot, now, &view.policy)
-        else {
-            continue;
-        };
-        let cut = trackers
-            .iter()
-            .any(|tracker| tracker.tracks == Tracks::SpecChange(pr.number));
-        if !cut {
-            let designed = last_labeling(&pr.events, label.name())
-                .map_or(pr.merged_at, |labeling| labeling.at);
-            cards.push(Card::ended(
-                pr.number,
-                &pr.title,
-                Ended::NothingToBuild,
-                designed,
-                changed(&[pr.number]),
-            ));
-        }
-    }
 
     cards.sort_by_key(|(_, card)| card.number);
     let mut lanes: Vec<Lane> = trackers
@@ -665,37 +543,54 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     Board {
         lanes,
         needing_a_person,
-        own_cards,
+        managed: all,
     }
 }
 
-/// An issue's closing: when, the pull request whose merge closed it where it
-/// is known, and GitHub's reason.
-struct Closing {
-    at: Timestamp,
-    merged_by: Option<Number>,
-    reason: Option<IssueCloseReason>,
+/// The issues `managed` closes, if it is a pull request of Linewright's,
+/// which shows on their cards; a spec change is its own card.
+fn folds_onto(managed: &Managed) -> Option<&[Number]> {
+    use ItemState as S;
+    match managed.state {
+        S::PullRequest { .. }
+        | S::Ended {
+            ended: Ended::Merged | Ended::ClosedUnmerged,
+            ..
+        } => Some(&managed.closes),
+        S::Ended {
+            ended: Ended::ClosedIn(_) | Ended::Closed(_) | Ended::NothingToBuild,
+            ..
+        }
+        | S::MergedInto { .. }
+        | S::WaitingForDesign
+        | S::Tracking { .. }
+        | S::WaitingForTriage
+        | S::BeingTriaged
+        | S::WaitingOnThePeopleAsked
+        | S::WithTheMaintainer
+        | S::InReview(_)
+        | S::InReviewElsewhere { .. }
+        | S::BeingDesigned
+        | S::ReadyToDesign
+        | S::Claimed
+        | S::ReadyToClaim => None,
+    }
 }
 
-/// Whether an issue Linewright worked is in Done (`docs/specs/design_system.md`,
-/// The board, Cards) and if so how it ended and when it entered Done, from
-/// `merge`, the first pull request that closes it to merge into the default
-/// branch since it was last opened, and `closing`, if it is closed: either
-/// puts it in Done, and "closed in" names that pull request before the
-/// closer.
-fn issue_ended(merge: Option<Merge>, closing: Option<Closing>) -> Option<(Ended, Timestamp)> {
-    match (merge, closing) {
-        (Some(merge), closing) => Some((
-            Ended::ClosedIn(merge.pull_request),
-            closing.map_or(merge.at, |closing| merge.at.min(closing.at)),
-        )),
-        (None, Some(closing)) => Some((
-            closing
-                .merged_by
-                .map_or(Ended::Closed(closing.reason), Ended::ClosedIn),
-            closing.at,
-        )),
-        (None, None) => None,
+/// The line in Done: how the item ended.
+fn done_line(state: &ItemState) -> Option<CardLine> {
+    if let ItemState::Ended { ended, at } = *state {
+        Some(CardLine::Ended { ended, at })
+    } else if let ItemState::MergedInto {
+        pull_request, at, ..
+    } = *state
+    {
+        Some(CardLine::Ended {
+            ended: Ended::ClosedIn(pull_request),
+            at,
+        })
+    } else {
+        None
     }
 }
 
@@ -786,14 +681,19 @@ fn held(waits: &[Wait]) -> Option<CardLine> {
     ])
 }
 
-/// The line in In review of an item other than its pull request: its pull
-/// request and what stops it merging.
+/// The line in In review: of an item other than its pull request, its pull
+/// request and what stops it merging; of a pull request, what stops it
+/// merging.
 fn review_line(
-    state: &ItemState,
+    managed: &Managed,
     issue: Option<&Issue>,
     run: Option<Running>,
     view: &View,
 ) -> Option<CardLine> {
+    let state = &managed.state;
+    if let ItemState::PullRequest { .. } = state {
+        return merge_stop(managed.number, None, run, view).map(CardLine::MergeStop);
+    }
     let (pull_request, author) = if let ItemState::InReview(review) = state {
         (review.pull_request, None)
     } else if let ItemState::InReviewElsewhere {
@@ -861,13 +761,41 @@ fn merge_stop(
 struct Tracker {
     number: Number,
     title: String,
-    tracks: Tracks,
     /// Its tickets, the cards of its lane.
     tickets: Vec<Number>,
     tickets_closed: usize,
 }
 
 impl Tracker {
+    /// The tracking issue #`number`, open or closed, as the snapshot holds
+    /// it.
+    fn of(number: Number, view: &View) -> Option<Tracker> {
+        let snapshot = &view.snapshot;
+        let linewright = &view.policy.linewright;
+        if let Some(issue) = snapshot.issue(number).filter(|issue| issue.open) {
+            let tracks = issue.tracks(linewright)?;
+            return Some(Tracker::new(
+                number,
+                &issue.title,
+                tracks,
+                &issue.sub_issues,
+                linewright,
+            ));
+        }
+        let item = snapshot.closed.iter().find(|item| item.number == number)?;
+        let tracks = item.tracks(linewright)?;
+        let ClosedKind::Issue { facts, .. } = &item.kind else {
+            return None;
+        };
+        Some(Tracker::new(
+            number,
+            &item.title,
+            tracks,
+            &facts.sub_issues,
+            linewright,
+        ))
+    }
+
     fn new(
         number: Number,
         title: &str,
@@ -879,7 +807,6 @@ impl Tracker {
         Tracker {
             number,
             title: title.to_string(),
-            tracks,
             tickets: tickets.iter().map(|s| s.number).collect(),
             tickets_closed: tickets.iter().filter(|s| !s.is_open()).count(),
         }
@@ -992,42 +919,4 @@ fn run_on(view: &View, items: &[Number], now: Timestamp) -> Option<Running> {
             elapsed: Elapsed::of(run.started_at, now),
         })
     })
-}
-
-/// The rightmost column whose facts hold of an open item: its state and
-/// whether a run is in flight on it. A tracking issue fits none. A closed
-/// item is in Done, the rightmost of all.
-fn column(state: &ItemState, run_in_flight: bool) -> Option<Column> {
-    use ItemState as S;
-    if matches!(state, S::Tracking { .. }) {
-        return None;
-    }
-    let fits = [
-        (
-            matches!(state, S::InReview(_) | S::InReviewElsewhere { .. }),
-            Column::InReview,
-        ),
-        (
-            matches!(state, S::Claimed | S::BeingDesigned) || run_in_flight,
-            Column::Working,
-        ),
-        (
-            matches!(
-                state,
-                S::ReadyToClaim | S::ReadyToDesign | S::WaitingForDesign
-            ),
-            Column::Ready,
-        ),
-        (
-            matches!(state, S::WaitingOnThePeopleAsked | S::WithTheMaintainer),
-            Column::NeedsAPerson,
-        ),
-        (
-            matches!(state, S::WaitingForTriage | S::BeingTriaged),
-            Column::Triage,
-        ),
-    ];
-    fits.into_iter()
-        .find(|(fits, _)| *fits)
-        .map(|(_, column)| column)
 }

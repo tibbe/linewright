@@ -4,15 +4,16 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    ClosingPull, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, Timestamp, Tracks,
+    ClosingPull, Issue, Item, Login, MergedPull, Number, Snapshot, Timestamp, Tracks,
+};
+use crate::managed::{
+    Held, InReview, IssueExclusion, ItemState, LeftAloneIssue, LeftAloneItem, LeftAlonePull,
+    Managed, PullExclusion, classify,
 };
 use crate::phrase::Phrase;
-use crate::reconcile::{NotSpecChange, NotWorked, Wait, worked_ticket};
+use crate::reconcile::{NotSpecChange, Wait, spec_change};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
-use crate::status::{
-    InReview, IssueExclusion, ItemState, Paint, View, describe, describe_wait, managed,
-    spec_change_standing, standing,
-};
+use crate::status::{Paint, View, describe, describe_wait, shown};
 use crate::store::AnyItem;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -334,51 +335,105 @@ pub enum Standing {
     Item(ItemState),
 }
 
-/// `None` unless #`number` is a managed item or Linewright's
-/// open pull request it works on.
+impl Standing {
+    fn of(state: ItemState) -> Standing {
+        if let ItemState::PullRequest {
+            pull_request_for,
+            review,
+        } = state
+        {
+            Standing::PullRequest {
+                pull_request_for,
+                review,
+            }
+        } else {
+            Standing::Item(shown(state))
+        }
+    }
+}
+
+/// `None` unless #`number` is a managed item the view holds open, or a
+/// spec change waiting for its design.
 pub fn explain(
     view: &View,
     recorded: &[Recorded],
     number: Number,
     now: Timestamp,
 ) -> Option<Explanation> {
+    let snapshot = &view.snapshot;
     let last_read = |item: Item| view.read_at.get(&item).copied().unwrap_or(view.polls.last);
-    if let Some(pull) = view.snapshot.pull(number).filter(|p| p.is_open()) {
-        let explanation = pull_standing(view, recorded, pull, now).ok()?;
-        return Some(Explanation {
-            last_read: last_read(Item::Pull(number)),
-            ..explanation
-        });
-    }
-    let items = managed(view, now);
-    if let Some(managed) = items.iter().find(|m| m.number == number) {
-        // A managed spec change is a merged pull request, not yet cut into
-        // tickets; the rest are issues.
-        let (read, family) = match view.snapshot.issue(number) {
-            Some(issue) => (
+    let (held, read, family, stalled) =
+        if let Some(issue) = snapshot.issue(number).filter(|i| i.open) {
+            (
+                Held::Issue(issue),
                 Item::Issue(number),
-                Family::of_issue(issue, &view.snapshot, &view.policy.linewright),
-            ),
-            None => (
+                Family::of_issue(issue, snapshot, &view.policy.linewright),
+                snapshot.is_stalled(number),
+            )
+        } else if let Some(pull) = snapshot.pull(number).filter(|p| p.is_open()) {
+            (
+                Held::Pull(pull),
                 Item::Pull(number),
-                view.snapshot
-                    .merged_pull(number)
-                    .map(|pull| Family::of_pull(&pull.closes))
-                    .unwrap_or_default(),
-            ),
+                Family::of_pull(&pull.closes),
+                pull.is_stalled(),
+            )
+        } else {
+            let pull = snapshot.merged_pull(number)?;
+            (
+                Held::Merged(pull),
+                Item::Pull(number),
+                Family::of_pull(&pull.closes),
+                snapshot.is_stalled(number),
+            )
         };
-        return Some(Explanation {
-            number,
-            title: managed.title.clone(),
-            family,
-            standing: Standing::Item(managed.state.clone()),
-            stalled: view.snapshot.is_stalled(number),
-            last_read: last_read(read),
-            waiting_for: managed.waiting_for.clone(),
-            runs: ItemRuns::of(view, recorded, number, now),
-        });
+    let managed = classify(view, held, now).ok()?;
+    // A merged pull request that has ended is answered as GitHub reads it.
+    if let Held::Merged(pull) = held
+        && ended_merge(&managed, pull, view, now).is_some()
+    {
+        return None;
     }
-    None
+    Some(Explanation {
+        family,
+        stalled,
+        last_read: last_read(read),
+        ..explanation(view, recorded, managed, now)
+    })
+}
+
+/// Why merged `pull`, which the classifier finds `managed`, is no spec
+/// change, if it has ended: `explain` answers it as left alone, as GitHub
+/// reads it, rather than in Done as the board shows it.
+fn ended_merge(
+    managed: &Managed,
+    pull: &MergedPull,
+    view: &View,
+    now: Timestamp,
+) -> Option<NotSpecChange> {
+    if !matches!(managed.state, ItemState::Ended { .. }) {
+        return None;
+    }
+    spec_change(pull, &view.snapshot.default_branch, now, &view.policy).err()
+}
+
+/// What `explain` answers of `managed`, read `now`, related to no other item
+/// and not stalled.
+fn explanation(
+    view: &View,
+    recorded: &[Recorded],
+    managed: Managed,
+    now: Timestamp,
+) -> Explanation {
+    Explanation {
+        number: managed.number,
+        title: managed.title,
+        family: Family::default(),
+        standing: Standing::of(managed.state),
+        stalled: false,
+        last_read: now,
+        waiting_for: managed.waiting_for,
+        runs: ItemRuns::of(view, recorded, managed.number, now),
+    }
 }
 
 /// What `explain` answers of #`number` from `view` alone, without reading
@@ -424,36 +479,6 @@ pub struct LeftAlone {
     pub runs: ItemRuns,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "item", rename_all = "kebab-case")]
-pub enum LeftAloneItem {
-    Issue(LeftAloneIssue),
-    PullRequest(LeftAlonePull),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "kebab-case")]
-pub enum LeftAloneIssue {
-    Closed,
-    Open { left_alone: IssueExclusion },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "kebab-case")]
-pub enum LeftAlonePull {
-    Closed,
-    Open { left_alone: PullExclusion },
-    Merged { left_alone: NotSpecChange },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "reason", rename_all = "kebab-case")]
-pub enum PullExclusion {
-    NotLinewrights { author: Login },
-    ClosesNoIssue,
-    Superseded { issue: Number, by: Number },
-}
-
 /// `view` with `read`, read from GitHub `now`, put in as a poll taking a
 /// snapshot now would hold it, and an issue left out of the view put in
 /// too, so that what relates to it can be read from the view. Linewright
@@ -486,8 +511,6 @@ pub fn explain_fresh(
     now: Timestamp,
 ) -> Answer {
     let number = read.number();
-    let mut waits = fresh.decisions(now).waits;
-    let mut take_waits = || waits.remove(&number).unwrap_or_default();
     let family = match read {
         AnyItem::Pull(pull) => Family::of_pull(&pull.closes),
         AnyItem::Merged {
@@ -499,54 +522,35 @@ pub fn explain_fresh(
         }
     };
     let stalled = read.is_stalled();
-    let managed_as = |title: &str, state: ItemState, waiting_for| {
+    let managed_as = |managed: Managed| {
         Answer::Managed(Explanation {
-            number,
-            title: title.to_string(),
             family: family.clone(),
-            standing: Standing::Item(state),
             stalled,
-            last_read: now,
-            waiting_for,
-            runs: ItemRuns::of(fresh, recorded, number, now),
+            ..explanation(fresh, recorded, managed, now)
         })
     };
     let (title, item) = match read {
-        AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) if !issue.open => {
-            (&issue.title, LeftAloneItem::Issue(LeftAloneIssue::Closed))
-        }
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
-            let waiting_for = take_waits();
-            match standing(issue, &fresh.snapshot, &fresh.policy, &waiting_for) {
-                Ok(state) => return managed_as(&issue.title, state, waiting_for),
-                Err(left_alone) => (
-                    &issue.title,
-                    LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }),
-                ),
+            match classify(fresh, Held::Issue(issue), now) {
+                Ok(managed) => return managed_as(managed),
+                Err(left_alone) => (&issue.title, left_alone),
             }
         }
-        AnyItem::Merged { pull: merged, .. } => {
-            match spec_change_standing(merged, &fresh.snapshot, now, &fresh.policy) {
-                Ok((state, mut waiting_for)) => {
-                    waiting_for.extend(take_waits());
-                    return managed_as(&merged.title, state, waiting_for);
-                }
-                Err(left_alone) => (
+        AnyItem::Merged { pull: merged, .. } => match classify(fresh, Held::Merged(merged), now) {
+            Ok(managed) => {
+                let Some(left_alone) = ended_merge(&managed, merged, fresh, now) else {
+                    return managed_as(managed);
+                };
+                (
                     &merged.title,
                     LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }),
-                ),
+                )
             }
-        }
-        AnyItem::Pull(pull) if !pull.is_open() => (
-            &pull.title,
-            LeftAloneItem::PullRequest(LeftAlonePull::Closed),
-        ),
-        AnyItem::Pull(pull) => match pull_standing(fresh, recorded, pull, now) {
-            Ok(explanation) => return Answer::Managed(explanation),
-            Err(left_alone) => (
-                &pull.title,
-                LeftAloneItem::PullRequest(LeftAlonePull::Open { left_alone }),
-            ),
+            Err(left_alone) => (&merged.title, left_alone),
+        },
+        AnyItem::Pull(pull) => match classify(fresh, Held::Pull(pull), now) {
+            Ok(managed) => return managed_as(managed),
+            Err(left_alone) => (&pull.title, left_alone),
         },
     };
     Answer::LeftAlone(LeftAlone {
@@ -557,40 +561,6 @@ pub fn explain_fresh(
         stalled,
         last_read: now,
         runs: ItemRuns::of(fresh, recorded, number, now),
-    })
-}
-
-fn pull_standing(
-    view: &View,
-    recorded: &[Recorded],
-    pull: &Pull,
-    now: Timestamp,
-) -> Result<Explanation, PullExclusion> {
-    let ticket =
-        worked_ticket(&view.snapshot, pull, &view.policy.linewright).map_err(|not_worked| {
-            match not_worked {
-                NotWorked::NotLinewrights => PullExclusion::NotLinewrights {
-                    author: pull.author.clone(),
-                },
-                NotWorked::ForNoIssue => PullExclusion::ClosesNoIssue,
-                NotWorked::Superseded { ticket, by } => {
-                    PullExclusion::Superseded { issue: ticket, by }
-                }
-            }
-        })?;
-    let waiting_for = view.decisions(now).waits.remove(&pull.number);
-    Ok(Explanation {
-        number: pull.number,
-        title: pull.title.clone(),
-        family: Family::of_pull(&pull.closes),
-        standing: Standing::PullRequest {
-            pull_request_for: ticket,
-            review: InReview::of(pull),
-        },
-        stalled: pull.is_stalled(),
-        last_read: now,
-        waiting_for: waiting_for.unwrap_or_default(),
-        runs: ItemRuns::of(view, recorded, pull.number, now),
     })
 }
 

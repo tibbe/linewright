@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed, HandBackKind,
-    Issue, Item, Linked, Login, Marking, MergeMethod, MergeMethods, Mergeability, MergedPull,
-    Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
+    Asked, Asks, Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed,
+    HandBackKind, Issue, Item, Linked, Login, Marking, MergeMethod, MergeMethods, Mergeability,
+    MergedPull, Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
     StatusLabel, SubIssue, Thread, TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule,
     Windows, label, last_assigned, last_assignment, last_labeling, last_unassignment,
 };
@@ -890,7 +890,7 @@ pub fn decisions(
         } else {
             match asked {
                 Ok(Asked::Triage) => triage(issue, replied, running(subject), policy, &mut plan),
-                Ok(Asked::Implementation) => {
+                Ok(Asked::DesignAndImplementation) => {
                     implementation(issue, &closing, running(subject), policy, &mut plan);
                 }
                 Err(_) => {
@@ -1213,15 +1213,16 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
                 return Some(format!("{number} was closed"));
             };
             let wanted = match run.kind {
-                WorkKind::Triage => StatusLabel::NeedsTriage,
+                WorkKind::Triage => Asked::Triage,
                 WorkKind::Design
                 | WorkKind::Implement
                 | WorkKind::Rework
                 | WorkKind::FixCi
-                | WorkKind::Update => StatusLabel::ReadyForAgent,
+                | WorkKind::Update => Asked::DesignAndImplementation,
             };
-            if !issue.holds(wanted) {
-                Some(format!("`{wanted}` was removed from {number}"))
+            let asks = issue.status_label().map(StatusLabel::asks);
+            if asks != Some(Asks::Linewright(wanted)) {
+                Some(format!("`{}` was removed from {number}", wanted.label()))
             } else if !issue.is_assigned(&policy.linewright) {
                 Some(format!(
                     "{} was unassigned from {number}",
@@ -1399,29 +1400,20 @@ fn rank(kind: WorkKind) -> u8 {
     }
 }
 
-/// The work an issue's label asks of Linewright.
-#[derive(Clone, Copy)]
-enum Asked {
-    Triage,
-    Implementation,
-}
-
 /// What an issue whose label asks nothing of Linewright is labeled.
 #[derive(Clone, Copy)]
 enum Unasked {
-    NeedsInfo,
-    ReadyForHuman,
+    /// A status label that asks for a person's work.
+    Person(StatusLabel),
     NoStatusLabel,
 }
 
 /// What an issue labeled `status` asks of Linewright.
 fn asked_work(status: Option<StatusLabel>) -> Result<Asked, Unasked> {
-    match status {
-        Some(StatusLabel::NeedsTriage) => Ok(Asked::Triage),
-        Some(StatusLabel::ReadyForAgent) => Ok(Asked::Implementation),
-        Some(StatusLabel::NeedsInfo) => Err(Unasked::NeedsInfo),
-        Some(StatusLabel::ReadyForHuman) => Err(Unasked::ReadyForHuman),
-        None => Err(Unasked::NoStatusLabel),
+    let status = status.ok_or(Unasked::NoStatusLabel)?;
+    match status.asks() {
+        Asks::Linewright(asked) => Ok(asked),
+        Asks::Person => Err(Unasked::Person(status)),
     }
 }
 
@@ -1447,14 +1439,11 @@ fn answers_hand_assignment(issue: &Issue, linewright: &Login) -> bool {
 /// label asks nothing of it, labeled `unasked`.
 fn let_go_comment(unasked: Unasked, linewright: &Login) -> String {
     let waits = match unasked {
-        Unasked::NeedsInfo => format!(
+        Unasked::Person(StatusLabel::NeedsInfo) => format!(
             "This issue waits for an answer to its question (`{}`)",
             label::NEEDS_INFO
         ),
-        Unasked::ReadyForHuman => format!(
-            "This issue waits for a person's decision (`{}`)",
-            label::READY_FOR_HUMAN
-        ),
+        Unasked::Person(held) => format!("This issue waits for a person's decision (`{held}`)"),
         Unasked::NoStatusLabel => "This issue has no status label".into(),
     };
     format!(

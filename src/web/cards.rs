@@ -5,9 +5,8 @@
 use super::html::{self, Html};
 use super::names::Names;
 use crate::board::{
-    Card, CardLine, CardStatus, Elapsed, Ended, Hold, LaneHead, LaneHeading, Running, Stop,
+    Card, CardLine, CardStatus, Elapsed, Hold, LaneHead, LaneHeading, Running, Stop,
 };
-use crate::domain::IssueCloseReason;
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
 
@@ -105,7 +104,7 @@ fn worded(line: &CardLine) -> Phrase {
             }
         }
         CardLine::MergeStop(stop) => stop_worded(stop),
-        CardLine::Ended { ended, at } => ended_worded(*ended).text(" · ").time(*at),
+        CardLine::Ended { ended, at } => ended.worded().text(" · ").time(*at),
     }
 }
 
@@ -139,18 +138,5 @@ fn stop_worded(stop: &Stop) -> Phrase {
         Stop::ChangesRequested => "changes requested".into(),
         Stop::ReviewRequired => "review required".into(),
         Stop::Approved => "approved".into(),
-    }
-}
-
-fn ended_worded(ended: Ended) -> Phrase {
-    match ended {
-        Ended::ClosedIn(pull) => Phrase::from("closed in ").item(pull),
-        Ended::Closed(None) => "closed".into(),
-        Ended::Closed(Some(IssueCloseReason::Completed)) => "closed as completed".into(),
-        Ended::Closed(Some(IssueCloseReason::NotPlanned)) => "closed as not planned".into(),
-        Ended::Closed(Some(IssueCloseReason::Duplicate)) => "closed as a duplicate".into(),
-        Ended::Merged => "merged".into(),
-        Ended::ClosedUnmerged => "closed without merging".into(),
-        Ended::NothingToBuild => "merged · nothing to build".into(),
     }
 }
