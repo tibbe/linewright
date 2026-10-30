@@ -226,7 +226,7 @@ async fn a_missing_required_label_leaves_the_draft_pull_request_and_spec_gap_wit
 const WEEKLY: &str = "---
 on:
   schedule: \"0 6 * * 1\"
-timeout: 60m
+session-timeout: 60m
 max-issues: 3
 ---
 Look at the bugs.

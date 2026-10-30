@@ -1,7 +1,7 @@
 ---
 on:
   schedule: "0 6 * * 1"
-timeout: 15m
+session-timeout: 15m
 max-issues: 1
 ---
 Check whether `rust-toolchain.toml` pins the latest stable Rust, and file an

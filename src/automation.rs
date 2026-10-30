@@ -2,19 +2,19 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 use serde::{Deserialize, Serialize};
 
 use crate::briefs;
+use crate::config;
 use crate::domain::Timestamp;
 use crate::records;
 use crate::repo_files;
 use crate::store::Store;
-use crate::work_settings::{Effort, Setup};
+use crate::work_settings::{Partial, RepositorySetting};
 
 pub const DIR: &str = repo_files::linewright_path!("/automations");
 
@@ -24,14 +24,9 @@ const DEFAULT_MAX_ISSUES: u32 = 3;
 pub struct Automation {
     pub name: AutomationName,
     pub schedule: Schedule,
-    /// `None` is the `session-timeout` setting.
-    pub timeout: Option<Duration>,
-    /// `None` is the `model` setting.
-    pub model: Option<String>,
-    /// `None` is the `effort` setting.
-    pub effort: Option<Effort>,
-    /// `None` is the `setup` setting.
-    pub setup: Option<Setup>,
+    /// The session settings its front matter sets, a layer above every
+    /// whole-pipeline layer.
+    pub session: Partial,
     pub max_issues: u32,
     pub instructions: String,
 }
@@ -228,15 +223,16 @@ fn classify(listed: Vec<String>) -> (Vec<AutomationName>, AutomationFiles) {
     (names, files)
 }
 
+/// Its keys but the session settings, which are gathered in `session` and
+/// checked against [`RepositorySetting`] so that the front matter takes
+/// what the repository's file takes.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
 struct FrontMatter {
     on: Trigger,
-    timeout: Option<String>,
-    model: Option<String>,
-    effort: Option<String>,
-    setup: Option<String>,
     max_issues: Option<u32>,
+    #[serde(flatten)]
+    session: BTreeMap<String, serde_yaml_ng::Value>,
 }
 
 #[derive(Deserialize)]
@@ -250,24 +246,22 @@ pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
         .context("the file does not open with YAML front matter between `---` lines")?;
     let front: FrontMatter =
         serde_yaml_ng::from_str(front).context("the front matter is not an automation's")?;
-    let timeout = front
-        .timeout
-        .map(|t| {
-            humantime::parse_duration(&t)
-                .with_context(|| format!("`timeout` is {t:?}, not a duration such as 60m"))
-        })
-        .transpose()?;
-    let effort = front
-        .effort
-        .map(|e| e.parse::<Effort>().map_err(anyhow::Error::msg))
-        .transpose()?;
+    let mut session = Partial::default();
+    for (key, value) in front.session {
+        let Some(setting) = RepositorySetting::named(&key) else {
+            bail!(
+                "the front matter has an unknown key `{key}`: it holds `on`, `max-issues`, {}",
+                RepositorySetting::keys()
+            );
+        };
+        let value = toml::Value::try_from(value)
+            .map_err(|e| anyhow!("the setting `{key}` is not a string, number or boolean: {e}"))?;
+        config::set_session(&mut session, setting, value)?;
+    }
     Ok(Automation {
         name: name.clone(),
         schedule: Schedule::parse(&front.on.schedule)?,
-        timeout,
-        model: front.model,
-        effort,
-        setup: front.setup.map(Setup::from),
+        session,
         max_issues: front.max_issues.unwrap_or(DEFAULT_MAX_ISSUES),
         instructions: body.to_string(),
     })

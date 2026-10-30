@@ -1,7 +1,7 @@
 ---
 on:
   schedule: "0 6 * * 1"
-timeout: 15m
+session-timeout: 15m
 max-issues: 2
 ---
 Check whether the `Dockerfile` pins the newest Claude Code and gh, and file an

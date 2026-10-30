@@ -506,11 +506,11 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
 }
 
 #[test]
-fn an_automations_timeout_comes_from_the_repository_before_the_operators_session_timeout() {
+fn an_automations_session_timeout_comes_from_the_repository_before_the_operators_session_timeout() {
     let config = resolve(&["--session-timeout", "10m"], &[], None).unwrap();
     let automation = automation::parse(
         &"weekly".parse().unwrap(),
-        "---\non:\n  schedule: \"0 9 * * 1\"\ntimeout: 5m\n---\nLook around.\n",
+        "---\non:\n  schedule: \"0 9 * * 1\"\nsession-timeout: 5m\n---\nLook around.\n",
     )
     .unwrap();
 
@@ -1500,7 +1500,7 @@ fn setup_is_a_flag_a_variable_or_a_key_and_unset_runs_nothing() {
     );
     assert_eq!(setup(&["--setup", ""], &[], file).value, Setup::Empty);
     assert_eq!(
-        session(&resolve(&[], &[], file).unwrap()).sources()[&Setting::Setup],
+        session(&resolve(&[], &[], file).unwrap()).sources()[&Setting::SETUP],
         Source::Layer(Layer::Operator)
     );
 }

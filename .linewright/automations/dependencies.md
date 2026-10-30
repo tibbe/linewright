@@ -1,7 +1,7 @@
 ---
 on:
   schedule: "0 7 * * 1"
-timeout: 30m
+session-timeout: 30m
 max-issues: 10
 ---
 Check whether the dependencies have releases at least 7 days old that

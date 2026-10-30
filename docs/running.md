@@ -58,14 +58,16 @@ session-pass-env = ["DEPLOY_KEY"]
 ```
 
 A model or effort Linewright sets wins over `ANTHROPIC_MODEL`,
-`CLAUDE_CODE_EFFORT_LEVEL` and the repository's Claude Code settings. An
-automation's `model` and `effort` in its front matter win over the whole
-pipeline's for its runs.
+`CLAUDE_CODE_EFFORT_LEVEL` and the repository's Claude Code settings.
 
 The repository can set `model`, `effort`, `session-timeout` and `setup` too,
 for the whole pipeline and in stage tables, in `.linewright/config.toml` on its
 default branch. Its settings win over your file, and your flags and variables
 win over its whole-pipeline settings.
+
+An automation's front matter takes the same settings as the repository's file,
+such as `session-timeout: 15m`, and they win over the whole pipeline's for its
+runs.
 
 ### The setup command
 
@@ -91,9 +93,6 @@ setup = ""
   process that leaves the group, or a container it starts, outlives the run.
 - **Its output** is kept with the run, redacted, in `setup.log` in the
   session's directory under `sessions/` in the work directory.
-
-An automation's `setup` in its front matter wins over the whole pipeline's for
-its runs.
 
 ### Prompts
 

@@ -75,20 +75,70 @@ impl fmt::Display for Effort {
 /// (`docs/specs/operation.md`, Stage settings).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Setting {
-    Model,
-    Effort,
-    SessionTimeout,
-    Setup,
+    Repository(RepositorySetting),
     SessionEnv,
     SessionPassEnv,
 }
 
+/// The settings of the repository's file, at its top level and in its
+/// stages' tables (`docs/specs/operation.md`, The repository's file), and
+/// of an automation's front matter (`docs/specs/automations.md`, Session
+/// settings).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RepositorySetting {
+    Model,
+    Effort,
+    SessionTimeout,
+    Setup,
+}
+
+impl RepositorySetting {
+    pub const ALL: [RepositorySetting; 4] = [
+        RepositorySetting::Model,
+        RepositorySetting::Effort,
+        RepositorySetting::SessionTimeout,
+        RepositorySetting::Setup,
+    ];
+
+    /// Its key in a config file and in front matter.
+    pub const fn name(self) -> &'static str {
+        match self {
+            RepositorySetting::Model => "model",
+            RepositorySetting::Effort => "effort",
+            RepositorySetting::SessionTimeout => "session-timeout",
+            RepositorySetting::Setup => "setup",
+        }
+    }
+
+    /// The setting whose key is `key`, if it is one of these.
+    pub fn named(key: &str) -> Option<RepositorySetting> {
+        RepositorySetting::ALL
+            .into_iter()
+            .find(|setting| setting.name() == key)
+    }
+
+    /// Their keys, as a list in an error: "`model`, `effort`, …".
+    pub fn keys() -> String {
+        format!(
+            "`{}`",
+            RepositorySetting::ALL
+                .map(RepositorySetting::name)
+                .join("`, `")
+        )
+    }
+}
+
 impl Setting {
+    pub const MODEL: Setting = Setting::Repository(RepositorySetting::Model);
+    pub const EFFORT: Setting = Setting::Repository(RepositorySetting::Effort);
+    pub const SESSION_TIMEOUT: Setting = Setting::Repository(RepositorySetting::SessionTimeout);
+    pub const SETUP: Setting = Setting::Repository(RepositorySetting::Setup);
+
     pub const ALL: [Setting; 6] = [
-        Setting::Model,
-        Setting::Effort,
-        Setting::SessionTimeout,
-        Setting::Setup,
+        Setting::MODEL,
+        Setting::EFFORT,
+        Setting::SESSION_TIMEOUT,
+        Setting::SETUP,
         Setting::SessionEnv,
         Setting::SessionPassEnv,
     ];
@@ -96,10 +146,7 @@ impl Setting {
     /// Its key in a config file.
     pub const fn name(self) -> &'static str {
         match self {
-            Setting::Model => "model",
-            Setting::Effort => "effort",
-            Setting::SessionTimeout => "session-timeout",
-            Setting::Setup => "setup",
+            Setting::Repository(setting) => setting.name(),
             Setting::SessionEnv => "session-env",
             Setting::SessionPassEnv => "session-pass-env",
         }
@@ -297,7 +344,7 @@ pub struct StageSet {
 /// that would give the next run longer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimeoutSetting {
-    /// The automation's `timeout`.
+    /// `session-timeout` in the automation's front matter.
     Automation,
     /// `session-timeout` in the stage's table.
     Stage(WorkKind),
@@ -308,7 +355,9 @@ pub enum TimeoutSetting {
 impl fmt::Display for TimeoutSetting {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TimeoutSetting::Automation => f.write_str("the automation's `timeout`"),
+            TimeoutSetting::Automation => {
+                f.write_str("`session-timeout` in the automation's front matter")
+            }
             TimeoutSetting::Stage(stage) => {
                 write!(f, "`session-timeout` in `[stage.{}]`", stage.name())
             }
@@ -326,7 +375,8 @@ pub struct SessionSettings {
     pub effort: Option<Sourced<Effort>>,
     pub session_timeout: Sourced<Duration>,
     pub timeout_setting: TimeoutSetting,
-    /// The setup command, whose time counts against `session_timeout`.
+    /// The setup command, which runs within its session's timeout,
+    /// `session_timeout`, having none of its own.
     pub setup: Sourced<Setup>,
     pub environment: Arc<Given>,
     pub env_layers: EnvLayers,
@@ -348,18 +398,18 @@ impl SessionSettings {
         let set_or_harness = |layer: Option<Layer>| layer.map_or(Source::Harness, Source::Layer);
         BTreeMap::from([
             (
-                Setting::Model,
+                Setting::MODEL,
                 set_or_harness(self.model.as_ref().map(|model| model.layer)),
             ),
             (
-                Setting::Effort,
+                Setting::EFFORT,
                 set_or_harness(self.effort.as_ref().map(|effort| effort.layer)),
             ),
             (
-                Setting::SessionTimeout,
+                Setting::SESSION_TIMEOUT,
                 Source::Layer(self.session_timeout.layer),
             ),
-            (Setting::Setup, Source::Layer(self.setup.layer)),
+            (Setting::SETUP, Source::Layer(self.setup.layer)),
             (Setting::SessionEnv, Source::Layer(self.env_layers.set)),
             (Setting::SessionPassEnv, Source::Layer(self.env_layers.pass)),
         ])
@@ -408,21 +458,13 @@ impl WorkSettings {
     ) -> SessionSettings {
         let none = Partial::default();
         let (front_matter, stage) = match of {
-            RunKind::Automation(automation) => (
-                Partial {
-                    model: automation.model.clone(),
-                    effort: automation.effort,
-                    session_timeout: automation.timeout,
-                    setup: automation.setup.clone(),
-                },
-                None,
-            ),
-            RunKind::Stage(stage) => (Partial::default(), Some(stage)),
+            RunKind::Automation(automation) => (&automation.session, None),
+            RunKind::Stage(stage) => (&none, Some(stage)),
         };
         let table = stage.and_then(|stage| self.stages.get(&stage));
         let stage_setting = stage.map_or(TimeoutSetting::Pipeline, TimeoutSetting::Stage);
         let ladder = [
-            Rung::new(&front_matter, Layer::Repository, TimeoutSetting::Automation),
+            Rung::new(front_matter, Layer::Repository, TimeoutSetting::Automation),
             Rung::new(
                 stage
                     .and_then(|stage| repo.stages.get(&stage))

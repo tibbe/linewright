@@ -412,7 +412,7 @@ async fn a_scheduled_automation_run_resumes_with_the_time_left_of_its_own_timeou
             "main",
             &[(
                 ".linewright/automations/hourly.md",
-                "---\non:\n  schedule: \"0 * * * *\"\ntimeout: 60m\n---\nLook around.\n",
+                "---\non:\n  schedule: \"0 * * * *\"\nsession-timeout: 60m\n---\nLook around.\n",
             )],
             "Add an automation",
         )

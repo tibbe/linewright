@@ -280,8 +280,8 @@ impl From<KeptRan> for Ran {
     fn from(kept: KeptRan) -> Ran {
         let mut layers = kept.layers;
         for (setting, set) in [
-            (Setting::Model, kept.model.is_some()),
-            (Setting::Effort, kept.effort.is_some()),
+            (Setting::MODEL, kept.model.is_some()),
+            (Setting::EFFORT, kept.effort.is_some()),
         ] {
             if let Some(source) = layers.settings.get_mut(&setting)
                 && !set

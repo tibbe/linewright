@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use linewright::automation::{Automation, AutomationName, parse};
-use linewright::work_settings::Effort;
+use linewright::work_settings::{Effort, Partial, Setup};
 
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
@@ -21,7 +21,7 @@ fn error(text: &str) -> String {
 const SPEC_EXAMPLE: &str = "---
 on:
   schedule: \"0 6 * * 1\"
-timeout: 60m
+session-timeout: 60m
 max-issues: 3
 ---
 Look at the bugs fixed in the past week ...
@@ -37,7 +37,10 @@ fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions(
         automation.schedule.next_after(utc("2026-10-01T12:00:00Z")),
         Some(utc("2026-10-05T06:00:00Z"))
     );
-    assert_eq!(automation.timeout, Some(Duration::from_hours(1)));
+    assert_eq!(
+        automation.session.session_timeout,
+        Some(Duration::from_hours(1))
+    );
     assert_eq!(automation.max_issues, 3);
     assert_eq!(
         automation.instructions,
@@ -46,14 +49,18 @@ fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions(
 }
 
 #[test]
-fn without_a_timeout_or_an_issue_cap_an_automation_takes_the_defaults() {
+fn without_session_settings_or_an_issue_cap_an_automation_takes_the_defaults() {
     let automation = parse(
         &name("nightly"),
         "---\non:\n  schedule: \"30 2 * * *\"\n---\nTidy up.\n",
     )
     .unwrap();
 
-    assert_eq!(automation.timeout, None, "the `session-timeout` setting");
+    assert_eq!(
+        automation.session,
+        Partial::default(),
+        "the whole pipeline's"
+    );
     assert_eq!(automation.max_issues, 3);
 }
 
@@ -77,7 +84,7 @@ fn the_schedule_is_in_utc() {
 
 #[test]
 fn a_file_without_a_schedule_does_not_parse() {
-    let error = error("---\ntimeout: 60m\n---\nLook.\n");
+    let error = error("---\nsession-timeout: 60m\n---\nLook.\n");
 
     assert!(error.contains("missing field `on`"), "{error}");
 }
@@ -131,10 +138,54 @@ fn an_unknown_key_does_not_parse() {
 }
 
 #[test]
-fn a_timeout_that_is_not_a_duration_does_not_parse() {
-    let error = error("---\non:\n  schedule: \"0 6 * * 1\"\ntimeout: soon\n---\nLook.\n");
+fn a_session_timeout_that_is_not_a_duration_does_not_parse() {
+    let error = error("---\non:\n  schedule: \"0 6 * * 1\"\nsession-timeout: soon\n---\nLook.\n");
 
-    assert!(error.contains("`timeout` is \"soon\""), "{error}");
+    assert!(error.contains("`session-timeout` is \"soon\""), "{error}");
+}
+
+#[test]
+fn a_leftover_timeout_does_not_parse_naming_the_key() {
+    let error = error("---\non:\n  schedule: \"0 6 * * 1\"\ntimeout: 15m\n---\nLook.\n");
+
+    assert!(error.contains("`timeout`"), "{error}");
+    assert!(error.contains("`session-timeout`"), "{error}");
+}
+
+#[test]
+fn the_front_matter_takes_the_session_settings_the_repositorys_file_takes() {
+    let automation = parse(
+        &name("weekly"),
+        "---
+on:
+  schedule: \"0 6 * * 1\"
+model: opus
+effort: high
+session-timeout: 15m
+setup: make deps
+---
+Look.
+",
+    )
+    .unwrap();
+
+    assert_eq!(
+        automation.session,
+        Partial {
+            model: Some("opus".to_string()),
+            effort: Some(Effort::High),
+            session_timeout: Some(Duration::from_mins(15)),
+            setup: Some(Setup::from("make deps".to_string())),
+        }
+    );
+}
+
+#[test]
+fn the_front_matter_takes_no_operator_only_session_setting() {
+    let error =
+        error("---\non:\n  schedule: \"0 6 * * 1\"\nsession-pass-env: [HOME]\n---\nLook.\n");
+
+    assert!(error.contains("`session-pass-env`"), "{error}");
 }
 
 #[test]
@@ -150,9 +201,9 @@ fn an_automation_names_its_model_and_effort_or_takes_the_whole_pipelines() {
     )
     .unwrap();
 
-    assert_eq!(chosen.model.as_deref(), Some("opus"));
-    assert_eq!(chosen.effort, Some(Effort::High));
-    assert_eq!((unset.model, unset.effort), (None, None));
+    assert_eq!(chosen.session.model.as_deref(), Some("opus"));
+    assert_eq!(chosen.session.effort, Some(Effort::High));
+    assert_eq!((unset.session.model, unset.session.effort), (None, None));
 }
 
 #[test]

@@ -14,7 +14,7 @@ use serde_json::json;
 const WEEKLY: &str = "---
 on:
   schedule: \"0 6 * * 1\"
-timeout: 60m
+session-timeout: 60m
 max-issues: 3
 ---
 Look at the bugs fixed in the past week ...
@@ -345,7 +345,7 @@ async fn an_automations_model_and_effort_reach_its_session() {
 }
 
 #[tokio::test]
-async fn the_session_times_out_after_the_automations_timeout() {
+async fn the_session_times_out_after_the_automations_session_timeout() {
     let left = time_given(WEEKLY).await;
 
     assert!(
@@ -355,7 +355,7 @@ async fn the_session_times_out_after_the_automations_timeout() {
 }
 
 #[tokio::test]
-async fn without_a_timeout_the_session_times_out_after_the_session_timeout() {
+async fn without_a_session_timeout_the_session_times_out_after_the_session_timeout() {
     let left = time_given("---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n").await;
 
     // The `session-timeout` the test factory runs with.
@@ -427,7 +427,9 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
 
     assert!(error.contains("it timed out"), "{error}");
     assert!(
-        error.contains("or the automation's `timeout` may need to be longer"),
+        error.contains(
+            "or `session-timeout` in the automation's front matter may need to be longer"
+        ),
         "{error}"
     );
     assert_eq!(world.harness.automation_prompts().len(), 1);

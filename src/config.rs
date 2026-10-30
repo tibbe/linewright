@@ -21,7 +21,8 @@ use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
 use crate::work_settings::{
-    Effort, EnvLayers, Partial, RepoSettings, Setting, Setup, StageTable, WorkSettings,
+    Effort, EnvLayers, Partial, RepoSettings, RepositorySetting, Setting, Setup, StageTable,
+    WorkSettings,
 };
 
 #[derive(Parser, Debug)]
@@ -438,7 +439,7 @@ const VARIABLE_NAME: &str = "a variable's name";
 /// The form of `setting`, a stage's setting.
 const fn stage_form(setting: Setting) -> Form {
     match setting {
-        Setting::Model | Setting::Effort | Setting::SessionTimeout | Setting::Setup => VALUE,
+        Setting::Repository(_) => VALUE,
         Setting::SessionPassEnv => list(VARIABLE_NAME),
         Setting::SessionEnv => Form::Table,
     }
@@ -461,14 +462,14 @@ const SETTINGS: [(&str, Form); 27] = [
     ("done-window", VALUE),
     ("max-runs", VALUE),
     ("work-dir", VALUE),
-    stage_entry(Setting::Model),
-    stage_entry(Setting::Effort),
+    stage_entry(Setting::MODEL),
+    stage_entry(Setting::EFFORT),
     ("prompts", VALUE),
     stage_entry(Setting::SessionEnv),
     stage_entry(Setting::SessionPassEnv),
     ("secrets", list(VARIABLE_NAME)),
-    stage_entry(Setting::SessionTimeout),
-    stage_entry(Setting::Setup),
+    stage_entry(Setting::SESSION_TIMEOUT),
+    stage_entry(Setting::SETUP),
     ("result-retries", VALUE),
     ("ci-grace", VALUE),
     ("ci-timeout", VALUE),
@@ -1045,15 +1046,6 @@ fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<FileSettings, Resolv
 /// The key of the stages' tables.
 const STAGE: &str = "stage";
 
-/// The settings of the repository's file, at its top level and in its
-/// stages' tables (`docs/specs/operation.md`, The repository's file).
-const REPOSITORY_SETTINGS: [Setting; 4] = [
-    Setting::Model,
-    Setting::Effort,
-    Setting::SessionTimeout,
-    Setting::Setup,
-];
-
 /// Whose config file a table is in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Owner {
@@ -1066,7 +1058,7 @@ impl Owner {
     /// file.
     fn stage_setting(self, key: &str, at: &str) -> Result<Setting> {
         match self {
-            Owner::Repository => repository_setting(key, at),
+            Owner::Repository => repository_setting(key, at).map(Setting::Repository),
             Owner::Operator => key.parse().map_err(|_| {
                 let keys = Setting::ALL.map(Setting::name);
                 anyhow!(
@@ -1080,12 +1072,11 @@ impl Owner {
 
 /// The setting `key` names in the repository's file, `at` naming where. An
 /// error says when the key is the operator's.
-fn repository_setting(key: &str, at: &str) -> Result<Setting> {
-    if let Some(setting) = REPOSITORY_SETTINGS.into_iter().find(|s| s.name() == key) {
+fn repository_setting(key: &str, at: &str) -> Result<RepositorySetting> {
+    if let Some(setting) = RepositorySetting::named(key) {
         return Ok(setting);
     }
-    let keys = REPOSITORY_SETTINGS.map(Setting::name);
-    let holds = format!("{at} holds `{}`", keys.join("`, `"));
+    let holds = format!("{at} holds {}", RepositorySetting::keys());
     if form(key).is_some() {
         bail!("the setting `{key}` is the operator's: {holds}");
     }
@@ -1094,18 +1085,12 @@ fn repository_setting(key: &str, at: &str) -> Result<Setting> {
 
 /// Sets `setting` in `table` to `value`.
 fn set(table: &mut StageTable, setting: Setting, value: toml::Value) -> Result<()> {
-    let text = |form, given| setting_value(setting.name(), form, given);
-    let settings = &mut table.settings;
     match setting {
-        Setting::Model => settings.model = Some(text(Text::Value, value)?),
-        Setting::Effort => settings.effort = Some(effort(&text(Text::Value, value)?)?),
-        Setting::SessionTimeout => {
-            settings.session_timeout = Some(session_timeout(&text(Text::Value, value)?)?);
-        }
-        Setting::Setup => settings.setup = Some(Setup::from(text(Text::Value, value)?)),
+        Setting::Repository(setting) => set_session(&mut table.settings, setting, value)?,
         Setting::SessionEnv => table.session_env = Some(set_env(setting.name(), value)?),
         Setting::SessionPassEnv => {
-            let names = text(
+            let names = setting_value(
+                setting.name(),
                 Text::List {
                     holds: VARIABLE_NAME,
                 },
@@ -1113,6 +1098,25 @@ fn set(table: &mut StageTable, setting: Setting, value: toml::Value) -> Result<(
             )?;
             table.session_pass_env = Some(names.parse().map_err(|e: String| anyhow!(e))?);
         }
+    }
+    Ok(())
+}
+
+/// Sets `setting` in `settings` to `value`: so the repository's file and an
+/// automation's front matter read a setting alike.
+pub(crate) fn set_session(
+    settings: &mut Partial,
+    setting: RepositorySetting,
+    value: toml::Value,
+) -> Result<()> {
+    let text = |given| setting_value(setting.name(), Text::Value, given);
+    match setting {
+        RepositorySetting::Model => settings.model = Some(text(value)?),
+        RepositorySetting::Effort => settings.effort = Some(effort(&text(value)?)?),
+        RepositorySetting::SessionTimeout => {
+            settings.session_timeout = Some(session_timeout(&text(value)?)?);
+        }
+        RepositorySetting::Setup => settings.setup = Some(Setup::from(text(value)?)),
     }
     Ok(())
 }
@@ -1156,7 +1160,7 @@ impl RepoSettings {
     /// at fault, and says so when the key is the operator's.
     pub fn parse(file: &str) -> Result<RepoSettings> {
         let keys: toml::Table = file.parse().context("it does not parse")?;
-        let mut top = StageTable::default();
+        let mut top = Partial::default();
         let mut stages = BTreeMap::new();
         for (key, value) in keys {
             if key == STAGE {
@@ -1167,9 +1171,9 @@ impl RepoSettings {
                 continue;
             }
             let setting = repository_setting(&key, "the repository's file")?;
-            set(&mut top, setting, value)?;
+            set_session(&mut top, setting, value)?;
         }
-        Ok(RepoSettings::new(top.settings, stages))
+        Ok(RepoSettings::new(top, stages))
     }
 }
 
