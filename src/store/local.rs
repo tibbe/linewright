@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 
 use super::{
     AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
-    PeoplesPullRead, PushError, PushMode, RepoSettings, Store,
+    PeoplesPullRead, PushError, PushMode, RepoSettings, Store, holds,
 };
 use crate::clock::Clock;
 use crate::domain::{
@@ -566,13 +566,14 @@ impl LocalStore {
     /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>),
     /// returning when it merged.
     async fn merge_as(&self, pr: Number, by: &str, method: MergeMethod) -> Result<Timestamp> {
-        let (head_ref, title, base_ref) = {
+        let (head_ref, title, base_ref, owner) = {
             let state = self.state();
             let record = state.pull(pr)?;
             (
                 record.head_ref.clone(),
                 record.title.clone(),
                 record.base_ref.clone(),
+                state.repo.owner().to_string(),
             )
         };
         let before = self.rev(&base_ref).await?;
@@ -582,6 +583,7 @@ impl LocalStore {
             MergeOf {
                 into: &base_ref,
                 before: &before,
+                owner: &owner,
                 head: &head_ref,
                 method,
                 by,
@@ -1307,6 +1309,20 @@ impl State {
         }
     }
 
+    /// Among which pull requests a snapshot holds #`record`, as GitHub's
+    /// does: a person's while it is open, as [`PullSigns::held`] tells, and
+    /// Linewright's while it is open or closes an issue the snapshot holds.
+    fn pull_held(&self, record: &PullRecord) -> Option<PullHeld> {
+        let events = record.events();
+        let held = record.signs(&events).held(&self.linewright)?;
+        let closes_held = || {
+            self.issues.iter().any(|(&number, issue)| {
+                record.closes(number) && holds(&self.issue_view(issue), &self.linewright)
+            })
+        };
+        (record.is_open() || (held == PullHeld::Linewrights && closes_held())).then_some(held)
+    }
+
     /// The issue as the snapshot holds it among its closed items: `None`
     /// when it is open.
     fn closed_issue(&self, record: &IssueRecord) -> Option<ClosedItem> {
@@ -1518,17 +1534,6 @@ impl PullRecord {
         }
     }
 
-    /// Among which pull requests a snapshot holds it: unlike GitHub's
-    /// snapshot, this one holds Linewright's open or not; a person's it
-    /// holds while open, as [`PullSigns::held`] tells.
-    fn held(&self, linewright: &Login) -> Option<PullHeld> {
-        let events = self.events();
-        match self.signs(&events).held(linewright) {
-            Some(PullHeld::Peoples) if !self.is_open() => None,
-            held => held,
-        }
-    }
-
     fn is_open(&self) -> bool {
         matches!(self.state, PullState::Open { .. })
     }
@@ -1732,7 +1737,7 @@ impl Store for LocalStore {
             let pulls: Vec<(Number, Option<PullHeld>)> = state
                 .pulls
                 .values()
-                .map(|p| (p.number, p.held(&state.linewright)))
+                .map(|p| (p.number, state.pull_held(p)))
                 .collect();
             (
                 state.default_branch.clone(),
@@ -1852,14 +1857,14 @@ impl Store for LocalStore {
 
     async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>> {
         self.read_item()?;
-        let by_linewright = {
+        let held = {
             let state = self.state();
             let Some(record) = state.pulls.get(&number) else {
                 return Ok(None);
             };
-            record.author == state.linewright
+            state.pull_held(record) == Some(PullHeld::Linewrights)
         };
-        if !by_linewright {
+        if !held {
             return Ok(None);
         }
         Ok(Some(self.pull_view(number).await?))
@@ -1872,7 +1877,7 @@ impl Store for LocalStore {
             let Some(record) = state.pulls.get(&number).filter(|p| p.is_open()) else {
                 return Ok(PeoplesPullRead::default());
             };
-            let peoples = record.held(&state.linewright) == Some(PullHeld::Peoples);
+            let peoples = state.pull_held(record) == Some(PullHeld::Peoples);
             (closing_references(&record.body), peoples)
         };
         let pull = if peoples {
@@ -1895,6 +1900,9 @@ impl Store for LocalStore {
     }
 
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String> {
+        if paths.is_empty() {
+            return Ok(String::new());
+        }
         let (merge, head_ref, default_branch) = {
             let state = self.state();
             let default_branch = state.default_branch.clone();
@@ -1972,7 +1980,7 @@ impl Store for LocalStore {
             };
             if paths.iter().any(|asked| asked == path) {
                 let bytes = git::git_bytes(&repository, &["cat-file", "blob", object]).await?;
-                read.insert(path.to_string(), Blob::from_bytes(bytes));
+                read.insert(path.to_string(), Blob::as_github_reads(bytes));
             }
         }
         Ok(read)
@@ -2310,6 +2318,10 @@ impl Store for LocalStore {
         }
         if self.rev(&head_ref).await? != head {
             bail!("the head of {pr} is no longer {head}");
+        }
+        // GitHub merges no pull request that conflicts, by any method.
+        if self.pull_view(pr).await?.mergeability == Mergeability::Conflicting {
+            bail!("{pr} has merge conflicts");
         }
         if !self.state().allowed_merge_methods.contains(method) {
             bail!("the repository doesn't allow the merge method `{method}`");

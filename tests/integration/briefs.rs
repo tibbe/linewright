@@ -170,7 +170,7 @@ fn a_prompt_that_cannot_be_read_as_text_is_unusable() {
             Unusable {
                 path: "triage.md".into(),
                 layer: Layer::Operator,
-                error: "it is not UTF-8 text".into(),
+                error: "it is not text".into(),
                 holds: Readers::Only(&[Reads::Stage(WorkKind::Triage)]),
             },
         ]

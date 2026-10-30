@@ -104,11 +104,12 @@ fn quote_path(path: &str) -> String {
     quoted
 }
 
-/// A merge of pull request `pr`, from branch `head` into branch `into` at
-/// `before`, by `by`.
+/// A merge of pull request `pr`, from branch `head` of the repository owned
+/// by `owner` into branch `into` at `before`, by `by`.
 pub struct MergeOf<'a> {
     pub into: &'a str,
     pub before: &'a str,
+    pub owner: &'a str,
     pub head: &'a str,
     pub method: MergeMethod,
     pub by: &'a str,
@@ -124,6 +125,7 @@ pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
     let MergeOf {
         into,
         before,
+        owner,
         head,
         method,
         by,
@@ -131,16 +133,22 @@ pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
         pr,
     } = merge;
     let by = Signature::of(by);
+    // GitHub commits merge commits and squashes as itself.
+    let github = Signature {
+        name: "GitHub",
+        email: Cow::Borrowed("noreply@github.com"),
+        date: None,
+    };
     let after = match method {
         MergeMethod::Merge => {
             let tree = merged_tree(repo, before, head).await?;
-            let message = format!("Merge pull request {pr} from {head}");
-            commit_tree(repo, &tree, &[before, head], &message, &by, &by).await?
+            let message = format!("Merge pull request {pr} from {owner}/{head}\n\n{title}");
+            commit_tree(repo, &tree, &[before, head], &message, &by, &github).await?
         }
         MergeMethod::Squash => {
             let tree = merged_tree(repo, before, head).await?;
-            let message = format!("{title} ({pr})");
-            commit_tree(repo, &tree, &[before], &message, &by, &by).await?
+            let message = format!("{} ({pr})", squash_title(repo, before, head, title).await?);
+            commit_tree(repo, &tree, &[before], &message, &by, &github).await?
         }
         MergeMethod::Rebase => {
             let Replayed::Onto(after) = replay(repo, before, head, by.name).await? else {
@@ -151,6 +159,22 @@ pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
     };
     move_ref(repo, into, &after, before).await?;
     Ok(after)
+}
+
+/// The title GitHub gives the squash of `head` into `before` by default: the
+/// subject of the pull request's commit when it has one, and otherwise its
+/// `title`
+/// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/configuring-commit-squashing-for-pull-requests>).
+async fn squash_title(repo: &Path, before: &str, head: &str, title: &str) -> Result<String> {
+    let range = format!("{before}..{head}");
+    let count = git::git(repo, &["rev-list", "--count", &range]).await?;
+    if count.trim() != "1" {
+        return Ok(title.to_string());
+    }
+    Ok(git::git(repo, &["log", "-1", "--format=%s", head])
+        .await?
+        .trim_end()
+        .to_string())
 }
 
 /// The tree that merges `head` into the commit `tip`, which must merge

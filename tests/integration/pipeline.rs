@@ -5082,7 +5082,8 @@ async fn with_auto_merge_and_no_merge_method_set_the_first_method_the_repository
 
     assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
     let pr = *squashed.store.pulls().last().unwrap();
-    assert_eq!(history(&squashed)[0], (format!("Do it ({pr})"), 1));
+    // A squash of one commit is titled after it.
+    assert_eq!(history(&squashed)[0], (format!("Do the ticket ({pr})"), 1));
 }
 
 #[tokio::test]

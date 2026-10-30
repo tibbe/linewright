@@ -345,23 +345,37 @@ impl AnyItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Blob {
     Text(String),
-    /// Not UTF-8 text.
+    /// Not text, such as an image.
     Binary,
     /// Too large for the store to give.
     TooLarge,
 }
 
 impl Blob {
-    /// The file holding `bytes`.
+    /// The file holding `bytes`, read as text only when it is UTF-8.
     pub fn from_bytes(bytes: Vec<u8>) -> Blob {
         String::from_utf8(bytes).map_or(Blob::Binary, Blob::Text)
+    }
+
+    /// The file holding `bytes`, as GitHub reads it from a repository:
+    /// binary when it holds a NUL byte, as git judges it
+    /// (<https://git-scm.com/docs/gitattributes#_marking_files_as_binary>),
+    /// and otherwise text, decoded as Latin-1 where it is not UTF-8.
+    pub fn as_github_reads(bytes: Vec<u8>) -> Blob {
+        if bytes.contains(&0) {
+            return Blob::Binary;
+        }
+        match String::from_utf8(bytes) {
+            Ok(text) => Blob::Text(text),
+            Err(error) => Blob::Text(error.into_bytes().into_iter().map(char::from).collect()),
+        }
     }
 
     /// The file's text, or why it cannot be read as text.
     pub fn text(self) -> Result<String, &'static str> {
         match self {
             Blob::Text(text) => Ok(text),
-            Blob::Binary => Err("it is not UTF-8 text"),
+            Blob::Binary => Err("it is not text"),
             Blob::TooLarge => Err("it is too large to read"),
         }
     }
