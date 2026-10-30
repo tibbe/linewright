@@ -25,6 +25,12 @@ pub const CONTROL_VARIABLE: &str = "LINEWRIGHT_CONTAIN_CONTROL";
 /// SIGKILL.
 const GRACE: Duration = Duration::from_secs(2);
 
+/// The variable macOS's CoreFoundation adds to the environment of the
+/// process it loads into, here the wrapper's, when it is missing. The
+/// wrapper does not pass it on, so that the program's environment is the one
+/// `serve` gave; a program that loads CoreFoundation sets it again itself.
+const CF_TEXT_ENCODING: &str = "__CF_USER_TEXT_ENCODING";
+
 /// What the wrapper exits with when it cannot run the program, as `env`
 /// does when it fails itself.
 const CANNOT_CONTAIN: u8 = 125;
@@ -81,10 +87,12 @@ pub fn main(program: &OsStr, args: &[OsString]) -> ExitCode {
     let started = become_subreaper(me)
         .map_err(std::io::Error::from)
         .and_then(|()| {
-            Command::new(program)
-                .args(args)
-                .env_remove(CONTROL_VARIABLE)
-                .spawn()
+            let mut command = Command::new(program);
+            command.args(args).env_remove(CONTROL_VARIABLE);
+            if cfg!(target_os = "macos") {
+                command.env_remove(CF_TEXT_ENCODING);
+            }
+            command.spawn()
         });
     let report = match &started {
         Ok(_) => Report::Started,
