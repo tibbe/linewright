@@ -879,6 +879,19 @@ mod tests {
     }
 
     #[test]
+    fn an_automations_issue_labeled_other_than_the_two_labels_is_sent_back() {
+        let error = rejected::<AutomationResult>(&json!({
+            "summary": "One bug.",
+            "issues": [{"title": "Fix it", "body": "It is broken.", "label": "bug"}],
+        }));
+        assert_eq!(
+            error,
+            "The result does not match its schema:\n\n\
+             - `/issues/0/label`: \"bug\" is not one of \"ready-for-agent\" or \"ready-for-human\"\n"
+        );
+    }
+
+    #[test]
     fn a_category_outside_the_categories_is_sent_back() {
         let error =
             triage(&json!({"outcome": "ready-for-agent", "category": "chore", "comment": "Fine."}))

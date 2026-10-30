@@ -46,6 +46,8 @@
 //! - `gated`: holds each session of a kind of work open until its `Gate`
 //!   releases it; the `Gate` tells when one has `begun`.
 //! - `gate`: a `Gate` and the `Gatepost` a session's script `wait`s at.
+//! - `store_holding`: a store whose default branch holds only the files
+//!   given, for a test that needs no factory.
 //! - `HOURLY`: an automation file that runs on the hour; the fake clock starts
 //!   at 12:00.
 //! - `Serving`: a factory serving in the background.

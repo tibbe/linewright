@@ -245,6 +245,41 @@ fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_l
 }
 
 #[test]
+fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
+    let dir = prompts_dir(&[(
+        "automation.md",
+        "Mind the schedule of `{{name}}`, at most {{max_issues}}: {{instructions}}\n\
+         {{facts}}\n\n{{output}}\n",
+    )]);
+    let automation = linewright::automation::parse(
+        &"weekly".parse().unwrap(),
+        "---\non:\n  schedule: \"0 6 * * 1\"\nmax-issues: 3\n---\nLook.\n",
+    )
+    .unwrap();
+    let name = "owner/widgets".parse().unwrap();
+
+    let briefs = OperatorPrompts::read(Some(dir.path())).unwrap().briefs();
+    let prompt = prompts::automation(
+        &briefs.prompts,
+        &prompts::Repo {
+            name: &name,
+            default_branch: "main",
+            spec_glob: "docs/**",
+        },
+        &automation,
+        std::path::Path::new("/attachments"),
+    );
+
+    assert!(
+        prompt.starts_with(
+            "Mind the schedule of `weekly`, at most 3: Look.\n- Repository: `owner/widgets`"
+        ),
+        "{prompt}"
+    );
+    assert_eq!(briefs.layers()["automation.md"], Layer::Operator);
+}
+
+#[test]
 fn an_operators_hidden_files_are_skipped() {
     let dir = prompts_dir(&[
         (".DS_Store", "Finder's."),

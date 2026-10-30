@@ -457,6 +457,27 @@ fn a_secret_in_a_binary_file_is_refused() {
 }
 
 #[test]
+fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_file() {
+    let briefs = linewright::briefs::OperatorPrompts::read(None)
+        .unwrap()
+        .briefs();
+
+    let followup = linewright::prompts::attachment_secret(
+        &briefs.prompts,
+        "NPM_TOKEN",
+        std::path::Path::new("/record/attachments/log.txt"),
+    );
+
+    assert_eq!(
+        followup,
+        "Your work is not finished: the attachment `/record/attachments/log.txt` holds the \
+         value of `NPM_TOKEN`, a secret. Linewright uploads no attachment that holds a secret, \
+         so take the secret out of the file, or take the reference to it out of your result.\
+         \n\nFix that, then answer again with only the result JSON object."
+    );
+}
+
+#[test]
 fn dir_create_makes_the_attachments_directory_in_the_record() {
     let record = tempfile::tempdir().unwrap();
     let dir = Dir::create(record.path()).unwrap();

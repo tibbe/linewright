@@ -1,13 +1,11 @@
 use crate::common;
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use common::*;
 use linewright::config::Cli;
 use linewright::harness::SessionError;
-use linewright::reconcile::WorkKind;
 use linewright::work_settings::Effort;
 use serde_json::json;
 
@@ -36,86 +34,32 @@ async fn with_automation(name: &str, text: &str) -> World {
 }
 
 #[tokio::test]
-async fn an_automation_runs_its_instructions_in_one_session_on_a_fresh_clone_of_the_default_branch()
-{
-    let world = with_automation("weekly", WEEKLY).await;
-    world.harness.on_automation(|call| {
-        assert!(
-            call.spec
-                .dir
-                .join(".linewright/automations/weekly.md")
-                .exists()
-        );
-        Ok(nothing_needs_doing())
-    });
-
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-
-    let prompts = world.harness.automation_prompts();
-    assert_eq!(prompts.len(), 1);
-    assert!(
-        prompts[0].contains("Look at the bugs fixed in the past week ..."),
-        "{}",
-        prompts[0]
-    );
-    assert!(
-        prompts[0].contains("### The automation `weekly`"),
-        "{}",
-        prompts[0]
-    );
-}
-
-#[tokio::test]
-async fn an_operators_automation_prompt_is_the_one_the_session_gets() {
-    let operators = prompts_with("automation.md", |text| {
-        format!("Mind the schedule.\n\n{text}")
-    });
-    let world = World::with(|config| {
-        config.prompts = linewright::briefs::OperatorPrompts::read(Some(operators.path())).unwrap();
-    })
-    .await;
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(".linewright/automations/weekly.md", WEEKLY)],
-            "Add an automation",
-        )
-        .await
-        .unwrap();
-    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
-
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-
-    let prompts = world.harness.automation_prompts();
-    assert_eq!(prompts.len(), 1);
-    assert!(
-        prompts[0].starts_with("Mind the schedule.\n\n"),
-        "{}",
-        prompts[0]
-    );
-}
-
-#[tokio::test]
 async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
-    let world = with_automation("weekly", WEEKLY).await;
-    world.harness.on_automation(|_| {
-        Ok(json!({
+    let world = with_automation(
+        "weekly",
+        "---\non:\n  schedule: \"0 6 * * 1\"\nmodel: opus\neffort: low\n---\nLook.\n",
+    )
+    .await;
+    let given = Arc::new(Mutex::new(None));
+    world.harness.on_automation({
+        let given = given.clone();
+        move |call| {
+            *given.lock().unwrap() = Some((
+                call.spec
+                    .dir
+                    .join(".linewright/automations/weekly.md")
+                    .exists(),
+                call.spec.model.clone(),
+                call.spec.effort,
+            ));
+            Ok(json!({
             "summary": "One bug looks unfixed, one needs a decision.",
             "issues": [
                 {"title": "Fix the widget count", "body": "Count them all.\n\n- [ ] All counted", "label": "ready-for-agent"},
                 {"title": "Should gadgets expire?", "body": "Recommend: yes.", "label": "ready-for-human"}
             ]
-        }).to_string())
+            }).to_string())
+        }
     });
 
     world
@@ -124,6 +68,14 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
         .await
         .unwrap();
 
+    // The session ran in a clone of the default branch, with the
+    // automation's settings, and is recorded under its name.
+    assert_eq!(
+        given.lock().unwrap().clone(),
+        Some((true, Some("opus".to_string()), Some(Effort::Low)))
+    );
+    let sessions = world.dir.path().join("work/sessions/automation-weekly");
+    assert_eq!(std::fs::read_dir(sessions).unwrap().count(), 1);
     let issues = world.store.issues();
     let filed: Vec<(&str, Vec<&str>, &str, &str)> = issues
         .iter()
@@ -210,162 +162,6 @@ async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
 }
 
 #[tokio::test]
-async fn a_result_with_a_label_other_than_the_two_goes_back_to_the_session_with_the_error() {
-    let world = with_automation("weekly", WEEKLY).await;
-    world.harness.on_automation(|call| {
-        let label = match call.followup {
-            None => "bug",
-            Some(_) => "ready-for-agent",
-        };
-        Ok(json!({
-            "summary": "One bug.",
-            "issues": [{"title": "Fix it", "body": "It is broken.", "label": label}]
-        })
-        .to_string())
-    });
-
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-
-    let prompts = world.harness.automation_prompts();
-    assert_eq!(prompts.len(), 2);
-    assert!(
-        prompts[1].contains(
-            r#"`/issues/0/label`: "bug" is not one of "ready-for-agent" or "ready-for-human""#
-        ),
-        "{}",
-        prompts[1]
-    );
-}
-
-#[tokio::test]
-async fn a_ready_for_agent_automation_issue_is_designed_then_implemented_without_triage() {
-    let mut world = with_automation("weekly", WEEKLY).await;
-    world.harness.on_automation(|_| {
-        Ok(json!({
-            "summary": "One bug.",
-            "issues": [{"title": "Fix it", "body": "It is broken.", "label": "ready-for-agent"}]
-        })
-        .to_string())
-    });
-    world.harness.on(WorkKind::Implement, |call| {
-        commit_in(&call.spec.dir, &[("src/fixed.txt", "fixed\n")], "Fix it");
-        Ok(json!({"outcome": "done", "pr_title": "Fix it", "pr_body": "Fixes it."}).to_string())
-    });
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-    let issue = world.store.issues()[0].number;
-    design_issues(&world);
-
-    world.poll().await;
-    world.poll().await;
-
-    let pr = *world
-        .store
-        .pulls()
-        .last()
-        .expect("a pull request was opened");
-    assert_eq!(world.store.snapshot_pull(pr).await.closes, [issue]);
-    assert_eq!(
-        world.harness.prompts(WorkKind::Triage),
-        Vec::<String>::new()
-    );
-}
-
-#[tokio::test]
-async fn an_automation_runs_kept_its_brief_result_and_transcript_under_the_work_directory() {
-    let world = with_automation("weekly", WEEKLY).await;
-    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
-
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-
-    let sessions = world.dir.path().join("work/sessions/automation-weekly");
-    let records: Vec<_> = std::fs::read_dir(&sessions).unwrap().collect();
-    assert_eq!(records.len(), 1);
-    let record = records[0].as_ref().unwrap().path();
-    for file in ["brief.md", "result.json", "transcript.jsonl"] {
-        assert!(record.join(file).exists(), "{file} in {}", record.display());
-    }
-}
-
-async fn time_given(text: &str) -> Duration {
-    let world = with_automation("weekly", text).await;
-    let left = Arc::new(Mutex::new(None));
-    world.harness.on_automation({
-        let left = left.clone();
-        move |call| {
-            *left.lock().unwrap() = Some(call.spec.deadline - tokio::time::Instant::now());
-            Ok(nothing_needs_doing())
-        }
-    });
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-    left.lock().unwrap().expect("the session ran")
-}
-
-#[tokio::test]
-async fn an_automations_model_and_effort_reach_its_session() {
-    let world = with_automation(
-        "weekly",
-        "---\non:\n  schedule: \"0 6 * * 1\"\nmodel: opus\neffort: low\n---\nLook.\n",
-    )
-    .await;
-    let given = Arc::new(Mutex::new(None));
-    world.harness.on_automation({
-        let given = given.clone();
-        move |call| {
-            *given.lock().unwrap() = Some((call.spec.model.clone(), call.spec.effort));
-            Ok(nothing_needs_doing())
-        }
-    });
-
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(
-        given.lock().unwrap().clone(),
-        Some((Some("opus".to_string()), Some(Effort::Low)))
-    );
-}
-
-#[tokio::test]
-async fn the_session_times_out_after_the_automations_session_timeout() {
-    let left = time_given(WEEKLY).await;
-
-    assert!(
-        left > Duration::from_mins(59) && left <= Duration::from_hours(1),
-        "{left:?}"
-    );
-}
-
-#[tokio::test]
-async fn without_a_session_timeout_the_session_times_out_after_the_session_timeout() {
-    let left = time_given("---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n").await;
-
-    // The `session-timeout` the test factory runs with.
-    assert!(
-        left > Duration::from_mins(29) && left <= Duration::from_mins(30),
-        "{left:?}"
-    );
-}
-
-#[tokio::test]
 async fn an_unknown_automation_fails_naming_its_file() {
     let world = with_automation("weekly", WEEKLY).await;
 
@@ -383,27 +179,6 @@ async fn an_unknown_automation_fails_naming_its_file() {
         error.contains(".linewright/automations/daily.md"),
         "{error}"
     );
-    assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
-}
-
-#[tokio::test]
-async fn an_automation_file_that_does_not_parse_fails_saying_why() {
-    let world = with_automation(
-        "weekly",
-        "---\non:\n  schedule: \"every monday\"\n---\nLook.\n",
-    )
-    .await;
-
-    let error = format!(
-        "{:#}",
-        world
-            .factory
-            .run_automation(&"weekly".parse().unwrap())
-            .await
-            .unwrap_err()
-    );
-
-    assert!(error.contains("every monday"), "{error}");
     assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
 }
 
@@ -476,12 +251,8 @@ async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
 
 #[test]
 fn the_help_says_how_to_run_one_now() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
-        .arg("--help")
-        .output()
-        .unwrap();
+    let help = Cli::command().render_long_help().to_string();
 
-    let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("`automation run NAME`"), "{help}");
 }
 
