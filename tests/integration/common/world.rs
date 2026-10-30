@@ -326,7 +326,21 @@ pub fn check(name: &str, state: CheckState, log: &str) -> CheckRecord {
 
 /// Each run adds to what its ticket's branch holds.
 pub fn implement(world: &World) {
-    world.harness.on(WorkKind::Implement, |call| {
+    implement_describing(world, IMPLEMENTED_BODY.to_string());
+}
+
+/// [`implement`]'s, each pull request described as also closing `other`.
+pub fn implement_closing(world: &World, other: Number) {
+    implement_describing(world, also_closing(other));
+}
+
+/// How each run [`implement_closing`] scripts describes its pull request.
+fn also_closing(other: Number) -> String {
+    format!("{IMPLEMENTED_BODY}\n\nCloses {other}")
+}
+
+fn implement_describing(world: &World, body: String) {
+    world.harness.on(WorkKind::Implement, move |call| {
         let file = implemented_file(&subject_file(call));
         let done = std::fs::read_to_string(call.spec.dir.join(&file)).unwrap_or_default();
         commit_in(
@@ -337,7 +351,7 @@ pub fn implement(world: &World) {
         Ok(serde_json::json!({
             "outcome": "done",
             "pr_title": IMPLEMENTED_TITLE,
-            "pr_body": IMPLEMENTED_BODY,
+            "pr_body": body,
         })
         .to_string())
     });
@@ -350,18 +364,42 @@ const IMPLEMENTED_MESSAGE: &str = "Do the ticket";
 const IMPLEMENTED_TITLE: &str = "Do it";
 const IMPLEMENTED_BODY: &str = "Does it.";
 
-/// The file each run [`implement`] scripts adds to, for the subject named
-/// `subject`.
-fn implemented_file(subject: &str) -> String {
+/// The file each implement run the tests script adds to, for the subject
+/// named `subject`.
+pub(super) fn implemented_file(subject: &str) -> String {
     format!("src/{subject}.txt")
+}
+
+/// What an implement session committed to its ticket's file and answered.
+pub(super) struct Implementation<'a> {
+    pub contents: &'a str,
+    pub message: &'a str,
+    pub title: &'a str,
+    pub body: &'a str,
+}
+
+impl<'a> Implementation<'a> {
+    /// What each run [`implement`] scripts commits and answers, describing
+    /// its pull request with `body`.
+    fn scripted(body: &'a str) -> Implementation<'a> {
+        Implementation {
+            contents: IMPLEMENTED,
+            message: IMPLEMENTED_MESSAGE,
+            title: IMPLEMENTED_TITLE,
+            body,
+        }
+    }
 }
 
 /// Each design of an issue answers that it is designed, built as it is.
 pub fn design_issues(world: &World) {
     world.harness.on(WorkKind::Design, |_| {
-        Ok(serde_json::json!({"outcome": "designed", "design": "Built as asked."}).to_string())
+        Ok(serde_json::json!({"outcome": "designed", "design": BUILT_AS_ASKED}).to_string())
     });
 }
+
+/// The design each design [`design_issues`] scripts answers with.
+pub(super) const BUILT_AS_ASKED: &str = "Built as asked.";
 
 /// A session held open until released, from [`gate`] or [`gated`].
 pub struct Gate {
@@ -482,6 +520,15 @@ pub fn triage_paused_after_removing_needs_triage(world: &World) -> (Number, Paus
 /// The comment `triage_paused_after_removing_needs_triage`'s triage posts.
 pub const TRIAGE_BRIEF: &str = "## Agent Brief\n\n**Summary:** Empty widgets crash.";
 
+/// A maintainer relabels `issue`, handed back, `ready-for-agent`.
+pub fn relabel_ready_for_agent(world: &World, issue: Number) {
+    world.store.unlabel_as(issue, "ready-for-human").unwrap();
+    world
+        .store
+        .label_as("maintainer", issue, "ready-for-agent")
+        .unwrap();
+}
+
 /// Opens a ticket titled `title`, ready for an agent and designed.
 pub fn open_ticket(world: &World, title: &str) -> Number {
     world.store.open_issue(
@@ -559,29 +606,63 @@ impl World {
     /// for, written straight into the store, with each implement run scripted
     /// as [`implement`] scripts it.
     pub async fn ticket_in_review(&mut self) -> (Number, Number) {
-        implement(self);
+        self.ticket_in_review_described(IMPLEMENTED_BODY.to_string())
+            .await
+    }
+
+    /// [`World::ticket_in_review`]'s, its pull request also closing `other`,
+    /// with each implement run scripted as [`implement_closing`] scripts it.
+    pub async fn ticket_in_review_closing(&mut self, other: Number) -> (Number, Number) {
+        self.ticket_in_review_described(also_closing(other)).await
+    }
+
+    /// [`World::ticket_in_review`]'s, each pull request described with
+    /// `body`.
+    async fn ticket_in_review_described(&mut self, body: String) -> (Number, Number) {
+        implement_describing(self, body.clone());
         let ticket = open_ticket(self, "Do the thing");
+        let pr = self
+            .implemented(ticket, &Implementation::scripted(&body))
+            .await;
+        (ticket, pr)
+    }
+
+    /// The branch Linewright names for `ticket`, after its title.
+    pub(super) fn ticket_branch(&self, ticket: Number) -> String {
+        let title = self.issue(ticket).title;
+        format!("{}-{}", ticket.0, title.to_lowercase().replace(' ', "-"))
+    }
+
+    /// What the implement stage leaves of `ticket`, open and unclaimed,
+    /// once its session committed and answered as `implementation` says:
+    /// the ticket claimed, its branch, and Linewright's draft pull request
+    /// closing it, assigned to Linewright. Returns the pull request.
+    pub(super) async fn implemented(
+        &self,
+        ticket: Number,
+        implementation: &Implementation<'_>,
+    ) -> Number {
         self.store
             .assign_as(LINEWRIGHT, ticket, LINEWRIGHT)
             .unwrap();
-        let branch = format!("{}-do-the-thing", ticket.0);
+        let branch = self.ticket_branch(ticket);
         let file = implemented_file(&subject_name(Subject::Issue(ticket)));
         self.store
             .commit(
                 LINEWRIGHT,
                 &branch,
-                &[(&file, IMPLEMENTED)],
-                IMPLEMENTED_MESSAGE,
+                &[(&file, implementation.contents)],
+                implementation.message,
             )
             .await
             .unwrap();
         let pr = self.store.open_linewrights_pull(
             &branch,
-            IMPLEMENTED_TITLE,
-            &format!("{IMPLEMENTED_BODY}\n\nCloses {ticket}"),
+            implementation.title,
+            &format!("{}\n\nCloses {ticket}", implementation.body),
         );
         self.store.assign_as(LINEWRIGHT, pr, LINEWRIGHT).unwrap();
-        (ticket, pr)
+        pr
     }
 
     pub async fn persons_pull_closing(&self, issue: Number) -> Number {
