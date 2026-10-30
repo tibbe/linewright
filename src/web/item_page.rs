@@ -17,8 +17,9 @@ use super::{ErrorPage, Frame, Page, events, frame_regions, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::board;
 use crate::domain::{Number, Snapshot};
-use crate::explain::{self, LeftAloneIssue, LeftAloneItem, LeftAlonePull, PullExclusion};
+use crate::explain;
 use crate::item_facts::{self, ItemFacts, Related, StateFact};
+use crate::managed::{LeftAloneIssue, LeftAloneItem, LeftAlonePull, PullExclusion};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::NotSpecChange;
 use crate::runs;
@@ -288,7 +289,13 @@ pub(super) async fn item_events(
                 explain::explain_in_view(&in_view.view, &in_view.recorded, number, in_view.now)
         {
             let board = board::board(&in_view.view, &in_view.recorded, in_view.now);
-            let facts = item_facts::item_facts(&answer, &in_view.view, &board);
+            let facts = item_facts::item_facts(
+                &answer,
+                &in_view.view,
+                &board,
+                &in_view.recorded,
+                in_view.now,
+            );
             let item = ItemShown::of(&facts, &names);
             regions.push(("item", render(&ItemRegion { item: &item })));
         }

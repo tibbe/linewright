@@ -702,7 +702,7 @@ pub(crate) async fn item_facts(
         },
     ) = item_answer_in_view(sources, number).await?;
     let board = board::board(&view, &recorded, now);
-    let facts = item_facts::item_facts(&answer, &view, &board);
+    let facts = item_facts::item_facts(&answer, &view, &board, &recorded, now);
     Ok((facts, view.snapshot))
 }
 

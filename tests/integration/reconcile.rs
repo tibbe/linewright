@@ -489,6 +489,30 @@ fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_l
 }
 
 #[test]
+fn relabeling_a_claimed_issue_needing_triage_ready_for_agent_cancels_its_triage_run() {
+    let world = snapshot(vec![claimed(labeled_both(
+        StatusLabel::NeedsTriage,
+        StatusLabel::ReadyForAgent,
+    ))]);
+
+    assert_eq!(
+        reconcile(
+            &world,
+            &[live(1, WorkKind::Triage)],
+            &Memory::default(),
+            &Automations::default(),
+            t(10),
+            &policy(),
+            &[]
+        ),
+        vec![Action::Cancel {
+            subject: Subject::Issue(Number(1)),
+            reason: "`needs-triage` was removed from #1".into(),
+        }]
+    );
+}
+
+#[test]
 fn removing_a_claimed_issues_status_label_lets_go_of_it() {
     let world = snapshot(vec![claimed(issue(1))]);
 

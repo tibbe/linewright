@@ -3,10 +3,12 @@
 //! and the items it relates to, from what `explain` answers of it, the view
 //! it answered from and that view's board.
 
-use crate::board::{Board, Card, CardStatus, Column, Lane, LaneHeading};
+use crate::board::{self, Board, Card, CardStatus, Column, Lane, LaneHeading};
 use crate::domain::{ClosedKind, Number, PullState, SubIssue, Timestamp, Tracks, tickets_finished};
-use crate::explain::{Answer, ChildRole, LeftAloneItem, ParentRole};
+use crate::explain::{Answer, ChildRole, ParentRole};
+use crate::managed::LeftAloneItem;
 use crate::reconcile::Wait;
+use crate::runs::Recorded;
 use crate::status::View;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,7 +32,7 @@ pub struct ItemFacts {
 /// The State fact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StateFact {
-    /// Its card, or the card it would have on its own, and its column.
+    /// Its card and its column, on the board or off it.
     Card { column: Column, card: Card },
     /// A tracking issue, and when its lane finished, if it finished, on the
     /// board or off it.
@@ -64,22 +66,41 @@ pub struct Tickets {
     pub tickets: Vec<Related>,
 }
 
-/// `answer`'s item's facts. `view` is the view `explain` answered from, and
-/// `board` that view's board.
-pub fn item_facts(answer: &Answer, view: &View, board: &Board) -> ItemFacts {
+/// `answer`'s item's facts. `view` is the view `explain` answered from,
+/// `board` that view's board, `recorded` every run's record and `now` when
+/// `explain` answered.
+pub fn item_facts(
+    answer: &Answer,
+    view: &View,
+    board: &Board,
+    recorded: &[Recorded],
+    now: Timestamp,
+) -> ItemFacts {
     let number = answer.number();
+    // A managed item's card, on the board or off it.
+    let card_of = |item: Number| -> Option<(Column, Card)> {
+        if let Some((column, card)) = board.card(item) {
+            return Some((column, card.clone()));
+        }
+        let managed = board
+            .managed()
+            .iter()
+            .find(|managed| managed.number == item)?;
+        board::card(managed, view, recorded, now).ok()
+    };
     let related = |item: Number, pull_request: bool| {
         if let Some(lane) = board.lane_headed_by(item) {
             return Related::LaneHead(lane.heading());
         }
-        let card = board.card(item).map(|(_, card)| card);
+        let card = card_of(item).map(|(_, card)| card);
         Related::Card {
             number: item,
             title: card
+                .as_ref()
                 .map(|card| card.title.clone())
                 .or_else(|| view.snapshot.title(item).map(str::to_string)),
             pull_request,
-            status: card.and_then(Card::status),
+            status: card.as_ref().and_then(Card::status),
         }
     };
     let family = answer.family();
@@ -124,11 +145,11 @@ pub fn item_facts(answer: &Answer, view: &View, board: &Board) -> ItemFacts {
         .filter(|pull| !matches!(pull.state, PullState::Closed { .. }))
         .map(|pull| related(pull.number, true))
         .collect();
-    let card = board.card(number);
+    let card = card_of(number);
     let lane = board.lane_headed_by(number);
-    let state = if let Some((column, card)) = card {
+    let state = if let Some((column, card)) = &card {
         StateFact::Card {
-            column,
+            column: *column,
             card: card.clone(),
         }
     } else if lane.is_some() || all_tickets.is_some() {

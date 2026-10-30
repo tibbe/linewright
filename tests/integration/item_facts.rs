@@ -6,8 +6,9 @@ use crate::common;
 use common::{NOW, at, labeled_by_linewright, sub_issue, ticket, view};
 use linewright::board::{CardLine, CardStatus, Column, LaneHead, Stop, board};
 use linewright::domain::*;
-use linewright::explain::{LeftAloneIssue, LeftAloneItem, explain, explain_fresh, fresh_view};
+use linewright::explain::{explain, explain_fresh, fresh_view};
 use linewright::item_facts::{ItemFacts, Related, StateFact, item_facts};
+use linewright::managed::{LeftAloneIssue, LeftAloneItem};
 use linewright::reconcile::Wait;
 use linewright::status::View;
 use linewright::store::AnyItem;
@@ -16,7 +17,7 @@ use linewright::store::AnyItem;
 fn facts_of(view: &View, number: u64) -> ItemFacts {
     let answer = explain(view, &[], Number(number), at(NOW)).expect("a managed item");
     let answer = linewright::explain::Answer::Managed(answer);
-    item_facts(&answer, view, &board(view, &[], at(NOW)))
+    item_facts(&answer, view, &board(view, &[], at(NOW)), &[], at(NOW))
 }
 
 /// The facts of `read`, as `serve` finds them for an item it reads from
@@ -24,7 +25,7 @@ fn facts_of(view: &View, number: u64) -> ItemFacts {
 fn facts_read(view: &View, read: &AnyItem) -> ItemFacts {
     let fresh = fresh_view(view, read, at(NOW));
     let answer = explain_fresh(&fresh, &[], read, at(NOW));
-    item_facts(&answer, &fresh, &board(&fresh, &[], at(NOW)))
+    item_facts(&answer, &fresh, &board(&fresh, &[], at(NOW)), &[], at(NOW))
 }
 
 /// The tracking issue #`number` of spec change #`spec_change`, with its

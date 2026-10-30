@@ -311,6 +311,39 @@ impl StatusLabel {
             StatusLabel::ReadyForHuman => label::READY_FOR_HUMAN,
         }
     }
+
+    /// Whose work it asks for (`docs/specs/repository.md`, Labels).
+    pub fn asks(self) -> Asks {
+        match self {
+            StatusLabel::NeedsTriage => Asks::Linewright(Asked::Triage),
+            StatusLabel::ReadyForAgent => Asks::Linewright(Asked::DesignAndImplementation),
+            StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => Asks::Person,
+        }
+    }
+}
+
+/// Whose work a status label asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asks {
+    Linewright(Asked),
+    Person,
+}
+
+/// The work a status label asks of Linewright.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    Triage,
+    DesignAndImplementation,
+}
+
+impl Asked {
+    /// The status label that asks for it, as [`StatusLabel::asks`] tells.
+    pub fn label(self) -> StatusLabel {
+        StatusLabel::ALL
+            .into_iter()
+            .find(|status| status.asks() == Asks::Linewright(self))
+            .expect("a status label asks for each work")
+    }
 }
 
 impl fmt::Display for StatusLabel {

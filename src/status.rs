@@ -6,14 +6,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationFiles, AutomationName, LastScheduledRuns};
-use crate::domain::{
-    CheckState, Issue, Item, Login, Marking, MergedPull, Number, Pull, PullState, Requirement,
-    Snapshot, StatusLabel, Timestamp, label,
-};
+use crate::domain::{Item, Number, Requirement, Snapshot, Timestamp, label};
+use crate::managed::{self, ItemState, Managed};
 use crate::phrase::Phrase;
 use crate::reconcile::{
-    Automations, Decisions, Drain, LiveRun, Memory, NextRun, NotSpecChange, Policy, Relabel,
-    SpecChange, Wait, decisions, next_run, open_pull_for, spec_change, worked_pulls,
+    Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
+    next_run,
 };
 use crate::repo_files::{FileError, Unusable};
 use crate::runs::{
@@ -89,8 +87,9 @@ pub struct Status {
     pub linewright: Linewright,
     /// The runs in flight, oldest first.
     pub runs: Vec<RunInFlight>,
-    /// The other managed items: those with no run in flight.
-    pub items: Vec<Managed>,
+    /// The other open managed items: those with no run in flight and not in
+    /// Done.
+    pub items: Vec<Listed>,
     pub automations: Vec<AutomationRuns>,
     pub unparsed_automations: Vec<UnparsedAutomation>,
 }
@@ -191,8 +190,9 @@ impl FailedPolls {
     }
 }
 
+/// An open managed item, as `status` lists it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Managed {
+pub struct Listed {
     pub number: Number,
     pub title: String,
     #[serde(flatten)]
@@ -200,85 +200,37 @@ pub struct Managed {
     pub waiting_for: Vec<Wait>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "kebab-case")]
-pub enum ItemState {
-    WaitingForDesign,
-    Tracking {
-        tickets_closed: usize,
-        tickets: usize,
-    },
-    WaitingForTriage,
-    BeingTriaged,
-    WaitingOnThePeopleAsked,
-    WithTheMaintainer,
-    InReview(InReview),
-    InReviewElsewhere {
-        pull_request: Number,
-        author: Login,
-    },
-    /// Claimed, and not designed yet.
-    BeingDesigned,
-    /// Not claimed, and not designed yet.
-    ReadyToDesign,
-    Claimed,
-    ReadyToClaim,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InReview {
-    pub pull_request: Number,
-    pub draft: bool,
-    pub ci: Ci,
-}
-
-impl InReview {
-    pub(crate) fn of(pr: &Pull) -> InReview {
-        let has = |state| pr.checks.iter().any(|c| c.state == state);
-        InReview {
-            pull_request: pr.number,
-            draft: matches!(pr.state, PullState::Open { draft: true }),
-            ci: if pr.checks.is_empty() {
-                Ci::NoChecks
-            } else if has(CheckState::Failed) {
-                Ci::Failing
-            } else if has(CheckState::Pending) {
-                Ci::Running
-            } else {
-                Ci::Green
-            },
+impl Listed {
+    fn of(managed: Managed) -> Listed {
+        let state = shown(managed.state);
+        Listed {
+            number: managed.number,
+            title: managed.title,
+            state,
+            waiting_for: managed.waiting_for,
         }
     }
-
-    pub(crate) fn describe(&self) -> Phrase {
-        let stage = if self.draft {
-            "draft"
-        } else {
-            "ready for review"
-        };
-        Phrase::from("in review: ")
-            .item(self.pull_request)
-            .text(format!(" ({stage}, {})", self.ci.describe()))
-    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Ci {
-    NoChecks,
-    Failing,
-    Running,
-    Green,
-}
-
-impl Ci {
-    pub(crate) fn describe(self) -> &'static str {
-        match self {
-            Ci::NoChecks => "no checks",
-            Ci::Failing => "CI failing",
-            Ci::Running => "CI running",
-            Ci::Green => "CI green",
-        }
+/// `state` as `status` shows it: a pull request as the issue it is for
+/// shows it, and an open issue merged into as its labels say.
+pub(crate) fn shown(state: ItemState) -> ItemState {
+    match state {
+        ItemState::PullRequest { review, .. } => ItemState::InReview(review),
+        ItemState::MergedInto { labeled, .. } => shown(*labeled),
+        ItemState::WaitingForDesign
+        | ItemState::Tracking { .. }
+        | ItemState::WaitingForTriage
+        | ItemState::BeingTriaged
+        | ItemState::WaitingOnThePeopleAsked
+        | ItemState::WithTheMaintainer
+        | ItemState::InReview(_)
+        | ItemState::InReviewElsewhere { .. }
+        | ItemState::BeingDesigned
+        | ItemState::ReadyToDesign
+        | ItemState::Claimed
+        | ItemState::ReadyToClaim
+        | ItemState::Ended { .. } => state,
     }
 }
 
@@ -417,9 +369,13 @@ pub fn status(
     Status {
         linewright,
         runs,
-        items: managed(view, now)
+        items: managed::managed(view, now)
             .into_iter()
-            .filter(|item| !view.has_run_in_flight(item.number))
+            .filter(|item| {
+                let ended = matches!(item.state, ItemState::Ended { .. });
+                !item.closed && !ended && !view.has_run_in_flight(item.number)
+            })
+            .map(Listed::of)
             .collect(),
         automations,
         unparsed_automations,
@@ -451,176 +407,6 @@ pub(crate) fn schedule_of(
             NextRun::Never => Schedule::Ended,
         },
     }
-}
-
-pub(crate) fn managed(view: &View, now: Timestamp) -> Vec<Managed> {
-    let snapshot = &view.snapshot;
-    let mut waits = view.decisions(now).waits;
-    let mut items = vec![];
-    for pr in &snapshot.merged {
-        let Ok((state, mut waiting_for)) = spec_change_standing(pr, snapshot, now, &view.policy)
-        else {
-            continue;
-        };
-        waiting_for.extend(waits.remove(&pr.number).unwrap_or_default());
-        items.push(Managed {
-            number: pr.number,
-            title: pr.title.clone(),
-            state,
-            waiting_for,
-        });
-    }
-    for issue in snapshot.issues.iter().filter(|i| i.open) {
-        let waiting_for = waits.remove(&issue.number).unwrap_or_default();
-        let Ok(state) = standing(issue, &view.snapshot, &view.policy, &waiting_for) else {
-            continue;
-        };
-        items.push(Managed {
-            number: issue.number,
-            title: issue.title.clone(),
-            state,
-            waiting_for,
-        });
-    }
-    for (pr, _) in worked_pulls(&view.snapshot, &view.policy.linewright) {
-        items.push(Managed {
-            number: pr.number,
-            title: pr.title.clone(),
-            state: ItemState::InReview(InReview::of(pr)),
-            waiting_for: waits.remove(&pr.number).unwrap_or_default(),
-        });
-    }
-    items
-}
-
-/// Why Linewright leaves an open issue alone.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "reason", rename_all = "kebab-case")]
-pub enum IssueExclusion {
-    /// It would wait on Linewright were it marked for Linewright, and
-    /// Linewright has not worked it.
-    NotMarked {
-        label: String,
-    },
-    /// It waits on a person, and Linewright has not worked it.
-    WaitsOnAPerson,
-    /// Linewright has worked it, and no column holds it.
-    NoPipelineLabel,
-    NoTickets,
-}
-
-impl IssueExclusion {
-    /// What keeps the issue out, as a predicate of it, such as "not marked
-    /// for Linewright".
-    pub(crate) fn worded(&self) -> Phrase {
-        match self {
-            IssueExclusion::NotMarked { .. } => "not marked for Linewright".into(),
-            IssueExclusion::WaitsOnAPerson => {
-                "waits on a person, and Linewright has not worked it".into()
-            }
-            IssueExclusion::NoPipelineLabel => Phrase::from("labeled none of ").then(Phrase::list(
-                StatusLabel::ALL.map(|status| Phrase::default().code(status.label())),
-                "or",
-            )),
-            IssueExclusion::NoTickets => {
-                "a tracking issue with no tickets, and none are being cut".into()
-            }
-        }
-    }
-}
-
-/// Where open `issue` stands, or why Linewright leaves it alone: it is
-/// managed (`GLOSSARY.md`, **Managed**) or left alone by
-/// [`Issue::managed`].
-pub(crate) fn standing(
-    issue: &Issue,
-    snapshot: &Snapshot,
-    policy: &Policy,
-    waiting_for: &[Wait],
-) -> Result<ItemState, IssueExclusion> {
-    let linewright = &policy.linewright;
-    let marking = policy.marking(&issue.labels);
-    if !issue.managed(linewright, &snapshot.pulls_closing(issue), marking) {
-        return Err(match &policy.require_label {
-            Some(label)
-                if marking == Marking::Unmarked
-                    && issue.waits_on_linewright(linewright, Marking::Marked) =>
-            {
-                IssueExclusion::NotMarked {
-                    label: label.clone(),
-                }
-            }
-            _ => IssueExclusion::WaitsOnAPerson,
-        });
-    }
-    let state = issue_state(issue, snapshot, policy)?;
-    if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
-        return Err(IssueExclusion::NoTickets);
-    }
-    Ok(state)
-}
-
-/// Where merged `pr` stands as a spec change, with the waits its standing
-/// implies alone, which the decisions' waits for it follow; or why it is no
-/// spec change. A spec change Linewright was unassigned from has been
-/// worked (`GLOSSARY.md`, **Managed**), so it stays managed, though
-/// Linewright does not cut it.
-pub(crate) fn spec_change_standing(
-    pr: &MergedPull,
-    snapshot: &Snapshot,
-    now: Timestamp,
-    policy: &Policy,
-) -> Result<(ItemState, Vec<Wait>), NotSpecChange> {
-    let waits = match spec_change(pr, &snapshot.default_branch, now, policy)? {
-        SpecChange::Pending => vec![],
-        SpecChange::Unassigned { required_label } => vec![Wait::Unassigned { required_label }],
-    };
-    Ok((ItemState::WaitingForDesign, waits))
-}
-
-fn issue_state(
-    issue: &Issue,
-    snapshot: &Snapshot,
-    policy: &Policy,
-) -> Result<ItemState, IssueExclusion> {
-    let open_pull = open_pull_for(snapshot, issue.number, &policy.linewright);
-    let closing = snapshot.pulls_closing(issue);
-    let open_closing = closing.iter().find(|p| p.is_open());
-    let state = if issue.tracks(&policy.linewright).is_some() {
-        ItemState::Tracking {
-            tickets_closed: issue.sub_issues.iter().filter(|t| !t.is_open()).count(),
-            tickets: issue.sub_issues.len(),
-        }
-    } else if let Some(pr) = open_pull {
-        ItemState::InReview(InReview::of(pr))
-    } else if let Some(pr) = open_closing {
-        ItemState::InReviewElsewhere {
-            pull_request: pr.number,
-            author: pr.author.clone(),
-        }
-    } else {
-        match issue.status_label() {
-            Some(StatusLabel::NeedsTriage) if issue.is_assigned(&policy.linewright) => {
-                ItemState::BeingTriaged
-            }
-            Some(StatusLabel::NeedsTriage) => ItemState::WaitingForTriage,
-            Some(StatusLabel::NeedsInfo) => ItemState::WaitingOnThePeopleAsked,
-            Some(StatusLabel::ReadyForHuman) => ItemState::WithTheMaintainer,
-            Some(StatusLabel::ReadyForAgent) => {
-                match (
-                    issue.is_assigned(&policy.linewright),
-                    issue.has_label(label::DESIGNED),
-                ) {
-                    (true, true) => ItemState::Claimed,
-                    (true, false) => ItemState::BeingDesigned,
-                    (false, true) => ItemState::ReadyToClaim,
-                    (false, false) => ItemState::ReadyToDesign,
-                }
-            }
-            None => return Err(IssueExclusion::NoPipelineLabel),
-        }
-    };
-    Ok(state)
 }
 
 pub fn render(status: &Status, colour: bool) -> String {
@@ -899,6 +685,9 @@ pub(crate) fn describe(state: &ItemState) -> Phrase {
         ItemState::ReadyToDesign => "ready to claim, waiting for its design".into(),
         ItemState::Claimed => "claimed: being implemented".into(),
         ItemState::ReadyToClaim => "ready to claim".into(),
+        ItemState::PullRequest { review, .. } => review.describe(),
+        ItemState::Ended { ended, .. } => ended.worded(),
+        ItemState::MergedInto { labeled, .. } => describe(labeled),
     }
 }
 

@@ -279,7 +279,7 @@ pub enum AnyItem {
 /// Whether a snapshot holds open `issue`: whether `linewright` manages it
 /// ([`Issue::managed`]), with the pull requests GitHub says close it. A store
 /// does not know the required label, so it counts every issue marked, and
-/// `status::standing` leaves one that is not alone.
+/// `managed::classify` leaves one that is not alone.
 pub fn holds(issue: &Issue, linewright: &Login) -> bool {
     issue.open && issue.managed(linewright, &issue.closed_by, Marking::Marked)
 }
