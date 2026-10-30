@@ -118,6 +118,8 @@ libtest-mimic = "0.8"
 # (https://github.com/rust-lang/cargo/issues/4356), and this is jj's way
 # around that.
 linewright = { path = ".", features = ["fake-claude"] }
+# Table tests: one named test per `#[case]`.
+rstest = { version = "0.28", default-features = false }
 # Reads the web UI's pages as a reader sees them.
 scraper = "0.27"
 # Paused time, for the session timeout under the usage limit.
