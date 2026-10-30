@@ -2,7 +2,7 @@ use crate::common;
 
 use common::*;
 use linewright::domain::{Item, Number, Pull, PullState, Snapshot};
-use linewright::webhook::{Listener, Pending, Subject};
+use linewright::webhook::{Listener, Pending, Received, Subject};
 
 async fn listen() -> Listener {
     Listener::bind(
@@ -499,5 +499,43 @@ fn a_delivery_names_its_item_the_open_pull_request_whose_head_its_commit_is_or_o
 
     for (case, subject, items) in cases {
         assert_eq!(subject.items(&snapshot), items, "{case}");
+    }
+}
+
+/// `docs/specs/design_system.md`, Holds and problems: a delivery refused
+/// is a hold until a delivery is accepted.
+#[test]
+fn a_refused_delivery_holds_until_a_later_one_is_accepted() {
+    let tally = |last_accepted: Option<&str>, last_refused: Option<&str>| Received {
+        last_accepted: last_accepted.map(at),
+        refused: u64::from(last_refused.is_some()),
+        last_refused: last_refused.map(at),
+    };
+    let cases = [
+        ("none received", tally(None, None), None),
+        (
+            "only accepted",
+            tally(Some("2026-10-01T12:00:00Z"), None),
+            None,
+        ),
+        (
+            "refused, none accepted",
+            tally(None, Some("2026-10-01T12:00:00Z")),
+            Some("2026-10-01T12:00:00Z"),
+        ),
+        (
+            "refused after the last accepted",
+            tally(Some("2026-10-01T11:00:00Z"), Some("2026-10-01T12:00:00Z")),
+            Some("2026-10-01T12:00:00Z"),
+        ),
+        (
+            "accepted after the last refused",
+            tally(Some("2026-10-01T13:00:00Z"), Some("2026-10-01T12:00:00Z")),
+            None,
+        ),
+    ];
+
+    for (case, received, held) in cases {
+        assert_eq!(received.refused_since_accepted(), held.map(at), "{case}");
     }
 }

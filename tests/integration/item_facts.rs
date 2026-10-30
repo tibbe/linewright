@@ -542,6 +542,32 @@ fn a_closed_issue_linewright_has_not_worked_is_left_alone_as_closed() {
 }
 
 #[test]
+fn with_a_required_label_a_closed_issue_linewright_has_not_worked_is_left_alone_as_closed_with_the_label_or_without()
+ {
+    let mut required = view(vec![], vec![]);
+    required.policy.require_label = Some("linewright".into());
+
+    for labels in [
+        vec!["ready-for-agent", "linewright"],
+        vec!["ready-for-agent"],
+    ] {
+        let read = read_closed(
+            Issue {
+                labels: labels.iter().map(ToString::to_string).collect(),
+                ..ticket(7, "Old idea")
+            },
+            "2026-09-30T12:00:00Z",
+        );
+
+        assert_eq!(
+            facts_read(&required, &read).state,
+            StateFact::LeftAlone(LeftAloneItem::Issue(LeftAloneIssue::Closed)),
+            "{labels:?}"
+        );
+    }
+}
+
+#[test]
 fn a_closed_issue_linewright_worked_is_in_done_with_the_line_it_had_on_the_board_after_it_left_it()
 {
     let worked = labeled_by_linewright(ticket(7, "Old idea"));

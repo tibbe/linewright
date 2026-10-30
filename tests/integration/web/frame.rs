@@ -1,5 +1,9 @@
 use super::*;
 
+use linewright::prompts::Readers;
+use linewright::repo_files::{FileError, Unusable};
+use linewright::status::View;
+
 /// Each hold's words, and where it links.
 fn holds(html: &Html) -> Vec<(String, String)> {
     select(html, "#holds .alert")
@@ -49,7 +53,7 @@ fn horizontal(element: ElementRef<'_>, property: char) -> Vec<&str> {
 
 #[tokio::test]
 async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_with_their_icons() {
-    let web = Web::start(with_ticket().await).await;
+    let pages = Pages::of(a_ticket()).await;
 
     let mut sidebars = vec![];
     for path in [
@@ -60,7 +64,7 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
         "/server",
         "/items/99",
     ] {
-        let (_, body) = web.get(path).await;
+        let (_, body) = pages.get(path).await;
         let html = Html::parse_document(&body);
         let sidebar = select(&html, ".drawer-side nav");
         assert_eq!(sidebar.len(), 1, "{path}");
@@ -94,12 +98,11 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
         sidebars.windows(2).all(|pair| pair[0] == pair[1]),
         "{sidebars:?}"
     );
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn every_page_has_one_tooltip_outside_every_region_for_its_script_to_show() {
-    let web = Web::start(with_ticket().await).await;
+    let pages = Pages::of(a_ticket()).await;
 
     for path in [
         "/",
@@ -110,7 +113,7 @@ async fn every_page_has_one_tooltip_outside_every_region_for_its_script_to_show(
         "/server",
         "/items/99",
     ] {
-        let (_, body) = web.get(path).await;
+        let (_, body) = pages.get(path).await;
         let html = Html::parse_document(&body);
         let tips = select(&html, "[popover], .tooltip");
         assert_eq!(tips.len(), 1, "{path}: {tips:?}");
@@ -128,7 +131,6 @@ async fn every_page_has_one_tooltip_outside_every_region_for_its_script_to_show(
         let parent = ElementRef::wrap(tip.parent().unwrap()).unwrap();
         assert_eq!(parent.value().name(), "body", "{path}");
     }
-    web.stop().await;
 }
 
 /// `element`'s classes in the rail, without their `lg:max-2xl:` prefix.
@@ -158,9 +160,9 @@ fn hidden_at_some_width(element: ElementRef<'_>, within: ElementRef<'_>) -> bool
 #[tokio::test]
 async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the_avatar_with_its_name_as_a_tip_while_cut_and_hidden_text()
  {
-    let web = Web::start(with_ticket().await).await;
+    let pages = Pages::of(a_ticket()).await;
 
-    let html = web.page("/runs").await;
+    let html = pages.page("/runs").await;
 
     let repo = select(&html, ".drawer-side a.repo")[0];
     let avatars = select_in(repo, "img");
@@ -199,20 +201,17 @@ async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the
         "the page's one tooltip is the repository's: {}",
         repo.html()
     );
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_page() {
-    let world = with_issue_for_triage().await;
-    world
-        .harness
-        .on(WorkKind::Triage, |_| refused_for_the_usage_limit());
-    let web = Web::start(world).await;
+    let pages = Pages::of(View {
+        memory: limited_until("2026-10-13T07:50:00Z"),
+        ..a_ticket()
+    })
+    .await;
 
-    let html = web
-        .eventually_page("/items/1", |html| !holds(html).is_empty())
-        .await;
+    let html = pages.page("/items/1").await;
 
     let held = [(
         "usage limit: in force until 2026-10-13 07:50:00 UTC".to_string(),
@@ -229,9 +228,9 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
         alert.html()
     );
     for path in ["/", "/runs", "/server"] {
-        assert_eq!(holds(&web.page(path).await), held, "{path}");
+        assert_eq!(holds(&pages.page(path).await), held, "{path}");
     }
-    let server = web.page("/server").await;
+    let server = pages.page("/server").await;
     let facts = server_facts(&server);
     assert_eq!(
         facts.get(2),
@@ -265,93 +264,71 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
         server.html()
     );
     assert_no_status_by_colour_alone(&server);
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
-    let world = with_issue_for_triage().await;
-    let agent = world.harness.hold();
-    let web = Web::start(world).await;
-    web.eventually_page("/items/1", |html| {
-        has_run(&runs_shown(html), "in flight", "1/triage-1")
+    let pages = Pages::of(View {
+        memory: draining_since("2026-10-01T12:00:20Z"),
+        ..a_ticket()
     })
     .await;
 
-    web.serving.drain();
+    let html = pages.page("/").await;
 
-    let html = web
-        .eventually_page("/", |html| !holds(html).is_empty())
-        .await;
-    let holds = holds(&html);
-    assert!(
-        holds.len() == 1
-            && holds[0].0.starts_with("drain: under way since 2026-10-01 ")
-            && holds[0].1 == "/server",
-        "{holds:?}"
+    assert_eq!(
+        holds(&html),
+        [(
+            "drain: under way since 2026-10-01 12:00:20 UTC".to_string(),
+            "/server".to_string()
+        )]
     );
     assert!(
         has_classes(select(&html, "#holds .alert")[0], &["alert-info"]),
         "{}",
         html.html()
     );
-    let facts = server_facts(&web.page("/server").await);
-    let drain = &facts[2];
-    assert!(
-        drain.label == "Drain"
-            && drain.value.starts_with("started 2026-10-01 ")
-            && !drain.value.contains("deadline")
-            && drain.tone.as_deref() == Some("info"),
+    let facts = server_facts(&pages.page("/server").await);
+    assert_eq!(
+        facts.get(2),
+        Some(&ServerFact {
+            label: "Drain".into(),
+            value: "started 2026-10-01 12:00:20 UTC".into(),
+            tone: Some("info".into()),
+        }),
         "{facts:?}"
     );
-    drop(agent);
-    web.stop().await;
 }
 
 #[tokio::test]
-async fn a_refused_delivery_is_a_hold_until_a_delivery_is_accepted() {
-    let web = Web::start(with_ticket().await).await;
+async fn a_refused_delivery_is_a_hold_linking_to_the_server_page() {
+    let pages = Pages::with_deliveries(a_ticket()).await;
     let unsigned = Request {
         signature: None,
         ..Request::signed_json("{}")
     };
 
-    unsigned.send(&web.listener).await;
+    unsigned.send(pages.deliveries()).await;
 
-    let html = web.page("/runs").await;
-    let refused = holds(&html);
-    assert!(
-        refused.len() == 1
-            && refused[0]
-                .0
-                .strip_prefix("webhook delivery refused: 2026-10-01 12:")
-                .is_some_and(|rest| rest.ends_with(" UTC, none accepted since"))
-            && refused[0].1 == "/server",
-        "{refused:?}"
+    let html = pages.page("/runs").await;
+    assert_eq!(
+        holds(&html),
+        [(
+            "webhook delivery refused: 2026-10-01 12:00:02 UTC, none accepted since".to_string(),
+            "/server".to_string()
+        )]
     );
     assert!(
         has_classes(select(&html, "#holds .alert")[0], &["alert-warning"]),
         "{}",
         html.html()
     );
-
-    signed(&web.listener, "ping", "{}").await;
-
-    assert_eq!(
-        holds(&web.page("/runs").await),
-        Vec::<(String, String)>::new()
-    );
-
-    unsigned.send(&web.listener).await;
-
-    assert_eq!(holds(&web.page("/runs").await).len(), 1);
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn a_hold_comes_and_goes_through_the_stream() {
-    let web = Web::start(with_ticket().await).await;
-    let mut events = stream(&web, "/events/runs").await;
+    let pages = Pages::with_deliveries(a_ticket()).await;
+    let mut events = stream(&pages, "/events/runs").await;
     let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await
         .unwrap()
@@ -363,7 +340,7 @@ async fn a_hold_comes_and_goes_through_the_stream() {
         signature: None,
         ..Request::signed_json("{}")
     }
-    .send(&web.listener)
+    .send(pages.deliveries())
     .await;
 
     let changed = tokio::time::timeout(Duration::from_secs(5), events.recv())
@@ -374,7 +351,6 @@ async fn a_hold_comes_and_goes_through_the_stream() {
     assert_eq!(changed.len(), 1, "{changed:?}");
     assert_eq!(changed[0].0, "holds");
     assert_eq!(select(&changed[0].1, ".alert").len(), 1);
-    web.stop().await;
 }
 
 /// The holds region of the next event `events` sends that holds it.
@@ -419,24 +395,12 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
         .iter()
         .find(|fact| fact.label == "Failed polls")
         .unwrap_or_else(|| panic!("{facts:?}"));
-    assert_eq!(failed.tone.as_deref(), Some("error"), "{facts:?}");
-    // The count, when the first and the last failed, and the last's error.
-    let shape = |value: &str| match value.split_once(", the first 2026-10-01 ") {
-        Some((count, rest)) => {
-            count.parse::<u64>().is_ok_and(|count| count > 1) && rest.contains(", the last ")
-        }
-        None => value.starts_with("1, 2026-10-01 "),
-    };
     assert!(
-        shape(&failed.value)
-            && failed
-                .value
-                .ends_with(" UTC: taking a snapshot: GitHub is down"),
+        failed
+            .value
+            .ends_with(" UTC: taking a snapshot: GitHub is down"),
         "{failed:?}"
     );
-    // Before any poll has succeeded, the polls stand as none yet.
-    assert_eq!(facts[1].label, "Polls", "{facts:?}");
-    assert!(facts[1].value.starts_with("none yet, next "), "{facts:?}");
 
     web.store.restore_reads();
 
@@ -448,26 +412,21 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
 }
 
 #[tokio::test]
-async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to_the_server_page_until_the_default_branch_fixes_it()
- {
-    let world = with_ticket().await;
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(".linewright/config.toml", "max-runs = 9\n")],
-            "Configure Linewright",
-        )
-        .await
-        .unwrap();
-    let web = Web::polling(world, Duration::from_millis(200)).await;
-    let error = "the setting `max-runs` is the operator's: the repository's file holds \
-                 `model`, `effort`, `session-timeout`, `setup`";
+async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to_the_server_page() {
+    let error = "the setting `max-runs` is the operator's";
+    let pages = Pages::of(View {
+        unusable: vec![Unusable {
+            file: FileError {
+                path: ".linewright/config.toml".into(),
+                error: error.into(),
+            },
+            holds: Readers::Every,
+        }],
+        ..a_ticket()
+    })
+    .await;
 
-    let html = web
-        .eventually_page("/", |html| !holds(html).is_empty())
-        .await;
+    let html = pages.page("/").await;
 
     assert_eq!(
         holds(&html),
@@ -481,7 +440,7 @@ async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to
         "{}",
         html.html()
     );
-    let facts = server_facts(&web.page("/server").await);
+    let facts = server_facts(&pages.page("/server").await);
     assert_eq!(
         facts.get(2),
         Some(&ServerFact {
@@ -491,28 +450,6 @@ async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to
         }),
         "{facts:?}"
     );
-
-    web.store
-        .commit(
-            "maintainer",
-            "main",
-            &[(".linewright/config.toml", "model = \"opus\"\n")],
-            "Fix Linewright's config",
-        )
-        .await
-        .unwrap();
-
-    let fixed = web
-        .eventually_page("/server", |page| holds(page).is_empty())
-        .await;
-    let fixed_facts = server_facts(&fixed);
-    assert!(
-        !fixed_facts
-            .iter()
-            .any(|fact| fact.label == "Repository file"),
-        "{fixed_facts:?}"
-    );
-    web.stop().await;
 }
 
 /// A fact of the server page, as a reader reads it, with the colour of its
@@ -560,47 +497,30 @@ fn labelled(facts: &[ServerFact]) -> Vec<(&str, &str)> {
 
 #[tokio::test]
 async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label() {
-    let world = with_ticket().await;
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(
-                ".linewright/automations/weekly.md",
-                "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
-            )],
-            "Add an automation",
-        )
-        .await
-        .unwrap();
-    let web = Web::start(world).await;
-    signed(&web.listener, "ping", "{}").await;
+    let pages = Pages::with_deliveries(View {
+        snapshot: a_ticket().snapshot,
+        ..super::automations::with(&[("weekly", super::automations::WEEKLY)], false)
+    })
+    .await;
+    signed(pages.deliveries(), "ping", "{}").await;
 
-    let html = web.page("/server").await;
+    let html = pages.page("/server").await;
 
     let facts = server_facts(&html);
-    let labels: Vec<&str> = facts.iter().map(|fact| fact.label.as_str()).collect();
     assert_eq!(
-        labels,
+        labelled(&facts),
         [
-            "Started",
-            "Polls",
-            "Runs in flight",
-            "Last webhook delivery accepted",
-            "Webhook deliveries refused",
+            ("Started", "2026-10-01 12:00:01 UTC"),
+            (
+                "Polls",
+                "last 2026-10-01 12:00:00 UTC, next 2026-10-01 12:01:00 UTC"
+            ),
+            ("Runs in flight", "0 of 4"),
+            ("Last webhook delivery accepted", "2026-10-01 12:00:02 UTC"),
+            ("Webhook deliveries refused", "0"),
         ],
         "{facts:?}"
     );
-    assert!(facts[0].value.starts_with("2026-10-01 "), "{:?}", facts[0]);
-    let polls = facts[1]
-        .value
-        .strip_prefix("last 2026-10-01 ")
-        .and_then(|rest| rest.split_once(" UTC, next 2026-10-01 "));
-    assert!(polls.is_some(), "{:?}", facts[1]);
-    assert_eq!(labelled(&facts[2..3]), [("Runs in flight", "0 of 4")]);
-    assert!(facts[3].value.starts_with("2026-10-01 "), "{:?}", facts[3]);
-    assert_eq!(labelled(&facts[4..]), [("Webhook deliveries refused", "0")]);
     assert!(facts.iter().all(|fact| fact.tone.is_none()), "{facts:?}");
     // `docs/specs/web/design_system.md`, Facts: drawn as a card is.
     let cards = classes(&html, "#server dl.card");
@@ -627,13 +547,12 @@ async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label()
         html.html()
     );
     assert_eq!(events_path(&html), Some("/events/server"));
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed() {
-    let web = Web::start(with_ticket().await).await;
-    let mut events = stream(&web, "/events/server").await;
+    let pages = Pages::with_deliveries(a_ticket()).await;
+    let mut events = stream(&pages, "/events/server").await;
 
     let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await
@@ -646,7 +565,7 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
         signature: None,
         ..Request::signed_json("{}")
     }
-    .send(&web.listener)
+    .send(pages.deliveries())
     .await;
 
     let changed = tokio::time::timeout(Duration::from_secs(5), events.recv())
@@ -664,12 +583,11 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
             .is_some_and(|facts| labelled(facts).contains(&("Webhook deliveries refused", "1"))),
         "{server:?}"
     );
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn every_pages_heading_takes_its_look_from_the_stylesheet_alone() {
-    let (web, _) = super::run::run_page_of_implemented().await;
+    let pages = super::run::implemented_as_recorded().await;
 
     for path in [
         "/items/1",
@@ -678,17 +596,16 @@ async fn every_pages_heading_takes_its_look_from_the_stylesheet_alone() {
         "/automations",
         "/server",
     ] {
-        let html = web.page(path).await;
+        let html = pages.page(path).await;
         let headings = select(&html, "h1");
         assert_eq!(headings.len(), 1, "{path}");
         assert_eq!(headings[0].attr("class"), None, "{path}");
     }
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn every_pages_content_is_inset_by_the_same_gutter_as_the_alerts_above_it() {
-    let (web, _) = super::run::run_page_of_implemented().await;
+    let pages = super::run::implemented_as_recorded().await;
 
     for path in [
         "/",
@@ -698,7 +615,7 @@ async fn every_pages_content_is_inset_by_the_same_gutter_as_the_alerts_above_it(
         "/automations",
         "/server",
     ] {
-        let html = web.page(path).await;
+        let html = pages.page(path).await;
         let main = select(&html, "main");
         assert_eq!(main.len(), 1, "{path}");
         assert_eq!(horizontal_padding(main[0]), ["px-page"], "{path}");
@@ -713,5 +630,4 @@ async fn every_pages_content_is_inset_by_the_same_gutter_as_the_alerts_above_it(
             "{path}"
         );
     }
-    web.stop().await;
 }

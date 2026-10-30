@@ -1,22 +1,97 @@
 use super::*;
 
-/// #1 implemented in a run whose transcript is the one recorded, with a
-/// sub-agent's work and a call that failed.
-async fn implemented_as_recorded() -> World {
-    implemented_by(crate::logs::implement_as_recorded).await
+use linewright::transcript::{SetupStatus, setup_ended, setup_started};
+use serde_json::json;
+
+/// Where #1's implementing session keeps its record.
+const SESSION: &str = "sessions/issue-1/20261013T100908Z-implement";
+
+/// How a session that ran with the harness's model and effort, and the
+/// operator's implementing prompt, is kept in its run's record, its own
+/// record in `dir`.
+fn ran(dir: &str) -> serde_json::Value {
+    json!({
+        "dir": dir,
+        "model": null,
+        "effort": null,
+        "layers": {
+            "settings": {
+                "model": "harness",
+                "effort": "harness",
+                "session-timeout": "operator",
+                "setup": "linewright",
+                "session-env": "linewright",
+                "session-pass-env": "linewright",
+            },
+            "prompts": {
+                "follow-ups/result-error.md": "linewright",
+                "implement.md": "operator",
+            },
+        },
+    })
 }
 
-/// #1 implemented in a run whose sessions `implement` scripts.
-async fn implemented_by(implement: fn(&World)) -> World {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    implement(&world);
-    world.store.open_issue(
-        "maintainer",
-        "Ship gh",
-        "Please.",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world
+/// The output of a session whose setup command `command` started at
+/// `start` and ended `seconds` later as `status`.
+fn setting_up(start: &str, command: &str, status: SetupStatus, seconds: f64) -> String {
+    let start = at(start);
+    let end =
+        start + chrono::TimeDelta::from_std(std::time::Duration::from_secs_f64(seconds)).unwrap();
+    format!(
+        "{}\n{}\n",
+        setup_started(start, command),
+        setup_ended(end, status, seconds)
+    )
+}
+
+/// #1, `Ship gh`, implemented in run 1/implement-1 of one session, whose
+/// transcript is the one recorded, with a sub-agent's work and a call that
+/// failed.
+pub(super) async fn implemented_as_recorded() -> Pages {
+    implemented_after("", None).await
+}
+
+/// [`implemented_as_recorded`]'s, its session's output after `setup`, and
+/// its setup command's output `setup_log`.
+async fn implemented_after(setup: &str, setup_log: Option<&str>) -> Pages {
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    let record = json!({
+        "item": 1,
+        "stage": "implement",
+        "n": 1,
+        "started_at": "2026-10-13T10:09:00Z",
+        "end": {"at": "2026-10-13T10:13:00Z", "ending": "done"},
+        "sessions": [ran(SESSION)],
+    });
+    let output = [
+        setup,
+        include_str!("../fixtures/transcript/turn-1.jsonl"),
+        include_str!("../fixtures/transcript/turn-2.jsonl"),
+    ]
+    .concat();
+    let mut files = vec![
+        (format!("{SESSION}/output.jsonl"), output),
+        (
+            format!("{SESSION}/brief.md"),
+            "# Your task\n\nImplement the ticket below.\n".to_string(),
+        ),
+        (
+            format!("{SESSION}/followup-1.md"),
+            "Your final message could not be used: The final message holds no JSON object. \
+             End with one.\n"
+                .to_string(),
+        ),
+    ];
+    if let Some(log) = setup_log {
+        files.push((format!("{SESSION}/setup.log"), log.to_string()));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    pages.write(&files);
+    pages.record(&record);
+    pages
 }
 
 /// The run page's headers and entries in order, each entry as its line,
@@ -47,28 +122,6 @@ fn entry_of(element: ElementRef) -> Option<ElementRef> {
         .find(|ancestor| ancestor.value().classes().any(|class| class == "entry"))
 }
 
-/// #1's run page, once its run, with the recorded transcript, is done.
-pub(super) async fn run_page_of_implemented() -> (Web, Html) {
-    run_page_of(implemented_as_recorded().await).await
-}
-
-/// #1's run page, once its run is done.
-async fn run_page_of(world: World) -> (Web, Html) {
-    let web = Web::start(world).await;
-    let html = web
-        .eventually_page("/runs?item=1", |html| {
-            has_run(&runs_shown(html), "done", "1/implement-1")
-        })
-        .await;
-    let link = select(&html, "#runs tbody a")[0]
-        .attr("href")
-        .unwrap()
-        .to_string();
-    assert_eq!(link, "/runs/1/implement-1");
-    let page = web.page(&link).await;
-    (web, page)
-}
-
 /// Each of `shown`, cut to its first `chars` characters.
 fn cut(shown: &[String], chars: usize) -> Vec<String> {
     shown
@@ -80,7 +133,9 @@ fn cut(shown: &[String], chars: usize) -> Vec<String> {
 #[tokio::test]
 async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_settings_and_prompts_came_from()
  {
-    let (_web, html) = run_page_of_implemented().await;
+    let pages = implemented_as_recorded().await;
+
+    let html = pages.page("/runs/1/implement-1").await;
 
     let texts =
         |selector: &str| -> Vec<String> { select(&html, selector).into_iter().map(text).collect() };
@@ -99,10 +154,12 @@ async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_se
             "session-pass-env: Linewright's own",
         ]
     );
-    let prompts = texts("#s1 .layers .prompt");
-    assert!(
-        prompts.contains(&"implement.md: Linewright's own".to_string()),
-        "{prompts:?}"
+    assert_eq!(
+        texts("#s1 .layers .prompt"),
+        [
+            "follow-ups/result-error.md: Linewright's own",
+            "implement.md: the operator's",
+        ]
     );
 }
 
@@ -111,33 +168,20 @@ async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_se
 #[tokio::test]
 async fn the_run_page_shows_a_sessions_ran_with_line_its_layers_and_each_entrys_time_in_muted_text()
 {
-    let (web, html) = run_page_of_implemented().await;
+    let pages = implemented_as_recorded().await;
+
+    let html = pages.page("/runs/1/implement-1").await;
 
     for selector in ["#s1 .ran", "#s1 .layers", "#transcript a.at"] {
         assert_in_muted_text(&html, selector);
     }
-    web.stop().await;
-}
-
-/// `docs/specs/design_system.md`, Transcripts; Time, Durations.
-#[tokio::test]
-async fn the_run_page_shows_how_long_a_sub_agent_ran_as_a_duration() {
-    let (_web, html) =
-        run_page_of(implemented_by(crate::logs::implement_with_a_sub_agent_of_3h_2m_9s).await)
-            .await;
-
-    assert_eq!(
-        transcript_shown(&html, false)[2..],
-        [
-            "0:02 Agent(Review) → done, 3 tool uses, 3h 2m",
-            "3:02:15 The review came back clean.",
-        ]
-    );
 }
 
 #[tokio::test]
 async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_line() {
-    let (web, html) = run_page_of_implemented().await;
+    let pages = implemented_as_recorded().await;
+
+    let html = pages.page("/runs/1/implement-1").await;
 
     // As `lw logs 1` prints them.
     assert_eq!(
@@ -200,12 +244,13 @@ async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_li
         .collect();
     assert_eq!(cut(&work, 30), ["2:02 Bash(git diff origin/main"]);
     assert_no_status_by_colour_alone(&html);
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_run_pages_entry_stamp_shows_when_the_entry_happened_in_the_pages_tooltip() {
-    let (web, html) = run_page_of_implemented().await;
+    let pages = implemented_as_recorded().await;
+
+    let html = pages.page("/runs/1/implement-1").await;
 
     let stamp = select(&html, "#transcript a.at")
         .into_iter()
@@ -214,18 +259,18 @@ async fn the_run_pages_entry_stamp_shows_when_the_entry_happened_in_the_pages_to
     // The session started at 10:09:08, and the entry 3 seconds after.
     assert_eq!(stamp.attr("data-tip"), Some("2026-10-13 10:09:11 UTC"));
     assert_eq!(select(&html, "[title]").len(), 0);
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everything_open() {
-    let (web, html) = run_page_of_implemented().await;
+    let pages = implemented_as_recorded().await;
+    let html = pages.page("/runs/1/implement-1").await;
     let switch = select(&html, "[role=switch]");
     assert_eq!(switch[0].attr("aria-checked"), Some("false"));
     let verbose_path = switch[0].attr("href").unwrap().to_string();
     assert_eq!(verbose_path, "/runs/1/implement-1?verbose=");
 
-    let verbose = web.page(&verbose_path).await;
+    let verbose = pages.page(&verbose_path).await;
 
     // As `lw logs 1 --verbose` prints them.
     assert_eq!(
@@ -278,13 +323,12 @@ async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everyth
     let back = select(&verbose, "[role=switch]");
     assert_eq!(back[0].attr("aria-checked"), Some("true"));
     assert_eq!(back[0].attr("href"), Some("/runs/1/implement-1"));
-    web.stop().await;
 }
 
 /// Each event the stream at `path` sends, as its ID, if it has one, and
 /// its data, resuming after the event `last_id` if one is given.
 async fn stream_with_ids(
-    web: &Web,
+    web: &impl Routed,
     path: &str,
     last_id: Option<&str>,
 ) -> tokio::sync::mpsc::UnboundedReceiver<(Option<String>, String)> {
@@ -293,7 +337,7 @@ async fn stream_with_ids(
         request = request.header("Last-Event-ID", last_id);
     }
     let response = web
-        .router
+        .router()
         .clone()
         .oneshot(request.body(Body::empty()).unwrap())
         .await
@@ -539,8 +583,10 @@ fn heading_links(html: &Html) -> Vec<String> {
 #[tokio::test]
 async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_under_it_as_the_runs_page_does()
  {
-    let (web, html) = run_page_of_implemented().await;
-    let runs = web.page("/runs").await;
+    let pages = implemented_as_recorded().await;
+
+    let html = pages.page("/runs/1/implement-1").await;
+    let runs = pages.page("/runs").await;
 
     let row = runs_shown(&runs)
         .into_iter()
@@ -560,13 +606,12 @@ async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_un
     // As the runs page's Item cell names the run's item.
     assert_eq!((row[2].as_str(), &cell_links), ("#1: Ship gh", &links));
     assert_eq!(item_line(&html), ("#1: Ship gh".to_string(), links));
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_run_pages_stream_swaps_in_the_whole_heading_when_the_runs_header_comes() {
-    let (web, _) = run_page_of_implemented().await;
-    let mut events = stream_with_ids(&web, "/events/runs/1/implement-1?follow=start", None).await;
+    let pages = implemented_as_recorded().await;
+    let mut events = stream_with_ids(&pages, "/events/runs/1/implement-1?follow=start", None).await;
 
     let sent = transcript_events(&mut events, |sent| !sent.is_empty()).await;
 
@@ -580,46 +625,46 @@ async fn the_run_pages_stream_swaps_in_the_whole_heading_when_the_runs_header_co
         .collect();
     assert_eq!(swapped, ["1/implement-1"]);
     assert_eq!(text(select(heading, "hgroup#run > p")[0]), "#1: Ship gh");
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(
-                ".linewright/automations/weekly.md",
-                "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
-            )],
-            "Add an automation",
-        )
-        .await
-        .unwrap();
-    world.harness.on_automation(|_| {
-        Ok(serde_json::json!({"summary": "Nothing needs doing.", "issues": []}).to_string())
+    let pages = Pages::of(view(vec![], vec![])).await;
+    let session = "sessions/automation-weekly/20261014T120005Z-automation";
+    let record = json!({
+        "automation": "weekly",
+        "n": 1,
+        "started_by": "hand",
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
+        "sessions": [ran(session)],
     });
-    world
-        .factory
-        .run_automation(&"weekly".parse().unwrap())
-        .await
-        .unwrap();
-    let web = Web::start(world).await;
+    let output = output_of(&[
+        json!({"type": "linewright-turn", "started_at": "2026-10-14T12:00:05Z", "started_by": "brief"}),
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-14T12:00:09Z",
+            "message": {"content": [{"type": "text", "text": "Nothing needs doing."}]},
+        }),
+    ]);
+    pages.record(&record);
+    pages.write(&[(&format!("{session}/output.jsonl"), &output)]);
 
-    let runs = web.page("/runs").await;
-    let html = web.page("/runs/weekly/1").await;
+    let runs = pages.page("/runs").await;
+    let html = pages.page("/runs/weekly/1").await;
 
     let links: Vec<&str> = select(&runs, "#runs tbody td:nth-child(2) a")
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();
     assert_eq!(links, ["/runs/weekly/1"]);
-    let shown = heading(&html);
-    assert_eq!(shown[0], "weekly/1, by hand");
-    assert!(shown[1].starts_with("session 1"), "{shown:?}");
+    assert_eq!(
+        heading(&html),
+        [
+            "weekly/1, by hand",
+            "session 1: started 2026-10-14 12:00:05 UTC"
+        ]
+    );
     assert!(
         heading_links(&html).is_empty(),
         "{:?}",
@@ -632,60 +677,68 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
             vec!["/automations".to_string()]
         )
     );
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_page_of_an_automations_run_by_hand_says_so_in_its_heading_and_of_a_scheduled_one_not()
 {
-    let mut world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    world.hourly_by_schedule_then_by_hand().await;
-    let web = Web::start(world).await;
+    let pages = Pages::of(view(vec![], vec![])).await;
+    for (n, by) in [(1, "schedule"), (2, "hand")] {
+        let record = json!({
+            "automation": "hourly",
+            "n": n,
+            "started_by": by,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
+            "sessions": [],
+        });
+        pages.record(&record);
+    }
 
-    let by_hand = web.page("/runs/hourly/2").await;
-    let scheduled = web.page("/runs/hourly/1").await;
+    let by_hand = pages.page("/runs/hourly/2").await;
+    let scheduled = pages.page("/runs/hourly/1").await;
 
-    assert_eq!(heading(&by_hand)[0], "hourly/2, by hand");
-    assert_eq!(heading(&scheduled)[0], "hourly/1");
-    web.stop().await;
+    assert_eq!(
+        heading(&by_hand)[0],
+        "hourly/2, by hand (it started no session)"
+    );
+    assert_eq!(heading(&scheduled)[0], "hourly/1 (it started no session)");
 }
 
 #[tokio::test]
 async fn the_page_of_a_run_that_started_no_session_says_so() {
-    let mut world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    let (_, pr) = world.ticket_in_review().await;
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Other work",
-            "",
-            &[("src/other.txt", "other\n")],
-        )
-        .await
-        .unwrap();
-    // Brought up to date without a session: nothing conflicts.
-    world.poll().await;
-    let web = Web::start(world).await;
+    let pages = Pages::of(view(
+        vec![ticket(1, "Ship gh")],
+        vec![open_pull(2, LINEWRIGHT, &[1], &[LINEWRIGHT])],
+    ))
+    .await;
+    pages.record(&json!({
+        "item": 2,
+        "stage": "update",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
+        "sessions": [],
+    }));
 
-    let html = web.page(&format!("/runs/{}/update-1", pr.0)).await;
+    let html = pages.page("/runs/2/update-1").await;
 
+    assert_eq!(heading(&html), ["2/update-1 (it started no session)"]);
+    let (item, links) = item_line(&html);
     assert_eq!(
-        heading(&html),
-        [format!("{}/update-1 (it started no session)", pr.0)]
+        (item.as_str(), links[0].as_str()),
+        ("#2: Pull 2", "/items/2")
     );
-    assert_eq!(item_line(&html).1[0], format!("/items/{}", pr.0));
     assert_eq!(select(&html, "#transcript .entry").len(), 0);
     assert_eq!(events_path(&html), Some("/events/runs/2/update-1"));
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_page_of_no_run_says_there_is_none() {
-    let web = Web::start(with_ticket().await).await;
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
 
-    let (no_run, no_run_body) = web.get("/runs/1/rework-9").await;
-    let (no_id, no_id_body) = web.get("/runs/nothing").await;
+    let (no_run, no_run_body) = pages.get("/runs/1/rework-9").await;
+    let (no_id, no_id_body) = pages.get("/runs/nothing").await;
 
     for (status, body, error) in [
         (no_run, no_run_body, "there is no run 1/rework-9"),
@@ -699,39 +752,16 @@ async fn the_page_of_no_run_says_there_is_none() {
             .collect();
         assert_eq!(shown, [error]);
     }
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_run_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
-    let web = Web::start(implemented_as_recorded().await).await;
-    web.eventually_page("/runs?item=1", |html| {
-        has_run(&runs_shown(html), "done", "1/implement-1")
-    })
-    .await;
+    let pages = implemented_as_recorded().await;
 
-    let response = web.response("/events/runs/1/implement-1").await;
+    let response = pages.response("/events/runs/1/implement-1").await;
 
     assert_eq!(response.status(), 200);
     assert_passes_through_a_proxy(response.headers());
-    web.stop().await;
-}
-
-/// `implemented_by`'s, with `setup` the setup command of every stage.
-async fn implemented_setting_up_with(setup: &str, implement: fn(&World)) -> World {
-    let world = World::with(|config| {
-        config.work_dir = config.work_dir.join(REPO);
-        setting_up_with(config, setup);
-    })
-    .await;
-    implement(&world);
-    world.store.open_issue(
-        "maintainer",
-        "Ship gh",
-        "Please.",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world
 }
 
 /// Each session's setup command, as its line, the output it opens to, and
@@ -757,13 +787,19 @@ fn setups_shown(html: &Html) -> Vec<(String, String, bool)> {
 /// page, Folding and Verbose.
 #[tokio::test]
 async fn the_run_page_shows_a_setup_command_as_its_sessions_first_entry_folded_to_its_line() {
-    let world = implemented_setting_up_with(
-        "echo 'added 3 packages'",
-        crate::logs::implement_as_recorded,
+    let pages = implemented_after(
+        &setting_up(
+            "2026-10-13T10:09:08Z",
+            "echo 'added 3 packages'",
+            SetupStatus::Exited(0),
+            0.2,
+        ),
+        Some("added 3 packages\n"),
     )
     .await;
-    let (web, html) = run_page_of(world).await;
-    let verbose = web.page("/runs/1/implement-1?verbose=").await;
+
+    let html = pages.page("/runs/1/implement-1").await;
+    let verbose = pages.page("/runs/1/implement-1?verbose=").await;
 
     let line = "0:00 setup: echo 'added 3 packages' → exit 0, 0s".to_string();
     assert_eq!(
@@ -777,30 +813,51 @@ async fn the_run_page_shows_a_setup_command_as_its_sessions_first_entry_folded_t
     let entries = select(&html, "#s1-entries > .entry");
     assert_eq!(entries[0].attr("id"), Some("s1-e1"));
     assert!(entries[0].value().classes().any(|class| class == "setup"));
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_page_of_a_run_whose_setup_command_failed_shows_it_open_under_each_session() {
-    let world =
-        with_issue_for_triage_setting_up_with("echo 'npm ERR! missing lockfile'; exit 3").await;
-    let web = Web::start(world).await;
-    web.eventually_page("/runs?item=1", |html| {
-        has_run(&runs_shown(html), "handed back", "1/triage-1")
-    })
-    .await;
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    let sessions = [
+        (
+            "sessions/issue-1/20261014T120000Z-triage",
+            "2026-10-14T12:00:00Z",
+        ),
+        (
+            "sessions/issue-1/20261014T120010Z-triage",
+            "2026-10-14T12:00:10Z",
+        ),
+    ];
+    for (dir, start) in sessions {
+        let output = setting_up(
+            start,
+            "echo 'npm ERR! missing lockfile'; exit 3",
+            SetupStatus::Exited(3),
+            0.1,
+        );
+        pages.write(&[
+            (&format!("{dir}/output.jsonl"), &output),
+            (&format!("{dir}/setup.log"), "npm ERR! missing lockfile\n"),
+        ]);
+    }
+    pages.record(&json!({
+        "item": 1,
+        "stage": "triage",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": {"at": "2026-10-14T12:00:20Z", "ending": "handed-back"},
+        "sessions": sessions.map(|(dir, _)| ran(dir)),
+    }));
 
-    let html = web.page("/runs/1/triage-1").await;
+    let html = pages.page("/runs/1/triage-1").await;
 
-    let headings = heading(&html);
-    assert_eq!(headings[0], "1/triage-1");
-    assert!(
-        headings[1].starts_with("session 1: started "),
-        "{headings:?}"
-    );
-    assert!(
-        headings[2].starts_with("session 2: started "),
-        "{headings:?}"
+    assert_eq!(
+        heading(&html),
+        [
+            "1/triage-1",
+            "session 1: started 2026-10-14 12:00:00 UTC",
+            "session 2: started 2026-10-14 12:00:10 UTC",
+        ]
     );
     let failed = (
         "0:00 setup: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s".to_string(),
@@ -809,54 +866,62 @@ async fn the_page_of_a_run_whose_setup_command_failed_shows_it_open_under_each_s
     );
     assert_eq!(setups_shown(&html), [failed.clone(), failed]);
     assert_no_status_by_colour_alone(&html);
-    web.stop().await;
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Running; The run page,
 /// Following.
 #[tokio::test]
 async fn the_run_page_shows_a_setup_command_running_and_patches_its_line_once_it_ends() {
-    let marks = tempfile::tempdir().unwrap();
-    let go = marks.path().join("go");
-    let world = with_issue_for_triage_setting_up_with(&format!(
-        "until [ -e {} ]; do sleep 0.05; done; echo installing",
-        go.display()
-    ))
-    .await;
-    let agent = world.harness.hold();
-    let web = Web::start(world).await;
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    let dir = "sessions/issue-1/20261014T120000Z-triage";
+    let start = at("2026-10-14T12:00:00Z");
+    pages.write(&[(
+        &format!("{dir}/output.jsonl"),
+        &format!("{}\n", setup_started(start, "npm ci")),
+    )]);
+    pages.record(&json!({
+        "item": 1,
+        "stage": "triage",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": null,
+        "sessions": [ran(dir)],
+    }));
+    let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
 
-    let read = web
-        .eventually_page("/runs/1/triage-1", |html| !setups_shown(html).is_empty())
-        .await;
+    let read = pages.page("/runs/1/triage-1").await;
     let events_path = events_path(&read).unwrap().to_string();
-    let mut events = stream_with_ids(&web, &events_path, None).await;
-    std::fs::write(&go, "").unwrap();
+    let mut events = stream_with_ids(&pages, &events_path, None).await;
+    pages.write(&[(&format!("{dir}/setup.log"), "installing\n")]);
+    let line = setup_ended(
+        start + chrono::TimeDelta::seconds(12),
+        SetupStatus::Exited(0),
+        12.4,
+    );
+    pages.append(&format!("{dir}/output.jsonl"), &format!("{line}\n"));
     let ended = transcript_events(&mut events, |sent| {
         sent.iter().any(|(_, data)| data.contains("exit 0"))
     })
     .await;
-    drop(agent);
 
-    let [(line, output, open)] = &setups_shown(&read)[..] else {
-        panic!("{read:?}")
-    };
-    assert!(
-        line.starts_with("0:00 setup: until [ -e ") && line.ends_with(" → running"),
-        "{line}"
+    assert_eq!(
+        setups_shown(&read),
+        [(
+            "0:00 setup: npm ci → running".to_string(),
+            String::new(),
+            false
+        )]
     );
-    assert_eq!((output.as_str(), *open), ("", false));
     let [(target, swap, html)] = &patches(&ended.last().unwrap().1)[..] else {
         panic!("{ended:?}")
     };
     assert_eq!((target.as_str(), swap.as_str()), ("#s1-e1", "outerHTML"));
-    let [(ended_line, ended_output, ended_open)] = &setups_shown(html)[..] else {
-        panic!("{ended:?}")
-    };
-    assert!(
-        ended_line.starts_with("0:00 setup: until [ -e ") && ended_line.contains(" → exit 0, "),
-        "{ended_line}"
+    assert_eq!(
+        setups_shown(html),
+        [(
+            "0:00 setup: npm ci → exit 0, 12s".to_string(),
+            "installing".to_string(),
+            false
+        )]
     );
-    assert_eq!((ended_output.as_str(), *ended_open), ("installing", false));
-    web.stop().await;
 }

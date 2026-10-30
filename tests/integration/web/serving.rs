@@ -1,16 +1,21 @@
 use super::*;
 
+/// The pages of #1, ready for Linewright.
+async fn pages() -> Pages {
+    Pages::of(a_ticket()).await
+}
+
 #[tokio::test]
 async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
-    let web = Web::start(with_ticket().await).await;
+    let pages = pages().await;
 
-    let page = web.response("/items/1").await;
-    let html = web.page("/items/1").await;
+    let page = pages.response("/items/1").await;
+    let html = pages.page("/items/1").await;
     let scripts: Vec<String> = select(&html, "script[src]")
         .into_iter()
         .map(|script| script.attr("src").unwrap().to_string())
         .collect();
-    let stale = web.response("/assets/htmx-0000000000000000.min.js").await;
+    let stale = pages.response("/assets/htmx-0000000000000000.min.js").await;
 
     assert_eq!(
         page.headers()["content-security-policy"],
@@ -31,7 +36,7 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
         [("htmx", "min.js"), ("hx-sse", "js"), ("linewright", "js")]
     );
     for script in &scripts {
-        let asset = web.response(script).await;
+        let asset = pages.response(script).await;
         assert_eq!(asset.status(), 200, "{script}");
         assert_eq!(
             asset.headers()["content-type"],
@@ -45,7 +50,6 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
         );
     }
     assert_eq!(stale.status(), 404);
-    web.stop().await;
 }
 
 /// The status of the answer to a GET of `path` on `listener` with `host`
@@ -61,8 +65,8 @@ async fn status_on(listener: &web::Listener, host: Option<&str>, path: &str) -> 
 }
 
 /// A page, its event stream and an asset of it.
-async fn a_page_its_stream_and_an_asset(web: &Web) -> [String; 3] {
-    let html = web.page("/items/1").await;
+async fn a_page_its_stream_and_an_asset(pages: &Pages) -> [String; 3] {
+    let html = pages.page("/items/1").await;
     let script = select(&html, "script[src]")[0]
         .attr("src")
         .unwrap()
@@ -72,10 +76,10 @@ async fn a_page_its_stream_and_an_asset(web: &Web) -> [String; 3] {
 
 #[tokio::test]
 async fn the_ui_answers_a_local_name_an_ip_address_or_one_of_ui_hosts() {
-    let web = Web::start(with_ticket().await).await;
-    let ui = web.listen(&["Linewright.Example.com"]).await;
+    let pages = pages().await;
+    let ui = pages.listen(&["Linewright.Example.com"]).await;
 
-    for path in a_page_its_stream_and_an_asset(&web).await {
+    for path in a_page_its_stream_and_an_asset(&pages).await {
         for host in [
             "localhost",
             "LOCALHOST.:8081",
@@ -94,14 +98,13 @@ async fn the_ui_answers_a_local_name_an_ip_address_or_one_of_ui_hosts() {
         }
     }
     ui.stop().await;
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
-    let web = Web::start(with_ticket().await).await;
-    let ui = web.listen(&["linewright.example.com"]).await;
-    let paths = a_page_its_stream_and_an_asset(&web).await;
+    let pages = pages().await;
+    let ui = pages.listen(&["linewright.example.com"]).await;
+    let paths = a_page_its_stream_and_an_asset(&pages).await;
 
     for path in paths {
         for (host, reason) in [
@@ -126,18 +129,16 @@ async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
         }
     }
     ui.stop().await;
-    web.stop().await;
 }
 
 #[tokio::test]
 async fn a_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
-    let web = Web::start(with_ticket().await).await;
+    let pages = pages().await;
 
-    let response = web.response("/events/items/1").await;
+    let response = pages.response("/events/items/1").await;
 
     assert_eq!(response.status(), 200);
     assert_passes_through_a_proxy(response.headers());
-    web.stop().await;
 }
 
 // The keep-alive is a comment line (WHATWG HTML, 9.2.6), sent once a stream
@@ -145,10 +146,10 @@ async fn a_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached
 // proxy).
 #[tokio::test]
 async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_and_none_before() {
-    let web = Web::start(with_ticket().await).await;
+    let pages = pages().await;
     // Paused once serving, so that time moves on only when nothing else can.
     tokio::time::pause();
-    let response = web.response("/events/items/1").await;
+    let response = pages.response("/events/items/1").await;
     let mut body = response.into_body();
     let mut next = async || {
         let frame = body.frame().await.unwrap().unwrap();
@@ -175,5 +176,4 @@ async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_an
         (quiet * 2..=quiet * 2 + tick * 2).contains(&second_after),
         "{second_after:?}"
     );
-    web.stop().await;
 }
