@@ -11,7 +11,9 @@ pub fn commit_in(dir: &Path, files: &[(&str, &str)], message: &str) {
     git_in(dir, &["commit", "--quiet", "-m", message]);
 }
 
-pub fn git_in(dir: &Path, args: &[&str]) {
+/// Runs git in `dir`, failing the test if git fails, and returns what it
+/// printed.
+pub fn git_in(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -23,6 +25,7 @@ pub fn git_in(dir: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 pub fn files_named(dir: &Path, name: &str) -> Vec<std::path::PathBuf> {

@@ -17,7 +17,9 @@
 //!   - `restart`: starts its factory again, reconfigured.
 //!   - `poll`: one poll, with every run it started run to its end.
 //!   - `issue`: an issue as the store holds it.
-//!   - `ticket_in_review`: a ticket implemented and its pull request opened.
+//!   - `implement_a_ticket`: runs the implement stage on a ticket.
+//!   - `ticket_in_review`: a ticket implemented and its pull request opened,
+//!     written straight into the store.
 //!   - `persons_pull_closing`: a person's pull request that closes an issue.
 //!   - `rework_asked`: a maintainer asks for rework and the agent does it.
 //! - `Repository`: the repository settings a `World` starts with; `allowing`
@@ -115,7 +117,8 @@
 //! # `files`: git and files
 //!
 //! - `commit_in`: writes files in a checkout and commits them.
-//! - `git_in`: runs git in a directory, failing the test if git fails.
+//! - `git_in`: runs git in a directory, failing the test if git fails, and
+//!   returns what it printed.
 //! - `files_named`: the files with a name under a directory.
 //!
 //! # `cli`: running `lw`
@@ -134,6 +137,11 @@
 //! - `eventually`: waits until a condition holds.
 //! - `eventually_async`: waits until an async condition holds.
 //! - `run_ids`: the run ids in `lw runs` output.
+//!
+//! # `same_state`: comparing stores
+//!
+//! - `assert_same_state`: asserts a stage left the same state in one store as
+//!   a back door wrote in another, naming the first field that differs.
 
 mod assert;
 mod cli;
@@ -142,6 +150,7 @@ mod files;
 mod harness;
 mod http;
 mod items;
+mod same_state;
 mod webhooks;
 mod world;
 
@@ -152,5 +161,6 @@ pub use files::*;
 pub use harness::*;
 pub use http::*;
 pub use items::*;
+pub use same_state::*;
 pub use webhooks::*;
 pub use world::*;

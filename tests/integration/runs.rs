@@ -341,7 +341,7 @@ async fn run_ids_number_each_stage_on_an_item_on_from_before_a_restart() {
 #[tokio::test]
 async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     let (mut world, work_dir) = world_in_work_dir().await;
-    world.ticket_in_review().await;
+    world.implement_a_ticket().await;
     world
         .store
         .merge_change(
@@ -612,7 +612,7 @@ async fn listed(dir: &Path, item: Number) -> Vec<String> {
 #[tokio::test]
 async fn a_pull_requests_runs_are_its_own_and_its_tickets_are_the_tickets() {
     let (mut world, work_dir) = world_in_work_dir().await;
-    let (issue, pr) = world.ticket_in_review().await;
+    let (issue, pr) = world.implement_a_ticket().await;
     world.rework_asked(pr);
     world.poll().await;
     let dir = work_dir.path();
@@ -653,7 +653,7 @@ async fn a_pull_requests_runs_are_counted_per_stage_on_it() {
 #[tokio::test]
 async fn a_closed_pull_request_has_no_runs_of_its_tickets() {
     let (mut world, work_dir) = world_in_work_dir().await;
-    let (issue, closed) = world.ticket_in_review().await;
+    let (issue, closed) = world.implement_a_ticket().await;
     world.store.close_pull_as(closed).unwrap();
     world.poll().await;
     world.store.unlabel_as(issue, "ready-for-human").unwrap();

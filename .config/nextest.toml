@@ -9,18 +9,3 @@ status-level = "leak"
 final-status-level = "leak"
 failure-output = "immediate"
 fail-fast = false
-
-# The tests over the budget, each named exactly, until each is made fast.
-# `scripts/check test` fails on a filter that names no test, such as one
-# left behind by a rename.
-[[profile.default.overrides]]
-filter = 'test(=pipeline::a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_unfinished_commit)'
-slow-timeout = { period = "30s", terminate-after = 1 }
-
-[[profile.default.overrides]]
-filter = 'test(=pipeline::every_first_message_prompt_names_the_repository)'
-slow-timeout = { period = "30s", terminate-after = 1 }
-
-[[profile.default.overrides]]
-filter = 'test(=repository_files::a_file_under_linewright_that_is_not_one_of_linewrights_holds_every_run_until_it_is_removed)'
-slow-timeout = { period = "30s", terminate-after = 1 }

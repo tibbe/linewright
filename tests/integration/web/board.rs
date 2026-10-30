@@ -868,6 +868,8 @@ async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with
             .unwrap();
         in_review.push((ticket, pr));
     }
+    // Each is marked ready for review on its passing checks.
+    world.poll().await;
     let [
         (unruled_ticket, unruled),
         (required_ticket, required),

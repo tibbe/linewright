@@ -456,7 +456,7 @@ async fn feedback_on_linewrights_pull_request_is_addressed_on_the_delivery() {
         served.deliver(event, body).await;
 
         eventually(|| served.harness.prompts(WorkKind::Rework).len() == 1).await;
-        assert_eq!(served.store.snapshots_taken(), 2, "{event}");
+        assert_eq!(served.store.snapshots_taken(), 1, "{event}");
         served.stop().await;
     }
 }
@@ -567,7 +567,7 @@ async fn assigning_linewrights_pull_request_reads_it_again_on_the_delivery() {
     served.deliver("pull_request", about_pull(pr)).await;
     eventually(|| served.store.items_read() > before_assigned).await;
 
-    assert_eq!(served.store.snapshots_taken(), 2);
+    assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }
 
@@ -626,7 +626,7 @@ async fn closing_linewrights_pull_request_hands_its_ticket_back_on_the_delivery(
         last_comment(&served.issue(ticket)),
         format!("{pr} was closed without merging.")
     );
-    assert_eq!(served.store.snapshots_taken(), 2);
+    assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }
 
@@ -649,7 +649,7 @@ async fn merging_linewrights_pull_request_works_the_ticket_it_unblocked_on_the_d
     served.deliver("issues", about_issue(ticket)).await;
 
     eventually(|| claimed(&served.store, blocked)).await;
-    assert_eq!(served.store.snapshots_taken(), 2);
+    assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }
 
@@ -812,7 +812,7 @@ async fn a_failing_check_on_linewrights_pull_request_starts_the_ci_fix_on_the_de
         eventually(|| served.harness.prompts(WorkKind::FixCi).len() == 1).await;
         let prompt = &served.harness.prompts(WorkKind::FixCi)[0];
         assert!(prompt.contains("widgets == 2"), "{event}: {prompt}");
-        assert_eq!(served.store.snapshots_taken(), 2, "{event}");
+        assert_eq!(served.store.snapshots_taken(), 1, "{event}");
         served.stop().await;
     }
 }
@@ -830,7 +830,7 @@ async fn green_checks_on_linewrights_pull_request_mark_it_ready_on_the_delivery(
             served.store.snapshot_pull(pr).await.state == PullState::Open { draft: false }
         })
         .await;
-        assert_eq!(served.store.snapshots_taken(), 2, "{event}");
+        assert_eq!(served.store.snapshots_taken(), 1, "{event}");
         served.stop().await;
     }
 }
@@ -850,7 +850,7 @@ async fn with_auto_merge_green_checks_on_linewrights_pull_request_merge_it_on_th
             matches!(state, PullState::Merged { .. }),
             "{event}: {state:?}"
         );
-        assert_eq!(served.store.snapshots_taken(), 2, "{event}");
+        assert_eq!(served.store.snapshots_taken(), 1, "{event}");
         served.stop().await;
     }
 }
@@ -885,6 +885,6 @@ async fn a_push_to_the_default_branch_brings_linewrights_pull_request_up_to_date
         after.mergeability == Mergeability::Clean && after.head_sha != before.head_sha
     })
     .await;
-    assert_eq!(served.store.snapshots_taken(), 2);
+    assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }

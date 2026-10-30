@@ -60,7 +60,7 @@ pub async fn write_commit(repo: &Path, commit: NewCommit<'_>) -> Result<String> 
 fn fast_import_stream(commit: &NewCommit<'_>, parent: Option<&str>) -> Vec<u8> {
     let mut stream = Vec::new();
     let author = commit.author;
-    let identity = format!("{author} <{author}@example.com> now");
+    let identity = format!("{author} <{}> now", email(author));
     stream.extend(format!("commit {}\nmark :1\n", branch_ref(commit.branch)).bytes());
     stream.extend(format!("author {identity}\ncommitter {identity}\n").bytes());
     add_data(&mut stream, commit.message.as_bytes());
@@ -76,6 +76,13 @@ fn fast_import_stream(commit: &NewCommit<'_>, parent: Option<&str>) -> Vec<u8> {
     }
     stream.extend(b"\nget-mark :1\n");
     stream
+}
+
+/// The email the login `login` commits with, as GitHub's no-reply address
+/// for it
+/// (<https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address#about-no-reply-email-addresses>).
+pub fn email(login: &str) -> String {
+    format!("{login}@users.noreply.github.com")
 }
 
 /// Adds a fast-import `data` command carrying `data` to `stream`.
@@ -199,7 +206,7 @@ impl<'a> Signature<'a> {
     fn of(name: &'a str) -> Self {
         Signature {
             name,
-            email: Cow::Owned(format!("{name}@example.com")),
+            email: Cow::Owned(email(name)),
             date: None,
         }
     }

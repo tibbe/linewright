@@ -13,6 +13,7 @@ mod drain;
 mod ending;
 mod explain;
 mod fix_brief;
+mod front_door;
 mod git;
 mod harness;
 mod item_facts;
