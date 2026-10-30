@@ -1269,7 +1269,7 @@ fn a_setup_commands_output_is_read_once_its_end_is_even_when_a_read_stops_inside
 
 /// The output of a session that starts a sub-agent which runs for 3h 2m 9s
 /// and makes 3 tool calls, then answers.
-pub(crate) fn with_a_sub_agent_of_3h_2m_9s() -> String {
+fn with_a_sub_agent_of_3h_2m_9s() -> String {
     let message = |kind: &str, at: &str, content: serde_json::Value| json!({"type": kind, "timestamp": at, "message": {"content": content}});
     let mut returned = message(
         "user",

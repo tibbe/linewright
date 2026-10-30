@@ -18,8 +18,6 @@ use http_body_util::BodyExt as _;
 use linewright::api::Sources;
 use linewright::clock::Clock;
 use linewright::host::UiHosts;
-use linewright::reconcile::WorkKind;
-use linewright::store::Store as _;
 use linewright::web;
 use linewright::webhook::{Listener, Pending};
 use scraper::{ElementRef, Html, Selector};
@@ -31,7 +29,6 @@ use tower::ServiceExt as _;
 struct Web {
     serving: Serving,
     listener: Listener,
-    sources: Sources,
     router: Router,
     stopping: CancellationToken,
     store: std::sync::Arc<linewright::store::local::LocalStore>,
@@ -108,11 +105,10 @@ impl Web {
                 serving.polling.clone(),
             )
         };
-        let router = web::router(sources.clone(), UiHosts::default(), stopping.clone());
+        let router = web::router(sources, UiHosts::default(), stopping.clone());
         Web {
             serving,
             listener,
-            sources,
             router,
             stopping,
             store,
@@ -137,18 +133,6 @@ impl Web {
         )
         .await
         .unwrap()
-    }
-
-    /// The web UI listening on a port of its own, answering `hosts` besides
-    /// the local names and IP addresses.
-    async fn listen(&self, hosts: &[&str]) -> web::Listener {
-        let ui = web::Ui {
-            address: "127.0.0.1:0".parse().unwrap(),
-            hosts: UiHosts::new(hosts.iter().copied()).unwrap(),
-        };
-        web::Listener::bind(&ui, self.sources.clone())
-            .await
-            .unwrap()
     }
 
     /// A delivery naming issue #`number`.
@@ -190,7 +174,10 @@ impl Routed for Web {
 /// and no poll.
 struct Pages {
     router: Router,
+    sources: Sources,
     served: tokio::sync::watch::Sender<Option<linewright::api::Served>>,
+    /// Set by [`Pages::with_deliveries`].
+    listener: Option<Listener>,
     store: std::sync::Arc<linewright::store::local::LocalStore>,
     stopping: CancellationToken,
     dir: tempfile::TempDir,
@@ -199,6 +186,16 @@ struct Pages {
 impl Pages {
     /// The pages of `view`, as `serve` shows them once a poll has made it.
     async fn of(view: linewright::status::View) -> Pages {
+        Pages::over(view, false).await
+    }
+
+    /// [`Pages::of`]'s, with webhooks on: a bare webhook listener, that
+    /// nothing takes the deliveries of, tallies them for the pages.
+    async fn with_deliveries(view: linewright::status::View) -> Pages {
+        Pages::over(view, true).await
+    }
+
+    async fn over(view: linewright::status::View, deliveries: bool) -> Pages {
         let dir = tempfile::tempdir().unwrap();
         let clock = std::sync::Arc::new(FakeClock::new());
         let store = std::sync::Arc::new(
@@ -209,6 +206,15 @@ impl Pages {
             )
             .await,
         );
+        let listener = if deliveries {
+            let listener =
+                Listener::bind(&webhooks("127.0.0.1:0"), Pending::default(), clock.clone())
+                    .await
+                    .unwrap();
+            Some(listener)
+        } else {
+            None
+        };
         let polling = linewright::status::Polling {
             next: view.polls.next,
             failed: None,
@@ -218,16 +224,26 @@ impl Pages {
         // Kept open by the receivers `Sources` holds.
         let (_, polling) = tokio::sync::watch::channel(Some(polling));
         let since = clock.now();
-        let sources = sources(&dir, &clock, since, served_receiver, polling);
+        let sources = Sources {
+            deliveries: listener.as_ref().map(Listener::tally),
+            ..sources(&dir, &clock, since, served_receiver, polling)
+        };
         let stopping = CancellationToken::new();
-        let router = web::router(sources, UiHosts::default(), stopping.clone());
+        let router = web::router(sources.clone(), UiHosts::default(), stopping.clone());
         Pages {
             router,
+            sources,
             served,
+            listener,
             store,
             stopping,
             dir,
         }
+    }
+
+    /// The webhook listener of [`Pages::with_deliveries`].
+    fn deliveries(&self) -> &Listener {
+        self.listener.as_ref().expect("webhooks on")
     }
 
     /// Publishes `view` as the next one `serve` shows, as a poll would.
@@ -236,9 +252,42 @@ impl Pages {
         self.served.send_replace(Some(served));
     }
 
+    /// The web UI listening on a port of its own, answering `hosts` besides
+    /// the local names and IP addresses.
+    async fn listen(&self, hosts: &[&str]) -> web::Listener {
+        let ui = web::Ui {
+            address: "127.0.0.1:0".parse().unwrap(),
+            hosts: UiHosts::new(hosts.iter().copied()).unwrap(),
+        };
+        web::Listener::bind(&ui, self.sources.clone())
+            .await
+            .unwrap()
+    }
+
     /// Writes the run `record`, as its run would have kept it.
     fn record(&self, record: &serde_json::Value) {
         write_record(&work_dir(&self.dir), record);
+    }
+
+    /// Writes each of `files`, a path under the work directory and what it
+    /// holds, as runs leave them there.
+    fn write(&self, files: &[(&str, &str)]) {
+        write_files(&work_dir(&self.dir), files);
+    }
+
+    /// Adds `text` to the end of `path` under the work directory, as a
+    /// session adds to its output while it runs.
+    fn append(&self, path: &str, text: &str) {
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.path(path))
+            .unwrap();
+        std::io::Write::write_all(&mut file, text.as_bytes()).unwrap();
+    }
+
+    /// The work directory's path of `path`.
+    fn path(&self, path: &str) -> std::path::PathBuf {
+        work_dir(&self.dir).join(path)
     }
 }
 
@@ -395,6 +444,11 @@ fn item_facts(html: &Html) -> Vec<(String, String)> {
         .collect()
 }
 
+/// #1, ready for Linewright.
+fn a_ticket() -> linewright::status::View {
+    view(vec![ticket(1, "Do the thing")], vec![])
+}
+
 async fn with_ticket() -> World {
     let world = World::new().await;
     open_issue_linewright_labeled(
@@ -503,7 +557,7 @@ fn classes<'a>(html: &'a Html, selector: &str) -> Vec<Vec<&'a str>> {
 
 /// Records run `n` of #`item`'s triage as started at `started_at` and never
 /// ended nor in flight: interrupted, as when its process died.
-fn record_interrupted(web: &Web, item: u64, n: u32, started_at: &str) {
+fn record_interrupted(pages: &Pages, item: u64, n: u32, started_at: &str) {
     let record = serde_json::json!({
         "item": item,
         "stage": "triage",
@@ -512,14 +566,20 @@ fn record_interrupted(web: &Web, item: u64, n: u32, started_at: &str) {
         "end": null,
         "sessions": [],
     });
-    write_record(&web.work_dir(), &record);
+    pages.record(&record);
 }
 
-/// Writes the record of an item's run into `work_dir`, where its run keeps
-/// it.
+/// Writes the record of a run, an item's or an automation's, into
+/// `work_dir`, where its run keeps it.
 fn write_record(work_dir: &std::path::Path, record: &serde_json::Value) {
-    let dir = work_dir.join("runs/items").join(record["item"].to_string());
-    std::fs::create_dir_all(&dir).unwrap();
-    let name = format!("{}-{}.json", record["stage"].as_str().unwrap(), record["n"]);
-    std::fs::write(dir.join(name), record.to_string()).unwrap();
+    let path = match record["automation"].as_str() {
+        Some(automation) => format!("runs/automations/{automation}/{}.json", record["n"]),
+        None => format!(
+            "runs/items/{}/{}-{}.json",
+            record["item"],
+            record["stage"].as_str().unwrap(),
+            record["n"]
+        ),
+    };
+    write_files(work_dir, &[(&path, &record.to_string())]);
 }

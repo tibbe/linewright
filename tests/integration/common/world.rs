@@ -466,21 +466,7 @@ pub fn setting_up_with(config: &mut FactoryConfig, setup: &str) {
 /// A world whose work dir is `REPO`'s, holding an issue that needs triage,
 /// which each triage answers is ready for an agent.
 pub async fn with_issue_for_triage() -> World {
-    with_issue_for_triage_where(|_| {}).await
-}
-
-/// [`with_issue_for_triage`]'s, with `setup` the setup command of every
-/// stage.
-pub async fn with_issue_for_triage_setting_up_with(setup: &str) -> World {
-    with_issue_for_triage_where(|config| setting_up_with(config, setup)).await
-}
-
-async fn with_issue_for_triage_where(adjust: impl FnOnce(&mut FactoryConfig)) -> World {
-    let world = World::with(|config| {
-        config.work_dir = config.work_dir.join(REPO);
-        adjust(config);
-    })
-    .await;
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     world.harness.on(WorkKind::Triage, |_| {
         Ok(serde_json::json!({
             "outcome": "ready-for-agent",

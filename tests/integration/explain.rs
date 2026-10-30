@@ -1005,23 +1005,35 @@ fn a_closed_issue_is_left_alone_as_closed() {
 
 #[test]
 fn an_open_issue_linewright_has_not_worked_that_waits_on_a_person_is_left_alone_as_such() {
-    let asked = Issue {
-        labels: vec!["needs-info".into()],
-        ..ticket(42, "Add invoices")
-    };
-
-    for read in [
-        AnyItem::HeldIssue(Box::new(asked.clone())),
-        AnyItem::LeftOutIssue(Box::new(asked.clone())),
+    for (label, left_alone) in [
+        (
+            "needs-info",
+            "left alone: it holds `needs-info`, and Linewright has not worked it",
+        ),
+        (
+            "ready-for-human",
+            "left alone: it holds `ready-for-human`, and Linewright has not worked it",
+        ),
     ] {
-        assert_eq!(
-            read_text(&view(vec![asked.clone()], vec![]), &read)[1..],
-            [
-                "state: open issue",
-                "last read: 2026-10-01 12:00:30 UTC",
-                "left alone: it holds `needs-info`, and Linewright has not worked it",
-            ]
-        );
+        let waiting = Issue {
+            labels: vec![label.into()],
+            ..ticket(42, "Add invoices")
+        };
+
+        for read in [
+            AnyItem::HeldIssue(Box::new(waiting.clone())),
+            AnyItem::LeftOutIssue(Box::new(waiting.clone())),
+        ] {
+            assert_eq!(
+                read_text(&view(vec![waiting.clone()], vec![]), &read)[1..],
+                [
+                    "state: open issue",
+                    "last read: 2026-10-01 12:00:30 UTC",
+                    left_alone,
+                ],
+                "{label}"
+            );
+        }
     }
 }
 

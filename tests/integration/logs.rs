@@ -172,17 +172,6 @@ pub(crate) fn implement_as_recorded(world: &World) {
     });
 }
 
-/// Implementing sessions start a sub-agent that runs for 3h 2m 9s and makes
-/// 3 tool calls, then answer with the result.
-pub(crate) fn implement_with_a_sub_agent_of_3h_2m_9s(world: &World) {
-    world.harness.on(WorkKind::Implement, |call| {
-        let output = call.spec.record.join(linewright::transcript::OUTPUT);
-        std::fs::write(&output, crate::transcript::with_a_sub_agent_of_3h_2m_9s()).unwrap();
-        commit_in(&call.spec.dir, &[("src/done.txt", "done\n")], "Do it");
-        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
-    });
-}
-
 /// #1 implemented in a run whose sessions stream the recorded transcript.
 async fn implemented_as_recorded() -> (World, tempfile::TempDir) {
     let (mut world, work_dir) = world_in_work_dir().await;

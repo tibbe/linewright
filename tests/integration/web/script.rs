@@ -26,15 +26,16 @@ function setTimeout() {}
 "#;
 
 /// The script the board serves, as its page names it.
-async fn served_script(web: &Web) -> String {
-    let html = web.page("/").await;
+async fn served_script() -> String {
+    let pages = Pages::of(view(vec![], vec![])).await;
+    let html = pages.page("/").await;
     let src = select(&html, "script[src]")
         .into_iter()
         .filter_map(|script| script.attr("src"))
         .find(|src| src.starts_with("/assets/linewright-"))
         .expect("the page's script")
         .to_string();
-    let (status, script) = web.get(&src).await;
+    let (status, script) = pages.get(&src).await;
     assert_eq!(status, 200);
     script
 }
@@ -55,9 +56,7 @@ fn evaluated(sources: &[&str]) -> String {
 
 #[tokio::test]
 async fn an_update_neither_opens_nor_closes_a_fold_and_morphs_every_other_attribute() {
-    let web = Web::start(with_ticket().await).await;
-    let script = served_script(&web).await;
-    web.stop().await;
+    let script = served_script().await;
 
     // Each hook as htmx calls it in a morph:
     // https://four.htmx.org/docs/extension-authoring-guide#event-hooks
@@ -208,9 +207,7 @@ function point(from, to) {
 /// What `asked` evaluates to, line by line, once the served script has run
 /// on a page that `page` builds of the stand-ins in `TIPS`.
 async fn with_tips(page: &str, asked: &str) -> Vec<String> {
-    let web = Web::start(with_ticket().await).await;
-    let script = served_script(&web).await;
-    web.stop().await;
+    let script = served_script().await;
     evaluated(&[BROWSER, TIPS, page, &script, asked])
         .lines()
         .map(str::to_string)
@@ -567,9 +564,7 @@ document.querySelectorAll = (selector) => {
 /// What `asked` evaluates to, line by line, once the served script has run
 /// on a page holding the times `page` adds, as of `NOW`.
 async fn on_the_page(page: &str, asked: &str) -> Vec<String> {
-    let web = Web::start(with_ticket().await).await;
-    let script = served_script(&web).await;
-    web.stop().await;
+    let script = served_script().await;
     let clock = format!("var now = Date.parse({NOW:?});");
     evaluated(&[BROWSER, &clock, TIMES, page, &script, asked])
         .lines()
