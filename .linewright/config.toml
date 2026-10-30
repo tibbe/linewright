@@ -1,0 +1,4 @@
+# An implement session builds and checks its work, and some checks, such as
+# the store's contract tests against GitHub, take minutes a run.
+[stage.implement]
+session-timeout = "90m"
