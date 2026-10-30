@@ -1,9 +1,11 @@
 use chrono::TimeDelta;
 use linewright::apply::pull_work::*;
 use linewright::domain::{
-    Comment, Login, Mergeability, Number, Pull, PullState, Rebaseability, Review, ReviewState,
-    Thread, Timestamp,
+    CheckFailure, Comment, Login, Mergeability, Number, Pull, PullState, Rebaseability, Review,
+    ReviewState, Thread, Timestamp, UpdateMethod,
 };
+use linewright::git::Conflict;
+use linewright::prompts::PullTask;
 use linewright::reconcile::{Feedback, WorkKind};
 use linewright::results::ThreadReply;
 use rstest::rstest;
@@ -295,4 +297,70 @@ fn late_feedback_in_a_thread_keeps_only_its_late_comments() {
         .map(|c| c.author.as_str())
         .collect();
     assert_eq!(authors, ["designer"]);
+}
+
+#[rstest]
+#[case::work_its_session_changed_on_an_open_pull_request_is_kept(true, true, true)]
+#[case::work_its_session_left_as_it_was_is_not(false, true, false)]
+#[case::work_on_a_pull_request_that_closed_is_not(true, false, false)]
+#[case::unchanged_work_on_a_closed_pull_request_is_not(false, false, false)]
+fn a_stopped_pull_request_runs_work(#[case] changed: bool, #[case] open: bool, #[case] kept: bool) {
+    assert_eq!(keeps_work(changed, open), kept);
+}
+
+/// The work of a case, which owns what it refers to.
+#[derive(Clone, Copy, Debug)]
+enum Job {
+    Rework,
+    FixCi,
+    Update,
+}
+
+#[rstest]
+#[case::a_rework_without_a_conflict_addresses_its_feedback(Job::Rework, false, Some(Job::Rework))]
+#[case::a_rework_with_a_conflict_also_resolves_it(Job::Rework, true, Some(Job::Rework))]
+#[case::a_ci_fix_without_a_conflict_fixes_its_failures(Job::FixCi, false, Some(Job::FixCi))]
+#[case::a_ci_fix_with_a_conflict_also_resolves_it(Job::FixCi, true, Some(Job::FixCi))]
+#[case::an_update_with_a_conflict_resolves_it(Job::Update, true, Some(Job::Update))]
+#[case::an_update_without_a_conflict_starts_no_session(Job::Update, false, None)]
+fn a_pull_request_runs_session_is_asked(
+    #[case] job: Job,
+    #[case] conflicted: bool,
+    #[case] asked: Option<Job>,
+) {
+    let conflict = Conflict {
+        method: UpdateMethod::Rebase,
+        files: vec!["src/x.txt".into()],
+    };
+    let feedback_comment = comment("maintainer", 2);
+    let feedback = || Feedback {
+        comments: vec![&feedback_comment],
+        ..Feedback::default()
+    };
+    let failures = [CheckFailure {
+        name: "test".into(),
+        summary: "1 failed".into(),
+        log: None,
+    }];
+    let conflict = conflicted.then_some(&conflict);
+    let pull_job = match job {
+        Job::Rework => PullJob::Rework(feedback()),
+        Job::FixCi => PullJob::FixCi(&failures),
+        Job::Update => PullJob::Update,
+    };
+
+    let task = session_task(pull_job, conflict);
+
+    let expected = asked.map(|asked| match asked {
+        Job::Rework => PullTask::Rework {
+            feedback: feedback(),
+            conflict,
+        },
+        Job::FixCi => PullTask::FixCi {
+            failures: &failures,
+            conflict,
+        },
+        Job::Update => PullTask::Update(conflict.unwrap()),
+    });
+    assert_eq!(task, expected);
 }

@@ -106,6 +106,41 @@ impl UsageLimit {
             now + UsageLimit::SHORT_WAIT
         }
     }
+
+    /// The deadline of a session resumed at `woke_at` after waiting out the
+    /// usage limit that refused it at `refused_at`, when its deadline was
+    /// `deadline`: it has the time it had left (docs/specs/runs.md, "Usage
+    /// limit", The refused session).
+    pub fn deadline_after_wait(
+        deadline: tokio::time::Instant,
+        refused_at: tokio::time::Instant,
+        woke_at: tokio::time::Instant,
+    ) -> tokio::time::Instant {
+        woke_at + deadline.saturating_duration_since(refused_at)
+    }
+}
+
+/// The turn a session takes next.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NextTurn {
+    Start,
+    Resume { session: String, prompt: String },
+}
+
+impl NextTurn {
+    /// The turn to take once the usage limit that refused this one resets:
+    /// in `underway`, the session it got under way in, resumed with
+    /// `reset_prompt`, or else this turn again.
+    #[must_use]
+    pub fn after_refusal(self, underway: Option<String>, reset_prompt: &str) -> NextTurn {
+        match underway {
+            Some(session) => NextTurn::Resume {
+                session,
+                prompt: reset_prompt.to_string(),
+            },
+            None => self,
+        }
+    }
 }
 
 /// What a session that ran past its deadline did, as its error says.

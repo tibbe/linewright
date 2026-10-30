@@ -5234,3 +5234,16 @@ fn deleting_a_ticket_branch_touches_its_ticket() {
         vec![Item::Issue(Number(42))]
     );
 }
+
+#[test]
+fn a_drain_has_drained_once_no_run_is_in_flight() {
+    let memory = draining();
+
+    assert!(memory.drained(0));
+    assert!(!memory.drained(1));
+}
+
+#[test]
+fn serve_not_draining_has_not_drained_with_no_run_in_flight() {
+    assert!(!Memory::default().drained(0));
+}

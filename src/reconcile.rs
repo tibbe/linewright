@@ -292,6 +292,12 @@ impl Memory {
         true
     }
 
+    /// Whether a drain has ended `serve`, with `runs_in_flight` runs still
+    /// in flight (docs/specs/operation.md, "Stopping", Draining).
+    pub fn drained(&self, runs_in_flight: usize) -> bool {
+        self.drain.is_some() && runs_in_flight == 0
+    }
+
     /// Returns the reset it lifted.
     pub fn lift_usage_limit(&mut self, now: Timestamp) -> Option<Timestamp> {
         if self.holds_starts(now) {
@@ -2008,7 +2014,7 @@ fn is_held(pr: &Pull, linewright: &Login) -> bool {
     })
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Feedback<'a> {
     pub comments: Vec<&'a Comment>,
     pub reviews: Vec<&'a Review>,

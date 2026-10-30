@@ -1,8 +1,11 @@
-//! What a finished pull request run writes, and the feedback that decides
-//! a rework's reviewers.
+//! What a pull request run's session is asked, what a finished one writes,
+//! the feedback that decides a rework's reviewers, and whether a stopped
+//! one keeps its work.
 
 use super::closing;
-use crate::domain::{Login, Pull, Timestamp};
+use crate::domain::{CheckFailure, Login, Pull, Timestamp};
+use crate::git::Conflict;
+use crate::prompts::PullTask;
 use crate::reconcile::{Feedback, WorkKind};
 use crate::results::ThreadReply;
 
@@ -116,4 +119,34 @@ pub fn feedback_people(feedback: &Feedback, linewright: &Login) -> Vec<Login> {
         .filter(|a| a.is_person_besides(linewright))
         .cloned()
         .collect()
+}
+
+/// The work a run on a pull request is to do, before the update it starts
+/// with has stopped on a conflict or not.
+#[derive(Debug)]
+pub enum PullJob<'a> {
+    Rework(Feedback<'a>),
+    FixCi(&'a [CheckFailure]),
+    Update,
+}
+
+/// What the session of a run on a pull request is asked to do for `job`,
+/// `conflict` being where the update it starts with stopped, if it did;
+/// `None` when the run starts no session, as an update without a conflict
+/// does (docs/specs/runs.md, Stages, "Sessions").
+pub fn session_task<'a>(job: PullJob<'a>, conflict: Option<&'a Conflict>) -> Option<PullTask<'a>> {
+    match (job, conflict) {
+        (PullJob::Rework(feedback), conflict) => Some(PullTask::Rework { feedback, conflict }),
+        (PullJob::FixCi(failures), conflict) => Some(PullTask::FixCi { failures, conflict }),
+        (PullJob::Update, Some(conflict)) => Some(PullTask::Update(conflict)),
+        (PullJob::Update, None) => None,
+    }
+}
+
+/// Whether a pull request run that stopped before it finished keeps its
+/// work on the pull request's branch: only when its session `changed` it
+/// and the pull request is still `open` (docs/specs/runs.md, Ending,
+/// "Unfinished work" and "Cancelling").
+pub fn keeps_work(changed: bool, open: bool) -> bool {
+    changed && open
 }

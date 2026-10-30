@@ -76,6 +76,7 @@ impl<'a> Ticket<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum PullTask<'a> {
     /// `conflict` is where the update the run starts with stopped, if it did.
     Rework {

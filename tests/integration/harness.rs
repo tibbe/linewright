@@ -2,16 +2,20 @@ use crate::common;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use common::*;
 use linewright::domain::Number;
 use linewright::harness::claude::ClaudeCode;
-use linewright::harness::{Harness, Purpose, Reported, Reporter, SessionError, SessionSpec};
+use linewright::harness::{
+    Harness, NextTurn, Purpose, Reported, Reporter, SessionError, SessionSpec, UsageLimit,
+};
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
 use linewright::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 use linewright::transcript::{Prompt, What};
 use linewright::work_settings::Effort;
+use rstest::rstest;
 use serde_json::{Value, json};
 
 /// Claude Code as `program`, with no GitHub token and nothing to redact.
@@ -1155,4 +1159,71 @@ async fn a_process_a_session_left_holding_its_output_does_not_hold_the_turn() {
     let turn = harness.start(&triage_session(dir.path())).await.unwrap();
 
     assert_eq!(turn.message, "Done.");
+}
+
+#[rstest]
+#[case::a_reset_to_come_is_waited_for("2026-10-13T07:50:00Z", "2026-10-13T07:50:00Z")]
+#[case::a_reset_that_has_passed_is_waited_out_for_a_minute(
+    "2026-10-13T05:00:00Z",
+    "2026-10-13T06:01:00Z"
+)]
+#[case::a_reset_now_is_waited_out_for_a_minute("2026-10-13T06:00:00Z", "2026-10-13T06:01:00Z")]
+fn a_refused_session_waits_until(#[case] resets_at: &str, #[case] until: &str) {
+    let limit = UsageLimit {
+        resets_at: at(resets_at),
+    };
+
+    assert_eq!(limit.wait_until(at("2026-10-13T06:00:00Z")), at(until));
+}
+
+fn resume(session: &str, prompt: &str) -> NextTurn {
+    NextTurn::Resume {
+        session: session.into(),
+        prompt: prompt.into(),
+    }
+}
+
+#[rstest]
+#[case::a_first_turn_refused_before_it_began_is_taken_again(NextTurn::Start, None, NextTurn::Start)]
+#[case::a_follow_up_refused_before_it_began_is_taken_again(
+    resume("s-1", "Answer with JSON."),
+    None,
+    resume("s-1", "Answer with JSON.")
+)]
+#[case::a_first_turn_under_way_resumes_its_session(
+    NextTurn::Start,
+    Some("s-1"),
+    resume("s-1", "The limit reset; carry on.")
+)]
+#[case::a_follow_up_under_way_resumes_its_session(
+    resume("s-1", "Answer with JSON."),
+    Some("s-1"),
+    resume("s-1", "The limit reset; carry on.")
+)]
+fn a_turn_refused_for_the_usage_limit_is_followed_once_it_resets_by(
+    #[case] refused: NextTurn,
+    #[case] underway: Option<&str>,
+    #[case] expected: NextTurn,
+) {
+    let next = refused.after_refusal(underway.map(str::to_string), "The limit reset; carry on.");
+
+    assert_eq!(next, expected);
+}
+
+#[rstest]
+#[case::the_time_left_at_the_refusal_is_carried_over(30, 20, 10)]
+#[case::a_deadline_passed_at_the_refusal_leaves_no_time(30, 40, 0)]
+fn a_session_resumed_after_waiting_out_the_usage_limit_has(
+    #[case] deadline_minute: u64,
+    #[case] refused_minute: u64,
+    #[case] left_minutes: u64,
+) {
+    let start = tokio::time::Instant::now();
+    let minute = |n: u64| start + Duration::from_mins(n);
+    let woke_at = minute(120);
+
+    let deadline =
+        UsageLimit::deadline_after_wait(minute(deadline_minute), minute(refused_minute), woke_at);
+
+    assert_eq!(deadline - woke_at, Duration::from_mins(left_minutes));
 }
