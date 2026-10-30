@@ -8,13 +8,16 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::apply::filing::{
+    self, AlreadyFiled, Comment, CutUnder, NewTicket, TrackingIssue, spec_gap_issues,
+};
 use crate::apply::hand_back::{
     self, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail, SendBack, Stopped,
     TryAgain,
 };
 use crate::apply::pull_work::{self, PullWorkWrites, feedback_people, late};
 use crate::apply::triage::{self, CategoryChange};
-use crate::apply::{Asks, Designed, StatusTo, closing};
+use crate::apply::{Asks, Designed, StatusTo};
 use crate::attachments::{self, Dir, Refusal};
 use crate::automation::Automation;
 use crate::briefs::{Briefs, OperatorPrompts};
@@ -30,18 +33,17 @@ use crate::reconcile::{
 };
 use crate::repo_files::RepoLayer;
 use crate::results::{
-    self, AutomationIssueLabel, AutomationResult, Contract, Cut, DesignResult, ImplementResult,
-    IssueWork, Posts, PullWorkResult, SpecGap, SpecGaps, Tickets, TriageResult,
+    self, AutomationResult, Contract, Cut, DesignResult, ImplementResult, IssueWork, Posts,
+    PullWorkResult, SpecGap, SpecGaps, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs, SessionRecorder};
 use crate::secrets::{Held, Secrets};
 use crate::setup;
 use crate::spec_gap::{self, FiledGaps};
 use crate::store::{
-    AnyItem, AttachError, FoundSecrets, Identity, NewIssue, NewPull, PushError, PushMode,
-    RepoSettings, Store,
+    AnyItem, AttachError, FoundSecrets, Identity, PushError, PushMode, RepoSettings, Store,
 };
-use crate::tracking::{self, FiledTicket};
+use crate::tracking::FiledTicket;
 use crate::transcript;
 use crate::work_settings::{
     Environments, RunKind, SessionSettings, Setup, SetupCommand, WorkSettings,
@@ -67,6 +69,23 @@ pub(crate) struct Shell {
     pub waits_out_usage_limit: bool,
     pub secrets: Secrets,
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
+}
+
+/// The label each issue and pull request Linewright files carries, if the
+/// repository has it: read once in a run, when it first files one.
+struct RequiredLabel<'a> {
+    shell: &'a Shell,
+    read: tokio::sync::OnceCell<Option<String>>,
+}
+
+impl RequiredLabel<'_> {
+    async fn get(&self) -> Result<Option<&str>> {
+        let label = self
+            .read
+            .get_or_try_init(|| self.shell.creation_label())
+            .await?;
+        Ok(label.as_deref())
+    }
 }
 
 /// What a run works from, resolved as it starts.
@@ -105,6 +124,14 @@ impl Shell {
             "the required label does not exist: not applied"
         );
         Ok(None)
+    }
+
+    /// The required label, read when the run first needs it.
+    fn required_label(&self) -> RequiredLabel<'_> {
+        RequiredLabel {
+            shell: self,
+            read: tokio::sync::OnceCell::new(),
+        }
     }
 
     fn upstream(&self) -> String {
@@ -1199,23 +1226,16 @@ async fn post_attachments(
     Ok(())
 }
 
-/// Drops from `result`'s spec gaps those already filed and still open,
-/// which are not posted again (docs/specs/runs.md, "Spec gaps").
+/// Drops from `result`'s spec gaps those already filed for `filed.item`,
+/// logging each.
 fn drop_filed_gaps(result: &mut impl SpecGaps, filed: &FiledGaps<'_>) {
-    let Some(gaps) = result.spec_gaps_mut() else {
-        return;
-    };
-    gaps.retain(|gap| match spec_gap::filed_as(filed, &gap.title) {
-        Some(issue) => {
-            info!(
-                issue = issue.number.0,
-                item = filed.item.0,
-                "spec gap already filed"
-            );
-            false
-        }
-        None => true,
-    });
+    for AlreadyFiled { issue, .. } in filing::unfiled_gaps(result, filed) {
+        info!(
+            issue = issue.0,
+            item = filed.item.0,
+            "spec gap already filed"
+        );
+    }
 }
 
 async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> {
@@ -1336,7 +1356,7 @@ async fn run_blocked(
     item: Number,
     stopped: &Stopped<'_>,
 ) -> Result<(), Failure> {
-    file_spec_gaps(shell, spec_gaps, item)
+    file_spec_gaps(shell, spec_gaps, item, &shell.required_label())
         .await
         .map_err(|e| apply(e).noted(&stopped.note()))?;
     Err(Failure::HandBack(hand_back::blocked(question, stopped)))
@@ -1350,7 +1370,7 @@ async fn design_blocked(
     spec_gaps: &[SpecGap],
     item: Number,
 ) -> Result<(), Failure> {
-    file_spec_gaps(shell, spec_gaps, item)
+    file_spec_gaps(shell, spec_gaps, item, &shell.required_label())
         .await
         .map_err(apply)?;
     Err(Failure::HandBack(hand_back::design_blocked(question)))
@@ -1385,23 +1405,24 @@ async fn design_spec_change(
             design,
             cut: Cut { tickets, comment },
             spec_gaps,
-        } => {
-            file_tickets(shell, pr, &design, &tickets, &comment)
-                .await
-                .map_err(apply)?;
-            file_spec_gaps(shell, &spec_gaps, filed_gaps.item)
-                .await
-                .map_err(apply)?;
-            mark_designed(shell, pr).await.map_err(apply)
+        } => async {
+            let required = shell.required_label();
+            let to_file = filing::cut(&tickets, CutUnder::SpecChange(pr), required.get().await?);
+            file_cut(shell, pr.number, to_file, &design, &comment).await?;
+            file_spec_gaps(shell, &spec_gaps, pr.number, &required).await?;
+            // The label goes on last, so that a design stopped before it is
+            // discarded and made again (docs/specs/design.md, "Discarding a
+            // cut").
+            ask(&*shell.store, pr.number, &filing::spec_change_designed()).await
         }
-        DesignResult::NothingToBuild { reason } => {
-            shell
-                .store
-                .comment(pr.number, &reason)
-                .await
-                .map_err(apply)?;
-            mark_designed(shell, pr).await.map_err(apply)
+        .await
+        .map_err(apply),
+        DesignResult::NothingToBuild { reason } => async {
+            shell.store.comment(pr.number, &reason).await?;
+            ask(&*shell.store, pr.number, &filing::spec_change_designed()).await
         }
+        .await
+        .map_err(apply),
         DesignResult::Blocked {
             question,
             spec_gaps,
@@ -1448,37 +1469,20 @@ async fn design_issue(
         } => {
             let store = &shell.store;
             let n = issue.number;
-            match &cut {
-                IssueWork::AsItIs => store.comment(n, &design).await,
-                IssueWork::Cut(Cut { tickets, comment }) => {
-                    async {
-                        let required: Vec<String> =
-                            shell.creation_label().await?.into_iter().collect();
-                        let filed = file_tickets_under(shell, n, tickets, &required).await?;
-                        publish_cut(shell, n, &design, &filed, comment).await
+            async {
+                let required = shell.required_label();
+                match &cut {
+                    IssueWork::AsItIs => store.comment(n, &design).await?,
+                    IssueWork::Cut(Cut { tickets, comment }) => {
+                        let to_file = filing::cut(tickets, CutUnder::Issue, required.get().await?);
+                        file_cut(shell, n, to_file, &design, comment).await?;
                     }
-                    .await
                 }
+                file_spec_gaps(shell, &spec_gaps, n, &required).await?;
+                ask(&**store, n, &filing::designed_asks(&cut)).await
             }
-            .map_err(apply)?;
-            file_spec_gaps(shell, &spec_gaps, filed_gaps.item)
-                .await
-                .map_err(apply)?;
-            let asks = match cut {
-                IssueWork::AsItIs => Asks {
-                    designed: Some(Designed::Add),
-                    ..Asks::default()
-                },
-                // A tracking issue carries no status label, and is worked
-                // through its tickets.
-                IssueWork::Cut(_) => Asks {
-                    designed: Some(Designed::Add),
-                    status: Some(StatusTo::Clear),
-                    unassign: true,
-                    ..Asks::default()
-                },
-            };
-            ask(&**store, n, &asks).await.map_err(apply)
+            .await
+            .map_err(apply)
         }
         DesignResult::NothingToBuild { reason } => {
             Err(Failure::HandBack(hand_back::nothing_to_build(&reason)))
@@ -1509,94 +1513,29 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
         .map_err(infra)
 }
 
-/// The label goes on last, so that a design stopped before it is discarded
-/// and made again (docs/specs/design.md, "Discarding a cut").
-async fn mark_designed(shell: &Shell, pr: &MergedPull) -> Result<()> {
-    let asks = Asks {
-        designed: Some(Designed::Add),
-        unassign: true,
-        ..Asks::default()
-    };
-    ask(&*shell.store, pr.number, &asks).await
-}
-
-/// Files the tickets under a tracking issue, and records the design on it
-/// and the tickets on the spec change.
-async fn file_tickets(
+/// Files `cut`, made from the design of `item`, and publishes `design` with
+/// its tickets on their tracking issue: the one `cut` files, or `item`.
+async fn file_cut(
     shell: &Shell,
-    pr: &MergedPull,
+    item: Number,
+    cut: filing::Cut,
     design: &str,
-    tickets: &Tickets,
     comment: &str,
 ) -> Result<()> {
     let store = &shell.store;
-    let required: Vec<String> = shell.creation_label().await?.into_iter().collect();
-    let tracking_issue = store
-        .create_issue(NewIssue {
-            title: tracking::title(&pr.title),
-            body: tracking::body(pr.number, &[]),
-            labels: required.clone(),
-        })
-        .await?;
-    let list = file_tickets_under(shell, tracking_issue, tickets, &required).await?;
-    store
-        .edit_body(tracking_issue, &tracking::body(pr.number, &list))
-        .await?;
-    publish_cut(shell, tracking_issue, design, &list, comment).await?;
-    store
-        .comment(
-            pr.number,
-            &format!(
-                "{comment}\n\nTracked in {tracking_issue}:\n\n{}",
-                in_order(&list)
-            ),
-        )
-        .await
-}
-
-/// Files `tickets` as sub-issues of `tracking_issue`, labeled `required`
-/// and each linked to the tickets blocking it, and returns them in order,
-/// not yet ready: [`publish_cut`] readies them.
-async fn file_tickets_under(
-    shell: &Shell,
-    tracking_issue: Number,
-    tickets: &Tickets,
-    required: &[String],
-) -> Result<Vec<FiledTicket>> {
-    let store = &shell.store;
-    let mut list: Vec<FiledTicket> = vec![];
-    for ticket in tickets.in_order() {
-        let number = store
-            .create_issue(NewIssue {
-                title: ticket.title.clone(),
-                body: ticket.body.clone(),
-                labels: required.to_vec(),
-            })
-            .await?;
-        store.add_sub_issue(tracking_issue, number).await?;
-        for &blocker in &ticket.blocked_by {
-            store.add_blocked_by(number, list[blocker].number).await?;
+    let (tracking_issue, spec_change) = match cut.tracking_issue {
+        Some(TrackingIssue { issue, spec_change }) => {
+            (store.create_issue(issue).await?, Some(spec_change))
         }
-        list.push(FiledTicket {
-            number,
-            title: ticket.title.clone(),
-        });
+        None => (item, None),
+    };
+    let filed = file_tickets_under(shell, tracking_issue, cut.tickets).await?;
+    let published = filing::published(design, comment, tracking_issue, &filed, spec_change);
+    if let Some(body) = &published.tracking_body {
+        store.edit_body(tracking_issue, body).await?;
     }
-    Ok(list)
-}
-
-/// Posts the design of work cut into `tickets` on their `tracking_issue`,
-/// then readies them.
-async fn publish_cut(
-    shell: &Shell,
-    tracking_issue: Number,
-    design: &str,
-    tickets: &[FiledTicket],
-    comment: &str,
-) -> Result<()> {
-    let store = &shell.store;
     store
-        .comment(tracking_issue, &with_tickets(design, tickets, comment))
+        .comment(tracking_issue, &published.design_comment)
         .await?;
     // Tickets get `ready-for-agent` only once every edge exists, so no poll
     // sees a ticket unblocked before its blockers are linked; once the design
@@ -1606,29 +1545,35 @@ async fn publish_cut(
     // A stop before then leaves the item undesigned, and its cut is discarded
     // with these tickets, ready or not (docs/specs/design.md, "Discarding a
     // cut").
-    let asks = Asks {
-        designed: Some(Designed::Add),
-        status: Some(StatusTo::Set(StatusLabel::ReadyForAgent)),
-        ..Asks::default()
-    };
-    for ticket in tickets {
-        ask(&**store, ticket.number, &asks).await?;
+    for ticket in &filed {
+        ask(&**store, ticket.number, &published.ticket_asks).await?;
+    }
+    if let Some(Comment { on, body }) = &published.spec_change_comment {
+        store.comment(*on, body).await?;
     }
     Ok(())
 }
 
-/// The design of work cut into `tickets`, with them in order and why
-/// `comment` gives for the cut.
-fn with_tickets(design: &str, tickets: &[FiledTicket], comment: &str) -> String {
-    format!("{design}\n\n## Tickets\n\n{}\n{comment}", in_order(tickets))
-}
-
-fn in_order(tickets: &[FiledTicket]) -> String {
-    tickets
-        .iter()
-        .enumerate()
-        .map(|(i, t)| format!("{}. {} {}\n", i + 1, t.number, t.title))
-        .collect()
+/// Files `tickets` as sub-issues of `tracking_issue`, each linked to the
+/// tickets blocking it, and returns them in order, not yet ready:
+/// [`file_cut`] readies them.
+async fn file_tickets_under(
+    shell: &Shell,
+    tracking_issue: Number,
+    tickets: Vec<NewTicket>,
+) -> Result<Vec<FiledTicket>> {
+    let store = &shell.store;
+    let mut list: Vec<FiledTicket> = vec![];
+    for NewTicket { issue, blocked_by } in tickets {
+        let title = issue.title.clone();
+        let number = store.create_issue(issue).await?;
+        store.add_sub_issue(tracking_issue, number).await?;
+        for blocker in blocked_by {
+            store.add_blocked_by(number, list[blocker].number).await?;
+        }
+        list.push(FiledTicket { number, title });
+    }
+    Ok(list)
 }
 
 /// Keeps the work of an implement run that stopped before it finished on the
@@ -1837,18 +1782,20 @@ async fn implement(
             pr_body,
             spec_gaps,
         } => {
+            let required = shell.required_label();
             // Opening the pull request puts the ticket in review, which
             // changes what it asks for, so the gaps go first
             // (docs/specs/repository.md, Writes, "Order").
-            file_spec_gaps(shell, &spec_gaps, ticket.number())
+            file_spec_gaps(shell, &spec_gaps, ticket.number(), &required)
                 .await
                 .map_err(apply)?;
             let pr = store
-                .open_pull(NewPull {
-                    head: branch.clone(),
-                    title: pr_title,
-                    body: closing(&pr_body, &[ticket.number()]),
-                })
+                .open_pull(filing::new_pull(
+                    &branch,
+                    pr_title,
+                    &pr_body,
+                    ticket.number(),
+                ))
                 .await
                 .map_err(apply)?;
             // A pull request Linewright was never assigned to is claimed by
@@ -1860,8 +1807,8 @@ async fn implement(
                     "assigning the pull request failed"
                 );
             }
-            if let Some(required) = shell.creation_label().await.map_err(apply)? {
-                store.add_label(pr, &required).await.map_err(apply)?;
+            if let Some(required) = required.get().await.map_err(apply)? {
+                store.add_label(pr, required).await.map_err(apply)?;
             }
             info!(
                 issue = ticket.number().0,
@@ -1886,21 +1833,20 @@ async fn implement(
     }
 }
 
-/// Files `gaps` for `item`, those already filed dropped from them by
-/// [`drop_filed_gaps`].
-async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], item: Number) -> Result<()> {
-    for gap in gaps {
-        let number = shell
-            .store
-            .create_issue(NewIssue {
-                title: gap.title.clone(),
-                body: spec_gap::body(&gap.body, item),
-                labels: [label::READY_FOR_HUMAN.into()]
-                    .into_iter()
-                    .chain(shell.creation_label().await?)
-                    .collect(),
-            })
-            .await?;
+/// Files `gaps` for `item`, labeled `required` as well, those already filed
+/// dropped from them by [`drop_filed_gaps`].
+async fn file_spec_gaps(
+    shell: &Shell,
+    gaps: &[SpecGap],
+    item: Number,
+    required: &RequiredLabel<'_>,
+) -> Result<()> {
+    // The label is read only to file a gap.
+    if gaps.is_empty() {
+        return Ok(());
+    }
+    for gap in spec_gap_issues(gaps, item, required.get().await?) {
+        let number = shell.store.create_issue(gap).await?;
         info!(issue = number.0, item = item.0, "filed a spec gap");
     }
     Ok(())
@@ -2173,7 +2119,7 @@ async fn pull_work(
             if kind == WorkKind::Rework {
                 ctx.run.answered(read_at);
             }
-            file_spec_gaps(shell, &spec_gaps, ticket.number())
+            file_spec_gaps(shell, &spec_gaps, ticket.number(), &shell.required_label())
                 .await
                 .map_err(apply)
         }
@@ -2307,10 +2253,9 @@ fn with_tail(error: &anyhow::Error, log_tail: &LogTail) -> anyhow::Error {
     anyhow::anyhow!("{error:#}\n\n{}:\n{}", log_tail.heading(), log_tail.text())
 }
 
-/// Drops the issues past `max-issues` from `result`, which are not filed.
+/// Drops the issues past `max-issues` from `result`, logging each.
 fn drop_past_max_issues(automation: &Automation, result: &mut AutomationResult) {
-    let cap = (automation.max_issues as usize).min(result.issues.len());
-    for issue in result.issues.drain(cap..) {
+    for issue in filing::past_max_issues(automation, result) {
         warn!(
             automation = %automation.name,
             max_issues = automation.max_issues,
@@ -2325,29 +2270,18 @@ async fn record_automation(
     automation: &Automation,
     result: &AutomationResult,
 ) -> Result<()> {
-    for issue in &result.issues {
-        let state = match issue.label {
-            AutomationIssueLabel::ReadyForAgent => label::READY_FOR_AGENT,
-            AutomationIssueLabel::ReadyForHuman => label::READY_FOR_HUMAN,
-        };
-        let number = shell
-            .store
-            .create_issue(NewIssue {
-                title: issue.title.clone(),
-                body: format!(
-                    "{}\n\nFiled by the automation `{}`.",
-                    issue.body, automation.name
-                ),
-                labels: [state.into()]
-                    .into_iter()
-                    .chain(shell.creation_label().await?)
-                    .collect(),
-            })
-            .await?;
+    // The label is read only to file an issue.
+    if result.issues.is_empty() {
+        return Ok(());
+    }
+    let required = shell.creation_label().await?;
+    for issue in filing::automation_issues(automation, result, required.as_deref()) {
+        let title = issue.title.clone();
+        let number = shell.store.create_issue(issue).await?;
         info!(
             automation = %automation.name,
             issue = %number,
-            title = issue.title,
+            title,
             "automation issue filed"
         );
     }

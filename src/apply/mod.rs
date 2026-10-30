@@ -3,6 +3,7 @@
 //! next writes. The run (`crate::run`) makes the writes. Nothing here makes
 //! I/O, reads a clock or logs.
 
+pub mod filing;
 pub mod hand_back;
 pub mod pull_work;
 pub mod triage;
