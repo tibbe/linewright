@@ -2,10 +2,10 @@
 
 use anyhow::{Result, bail, ensure};
 use linewright::git;
-use linewright::store::PushMode;
+use linewright::store::{NewIssue, PushMode};
 
 use crate::check::{contracts, equal};
-use crate::sandbox::{NewCommit, Sandbox, commit};
+use crate::sandbox::{NewCommit, Sandbox, commit, recent};
 
 contracts![
     a_clone_is_of_the_branch_asked_with_the_settings_given,
@@ -13,6 +13,7 @@ contracts![
     a_push_with_a_lease_moves_the_branch_from_the_commit_expected,
     a_push_with_a_stale_lease_is_refused_and_leaves_the_branch,
     a_deleted_branch_is_gone,
+    only_a_branch_named_for_an_issue_whose_head_linewright_committed_is_a_tickets,
 ];
 
 async fn a_clone_is_of_the_branch_asked_with_the_settings_given(sandbox: Sandbox) -> Result<()> {
@@ -190,4 +191,57 @@ async fn a_deleted_branch_is_gone(sandbox: Sandbox) -> Result<()> {
         .delete_branch(&pushed.name)
         .await
         .map_err(|error| error.context("deleting it again"))
+}
+
+async fn only_a_branch_named_for_an_issue_whose_head_linewright_committed_is_a_tickets(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let issue = sandbox
+        .store()
+        .create_issue(NewIssue {
+            title: sandbox.unique("ticket-branch"),
+            body: "Opened for branches named for it.".into(),
+            labels: vec![],
+        })
+        .await?;
+    sandbox.made_issue(issue);
+    let linewrights_branch = format!("{}-{}", issue.0, sandbox.unique("linewright"));
+    let persons_branch = format!("{}-{}", issue.0, sandbox.unique("person"));
+    for (branch, committer) in [
+        (&linewrights_branch, None),
+        (&persons_branch, Some("A person")),
+    ] {
+        let clone = sandbox.clone_default_branch().await?;
+        if let Some(name) = committer {
+            git::git(&clone, &["config", "user.name", name]).await?;
+            git::git(&clone, &["config", "user.email", "a.person@example.com"]).await?;
+        }
+        commit(
+            &clone,
+            &[NewCommit {
+                message: "Add a file",
+                files: &[("ticket.txt", b"ticket\n")],
+            }],
+        )
+        .await?;
+        sandbox.made_branch(branch);
+        sandbox.push(&clone, branch, PushMode::Replace).await?;
+    }
+
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let listed: Vec<&str> = snapshot
+                .ticket_branches
+                .iter()
+                .map(|branch| branch.name.as_str())
+                .filter(|&name| name == linewrights_branch || name == persons_branch)
+                .collect();
+            equal(
+                "the ticket branches",
+                &listed,
+                &vec![linewrights_branch.as_str()],
+            )
+        })
+        .await
 }

@@ -18,7 +18,7 @@ use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
 use crate::domain::{
     AutoMerge, IssueCloseReason, Item, Number, PullHeldRead, PullRead, Snapshot, Timestamp,
-    UpdateMethod, UpdateRule, Windows, label,
+    UpdateMethod, Windows, label,
 };
 use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
@@ -214,19 +214,11 @@ impl Factory {
             ),
             SessionToken::Withheld => {}
         }
-        let mut settings = store
+        let settings = store
             .settings()
             .await
-            .context("reading the repository's settings")?;
-        if let Some(method) = config.update_method {
-            settings.update_rule = UpdateRule::Always(method);
-        }
-        if let Some(auto_merge) = config.auto_merge {
-            if let Some(method) = auto_merge.merge_method {
-                settings.merge_method = method;
-            }
-            settings.check_auto_merge(config.update_method)?;
-        }
+            .context("reading the repository's settings")?
+            .configured(config.update_method, config.auto_merge)?;
         let labels = store.labels().await.context("listing labels")?;
         for change in label::label_changes(&labels, &label::ALL) {
             match change {

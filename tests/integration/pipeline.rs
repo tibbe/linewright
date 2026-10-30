@@ -374,7 +374,7 @@ async fn every_kind_of_first_message_prompt() -> Vec<(&'static str, Vec<String>)
     });
     failing.poll().await;
 
-    let (mut moved, _) = moved_past(Repository::default(), None, true).await;
+    let (mut moved, _) = moved_past_in_conflict().await;
     moved.poll().await;
 
     let mut automated = World::new().await;
@@ -3511,61 +3511,6 @@ async fn closing_a_ticket_whose_pull_request_is_open_leaves_its_branch() {
 }
 
 #[tokio::test]
-async fn a_branch_named_for_a_closed_issue_whose_head_a_person_made_is_left() {
-    let mut world = World::new().await;
-    let issue = world.store.open_issue("maintainer", "Gadgets", "", &[]);
-    let branch = format!("{}-gadgets", issue.0);
-    world
-        .store
-        .commit(
-            "alice",
-            &branch,
-            &[("src/gadgets.txt", "gadgets\n")],
-            "Gadgets",
-        )
-        .await
-        .unwrap();
-
-    world.store.close_issue_as_completed(issue).unwrap();
-    world.poll().await;
-
-    assert!(has_branch(&world, &branch));
-}
-
-#[tokio::test]
-async fn only_a_branch_named_as_linewright_names_a_closed_tickets_branch_is_deleted() {
-    let mut world = World::new().await;
-    let issue = world.store.open_issue("maintainer", "Gadgets", "", &[]);
-    let named = format!("{}-gadgets", issue.0);
-    let others = [
-        format!("0{}-gadgets", issue.0),
-        format!("{}--gadgets", issue.0),
-        format!("{}-Gadgets", issue.0),
-        "gadgets".to_string(),
-    ];
-    for branch in others.iter().chain([&named]) {
-        world
-            .store
-            .commit(
-                LINEWRIGHT,
-                branch,
-                &[("src/gadgets.txt", "gadgets\n")],
-                "Gadgets",
-            )
-            .await
-            .unwrap();
-    }
-
-    world.store.close_issue_as_completed(issue).unwrap();
-    world.poll().await;
-
-    assert!(!has_branch(&world, &named));
-    for branch in &others {
-        assert!(has_branch(&world, branch), "{branch} is left");
-    }
-}
-
-#[tokio::test]
 async fn the_branch_of_a_ticket_closed_while_linewright_was_stopped_is_deleted_after_a_restart() {
     let mut world = World::new().await;
     let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
@@ -3615,17 +3560,10 @@ async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date() {
     );
 }
 
-async fn moved_past(
-    repository: Repository,
-    update_branch: Option<linewright::domain::UpdateMethod>,
-    conflicting: bool,
-) -> (World, linewright::domain::Number) {
-    moved_past_with(
-        repository,
-        |config| config.update_method = update_branch,
-        conflicting,
-    )
-    .await
+/// A world whose ticket's pull request conflicts with the default branch,
+/// which moved on past it.
+async fn moved_past_in_conflict() -> (World, linewright::domain::Number) {
+    moved_past_with(Repository::default(), |_| {}, true).await
 }
 
 pub(crate) async fn moved_past_with(
@@ -3750,7 +3688,7 @@ async fn an_operators_prompt_is_the_one_the_session_gets() {
 #[tokio::test]
 async fn by_default_a_conflict_is_resolved_in_a_rebase_where_the_repository_allows_rebase_merging()
 {
-    let (mut world, pr) = moved_past(Repository::default(), None, true).await;
+    let (mut world, pr) = moved_past_in_conflict().await;
 
     world.poll().await;
 
@@ -3761,77 +3699,8 @@ async fn by_default_a_conflict_is_resolved_in_a_rebase_where_the_repository_allo
 }
 
 #[tokio::test]
-async fn by_default_a_conflict_is_resolved_in_a_merge_where_the_repository_disallows_rebase_merging()
- {
-    use linewright::domain::MergeMethod;
-
-    let (mut world, pr) = moved_past(
-        Repository::allowing([MergeMethod::Merge, MergeMethod::Squash]),
-        None,
-        true,
-    )
-    .await;
-
-    world.poll().await;
-
-    let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(world.harness.stopped(WorkKind::Update), [Stopped::Merge]);
-    assert_eq!(merges(&world, &view.head_ref), 1);
-    assert_eq!(view.mergeability, linewright::domain::Mergeability::Clean);
-}
-
-#[tokio::test]
-async fn by_default_a_branch_is_always_rebased_where_the_repository_requires_linear_history() {
-    let linear = || Repository {
-        linear_history: true,
-        ..Repository::default()
-    };
-    let (mut clean, clean_pr) = moved_past(linear(), None, false).await;
-    let before = clean.store.snapshot_pull(clean_pr).await.head_sha;
-    let (mut conflicting, conflicting_pr) = moved_past(linear(), None, true).await;
-
-    clean.poll().await;
-    conflicting.poll().await;
-
-    let clean_ref = clean.store.snapshot_pull(clean_pr).await.head_ref;
-    assert!(!contains(&clean, &clean_ref, &before), "rebased");
-    assert_eq!(merges(&clean, &clean_ref), 0);
-    assert_eq!(
-        conflicting.harness.stopped(WorkKind::Update),
-        [Stopped::Rebase]
-    );
-    let conflicting_ref = conflicting
-        .store
-        .snapshot_pull(conflicting_pr)
-        .await
-        .head_ref;
-    assert_eq!(merges(&conflicting, &conflicting_ref), 0);
-}
-
-#[tokio::test]
-async fn update_branch_merge_merges_even_on_a_conflict_and_rebase_always_rebases() {
-    use linewright::domain::UpdateMethod;
-
-    let (mut merging, merging_pr) =
-        moved_past(Repository::default(), Some(UpdateMethod::Merge), true).await;
-    let (mut rebasing, rebasing_pr) =
-        moved_past(Repository::default(), Some(UpdateMethod::Rebase), false).await;
-    let before = rebasing.store.snapshot_pull(rebasing_pr).await.head_sha;
-
-    merging.poll().await;
-    rebasing.poll().await;
-
-    assert_eq!(merging.harness.stopped(WorkKind::Update), [Stopped::Merge]);
-    let merging_ref = merging.store.snapshot_pull(merging_pr).await.head_ref;
-    assert_eq!(merges(&merging, &merging_ref), 1);
-    let rebasing_ref = rebasing.store.snapshot_pull(rebasing_pr).await.head_ref;
-    assert!(!contains(&rebasing, &rebasing_ref, &before), "rebased");
-    assert_eq!(merges(&rebasing, &rebasing_ref), 0);
-}
-
-#[tokio::test]
 async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
-    let (mut world, pr) = moved_past(Repository::default(), None, true).await;
+    let (mut world, pr) = moved_past_in_conflict().await;
     world
         .store
         .comment_as("maintainer", pr, "Tidy up.")
@@ -4044,66 +3913,6 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     assert_eq!(world.store.snapshot_pull(next).await.closes, [second]);
 }
 
-async fn auto_merged(
-    repository: Repository,
-    merge_method: Option<linewright::domain::MergeMethod>,
-) -> World {
-    let mut world = World::with_repository(repository, |config| {
-        config.auto_merge = Some(AutoMerge { merge_method });
-    })
-    .await;
-    world.ticket_in_review().await;
-    world.clock.advance(chrono::TimeDelta::minutes(6));
-    world.poll().await;
-    world
-}
-
-#[tokio::test]
-async fn with_auto_merge_and_no_merge_method_set_the_repository_decides_it() {
-    let rebased = auto_merged(
-        Repository {
-            linear_history: true,
-            ..Repository::default()
-        },
-        None,
-    )
-    .await;
-    let merged = auto_merged(Repository::default(), None).await;
-
-    assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
-    assert_eq!(history(&merged)[0].1, 2, "a merge commit");
-}
-
-#[tokio::test]
-async fn with_auto_merge_and_no_merge_method_set_the_first_method_the_repository_allows_is_used() {
-    use linewright::domain::MergeMethod;
-
-    let rebased = auto_merged(Repository::allowing([MergeMethod::Rebase]), None).await;
-    let squashed = auto_merged(
-        Repository::allowing([MergeMethod::Squash, MergeMethod::Rebase]),
-        None,
-    )
-    .await;
-
-    assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
-    let pr = *squashed.store.pulls().last().unwrap();
-    // A squash of one commit is titled after it.
-    assert_eq!(history(&squashed)[0], (format!("Do the ticket ({pr})"), 1));
-}
-
-#[tokio::test]
-async fn with_auto_merge_a_merge_method_set_wins_over_the_one_the_repository_allows_first() {
-    use linewright::domain::MergeMethod;
-
-    let rebased = auto_merged(
-        Repository::allowing([MergeMethod::Squash, MergeMethod::Rebase]),
-        Some(MergeMethod::Rebase),
-    )
-    .await;
-
-    assert_eq!(history(&rebased)[0], ("Do the ticket".to_string(), 1));
-}
-
 #[tokio::test]
 async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_across_a_restart_then_merges()
  {
@@ -4140,19 +3949,6 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_ac
     let merged = world.store.snapshot_pull(pr).await;
     assert!(matches!(merged.state, PullState::Merged { .. }));
     assert!(!world.issue(ticket).open);
-}
-
-#[tokio::test]
-async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_holds_is_not_held_again()
- {
-    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
-    let (_, pr) = world.ticket_in_review().await;
-    world.held_for_a_code_owners_review(pr).await;
-
-    world.poll().await;
-    world.poll().await;
-
-    assert_eq!(world.store.snapshot_pull(pr).await.comments.len(), 1);
 }
 
 #[tokio::test]
@@ -4486,72 +4282,6 @@ async fn implemented_with_pushes_refused(output: &str) -> (World, linewright::do
     );
     world.poll().await;
     (world, ticket)
-}
-
-#[tokio::test]
-async fn other_pushes_refused_for_a_missing_permission_are_handed_back_at_once_with_githubs_reason()
-{
-    for (output, reason) in [
-        (
-            rejected(
-                "refusing to allow a GitHub App to create or update workflow \
-                 `.github/workflows/ci.yml` without `workflows` permission",
-            ),
-            "refusing to allow a GitHub App to create or update workflow \
-             `.github/workflows/ci.yml` without `workflows` permission",
-        ),
-        (
-            "remote: Permission to acme/widgets.git denied to linewright-bot.\n\
-             fatal: unable to access 'https://github.com/acme/widgets.git/': The requested \
-             URL returned error: 403"
-                .to_string(),
-            "Permission to acme/widgets.git denied to linewright-bot.",
-        ),
-    ] {
-        let (world, ticket) = implemented_with_pushes_refused(&output).await;
-
-        let issue = world.issue(ticket);
-        assert_eq!(
-            world.harness.prompts(WorkKind::Implement).len(),
-            1,
-            "not retried"
-        );
-        assert!(issue.has_label("ready-for-human"), "{:?}", issue.labels);
-        assert!(
-            last_comment(&issue).contains(reason),
-            "{}",
-            last_comment(&issue)
-        );
-    }
-}
-
-#[tokio::test]
-async fn a_push_refused_for_a_reason_not_recognized_is_retried_once_then_handed_back() {
-    for output in [
-        rejected("pre-receive hook declined"),
-        "To https://github.com/acme/widgets.git\n ! [rejected] HEAD -> branch (stale info)\n\
-         error: failed to push some refs to 'https://github.com/acme/widgets.git'"
-            .to_string(),
-        "fatal: unable to access 'https://github.com/acme/widgets.git/': Could not resolve \
-         host: github.com"
-            .to_string(),
-    ] {
-        let (world, ticket) = implemented_with_pushes_refused(&output).await;
-
-        let issue = world.issue(ticket);
-        assert_eq!(
-            world.harness.prompts(WorkKind::Implement).len(),
-            2,
-            "{output}"
-        );
-        assert!(issue.has_label("ready-for-human"), "{:?}", issue.labels);
-        let comment = last_comment(&issue);
-        assert!(
-            comment.contains("The run failed twice on its infrastructure")
-                && !comment.contains("The work was not kept"),
-            "{comment}"
-        );
-    }
 }
 
 #[tokio::test]

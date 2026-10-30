@@ -981,3 +981,21 @@ fn a_pull_request_read_frees_the_other_issues_it_closes_or_closed_while_open() {
         );
     }
 }
+
+#[test]
+fn only_a_name_linewright_gives_a_tickets_branch_names_one() {
+    let issue_of = |name: &str| TicketBranchName::parse(name).map(|branch| branch.issue());
+
+    assert_eq!(issue_of("12-gadgets"), Some(Number(12)));
+    assert_eq!(issue_of("12-blue-gadgets-2"), Some(Number(12)));
+    assert_eq!(issue_of("12"), Some(Number(12)));
+    for name in [
+        "012-gadgets",
+        "12--gadgets",
+        "12-Gadgets",
+        "gadgets",
+        "-gadgets",
+    ] {
+        assert_eq!(issue_of(name), None, "{name}");
+    }
+}

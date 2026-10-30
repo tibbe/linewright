@@ -30,8 +30,9 @@ const GITHUB_LAG: Duration = Duration::from_secs(20);
 /// trial nextest runs in a process of its own, may still be using it.
 const LONGEST_CONTRACT: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
 
-/// What starts the name of everything a contract makes, so that the sweep
-/// closes nothing else, even in a repository that is not a sandbox.
+/// What starts the name of everything a contract makes, after the number of
+/// a branch named for a ticket, so that the sweep closes nothing else, even
+/// in a repository that is not a sandbox.
 const MARK: &str = "contract-";
 
 /// Held by a contract while it merges into the default branch: GitHub
@@ -464,12 +465,18 @@ pub async fn sweep(github: &GitHub) -> Result<()> {
         }
     }
     // <https://docs.github.com/en/rest/git/refs#list-matching-references>
-    let refs = github
-        .repo_get(&format!("/git/matching-refs/heads/{MARK}"))
-        .await?;
+    let refs = github.repo_get("/git/matching-refs/heads/").await?;
     let refs = refs.as_array().context("GitHub lists the matching refs")?;
     for branch in refs {
         let name = branch["ref"].as_str().context("a ref has a name")?;
+        let name = name.strip_prefix("refs/heads/").unwrap_or(name);
+        let unnumbered = name
+            .split_once('-')
+            .filter(|(number, _)| number.bytes().all(|b| b.is_ascii_digit()))
+            .map_or(name, |(_, rest)| rest);
+        if !unnumbered.starts_with(MARK) {
+            continue;
+        }
         let sha = branch["object"]["sha"]
             .as_str()
             .context("a ref has a commit")?;
@@ -478,7 +485,6 @@ pub async fn sweep(github: &GitHub) -> Result<()> {
             .as_str()
             .and_then(|at| at.parse().ok());
         if committed.is_some_and(|at| at < before) {
-            let name = name.strip_prefix("refs/heads/").unwrap_or(name);
             github.delete_branch(name).await?;
         }
     }
