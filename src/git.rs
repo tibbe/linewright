@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::AsyncWriteExt;
@@ -8,6 +9,29 @@ use crate::child;
 use crate::domain::{UpdateMethod, UpdateRule};
 
 pub type GitEnv = [(String, String)];
+
+/// The git binary that the `git` on the path runs, found on first use
+/// (`docs/specs/operation.md`, Running, "git"). A `git` on the path may be a
+/// stub or shim that finds another git and runs it, as macOS's
+/// `/usr/bin/git` does with xcrun on every run, which costs more than many
+/// a git command itself. git's install puts a `git` among its helpers, in
+/// the directory `git --exec-path` names
+/// (<https://github.com/git/git/blob/master/Makefile>, `install`), and that
+/// `git` finds the rest of its install from there. Where it is missing, the
+/// `git` on the path is run.
+fn program() -> &'static Path {
+    static PROGRAM: OnceLock<PathBuf> = OnceLock::new();
+    PROGRAM.get_or_init(|| {
+        std::process::Command::new("git")
+            .arg("--exec-path")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()).join("git"))
+            .filter(|git| git.is_file())
+            .unwrap_or_else(|| PathBuf::from("git"))
+    })
+}
 
 pub async fn git(dir: &Path, args: &[&str]) -> Result<String> {
     git_with(dir, args, &[]).await
@@ -59,7 +83,7 @@ pub async fn git_input(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) ->
 }
 
 async fn git_output(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) -> Result<Vec<u8>> {
-    let mut child = child::command("git")
+    let mut child = child::command(program())
         .args(args)
         .current_dir(dir)
         .envs(env.iter().map(|(k, v)| (k, v)))
@@ -378,7 +402,7 @@ pub(crate) async fn merge_tree(
     let mut args = vec!["merge-tree", "--write-tree"];
     args.extend(base.as_deref());
     args.extend([ours, theirs]);
-    let output = child::command("git")
+    let output = child::command(program())
         .args(&args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")
