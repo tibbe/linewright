@@ -1794,6 +1794,7 @@ dependencies = [
  "hyper-util",
  "jsonschema",
  "libtest-mimic",
+ "linewright",
  "percent-encoding",
  "pulldown-cmark",
  "reqwest",

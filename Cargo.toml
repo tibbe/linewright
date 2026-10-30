@@ -16,12 +16,25 @@ doctest = false
 name = "lw"
 path = "src/main.rs"
 
+# The stand-in for Claude Code the integration tests run
+# (`src/bin/fake-claude/main.rs`). Only test and `--all-targets` builds turn
+# its feature on, through the dev-dependency on this package below, so
+# release builds and `cargo install` leave it out.
+[[bin]]
+name = "fake-claude"
+path = "src/bin/fake-claude/main.rs"
+required-features = ["fake-claude"]
+
 # The store's contracts, run against the local store and, given a sandbox
 # repository, GitHub (`tests/contract/main.rs`).
 [[test]]
 name = "contract"
 path = "tests/contract/main.rs"
 harness = false
+
+[features]
+# Builds the fake `claude`, for the tests.
+fake-claude = []
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -100,6 +113,11 @@ uuid = { version = "1", features = ["v4"] }
 boa_engine = { version = "0.22", default-features = false }
 # The contract tests' harness: one named trial per contract and store.
 libtest-mimic = "0.8"
+# Turns on the `fake-claude` feature for test builds, so they build the fake
+# and set `CARGO_BIN_EXE_fake-claude`: cargo has no test-only binaries
+# (https://github.com/rust-lang/cargo/issues/4356), and this is jj's way
+# around that.
+linewright = { path = ".", features = ["fake-claude"] }
 # Reads the web UI's pages as a reader sees them.
 scraper = "0.27"
 # Paused time, for the session timeout under the usage limit.
