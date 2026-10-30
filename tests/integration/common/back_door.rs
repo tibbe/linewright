@@ -3,7 +3,7 @@
 //! stage answers as they would. `front_door` checks each against its stage.
 
 use chrono::TimeDelta;
-use linewright::domain::{Login, Number, Requirement};
+use linewright::domain::{CheckState, Login, Number, Requirement};
 use linewright::harness::SessionError;
 use linewright::reconcile::WorkKind;
 use linewright::store::{NewIssue, PushMode, Store};
@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::files::commit_in;
 use super::harness::subject_file;
 use super::world::{
-    BUILT_AS_ASKED, Implementation, LINEWRIGHT, World, design_issues, implemented_file,
+    BUILT_AS_ASKED, Implementation, LINEWRIGHT, World, check, design_issues, implemented_file,
 };
 
 /// Each triage asks the maintainer whether widgets should be resizable,
@@ -223,14 +223,21 @@ pub fn implement_timing_out_with_edits(world: &World) {
     });
 }
 
-/// What [`rename_and_leave_edits`] commits, with its message, and then
-/// leaves uncommitted.
-const RENAMED: (&str, &str) = ("src/renamed.txt", "renamed\n");
-const RENAME: &str = "Rename";
+/// What [`rename_and_leave_edits`] and each rework [`World::rework_asked`]
+/// scripts commit, with its message, and what the first then leaves
+/// uncommitted.
+pub(super) const RENAMED: (&str, &str) = ("src/renamed.txt", "renamed\n");
+pub(super) const RENAME: &str = "Rename";
 const LEFT_AFTER_RENAMING: [(&str, &str); 2] = [
     ("src/renamed.txt", "renamed and more\n"),
     ("src/new.txt", "new\n"),
 ];
+
+/// How each rework [`World::rework_asked`] scripts answers.
+pub(super) const RENAMED_COMMENT: &str = "Renamed.";
+
+/// Who asks for rework in [`World::rework_asked`].
+pub(super) const ASKS_FOR_REWORK: &str = "maintainer";
 
 /// Commits a rename, then leaves an edit to it and a new file uncommitted.
 pub fn rename_and_leave_edits(dir: &std::path::Path) {
@@ -626,6 +633,7 @@ impl World {
     /// `pr`, Linewright's draft with no CI reported, marked ready for review
     /// once CI's grace has passed.
     pub async fn ready_for_review(&self, pr: Number) {
+        self.clock.advance(TimeDelta::minutes(6));
         self.marked_ready(pr, "No CI reported: ready for review.")
             .await;
     }
@@ -640,6 +648,7 @@ impl World {
                 owners: vec!["alice".into()],
             }],
         );
+        self.clock.advance(TimeDelta::minutes(6));
         self.marked_ready(
             pr,
             "Ready for review: GitHub requires a code owner's review (@alice) before \
@@ -648,10 +657,38 @@ impl World {
         .await;
     }
 
+    /// `pr`, Linewright's draft, whose check `test` passed, marked ready for
+    /// review.
+    pub async fn ready_for_review_on_green_checks(&self, pr: Number) {
+        self.store
+            .set_checks(pr, vec![check("test", CheckState::Passed, "")])
+            .await
+            .unwrap();
+        self.marked_ready(pr, "CI is green: ready for review.")
+            .await;
+    }
+
     async fn marked_ready(&self, pr: Number, comment: &str) {
-        self.clock.advance(TimeDelta::minutes(6));
         self.store.mark_ready(pr).await.unwrap();
         self.store.comment(pr, comment).await.unwrap();
+    }
+
+    /// `pr`, Linewright's, after [`ASKS_FOR_REWORK`] asked for rework as
+    /// [`World::rework_asked`] asks, reworked as it scripts each rework: its
+    /// commit pushed, its comment posted and whoever gave feedback asked to
+    /// review it again.
+    pub async fn reworked(&self, pr: Number) {
+        self.rework_asked(pr);
+        let branch = self.store.snapshot_pull(pr).await.head_ref;
+        self.store
+            .commit(LINEWRIGHT, &branch, &[RENAMED], RENAME)
+            .await
+            .unwrap();
+        self.store.comment(pr, RENAMED_COMMENT).await.unwrap();
+        self.store
+            .request_review(pr, &[Login::new(ASKS_FOR_REWORK)])
+            .await
+            .unwrap();
     }
 
     /// [`World::ticket_in_review`]'s, after a maintainer asked for rework and

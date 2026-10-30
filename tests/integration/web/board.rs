@@ -856,20 +856,14 @@ async fn an_issue_closed_without_a_merge_shows_githubs_reason_for_closing_it() {
 #[tokio::test]
 async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with_its_review_decision()
  {
-    use linewright::domain::{CheckState, ReviewState};
+    use linewright::domain::ReviewState;
     let mut world = World::new().await;
     let mut in_review = vec![];
     for _ in 0..5 {
         let (ticket, pr) = world.ticket_in_review().await;
-        world
-            .store
-            .set_checks(pr, vec![check("test", CheckState::Passed, "")])
-            .await
-            .unwrap();
+        world.ready_for_review_on_green_checks(pr).await;
         in_review.push((ticket, pr));
     }
-    // Each is marked ready for review on its passing checks.
-    world.poll().await;
     let [
         (unruled_ticket, unruled),
         (required_ticket, required),
@@ -883,7 +877,6 @@ async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with
     for pr in [required, changes, approved] {
         world.store.require_review(pr);
     }
-    world.rework_asked(changes);
     world
         .store
         .review_as(
@@ -901,7 +894,7 @@ async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with
             .unwrap();
     }
     // The rework answers the review, whose decision stands.
-    world.poll().await;
+    world.reworked(changes).await;
     let web = Web::start(world).await;
 
     let mut shown: Vec<String> = cards_shown(&web.page("/").await)
@@ -931,19 +924,14 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
  {
     use linewright::domain::{CheckState, Requirement};
     let mut world = World::new().await;
-    let mut in_review = vec![];
-    for state in [CheckState::Passed, CheckState::Pending] {
-        let (ticket, pr) = world.ticket_in_review().await;
-        world
-            .store
-            .set_checks(pr, vec![check("test", state, "")])
-            .await
-            .unwrap();
-        in_review.push((ticket, pr));
-    }
-    let [(ticket, pr), (running_ticket, running)] = in_review[..] else {
-        unreachable!();
-    };
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.ready_for_review_on_green_checks(pr).await;
+    let (running_ticket, running) = world.ticket_in_review().await;
+    world
+        .store
+        .set_checks(running, vec![check("test", CheckState::Pending, "")])
+        .await
+        .unwrap();
     // Closes an issue closed before the Done window, so no issue on the
     // board: it is a card of its own.
     let untidy = world
@@ -968,7 +956,6 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
             }],
         );
     }
-    world.poll().await;
     world.store.close_issue_as_completed(untidy).unwrap();
     world.clock.advance(chrono::TimeDelta::days(8));
     let web = Web::start(world).await;

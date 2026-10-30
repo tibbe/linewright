@@ -1,7 +1,7 @@
 //! Each back-door state is what its stage leaves, checked by running the
 //! stage from the same start.
 
-use linewright::domain::Requirement;
+use linewright::domain::{CheckState, Requirement};
 use serde_json::json;
 
 use crate::common::*;
@@ -263,6 +263,38 @@ async fn a_rework_timed_out_with_edits_is_what_the_rework_stage_leaves() {
     let mut back = World::new().await;
 
     back.rework_timed_out_with_edits().await;
+
+    assert_same_state(&front.store, &back.store).await;
+}
+
+#[tokio::test]
+async fn a_pull_request_ready_for_review_on_green_checks_is_what_a_poll_leaves() {
+    let mut front = World::new().await;
+    let (_, front_pr) = front.ticket_in_review().await;
+    front
+        .store
+        .set_checks(front_pr, vec![check("test", CheckState::Passed, "")])
+        .await
+        .unwrap();
+    front.poll().await;
+    let mut back = World::new().await;
+    let (_, pr) = back.ticket_in_review().await;
+
+    back.ready_for_review_on_green_checks(pr).await;
+
+    assert_same_state(&front.store, &back.store).await;
+}
+
+#[tokio::test]
+async fn a_pull_request_reworked_is_what_the_rework_stage_leaves() {
+    let mut front = World::new().await;
+    let (_, front_pr) = front.ticket_in_review().await;
+    front.rework_asked(front_pr);
+    front.poll().await;
+    let mut back = World::new().await;
+    let (_, pr) = back.ticket_in_review().await;
+
+    back.reworked(pr).await;
 
     assert_same_state(&front.store, &back.store).await;
 }
