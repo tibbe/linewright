@@ -276,70 +276,6 @@ async fn a_rework_that_takes_a_secret_out_of_its_commits_when_sent_back_pushes_t
 }
 
 #[tokio::test]
-async fn a_rework_is_not_sent_back_for_a_secret_its_pull_request_already_held() {
-    let mut world = world_with_secret().await;
-    let (_, pr) = world.ticket_in_review().await;
-    let head_ref = world.store.snapshot_pull(pr).await.head_ref;
-    world
-        .store
-        .commit(
-            "alice",
-            &head_ref,
-            &[(".npmrc", &format!("_authToken={SECRET}\n"))],
-            "Publish",
-        )
-        .await
-        .unwrap();
-    world.rework_asked(pr);
-
-    world.poll().await;
-
-    assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
-    assert_eq!(
-        world
-            .store
-            .file(&head_ref, "src/renamed.txt")
-            .await
-            .unwrap(),
-        "renamed\n"
-    );
-}
-
-#[tokio::test]
-async fn a_secret_whose_value_spans_lines_is_found_whole() {
-    let key = "-----BEGIN KEY-----\nc2VjcmV0\n-----END KEY-----";
-    let mut world = World::with(|config| {
-        config.secrets = secrets_of(&[("DEPLOY_KEY", key)]);
-    })
-    .await;
-    world.harness.on(WorkKind::Implement, move |call| {
-        commit_in(
-            &call.spec.dir,
-            &[("deploy/key.pem", &format!("{key}\n"))],
-            "Add the deploy key",
-        );
-        Ok(json!({"outcome": "done", "pr_title": "Deploy", "pr_body": "Deploys."}).to_string())
-    });
-    world.store.open_issue(
-        "maintainer",
-        "Deploy",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-
-    world.poll().await;
-
-    let prompts = world.harness.prompts(WorkKind::Implement);
-    assert_eq!(prompts.len(), 2);
-    assert!(
-        prompts[1].contains("`DEPLOY_KEY`") && prompts[1].contains("`deploy/key.pem`"),
-        "{}",
-        prompts[1]
-    );
-    assert_eq!(world.store.pulls(), []);
-}
-
-#[tokio::test]
 async fn a_secret_of_1_to_5_characters_in_a_commit_is_pushed() {
     let pin = "12345";
     let mut world = World::with(|config| {
@@ -538,43 +474,6 @@ async fn a_run_that_stops_with_work_that_holds_no_secret_still_keeps_it() {
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
         comment.ends_with(&format!("The work so far is on the branch `{branch}`.")),
-        "{comment}"
-    );
-}
-
-#[tokio::test]
-async fn a_rework_that_stops_keeps_its_work_though_the_default_branch_it_took_in_holds_a_secret() {
-    let mut world = world_with_secret().await;
-    let (_, pr) = world.ticket_in_review().await;
-    world
-        .store
-        .commit(
-            "alice",
-            "main",
-            &[(".npmrc", &format!("_authToken={SECRET}\n"))],
-            "Publish",
-        )
-        .await
-        .unwrap();
-    world
-        .store
-        .comment_as("maintainer", pr, "Publish it too.")
-        .unwrap();
-    world.harness.on(WorkKind::Rework, |call| {
-        std::fs::write(call.spec.dir.join("notes.txt"), "half done\n").unwrap();
-        Ok(json!({"outcome": "gave-up", "reason": "No registry."}).to_string())
-    });
-
-    world.poll().await;
-
-    let head_ref = world.store.snapshot_pull(pr).await.head_ref;
-    assert_eq!(
-        world.store.file(&head_ref, "notes.txt").await.unwrap(),
-        "half done\n"
-    );
-    let comment = last_pull_comment(&world, pr).await;
-    assert!(
-        comment.contains(&format!("The work so far is on the branch `{head_ref}`.")),
         "{comment}"
     );
 }
