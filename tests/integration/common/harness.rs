@@ -245,24 +245,26 @@ pub enum Stopped {
     Merge,
 }
 
-/// The update `dir`'s clone is stopped in, if any.
+/// The update `dir`'s clone is stopped in, if any. One process says where
+/// each of git's markers would be: `rev-parse` prints a line per
+/// `--git-path`.
 fn stopped_in(dir: &Path) -> Option<Stopped> {
-    let exists = |name: &str| {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["rev-parse", "--git-path", name])
-            .output()
-            .unwrap();
-        let path = String::from_utf8(output.stdout).unwrap();
-        dir.join(path.trim()).exists()
-    };
-    if exists("rebase-merge") || exists("rebase-apply") {
-        Some(Stopped::Rebase)
-    } else if exists("MERGE_HEAD") {
-        Some(Stopped::Merge)
-    } else {
-        None
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--path-format=absolute"])
+        .args(["--git-path", "rebase-merge"])
+        .args(["--git-path", "rebase-apply"])
+        .args(["--git-path", "MERGE_HEAD"])
+        .output()
+        .unwrap();
+    let paths = String::from_utf8(output.stdout).unwrap();
+    let exists: Vec<bool> = paths.lines().map(|path| Path::new(path).exists()).collect();
+    match exists[..] {
+        [true, _, _] | [_, true, _] => Some(Stopped::Rebase),
+        [false, false, true] => Some(Stopped::Merge),
+        [false, false, false] => None,
+        _ => panic!("git rev-parse printed {paths:?}"),
     }
 }
 

@@ -416,7 +416,9 @@ pub trait Store: Send + Sync {
     /// its subdirectories at the head of `branch`, such as
     /// `prompts/follow-ups/result-error.md`: none when it has no such directory.
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;
-    async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()>;
+    /// Clones the repository into `dir` at `branch`, with each `config`
+    /// setting, such as `user.name`, written to the clone's config.
+    async fn clone_repo(&self, dir: &Path, branch: &str, config: &[(&str, &str)]) -> Result<()>;
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;
     /// Uploads `file` as an attachment of the repository's Markdown, named
     /// `name`, and returns the URL to put in place of its path

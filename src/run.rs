@@ -808,8 +808,13 @@ impl Workspace {
             .context("creating a clone directory")
             .map_err(infra)?;
         let dir = temp.path().join("repo");
-        shell.store.clone_repo(&dir, branch).await.map_err(infra)?;
-        git::set_identity(&dir, &shell.identity.name, &shell.identity.email)
+        let identity = [
+            ("user.name", shell.identity.name.as_str()),
+            ("user.email", shell.identity.email.as_str()),
+        ];
+        shell
+            .store
+            .clone_repo(&dir, branch, &identity)
             .await
             .map_err(infra)?;
         let scratch = temp.path().join("tmp");

@@ -22,6 +22,36 @@ pub async fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     git_output(dir, args, &[], &[]).await
 }
 
+/// The contents of `object`, such as `main:README.md`, and its type, or none
+/// when there is no such object, read in one process: `cat-file --batch`
+/// says `missing` rather than failing
+/// (<https://git-scm.com/docs/git-cat-file#_batch_output>). `-Z` ends the
+/// name and the header with NUL, so a path may hold a newline.
+pub async fn object(dir: &Path, object: &str) -> Result<Option<(String, Vec<u8>)>> {
+    let input = format!("{object}\0");
+    let output = git_output(dir, &["cat-file", "--batch", "-Z"], &[], input.as_bytes()).await?;
+    let header_end = output
+        .iter()
+        .position(|&b| b == 0)
+        .context("git cat-file --batch wrote no header")?;
+    let header = String::from_utf8_lossy(&output[..header_end]);
+    // `<object> <type> <size>`, or `<object> missing`.
+    let mut fields = header.rsplitn(3, ' ');
+    let (Some(size), Some(kind)) = (fields.next(), fields.next()) else {
+        bail!("git cat-file --batch wrote {header}");
+    };
+    if size == "missing" || size == "ambiguous" {
+        return Ok(None);
+    }
+    let size: usize = size
+        .parse()
+        .with_context(|| format!("the size in {header}"))?;
+    let contents = output
+        .get(header_end + 1..header_end + 1 + size)
+        .context("git cat-file --batch wrote less than the object's size")?;
+    Ok(Some((kind.to_string(), contents.to_vec())))
+}
+
 /// Runs git with `input` piped to its standard input.
 pub async fn git_input(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) -> Result<String> {
     let output = git_output(dir, args, env, input).await?;
@@ -60,30 +90,28 @@ async fn git_output(dir: &Path, args: &[&str], env: &GitEnv, input: &[u8]) -> Re
     Ok(output.stdout)
 }
 
-pub async fn clone(url: &str, dir: &Path, branch: &str, env: &GitEnv) -> Result<()> {
+/// Clones `branch` of `url` into `dir`, with each `config` setting, such as
+/// `user.name`, written to the clone's config.
+pub async fn clone(
+    url: &str,
+    dir: &Path,
+    branch: &str,
+    config: &[(&str, &str)],
+    env: &GitEnv,
+) -> Result<()> {
     let parent = dir.parent().context("a clone directory has a parent")?;
     tokio::fs::create_dir_all(parent).await?;
     let target = dir.to_str().context("clone paths are UTF-8")?;
-    git_with(
-        parent,
-        &[
-            "clone",
-            "--quiet",
-            "--no-tags",
-            "--branch",
-            branch,
-            url,
-            target,
-        ],
-        env,
-    )
-    .await?;
-    Ok(())
-}
-
-pub async fn set_identity(dir: &Path, name: &str, email: &str) -> Result<()> {
-    git(dir, &["config", "user.name", name]).await?;
-    git(dir, &["config", "user.email", email]).await?;
+    let settings: Vec<String> = config
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect();
+    let mut args = vec!["clone", "--quiet", "--no-tags", "--branch", branch];
+    for setting in &settings {
+        args.extend(["--config", setting]);
+    }
+    args.extend([url, target]);
+    git_with(parent, &args, env).await?;
     Ok(())
 }
 
@@ -226,18 +254,10 @@ pub struct WorkState {
 
 /// Where the work in `dir` stands. Reading it changes nothing in `dir`.
 pub async fn work_state(dir: &Path) -> Result<WorkState> {
-    let path = async |name: &str| -> Result<String> {
-        let path = git(
-            dir,
-            &["rev-parse", "--path-format=absolute", "--git-path", name],
-        )
-        .await?;
-        Ok(path.trim().to_string())
-    };
     // The tree is written from a copy of the index, so the clone's own,
     // which may hold a conflict, is left as it is.
-    let scratch = path("linewright-state-index").await?;
-    tokio::fs::copy(path("index").await?, &scratch).await?;
+    let [scratch, index] = git_paths(dir, ["linewright-state-index", "index"]).await?;
+    tokio::fs::copy(&index, &scratch).await?;
     let env = [("GIT_INDEX_FILE".to_string(), scratch.clone())];
     let tree = async {
         git_with(dir, &["add", "--all"], &env).await?;
@@ -384,17 +404,31 @@ pub(crate) async fn merge_tree(
 }
 
 async fn in_progress(dir: &Path) -> Result<Option<InProgress>> {
-    for (path, what) in [
-        ("rebase-merge", InProgress::Rebase(Backend::Merge)),
-        ("rebase-apply", InProgress::Rebase(Backend::Apply)),
-        ("MERGE_HEAD", InProgress::Merge),
-    ] {
-        let location = git(dir, &["rev-parse", "--git-path", path]).await?;
-        if dir.join(location.trim()).exists() {
-            return Ok(Some(what));
-        }
+    let paths = git_paths(dir, ["rebase-merge", "rebase-apply", "MERGE_HEAD"]).await?;
+    let operations = [
+        InProgress::Rebase(Backend::Merge),
+        InProgress::Rebase(Backend::Apply),
+        InProgress::Merge,
+    ];
+    Ok(paths
+        .iter()
+        .zip(operations)
+        .find_map(|(path, operation)| Path::new(path).exists().then_some(operation)))
+}
+
+/// Where git keeps each of `names` in the git directory of `dir`, as
+/// absolute paths, in one process: `rev-parse` prints a line per
+/// `--git-path`.
+async fn git_paths<const N: usize>(dir: &Path, names: [&str; N]) -> Result<[String; N]> {
+    let mut args = vec!["rev-parse", "--path-format=absolute"];
+    for name in names {
+        args.extend(["--git-path", name]);
     }
-    Ok(None)
+    let output = git(dir, &args).await?;
+    let paths: Vec<String> = output.lines().map(str::to_string).collect();
+    paths.try_into().map_err(|paths: Vec<String>| {
+        anyhow::anyhow!("git rev-parse printed {} paths, not {N}", paths.len())
+    })
 }
 
 /// What keeps the work in `dir` from being finished: a rebase or merge in

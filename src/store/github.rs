@@ -3162,9 +3162,9 @@ impl Store for GitHub {
         files_listed(tree).with_context(|| format!("listing {dir} on {branch}"))
     }
 
-    async fn clone_repo(&self, dir: &Path, branch: &str) -> Result<()> {
+    async fn clone_repo(&self, dir: &Path, branch: &str, config: &[(&str, &str)]) -> Result<()> {
         let url = format!("https://github.com/{}/{}.git", self.owner, self.name);
-        git::clone(&url, dir, branch, &self.git_env()).await
+        git::clone(&url, dir, branch, config, &self.git_env()).await
     }
 
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
