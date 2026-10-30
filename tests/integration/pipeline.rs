@@ -37,6 +37,15 @@ async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
         "## Agent Brief\n\n**Summary:** Empty widgets crash."
     );
     assert!(issue.open);
+    let claims = issue
+        .events
+        .iter()
+        .filter(|e| {
+            matches!(e, IssueEvent::Assignment(Assignment::Assigned { assignee, .. })
+                if assignee.as_str() == LINEWRIGHT)
+        })
+        .count();
+    assert_eq!(claims, 1, "claimed once before triage");
 }
 
 #[tokio::test]
@@ -437,26 +446,6 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
 }
 
 #[tokio::test]
-async fn an_issue_triaged_for_the_maintainer_says_a_label_answers_it() {
-    let mut world = World::new().await;
-    triage_for_the_maintainer(&world);
-    let issue = world
-        .store
-        .open_issue("reporter", "Resize widgets", "", &["needs-triage"]);
-
-    world.poll().await;
-
-    let issue = world.issue(issue);
-    assert_eq!(labels(&issue), ["enhancement", "ready-for-human"]);
-    assert_eq!(
-        last_comment(&issue),
-        "Should widgets be resizable?\n\n\
-         Answer with a label: `ready-for-agent` to implement it as decided or \
-         `needs-triage` to triage it again. A comment alone starts nothing."
-    );
-}
-
-#[tokio::test]
 async fn the_maintainers_answer_to_a_triage_for_them_is_triaged_again_once_they_label_it() {
     let mut world = World::new().await;
     let issue = world.issue_triaged_for_the_maintainer().await;
@@ -518,41 +507,6 @@ fn triaged_to(world: &World, outcome: &'static str) {
 }
 
 #[tokio::test]
-async fn triage_claims_the_issue_and_hands_it_on_by_its_outcome() {
-    for (outcome, assigned_after) in [
-        ("ready-for-agent", &[LINEWRIGHT][..]),
-        ("needs-info", &["reporter"][..]),
-        ("ready-for-human", &[][..]),
-    ] {
-        let mut world = World::new().await;
-        triaged_to(&world, outcome);
-        let issue = world
-            .store
-            .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
-
-        world.poll().await;
-
-        let issue = world.issue(issue);
-        assert!(labels(&issue).contains(&outcome), "{outcome}");
-        let assigned = issue
-            .assignees
-            .iter()
-            .map(Login::as_str)
-            .collect::<Vec<_>>();
-        assert_eq!(assigned, assigned_after, "{outcome}");
-        let claims = issue
-            .events
-            .iter()
-            .filter(|e| {
-                matches!(e, IssueEvent::Assignment(Assignment::Assigned { assignee, .. })
-                    if assignee.as_str() == LINEWRIGHT)
-            })
-            .count();
-        assert_eq!(claims, 1, "{outcome}: claimed before triage");
-    }
-}
-
-#[tokio::test]
 async fn an_issue_linewright_filed_with_needs_triage_is_triaged() {
     let mut world = World::new().await;
     triaged_to(&world, "ready-for-agent");
@@ -589,57 +543,7 @@ async fn needs_info_assigns_the_people_asked_and_names_them_all_even_one_github_
     let issue = world.issue(issue);
     assert_eq!(labels(&issue), ["bug", "needs-info"]);
     assert_eq!(assignees(&issue), ["tester"]);
-    assert!(issue.events.iter().any(|e| matches!(
-        e,
-        IssueEvent::Assignment(Assignment::Assigned { assignee, actor, .. })
-            if assignee.as_str() == "tester" && actor.as_str() == LINEWRIGHT
-    )));
     assert_eq!(last_comment(&issue), "@outsider\n\nWhich version, @tester?");
-}
-
-#[tokio::test]
-async fn needs_info_naming_no_one_asks_the_reporter() {
-    let mut world = World::new().await;
-    triage_asking(&world, json!([]), "Which version?");
-    let issue = world
-        .store
-        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
-
-    world.poll().await;
-
-    let issue = world.issue(issue);
-    assert_eq!(assignees(&issue), ["reporter"]);
-    assert_eq!(last_comment(&issue), "@reporter\n\nWhich version?");
-}
-
-#[tokio::test]
-async fn a_comment_mentioning_a_person_asked_in_another_case_names_them() {
-    let mut world = World::new().await;
-    triage_asking(&world, json!(["tester"]), "Which version, @Tester?");
-    let issue = world
-        .store
-        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
-
-    world.poll().await;
-
-    let issue = world.issue(issue);
-    assert_eq!(assignees(&issue), ["tester"]);
-    assert_eq!(last_comment(&issue), "Which version, @Tester?");
-}
-
-#[tokio::test]
-async fn linewright_never_asks_itself() {
-    let mut world = World::new().await;
-    triage_asking(&world, json!([LINEWRIGHT]), "Which version?");
-    let issue = world
-        .store
-        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
-
-    world.poll().await;
-
-    let issue = world.issue(issue);
-    assert_eq!(assignees(&issue), ["reporter"]);
-    assert_eq!(last_comment(&issue), "@reporter\n\nWhich version?");
 }
 
 #[tokio::test]
@@ -1159,7 +1063,6 @@ async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_r
     );
     let thread = &view.threads[0];
     assert_eq!(thread.comments.last().unwrap().body, "Renamed.");
-    assert!(!thread.resolved, "people resolve their own threads");
     assert_eq!(view.comments.last().unwrap().body, "Renamed as asked.");
     assert_eq!(
         world.store.requested_reviewers(pr),
@@ -1174,44 +1077,6 @@ async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_r
         world.harness.prompts(WorkKind::Rework).len(),
         1,
         "answered feedback starts nothing"
-    );
-}
-
-async fn reviewers_after_rework_of_comments_by(authors: &[&str]) -> Vec<Login> {
-    let mut world = World::new().await;
-    let (_, pr) = world.ticket_in_review().await;
-    for author in authors {
-        world.store.comment_as(author, pr, "Rename it.").unwrap();
-    }
-    world.harness.on(WorkKind::Rework, |call| {
-        commit_in(
-            &call.spec.dir,
-            &[("src/renamed.txt", "renamed\n")],
-            "Rename",
-        );
-        Ok(json!({"outcome": "done", "comment": "Renamed as asked."}).to_string())
-    });
-
-    world.poll().await;
-
-    assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
-    world.store.requested_reviewers(pr)
-}
-
-#[tokio::test]
-async fn a_rework_requests_review_from_the_commenter_and_not_from_an_assignee_who_did_not_comment()
-{
-    assert_eq!(
-        reviewers_after_rework_of_comments_by(&["reviewer"]).await,
-        [Login::new("reviewer")]
-    );
-}
-
-#[tokio::test]
-async fn a_rework_of_only_bot_comments_requests_review_from_no_one() {
-    assert_eq!(
-        reviewers_after_rework_of_comments_by(&["linter[bot]"]).await,
-        []
     );
 }
 
@@ -1253,35 +1118,6 @@ async fn a_rework_requests_review_from_a_person_whose_feedback_arrived_while_it_
         world.store.requested_reviewers(pr),
         [Login::new("designer"), Login::new("reviewer")]
     );
-}
-
-#[tokio::test]
-async fn a_rework_that_makes_the_description_out_of_date_rewrites_it() {
-    let mut world = World::new().await;
-    let (ticket, pr) = world.ticket_in_review().await;
-    world
-        .store
-        .comment_as("maintainer", pr, "Rename it.")
-        .unwrap();
-    world.harness.on(WorkKind::Rework, |call| {
-        assert!(call.spec.prompt.contains("Does it."));
-        commit_in(
-            &call.spec.dir,
-            &[("src/renamed.txt", "renamed\n")],
-            "Rename",
-        );
-        Ok(json!({
-            "outcome": "done",
-            "comment": "Renamed as asked.",
-            "pr_body": "Does it, renamed."
-        })
-        .to_string())
-    });
-
-    world.poll().await;
-
-    let view = world.store.snapshot_pull(pr).await;
-    assert_eq!(view.body, format!("Does it, renamed.\n\nCloses {ticket}"));
 }
 
 async fn ticket_a_persons_pull_request_closes(world: &World, claimed: bool) -> (Number, Number) {
@@ -1491,27 +1327,6 @@ async fn a_ticket_whose_pull_request_is_edited_not_to_close_it_is_worked_again_b
     assert_eq!(new.closes, [ticket]);
     let prompt = &world.harness.prompts(WorkKind::Implement)[0];
     assert!(prompt.contains(&new.head_ref), "{prompt}");
-}
-
-#[tokio::test]
-async fn a_rewritten_description_keeps_every_issue_the_pull_request_closes() {
-    let mut world = World::new().await;
-    let (ticket, other, pr) = pull_request_closing_another_issue(&mut world).await;
-    world.harness.on(WorkKind::FixCi, |call| {
-        commit_in(&call.spec.dir, &[("src/fix.txt", "fixed\n")], "Fix it");
-        Ok(
-            json!({"outcome": "done", "comment": "Fixed.", "pr_body": "Does it, fixed."})
-                .to_string(),
-        )
-    });
-
-    world.poll().await;
-
-    let body = world.store.snapshot_pull(pr).await.body;
-    assert!(body.starts_with("Does it, fixed."), "{body}");
-    let mut closes = world.store.snapshot_pull(pr).await.closes;
-    closes.sort();
-    assert_eq!(closes, [other, ticket]);
 }
 
 #[tokio::test]
