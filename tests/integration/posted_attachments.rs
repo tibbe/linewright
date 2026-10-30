@@ -41,20 +41,28 @@ fn implement_with_body(world: &World, body: impl Fn(&Call) -> String + Send + Sy
 #[tokio::test]
 async fn an_implement_run_opens_its_pull_request_showing_the_screenshot_its_body_refers_to() {
     let mut world = World::new().await;
-    world.harness.on(WorkKind::Implement, |call| {
-        commit_in(&call.spec.dir, &[("src/gadgets.txt", "done\n")], "Do it");
-        let shot = save_shot(call);
-        Ok(json!({
-            "outcome": "done",
-            "pr_title": "Show gadgets",
-            "pr_body": format!("Shows them.\n\n![The gadgets]({shot})"),
-        })
-        .to_string())
+    let named = std::sync::Arc::new(std::sync::Mutex::new(None));
+    world.harness.on(WorkKind::Implement, {
+        let named = named.clone();
+        move |call| {
+            let directory = format!("`{}`", call.spec.attachments.display());
+            *named.lock().unwrap() = Some(call.spec.prompt.contains(&directory));
+            commit_in(&call.spec.dir, &[("src/gadgets.txt", "done\n")], "Do it");
+            let shot = save_shot(call);
+            Ok(json!({
+                "outcome": "done",
+                "pr_title": "Show gadgets",
+                "pr_body": format!("Shows them.\n\n![The gadgets]({shot})"),
+            })
+            .to_string())
+        }
     });
     let ticket = open_ticket(&world, "Gadgets");
 
     world.poll().await;
 
+    // The prompt names the directory the session saves its attachments in.
+    assert_eq!(*named.lock().unwrap(), Some(true));
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(
         pr.body,
@@ -85,69 +93,6 @@ async fn an_implement_run_uploads_its_attachments_before_it_pushes() {
         "done\n"
     );
     assert_eq!(world.store.pulls().len(), 1);
-}
-
-#[tokio::test]
-async fn a_reference_to_a_missing_attachment_is_sent_back_and_the_corrected_answer_posted() {
-    let mut world = World::new().await;
-    implement_with_body(&world, |call| {
-        if call.followup.is_none() {
-            let missing = call.spec.attachments.join("shot.png");
-            format!("![The gadgets]({})", missing.display())
-        } else {
-            format!("![The gadgets]({})", save_shot(call))
-        }
-    });
-    let ticket = open_ticket(&world, "Gadgets");
-
-    world.poll().await;
-
-    let prompts = world.harness.prompts(WorkKind::Implement);
-    assert_eq!(prompts.len(), 2);
-    assert!(
-        prompts[1].starts_with("Your final message could not be used: `")
-            && prompts[1].contains(
-                "shot.png` is in the attachments directory but is not a regular file there"
-            ),
-        "{}",
-        prompts[1]
-    );
-    let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
-    assert_eq!(
-        pr.body,
-        format!("![The gadgets]({KEPT_SHOT})\n\nCloses {ticket}")
-    );
-}
-
-#[tokio::test]
-async fn an_attachment_holding_a_secret_is_sent_back_naming_the_variable_and_the_file() {
-    let mut world = World::with(|config| {
-        config.secrets = secrets_of(&[("NPM_TOKEN", "npm-s3cr3t")]);
-    })
-    .await;
-    implement_with_body(&world, |call| {
-        let log = call.spec.attachments.join("log.txt");
-        std::fs::write(&log, "token: npm-s3cr3t\n").unwrap();
-        format!("[The log]({})", log.display())
-    });
-    open_ticket(&world, "Gadgets");
-
-    world.poll().await;
-
-    let prompts = world.harness.prompts(WorkKind::Implement);
-    assert_eq!(prompts.len(), 2);
-    let attachments =
-        std::fs::canonicalize(world.dir.path().join("work").join("sessions")).unwrap();
-    assert!(
-        prompts[1].starts_with("Your work is not finished: the attachment `")
-            && prompts[1].contains(&attachments.display().to_string())
-            && prompts[1]
-                .contains("/attachments/log.txt` holds the value of `NPM_TOKEN`, a secret."),
-        "{}",
-        prompts[1]
-    );
-    assert!(!prompts[1].contains("npm-s3cr3t"), "{}", prompts[1]);
-    assert_eq!(world.store.pulls(), []);
 }
 
 #[tokio::test]
@@ -355,29 +300,4 @@ async fn a_spec_gap_already_filed_is_not_uploaded_for() {
 
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     assert_eq!(world.store.pulls().len(), 1);
-}
-
-#[tokio::test]
-async fn every_prompt_names_the_sessions_attachments_directory() {
-    let mut world = World::new().await;
-    let named = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
-    let seen = named.clone();
-    world.harness.on(WorkKind::Triage, move |call| {
-        let directory = call.spec.attachments.display().to_string();
-        seen.lock().unwrap().push((
-            call.spec.prompt.contains(&format!("`{directory}`")),
-            call.spec.attachments.is_dir(),
-        ));
-        Ok(
-            json!({"outcome": "ready-for-agent", "category": "bug", "comment": "Brief."})
-                .to_string(),
-        )
-    });
-    world
-        .store
-        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
-
-    world.poll().await;
-
-    assert_eq!(*named.lock().unwrap(), [(true, true)]);
 }

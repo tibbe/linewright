@@ -1,7 +1,11 @@
 use std::time::Duration;
 
+use crate::common;
+
 use chrono::{DateTime, Utc};
-use linewright::automation::{Automation, AutomationName, parse};
+use linewright::automation::{
+    self, Automation, AutomationName, LastScheduledRuns, Unparsed, parse,
+};
 use linewright::work_settings::{Effort, Partial, Setup};
 
 fn utc(text: &str) -> DateTime<Utc> {
@@ -215,4 +219,66 @@ fn an_effort_outside_its_levels_does_not_parse() {
         error.contains("`low`, `medium`, `high`, `xhigh` or `max`"),
         "{error}"
     );
+}
+
+#[tokio::test]
+async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does_not_parse() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = common::store_holding(
+        dir.path(),
+        &[
+            (".linewright/automations/hourly.md", common::HOURLY),
+            (
+                ".linewright/automations/broken.md",
+                "---\non:\n  schedule: \"every hour\"\n---\nLook.\n",
+            ),
+            (".linewright/automations/notes.txt", "Notes.\n"),
+            (".linewright/automations/sub/x.md", common::HOURLY),
+            (".linewright/automations/.gitkeep", ""),
+        ],
+    )
+    .await;
+
+    let files = automation::read(&store, "main").await.unwrap();
+
+    assert_eq!(
+        files.parsed,
+        [parse(&name("hourly"), common::HOURLY).unwrap()]
+    );
+    assert_eq!(
+        files.unparsed,
+        [
+            Unparsed {
+                path: ".linewright/automations/notes.txt".into(),
+                reason: "an automation is a `.md` file directly in `.linewright/automations/`"
+                    .into(),
+            },
+            Unparsed {
+                path: ".linewright/automations/sub/x.md".into(),
+                reason: "an automation is a `.md` file directly in `.linewright/automations/`"
+                    .into(),
+            },
+            Unparsed {
+                path: ".linewright/automations/broken.md".into(),
+                reason: "`on.schedule` is \"every hour\", not a cron expression: Invalid \
+                         pattern: Pattern must have 5 fields when seconds are disallowed."
+                    .into(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn the_last_scheduled_runs_the_previous_version_recorded_are_loaded() {
+    let work_dir = tempfile::tempdir().unwrap();
+    // Where the previous version recorded them.
+    std::fs::write(
+        work_dir.path().join("workflow-runs.json"),
+        r#"{"hourly": "2026-10-01T11:00:00Z"}"#,
+    )
+    .unwrap();
+
+    let runs = LastScheduledRuns::load(work_dir.path());
+
+    assert_eq!(runs.get(&name("hourly")), Some(utc("2026-10-01T11:00:00Z")));
 }

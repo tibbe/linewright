@@ -540,6 +540,30 @@ pub fn open_ticket(world: &World, title: &str) -> Number {
     )
 }
 
+/// A store under `dir` whose default branch, `main`, holds only `files`,
+/// for a test of a reader of the repository that needs no factory.
+pub async fn store_holding(dir: &Path, files: &[(&str, &str)]) -> LocalStore {
+    let store = LocalStore::create(
+        dir,
+        Seed {
+            repo: REPO.parse().unwrap(),
+            default_branch: "main".into(),
+            linewright: Login::new(LINEWRIGHT),
+            issue_types: None,
+            linear_history: false,
+            allowed_merge_methods: MergeMethods::all(),
+        },
+        Arc::new(FakeClock::new()),
+    )
+    .await
+    .unwrap();
+    store
+        .commit("maintainer", "main", files, "Start")
+        .await
+        .unwrap();
+    store
+}
+
 /// An automation file that runs on the hour; the fake clock starts at 12:00.
 pub const HOURLY: &str = "---\non:\n  schedule: \"0 * * * *\"\n---\nLook around.\n";
 
