@@ -35,9 +35,15 @@ const CF_TEXT_ENCODING: &str = "__CF_USER_TEXT_ENCODING";
 /// does when it fails itself.
 const CANNOT_CONTAIN: u8 = 125;
 
+/// What `serve` tells the wrapper on the control socket once it has checked
+/// that the wrapper is its peer, and before the wrapper starts the program.
+/// The wrapper waits for it, so that it is still connected while it is
+/// checked. `serve` sends nothing after it: the socket's end, however
+/// `serve` closes it or ends, is the word to end.
+pub const GO_AHEAD: &str = "go\n";
+
 /// What the wrapper tells `serve` on the control socket, in one line, once
-/// it has tried to start the program. `serve` sends nothing: the socket's
-/// end, however `serve` closes it or ends, is the word to end.
+/// it has had the [`GO_AHEAD`] and tried to start the program.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Report {
     Started,
@@ -76,7 +82,7 @@ pub fn main(program: &OsStr, args: &[OsString]) -> ExitCode {
         eprintln!("{}: `contain` is for Linewright's own use", crate::COMMAND);
         return ExitCode::from(CANNOT_CONTAIN);
     };
-    let mut control = match UnixStream::connect(&path) {
+    let mut control = match reach_serve(&path) {
         Ok(control) => control,
         Err(e) => {
             eprintln!("{}: reaching serve: {e}", crate::COMMAND);
@@ -116,6 +122,20 @@ pub fn main(program: &OsStr, args: &[OsString]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The control socket at `path`, once `serve` has given the [`GO_AHEAD`].
+fn reach_serve(path: &OsStr) -> std::io::Result<UnixStream> {
+    let mut control = UnixStream::connect(path)?;
+    let mut word = [0; GO_AHEAD.len()];
+    control.read_exact(&mut word)?;
+    if word != GO_AHEAD.as_bytes() {
+        return Err(std::io::Error::other(format!(
+            "expected the go-ahead, got {:?}",
+            String::from_utf8_lossy(&word)
+        )));
+    }
+    Ok(control)
 }
 
 #[cfg(target_os = "linux")]
