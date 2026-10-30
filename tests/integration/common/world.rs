@@ -130,6 +130,28 @@ impl Default for Repository {
     }
 }
 
+/// An empty local store at `root` of `REPO`, with `repository`'s settings.
+pub async fn local_store(
+    root: &Path,
+    repository: &Repository,
+    clock: Arc<FakeClock>,
+) -> LocalStore {
+    LocalStore::create(
+        root,
+        Seed {
+            repo: REPO.parse().unwrap(),
+            default_branch: "main".into(),
+            linewright: Login::new(LINEWRIGHT),
+            issue_types: None,
+            linear_history: repository.linear_history,
+            allowed_merge_methods: repository.allowed_merge_methods.clone(),
+        },
+        clock,
+    )
+    .await
+    .unwrap()
+}
+
 pub fn config(work_dir: &Path) -> FactoryConfig {
     FactoryConfig {
         spec_glob: SpecGlob::default(),
@@ -198,22 +220,8 @@ impl World {
     ) -> anyhow::Result<World> {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(FakeClock::new());
-        let store = Arc::new(
-            LocalStore::create(
-                &dir.path().join("store"),
-                Seed {
-                    repo: REPO.parse().unwrap(),
-                    default_branch: "main".into(),
-                    linewright: Login::new(LINEWRIGHT),
-                    issue_types: None,
-                    linear_history: repository.linear_history,
-                    allowed_merge_methods: repository.allowed_merge_methods,
-                },
-                clock.clone(),
-            )
-            .await
-            .unwrap(),
-        );
+        let store =
+            Arc::new(local_store(&dir.path().join("store"), &repository, clock.clone()).await);
         store
             .commit(
                 "maintainer",

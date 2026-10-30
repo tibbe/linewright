@@ -37,7 +37,13 @@ struct Web {
     store: std::sync::Arc<linewright::store::local::LocalStore>,
     harness: std::sync::Arc<ScriptedHarness>,
     clock: std::sync::Arc<FakeClock>,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
+}
+
+/// The work directory of `REPO` under `dir`, as `sources` has it, where its
+/// runs keep their records.
+fn work_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    dir.path().join("work").join(REPO)
 }
 
 /// What `serve` answers from, over `served` and `polling`, with webhooks
@@ -112,18 +118,22 @@ impl Web {
             store,
             harness,
             clock,
-            _dir: dir,
+            dir,
         }
     }
 
     /// A factory beside `serve`'s, as `linewright automation run` starts
     /// one, over the work directory a world adjusted to `work_dir/REPO`.
+    fn work_dir(&self) -> std::path::PathBuf {
+        work_dir(&self.dir)
+    }
+
     async fn factory_beside(&self) -> linewright::factory::Factory {
         linewright::factory::Factory::start(
             self.store.clone(),
             self.harness.clone(),
             self.clock.clone(),
-            config(&self._dir.path().join("work").join(REPO)),
+            config(&self.work_dir()),
         )
         .await
         .unwrap()
@@ -139,27 +149,6 @@ impl Web {
         web::Listener::bind(&ui, self.sources.clone())
             .await
             .unwrap()
-    }
-
-    async fn response(&self, path: &str) -> axum::response::Response {
-        let request = axum::http::Request::get(path)
-            .header("Host", "localhost")
-            .body(Body::empty())
-            .unwrap();
-        self.router.clone().oneshot(request).await.unwrap()
-    }
-
-    async fn get(&self, path: &str) -> (u16, String) {
-        let response = self.response(path).await;
-        let status = response.status().as_u16();
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        (status, String::from_utf8(body.to_vec()).unwrap())
-    }
-
-    async fn page(&self, path: &str) -> Html {
-        let (status, body) = self.get(path).await;
-        assert_eq!(status, 200, "{body}");
-        Html::parse_document(&body)
     }
 
     /// A delivery naming issue #`number`.
@@ -187,6 +176,108 @@ impl Web {
         })
         .await;
         waited.expect("shown in time")
+    }
+}
+
+impl Routed for Web {
+    fn router(&self) -> &Router {
+        &self.router
+    }
+}
+
+/// The web UI's router driven in-process over a `Served` written through
+/// the back door: a view built by hand over a local store, with no factory
+/// and no poll.
+struct Pages {
+    router: Router,
+    served: tokio::sync::watch::Sender<Option<linewright::api::Served>>,
+    store: std::sync::Arc<linewright::store::local::LocalStore>,
+    stopping: CancellationToken,
+    dir: tempfile::TempDir,
+}
+
+impl Pages {
+    /// The pages of `view`, as `serve` shows them once a poll has made it.
+    async fn of(view: linewright::status::View) -> Pages {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = std::sync::Arc::new(FakeClock::new());
+        let store = std::sync::Arc::new(
+            local_store(
+                &dir.path().join("store"),
+                &Repository::default(),
+                clock.clone(),
+            )
+            .await,
+        );
+        let polling = linewright::status::Polling {
+            next: view.polls.next,
+            failed: None,
+        };
+        let served = Some(linewright::api::Served::new(view, store.clone()));
+        let (served, served_receiver) = tokio::sync::watch::channel(served);
+        // Kept open by the receivers `Sources` holds.
+        let (_, polling) = tokio::sync::watch::channel(Some(polling));
+        let since = clock.now();
+        let sources = sources(&dir, &clock, since, served_receiver, polling);
+        let stopping = CancellationToken::new();
+        let router = web::router(sources, UiHosts::default(), stopping.clone());
+        Pages {
+            router,
+            served,
+            store,
+            stopping,
+            dir,
+        }
+    }
+
+    /// Publishes `view` as the next one `serve` shows, as a poll would.
+    fn publish(&self, view: linewright::status::View) {
+        let served = linewright::api::Served::new(view, self.store.clone());
+        self.served.send_replace(Some(served));
+    }
+
+    /// Writes the run `record`, as its run would have kept it.
+    fn record(&self, record: &serde_json::Value) {
+        write_record(&work_dir(&self.dir), record);
+    }
+}
+
+impl Routed for Pages {
+    fn router(&self) -> &Router {
+        &self.router
+    }
+}
+
+impl Drop for Pages {
+    /// Ends the event streams.
+    fn drop(&mut self) {
+        self.stopping.cancel();
+    }
+}
+
+/// What answers the web UI's requests in-process.
+trait Routed {
+    fn router(&self) -> &Router;
+
+    async fn response(&self, path: &str) -> axum::response::Response {
+        let request = axum::http::Request::get(path)
+            .header("Host", "localhost")
+            .body(Body::empty())
+            .unwrap();
+        self.router().clone().oneshot(request).await.unwrap()
+    }
+
+    async fn get(&self, path: &str) -> (u16, String) {
+        let response = self.response(path).await;
+        let status = response.status().as_u16();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    async fn page(&self, path: &str) -> Html {
+        let (status, body) = self.get(path).await;
+        assert_eq!(status, 200, "{body}");
+        Html::parse_document(&body)
     }
 }
 
@@ -329,7 +420,7 @@ fn assert_no_status_by_colour_alone(html: &Html) {
 }
 
 /// The data of each event the stream at `path` sends.
-async fn stream(web: &Web, path: &str) -> tokio::sync::mpsc::UnboundedReceiver<String> {
+async fn stream(web: &impl Routed, path: &str) -> tokio::sync::mpsc::UnboundedReceiver<String> {
     let response = web.response(path).await;
     assert_eq!(response.status(), 200);
     assert!(
@@ -413,14 +504,6 @@ fn classes<'a>(html: &'a Html, selector: &str) -> Vec<Vec<&'a str>> {
 /// Records run `n` of #`item`'s triage as started at `started_at` and never
 /// ended nor in flight: interrupted, as when its process died.
 fn record_interrupted(web: &Web, item: u64, n: u32, started_at: &str) {
-    let dir = web
-        ._dir
-        .path()
-        .join("work")
-        .join(REPO)
-        .join("runs/items")
-        .join(item.to_string());
-    std::fs::create_dir_all(&dir).unwrap();
     let record = serde_json::json!({
         "item": item,
         "stage": "triage",
@@ -429,5 +512,14 @@ fn record_interrupted(web: &Web, item: u64, n: u32, started_at: &str) {
         "end": null,
         "sessions": [],
     });
-    std::fs::write(dir.join(format!("triage-{n}.json")), record.to_string()).unwrap();
+    write_record(&web.work_dir(), &record);
+}
+
+/// Writes the record of an item's run into `work_dir`, where its run keeps
+/// it.
+fn write_record(work_dir: &std::path::Path, record: &serde_json::Value) {
+    let dir = work_dir.join("runs/items").join(record["item"].to_string());
+    std::fs::create_dir_all(&dir).unwrap();
+    let name = format!("{}-{}.json", record["stage"].as_str().unwrap(), record["n"]);
+    std::fs::write(dir.join(name), record.to_string()).unwrap();
 }
