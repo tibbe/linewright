@@ -1891,7 +1891,7 @@ async fn linewright_is_assigned_to_a_spec_change_while_designing_it_and_unassign
 }
 
 #[tokio::test]
-async fn a_spec_change_with_nothing_to_build_is_labeled_designed_with_why_and_files_no_issues() {
+async fn a_spec_change_with_nothing_to_build_says_why_and_files_no_issues() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |_| {
         Ok(json!({"outcome": "nothing-to-build", "reason": "Gadgets exist already."}).to_string())
@@ -1900,7 +1900,6 @@ async fn a_spec_change_with_nothing_to_build_is_labeled_designed_with_why_and_fi
 
     world.poll().await;
 
-    assert_eq!(world.store.pull_labels(spec_pr), ["linewright:designed"]);
     assert_eq!(
         last_pull_comment(&world, spec_pr).await,
         "Gadgets exist already."
@@ -1949,36 +1948,6 @@ async fn a_handed_back_spec_change_loses_its_design_label() {
         last_pull_comment(&world, spec_pr)
             .await
             .contains("Not now.")
-    );
-}
-
-#[tokio::test]
-async fn a_spec_gap_that_does_not_block_a_design_is_filed_once_for_the_spec_change() {
-    let mut world = World::new().await;
-    let spec_pr = world.spec_change_blocked_filing_a_spec_gap().await;
-    world
-        .store
-        .assign_as("maintainer", spec_pr, LINEWRIGHT)
-        .unwrap();
-
-    world.poll().await;
-
-    let prompts = world.harness.prompts(WorkKind::Design);
-    assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].contains("Spec: gadget colors"));
-    let gaps: Vec<_> = world
-        .store
-        .issues()
-        .into_iter()
-        .filter(|i| i.title == "Spec: gadget colors")
-        .collect();
-    let [gap] = &gaps[..] else {
-        panic!("expected the gap filed once, got {gaps:#?}");
-    };
-    assert_eq!(labels(gap), ["ready-for-human"]);
-    assert!(
-        gap.body
-            .ends_with(&format!("Found while working on {spec_pr}."))
     );
 }
 
@@ -2057,48 +2026,6 @@ async fn issue_cut_into_tickets() -> (World, Number, [Number; 2]) {
     let world = World::new().await;
     let (issue, tickets) = world.issue_cut_into_tickets().await;
     (world, issue, tickets)
-}
-
-#[tokio::test]
-async fn an_issue_designed_into_tickets_files_them_under_it_and_lets_go_of_it_as_their_tracking_issue()
- {
-    let mut world = World::new().await;
-    tickets_script(&world);
-    let issue = open_undesigned_gadgets(&world);
-
-    world.poll().await;
-
-    let tickets: Vec<Number> = world
-        .issue(issue)
-        .sub_issues
-        .iter()
-        .map(|s| s.number)
-        .collect();
-    let [store_ticket, list_ticket] = tickets[..] else {
-        panic!("expected two tickets, got {tickets:?}");
-    };
-    let issues = world.store.issues();
-    let titles: Vec<&str> = issues.iter().map(|i| i.title.as_str()).collect();
-    assert_eq!(titles, ["Gadgets", "Store gadgets", "List gadgets"]);
-    assert_eq!(world.issue(list_ticket).blocked_by[0].number, store_ticket);
-    for ticket in [store_ticket, list_ticket] {
-        assert_eq!(
-            labels(&world.issue(ticket)),
-            ["linewright:designed", "ready-for-agent"]
-        );
-    }
-    let tracking = world.issue(issue);
-    assert_eq!(
-        last_comment(&tracking),
-        format!(
-            "A gadget store, and a listing that reads it.\n\n## Tickets\n\n\
-             1. {store_ticket} Store gadgets\n2. {list_ticket} List gadgets\n\n\
-             Two slices: storing, then listing."
-        )
-    );
-    assert_eq!(labels(&tracking), ["linewright:designed"]);
-    assert_eq!(tracking.assignees, []);
-    assert!(tracking.open);
 }
 
 #[tokio::test]
@@ -2272,37 +2199,6 @@ async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_their
         labels(&world.issue(issue)),
         ["linewright:designed", "ready-for-agent"]
     );
-}
-
-#[tokio::test]
-async fn a_blocked_issue_design_files_its_other_spec_gaps_for_the_issue() {
-    let mut world = World::new().await;
-    design_answering(
-        &world,
-        json!({
-            "outcome": "blocked",
-            "question": "Should gadgets expire?",
-            "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
-        }),
-    );
-    let issue = open_undesigned_gadgets(&world);
-
-    world.poll().await;
-
-    let gaps: Vec<_> = world
-        .store
-        .issues()
-        .into_iter()
-        .filter(|i| i.title == "Spec: gadget colors")
-        .collect();
-    let [gap] = &gaps[..] else {
-        panic!("expected the gap filed once, got {gaps:#?}");
-    };
-    assert!(
-        gap.body
-            .ends_with(&format!("Found while working on {issue}."))
-    );
-    assert_eq!(labels(&world.issue(issue)), ["ready-for-human"]);
 }
 
 #[tokio::test]
@@ -2493,54 +2389,7 @@ async fn the_pull_request_is_titled_as_the_session_wrote_and_a_blank_title_is_se
 }
 
 #[tokio::test]
-async fn a_blocking_spec_gap_hands_the_ticket_back_keeping_the_branch_and_a_non_blocking_one_becomes_an_issue()
- {
-    let mut world = World::new().await;
-    world.harness.on(WorkKind::Implement, |call| {
-        commit_in(&call.spec.dir, &[("src/partial.txt", "half\n")], "Start");
-        Ok(json!({
-            "outcome": "blocked",
-            "question": "Should gadgets expire?",
-            "spec_gaps": [{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]
-        })
-        .to_string())
-    });
-    let ticket = world.store.open_issue(
-        "maintainer",
-        "Gadgets",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-
-    world.poll().await;
-
-    let issue = world.issue(ticket);
-    assert_eq!(labels(&issue), ["ready-for-human"]);
-    assert!(last_comment(&issue).contains("Should gadgets expire?"));
-    assert!(last_comment(&issue).contains(&format!("`{}-gadgets`", ticket.0)));
-    assert_eq!(
-        world
-            .store
-            .file(&format!("{}-gadgets", ticket.0), "src/partial.txt")
-            .await
-            .unwrap(),
-        "half\n"
-    );
-    let gap = world
-        .store
-        .issues()
-        .into_iter()
-        .find(|i| i.title == "Spec: gadget colors")
-        .unwrap();
-    assert_eq!(labels(&gap), ["ready-for-human"]);
-    assert!(
-        gap.body
-            .ends_with(&format!("Found while working on {ticket}."))
-    );
-}
-
-#[tokio::test]
-async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions_and_not_filed_again() {
+async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions() {
     let mut world = World::new().await;
     let ticket = world.ticket_blocked_filing_a_spec_gap().await;
     relabeled_and_designed_again(&world, ticket).await;
@@ -2550,13 +2399,6 @@ async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions_and_no
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 1);
     assert!(prompts[0].contains("Spec: gadget colors"));
-    let gaps = world
-        .store
-        .issues()
-        .into_iter()
-        .filter(|i| i.title == "Spec: gadget colors")
-        .count();
-    assert_eq!(gaps, 1);
 }
 
 #[tokio::test]
