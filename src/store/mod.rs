@@ -10,10 +10,11 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, ClosedItem, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking,
-    MergeMethod, MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule,
-    Windows, label,
+    CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking, MergeMethod,
+    MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule, Windows,
+    label,
 };
+pub use crate::domain::{IssueRead, PeoplesPullRead};
 use crate::redaction::Redaction;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -251,33 +252,6 @@ fn missing_permission(output: &str) -> Option<String> {
         let reason = line[at..].strip_prefix("remote: ")?.trim_end();
         reason.contains(" denied to ").then(|| reason.to_string())
     })
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IssueRead {
-    Held {
-        issue: Box<Issue>,
-        /// Linewright's pull requests that close the issue.
-        pulls: Vec<Pull>,
-    },
-    LeftOut {
-        open: bool,
-    },
-    /// Left out of the open issues, and closed: one a snapshot may hold
-    /// among its closed items.
-    Closed(Box<ClosedItem>),
-    Gone,
-}
-
-/// What [`Store::peoples_pull`] reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PeoplesPullRead {
-    /// The issues it closes while it is open: none when it is not open, or
-    /// the store has no such pull request.
-    pub closes: Vec<Number>,
-    /// `None` when a snapshot leaves it out of the people's pull requests,
-    /// as it does Linewright's own.
-    pub pull: Option<Pull>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

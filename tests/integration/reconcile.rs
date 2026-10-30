@@ -3070,14 +3070,14 @@ fn a_pull_request_closed_without_merging_hands_the_ticket_back_once() {
     let mut relabeled = closed.clone();
     relabeled.issues[0] = labeled_at(relabeled.issues[0].clone(), label::READY_FOR_AGENT, 6);
 
-    assert!(matches!(
-        at(&closed, 10).as_slice(),
+    assert_eq!(
+        at(&closed, 10),
         [Action::HandBack {
             item: Item::Issue(Number(2)),
             kind: HandBackKind::Decision,
-            ..
+            reason: "#20 was closed without merging.".into(),
         }]
-    ));
+    );
     assert_eq!(at(&relabeled, 10), vec![implement(2)]);
 }
 
@@ -5161,6 +5161,20 @@ fn discarding_a_cut_touches_its_tickets_its_tracking_issue_and_its_pull_requests
             Item::Pull(Number(30)),
             Item::Pull(Number(31)),
         ]
+    );
+}
+
+#[test]
+fn handing_an_item_back_touches_it() {
+    let action = Action::HandBack {
+        item: Item::Issue(Number(2)),
+        kind: HandBackKind::Decision,
+        reason: "#20 was closed without merging.".into(),
+    };
+
+    assert_eq!(
+        action.items(&snapshot(vec![])),
+        vec![Item::Issue(Number(2))]
     );
 }
 

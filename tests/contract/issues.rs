@@ -28,6 +28,7 @@ contracts![
     a_snapshot_holds_an_issue_closed_within_its_windows,
     a_sub_issue_and_its_parent_name_each_other,
     a_blocker_is_listed_open_until_it_closes,
+    no_issue_is_read_for_a_number_the_store_lacks,
 ];
 
 /// Opens an issue, as Linewright, titled for `what`.
@@ -461,5 +462,15 @@ async fn a_blocker_is_listed_open_until_it_closes(sandbox: Sandbox) -> Result<()
         "the blockers",
         &held(&sandbox, issue).await?.blocked_by,
         &vec![closed_blocker],
+    )
+}
+
+async fn no_issue_is_read_for_a_number_the_store_lacks(sandbox: Sandbox) -> Result<()> {
+    let lacked = Number(999_999_999);
+
+    equal(
+        "the issue",
+        &sandbox.store().issue(lacked).await?,
+        &IssueRead::Gone,
     )
 }

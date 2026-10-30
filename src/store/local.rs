@@ -63,6 +63,9 @@ struct State {
     snapshots_taken: usize,
     items_read: usize,
     unreadable: Option<String>,
+    /// Fails the reads of single items, as a refresh makes, but not
+    /// snapshots.
+    items_unreadable: Option<String>,
     pushes_refused: Option<String>,
     attachments_refused: Option<AttachRefusal>,
     /// GitHub tokens that cannot read the repository.
@@ -279,6 +282,7 @@ impl LocalStore {
                 snapshots_taken: 0,
                 items_read: 0,
                 unreadable: None,
+                items_unreadable: None,
                 pushes_refused: None,
                 attachments_refused: None,
                 unreadable_by: vec![],
@@ -918,8 +922,16 @@ impl LocalStore {
         self.state().unreadable = Some(reason.into());
     }
 
+    /// Fails the reads of single items, as a refresh makes, while
+    /// snapshots go on.
+    pub fn fail_item_reads(&self, reason: &str) {
+        self.state().items_unreadable = Some(reason.into());
+    }
+
     pub fn restore_reads(&self) {
-        self.state().unreadable = None;
+        let mut state = self.state();
+        state.unreadable = None;
+        state.items_unreadable = None;
     }
 
     fn readable(&self) -> Result<()> {
@@ -931,7 +943,11 @@ impl LocalStore {
 
     fn read_item(&self) -> Result<()> {
         self.readable()?;
-        self.state().items_read += 1;
+        let mut state = self.state();
+        if let Some(reason) = &state.items_unreadable {
+            bail!("{reason}");
+        }
+        state.items_read += 1;
         Ok(())
     }
 

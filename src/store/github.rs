@@ -42,6 +42,8 @@ pub const SESSION_TOKEN_VARIABLE: &str = "LINEWRIGHT_SESSION_GITHUB_TOKEN";
 #[derive(Clone)]
 pub struct GitHub {
     http: reqwest::Client,
+    /// Where its API answers: [`API`], but for a test's server.
+    api: String,
     token: String,
     owner: String,
     name: String,
@@ -279,6 +281,7 @@ impl GitHub {
             .build()?;
         let mut github = GitHub {
             http,
+            api: API.into(),
             token,
             owner: repo.owner().into(),
             name: repo.name().into(),
@@ -325,7 +328,7 @@ impl GitHub {
         let url = if path.starts_with("http") {
             path.to_string()
         } else {
-            format!("{API}{path}")
+            format!("{}{path}", self.api)
         };
         let mut request = self
             .http
@@ -4652,6 +4655,87 @@ mod tests {
         );
     }
 
+    /// The address of a server answering GraphQL as GitHub does for
+    /// <https://github.com/tibbe/linewright>: issue #731 with
+    /// `fixtures/issue-handed-back.json` and
+    /// `fixtures/closed-issue-handed-back.json`, and any other item with
+    /// `fixtures/pull-not-found.json`, which GitHub answered for its pull
+    /// request #999999 on 2026-10-30.
+    async fn serving_issue_731() -> String {
+        async fn answer(request: String) -> String {
+            let request: Value = serde_json::from_str(&request).unwrap();
+            let query = request["query"].as_str().unwrap_or_default();
+            let issue = |recorded: &str| {
+                let issue: Value = serde_json::from_str(recorded).unwrap();
+                json!({"data": {"repository": {"issue": issue}}})
+            };
+            let answer = match request["variables"]["number"].as_u64() {
+                Some(731) if query.contains("...ClosedIssueFields") => {
+                    issue(include_str!("fixtures/closed-issue-handed-back.json"))
+                }
+                Some(731) if query.contains("...IssueFields") => {
+                    issue(include_str!("fixtures/issue-handed-back.json"))
+                }
+                _ => serde_json::from_str(include_str!("fixtures/pull-not-found.json")).unwrap(),
+            };
+            answer.to_string()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/graphql", axum::routing::post(answer));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{address}")
+    }
+
+    /// A refresh reads items one by one between polls, so the issues a poll
+    /// reads to keep the index are those updated since the poll before it,
+    /// whatever was refreshed in between.
+    #[tokio::test]
+    async fn the_reads_of_a_refresh_leave_the_next_poll_reading_the_issues_updated_since_the_last_poll()
+     {
+        let (started, _) = started().await;
+        let github = GitHub {
+            api: serving_issue_731().await,
+            viewer: Viewer {
+                login: "tibbe-bot".into(),
+                id: 1,
+            },
+            index: Arc::new(tokio::sync::Mutex::new(Some(started))),
+            ..github("token")
+        };
+
+        github.issue(Number(731)).await.unwrap();
+        github.linewright_pull(Number(999_999)).await.unwrap();
+        github.peoples_pull(Number(999_999)).await.unwrap();
+        github
+            .merged_pull(
+                Number(999_999),
+                Windows::at(
+                    at("2026-10-29T22:30:00Z"),
+                    TimeDelta::days(7),
+                    TimeDelta::days(7),
+                ),
+            )
+            .await
+            .unwrap();
+        let mut asked = vec![];
+        let kept = github.index.lock().await.clone();
+        refreshed(
+            kept,
+            at("2026-10-29T21:30:00Z"),
+            at("2026-10-29T22:31:00Z"),
+            &Login::new("tibbe-bot"),
+            |filter: Value| {
+                asked.push(filter);
+                async { Ok(vec![]) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(asked, [json!({"since": "2026-10-29T22:00:00Z"})]);
+    }
+
     /// `fixtures/closed-issue-worked.json` is `ClosedIssueFields` as GitHub
     /// returned it for <https://github.com/tibbe/linewright/issues/673>, a
     /// person's issue Linewright claimed, let go of, claimed again and closed
@@ -5229,6 +5313,7 @@ mod tests {
     fn github(token: &str) -> GitHub {
         GitHub {
             http: reqwest::Client::new(),
+            api: API.into(),
             token: token.to_string(),
             owner: "owner".into(),
             name: "repo".into(),

@@ -17,8 +17,8 @@ use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastS
 use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
 use crate::domain::{
-    AutoMerge, IssueCloseReason, Item, Number, Snapshot, SubIssueState, Timestamp, UpdateMethod,
-    UpdateRule, Windows, label,
+    AutoMerge, IssueCloseReason, Item, Number, PullHeldRead, PullRead, Snapshot, Timestamp,
+    UpdateMethod, UpdateRule, Windows, label,
 };
 use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
@@ -33,8 +33,8 @@ use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::secrets::Secrets;
 use crate::spec_glob::SpecGlob;
 use crate::status::{FailedPolls, Poll, Polling, Polls, View};
+use crate::store::Store;
 use crate::store::github::SESSION_TOKEN_VARIABLE;
-use crate::store::{IssueRead, PeoplesPullRead, Store};
 use crate::webhook::{self, Pending};
 use crate::work_settings::{Environments, RunKind, WorkSettings};
 
@@ -381,7 +381,7 @@ impl Factory {
             return Ok(vec![]);
         }
         read.extend(read_all(snapshot, shell, named, windows).await?);
-        let others = closed_by_pulls_read(snapshot, &read);
+        let others = snapshot.closed_by_pulls_read(&read);
         read.extend(read_all(snapshot, shell, others, windows).await?);
         // Hold the closed items a snapshot taken now would.
         let linewright = &shell.policy.linewright;
@@ -1156,26 +1156,6 @@ async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str
     store.comment(pr, note).await
 }
 
-/// Also the issues closed while open: a pull request frees an issue when it
-/// ends or stops closing it.
-fn closed_by_pulls_read(snapshot: &Snapshot, read: &BTreeSet<Item>) -> BTreeSet<Item> {
-    let mut others = BTreeSet::new();
-    for item in read {
-        let Item::Pull(pr) = *item else { continue };
-        let Some(pull) = snapshot.pull(pr) else {
-            continue;
-        };
-        others.extend(
-            snapshot
-                .issues_closing(pr, &pull.closes)
-                .into_iter()
-                .map(Item::Issue)
-                .filter(|other| !read.contains(other)),
-        );
-    }
-    others
-}
-
 async fn read_all(
     snapshot: &mut Snapshot,
     shell: &Shell,
@@ -1203,23 +1183,12 @@ async fn read_into(
     match item {
         Item::Issue(number) => read_issue_into(snapshot, shell, number, windows).await,
         Item::Pull(number) => {
-            let mut closing = BTreeSet::new();
-            match store.linewright_pull(number).await? {
-                Some(pull) => snapshot.put_pull(pull),
-                None => {
-                    snapshot.remove_pull(number);
-                    let PeoplesPullRead { closes, pull } = store.peoples_pull(number).await?;
-                    closing.extend(snapshot.issues_closing(number, &closes));
-                    match pull {
-                        Some(pull) => snapshot.put_peoples_pull(pull),
-                        None => snapshot.remove_peoples_pull(number),
-                    }
-                }
-            }
-            match store.merged_pull(number, windows).await? {
-                Some(merged) => snapshot.put_merged(merged),
-                None => snapshot.remove_merged(number),
-            }
+            let held = match store.linewright_pull(number).await? {
+                Some(pull) => PullHeldRead::Linewrights(pull),
+                None => PullHeldRead::Peoples(store.peoples_pull(number).await?),
+            };
+            let merged = store.merged_pull(number, windows).await?;
+            let closing = snapshot.took_pull(number, PullRead { held, merged });
             let mut read = vec![item];
             for issue in closing {
                 read.extend(read_issue_into(snapshot, shell, issue, windows).await?);
@@ -1236,48 +1205,13 @@ async fn read_issue_into(
     windows: Windows,
 ) -> Result<Vec<Item>> {
     let store = &shell.store;
+    let issue = store.issue(number).await?;
+    let taken = snapshot.took_issue(number, issue, windows, &shell.policy.linewright);
     let mut read = vec![Item::Issue(number)];
-    snapshot.remove_closed(number);
-    let left = match store.issue(number).await? {
-        IssueRead::Held { issue, pulls } => {
-            snapshot.relink(number, SubIssueState::open(issue.open));
-            snapshot.put_issue(*issue);
-            for pull in pulls {
-                read.push(Item::Pull(pull.number));
-                snapshot.put_pull(pull);
-            }
-            false
-        }
-        IssueRead::LeftOut { open } => {
-            snapshot.relink(number, SubIssueState::open(open));
-            true
-        }
-        IssueRead::Closed(closed) => {
-            snapshot.relink(
-                number,
-                SubIssueState::Closed {
-                    at: Some(closed.closed_at),
-                },
-            );
-            if snapshot.keeps_closed(&closed, windows, &shell.policy.linewright) {
-                snapshot.put_closed(*closed);
-            }
-            true
-        }
-        IssueRead::Gone => {
-            snapshot.unlink(number);
-            true
-        }
-    };
-    if left {
-        snapshot.remove_issue(number);
-        for pr in snapshot.ended_pulls_closing(number) {
-            read.push(Item::Pull(pr));
-            match store.linewright_pull(pr).await? {
-                Some(pull) => snapshot.put_pull(pull),
-                None => snapshot.remove_pull(pr),
-            }
-        }
+    read.extend(taken.pulls_read.into_iter().map(Item::Pull));
+    for pr in taken.pulls_to_read {
+        read.push(Item::Pull(pr));
+        snapshot.took_ended_pull(pr, store.linewright_pull(pr).await?);
     }
     Ok(read)
 }
