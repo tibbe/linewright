@@ -303,10 +303,19 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
     use CheckState::{Failed, Passed, Pending};
     use Mergeability::{Behind, Clean, Conflicting};
     use ReviewDecision::{Approved, ChangesRequested, ReviewRequired};
-    let issues = (1..=10).map(|n| assigned(ticket(n, "Reviewed"))).collect();
+    let numbered = || (1..=10).chain(31..=34);
+    let issues = numbered()
+        .map(|n| assigned(ticket(n, "Reviewed")))
+        .collect();
     let decided = |pull: Pull, review_decision| Pull {
         review_decision: Some(review_decision),
         ..pull
+    };
+    let blocked = |requirement| Mergeability::Blocked {
+        requires: vec![requirement],
+    };
+    let code_owner = || Requirement::CodeOwnerReview {
+        owners: vec!["maintainer".into()],
     };
     let pulls = vec![
         reviewed(11, 1, &[Failed, Pending], Conflicting, true),
@@ -322,6 +331,16 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
         decided(reviewed(18, 8, &[Passed], Clean, false), ChangesRequested),
         decided(reviewed(19, 9, &[Passed], Clean, false), ReviewRequired),
         decided(reviewed(20, 10, &[Passed], Clean, false), Approved),
+        reviewed(41, 31, &[Passed], blocked(Requirement::Approval), false),
+        decided(
+            reviewed(42, 32, &[Passed], blocked(code_owner()), false),
+            ChangesRequested,
+        ),
+        decided(
+            reviewed(43, 33, &[Passed], blocked(code_owner()), false),
+            Approved,
+        ),
+        reviewed(44, 34, &[Failed], blocked(code_owner()), false),
     ];
     let view = with_runs(view(issues, pulls), &["11/rework-1"]);
 
@@ -335,7 +354,7 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
         })
     };
     assert_eq!(
-        (1..=10).map(|n| line(&board, n)).collect::<Vec<_>>(),
+        numbered().map(|n| line(&board, n)).collect::<Vec<_>>(),
         [
             review(
                 11,
@@ -361,9 +380,16 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
             review(18, Some(Stop::ChangesRequested)),
             review(19, Some(Stop::ReviewRequired)),
             review(20, Some(Stop::Approved)),
+            // GitHub decides no review where the rules require a code
+            // owner's review but no approvals; the blocked merge says so.
+            review(41, Some(Stop::ReviewRequired)),
+            review(42, Some(Stop::ChangesRequested)),
+            // Approved, but not yet by a code owner.
+            review(43, Some(Stop::ReviewRequired)),
+            review(44, Some(Stop::ChecksFailed)),
         ]
     );
-    assert!((1..=10).all(|n| !card(&board, n).pull_request));
+    assert!(numbered().all(|n| !card(&board, n).pull_request));
 }
 
 #[test]
