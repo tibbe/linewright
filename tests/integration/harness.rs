@@ -1133,10 +1133,9 @@ async fn what_a_session_started_has_ended_once_it_crashes() {
 async fn what_a_session_started_has_ended_once_it_times_out() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_leaving_a_process(dir.path(), "exec sleep 300");
-    let mut session = triage_session(dir.path());
-    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let session = triage_session(dir.path());
 
-    let error = harness.start(&session).await.unwrap_err();
+    let error = timed_out_once_said(harness, session, "Started.").await;
 
     assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
     assert!(has_ended(left_process(dir.path())));
