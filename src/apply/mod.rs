@@ -4,8 +4,10 @@
 //! I/O, reads a clock or logs.
 
 pub mod hand_back;
+pub mod pull_work;
+pub mod triage;
 
-use crate::domain::StatusLabel;
+use crate::domain::{Number, StatusLabel, closing_references};
 
 /// The writes that change what an item asks for, which a run makes last
 /// (docs/specs/repository.md, Writes, "Order").
@@ -32,4 +34,19 @@ pub enum StatusTo {
     Set(StatusLabel),
     /// Hold no status label, as a tracking issue does.
     Clear,
+}
+
+/// `body` with a `Closes` line for each of `closes` it does not reference.
+pub(crate) fn closing(body: &str, closes: &[Number]) -> String {
+    let referenced = closing_references(body);
+    let missing: Vec<String> = closes
+        .iter()
+        .filter(|issue| !referenced.contains(issue))
+        .map(|issue| format!("Closes {issue}"))
+        .collect();
+    if missing.is_empty() {
+        body.trim().to_string()
+    } else {
+        format!("{}\n\n{}", body.trim(), missing.join("\n"))
+    }
 }

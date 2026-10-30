@@ -30,6 +30,14 @@ pub fn policy() -> Policy {
     }
 }
 
+pub fn linewright() -> Login {
+    Login::new(super::LINEWRIGHT)
+}
+
+pub fn logins(logins: &[&str]) -> Vec<Login> {
+    logins.iter().copied().map(Login::new).collect()
+}
+
 pub fn sub_issue(number: u64, open: bool, author: &str) -> SubIssue {
     SubIssue {
         number: Number(number),

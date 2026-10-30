@@ -12,33 +12,34 @@ use crate::apply::hand_back::{
     self, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail, SendBack, Stopped,
     TryAgain,
 };
-use crate::apply::{Asks, Designed, StatusTo};
+use crate::apply::pull_work::{self, PullWorkWrites, feedback_people, late};
+use crate::apply::triage::{self, CategoryChange};
+use crate::apply::{Asks, Designed, StatusTo, closing};
 use crate::attachments::{self, Dir, Refusal};
 use crate::automation::Automation;
 use crate::briefs::{Briefs, OperatorPrompts};
 use crate::clock::Clock;
 use crate::domain::{
-    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp, Windows,
-    addressed_to, closing_references, label,
+    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp, Windows, label,
 };
 use crate::git::{self, Updated, WorkState};
 use crate::harness::{Harness, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::prompts::{self, DesignOf, PullTask, Repo, Ticket};
 use crate::reconcile::{
-    Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
+    Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
 use crate::repo_files::RepoLayer;
 use crate::results::{
     self, AutomationIssueLabel, AutomationResult, Contract, Cut, DesignResult, ImplementResult,
-    IssueWork, Posts, PullWorkResult, SpecGap, SpecGaps, Tickets, TriageOutcome, TriageResult,
+    IssueWork, Posts, PullWorkResult, SpecGap, SpecGaps, Tickets, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs, SessionRecorder};
 use crate::secrets::{Held, Secrets};
 use crate::setup;
 use crate::spec_gap::{self, FiledGaps};
 use crate::store::{
-    AnyItem, AttachError, Categories, FoundSecrets, Identity, NewIssue, NewPull, PushError,
-    PushMode, RepoSettings, Store,
+    AnyItem, AttachError, FoundSecrets, Identity, NewIssue, NewPull, PushError, PushMode,
+    RepoSettings, Store,
 };
 use crate::tracking::{self, FiledTicket};
 use crate::transcript;
@@ -1255,57 +1256,35 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
-    let (state, body) = match &result.outcome {
-        TriageOutcome::ReadyForAgent => (StatusLabel::ReadyForAgent, result.comment),
-        TriageOutcome::NeedsInfo { ask } => {
-            let people = issue.people_asked(ask, &shell.policy.linewright);
-            let refused = store.assign_people(issue.number, &people).await?;
-            if !refused.is_empty() {
-                warn!(
-                    issue = issue.number.0,
-                    ?refused,
-                    "GitHub refused to assign people asked"
-                );
-            }
-            (
-                StatusLabel::NeedsInfo,
-                addressed_to(&people, &result.comment),
-            )
-        }
-        TriageOutcome::ReadyForHuman => (
-            StatusLabel::ReadyForHuman,
-            format!(
-                "{}\n\nAnswer with a label: {}. A comment alone starts nothing.",
-                result.comment,
-                label::ANSWERS
-                    .map(|(answer, asks)| format!("`{answer}` {asks}"))
-                    .join(" or ")
-            ),
-        ),
-    };
-    // Posted before the labeling, so that a stop between the two leaves no
-    // status label without the comment it stands on.
-    store.comment(issue.number, &body).await?;
-    match &shell.settings.categories {
-        Categories::IssueTypes(_) => store.set_issue_type(issue.number, &result.category).await?,
-        Categories::Labels => {
-            for other in [label::BUG, label::ENHANCEMENT]
-                .into_iter()
-                .filter(|l| *l != result.category)
-            {
-                if issue.has_label(other) {
-                    store.remove_label(issue.number, other).await?;
-                }
-            }
-            store.add_label(issue.number, &result.category).await?;
+    let writes = triage::triage(
+        issue,
+        &result,
+        &shell.settings.categories,
+        &shell.policy.linewright,
+    );
+    if !writes.assign.is_empty() {
+        let refused = store.assign_people(issue.number, &writes.assign).await?;
+        if !refused.is_empty() {
+            warn!(
+                issue = issue.number.0,
+                ?refused,
+                "GitHub refused to assign people asked"
+            );
         }
     }
-    let asks = Asks {
-        status: Some(StatusTo::Set(state)),
-        unassign: !result.outcome.asks_for_linewright(),
-        ..Asks::default()
-    };
-    ask(&**store, issue.number, &asks).await
+    // Posted before the labeling, so that a stop between the two leaves no
+    // status label without the comment it stands on.
+    store.comment(issue.number, &writes.comment).await?;
+    match &writes.category {
+        CategoryChange::IssueType(category) => store.set_issue_type(issue.number, category).await?,
+        CategoryChange::Labels { remove, add } => {
+            for other in remove {
+                store.remove_label(issue.number, other).await?;
+            }
+            store.add_label(issue.number, add).await?;
+        }
+    }
+    ask(&**store, issue.number, &writes.asks).await
 }
 
 /// Runs a design session on `subject`, sent `prompt` made for its
@@ -1907,20 +1886,6 @@ async fn implement(
     }
 }
 
-fn closing(body: &str, closes: &[Number]) -> String {
-    let referenced = closing_references(body);
-    let missing: Vec<String> = closes
-        .iter()
-        .filter(|issue| !referenced.contains(issue))
-        .map(|issue| format!("Closes {issue}"))
-        .collect();
-    if missing.is_empty() {
-        body.trim().to_string()
-    } else {
-        format!("{}\n\n{}", body.trim(), missing.join("\n"))
-    }
-}
-
 /// Files `gaps` for `item`, those already filed dropped from them by
 /// [`drop_filed_gaps`].
 async fn file_spec_gaps(shell: &Shell, gaps: &[SpecGap], item: Number) -> Result<()> {
@@ -2192,13 +2157,15 @@ async fn pull_work(
             replies,
             spec_gaps,
         } => {
-            if let Some(body) = pr_body {
-                store
-                    .edit_body(pr.number, &closing(&body, &pr_now.closes))
-                    .await
-                    .map_err(apply)?;
-            }
-            record_pull_work(shell, &pr_now, kind, &comment, &replies, feedback_authors)
+            let writes = pull_work::done(
+                &pr_now,
+                kind,
+                pr_body.as_deref(),
+                &comment,
+                &replies,
+                &feedback_authors,
+            );
+            record_pull_work(shell, pr.number, &writes)
                 .await
                 .map_err(apply)?;
             // The session saw the feedback up to the last read; what came
@@ -2243,83 +2210,22 @@ fn lock(shown: &Mutex<Shown>) -> std::sync::MutexGuard<'_, Shown> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn late<'a>(feedback: &Feedback<'a>, since: Timestamp) -> Feedback<'a> {
-    Feedback {
-        comments: feedback
-            .comments
-            .iter()
-            .copied()
-            .filter(|c| c.created_at > since)
-            .collect(),
-        reviews: feedback
-            .reviews
-            .iter()
-            .copied()
-            .filter(|r| r.submitted_at > since)
-            .collect(),
-        threads: feedback
-            .threads
-            .iter()
-            .filter_map(|(t, comments)| {
-                let comments: Vec<_> = comments
-                    .iter()
-                    .copied()
-                    .filter(|c| c.created_at > since)
-                    .collect();
-                (!comments.is_empty()).then_some((*t, comments))
-            })
-            .collect(),
-    }
-}
-
-fn feedback_people(feedback: &Feedback, linewright: &Login) -> Vec<Login> {
-    feedback
-        .comments
-        .iter()
-        .map(|c| &c.author)
-        .chain(feedback.reviews.iter().map(|r| &r.author))
-        .chain(
-            feedback
-                .threads
-                .iter()
-                .flat_map(|(_, cs)| cs.iter().map(|c| &c.author)),
-        )
-        .filter(|a| a.is_person_besides(linewright))
-        .cloned()
-        .collect()
-}
-
-async fn record_pull_work(
-    shell: &Shell,
-    pr: &Pull,
-    kind: WorkKind,
-    comment: &str,
-    replies: &[results::ThreadReply],
-    feedback_authors: Vec<Login>,
-) -> Result<()> {
+async fn record_pull_work(shell: &Shell, pr: Number, writes: &PullWorkWrites) -> Result<()> {
     let store = &shell.store;
-    for reply in replies {
+    if let Some(body) = &writes.body {
+        store.edit_body(pr, body).await?;
+    }
+    for reply in &writes.replies {
         store
-            .reply_in_thread(pr.number, &reply.thread, &reply.body)
+            .reply_in_thread(pr, &reply.thread, &reply.body)
             .await?;
-        let opened_by_bot = pr
-            .threads
-            .iter()
-            .find(|t| t.id == reply.thread)
-            .and_then(|t| t.opened_by())
-            .is_some_and(Login::is_bot);
-        if reply.resolve && opened_by_bot {
-            store.resolve_thread(pr.number, &reply.thread).await?;
+        if reply.resolve {
+            store.resolve_thread(pr, &reply.thread).await?;
         }
     }
-    store.comment(pr.number, comment).await?;
-    if kind == WorkKind::Rework {
-        let mut reviewers = feedback_authors;
-        reviewers.sort();
-        reviewers.dedup();
-        if !reviewers.is_empty() {
-            store.request_review(pr.number, &reviewers).await?;
-        }
+    store.comment(pr, &writes.comment).await?;
+    if !writes.reviewers.is_empty() {
+        store.request_review(pr, &writes.reviewers).await?;
     }
     Ok(())
 }
