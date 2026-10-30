@@ -19,6 +19,7 @@ pub mod case;
 pub mod child;
 pub mod clock;
 pub mod config;
+pub mod contain;
 pub mod domain;
 pub mod drain;
 pub mod ending;

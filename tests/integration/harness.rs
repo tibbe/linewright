@@ -14,6 +14,17 @@ use linewright::transcript::{Prompt, What};
 use linewright::work_settings::Effort;
 use serde_json::{Value, json};
 
+/// Claude Code as `program`, with no GitHub token and nothing to redact.
+fn claude_code(program: &Path) -> ClaudeCode {
+    ClaudeCode {
+        program: program.to_str().unwrap().into(),
+        bash: "/bin/bash".into(),
+        github_token: None,
+        redaction: Redaction::default(),
+        container: env!("CARGO_BIN_EXE_lw").into(),
+    }
+}
+
 fn harness_without_token(dir: &Path) -> ClaudeCode {
     harness_streaming(
         dir,
@@ -22,12 +33,7 @@ fn harness_without_token(dir: &Path) -> ClaudeCode {
 }
 
 fn harness_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
-    ClaudeCode {
-        program: fake_claude_streaming(dir, events).to_str().unwrap().into(),
-        bash: "/bin/bash".into(),
-        github_token: None,
-        redaction: Redaction::default(),
-    }
+    claude_code(&fake_claude_streaming(dir, events))
 }
 
 /// Waits until the session whose record is `record` has streamed `text`.
@@ -155,12 +161,7 @@ async fn a_session_that_times_out_has_reported_the_model_it_ran() {
             init_naming("claude-sonnet-5-5")
         ),
     );
-    let harness = ClaudeCode {
-        program: program.to_str().unwrap().into(),
-        bash: "/bin/bash".into(),
-        github_token: None,
-        redaction: Redaction::default(),
-    };
+    let harness = claude_code(&program);
     let mut session = triage_session(dir.path());
     session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
     let reports = reports_of(&mut session);
@@ -184,10 +185,8 @@ async fn a_production_session_gets_linewrights_github_token() {
     let dir = tempfile::tempdir().unwrap();
     let program = fake_claude(dir.path(), "Done.");
     let harness = ClaudeCode {
-        program: program.to_str().unwrap().into(),
-        bash: "/bin/bash".into(),
         github_token: Some("linewright-token".into()),
-        redaction: Redaction::default(),
+        ..claude_code(&program)
     };
 
     harness.start(&triage_session(dir.path())).await.unwrap();
@@ -814,12 +813,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
          echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Still reading.\"}]}}'\n\
          exec sleep 30\n",
     );
-    let harness = ClaudeCode {
-        program: program.to_str().unwrap().into(),
-        bash: "/bin/bash".into(),
-        github_token: None,
-        redaction: Redaction::default(),
-    };
+    let harness = claude_code(&program);
     let mut session = triage_session(dir.path());
     session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
 
@@ -922,12 +916,7 @@ async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
             json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
         ),
     );
-    let harness = ClaudeCode {
-        program: program.to_str().unwrap().into(),
-        bash: "/bin/bash".into(),
-        github_token: None,
-        redaction: Redaction::default(),
-    };
+    let harness = claude_code(&program);
     let spec = triage_session(dir.path());
 
     let turn = tokio::spawn(async move { harness.start(&spec).await });
@@ -957,10 +946,8 @@ fn harness_printing_a_secret(dir: &Path, last: Option<Value>) -> ClaudeCode {
         ),
     );
     ClaudeCode {
-        program: program.to_str().unwrap().into(),
-        bash: "/bin/bash".into(),
-        github_token: None,
         redaction: redaction_of(&[("GH_TOKEN", CREDENTIAL)]),
+        ..claude_code(&program)
     }
 }
 
@@ -1062,14 +1049,141 @@ async fn a_session_runs_in_a_process_group_of_its_own() {
             group.display()
         ),
     );
-    let harness = ClaudeCode {
-        program: program.to_str().unwrap().into(),
-        bash: "/bin/bash".into(),
-        github_token: None,
-        redaction: Redaction::default(),
-    };
+    let harness = claude_code(&program);
 
     harness.start(&triage_session(dir.path())).await.unwrap();
 
     assert_in_a_process_group_of_its_own(&std::fs::read_to_string(&group).unwrap());
+}
+
+/// A Claude Code that, like the shell commands Claude Code runs, starts a
+/// process in a session of its own and in the background, writes its PID to
+/// `dir/left.pid`, says `Started.` and then runs `then`.
+fn harness_leaving_a_process(dir: &Path, then: &str) -> ClaudeCode {
+    let program = dir.join("claude");
+    write_program(
+        &program,
+        &format!(
+            "#!/bin/sh\n\
+             cat > /dev/null\n\
+             perl -MPOSIX -e 'POSIX::setsid(); exec \"sleep\", \"300\"' &\n\
+             echo $! > '{pid}'\n\
+             echo '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"Started.\"}}]}}}}'\n\
+             {then}\n",
+            pid = dir.join("left.pid").display(),
+        ),
+    );
+    claude_code(&program)
+}
+
+fn left_process(dir: &Path) -> rustix::process::Pid {
+    let pid = std::fs::read_to_string(dir.join("left.pid")).unwrap();
+    rustix::process::Pid::from_raw(pid.trim().parse().unwrap()).unwrap()
+}
+
+fn has_ended(pid: rustix::process::Pid) -> bool {
+    rustix::process::test_kill_process(pid) == Err(rustix::io::Errno::SRCH)
+}
+
+/// Without a subreaper, which only Linux has, a process whose parent has
+/// exited is beyond reach.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn what_a_session_started_has_ended_once_it_ends_with_a_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_leaving_a_process(
+        dir.path(),
+        "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Done.\"}'",
+    );
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert!(has_ended(left_process(dir.path())));
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn what_a_session_started_has_ended_once_it_crashes() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_leaving_a_process(dir.path(), "exit 3");
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, SessionError::Failed { .. }), "{error:?}");
+    assert!(has_ended(left_process(dir.path())));
+}
+
+#[tokio::test]
+async fn what_a_session_started_has_ended_once_it_times_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_leaving_a_process(dir.path(), "exec sleep 300");
+    let mut session = triage_session(dir.path());
+    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+
+    let error = harness.start(&session).await.unwrap_err();
+
+    assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
+    assert!(has_ended(left_process(dir.path())));
+}
+
+/// As when its run is cancelled.
+#[tokio::test]
+async fn what_a_session_started_ends_once_its_turn_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_leaving_a_process(dir.path(), "exec sleep 300");
+    let session = triage_session(dir.path());
+
+    let turn = tokio::spawn(async move { harness.start(&session).await });
+    until_said(dir.path(), "Started.").await;
+    turn.abort();
+    let left = left_process(dir.path());
+
+    eventually(|| has_ended(left)).await;
+}
+
+#[tokio::test]
+async fn a_harness_that_cannot_be_started_is_an_infrastructure_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("missing");
+    let harness = claude_code(&program);
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::Infrastructure(reason) = error else {
+        panic!("expected an infrastructure failure, got {error:?}");
+    };
+    assert_eq!(
+        reason,
+        format!(
+            "starting {}: No such file or directory (os error 2)",
+            program.display()
+        )
+    );
+}
+
+/// Claude Code's background commands share its standard output, and a turn
+/// reads that output to its end.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_process_a_session_left_holding_its_output_does_not_hold_the_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("claude");
+    write_program(
+        &program,
+        "#!/bin/sh\n\
+         cat > /dev/null\n\
+         sleep 300 &\n\
+         echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Done.\"}'\n",
+    );
+    let harness = claude_code(&program);
+
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "Done.");
 }

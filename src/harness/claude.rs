@@ -25,6 +25,9 @@ pub struct ClaudeCode {
     pub github_token: Option<String>,
     /// Applied to all a session says before Linewright keeps or answers it.
     pub redaction: Redaction,
+    /// The `lw` that runs each turn's `claude` inside the wrapper that ends
+    /// what it leaves running ([`child::contained`]).
+    pub container: PathBuf,
 }
 
 const TEMPORARY_DIRECTORY: &str = "TMPDIR";
@@ -345,7 +348,7 @@ impl ClaudeCode {
     ) -> Result<Turn, SessionError> {
         // Claude Code matches `CLAUDE.md` files by their real path.
         let clone = std::fs::canonicalize(&spec.dir).unwrap_or_else(|_| spec.dir.clone());
-        let mut command = child::command(&self.program);
+        let mut command = child::contained(&self.container, &self.program);
         command
             .args([
                 "-p",
@@ -373,6 +376,7 @@ impl ClaudeCode {
         }
         let mut child = command
             .spawn()
+            .await
             .map_err(|e| SessionError::Infrastructure(format!("starting {}: {e}", self.program)))?;
         let mut stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
@@ -458,6 +462,10 @@ impl ClaudeCode {
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
         let Ok((result, refusal, underway, status)) = outcome else {
+            // So that nothing of the session is left running once its run
+            // goes on to hand the work back. On a result or a crash, `wait`
+            // has returned only once all the turn started has ended.
+            child.end().await;
             return Err(SessionError::TimedOut {
                 log_tail: log.tail(),
             });

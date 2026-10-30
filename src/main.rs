@@ -11,7 +11,9 @@ use linewright::briefs::OperatorPrompts;
 use linewright::case;
 use linewright::child;
 use linewright::clock::{Clock, SystemClock};
-use linewright::config::{AutomationCommand, Cli, Command, Config, LogFormat, ResolveError, Since};
+use linewright::config::{
+    AutomationCommand, Cli, Command, Config, Invocation, LogFormat, ResolveError, Settings, Since,
+};
 use linewright::domain::Number;
 use linewright::drain::{self, Asked, Said, Stop, Taken, Timeout, Waiting, Was};
 use linewright::ending::{Ends, Event, Signal, Step, StopBy};
@@ -26,7 +28,7 @@ use linewright::variable_names::VariableNames;
 use linewright::webhook::{Listener, Pending};
 use linewright::work_settings::Environments;
 use linewright::{COMMAND, COMMIT, VERSION};
-use linewright::{explain, status, web};
+use linewright::{contain, explain, status, web};
 use tokio::signal::unix::signal;
 use tracing::{error, info, warn};
 
@@ -37,12 +39,27 @@ const WRONG_COMMAND_LINE: u8 = 2;
 const NOT_SERVING: u8 = 3;
 const NO_SUCH_ITEM: u8 = 4;
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let cli = Cli::parse();
+    match cli.invocation {
+        // Without a runtime: the wrapper runs nothing but its program, and
+        // reaps whatever is re-parented to it.
+        Invocation::Contain { program } => {
+            let (name, args) = program.split_first().expect("clap requires the program");
+            contain::main(name, args)
+        }
+        Invocation::Command(command) => tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("the runtime builds")
+            .block_on(serve_or_ask(command, &cli.settings)),
+    }
+}
+
+async fn serve_or_ask(command: Command, settings: &Settings) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_default();
     let config = match Config::resolve(
-        &cli.settings,
+        settings,
         &cwd,
         &|key| std::env::var(key).ok(),
         std::io::stderr().is_terminal(),
@@ -57,7 +74,7 @@ async fn main() -> ExitCode {
         }
     };
     init_logging(config.log_format);
-    match run(cli.command, config).await {
+    match run(command, config).await {
         Ok(code) => code,
         Err(e) => {
             error!(error = format!("{e:#}"), "exiting");
@@ -598,7 +615,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             require_tool(HARNESS_PROGRAM).await?;
             let sessions = SessionCredentials::new(SessionToken::Withheld, &config.secrets)?;
             let environments = environments(&config, &sessions);
-            let harness = harness(bash.clone(), &sessions);
+            let harness = harness(bash.clone(), &sessions)?;
             let factory_config = factory_config(
                 &config,
                 bash,
@@ -698,13 +715,14 @@ impl SessionCredentials {
     }
 }
 
-fn harness(bash: PathBuf, sessions: &SessionCredentials) -> ClaudeCode {
-    ClaudeCode {
+fn harness(bash: PathBuf, sessions: &SessionCredentials) -> Result<ClaudeCode> {
+    Ok(ClaudeCode {
         program: HARNESS_PROGRAM.into(),
         bash,
         github_token: sessions.token.given().map(str::to_string),
         redaction: sessions.secrets.redaction().clone(),
-    }
+        container: std::env::current_exe().context("finding Linewright's own program")?,
+    })
 }
 
 /// What sessions are given of Linewright's environment. Logs the names of
@@ -819,7 +837,7 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Res
         &config.secrets,
     )?;
     let environments = environments(config, &sessions);
-    let harness = harness(bash.clone(), &sessions);
+    let harness = harness(bash.clone(), &sessions)?;
     let github = connect(config, token).await?;
     let factory_config = factory_config(
         config,
