@@ -8,7 +8,7 @@ use linewright::board::{CardLine, CardStatus, Column, Ended, LaneHead, Stop, boa
 use linewright::domain::*;
 use linewright::explain::{explain, explain_fresh, fresh_view};
 use linewright::item_facts::{ItemFacts, Related, StateFact, item_facts};
-use linewright::managed::{IssueExclusion, LeftAloneIssue, LeftAloneItem};
+use linewright::managed::{LeftAloneIssue, LeftAloneItem};
 use linewright::reconcile::Wait;
 use linewright::status::View;
 use linewright::store::AnyItem;
@@ -112,6 +112,7 @@ fn a_ticket_in_ready_blocked_by_another_is_in_ready_saying_so_under_its_tracking
             title: "Tracking 20".into(),
             tickets_closed: 0,
             tickets: 2,
+            closed: None,
         }
     );
     assert_eq!(facts.tickets, None);
@@ -331,26 +332,33 @@ fn a_merged_spec_change_names_the_tracking_issue_cut_from_it() {
             title: "Tracking 20".into(),
             tickets_closed: 3,
             tickets: 5,
+            closed: None,
         }
     );
     assert!(facts.pull_request);
 }
 
-#[test]
-fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_closed() {
+/// Tracking issue #20 of spec change #15, closed at `closed_at`, whose
+/// tickets #1 and #2 closed in the Done window, the last at 2026-09-30
+/// 12:00.
+fn tracking_closed_at(closed_at: &str) -> View {
     let mut view = view(vec![], vec![]);
     let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
     snapshot.closed = vec![
         closed_item(
             &tracking_issue(20, 15, &[(1, false), (2, false)]),
-            "2026-09-30T12:00:00Z",
+            closed_at,
         ),
         closed_ticket(1, "2026-09-29T12:00:00Z"),
         closed_ticket(2, "2026-09-30T12:00:00Z"),
     ];
     snapshot.merged = vec![spec_change(15)];
+    view
+}
 
-    let facts = facts_of(&view, 20);
+#[test]
+fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_closed() {
+    let facts = facts_of(&tracking_closed_at("2026-09-30T12:00:00Z"), 20);
 
     assert_eq!(
         facts.state,
@@ -360,8 +368,33 @@ fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_
     );
 }
 
+/// `docs/specs/design_system.md`, The board, Finished lanes: a lane
+/// finished when its last ticket closed or its tracking issue closed,
+/// whichever is later, on the board or off it.
+#[test]
+fn a_tracking_issue_closed_after_its_last_ticket_finished_when_it_closed() {
+    let on_board = tracking_closed_at("2026-09-30T18:00:00Z");
+    let (off_board, tracking) = tracking_finished_before_the_window(false);
+
+    let on_board = facts_of(&on_board, 20);
+    let off_board = facts_read(&off_board, &read_closed(tracking, "2026-09-24T12:00:00Z"));
+
+    assert_eq!(
+        [on_board.state, off_board.state],
+        [
+            StateFact::Tracking {
+                finished: Some(at("2026-09-30T18:00:00Z"))
+            },
+            StateFact::Tracking {
+                finished: Some(at("2026-09-24T12:00:00Z"))
+            },
+        ]
+    );
+}
+
 /// Tracking issue #20 of spec change #15, open or not, whose tickets #1 and
-/// #2 closed before the Done window opened, so that its lane left the board.
+/// #2 closed before the Done window opened, so that its lane left the board
+/// once the issue is closed.
 fn tracking_finished_before_the_window(open: bool) -> (View, Issue) {
     let closed_at = |number, at: &str| SubIssue {
         state: SubIssueState::Closed {
@@ -388,19 +421,22 @@ fn tracking_finished_before_the_window(open: bool) -> (View, Issue) {
 }
 
 /// `docs/specs/repository.md`, Managed items: a tracking issue carries no
-/// status label, so with none of its tickets open it is managed no more.
+/// status label, so with none of its tickets open it is managed no more; but
+/// it still heads its lane, unfinished while it is open
+/// (`docs/specs/design_system.md`, The board, Finished lanes), so its State
+/// is "Tracking" alone.
 #[test]
-fn an_open_tracking_issue_with_none_of_its_tickets_open_is_left_alone() {
+fn an_open_tracking_issue_with_none_of_its_tickets_open_is_tracking_and_unfinished() {
     let (view, tracking) = tracking_finished_before_the_window(true);
+    let read = AnyItem::HeldIssue(Box::new(tracking));
 
-    let facts = facts_read(&view, &AnyItem::HeldIssue(Box::new(tracking)));
+    let facts = facts_read(&view, &read);
 
-    assert_eq!(
-        facts.state,
-        StateFact::LeftAlone(LeftAloneItem::Issue(LeftAloneIssue::Open {
-            left_alone: IssueExclusion::NoOpenTickets
-        }))
-    );
+    assert!(matches!(
+        explain_fresh(&fresh_view(&view, &read, at(NOW)), &[], &read, at(NOW)),
+        linewright::explain::Answer::LeftAlone(_)
+    ));
+    assert_eq!(facts.state, StateFact::Tracking { finished: None });
 }
 
 /// `docs/specs/design_system.md`, The item page, State: a tracking issue

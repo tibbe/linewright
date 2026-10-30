@@ -99,7 +99,9 @@ impl Lane {
         self.columns.iter().all(Vec::is_empty)
     }
 
-    /// When its last card entered Done, if every card is in Done
+    /// When it finished, once every card is in Done and its tracking issue,
+    /// if it has one, is closed: when the last of its cards entered Done or
+    /// its tracking issue closed, whichever is later
     /// (`docs/specs/design_system.md`, The board, Finished lanes).
     pub fn finished(&self) -> Option<Timestamp> {
         let open = Column::ALL
@@ -109,12 +111,19 @@ impl Lane {
         if open {
             return None;
         }
+        let closed = match self.head {
+            // Unfinished while its tracking issue is open.
+            LaneHead::Tracking { closed: None, .. } => return None,
+            LaneHead::Tracking { closed, .. } => closed,
+            LaneHead::Item { .. } => None,
+        };
         self.cards(Column::Done)
             .iter()
             .filter_map(|card| match card.line {
                 Some(CardLine::Ended { at, .. }) => Some(at),
                 _ => None,
             })
+            .chain(closed)
             .max()
     }
 
@@ -164,6 +173,8 @@ pub enum LaneHead {
         title: String,
         tickets_closed: usize,
         tickets: usize,
+        /// When the tracking issue closed, if it is closed.
+        closed: Option<Timestamp>,
     },
     /// An item worked as one, the lane's one card: an issue, a spec change's
     /// pull request, or a pull request that closes no issue with a card.
@@ -501,12 +512,23 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             .map(|(_, card)| card),
     );
 
+    // A tracking issue heads its lane whether or not it is managed: an open
+    // one with no open ticket is not, and its lane waits for it to close.
+    let open_trackers = view
+        .snapshot
+        .issues
+        .iter()
+        .filter(|issue| issue.open)
+        .map(|issue| issue.number);
     let mut trackers: Vec<Tracker> = all
         .iter()
         .filter(|managed| placement(&managed.state, false) == Placement::HeadsLane)
-        .filter_map(|managed| Tracker::of(managed.number, view))
+        .map(|managed| managed.number)
+        .chain(open_trackers)
+        .filter_map(|number| Tracker::of(number, view))
         .collect();
     trackers.sort_by_key(|tracker| tracker.number);
+    trackers.dedup_by_key(|tracker| tracker.number);
 
     cards.sort_by_key(|(_, card)| card.number);
     let mut lanes: Vec<Lane> = trackers
@@ -766,6 +788,8 @@ struct Tracker {
     /// Its tickets, the cards of its lane.
     tickets: Vec<Number>,
     tickets_closed: usize,
+    /// When it closed, if it is closed.
+    closed: Option<Timestamp>,
 }
 
 impl Tracker {
@@ -781,6 +805,7 @@ impl Tracker {
                 &issue.title,
                 tracks,
                 &issue.sub_issues,
+                None,
                 linewright,
             ));
         }
@@ -794,6 +819,7 @@ impl Tracker {
             &item.title,
             tracks,
             &facts.sub_issues,
+            Some(item.closed_at),
             linewright,
         ))
     }
@@ -803,6 +829,7 @@ impl Tracker {
         title: &str,
         tracks: Tracks,
         sub_issues: &[SubIssue],
+        closed: Option<Timestamp>,
         linewright: &Login,
     ) -> Tracker {
         let tickets: Vec<&SubIssue> = tracks.tickets(sub_issues, linewright).collect();
@@ -811,6 +838,7 @@ impl Tracker {
             title: title.to_string(),
             tickets: tickets.iter().map(|s| s.number).collect(),
             tickets_closed: tickets.iter().filter(|s| !s.is_open()).count(),
+            closed,
         }
     }
 
@@ -820,6 +848,7 @@ impl Tracker {
             title: self.title.clone(),
             tickets_closed: self.tickets_closed,
             tickets: self.tickets.len(),
+            closed: self.closed,
         }
     }
 }

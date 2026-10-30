@@ -290,6 +290,10 @@ enum Shown {
     OnCardOf(u64, Column),
     /// At the head of its lane.
     HeadsLane,
+    /// Left alone, but at the head of its lane, unfinished until it closes,
+    /// and "Tracking" on its page: an open tracking issue with no open
+    /// ticket.
+    HeadsUnfinishedLane,
     LeftAlone,
 }
 
@@ -326,7 +330,7 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
         (7, Shown::Card(Column::NeedsAPerson)),
         (8, Shown::HeadsLane),
         (9, Shown::Card(Column::Ready)),
-        (10, Shown::LeftAlone),
+        (10, Shown::HeadsUnfinishedLane),
         (11, Shown::Card(Column::Done)),
         (20, Shown::Card(Column::Done)),
         (21, Shown::LeftAlone),
@@ -370,6 +374,9 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
                 board.card(number).is_none() && board.card(Number(issue)).is_some()
             }
             Shown::HeadsLane => board.lane_headed_by(number).is_some(),
+            Shown::HeadsUnfinishedLane => board
+                .lane_headed_by(number)
+                .is_some_and(|lane| lane.finished().is_none()),
             Shown::LeftAlone => {
                 board.card(number).is_none() && board.lane_headed_by(number).is_none()
             }
@@ -388,7 +395,7 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
         assert!(on_the_board, "#{number}: {shown:?} on {board:?}");
         assert_eq!(
             managed.is_ok(),
-            shown != Shown::LeftAlone,
+            !matches!(shown, Shown::LeftAlone | Shown::HeadsUnfinishedLane),
             "#{number}: {managed:?}"
         );
         match shown {
@@ -405,6 +412,9 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
                     matches!(page, StateFact::Tracking { .. }),
                     "#{number}: {page:?}"
                 );
+            }
+            Shown::HeadsUnfinishedLane => {
+                assert_eq!(page, StateFact::Tracking { finished: None }, "#{number}");
             }
             Shown::LeftAlone => {
                 assert!(
