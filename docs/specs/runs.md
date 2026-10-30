@@ -178,7 +178,7 @@ A run ends in one of these outcomes, each with its name in JSON.
 - **Cancelling.** Except while it applies a result
   ([Architecture](architecture.md#the-protocol-between-linewright-and-an-agent)),
   or, for a run without a session, from its push on, a run is cancelled when its
-  item stops asking for its work, as under [Repository](repository.md), or when
+  item stops asking for it, as under [Repository](repository.md), or when
   `serve` stops. A cancelled run posts nothing more, and one whose pull request
   was merged or closed pushes nothing either.
 - **Restarts.** A restart leaves the runs in flight interrupted.

@@ -158,7 +158,10 @@ when `ui-address` is empty.
 
 ### The board
 
-The board shows managed items as cards in six columns, in this order:
+The board shows the managed items
+([Managed items](repository.md#managed-items)) as cards in six columns, in
+this order. Every managed item but a tracking issue, which heads its lane, is
+in one of them.
 
 | Column         | Holds a managed item that                                                                            |
 | -------------- | ---------------------------------------------------------------------------------------------------- |
@@ -166,26 +169,29 @@ The board shows managed items as cards in six columns, in this order:
 | Needs a person | holds `needs-info` or `ready-for-human`                                                              |
 | Ready          | holds `ready-for-agent` and is not claimed, or is a spec change not yet designed                     |
 | Working        | is claimed for design or implementation, or has a run in flight that no other column shows           |
-| In review      | has an open pull request that closes it, or is a pull request of Linewright's that closes no issue on the board |
-| Done           | is worked, and is closed or has had a pull request that closes it merge into the default branch since it was last opened |
+| In review      | has an open pull request that closes it, or is an open pull request                                  |
+| Done           | is closed or merged, or has had a pull request that closes it merge into the default branch since it was last opened; but for a spec change not yet designed |
 
 - **Two columns.** An item that fits two columns is in the one further
   right.
 - **One card per piece of work.** The card is the issue; a pull request, and
-  a run on it, show on the card of each issue it closes.
+  a run on it, show on the card of each issue it closes that has one, and a
+  pull request that closes no issue with a card has its own.
 - **A spec change.** Until it is designed, its card is its pull request;
   designed, it is its tracking issue's lane where one was cut, and otherwise
   its pull request, in Done, saying there was nothing to build.
 - **Lanes.** A lane per piece of work: where the work was cut, headed by its
   tracking issue's number and title and its tickets closed of total, with
-  its tickets as its cards; otherwise headed by the item's number and title,
-  with the item as its one card.
-- **Finished lanes.** A lane whose cards are all in Done is finished. It shows
-  as its head alone, with when it finished: when its last card entered Done, or,
-  for a spec change designed with nothing to build, when it was designed. It
-  opens on click. The finished lanes sit together under one fold that says
-  how many there are and opens on click. A finished lane leaves the board
-  once it finished before the Done window (`done-window`) opened.
+  its managed tickets as its cards; otherwise headed by the item's number and
+  title, with the item as its one card.
+- **Finished lanes.** A lane is finished once its cards are all in Done and,
+  where it has a tracking issue, that issue is closed. It shows as its head
+  alone, with when it finished: when the last of its cards entered Done or
+  its tracking issue closed, or, for a spec change designed with nothing to
+  build, when it was designed. It opens on click. The finished lanes sit
+  together under one fold that says how many there are and opens on click.
+  A finished lane leaves the board once it finished before the Done window
+  (`done-window`) opened.
 - **Order of lanes.** The unfinished lanes come first, latest changed first,
   then the finished lanes, latest finished first. Lanes changed at the same
   time are in number order.
@@ -234,9 +240,9 @@ to add is the title alone.
 | In review      | its pull request, where the card is not the pull request itself, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" | that of what stops it merging |
 | Done           | "closed in #42", the first pull request that closes it to merge since it was last opened                                                                                                                                                                              | an issue a merged pull request closes                                                                                                                   |  |
 |                | "closed as completed", "closed as not planned" or "closed as a duplicate", GitHub's reason; "closed" where the reason is not known                                                                                                                                     | an issue closed otherwise                                                                                                                               |  |
-|                | "merged"                                                                                                                                                                                                                                                               | a pull request of Linewright's merged                                                                                                                   |  |
-|                | "closed without merging"                                                                                                                                                                                                                                               | a pull request of Linewright's closed unmerged                                                                                                          |  |
 |                | "merged · nothing to build"                                                                                                                                                                                                                                            | a spec change designed with nothing to build                                                                                                            |  |
+|                | "merged"                                                                                                                                                                                                                                                               | a pull request merged                                                                                                                                   |  |
+|                | "closed without merging"                                                                                                                                                                                                                                               | a pull request closed unmerged                                                                                                                          |  |
 
 What stops a pull request merging, in the order the line picks from:
 
@@ -269,7 +275,7 @@ order below, then its runs ([Lists of runs](#lists-of-runs)).
 
 | Fact           | Holds                                                                                                                                  | Shown                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| State          | #N's column, then its card's line, with its card status ([Cards](#cards)); for a tracking issue, "Tracking", and once its lane is finished when it finished, on the board or off it, such as "Tracking · finished 2 days ago"; for an item the board does not show, "Left alone", then what keeps it out, such as "closed", "not marked for Linewright" or "waits on a person, and Linewright has not worked it" | always                         |
+| State          | #N's column, then its card's line, with its card status ([Cards](#cards)), on the board or off it; for a tracking issue, "Tracking", and once its lane is finished when it finished, such as "Tracking · finished 2 days ago"; for an item that is not managed, "Left alone", then what keeps it out, such as "labeled none of `needs-triage`, …", "not marked for Linewright" or "holds `ready-for-human`, and Linewright has not worked it" | always                         |
 | Waiting for    | each thing Linewright waits for before it acts on #N next, one per line, naming what ends it, such as "the usage limit, until 14:30", in plain text | while it waits for any         |
 | Tracking issue | a ticket's tracking issue, or the tracking issue cut from a spec change                                                                | while there is one             |
 | Tickets        | a tracking issue's tickets, with how many are closed of the total, such as "3 of 5 closed"                                             | while it has any               |

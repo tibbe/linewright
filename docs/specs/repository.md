@@ -76,16 +76,16 @@ required label. Every label is the repository's: Linewright leaves it as the
 people there keep it, except that at every startup it sets each
 `linewright:` label's description to its meaning below.
 
-| label                                        | meaning                                                | set by                                            |
-| -------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------- |
-| `needs-triage`                               | not yet assessed                                       | reporter's issue template, maintainer, Linewright |
-| `needs-info`                                 | its assessment waits on a fact only a person knows     | Linewright, maintainer                            |
-| `ready-for-agent`                            | decided: an agent could build it                       | maintainer, Linewright                            |
-| `ready-for-human`                            | needs a person's decision or action                    | Linewright, maintainer                            |
-| `bug`, `enhancement`                         | category, in repositories without issue types          | Linewright (triage), maintainer                   |
-| `linewright:designed`                        | designed, and cut into tickets where it needed cutting | Linewright                                        |
-| `linewright:stalled`                         | handed back in a stall                                 | Linewright                                        |
-| the required label, named by `require-label` | Linewright may start work on this item                 | maintainer, Linewright                            |
+| label                                        | meaning                                                | asks for work by                      | set by                                            |
+| -------------------------------------------- | ------------------------------------------------------ | ------------------------------------- | ------------------------------------------------- |
+| `needs-triage`                               | not yet assessed                                       | Linewright: triage                    | reporter's issue template, maintainer, Linewright |
+| `needs-info`                                 | its assessment waits on a fact only a person knows     | a person                              | Linewright, maintainer                            |
+| `ready-for-agent`                            | decided: an agent could build it                       | Linewright: design and implementation | maintainer, Linewright                            |
+| `ready-for-human`                            | needs a person's decision or action                    | a person                              | Linewright, maintainer                            |
+| `bug`, `enhancement`                         | category, in repositories without issue types          |                                       | Linewright (triage), maintainer                   |
+| `linewright:designed`                        | designed, and cut into tickets where it needed cutting |                                       | Linewright                                        |
+| `linewright:stalled`                         | handed back in a stall                                 |                                       | Linewright                                        |
+| the required label, named by `require-label` | Linewright may start work on this item                 |                                       | maintainer, Linewright                            |
 
 - **Linewright's labels.** Labels only Linewright uses are prefixed
   `linewright:`. Each records what Linewright has done to an item, beside the
@@ -109,30 +109,33 @@ assigning itself and lets go of it by unassigning itself.
   issue's label asks for its work again. A closed item keeps its labels and
   assignees.
 - **Claiming on its own.** On its own, Linewright claims an issue that is
-  unassigned, marked for it, labeled for work it does, `needs-triage` for
-  triage or `ready-for-agent` for implementation, and that it can start: no
-  open issue blocks it and no open pull request closes it. An item Linewright
-  was unassigned from, by itself or by anyone, is not claimed again on its
-  own until its status label or the required label is applied again.
+  unassigned, marked for it, whose status label asks for its work, and that
+  it can start: no open issue blocks it and no open pull request closes it.
+  An item Linewright was unassigned from, by itself or by anyone, is not
+  claimed again on its own until its status label or the required label is
+  applied again.
 - **Assigned by hand.** Assigning Linewright to an item by hand asks it to
   work the item, marked for it or not and beside any other assignee. An issue
   it works as its label says, holding one it cannot start yet; one whose
   label asks nothing of it, it lets go of with a comment saying what the
   issue needs first. A pull request or a spec change it goes on with.
-- **Cancelling.** A run is cancelled when its item stops asking for
-  Linewright's work: Linewright is unassigned from the item, the item is
-  closed, or an issue's label stops asking. When a cancel takes effect is
-  under [Runs](runs.md).
+- **Cancelling.** A run is cancelled when its item stops asking for the run:
+  Linewright is unassigned from the item, the item is closed, or an issue's
+  label stops asking for the run, such as `needs-triage` relabeled
+  `ready-for-agent` during triage. When a cancel takes effect is under
+  [Runs](runs.md).
 - **Handing back.** Handing an item back is how Linewright lets go of an item
   it cannot finish: it labels an issue `ready-for-human`, unassigns itself
   from the item, removes `linewright:designed` where the design is the item's
   own, and says why in a comment.
-- **Stalls.** A stall labels the item `linewright:stalled` as well, cleared
-  when Linewright next claims or works the item. For example, a session that
-  timed out, a push GitHub refused, checks still failing after the fix
-  attempts and a merge that failed twice are stalls; a question the spec
-  cannot decide, a design with nothing to build, a session that gave up with
-  its reason and a pull request closed unmerged are not.
+- **Stalls.** A hand-back is a stall when Linewright judged nothing:
+  something it relies on failed it, and a person fixes what failed or has
+  Linewright try again. A stall labels the item `linewright:stalled` as well,
+  cleared when Linewright next claims or works the item. For example, a
+  session that timed out, a push GitHub refused, checks still failing after
+  the fix attempts and a merge that failed twice are stalls; a question the
+  spec cannot decide, a design with nothing to build, a session that gave up
+  with its reason and a pull request closed unmerged are not.
 - **Marked for Linewright.** With `require-label` set, an item is marked for
   Linewright when it carries the required label, checked each time Linewright
   claims an item on its own. Work already started carries on without it.
@@ -151,22 +154,41 @@ given under [Triage](triage.md) and [Pull requests](pull_requests.md);
 `ready-for-agent` and `ready-for-human` are the labels between them, and
 `tracking` is an issue cut into tickets, under [Design](design.md).
 
-| State           | Event                          | Next            | Effect                                  |
-| --------------- | ------------------------------ | --------------- | --------------------------------------- |
-| —               | reporter files an issue        | triage          |                                         |
-| —               | maintainer labels              | ready-for-agent |                                         |
-| —               | Linewright creates a ticket    | ready-for-agent |                                         |
-| triage          | clear and within the spec      | ready-for-agent |                                         |
-| triage          | maintainer must decide         | ready-for-human |                                         |
-| ready-for-human | maintainer labels needs-triage | triage          |                                         |
-| ready-for-human | maintainer labels              | ready-for-agent |                                         |
-| ready-for-agent | Linewright assigned            | work            |                                         |
-| work            | Linewright unassigned          | ready-for-agent | not claimed on its own until labeled again |
-| work            | handed back                    | ready-for-human |                                         |
-| work            | PR closed unmerged             | ready-for-human |                                         |
-| work            | cut into tickets               | tracking        | tickets filed as sub-issues             |
-| tracking        | every sub-issue closed         | —               | issue closed                            |
-| work            | PR merged                      | —               | issue closed                            |
+| State           | Event                                  | Next            | Effect                                     |
+| --------------- | -------------------------------------- | --------------- | ------------------------------------------ |
+| —               | reporter files an issue                | triage          |                                            |
+| —               | maintainer labels                      | ready-for-agent |                                            |
+| —               | Linewright creates a ticket            | ready-for-agent |                                            |
+| triage          | clear and within the spec              | ready-for-agent |                                            |
+| triage          | maintainer must decide                 | ready-for-human |                                            |
+| triage          | status label removed                   | —               |                                            |
+| ready-for-human | maintainer labels needs-triage         | triage          |                                            |
+| ready-for-human | maintainer labels                      | ready-for-agent |                                            |
+| ready-for-human | status label removed                   | —               |                                            |
+| ready-for-agent | Linewright assigned                    | work            |                                            |
+| ready-for-agent | status label removed                   | —               |                                            |
+| work            | Linewright unassigned                  | ready-for-agent | not claimed on its own until labeled again |
+| work            | status label removed, no PR closes it  | —               | Linewright lets go of it                   |
+| work            | handed back                            | ready-for-human |                                            |
+| work            | PR closed unmerged                     | ready-for-human |                                            |
+| work            | cut into tickets                       | tracking        | tickets filed as sub-issues                |
+| tracking        | every sub-issue closed                 | —               | issue closed                               |
+| work            | PR merged                              | —               | issue closed                               |
+
+## Managed items
+
+Linewright manages the items it has worked or that ask for its work, except
+an open issue that holds no status label, has no run in flight, has no open
+pull request closing it and is not the tracking issue of an open ticket,
+whatever Linewright did on it before, such as one whose status label a person
+removed.
+
+- **Worked.** Linewright has opened the item, or recorded an outcome of its
+  work on it ([Comments](#comments)).
+- **Asking for its work.** An open item Linewright is assigned to, or one
+  marked for Linewright whose status label asks for its work; and a spec
+  change Linewright takes up ([Spec changes](sources_of_work.md#spec-changes)),
+  until it is designed.
 
 ## Writes
 
