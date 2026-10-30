@@ -808,13 +808,16 @@ impl Workspace {
             .context("creating a clone directory")
             .map_err(infra)?;
         let dir = temp.path().join("repo");
-        let identity = [
+        // The clone is removed when the run ends, so the maintenance git
+        // starts after a commit, a merge or a fetch would only cost time.
+        let config = [
             ("user.name", shell.identity.name.as_str()),
             ("user.email", shell.identity.email.as_str()),
+            ("maintenance.auto", "false"),
         ];
         shell
             .store
-            .clone_repo(&dir, branch, &identity)
+            .clone_repo(&dir, branch, &config)
             .await
             .map_err(infra)?;
         let scratch = temp.path().join("tmp");
