@@ -782,8 +782,6 @@ fn merge_stop(
         pull.is_some_and(|pull| pull.checks.iter().any(|check| check.state == held))
     };
     let mergeability = pull.map(|pull| &pull.mergeability);
-    let decided =
-        |decision: ReviewDecision| pull.is_some_and(|pull| pull.review_decision == Some(decision));
     let stops = [
         pull.is_some_and(Pull::is_stalled).then_some(Stop::Stalled),
         run.map(Stop::Running),
@@ -794,10 +792,12 @@ fn merge_stop(
             branch: snapshot.default_branch.clone(),
         }),
         matches!(pull_state, Some(PullState::Open { draft: true })).then_some(Stop::Draft),
-        decided(ReviewDecision::ChangesRequested).then_some(Stop::ChangesRequested),
+        pull.is_some_and(|pull| pull.review_decision == Some(ReviewDecision::ChangesRequested))
+            .then_some(Stop::ChangesRequested),
         pull.is_some_and(Pull::review_required)
             .then_some(Stop::ReviewRequired),
-        decided(ReviewDecision::Approved).then_some(Stop::Approved),
+        pull.is_some_and(|pull| pull.review_decision == Some(ReviewDecision::Approved))
+            .then_some(Stop::Approved),
     ];
     first(stops)
 }
