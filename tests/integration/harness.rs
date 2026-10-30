@@ -42,6 +42,29 @@ async fn until_said(record: &Path, text: &str) {
     eventually(|| std::fs::read_to_string(&output).is_ok_and(|output| output.contains(text))).await;
 }
 
+/// Runs `session` on `harness` and times it out once it has streamed `said`,
+/// returning the error it ends with.
+///
+/// A session can take long to start on a loaded machine, so the deadline is
+/// set far off and comes, with the clock paused, only once the session has
+/// spoken. Pausing the clock means a test may call this at most once, on the
+/// default current-thread runtime.
+async fn timed_out_once_said(
+    harness: ClaudeCode,
+    mut session: SessionSpec,
+    said: &str,
+) -> SessionError {
+    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
+    let record = session.record.clone();
+    let turn = tokio::spawn(async move { harness.start(&session).await });
+    until_said(&record, said).await;
+    tokio::time::pause();
+    match turn.await.unwrap() {
+        Ok(_) => panic!("expected the session to time out, but it finished"),
+        Err(error) => error,
+    }
+}
+
 fn turn_args(dir: &Path) -> Vec<Vec<String>> {
     std::fs::read_to_string(dir.join("args.log"))
         .unwrap()
@@ -163,13 +186,9 @@ async fn a_session_that_times_out_has_reported_the_model_it_ran() {
     );
     let harness = claude_code(&program);
     let mut session = triage_session(dir.path());
-    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
     let reports = reports_of(&mut session);
 
-    let turn = tokio::spawn(async move { harness.start(&session).await });
-    until_said(dir.path(), "Still reading.").await;
-    tokio::time::pause();
-    let error = turn.await.unwrap().unwrap_err();
+    let error = timed_out_once_said(harness, session, "Still reading.").await;
 
     assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
     assert_eq!(
@@ -814,15 +833,9 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
          exec sleep 30\n",
     );
     let harness = claude_code(&program);
-    let mut session = triage_session(dir.path());
-    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
+    let session = triage_session(dir.path());
 
-    let turn = tokio::spawn(async move { harness.start(&session).await });
-    // A session can take long to start on a loaded machine, so the deadline
-    // comes, with the clock paused, only once it has spoken.
-    until_said(dir.path(), "Still reading.").await;
-    tokio::time::pause();
-    let error = turn.await.unwrap().unwrap_err();
+    let error = timed_out_once_said(harness, session, "Still reading.").await;
 
     let SessionError::TimedOut { log_tail } = error else {
         panic!("expected a timeout, got {error:?}");
