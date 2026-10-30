@@ -358,9 +358,9 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
             ),
             review(16, Some(Stop::Draft)),
             review(17, None),
-            review(18, Some(Stop::Review(ChangesRequested))),
-            review(19, Some(Stop::Review(ReviewRequired))),
-            review(20, Some(Stop::Review(Approved))),
+            review(18, Some(Stop::ChangesRequested)),
+            review(19, Some(Stop::ReviewRequired)),
+            review(20, Some(Stop::Approved)),
         ]
     );
     assert!((1..=10).all(|n| !card(&board, n).pull_request));

@@ -1043,6 +1043,19 @@ impl Pull {
     pub fn is_assigned(&self, login: &Login) -> bool {
         self.assignees.contains(login)
     }
+
+    /// Whether GitHub requires a review before it merges, such as a code
+    /// owner's, that it has not had (`docs/specs/design_system.md`, Cards).
+    /// GitHub decides no review when its rules require a code owner's review
+    /// but no approvals, so its blocked merge says so too.
+    pub fn review_required(&self) -> bool {
+        self.review_decision == Some(ReviewDecision::ReviewRequired)
+            || matches!(&self.mergeability, Mergeability::Blocked { requires }
+            if requires.iter().any(|requirement| matches!(
+                requirement,
+                Requirement::Approval | Requirement::CodeOwnerReview { .. }
+            )))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

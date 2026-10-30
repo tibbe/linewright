@@ -7,7 +7,7 @@ use super::names::Names;
 use crate::board::{
     Card, CardLine, CardStatus, Elapsed, Ended, Hold, LaneHead, LaneHeading, Running, Stop,
 };
-use crate::domain::{IssueCloseReason, ReviewDecision};
+use crate::domain::IssueCloseReason;
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
 
@@ -136,9 +136,9 @@ fn stop_worded(stop: &Stop) -> Phrase {
         Stop::Conflicts => "conflicts".into(),
         Stop::Behind { branch } => format!("behind {branch}").into(),
         Stop::Draft => "draft".into(),
-        Stop::Review(ReviewDecision::ChangesRequested) => "changes requested".into(),
-        Stop::Review(ReviewDecision::ReviewRequired) => "review required".into(),
-        Stop::Review(ReviewDecision::Approved) => "approved".into(),
+        Stop::ChangesRequested => "changes requested".into(),
+        Stop::ReviewRequired => "review required".into(),
+        Stop::Approved => "approved".into(),
     }
 }
 
