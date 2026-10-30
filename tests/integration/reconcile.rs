@@ -673,9 +673,28 @@ fn an_issue_whose_label_asked_for_work_at_its_hand_assignment_or_claimed_by_line
         label::READY_FOR_AGENT,
         2,
     );
-    let world = snapshot(vec![triaged, claimed_itself, unlabeled]);
+    let relabeled = labeled_at(
+        unlabeled_at(
+            assigned_by(
+                labeled_at(readied(4), label::READY_FOR_AGENT, 0),
+                LINEWRIGHT,
+                "maintainer",
+                1,
+            ),
+            label::READY_FOR_AGENT,
+            2,
+        ),
+        label::READY_FOR_HUMAN,
+        2,
+    );
+    let mut relabeled = relabeled;
+    relabeled.labels = vec![label::READY_FOR_HUMAN.into()];
+    let world = snapshot(vec![triaged, claimed_itself, unlabeled, relabeled]);
 
-    assert_eq!(decide(&world), vec![let_go(1), let_go(2), let_go(3)]);
+    assert_eq!(
+        decide(&world),
+        vec![let_go(1), let_go(2), let_go(3), let_go(4)]
+    );
 }
 
 #[test]
@@ -3638,6 +3657,13 @@ fn with_a_required_label_only_a_labeled_unclaimed_ticket_is_claimed() {
 }
 
 #[test]
+fn with_a_required_label_a_ticket_assigned_to_linewright_by_hand_is_implemented_unlabeled() {
+    let world = snapshot(vec![assigned_by(ticket(1), LINEWRIGHT, "maintainer", 1)]);
+
+    assert_eq!(deciding_with_label(&world), vec![implement(1)]);
+}
+
+#[test]
 fn with_a_required_label_a_ticket_is_claimed_again_after_an_unassignment_only_if_labeled() {
     let restart = |number, required: bool| {
         let mut ticket = labeled_at(
@@ -4372,9 +4398,28 @@ fn a_pull_request_closed_unmerged_hands_back_each_claimed_issue_it_closes_once()
     }
 
     assert_eq!(handed_back_issues(&decided(&world).actions), [42, 12]);
+    assert_eq!(decided(&relabeled).actions, vec![design(42), implement(12)]);
+}
+
+#[test]
+fn a_pull_request_closed_unmerged_hands_back_its_claimed_issue_and_an_unclaimed_ticket_it_closes_is_claimed_and_worked()
+ {
+    let mut world = pull_closing_42_and_12(label::READY_FOR_AGENT);
+    world.issues[1].assignees.clear();
+    world.issues[1].events.clear();
+    let world = closed_unmerged(world, 43, 5);
+
     assert_eq!(
-        handed_back_issues(&decided(&relabeled).actions),
-        Vec::<u64>::new()
+        decide(&world),
+        vec![
+            Action::HandBack {
+                item: Item::Issue(Number(42)),
+                kind: HandBackKind::Decision,
+                reason: "#43 was closed without merging.".into(),
+            },
+            claim(12),
+            implement(12),
+        ]
     );
 }
 
