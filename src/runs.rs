@@ -1235,3 +1235,199 @@ fn work_dir(base: &Path, repo: &Repo) -> PathBuf {
         .and_then(|owner| spelled(&owner, repo.name()))
         .unwrap_or(exact)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::work_settings::{Environments, Partial, RepoSettings, RunKind, WorkSettings};
+
+    fn at(time: &str) -> Timestamp {
+        time.parse().unwrap()
+    }
+
+    /// Writes `record` as the file `path` under `work_dir`, as a run left it.
+    fn left(work_dir: &Path, path: &str, record: &serde_json::Value) {
+        let path = work_dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, record.to_string()).unwrap();
+    }
+
+    fn ended(item: u64, stage: &str, n: u32) -> serde_json::Value {
+        serde_json::json!({
+            "item": item,
+            "stage": stage,
+            "n": n,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
+            "sessions": [],
+        })
+    }
+
+    fn begun(runs: &Runs, begin: Begin) -> String {
+        let running = runs.begin(begin, at("2026-10-15T09:00:00Z")).unwrap();
+        let id = running.id().to_string();
+        running.end(at("2026-10-15T09:01:00Z"), Ending::Done);
+        id
+    }
+
+    fn work(item: u64, stage: WorkKind) -> Begin {
+        Begin::Work {
+            item: Number(item),
+            stage,
+        }
+    }
+
+    #[test]
+    fn a_run_is_numbered_on_from_the_recorded_runs_of_its_stage_on_its_item() {
+        let work_dir = tempfile::tempdir().unwrap();
+        for (path, item, stage, n) in [
+            ("runs/items/1/triage-1.json", 1, "triage", 1),
+            ("runs/items/1/triage-2.json", 1, "triage", 2),
+            ("runs/items/1/implement-1.json", 1, "implement", 1),
+            ("runs/items/3/rework-1.json", 3, "rework", 1),
+        ] {
+            left(work_dir.path(), path, &ended(item, stage, n));
+        }
+        let runs = Runs::new(work_dir.path());
+
+        let ids = [
+            work(1, WorkKind::Triage),
+            work(1, WorkKind::Triage),
+            work(1, WorkKind::Implement),
+            work(3, WorkKind::Rework),
+            work(3, WorkKind::FixCi),
+            work(2, WorkKind::Triage),
+        ]
+        .map(|begin| begun(&runs, begin));
+
+        assert_eq!(
+            ids,
+            [
+                "1/triage-3",
+                "1/triage-4",
+                "1/implement-2",
+                "3/rework-2",
+                "3/fix-ci-1",
+                "2/triage-1",
+            ]
+        );
+    }
+
+    fn automation(name: &str, n: u32) -> serde_json::Value {
+        serde_json::json!({
+            "automation": name,
+            "n": n,
+            "started_by": "schedule",
+            "started_at": "2026-10-14T06:00:00Z",
+            "end": {"at": "2026-10-14T06:05:00Z", "ending": "done"},
+            "sessions": [],
+        })
+    }
+
+    /// The record of an automation's run as the version before automations
+    /// were renamed from workflows kept it.
+    fn workflow(name: &str, n: u32) -> serde_json::Value {
+        serde_json::json!({
+            "workflow": name,
+            "n": n,
+            "started_at": "2026-09-28T06:00:00Z",
+            "end": {"at": "2026-09-28T06:05:00Z", "ending": "done"},
+            "sessions": [],
+        })
+    }
+
+    #[test]
+    fn a_run_is_numbered_on_from_its_runs_where_this_version_keeps_them_and_where_the_previous_did()
+    {
+        let work_dir = tempfile::tempdir().unwrap();
+        for (path, record) in [
+            ("runs/workflows/weekly/1.json", workflow("weekly", 1)),
+            ("runs/automations/weekly/2.json", automation("weekly", 2)),
+            ("runs/workflows/daily/4.json", workflow("daily", 4)),
+            ("runs/items/4/tickets-2.json", ended(4, "tickets", 2)),
+            ("runs/items/4/design-1.json", ended(4, "design", 1)),
+        ] {
+            left(work_dir.path(), path, &record);
+        }
+        let runs = Runs::new(work_dir.path());
+        let by_hand = |name: &str| Begin::Automation {
+            automation: name.parse().unwrap(),
+            started_by: StartedBy::Hand,
+        };
+
+        let ids = [
+            by_hand("weekly"),
+            by_hand("daily"),
+            work(4, WorkKind::Design),
+        ]
+        .map(|begin| begun(&runs, begin));
+
+        assert_eq!(ids, ["weekly/3", "daily/5", "4/design-3"]);
+    }
+
+    #[test]
+    fn what_a_runs_sessions_ran_with_reads_back_from_its_record() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let settings = WorkSettings {
+            flags_and_env: Partial {
+                model: Some("opus".into()),
+                ..Partial::default()
+            },
+            ..WorkSettings::default()
+        }
+        .for_run(
+            RunKind::Stage(WorkKind::Triage),
+            &RepoSettings::default(),
+            &Environments::default(),
+        );
+        let session = work_dir.path().join("sessions/1/triage-1");
+        let running = Runs::new(work_dir.path())
+            .begin(work(1, WorkKind::Triage), at("2026-10-15T09:00:00Z"))
+            .unwrap();
+
+        running
+            .session(&session, &settings, &Briefs::shipped())
+            .reported(Reported {
+                model: "claude-opus-5-5".into(),
+            });
+        running.end(at("2026-10-15T09:01:00Z"), Ending::Done);
+        let recorded = Runs::new(work_dir.path()).read().unwrap();
+
+        let [run] = &recorded[..] else {
+            panic!("one run: {recorded:#?}");
+        };
+        let [
+            SessionEntry {
+                dir,
+                ran: Some(ran),
+            },
+        ] = &run.sessions[..]
+        else {
+            panic!("one session with what it ran with: {run:#?}");
+        };
+        assert_eq!(dir, &session);
+        assert_eq!(
+            (
+                ran.model.as_deref(),
+                ran.reported_model.as_deref(),
+                ran.effort
+            ),
+            (Some("opus"), Some("claude-opus-5-5"), None)
+        );
+        assert_eq!(
+            serde_json::to_value(&ran.layers.settings).unwrap(),
+            serde_json::json!({
+                "model": "operator",
+                "effort": "harness",
+                "session-timeout": "linewright",
+                "setup": "linewright",
+                "session-env": "linewright",
+                "session-pass-env": "linewright",
+            })
+        );
+        assert_eq!(
+            ran.layers.prompts.get("triage.md"),
+            Some(&Layer::Linewright)
+        );
+    }
+}

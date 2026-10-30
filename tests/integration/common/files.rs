@@ -1,12 +1,17 @@
 use std::path::Path;
 use std::process::Command;
 
-pub fn commit_in(dir: &Path, files: &[(&str, &str)], message: &str) {
+/// Writes each of `files`, a path under `dir` and what it holds.
+pub fn write_files(dir: &Path, files: &[(&str, &str)]) {
     for (path, contents) in files {
         let path = dir.join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, contents).unwrap();
     }
+}
+
+pub fn commit_in(dir: &Path, files: &[(&str, &str)], message: &str) {
+    write_files(dir, files);
     git_in(dir, &["add", "--all"]);
     git_in(dir, &["commit", "--quiet", "-m", message]);
 }

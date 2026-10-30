@@ -58,16 +58,6 @@ impl Log {
     }
 }
 
-/// The IDs `runs` lists, leaving out the lines under each run of its
-/// sessions.
-pub fn run_ids(listed: &str) -> Vec<&str> {
-    listed
-        .lines()
-        .filter(|line| !line.starts_with(' '))
-        .map(|line| line.split_once(':').unwrap().0)
-        .collect()
-}
-
 pub async fn eventually(done: impl Fn() -> bool) {
     eventually_async(|| std::future::ready(done())).await;
 }

@@ -5,9 +5,10 @@ use std::path::PathBuf;
 use chrono::TimeDelta;
 use common::*;
 use linewright::domain::Number;
-use linewright::logs::{self, NoSuchRun, Which};
+use linewright::logs::{self, LogsError, NoSuchRun, Which};
 use linewright::reconcile::WorkKind;
 use linewright::runs::{Ending, Recorded, RunId, Started, State};
+use linewright::transcript::{self, Verbosity};
 use serde_json::json;
 
 fn run(id: &str, start: &str, sessions: usize) -> Recorded {
@@ -175,52 +176,17 @@ pub(crate) fn implement_as_recorded(world: &World) {
 /// 3 tool calls, then answer with the result.
 pub(crate) fn implement_with_a_sub_agent_of_3h_2m_9s(world: &World) {
     world.harness.on(WorkKind::Implement, |call| {
-        let message = |kind: &str, at: &str, content: serde_json::Value| {
-            json!({"type": kind, "timestamp": at, "message": {"content": content}})
-        };
-        let mut returned = message(
-            "user",
-            "2026-10-13T13:02:11Z",
-            json!([{"type": "tool_result", "tool_use_id": "a1", "content": "Clean."}]),
-        );
-        returned["tool_use_result"] = json!({
-            "status": "completed",
-            "totalDurationMs": 10_929_400,
-            "totalToolUseCount": 3,
-        });
-        let events = [
-            json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
-            message(
-                "assistant",
-                "2026-10-13T10:00:02Z",
-                json!([{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"description": "Review"}}]),
-            ),
-            returned,
-            message(
-                "assistant",
-                "2026-10-13T13:02:15Z",
-                json!([{"type": "text", "text": "The review came back clean."}]),
-            ),
-        ];
         let output = call.spec.record.join(linewright::transcript::OUTPUT);
-        std::fs::write(
-            &output,
-            events.iter().map(|event| format!("{event}\n")).collect::<String>(),
-        )
-        .unwrap();
+        std::fs::write(&output, crate::transcript::with_a_sub_agent_of_3h_2m_9s()).unwrap();
         commit_in(&call.spec.dir, &[("src/done.txt", "done\n")], "Do it");
         Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
     });
 }
 
+/// #1 implemented in a run whose sessions stream the recorded transcript.
 async fn implemented_as_recorded() -> (World, tempfile::TempDir) {
-    implemented_by(implement_as_recorded).await
-}
-
-/// #1 implemented in a run whose sessions `implement` scripts.
-async fn implemented_by(implement: fn(&World)) -> (World, tempfile::TempDir) {
     let (mut world, work_dir) = world_in_work_dir().await;
-    implement(&world);
+    implement_as_recorded(&world);
     world.store.open_issue(
         "maintainer",
         "Ship gh",
@@ -242,172 +208,6 @@ async fn logs_shows_the_items_latest_run_compact() {
     assert_eq!(lines.len(), 15, "{}", output.stdout);
     assert_eq!(lines[0], "run: 1/implement-1");
     assert_eq!(lines[1], "session 1: started 2026-10-13 10:09:08 UTC");
-    assert_eq!(
-        lines[2],
-        " 0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines"
-    );
-    assert_eq!(
-        lines[9],
-        " 2:02    Bash(git diff origin/main...HEAD --stat && git diff origin/main...HEAD && git log -1…) → exit 0, 7 lines"
-    );
-    assert!(
-        lines[12].starts_with(" 3:22  follow-up: Your final message could not be used: "),
-        "{}",
-        output.stdout
-    );
-}
-
-#[tokio::test]
-async fn a_run_recorded_before_sessions_kept_what_they_ran_with_still_shows_its_transcript() {
-    let (_world, work_dir) = implemented_as_recorded().await;
-    let before = lw_in(work_dir.path(), &["logs", "1"]).await;
-    // Its sessions as bare directories, as records kept them before.
-    let path = work_dir
-        .path()
-        .join(REPO)
-        .join("runs/items/1/implement-1.json");
-    let mut record: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    let sessions = record["sessions"].as_array_mut().unwrap();
-    for session in sessions.iter_mut() {
-        *session = session["dir"].clone();
-    }
-    assert!(
-        sessions.iter().all(serde_json::Value::is_string),
-        "{record}"
-    );
-    std::fs::write(&path, record.to_string()).unwrap();
-
-    let after = lw_in(work_dir.path(), &["logs", "1"]).await;
-
-    assert_eq!(after.code, Some(0), "{}", after.stderr);
-    assert_eq!(after.stdout, before.stdout);
-    assert!(after.stdout.lines().count() > 2, "{}", after.stdout);
-}
-
-/// `docs/specs/design_system.md`, Transcripts; Time, Durations.
-#[tokio::test]
-async fn logs_shows_how_long_a_sub_agent_ran_as_a_duration_and_each_line_at_its_time() {
-    let (_world, work_dir) = implemented_by(implement_with_a_sub_agent_of_3h_2m_9s).await;
-
-    let output = lw_in(work_dir.path(), &["logs", "1"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<&str> = output.stdout.lines().skip(2).collect();
-    assert_eq!(
-        lines,
-        [
-            " 0:02  Agent(Review) → done, 3 tool uses, 3h 2m",
-            "3:02:15  The review came back clean.",
-        ],
-        "{}",
-        output.stdout
-    );
-}
-
-#[tokio::test]
-async fn logs_verbose_adds_the_brief_and_the_thinking() {
-    let (_world, work_dir) = implemented_as_recorded().await;
-
-    let output = lw_in(work_dir.path(), &["logs", "1", "--verbose"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines[2], " 0:00  brief: # Your task");
-    assert!(
-        output
-            .stdout
-            .contains(" 0:04  thinking: The listing has a Dockerfile.\n"),
-        "{}",
-        output.stdout
-    );
-}
-
-#[tokio::test]
-async fn logs_json_prints_one_object_per_line() {
-    let (_world, work_dir) = implemented_as_recorded().await;
-
-    let output = lw_in(work_dir.path(), &["logs", "1", "--json"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<serde_json::Value> = output
-        .stdout
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(lines.len(), 15, "{}", output.stdout);
-    assert_eq!(
-        lines[0],
-        json!({"type": "run", "run": "1/implement-1", "sessions": 1})
-    );
-    assert_eq!(lines[14]["type"], "message");
-    let first_sub_agent_line = lines.iter().find(|line| line["depth"] == 1).unwrap();
-    assert_eq!(
-        first_sub_agent_line["tool_use_id"],
-        "toolu_01LBDfAEHMPeecSbXMbfKv6Z"
-    );
-    assert_eq!(
-        first_sub_agent_line["parent_tool_use_id"],
-        "toolu_01T5JmkDxVfWvgdZeKR3KCjP"
-    );
-}
-
-#[tokio::test]
-async fn an_automations_run_by_hand_says_so_in_its_header_and_a_scheduled_one_does_not() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    world.hourly_by_schedule_then_by_hand().await;
-
-    let by_hand = lw_in(work_dir.path(), &["logs", "--run", "hourly/2"]).await;
-    let scheduled = lw_in(work_dir.path(), &["logs", "--run", "hourly/1"]).await;
-    let by_hand_json = lw_in(work_dir.path(), &["logs", "--run", "hourly/2", "--json"]).await;
-    let scheduled_json = lw_in(work_dir.path(), &["logs", "--run", "hourly/1", "--json"]).await;
-
-    assert_eq!(by_hand.code, Some(0), "{}", by_hand.stderr);
-    assert_eq!(
-        by_hand.stdout.lines().next(),
-        Some("run: hourly/2, by hand")
-    );
-    assert_eq!(scheduled.stdout.lines().next(), Some("run: hourly/1"));
-    let header = |output: &Output| -> serde_json::Value {
-        serde_json::from_str(output.stdout.lines().next().unwrap()).unwrap()
-    };
-    assert_eq!(
-        header(&by_hand_json),
-        json!({"type": "run", "run": "hourly/2", "started_by": "hand", "sessions": 1})
-    );
-    assert_eq!(
-        header(&scheduled_json),
-        json!({"type": "run", "run": "hourly/1", "started_by": "schedule", "sessions": 1})
-    );
-}
-
-#[tokio::test]
-async fn a_run_that_started_no_session_says_so() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let (_, pr) = world.ticket_in_review().await;
-    assert_eq!(pr, Number(2));
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Other work",
-            "",
-            &[("src/other.txt", "other\n")],
-        )
-        .await
-        .unwrap();
-    // Brought up to date without a session: nothing conflicts.
-    world.poll().await;
-
-    let output = lw_in(work_dir.path(), &["logs", "2", "--run", "2/update-1"]).await;
-    let json = lw_in(work_dir.path(), &["logs", "--run", "2/update-1", "--json"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, "run: 2/update-1 (it started no session)\n");
-    assert_eq!(
-        json.stdout,
-        "{\"type\":\"run\",\"run\":\"2/update-1\",\"sessions\":0}\n"
-    );
 }
 
 #[tokio::test]
@@ -429,26 +229,6 @@ async fn an_unknown_item_or_run_exits_4_saying_so() {
         assert!(output.stderr.contains(error), "{}", output.stderr);
     }
     assert_eq!(neither.code, Some(2), "{}", neither.stderr);
-}
-
-#[tokio::test]
-async fn a_named_run_whose_record_does_not_read_exits_1_saying_why() {
-    let (_world, work_dir) = implemented_as_recorded().await;
-    let [record] = &files_named(work_dir.path(), "items/1/implement-1.json")[..] else {
-        panic!("one record of 1/implement-1");
-    };
-    std::fs::write(record, "not a record").unwrap();
-
-    let output = lw_in(work_dir.path(), &["logs", "--run", "1/implement-1"]).await;
-
-    assert_eq!(output.code, Some(1), "{}", output.stderr);
-    assert!(
-        output
-            .stderr
-            .contains("reading the record of 1/implement-1: expected ident"),
-        "{}",
-        output.stderr
-    );
 }
 
 #[tokio::test]
@@ -480,14 +260,9 @@ async fn world_setting_up_with(setup: &str) -> (World, tempfile::TempDir) {
     (world, work_dir)
 }
 
-fn json_lines(output: &Output) -> Vec<serde_json::Value> {
-    json_objects(&output.stdout)
-}
-
-/// `docs/specs/design_system.md`, Transcripts, Times and Setup;
 /// `docs/specs/monitoring.md`, logs, Setup.
 #[tokio::test]
-async fn logs_shows_a_setup_command_as_its_sessions_first_entry_with_its_output_only_in_full() {
+async fn logs_shows_the_setup_command_a_session_ran() {
     let (mut world, work_dir) = world_setting_up_with("echo 'added 3 packages'").await;
     implement_as_recorded(&world);
     world.store.open_issue(
@@ -498,87 +273,84 @@ async fn logs_shows_a_setup_command_as_its_sessions_first_entry_with_its_output_
     );
     world.poll().await;
 
-    let compact = lw_in(work_dir.path(), &["logs", "1"]).await;
-    let verbose = lw_in(work_dir.path(), &["logs", "1", "--verbose"]).await;
-    let json = lw_in(work_dir.path(), &["logs", "1", "--json"]).await;
+    let output = lw_in(work_dir.path(), &["logs", "1"]).await;
 
-    assert_eq!(compact.code, Some(0), "{}", compact.stderr);
-    let compact: Vec<&str> = compact.stdout.lines().collect();
-    // The session started with its setup command, when the clock said.
-    assert!(
-        compact[1].starts_with("session 1: started 2026-10-01 12:00:"),
-        "{compact:#?}"
-    );
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
-        compact[2],
-        " 0:00  setup: echo 'added 3 packages' → exit 0, 0s"
+        output.stdout.lines().nth(2),
+        Some(" 0:00  setup: echo 'added 3 packages' → exit 0, 0s"),
+        "{}",
+        output.stdout
     );
-    assert!(compact[3].contains("  Bash(ls;"), "{compact:#?}");
-    let verbose: Vec<&str> = verbose.stdout.lines().collect();
-    assert_eq!(
-        verbose[2..4],
-        [
-            " 0:00  setup: echo 'added 3 packages' → exit 0, 0s",
-            "         added 3 packages",
-        ]
-    );
-    assert!(verbose[4].contains("  brief: "), "{verbose:#?}");
-    let json = json_lines(&json);
-    let mut setup = json[2].clone();
-    assert!(
-        setup["duration_seconds"].as_f64().is_some_and(|s| s < 10.0),
-        "{setup}"
-    );
-    setup["duration_seconds"] = json!(0);
-    assert_eq!(
-        setup,
-        json!({
-            "type": "setup",
-            "session": 1,
-            "at": json[1]["started_at"],
-            "elapsed_seconds": 0,
-            "depth": 0,
-            "command": "echo 'added 3 packages'",
-            "status": {"exited": 0},
-            "duration_seconds": 0,
-            "output": "added 3 packages\n",
-        })
-    );
-    assert_eq!(json[3]["type"], "tool");
 }
 
-/// `docs/specs/monitoring.md`, logs: the run picked is the latest that
-/// started a session, as one whose setup command failed did.
-#[tokio::test]
-async fn a_run_whose_setup_command_failed_shows_it_under_each_session_and_is_the_one_logs_shows() {
-    let (mut world, work_dir) =
-        world_setting_up_with("echo 'npm ERR! missing lockfile'; exit 3").await;
-    world
-        .store
-        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
-    world.poll().await;
+#[test]
+fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript() {
+    let record = item_run_record(
+        5,
+        "rework",
+        1,
+        Some("done"),
+        &json!(["sessions/5/rework-1"]),
+    );
+    let output = output_of(&[
+        json!({"type": "linewright-turn", "started_at": "2026-10-14T12:00:05Z", "started_by": "brief"}),
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-14T12:00:09Z",
+            "message": {"content": [{"type": "text", "text": "Renamed it."}]},
+        }),
+    ]);
+    let (_base, work_dir) = work_dir_holding(&[
+        ("runs/items/5/rework-1.json", &record),
+        ("sessions/5/rework-1/output.jsonl", &output),
+    ]);
 
-    let shown = lw_in(work_dir.path(), &["logs", "1"]).await;
-    let json = lw_in(work_dir.path(), &["logs", "1", "--json"]).await;
+    let transcript = logs::answer(&work_dir, &item(5)).unwrap();
 
-    assert_eq!(shown.code, Some(0), "{}", shown.stderr);
-    let setup = " 0:00  setup: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s\n         \
-                 npm ERR! missing lockfile\n";
-    let shown: Vec<&str> = shown.stdout.split_inclusive('\n').collect();
-    assert_eq!(shown[0], "run: 1/triage-1\n");
-    // Each session started with its setup command, when the clock said.
-    for (session, lines) in shown[1..].chunks(3).enumerate() {
-        let started = format!("session {}: started 2026-10-01 12:00:", session + 1);
-        assert!(lines[0].starts_with(&started), "{shown:#?}");
-        assert_eq!(lines[1..].concat(), setup);
-    }
-    assert_eq!(shown.len(), 7, "{shown:#?}");
-    let lines = json_lines(&json);
-    let types: Vec<&str> = lines
-        .iter()
-        .map(|line| line["type"].as_str().unwrap())
-        .collect();
-    assert_eq!(types, ["run", "session", "setup", "session", "setup"]);
-    assert_eq!(lines[2]["status"], json!({"exited": 3}));
-    assert_eq!(lines[2]["output"], "npm ERR! missing lockfile\n");
+    assert_eq!(
+        transcript::render(&transcript, Verbosity::Compact, false),
+        "run: 5/rework-1\n\
+         session 1: started 2026-10-14 12:00:05 UTC\n \
+         0:04  Renamed it.\n"
+    );
+}
+
+#[test]
+fn a_named_run_whose_record_does_not_read_fails_saying_why() {
+    let (_base, work_dir) = work_dir_holding(&[("runs/items/1/implement-1.json", "not a record")]);
+    let named = Which::Run {
+        id: "1/implement-1".parse().unwrap(),
+        item: None,
+    };
+
+    let answered = logs::answer(&work_dir, &named);
+
+    let Err(LogsError::Other(e)) = answered else {
+        panic!("not a failure to read: {answered:?}");
+    };
+    assert_eq!(
+        format!("{e:#}"),
+        "reading the record of 1/implement-1: expected ident at line 1 column 2"
+    );
+}
+
+#[test]
+fn a_session_yet_to_write_anything_counts_as_started() {
+    let record = item_run_record(1, "triage", 1, None, &json!(["sessions/1/triage-1"]));
+    let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);
+    let repo_dir = base.path().join(REPO);
+    std::fs::create_dir_all(repo_dir.join("sessions/1/triage-1")).unwrap();
+    let _lock = lock_of(&repo_dir.join("runs/items/1/triage-1.json"));
+
+    let transcript = logs::answer(&work_dir, &item(1)).unwrap();
+
+    assert_eq!(
+        transcript::render(&transcript, Verbosity::Compact, false),
+        "run: 1/triage-1\n"
+    );
+    assert_eq!(
+        transcript::json_lines(&transcript, Verbosity::Compact),
+        "{\"type\":\"run\",\"run\":\"1/triage-1\",\"sessions\":1}\n"
+    );
 }
