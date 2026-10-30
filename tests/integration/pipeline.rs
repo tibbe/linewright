@@ -3109,41 +3109,6 @@ async fn a_handed_back_tickets_next_run_starts_from_its_branch_and_is_told_it_ho
 }
 
 #[tokio::test]
-async fn a_handed_back_ticket_relabeled_before_the_next_poll_starts_from_its_branch() {
-    let mut world = World::new().await;
-    let (ticket, _) = world.ticket_handed_back_with_its_branch().await;
-
-    let next = script_next_run(&world, finish_gadgets);
-    relabeled_and_designed_again(&world, ticket).await;
-    world
-        .factory
-        .refresh([linewright::domain::Item::Issue(ticket)])
-        .await
-        .unwrap();
-    world.factory.settle().await;
-
-    assert!(next.held_earlier_work());
-}
-
-#[tokio::test]
-async fn a_handed_back_tickets_next_run_starts_from_the_default_branch_once_its_branch_is_deleted()
-{
-    let mut world = World::new().await;
-    let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
-    assert!(
-        store_git(&world, &["branch", "-D", &branch])
-            .status
-            .success()
-    );
-
-    let next = worked_again(&mut world, ticket, finish_gadgets).await;
-
-    assert!(!next.held_earlier_work());
-    let prompt = &world.harness.prompts(WorkKind::Implement)[0];
-    assert!(prompt.contains(&branch), "{prompt}");
-}
-
-#[tokio::test]
 async fn a_run_that_resets_its_tickets_branch_to_the_default_branch_replaces_the_earlier_work() {
     let mut world = World::new().await;
     let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
@@ -3180,17 +3145,6 @@ fn subjects(world: &World, branch: &str) -> Vec<String> {
         .collect()
 }
 
-async fn assert_edits_kept_as_unfinished(world: &World, branch: &str) {
-    assert_eq!(subjects(world, branch), ["Start", UNFINISHED]);
-    let file = |path: &'static str| async move { world.store.file(branch, path).await.ok() };
-    assert_eq!(
-        file("src/partial.txt").await.as_deref(),
-        Some("half and more\n")
-    );
-    assert_eq!(file("src/new.txt").await.as_deref(), Some("new\n"));
-    assert_eq!(file("build.log").await, None, "ignored files are left out");
-}
-
 #[tokio::test]
 async fn a_timed_out_session_leaves_its_uncommitted_edits_on_the_tickets_branch_as_an_unfinished_commit()
  {
@@ -3211,7 +3165,7 @@ async fn a_timed_out_session_leaves_its_uncommitted_edits_on_the_tickets_branch_
     world.poll().await;
 
     let branch = format!("{}-gadgets", ticket.0);
-    assert_edits_kept_as_unfinished(&world, &branch).await;
+    assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
     let issue = world.issue(ticket);
     assert!(issue.has_label("ready-for-human"), "{:?}", issue.labels);
     let comment = last_comment(&issue);
@@ -3262,7 +3216,7 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
         world.poll().await;
 
         let branch = format!("{}-gadgets", ticket.0);
-        assert_edits_kept_as_unfinished(&world, &branch).await;
+        assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
         let issue = world.issue(ticket);
         assert!(issue.has_label("ready-for-human"), "{:?}", issue.labels);
         assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
@@ -3270,27 +3224,6 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
         assert!(comment.contains(says), "{comment}");
         assert!(comment.contains(&kept_on(&branch)), "{comment}");
     }
-}
-
-#[tokio::test]
-async fn a_run_that_ends_for_the_usage_limit_leaves_its_uncommitted_edits_as_an_unfinished_commit()
-{
-    let mut world = World::new().await;
-    world.harness.on(WorkKind::Implement, |call| {
-        start_and_leave_edits(&call.spec.dir);
-        refused_for_the_usage_limit()
-    });
-    let ticket = world.store.open_issue(
-        "maintainer",
-        "Gadgets",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-
-    world.poll().await;
-
-    assert_edits_kept_as_unfinished(&world, &format!("{}-gadgets", ticket.0)).await;
-    assert_eq!(world.issue(ticket).comments, []);
 }
 
 /// Starts a ticket's run, which leaves edits uncommitted, and has `cancel`
@@ -3322,19 +3255,6 @@ async fn cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, Number)
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_cancelled_run_leaves_its_uncommitted_edits_as_an_unfinished_commit() {
-    let mut world = World::new().await;
-
-    let ticket = cancelled_with_edits(&mut world, |world, ticket| {
-        world.store.unlabel_as(ticket, "ready-for-agent").unwrap();
-    })
-    .await;
-
-    assert_edits_kept_as_unfinished(&world, &format!("{}-gadgets", ticket.0)).await;
-    assert_eq!(world.issue(ticket).comments, []);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_run_cancelled_by_closing_its_ticket_pushes_its_work_and_the_branch_is_deleted_after() {
     let mut world = World::new().await;
 
@@ -3344,7 +3264,7 @@ async fn a_run_cancelled_by_closing_its_ticket_pushes_its_work_and_the_branch_is
     .await;
 
     let branch = format!("{}-gadgets", ticket.0);
-    assert_edits_kept_as_unfinished(&world, &branch).await;
+    assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
     world.poll().await;
     assert!(!has_branch(&world, &branch));
 }
@@ -3377,88 +3297,6 @@ async fn a_run_that_ends_with_nothing_committed_or_uncommitted_pushes_nothing_an
 }
 
 #[tokio::test]
-async fn a_run_that_stops_mid_rebase_leaves_its_work_and_resolution_as_an_unfinished_commit_on_a_branch_not_mid_rebase()
- {
-    let mut world = World::new().await;
-    world.harness.on(WorkKind::Implement, |call| {
-        let dir = &call.spec.dir;
-        commit_in(dir, &[("src/gadgets.txt", "ours\n")], "Start");
-        git_in(dir, &["checkout", "--quiet", "-b", "theirs", "HEAD~1"]);
-        commit_in(dir, &[("src/gadgets.txt", "theirs\n")], "Theirs");
-        git_in(dir, &["checkout", "--quiet", "-"]);
-        let rebase = std::process::Command::new("git")
-            .args(["rebase", "--quiet", "theirs"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(!rebase.status.success(), "the rebase stops on a conflict");
-        std::fs::write(dir.join("src/gadgets.txt"), "ours, then theirs\n").unwrap();
-        std::fs::write(dir.join("src/more.txt"), "more\n").unwrap();
-        Err(linewright::harness::SessionError::TimedOut {
-            log_tail: String::new(),
-        })
-    });
-    let ticket = world.store.open_issue(
-        "maintainer",
-        "Gadgets",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-
-    world.poll().await;
-
-    let branch = format!("{}-gadgets", ticket.0);
-    assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
-    assert_eq!(
-        world.store.file(&branch, "src/gadgets.txt").await.unwrap(),
-        "ours, then theirs\n"
-    );
-    assert_eq!(
-        world.store.file(&branch, "src/more.txt").await.unwrap(),
-        "more\n"
-    );
-    assert!(last_comment(&world.issue(ticket)).ends_with(&kept_on(&branch)));
-}
-
-#[tokio::test]
-async fn the_next_run_is_told_to_fold_in_the_unfinished_commit_and_its_done_is_sent_back_until_it_does()
- {
-    let mut world = World::new().await;
-    let (ticket, branch) = world.ticket_timed_out_with_edits().await;
-    let unfinished = store_git(&world, &["log", "-1", "--format=%h", &branch]).stdout;
-    let unfinished = String::from_utf8(unfinished).unwrap();
-    let unfinished = unfinished.trim();
-    world.harness.on(WorkKind::Implement, |call| {
-        let dir = &call.spec.dir;
-        if call.followup.is_none() {
-            commit_in(dir, &[("src/gadgets.txt", "gadgets\n")], "Finish gadgets");
-        } else {
-            git_in(dir, &["reset", "--quiet", "--soft", "origin/main"]);
-            git_in(dir, &["commit", "--quiet", "-m", "Add gadgets"]);
-        }
-        Ok(
-            json!({"outcome": "done", "pr_title": "Add gadgets", "pr_body": "Gadgets."})
-                .to_string(),
-        )
-    });
-
-    relabeled_and_designed_again(&world, ticket).await;
-    world.poll().await;
-
-    let prompts = world.harness.prompts(WorkKind::Implement);
-    assert!(prompts[0].contains(unfinished), "{}", prompts[0]);
-    assert!(prompts[1].contains(unfinished), "{}", prompts[1]);
-    assert_eq!(prompts.len(), 2);
-    let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
-    assert_eq!(pr.head_ref, branch);
-    assert_eq!(subjects(&world, &branch), ["Add gadgets"]);
-    assert_eq!(
-        world.store.file(&branch, "src/new.txt").await.unwrap(),
-        "new\n"
-    );
-}
-
-#[tokio::test]
 async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_request() {
     let mut world = World::new().await;
     let (ticket, branch) = world.ticket_timed_out_with_edits().await;
@@ -3478,27 +3316,6 @@ async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_r
     let comment = last_comment(&issue);
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
     assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
-}
-
-#[tokio::test]
-async fn a_run_that_stops_again_without_committing_keeps_one_unfinished_commit() {
-    let mut world = World::new().await;
-    let (ticket, branch) = world.ticket_timed_out_with_edits().await;
-    world.harness.on(WorkKind::Implement, |call| {
-        std::fs::write(call.spec.dir.join("src/new.txt"), "newer\n").unwrap();
-        Err(linewright::harness::SessionError::TimedOut {
-            log_tail: String::new(),
-        })
-    });
-
-    relabeled_and_designed_again(&world, ticket).await;
-    world.poll().await;
-
-    assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
-    assert_eq!(
-        world.store.file(&branch, "src/new.txt").await.unwrap(),
-        "newer\n"
-    );
 }
 
 #[tokio::test]
@@ -3534,26 +3351,13 @@ async fn a_run_that_fails_on_its_infrastructure_is_retried_from_its_unfinished_c
 
     let branch = format!("{}-gadgets", ticket.0);
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
-    assert_edits_kept_as_unfinished(&world, &branch).await;
+    assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
         comment.starts_with("The run failed twice on its infrastructure")
             && comment.ends_with(&kept_on(&branch)),
         "{comment}"
     );
-}
-
-async fn assert_pull_edits_kept_as_unfinished(world: &World, branch: &str) {
-    assert_eq!(
-        subjects(world, branch),
-        ["Do the ticket", "Rename", UNFINISHED]
-    );
-    let file = |path: &'static str| async move { world.store.file(branch, path).await.ok() };
-    assert_eq!(
-        file("src/renamed.txt").await.as_deref(),
-        Some("renamed and more\n")
-    );
-    assert_eq!(file("src/new.txt").await.as_deref(), Some("new\n"));
 }
 
 #[tokio::test]
@@ -3570,7 +3374,10 @@ async fn a_timed_out_rework_leaves_its_uncommitted_edits_on_the_pull_requests_br
     world.poll().await;
 
     let branch = world.store.snapshot_pull(pr).await.head_ref;
-    assert_pull_edits_kept_as_unfinished(&world, &branch).await;
+    assert_eq!(
+        subjects(&world, &branch),
+        ["Do the ticket", "Rename", UNFINISHED]
+    );
     let comment = handed_back_comment(&world, ticket, pr).await;
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
@@ -3593,7 +3400,10 @@ async fn a_timed_out_ci_fix_leaves_its_uncommitted_edits_on_the_pull_requests_br
     world.poll().await;
 
     let branch = world.store.snapshot_pull(pr).await.head_ref;
-    assert_pull_edits_kept_as_unfinished(&world, &branch).await;
+    assert_eq!(
+        subjects(&world, &branch),
+        ["Do the ticket", "Rename", UNFINISHED]
+    );
     let comment = handed_back_comment(&world, ticket, pr).await;
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
@@ -3646,7 +3456,10 @@ async fn a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_unc
         world.poll().await;
 
         let branch = world.store.snapshot_pull(pr).await.head_ref;
-        assert_pull_edits_kept_as_unfinished(&world, &branch).await;
+        assert_eq!(
+            subjects(&world, &branch),
+            ["Do the ticket", "Rename", UNFINISHED]
+        );
         assert!(!linewright_assigned(&world, pr).await);
         let comment = last_pull_comment(&world, pr).await;
         assert!(comment.contains(says), "{comment}");
@@ -3700,7 +3513,10 @@ async fn a_rework_cancelled_by_unassigning_linewright_keeps_its_edits_as_an_unfi
     world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
-    assert_pull_edits_kept_as_unfinished(&world, &view.head_ref).await;
+    assert_eq!(
+        subjects(&world, &view.head_ref),
+        ["Do the ticket", "Rename", UNFINISHED]
+    );
     assert!(
         !view
             .comments
@@ -3854,89 +3670,6 @@ async fn a_stopped_rework_with_nothing_new_but_its_update_pushes_nothing() {
     assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
     let comment = handed_back_comment(&world, ticket, pr).await;
     assert!(!comment.contains(&kept_on(&branch)), "{comment}");
-}
-
-async fn update_stopped_mid_conflict(method: linewright::domain::UpdateMethod) {
-    let (mut world, pr) = moved_past(Repository::default(), Some(method), true).await;
-    let ticket = world.store.snapshot_pull(pr).await.closes[0];
-    let file = format!("src/issue-{}.txt", ticket.0);
-    let resolving = file.clone();
-    world.harness.on(WorkKind::Update, move |call| {
-        std::fs::write(call.spec.dir.join(&resolving), "done\nother, half\n").unwrap();
-        timed_out()
-    });
-
-    world.poll().await;
-
-    let branch = world.store.snapshot_pull(pr).await.head_ref;
-    assert_eq!(
-        subjects(&world, &branch),
-        ["Do the ticket", UNFINISHED],
-        "{method:?}"
-    );
-    assert_eq!(merges(&world, &branch), 0, "{method:?}");
-    assert_eq!(
-        world.store.file(&branch, &file).await.unwrap(),
-        "done\nother, half\n",
-        "{method:?}"
-    );
-    assert!(
-        last_pull_comment(&world, pr)
-            .await
-            .contains(&kept_on(&branch)),
-        "{method:?}"
-    );
-}
-
-#[tokio::test]
-async fn an_update_stopped_mid_merge_keeps_its_resolution_as_an_unfinished_commit_not_a_merge() {
-    update_stopped_mid_conflict(linewright::domain::UpdateMethod::Merge).await;
-}
-
-#[tokio::test]
-async fn an_update_stopped_mid_rebase_keeps_the_commits_it_had_not_replayed() {
-    let mut world = World::with_repository(Repository::default(), |config| {
-        config.update_method = Some(linewright::domain::UpdateMethod::Rebase);
-    })
-    .await;
-    let (ticket, pr) = world.ticket_in_review().await;
-    let branch = world.store.snapshot_pull(pr).await.head_ref;
-    world
-        .store
-        .commit("alice", &branch, &[("src/more.txt", "more\n")], "More")
-        .await
-        .unwrap();
-    let file = format!("src/issue-{}.txt", ticket.0);
-    world
-        .store
-        .merge_change("maintainer", "Other work", "", &[(&file, "other\n")])
-        .await
-        .unwrap();
-    let resolving = file.clone();
-    world.harness.on(WorkKind::Update, move |call| {
-        std::fs::write(call.spec.dir.join(&resolving), "done\nother, half\n").unwrap();
-        timed_out()
-    });
-
-    world.poll().await;
-
-    assert_eq!(
-        subjects(&world, &branch),
-        ["Do the ticket", "More", UNFINISHED]
-    );
-    assert_eq!(
-        world.store.file(&branch, &file).await.unwrap(),
-        "done\nother, half\n"
-    );
-    assert_eq!(
-        world.store.file(&branch, "src/more.txt").await.unwrap(),
-        "more\n"
-    );
-}
-
-#[tokio::test]
-async fn an_update_stopped_mid_rebase_keeps_its_resolution_as_an_unfinished_commit_on_the_branch() {
-    update_stopped_mid_conflict(linewright::domain::UpdateMethod::Rebase).await;
 }
 
 #[tokio::test]

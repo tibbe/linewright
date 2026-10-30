@@ -154,7 +154,7 @@ pub fn open_designed_gadgets(world: &World) -> Number {
 pub const UNFINISHED: &str = "Unfinished work, kept when its run stopped";
 
 /// The whole message of that commit.
-const UNFINISHED_MESSAGE: &str = "Unfinished work, kept when its run stopped\n\n\
+pub const UNFINISHED_MESSAGE: &str = "Unfinished work, kept when its run stopped\n\n\
      Linewright committed what the session left uncommitted when its run stopped. The next \
      run folds it into its own commits.\n\nLinewright-Unfinished: true";
 
