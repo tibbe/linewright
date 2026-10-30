@@ -208,6 +208,9 @@ struct PullRecord {
     author: Login,
     created_at: Timestamp,
     updated_at: Timestamp,
+    /// The branch it merges into: the default branch unless
+    /// [`LocalStore::retarget`] changed it.
+    base_ref: String,
     head_ref: String,
     state: PullState,
     labels: Vec<String>,
@@ -483,15 +486,21 @@ impl LocalStore {
         let mut state = self.state();
         let number = state.take_number();
         let branch = format!("change-{}", number.0);
-        state.pulls.insert(
-            number,
-            PullRecord {
-                state: PullState::Merged { at: now },
-                merge: Some((before, merged.to_string())),
-                files,
-                ..PullRecord::new(number, title, body, Login::new(author), &branch, now)
-            },
-        );
+        let record = PullRecord {
+            state: PullState::Merged { at: now },
+            merge: Some((before, merged.to_string())),
+            files,
+            ..PullRecord::new(
+                &state,
+                number,
+                title,
+                body,
+                Login::new(author),
+                &branch,
+                now,
+            )
+        };
+        state.pulls.insert(number, record);
         Ok(number)
     }
 
@@ -510,41 +519,64 @@ impl LocalStore {
         let now = self.now();
         let mut state = self.state();
         let number = state.take_number();
-        state.pulls.insert(
-            number,
-            PullRecord {
-                state: PullState::Merged { at: now },
-                merge: Some((before, after)),
-                files: files.iter().map(|(path, _)| path.to_string()).collect(),
-                ..PullRecord::new(number, title, body, Login::new(author), &branch, now)
-            },
-        );
+        let record = PullRecord {
+            state: PullState::Merged { at: now },
+            merge: Some((before, after)),
+            files: files.iter().map(|(path, _)| path.to_string()).collect(),
+            ..PullRecord::new(
+                &state,
+                number,
+                title,
+                body,
+                Login::new(author),
+                &branch,
+                now,
+            )
+        };
+        state.pulls.insert(number, record);
         Ok(number)
     }
 
     pub async fn merge_pull(&self, pr: Number) -> Result<()> {
-        self.merge_as(pr, "maintainer", MergeMethod::Merge).await
+        self.merge_and_close(pr, "maintainer", MergeMethod::Merge)
+            .await
+    }
+
+    /// As [`LocalStore::merge_pull`], up to GitHub closing the issues it
+    /// closes, which it does moments after the merge.
+    pub async fn merge_pull_before_its_issues_close(&self, pr: Number) -> Result<()> {
+        self.merge_as(pr, "maintainer", MergeMethod::Merge).await?;
+        Ok(())
+    }
+
+    /// Has #`pr` merge into `base`, a branch the repository holds, as
+    /// changing a pull request's base does
+    /// (<https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-base-branch-of-a-pull-request>).
+    pub fn retarget(&self, pr: Number, base: &str) -> Result<()> {
+        let now = self.now();
+        self.state().pull_written(pr, now)?.base_ref = base.into();
+        Ok(())
     }
 
     /// As GitHub merges
-    /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>).
-    async fn merge_as(&self, pr: Number, by: &str, method: MergeMethod) -> Result<()> {
-        let (head_ref, title, default_branch) = {
+    /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>),
+    /// returning when it merged.
+    async fn merge_as(&self, pr: Number, by: &str, method: MergeMethod) -> Result<Timestamp> {
+        let (head_ref, title, base_ref) = {
             let state = self.state();
-            let default_branch = state.default_branch.clone();
             let record = state.pull(pr)?;
             (
                 record.head_ref.clone(),
                 record.title.clone(),
-                default_branch,
+                record.base_ref.clone(),
             )
         };
-        let before = self.rev(&default_branch).await?;
+        let before = self.rev(&base_ref).await?;
         let repo = self.repository();
         let after = history::merge(
             &repo,
             MergeOf {
-                into: &default_branch,
+                into: &base_ref,
                 before: &before,
                 head: &head_ref,
                 method,
@@ -561,8 +593,26 @@ impl LocalStore {
         record.state = PullState::Merged { at: now };
         record.merge = Some((before, after));
         record.files = files;
-        let closes = closing_references(&record.body);
-        for issue in closes {
+        Ok(now)
+    }
+
+    /// As [`LocalStore::merge_as`], then GitHub closing the issues #`pr`
+    /// closes.
+    async fn merge_and_close(&self, pr: Number, by: &str, method: MergeMethod) -> Result<()> {
+        let merged_at = self.merge_as(pr, by, method).await?;
+        self.close_issues_merged_by(pr, merged_at)
+    }
+
+    /// As GitHub closes the issues a pull request closes once it merged
+    /// into the default branch, and only then, at `now`
+    /// (<https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>).
+    fn close_issues_merged_by(&self, pr: Number, now: Timestamp) -> Result<()> {
+        let mut state = self.state();
+        let record = state.pull(pr)?;
+        if record.base_ref != state.default_branch {
+            return Ok(());
+        }
+        for issue in closing_references(&record.body) {
             if let Ok(issue) = state.issue_written(issue, now) {
                 issue.close(now, Some(pr), IssueCloseReason::Completed);
             }
@@ -715,13 +765,11 @@ impl LocalStore {
         let now = self.now();
         let mut state = self.state();
         let number = state.take_number();
-        state.pulls.insert(
-            number,
-            PullRecord {
-                state: PullState::Open { draft: false },
-                ..PullRecord::new(number, title, body, Login::new(author), branch, now)
-            },
-        );
+        let record = PullRecord {
+            state: PullState::Open { draft: false },
+            ..PullRecord::new(&state, number, title, body, Login::new(author), branch, now)
+        };
+        state.pulls.insert(number, record);
         Ok(number)
     }
 
@@ -1046,6 +1094,7 @@ impl LocalStore {
             author: record.author,
             created_at: record.created_at,
             updated_at: record.updated_at,
+            base_ref: record.base_ref,
             head_ref: record.head_ref,
             head_sha,
             state: record.state,
@@ -1208,6 +1257,7 @@ impl State {
                     author: p.author.clone(),
                     state: p.state,
                     updated_at: p.updated_at,
+                    base_ref: p.base_ref.clone(),
                 })
                 .collect(),
             ..issue.clone()
@@ -1485,10 +1535,15 @@ impl PullRecord {
         events
     }
 
+    /// The pull request as the snapshot holds it among the merged ones:
+    /// `None` unless it merged into `default_branch`.
     fn merged(&self, default_branch: &str) -> Option<MergedPull> {
         let PullState::Merged { at } = self.state else {
             return None;
         };
+        if self.base_ref != default_branch {
+            return None;
+        }
         Some(MergedPull {
             number: self.number,
             title: self.title.clone(),
@@ -1496,7 +1551,7 @@ impl PullRecord {
             author: self.author.clone(),
             merged_at: at,
             updated_at: self.updated_at,
-            base_ref: default_branch.to_string(),
+            base_ref: self.base_ref.clone(),
             labels: self.labels.clone(),
             closes: closing_references(&self.body),
             files: self.files.clone(),
@@ -1505,7 +1560,9 @@ impl PullRecord {
         })
     }
 
+    /// A pull request into `state`'s default branch.
     fn new(
+        state: &State,
         number: Number,
         title: &str,
         body: &str,
@@ -1520,6 +1577,7 @@ impl PullRecord {
             author,
             created_at: now,
             updated_at: now,
+            base_ref: state.default_branch.clone(),
             head_ref: head_ref.into(),
             state: PullState::Open { draft: true },
             labels: vec![],
@@ -2111,10 +2169,16 @@ impl Store for LocalStore {
             let mut state = self.state();
             let number = state.take_number();
             let author = state.linewright.clone();
-            state.pulls.insert(
+            let record = PullRecord::new(
+                &state,
                 number,
-                PullRecord::new(number, &pull.title, &pull.body, author, &pull.head, now),
+                &pull.title,
+                &pull.body,
+                author,
+                &pull.head,
+                now,
             );
+            state.pulls.insert(number, record);
             number
         };
         self.paused(Write::OpenPull { head: pull.head }).await?;
@@ -2172,7 +2236,7 @@ impl Store for LocalStore {
             bail!("the repository doesn't allow the merge method `{method}`");
         }
         let linewright = self.state().linewright.clone();
-        self.merge_as(pr, linewright.as_str(), method).await
+        self.merge_and_close(pr, linewright.as_str(), method).await
     }
 
     async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()> {

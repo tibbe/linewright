@@ -19,6 +19,7 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         author: Login::new("factory"),
         created_at: at("2026-10-01T11:58:00Z"),
         updated_at: at("2026-10-01T11:58:00Z"),
+        base_ref: "main".into(),
         head_ref: format!("{closes}-do"),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: true },
@@ -2267,6 +2268,7 @@ fn a_pull_request_names_each_issue_it_closes_as_a_parent() {
 fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
     let ended = |number| ClosingPull {
         number: Number(number),
+        base_ref: "main".into(),
         author: Login::new("alice"),
         state: PullState::Closed {
             at: at("2026-10-01T11:00:00Z"),

@@ -96,6 +96,7 @@ pub fn closed_by(issue: Issue, pr: u64, author: &str) -> Issue {
     Issue {
         closed_by: vec![ClosingPull {
             number: Number(pr),
+            base_ref: "main".into(),
             author: Login::new(author),
             state: PullState::Open { draft: false },
             updated_at: at("2026-09-30T09:00:00Z"),

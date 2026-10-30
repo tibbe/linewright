@@ -741,6 +741,81 @@ async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request
     web.stop().await;
 }
 
+/// Each card of an issue, as [`cards_shown`].
+fn issue_cards_shown(html: &Html) -> Vec<String> {
+    cards_shown(html)
+        .into_iter()
+        .filter(|(_, pull_request)| !pull_request)
+        .map(|(card, _)| card)
+        .collect()
+}
+
+#[tokio::test]
+async fn an_issue_whose_pull_request_merged_is_in_done_before_github_closes_it() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .merge_pull_before_its_issues_close(pr)
+        .await
+        .unwrap();
+    let web = Web::start(world).await;
+
+    assert_eq!(
+        issue_cards_shown(&web.page("/").await),
+        [format!(
+            "Done: {ticket}: Do the thing | closed in {pr} · 2026-10-01 12:00:SS UTC"
+        )]
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn an_issue_reopened_after_its_pull_request_merged_leaves_done() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world.store.merge_pull(pr).await.unwrap();
+    world.store.reopen_issue_as(ticket).unwrap();
+    let web = Web::start(world).await;
+
+    let shown = issue_cards_shown(&web.page("/").await);
+
+    assert_eq!(shown.len(), 1);
+    assert!(
+        shown[0].starts_with(&format!("Working: {ticket}: Do the thing")),
+        "{shown:?}"
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn an_issue_whose_pull_request_merged_into_another_branch_is_not_in_done() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "release",
+            &[("RELEASE", "1.0\n")],
+            "Branch off",
+        )
+        .await
+        .unwrap();
+    world.store.retarget(pr, "release").unwrap();
+    world.store.merge_pull(pr).await.unwrap();
+    let web = Web::start(world).await;
+
+    let shown = issue_cards_shown(&web.page("/").await);
+
+    assert_eq!(shown.len(), 1);
+    assert!(
+        shown[0].starts_with(&format!("Working: {ticket}: Do the thing")),
+        "{shown:?}"
+    );
+    web.stop().await;
+}
+
 #[tokio::test]
 async fn an_issue_closed_without_a_merge_shows_githubs_reason_for_closing_it() {
     use linewright::domain::IssueCloseReason::{Completed, Duplicate, NotPlanned};

@@ -119,6 +119,7 @@ fn pull(number: u64, closes: &[u64], checks: &[CheckState]) -> Pull {
         author: Login::new("factory"),
         created_at: at("2026-10-01T11:58:00Z"),
         updated_at: at("2026-10-01T11:58:00Z"),
+        base_ref: "main".into(),
         head_ref: format!("{number}-pull"),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: false },
@@ -530,6 +531,174 @@ fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
     );
 }
 
+/// Linewright's pull request #`number`, merged into `base` at `merged_at`,
+/// as an issue it closes refers to it.
+fn merged_into(number: u64, base: &str, merged_at: &str) -> ClosingPull {
+    ClosingPull {
+        number: Number(number),
+        author: Login::new("factory"),
+        state: PullState::Merged { at: at(merged_at) },
+        updated_at: at(merged_at),
+        base_ref: base.into(),
+    }
+}
+
+fn reopened(when: &str) -> IssueEvent {
+    IssueEvent::Reopened { at: at(when) }
+}
+
+#[test]
+fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since_it_was_last_opened_is_in_done()
+ {
+    let ready = || labeled(1, &["ready-for-agent", label::DESIGNED]);
+    let merged_into_main = Issue {
+        closed_by: vec![merged_into(11, "main", "2026-09-30T10:00:00Z")],
+        ..ready()
+    };
+    let unlabeled = Issue {
+        number: Number(2),
+        labels: vec![],
+        events: vec![],
+        closed_by: vec![merged_into(12, "main", "2026-09-30T10:02:00Z")],
+        ..ready()
+    };
+    let merged_elsewhere = Issue {
+        number: Number(3),
+        closed_by: vec![merged_into(13, "release", "2026-09-30T10:03:00Z")],
+        ..ready()
+    };
+    let reopened_since = Issue {
+        number: Number(4),
+        events: [ready().events, vec![reopened("2026-09-30T11:00:00Z")]].concat(),
+        closed_by: vec![merged_into(14, "main", "2026-09-30T10:04:00Z")],
+        ..ready()
+    };
+    let merged_several = Issue {
+        number: Number(5),
+        events: [ready().events, vec![reopened("2026-09-30T09:00:00Z")]].concat(),
+        closed_by: vec![
+            merged_into(15, "main", "2026-09-30T08:00:00Z"),
+            merged_into(16, "main", "2026-09-30T10:06:00Z"),
+            merged_into(17, "main", "2026-09-30T10:05:00Z"),
+            merged_into(18, "release", "2026-09-30T09:30:00Z"),
+        ],
+        ..ready()
+    };
+    let view = view(
+        vec![
+            merged_into_main,
+            unlabeled,
+            merged_elsewhere,
+            reopened_since,
+            merged_several,
+        ],
+        vec![],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    let mut placed = placed(&board);
+    placed.sort_by_key(|(_, _, number)| *number);
+    assert_eq!(
+        placed,
+        [
+            (1, Column::Done, 1),
+            (2, Column::Done, 2),
+            (3, Column::Ready, 3),
+            (4, Column::Ready, 4),
+            (5, Column::Done, 5),
+        ]
+    );
+    let ended = |pull_request, when| {
+        Some(CardLine::Ended {
+            ended: Ended::ClosedIn(Number(pull_request)),
+            at: at(when),
+        })
+    };
+    assert_eq!(card(&board, 1).line, ended(11, "2026-09-30T10:00:00Z"));
+    assert_eq!(card(&board, 2).line, ended(12, "2026-09-30T10:02:00Z"));
+    assert_eq!(card(&board, 5).line, ended(17, "2026-09-30T10:05:00Z"));
+}
+
+/// `closed`, with `events` and pull requests `closed_by` closing it.
+fn with_work(
+    mut closed: ClosedItem,
+    events: Vec<IssueEvent>,
+    closed_by: Vec<ClosingPull>,
+) -> ClosedItem {
+    if let ClosedKind::Issue { facts, .. } = &mut closed.kind {
+        facts.work.events = events;
+        facts.work.closed_by = closed_by;
+    }
+    closed
+}
+
+#[test]
+fn a_closed_issue_entered_done_when_its_first_closing_pull_request_since_it_was_last_opened_merged_or_else_when_it_closed()
+ {
+    let view = with_closed(
+        view(vec![], vec![]),
+        vec![
+            // Merged before it closed, with a later merge closing it.
+            with_work(
+                closed_issue(1, "2026-09-28T12:00:00Z", Some(12)),
+                vec![],
+                vec![
+                    merged_into(11, "main", "2026-09-26T12:00:00Z"),
+                    merged_into(12, "main", "2026-09-28T11:59:00Z"),
+                ],
+            ),
+            // Merged, reopened, then closed by a person.
+            with_work(
+                closed_issue(2, "2026-09-27T12:00:00Z", None),
+                vec![reopened("2026-09-26T12:00:00Z")],
+                vec![merged_into(21, "main", "2026-09-25T12:00:00Z")],
+            ),
+            // Merged into another branch, then closed by a person.
+            with_work(
+                closed_issue(3, "2026-09-27T13:00:00Z", None),
+                vec![],
+                vec![merged_into(31, "release", "2026-09-25T12:00:00Z")],
+            ),
+            // Merged before the Done window opened, closed within it.
+            with_work(
+                closed_issue(4, "2026-09-28T12:00:00Z", Some(41)),
+                vec![],
+                vec![merged_into(41, "main", "2026-09-20T12:00:00Z")],
+            ),
+        ],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        lanes(&board),
+        [
+            (3, Some(at("2026-09-27T13:00:00Z"))),
+            (2, Some(at("2026-09-27T12:00:00Z"))),
+            (1, Some(at("2026-09-26T12:00:00Z"))),
+        ]
+    );
+    let ended = |ended, when| {
+        Some(CardLine::Ended {
+            ended,
+            at: at(when),
+        })
+    };
+    assert_eq!(
+        card(&board, 1).line,
+        ended(Ended::ClosedIn(Number(11)), "2026-09-26T12:00:00Z")
+    );
+    assert_eq!(
+        card(&board, 2).line,
+        ended(Ended::Closed(None), "2026-09-27T12:00:00Z")
+    );
+    assert_eq!(
+        card(&board, 3).line,
+        ended(Ended::Closed(None), "2026-09-27T13:00:00Z")
+    );
+}
+
 fn spec_change(number: u64, labels: &[&str]) -> MergedPull {
     MergedPull {
         number: Number(number),
@@ -630,9 +799,7 @@ fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
     assert_eq!(
         card(&board, 5).line,
         Some(CardLine::Ended {
-            ended: Ended::NothingToBuild {
-                designed: at("2026-10-01T09:00:00Z")
-            },
+            ended: Ended::NothingToBuild,
             at: at("2026-10-01T09:00:00Z"),
         })
     );
@@ -757,6 +924,7 @@ fn an_issue_in_review_on_someone_elses_pull_request_names_them() {
     let unheld = Issue {
         closed_by: vec![ClosingPull {
             number: Number(20),
+            base_ref: "main".into(),
             author: Login::new("alice"),
             state: PullState::Open { draft: true },
             updated_at: at("2026-09-30T09:00:00Z"),
@@ -1959,6 +2127,7 @@ fn with_a_required_label_a_closed_issue_without_it_closed_by_a_pull_request_of_l
     let closed_by_ours = WorkFacts {
         closed_by: vec![ClosingPull {
             number: Number(10),
+            base_ref: "main".into(),
             author: Login::new("factory"),
             state: PullState::Closed {
                 at: at("2026-09-30T11:00:00Z"),
@@ -2040,7 +2209,7 @@ fn a_finished_lane_shows_every_ticket_until_it_finished_before_the_done_window_t
 }
 
 #[test]
-fn a_spec_change_designed_with_nothing_to_build_finished_when_it_was_designed() {
+fn a_spec_change_designed_with_nothing_to_build_entered_done_and_finished_when_it_was_designed() {
     let merged_before = |number: u64, designed: Option<&str>| MergedPull {
         merged_at: at("2026-09-01T09:00:00Z"),
         updated_at: at(designed.unwrap_or("2026-09-01T09:00:00Z")),
@@ -2065,10 +2234,8 @@ fn a_spec_change_designed_with_nothing_to_build_finished_when_it_was_designed() 
     assert_eq!(
         card(&board, 5).line,
         Some(CardLine::Ended {
-            ended: Ended::NothingToBuild {
-                designed: at("2026-09-29T09:00:00Z")
-            },
-            at: at("2026-09-01T09:00:00Z"),
+            ended: Ended::NothingToBuild,
+            at: at("2026-09-29T09:00:00Z"),
         })
     );
 }

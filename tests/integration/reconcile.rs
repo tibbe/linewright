@@ -1665,6 +1665,7 @@ fn the_branch_of_a_closed_ticket_is_deleted_unless_a_pull_request_is_open_for_it
     let mut closed_by_pull = closed(ticket(2));
     closed_by_pull.closed_by = vec![ClosingPull {
         number: Number(20),
+        base_ref: "main".into(),
         author: Login::new("alice"),
         state: PullState::Open { draft: false },
         updated_at: t(0),
@@ -1672,6 +1673,7 @@ fn the_branch_of_a_closed_ticket_is_deleted_unless_a_pull_request_is_open_for_it
     let mut closed_by_merged_pull = closed(ticket(7));
     closed_by_merged_pull.closed_by = vec![ClosingPull {
         number: Number(70),
+        base_ref: "main".into(),
         author: Login::new("alice"),
         state: PullState::Merged { at: t(5) },
         updated_at: t(5),
@@ -1801,6 +1803,7 @@ fn pull(number: u64, closes: u64) -> Pull {
         author: Login::new(LINEWRIGHT),
         created_at: t(1),
         updated_at: t(1),
+        base_ref: "main".into(),
         head_ref: format!("{closes}-ticket"),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: true },
@@ -4197,6 +4200,7 @@ fn a_ticket_only_pull_requests_closed_before_its_claim_close_is_claimed() {
     for number in [43, 44] {
         ticket.closed_by.push(ClosingPull {
             number: Number(number),
+            base_ref: "main".into(),
             author: Login::new("alice"),
             state: PullState::Closed { at: t(5) },
             updated_at: t(5),
@@ -4390,6 +4394,7 @@ fn a_ticket_someone_elses_merged_pull_request_closes_waits_to_be_labeled_again()
     let mut ticket = claimed(ticket(2));
     ticket.closed_by.push(ClosingPull {
         number: Number(20),
+        base_ref: "main".into(),
         author: Login::new("alice"),
         state: PullState::Merged { at: t(5) },
         updated_at: t(5),
