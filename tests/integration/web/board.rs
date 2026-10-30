@@ -236,6 +236,7 @@ async fn with_a_finished_lane() -> World {
         .open_issue(LINEWRIGHT, "Only part", "Of it.", &["ready-for-agent"]);
     world.store.add_sub_issue(tracking, part).await.unwrap();
     world.store.close_issue_as_completed(part).unwrap();
+    world.store.close_issue_as_completed(tracking).unwrap();
     world
 }
 

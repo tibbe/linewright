@@ -3,12 +3,12 @@
 
 use crate::common;
 
-use common::{NOW, at, labeled_by_linewright, sub_issue, ticket, view};
-use linewright::board::{CardLine, CardStatus, Column, LaneHead, Stop, board};
+use common::{NOW, at, closed_item, labeled_by_linewright, read_closed, sub_issue, ticket, view};
+use linewright::board::{CardLine, CardStatus, Column, Ended, LaneHead, Stop, board};
 use linewright::domain::*;
 use linewright::explain::{explain, explain_fresh, fresh_view};
 use linewright::item_facts::{ItemFacts, Related, StateFact, item_facts};
-use linewright::managed::{LeftAloneIssue, LeftAloneItem};
+use linewright::managed::{IssueExclusion, LeftAloneIssue, LeftAloneItem};
 use linewright::reconcile::Wait;
 use linewright::status::View;
 use linewright::store::AnyItem;
@@ -338,12 +338,13 @@ fn a_merged_spec_change_names_the_tracking_issue_cut_from_it() {
 
 #[test]
 fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_closed() {
-    let mut view = view(
-        vec![tracking_issue(20, 15, &[(1, false), (2, false)])],
-        vec![],
-    );
+    let mut view = view(vec![], vec![]);
     let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
     snapshot.closed = vec![
+        closed_item(
+            &tracking_issue(20, 15, &[(1, false), (2, false)]),
+            "2026-09-30T12:00:00Z",
+        ),
         closed_ticket(1, "2026-09-29T12:00:00Z"),
         closed_ticket(2, "2026-09-30T12:00:00Z"),
     ];
@@ -386,32 +387,29 @@ fn tracking_finished_before_the_window(open: bool) -> (View, Issue) {
     (view, tracking)
 }
 
-/// `docs/specs/design_system.md`, The item page, State: a tracking issue
-/// says when it finished off the board too.
+/// `docs/specs/repository.md`, Managed items: a tracking issue carries no
+/// status label, so with none of its tickets open it is managed no more.
 #[test]
-fn an_open_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_its_last_ticket_closed() {
-    let (view, _) = tracking_finished_before_the_window(true);
-    assert!(
-        board(&view, &[], at(NOW))
-            .lane_headed_by(Number(20))
-            .is_none()
-    );
+fn an_open_tracking_issue_with_none_of_its_tickets_open_is_left_alone() {
+    let (view, tracking) = tracking_finished_before_the_window(true);
 
-    let facts = facts_of(&view, 20);
+    let facts = facts_read(&view, &AnyItem::HeldIssue(Box::new(tracking)));
 
     assert_eq!(
         facts.state,
-        StateFact::Tracking {
-            finished: Some(at("2026-09-22T12:00:00Z"))
-        }
+        StateFact::LeftAlone(LeftAloneItem::Issue(LeftAloneIssue::Open {
+            left_alone: IssueExclusion::NoOpenTickets
+        }))
     );
 }
 
+/// `docs/specs/design_system.md`, The item page, State: a tracking issue
+/// says when it finished off the board too.
 #[test]
 fn a_closed_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_its_last_ticket_closed() {
     let (view, tracking) = tracking_finished_before_the_window(false);
 
-    let facts = facts_read(&view, &AnyItem::HeldIssue(Box::new(tracking)));
+    let facts = facts_read(&view, &read_closed(tracking, "2026-09-22T12:00:00Z"));
 
     assert_eq!(
         facts.state,
@@ -439,7 +437,7 @@ fn a_closed_tracking_issue_with_a_ticket_open_is_tracking() {
 
     let facts = facts_read(
         &view(vec![], vec![]),
-        &AnyItem::HeldIssue(Box::new(tracking)),
+        &read_closed(tracking, "2026-09-25T12:00:00Z"),
     );
 
     assert_eq!(facts.state, StateFact::Tracking { finished: None });
@@ -468,7 +466,7 @@ fn a_closed_tracking_issue_with_a_ticket_closed_at_an_unknown_time_is_tracking()
 
     let facts = facts_read(
         &view(vec![], vec![]),
-        &AnyItem::HeldIssue(Box::new(tracking)),
+        &read_closed(tracking, "2026-09-25T12:00:00Z"),
     );
 
     assert_eq!(facts.state, StateFact::Tracking { finished: None });
@@ -495,19 +493,49 @@ fn a_tracking_issue_heading_no_lane_is_related_by_its_number_and_title_alone() {
 }
 
 #[test]
-fn a_closed_issue_out_of_the_window_is_left_alone_as_closed() {
-    let closed = Issue {
-        open: false,
-        ..ticket(7, "Old idea")
-    };
+fn a_closed_issue_linewright_has_not_worked_is_left_alone_as_closed() {
+    let read = read_closed(ticket(7, "Old idea"), "2026-09-20T12:00:00Z");
 
-    let facts = facts_read(&view(vec![], vec![]), &AnyItem::HeldIssue(Box::new(closed)));
+    let facts = facts_read(&view(vec![], vec![]), &read);
 
     assert_eq!(
         facts.state,
         StateFact::LeftAlone(LeftAloneItem::Issue(LeftAloneIssue::Closed))
     );
     assert_eq!(facts.last_read, at(NOW));
+}
+
+#[test]
+fn a_closed_issue_linewright_worked_is_in_done_with_the_line_it_had_on_the_board_after_it_left_it()
+{
+    let worked = labeled_by_linewright(ticket(7, "Old idea"));
+    let done = Some(CardLine::Ended {
+        ended: Ended::Closed(Some(IssueCloseReason::Completed)),
+        at: at("2026-09-30T12:00:00Z"),
+    });
+
+    let off_the_board = facts_read(
+        &view(vec![], vec![]),
+        &read_closed(worked.clone(), "2026-09-30T12:00:00Z"),
+    );
+    let mut held = view(vec![], vec![]);
+    std::sync::Arc::make_mut(&mut held.snapshot).closed =
+        vec![closed_item(&worked, "2026-09-30T12:00:00Z")];
+    let board_card = board(&held, &[], at(NOW))
+        .card(Number(7))
+        .map(|(column, card)| (column, card.line.clone()));
+    let mut later = held.clone();
+    later.policy.done_window = chrono::TimeDelta::hours(1);
+    let left_the_board = facts_read(&later, &read_closed(worked, "2026-09-30T12:00:00Z"));
+
+    assert_eq!(board_card, Some((Column::Done, done.clone())));
+    assert_eq!(
+        card_state(&facts_of(&held, 7)),
+        (Column::Done, done.clone())
+    );
+    assert_eq!(card_state(&off_the_board), (Column::Done, done.clone()));
+    assert!(board(&later, &[], at(NOW)).card(Number(7)).is_none());
+    assert_eq!(card_state(&left_the_board), (Column::Done, done));
 }
 
 #[test]
@@ -565,4 +593,36 @@ fn what_linewright_waits_for_is_listed_only_while_it_waits_for_any() {
 
     assert_eq!(facts_of(&view, 1).waiting_for, [Wait::Maintainer]);
     assert_eq!(facts_of(&view, 2).waiting_for, []);
+}
+
+#[test]
+fn a_closed_issue_lists_the_merged_pull_requests_closing_it() {
+    let merged = ClosingPull {
+        number: Number(30),
+        base_ref: "main".into(),
+        author: Login::new("factory"),
+        state: PullState::Merged {
+            at: at("2026-09-30T11:00:00Z"),
+        },
+        updated_at: at("2026-09-30T11:00:00Z"),
+    };
+    let closed = Issue {
+        closed_by: vec![merged],
+        ..ticket(7, "Done")
+    };
+
+    let facts = facts_read(
+        &view(vec![], vec![]),
+        &read_closed(closed, "2026-09-30T11:00:00Z"),
+    );
+
+    assert_eq!(
+        facts.pull_requests,
+        [Related::Card {
+            number: Number(30),
+            title: None,
+            pull_request: true,
+            status: None,
+        }]
+    );
 }

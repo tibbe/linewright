@@ -4,9 +4,11 @@
 //! it answered from and that view's board.
 
 use crate::board::{self, Board, Card, CardStatus, Column, Lane, LaneHeading};
-use crate::domain::{ClosedKind, Number, PullState, SubIssue, Timestamp, Tracks, tickets_finished};
+use crate::domain::{
+    ClosedKind, ClosingPull, Number, PullState, SubIssue, Timestamp, Tracks, tickets_finished,
+};
 use crate::explain::{Answer, ChildRole, ParentRole};
-use crate::managed::LeftAloneItem;
+use crate::managed::{self, LeftAloneItem};
 use crate::reconcile::Wait;
 use crate::runs::Recorded;
 use crate::status::View;
@@ -82,11 +84,15 @@ pub fn item_facts(
         if let Some((column, card)) = board.card(item) {
             return Some((column, card.clone()));
         }
-        let managed = board
+        let managed = match board
             .managed()
             .iter()
-            .find(|managed| managed.number == item)?;
-        board::card(managed, view, recorded, now).ok()
+            .find(|managed| managed.number == item)
+        {
+            Some(managed) => managed.clone(),
+            None => managed::classify(view, managed::held(&view.snapshot, item)?, now).ok()?,
+        };
+        board::card(&managed, view, recorded, now)
     };
     let related = |item: Number, pull_request: bool| {
         if let Some(lane) = board.lane_headed_by(item) {
@@ -136,37 +142,27 @@ pub fn item_facts(
             .map(|ticket| related(ticket.number, false))
             .collect(),
     });
-    let pull_requests = view
-        .snapshot
-        .issue(number)
-        .map(|issue| view.snapshot.pulls_closing(issue))
-        .unwrap_or_default()
+    let pull_requests = closing_pulls(number, view)
         .into_iter()
         .filter(|pull| !matches!(pull.state, PullState::Closed { .. }))
         .map(|pull| related(pull.number, true))
         .collect();
     let card = card_of(number);
     let lane = board.lane_headed_by(number);
-    let state = if let Some((column, card)) = &card {
-        StateFact::Card {
+    let state = match (answer, &card) {
+        (Answer::LeftAlone(left_alone), _) => StateFact::LeftAlone(left_alone.item.clone()),
+        (Answer::Managed(_), Some((column, card))) => StateFact::Card {
             column: *column,
             card: card.clone(),
-        }
-    } else if lane.is_some() || all_tickets.is_some() {
-        // Its lane's finish time while it is on the board; off it, its
-        // tickets'.
-        StateFact::Tracking {
+        },
+        // Of the items Linewright manages, only a tracking issue has no
+        // card: its lane's finish time while it is on the board; off it,
+        // its tickets'.
+        (Answer::Managed(_), None) => StateFact::Tracking {
             finished: lane
                 .and_then(Lane::finished)
                 .or_else(|| all_tickets.as_deref().and_then(tickets_finished)),
-        }
-    } else {
-        match answer {
-            Answer::LeftAlone(left_alone) => StateFact::LeftAlone(left_alone.item.clone()),
-            // Of the items Linewright manages, only a tracking issue has no
-            // card.
-            Answer::Managed(_) => StateFact::Tracking { finished: None },
-        }
+        },
     };
     ItemFacts {
         number,
@@ -183,6 +179,18 @@ pub fn item_facts(
     }
 }
 
+/// The pull requests that close issue #`number`, open or closed.
+fn closing_pulls(number: Number, view: &View) -> Vec<ClosingPull> {
+    let snapshot = &view.snapshot;
+    if let Some(closed) = snapshot.closed_item(number) {
+        return closed.closing_pulls();
+    }
+    snapshot
+        .issue(number)
+        .map(|issue| snapshot.pulls_closing(issue))
+        .unwrap_or_default()
+}
+
 /// #`number`'s tickets, the same the lane it heads counts, if it is a
 /// tracking issue.
 fn tickets_of(number: Number, view: &View) -> Option<Vec<&SubIssue>> {
@@ -191,7 +199,7 @@ fn tickets_of(number: Number, view: &View) -> Option<Vec<&SubIssue>> {
         if let Some(issue) = view.snapshot.issue(number) {
             (issue.tracks(linewright), &issue.sub_issues)
         } else {
-            let closed = view.snapshot.closed.iter().find(|i| i.number == number)?;
+            let closed = view.snapshot.closed_item(number)?;
             let ClosedKind::Issue { facts, .. } = &closed.kind else {
                 return None;
             };

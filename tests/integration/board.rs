@@ -558,6 +558,7 @@ fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since
         closed_by: vec![merged_into(11, "main", "2026-09-30T10:00:00Z")],
         ..ready()
     };
+    // Its status label removed, Linewright leaves it alone.
     let unlabeled = Issue {
         number: Number(2),
         labels: vec![],
@@ -606,7 +607,6 @@ fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since
         placed,
         [
             (1, Column::Done, 1),
-            (2, Column::Done, 2),
             (3, Column::Ready, 3),
             (4, Column::Ready, 4),
             (5, Column::Done, 5),
@@ -619,7 +619,6 @@ fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since
         })
     };
     assert_eq!(card(&board, 1).line, ended(11, "2026-09-30T10:00:00Z"));
-    assert_eq!(card(&board, 2).line, ended(12, "2026-09-30T10:02:00Z"));
     assert_eq!(card(&board, 5).line, ended(17, "2026-09-30T10:05:00Z"));
 }
 
@@ -702,6 +701,8 @@ fn a_closed_issue_entered_done_when_its_first_closing_pull_request_since_it_was_
     );
 }
 
+/// Spec change #`number`, merged at 09:00, labeled `labels` by Linewright
+/// as it merged.
 fn spec_change(number: u64, labels: &[&str]) -> MergedPull {
     MergedPull {
         number: Number(number),
@@ -715,7 +716,10 @@ fn spec_change(number: u64, labels: &[&str]) -> MergedPull {
         closes: vec![],
         files: vec!["docs/specs/invoices.md".into()],
         assignees: vec![Login::new("factory")],
-        events: vec![],
+        events: labels
+            .iter()
+            .map(|label| labeling(label, "2026-10-01T09:00:00Z"))
+            .collect(),
     }
 }
 
@@ -979,6 +983,17 @@ fn closed_ticket(number: u64, tracking: u64, closed_at: &str) -> ClosedItem {
     closed
 }
 
+/// The tracking issue #`number` of spec change #`spec_change`, as
+/// `tracking_issue` gives it, closed at `closed_at`.
+fn closed_tracking_issue(
+    number: u64,
+    spec_change: u64,
+    tickets: &[(u64, bool)],
+    closed_at: &str,
+) -> ClosedItem {
+    common::closed_item(&tracking_issue(number, spec_change, tickets), closed_at)
+}
+
 /// Each lane's number, and when it finished, if it did.
 fn lanes(board: &Board) -> Vec<(u64, Option<Timestamp>)> {
     board
@@ -1010,13 +1025,13 @@ fn unfinished_lanes_come_first_latest_changed_first_then_the_finished_lanes_late
                     cut_from(labeled(21, &["needs-info"]), 20, 19),
                     "2026-10-01T09:30:00Z",
                 ),
-                tracking_issue(30, 29, &[(31, false), (32, false)]),
-                tracking_issue(40, 39, &[(41, false)]),
-                tracking_issue(50, 49, &[(51, false)]),
             ],
             vec![],
         ),
         vec![
+            closed_tracking_issue(30, 29, &[(31, false), (32, false)], "2026-09-29T12:00:00Z"),
+            closed_tracking_issue(40, 39, &[(41, false)], "2026-09-30T12:00:00Z"),
+            closed_tracking_issue(50, 49, &[(51, false)], "2026-09-29T12:00:00Z"),
             closed_ticket(22, 20, "2026-09-30T12:00:00Z"),
             closed_ticket(31, 30, "2026-09-29T12:00:00Z"),
             closed_ticket(32, 30, "2026-09-27T12:00:00Z"),
@@ -1194,8 +1209,9 @@ fn a_run_counts_toward_its_lanes_last_change_from_when_it_started() {
 fn an_item_closed_in_the_window_is_a_finished_lane_ordered_latest_finished_first() {
     let view = with_merged(
         with_closed(
-            view(vec![tracking_issue(30, 29, &[(31, false)])], vec![]),
+            view(vec![], vec![]),
             vec![
+                closed_tracking_issue(30, 29, &[(31, false)], "2026-09-30T12:00:00Z"),
                 closed_issue(1, "2026-09-28T12:00:00Z", Some(11)),
                 closed_ticket(31, 30, "2026-09-30T12:00:00Z"),
             ],
@@ -2210,14 +2226,10 @@ fn an_unfinished_lane_keeps_a_ticket_closed_before_the_done_window_in_done() {
 #[test]
 fn a_finished_lane_shows_every_ticket_until_it_finished_before_the_done_window_then_leaves_whole() {
     let view = with_closed(
-        view(
-            vec![
-                tracking_issue(10, 9, &[(11, false), (12, false)]),
-                tracking_issue(20, 19, &[(21, false), (22, false)]),
-            ],
-            vec![],
-        ),
+        view(vec![], vec![]),
         vec![
+            closed_tracking_issue(10, 9, &[(11, false), (12, false)], "2026-09-28T12:00:00Z"),
+            closed_tracking_issue(20, 19, &[(21, false), (22, false)], "2026-09-20T12:00:00Z"),
             closed_ticket(11, 10, "2026-09-10T12:00:00Z"),
             closed_ticket(12, 10, "2026-09-28T12:00:00Z"),
             closed_ticket(21, 20, "2026-09-10T12:00:00Z"),
@@ -2260,5 +2272,166 @@ fn a_spec_change_designed_with_nothing_to_build_entered_done_and_finished_when_i
             ended: Ended::NothingToBuild,
             at: at("2026-09-29T09:00:00Z"),
         })
+    );
+}
+
+/// Ticket #`number`, which Linewright labeled `ready-for-agent` and claimed,
+/// and whose status label a person removed since.
+fn taken_back(number: u64) -> Issue {
+    Issue {
+        labels: vec![label::DESIGNED.into()],
+        assignees: vec![Login::new("factory")],
+        events: vec![
+            IssueEvent::Labeled {
+                label: "ready-for-agent".into(),
+                by: Some(Login::new("factory")),
+                at: at("2026-09-30T10:00:00Z"),
+            },
+            assigning_linewright("2026-09-30T10:00:00Z"),
+            IssueEvent::Unlabeled {
+                label: "ready-for-agent".into(),
+                at: at("2026-09-30T11:00:00Z"),
+            },
+        ],
+        ..ticket(number, &format!("Ticket {number}"))
+    }
+}
+
+#[test]
+fn an_issue_linewright_worked_whose_status_label_a_person_removed_has_no_card() {
+    let view = view(vec![taken_back(1)], vec![]);
+
+    assert_eq!(placed(&board(&view, &[], at(NOW))), []);
+}
+
+#[test]
+fn an_issue_with_no_status_label_is_in_working_while_its_run_is_in_flight() {
+    let view = with_runs(view(vec![taken_back(1)], vec![]), &["1/implement-1"]);
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(placed(&board), [(1, Column::Working, 1)]);
+    assert!(matches!(line(&board, 1), Some(CardLine::Running(_))));
+}
+
+#[test]
+fn an_issue_with_no_status_label_is_in_review_while_an_open_pull_request_closes_it() {
+    let view = view(
+        vec![taken_back(1), taken_back(2)],
+        vec![pull(10, &[1], &[CheckState::Pending])],
+    );
+    let mut theirs = pull(20, &[2], &[]);
+    theirs.author = Login::new("alice");
+    theirs.assignees = vec![];
+    let view = with_peoples_pulls(view, vec![theirs]);
+
+    assert_eq!(
+        placed(&board(&view, &[], at(NOW))),
+        [(1, Column::InReview, 1), (2, Column::InReview, 2)]
+    );
+}
+
+fn with_peoples_pulls(mut view: View, pulls: Vec<Pull>) -> View {
+    let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
+    for pull in &pulls {
+        for &issue in &pull.closes {
+            if let Some(held) = snapshot.issues.iter_mut().find(|i| i.number == issue) {
+                held.closed_by.push(ClosingPull::from(pull));
+            }
+        }
+    }
+    snapshot.peoples_pulls = pulls;
+    view
+}
+
+/// `alice`'s open pull request #`number` closing each of `closes`, that
+/// Linewright is assigned to.
+fn persons_pull(number: u64, closes: &[u64]) -> Pull {
+    Pull {
+        author: Login::new("alice"),
+        ..pull(number, closes, &[CheckState::Pending])
+    }
+}
+
+#[test]
+fn a_persons_pull_request_linewright_is_assigned_to_or_worked_is_its_own_card_unless_it_closes_an_issue_with_one()
+ {
+    let commented = Pull {
+        assignees: vec![],
+        comments: vec![Comment {
+            author: Login::new("factory"),
+            body: "Looks good.".into(),
+            created_at: at("2026-10-01T11:00:00Z"),
+        }],
+        ..persons_pull(21, &[])
+    };
+    let view = with_peoples_pulls(
+        view(vec![ticket(1, "Ready")], vec![]),
+        vec![persons_pull(20, &[1]), commented, persons_pull(22, &[9])],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        placed(&board),
+        [
+            (1, Column::InReview, 1),
+            (21, Column::InReview, 21),
+            (22, Column::InReview, 22),
+        ]
+    );
+    assert_eq!(
+        line(&board, 1),
+        Some(CardLine::Review {
+            pull_request: Number(20),
+            author: Some(Login::new("alice")),
+            stops: Some(Stop::ChecksRunning),
+        })
+    );
+    assert!(card(&board, 22).pull_request);
+    assert_eq!(
+        line(&board, 22),
+        Some(CardLine::MergeStop(Stop::ChecksRunning))
+    );
+}
+
+#[test]
+fn a_pull_request_linewright_worked_that_merged_or_closed_unmerged_is_in_done_whoever_opened_it() {
+    let mut closed = closed_issue(31, "2026-09-30T12:00:00Z", None);
+    closed.kind = ClosedKind::Pull {
+        closes: vec![],
+        author: Some(Login::new("alice")),
+    };
+    let commented = MergedPull {
+        events: vec![IssueEvent::Commented {
+            by: Login::new("factory"),
+            at: at("2026-09-30T10:00:00Z"),
+        }],
+        ..merged(30, &[], "alice", "2026-09-30T11:00:00Z")
+    };
+    let untouched = merged(32, &[], "alice", "2026-09-30T11:00:00Z");
+    let view = with_merged(
+        with_closed(view(vec![], vec![]), vec![closed]),
+        vec![commented, untouched],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        placed(&board),
+        [(31, Column::Done, 31), (30, Column::Done, 30)]
+    );
+    assert_eq!(
+        [30, 31].map(|n| line(&board, n)),
+        [
+            Some(CardLine::Ended {
+                ended: Ended::Merged,
+                at: at("2026-09-30T11:00:00Z"),
+            }),
+            Some(CardLine::Ended {
+                ended: Ended::ClosedUnmerged,
+                at: at("2026-09-30T12:00:00Z"),
+            }),
+        ]
     );
 }

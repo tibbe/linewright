@@ -4,14 +4,15 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    ClosingPull, Issue, Item, Login, MergedPull, Number, Snapshot, Timestamp, Tracks,
+    self, ClosedItem, ClosedKind, ClosingPull, Issue, Item, Login, ManagedFacts, MergedPull,
+    Number, Snapshot, SubIssue, Timestamp, Tracks,
 };
 use crate::managed::{
-    Held, InReview, IssueExclusion, ItemState, LeftAloneIssue, LeftAloneItem, LeftAlonePull,
+    self, Held, InReview, IssueExclusion, ItemState, LeftAloneIssue, LeftAloneItem, LeftAlonePull,
     Managed, PullExclusion, classify,
 };
 use crate::phrase::Phrase;
-use crate::reconcile::{NotSpecChange, Wait, spec_change};
+use crate::reconcile::{NotSpecChange, Wait};
 use crate::runs::{self, Recorded, Run, RunInFlight, State};
 use crate::status::{Paint, View, describe, describe_wait, shown};
 use crate::store::AnyItem;
@@ -206,9 +207,41 @@ impl Family {
     }
 
     fn of_issue(issue: &Issue, snapshot: &Snapshot, linewright: &Login) -> Family {
+        Family::of_work(
+            issue.tracks(linewright),
+            &issue.sub_issues,
+            issue.parent.filter(|_| issue.was_cut(linewright)),
+            snapshot.pulls_closing(issue),
+        )
+    }
+
+    /// As [`Family::of_issue`], of a closed issue the snapshot holds with its
+    /// closing, under `parent`, with `facts`, closed by `closing`.
+    fn of_closed_issue(
+        parent: Option<domain::Parent>,
+        facts: &ManagedFacts,
+        closing: Vec<ClosingPull>,
+        linewright: &Login,
+    ) -> Family {
+        Family::of_work(
+            facts.tracks(linewright),
+            &facts.sub_issues,
+            parent.filter(|&parent| facts.was_cut(Some(parent), linewright)),
+            closing,
+        )
+    }
+
+    /// The family of an issue tracking `tracks`, with `sub_issues`, cut from
+    /// its tracking issue `cut_from`, if it is a ticket, and closed by
+    /// `closing`, in number order.
+    fn of_work(
+        tracks: Option<Tracks>,
+        sub_issues: &[SubIssue],
+        cut_from: Option<domain::Parent>,
+        closing: Vec<ClosingPull>,
+    ) -> Family {
         let tickets = || {
-            issue
-                .sub_issues
+            sub_issues
                 .iter()
                 .map(|ticket| Child {
                     number: ticket.number,
@@ -216,7 +249,7 @@ impl Family {
                 })
                 .collect()
         };
-        let mut family = match issue.tracks(linewright) {
+        let mut family = match tracks {
             Some(Tracks::SpecChange(spec_change)) => Family {
                 parents: vec![Parent {
                     number: spec_change,
@@ -230,9 +263,7 @@ impl Family {
             },
             // Only a ticket's parent is its tracking issue.
             None => Family {
-                parents: issue
-                    .parent
-                    .filter(|_| issue.was_cut(linewright))
+                parents: cut_from
                     .map(|parent| Parent {
                         number: parent.number,
                         role: ParentRole::TrackingIssue,
@@ -242,10 +273,8 @@ impl Family {
                 children: vec![],
             },
         };
-        let (open, ended): (Vec<ClosingPull>, Vec<ClosingPull>) = snapshot
-            .pulls_closing(issue)
-            .into_iter()
-            .partition(ClosingPull::is_open);
+        let (open, ended): (Vec<ClosingPull>, Vec<ClosingPull>) =
+            closing.into_iter().partition(ClosingPull::is_open);
         family
             .children
             .extend(open.into_iter().chain(ended).map(|pull| Child {
@@ -327,12 +356,14 @@ impl ChildRole {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Standing {
+    // First, so that only an answer naming its state reads as one.
+    Item(ItemState),
     PullRequest {
-        pull_request_for: Number,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pull_request_for: Option<Number>,
         #[serde(flatten)]
         review: InReview,
     },
-    Item(ItemState),
 }
 
 impl Standing {
@@ -352,8 +383,7 @@ impl Standing {
     }
 }
 
-/// `None` unless #`number` is a managed item the view holds open, or a
-/// spec change waiting for its design.
+/// `None` unless #`number` is a managed item the view holds.
 pub fn explain(
     view: &View,
     recorded: &[Recorded],
@@ -361,59 +391,36 @@ pub fn explain(
     now: Timestamp,
 ) -> Option<Explanation> {
     let snapshot = &view.snapshot;
-    let last_read = |item: Item| view.read_at.get(&item).copied().unwrap_or(view.polls.last);
-    let (held, read, family, stalled) =
-        if let Some(issue) = snapshot.issue(number).filter(|i| i.open) {
-            (
-                Held::Issue(issue),
-                Item::Issue(number),
-                Family::of_issue(issue, snapshot, &view.policy.linewright),
-                snapshot.is_stalled(number),
-            )
-        } else if let Some(pull) = snapshot.pull(number).filter(|p| p.is_open()) {
-            (
-                Held::Pull(pull),
-                Item::Pull(number),
-                Family::of_pull(&pull.closes),
-                pull.is_stalled(),
-            )
-        } else {
-            let pull = snapshot.merged_pull(number)?;
-            (
-                Held::Merged(pull),
-                Item::Pull(number),
-                Family::of_pull(&pull.closes),
-                snapshot.is_stalled(number),
-            )
-        };
+    let linewright = &view.policy.linewright;
+    let held = managed::held(snapshot, number)?;
     let managed = classify(view, held, now).ok()?;
-    // A merged pull request that has ended is answered as GitHub reads it.
-    if let Held::Merged(pull) = held
-        && ended_merge(&managed, pull, view, now).is_some()
-    {
-        return None;
-    }
+    let (read, family) = match held {
+        Held::Issue(issue) => (
+            Item::Issue(number),
+            Family::of_issue(issue, snapshot, linewright),
+        ),
+        Held::Pull(pull) => (Item::Pull(number), Family::of_pull(&pull.closes)),
+        Held::Merged(pull) => (
+            Item::Pull(number),
+            Family::of_merged(
+                pull,
+                &managed::tracking_issues(snapshot, number, linewright).collect::<Vec<_>>(),
+            ),
+        ),
+        Held::Closed(item) => match &item.kind {
+            ClosedKind::Issue { parent, facts, .. } => (
+                Item::Issue(number),
+                Family::of_closed_issue(*parent, facts, item.closing_pulls(), linewright),
+            ),
+            ClosedKind::Pull { closes, .. } => (Item::Pull(number), Family::of_pull(closes)),
+        },
+    };
     Some(Explanation {
         family,
-        stalled,
-        last_read: last_read(read),
+        stalled: snapshot.is_stalled(number),
+        last_read: view.read_at.get(&read).copied().unwrap_or(view.polls.last),
         ..explanation(view, recorded, managed, now)
     })
-}
-
-/// Why merged `pull`, which the classifier finds `managed`, is no spec
-/// change, if it has ended: `explain` answers it as left alone, as GitHub
-/// reads it, rather than in Done as the board shows it.
-fn ended_merge(
-    managed: &Managed,
-    pull: &MergedPull,
-    view: &View,
-    now: Timestamp,
-) -> Option<NotSpecChange> {
-    if !matches!(managed.state, ItemState::Ended { .. }) {
-        return None;
-    }
-    spec_change(pull, &view.snapshot.default_branch, now, &view.policy).err()
 }
 
 /// What `explain` answers of `managed`, read `now`, related to no other item
@@ -453,7 +460,7 @@ pub(crate) fn explain_in_view(
             Item::Issue(number),
         )
     } else {
-        let pull = view.snapshot.pull(number)?;
+        let pull = view.snapshot.any_pull(number)?;
         (AnyItem::Pull(Box::new(pull.clone())), Item::Pull(number))
     };
     // Read when the view was, not now.
@@ -481,8 +488,8 @@ pub struct LeftAlone {
 
 /// `view` with `read`, read from GitHub `now`, put in as a poll taking a
 /// snapshot now would hold it, and an issue left out of the view put in
-/// too, so that what relates to it can be read from the view. Linewright
-/// manages no such issue, so it changes no item's standing.
+/// too, so that what relates to it can be read from the view. A closed
+/// issue is put in among the closed items, with its closing.
 pub fn fresh_view(view: &View, read: &AnyItem, now: Timestamp) -> View {
     let mut fresh = view.clone();
     let linewright = &view.policy.linewright;
@@ -490,6 +497,9 @@ pub fn fresh_view(view: &View, read: &AnyItem, now: Timestamp) -> View {
     match read {
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
             held.put_issue(issue.as_ref().clone());
+        }
+        AnyItem::ClosedIssue { issue, closing } => {
+            held.put_closed(ClosedItem::of_issue(issue, *closing));
         }
         AnyItem::Pull(pull) => held.put_read_pull(pull.as_ref().clone(), linewright),
         AnyItem::Merged { pull, .. } => {
@@ -522,6 +532,9 @@ pub fn explain_fresh(
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
             Family::of_issue(issue, &fresh.snapshot, &fresh.policy.linewright)
         }
+        AnyItem::ClosedIssue { issue, .. } => {
+            Family::of_issue(issue, &fresh.snapshot, &fresh.policy.linewright)
+        }
     };
     let stalled = read.is_stalled();
     let managed_as = |managed: Managed| {
@@ -538,16 +551,15 @@ pub fn explain_fresh(
                 Err(left_alone) => (&issue.title, left_alone),
             }
         }
-        AnyItem::Merged { pull: merged, .. } => match classify(fresh, Held::Merged(merged), now) {
-            Ok(managed) => {
-                let Some(left_alone) = ended_merge(&managed, merged, fresh, now) else {
-                    return managed_as(managed);
-                };
-                (
-                    &merged.title,
-                    LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }),
-                )
+        AnyItem::ClosedIssue { issue, closing } => {
+            let closed = ClosedItem::of_issue(issue, *closing);
+            match classify(fresh, Held::Closed(&closed), now) {
+                Ok(managed) => return managed_as(managed),
+                Err(left_alone) => (&issue.title, left_alone),
             }
+        }
+        AnyItem::Merged { pull: merged, .. } => match classify(fresh, Held::Merged(merged), now) {
+            Ok(managed) => return managed_as(managed),
             Err(left_alone) => (&merged.title, left_alone),
         },
         AnyItem::Pull(pull) => match classify(fresh, Held::Pull(pull), now) {
@@ -650,8 +662,8 @@ impl Answer {
         }
     }
 
-    /// Whether the item is a pull request: Linewright's in review, or one
-    /// it leaves. A spec change's pull request is managed as an item.
+    /// Whether the item is a pull request: one in review, or one Linewright
+    /// leaves. A spec change's pull request is managed as an item.
     pub(crate) fn is_pull_request(&self) -> bool {
         match self {
             Answer::Managed(explanation) => {
@@ -739,9 +751,12 @@ fn explanation_lines(explanation: &Explanation) -> Vec<ItemLine<'_>> {
         }
         Standing::Item(state) => describe(state),
     };
-    let nothing = explanation
-        .waiting_for
-        .is_empty()
+    // Linewright acts no more on an item that has ended.
+    let ended = matches!(
+        explanation.standing,
+        Standing::Item(ItemState::Ended { .. })
+    );
+    let nothing = (explanation.waiting_for.is_empty() && !ended)
         .then(|| ItemLine::fact("waiting for", NOTHING_WAITED_FOR.into()));
     explanation
         .family
@@ -768,26 +783,21 @@ pub fn render_answer(answer: &Answer, colour: bool) -> String {
 
 fn describe_issue_exclusion(exclusion: &IssueExclusion) -> Phrase {
     let subject = match exclusion {
-        IssueExclusion::WaitsOnAPerson => "it ",
+        IssueExclusion::WaitsOnAPerson { .. } => "it ",
         IssueExclusion::NotMarked { .. }
         | IssueExclusion::NoPipelineLabel
-        | IssueExclusion::NoTickets => "it is ",
+        | IssueExclusion::NoTickets
+        | IssueExclusion::NoOpenTickets => "it is ",
     };
     Phrase::from(subject).then(exclusion.worded())
 }
 
 fn describe_pull_exclusion(exclusion: &PullExclusion) -> Phrase {
     match exclusion {
-        PullExclusion::NotLinewrights { author } => {
-            format!("{author} opened it, and Linewright works only on its own pull requests").into()
-        }
-        PullExclusion::ClosesNoIssue => {
-            "it is Linewright's, and closes no issue Linewright could work on".into()
-        }
-        PullExclusion::Superseded { issue, by } => Phrase::from("it is Linewright's for ")
-            .item(*issue)
-            .text(", which it works on through ")
-            .item(*by),
+        PullExclusion::NotWorked { author } => format!(
+            "{author} opened it, and Linewright has not worked it and is not assigned to it"
+        )
+        .into(),
     }
 }
 

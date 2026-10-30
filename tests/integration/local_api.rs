@@ -953,7 +953,7 @@ async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_
         [
             &format!("{spec_change}: Gadgets"),
             &format!("child: {tracking}, its tracking issue"),
-            "state: merged pull request",
+            "state: merged",
         ],
         "{}",
         spec_change_says.stderr
