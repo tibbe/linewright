@@ -216,14 +216,12 @@ async fn a_production_session_gets_linewrights_github_token() {
     );
 }
 
-/// The names of the variables the session's harness was started with, but
-/// for those its shell sets itself.
+/// The names of the variables the session's harness was started with.
 fn session_variables(dir: &Path) -> Vec<String> {
     let env = std::fs::read_to_string(dir.join("env.log")).unwrap();
     let mut names: Vec<String> = env
         .lines()
         .filter_map(|line| Some(line.split_once('=')?.0.to_string()))
-        .filter(|name| !["PWD", "OLDPWD", "SHLVL", "_"].contains(&name.as_str()))
         .collect();
     names.sort();
     names
