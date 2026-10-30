@@ -1322,9 +1322,20 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     answering.stop().await;
 }
 
-async fn with_pull_request_for_rework() -> World {
+/// How a ticket's pull request came to be in review.
+enum InReview {
+    /// Through the back door.
+    Written,
+    /// By the implement stage, whose run is recorded.
+    Implemented,
+}
+
+async fn with_pull_request_for_rework(in_review: InReview) -> World {
     let mut world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    let (_, pr) = world.ticket_in_review().await;
+    let (_, pr) = match in_review {
+        InReview::Written => world.ticket_in_review().await,
+        InReview::Implemented => world.implement_a_ticket().await,
+    };
     assert_eq!(pr, linewright::domain::Number(2));
     world.rework_asked(pr);
     world
@@ -1332,7 +1343,7 @@ async fn with_pull_request_for_rework() -> World {
 
 #[tokio::test]
 async fn a_pull_requests_runs_and_logs_are_its_own_with_serve_running_and_without() {
-    let world = with_pull_request_for_rework().await;
+    let world = with_pull_request_for_rework(InReview::Implemented).await;
     let agent = world.harness.hold();
     agent.writes(&turn_1().concat());
     drop(agent);
@@ -1397,7 +1408,7 @@ async fn a_pull_requests_runs_and_logs_are_its_own_with_serve_running_and_withou
 
 #[tokio::test]
 async fn logs_follow_of_a_pull_request_follows_its_run_in_flight() {
-    let world = with_pull_request_for_rework().await;
+    let world = with_pull_request_for_rework(InReview::Written).await;
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();

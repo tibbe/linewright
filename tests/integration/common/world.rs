@@ -8,8 +8,9 @@ use linewright::domain::{
     AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Windows, label,
 };
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
-use linewright::reconcile::WorkKind;
+use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
+use linewright::run::subject_name;
 use linewright::runs::{Ending, Runs, State};
 use linewright::secrets::Secrets;
 use linewright::spec_glob::SpecGlob;
@@ -326,18 +327,33 @@ pub fn check(name: &str, state: CheckState, log: &str) -> CheckRecord {
 /// Each run adds to what its ticket's branch holds.
 pub fn implement(world: &World) {
     world.harness.on(WorkKind::Implement, |call| {
-        let file = format!("src/{}.txt", subject_file(call));
+        let file = implemented_file(&subject_file(call));
         let done = std::fs::read_to_string(call.spec.dir.join(&file)).unwrap_or_default();
         commit_in(
             &call.spec.dir,
-            &[(&file, &format!("{done}done\n"))],
-            "Do the ticket",
+            &[(&file, &format!("{done}{IMPLEMENTED}"))],
+            IMPLEMENTED_MESSAGE,
         );
-        Ok(
-            serde_json::json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."})
-                .to_string(),
-        )
+        Ok(serde_json::json!({
+            "outcome": "done",
+            "pr_title": IMPLEMENTED_TITLE,
+            "pr_body": IMPLEMENTED_BODY,
+        })
+        .to_string())
     });
+}
+
+/// What each run [`implement`] scripts adds to its file, commits with, and
+/// titles and describes its pull request with.
+const IMPLEMENTED: &str = "done\n";
+const IMPLEMENTED_MESSAGE: &str = "Do the ticket";
+const IMPLEMENTED_TITLE: &str = "Do it";
+const IMPLEMENTED_BODY: &str = "Does it.";
+
+/// The file each run [`implement`] scripts adds to, for the subject named
+/// `subject`.
+fn implemented_file(subject: &str) -> String {
+    format!("src/{subject}.txt")
 }
 
 /// Each design of an issue answers that it is designed, built as it is.
@@ -524,20 +540,47 @@ impl World {
             .unwrap();
     }
 
-    pub async fn ticket_in_review(&mut self) -> (Number, Number) {
+    /// Runs the implement stage on a ticket, as [`implement`] scripts it,
+    /// returning the ticket and the pull request it opened: what
+    /// [`World::ticket_in_review`] writes, for a test of the stage itself.
+    pub async fn implement_a_ticket(&mut self) -> (Number, Number) {
         implement(self);
-        let ticket = self.store.open_issue(
-            "maintainer",
-            "Do the thing",
-            "Please.",
-            &["ready-for-agent", "linewright:designed"],
-        );
+        let ticket = open_ticket(self, "Do the thing");
         self.poll().await;
         let pr = *self
             .store
             .pulls()
             .last()
             .expect("a pull request was opened");
+        (ticket, pr)
+    }
+
+    /// A ticket the implement stage implemented and opened its pull request
+    /// for, written straight into the store, with each implement run scripted
+    /// as [`implement`] scripts it.
+    pub async fn ticket_in_review(&mut self) -> (Number, Number) {
+        implement(self);
+        let ticket = open_ticket(self, "Do the thing");
+        self.store
+            .assign_as(LINEWRIGHT, ticket, LINEWRIGHT)
+            .unwrap();
+        let branch = format!("{}-do-the-thing", ticket.0);
+        let file = implemented_file(&subject_name(Subject::Issue(ticket)));
+        self.store
+            .commit(
+                LINEWRIGHT,
+                &branch,
+                &[(&file, IMPLEMENTED)],
+                IMPLEMENTED_MESSAGE,
+            )
+            .await
+            .unwrap();
+        let pr = self.store.open_linewrights_pull(
+            &branch,
+            IMPLEMENTED_TITLE,
+            &format!("{IMPLEMENTED_BODY}\n\nCloses {ticket}"),
+        );
+        self.store.assign_as(LINEWRIGHT, pr, LINEWRIGHT).unwrap();
         (ticket, pr)
     }
 

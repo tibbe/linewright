@@ -139,15 +139,7 @@ async fn a_cancel_after_a_rework_begins_pushing_its_result_does_not_stop_it() {
             .unwrap(),
         "renamed\n"
     );
-    let mut ended = ended_runs(&world);
-    ended.sort_by_key(|ending| format!("{ending:?}"));
-    assert_eq!(
-        ended,
-        [
-            linewright::runs::Ending::Done,
-            linewright::runs::Ending::Done
-        ]
-    );
+    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -185,15 +177,7 @@ async fn a_rework_cancelled_before_its_push_by_its_pull_request_closing_pushes_a
             .is_err()
     );
     assert_ne!(last_pull_comment(&world, pr).await, "Renamed.");
-    let mut ended = ended_runs(&world);
-    ended.sort_by_key(|ending| format!("{ending:?}"));
-    assert_eq!(
-        ended,
-        [
-            linewright::runs::Ending::Cancelled,
-            linewright::runs::Ending::Done
-        ]
-    );
+    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Cancelled]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1142,7 +1126,8 @@ async fn a_ticket_a_person_parented_is_briefed_with_its_parent_its_comments_and_
 #[tokio::test]
 async fn a_ticket_with_no_parent_is_briefed_with_no_parent_issue() {
     let mut world = World::new().await;
-    world.ticket_in_review().await;
+
+    world.implement_a_ticket().await;
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 1);
@@ -1608,7 +1593,7 @@ async fn a_ticket_whose_pull_request_is_edited_not_to_close_it_is_worked_again_b
 
     world.poll().await;
 
-    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     let pulls = world.store.pulls();
     assert_eq!(pulls.len(), 2);
     let (old, new) = (
@@ -1618,7 +1603,7 @@ async fn a_ticket_whose_pull_request_is_edited_not_to_close_it_is_worked_again_b
     assert!(old.is_open() && new.is_open());
     assert_ne!(old.head_ref, new.head_ref);
     assert_eq!(new.closes, [ticket]);
-    let prompt = &world.harness.prompts(WorkKind::Implement)[1];
+    let prompt = &world.harness.prompts(WorkKind::Implement)[0];
     assert!(prompt.contains(&new.head_ref), "{prompt}");
 }
 
@@ -3202,7 +3187,7 @@ async fn a_ticket_reopened_after_its_pull_request_merged_is_implemented_again_un
     world.store.reopen_issue_as(ticket).unwrap();
     world.poll().await;
 
-    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     let next = *world.store.pulls().last().unwrap();
     assert_ne!(next, pr);
 }

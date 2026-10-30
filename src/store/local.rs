@@ -779,6 +779,18 @@ impl LocalStore {
         Ok(number)
     }
 
+    /// Opens a draft pull request from `head` as Linewright, as Linewright
+    /// opens one.
+    pub fn open_linewrights_pull(&self, head: &str, title: &str, body: &str) -> Number {
+        let now = self.now();
+        let mut state = self.state();
+        let number = state.take_number();
+        let author = state.linewright.clone();
+        let record = PullRecord::new(&state, number, title, body, author, head, now);
+        state.pulls.insert(number, record);
+        number
+    }
+
     pub fn close_pull_as(&self, pr: Number) -> Result<()> {
         let now = self.now();
         self.state().pull_written(pr, now)?.state = PullState::Closed { at: now };
@@ -1651,7 +1663,7 @@ impl Store for LocalStore {
         let login = self.state().linewright.clone();
         Ok(Identity {
             name: login.0.clone(),
-            email: format!("{login}@users.noreply.github.com"),
+            email: history::email(login.as_str()),
             login,
         })
     }
@@ -2251,23 +2263,7 @@ impl Store for LocalStore {
         {
             bail!("no branch {}", pull.head);
         }
-        let now = self.now();
-        let number = {
-            let mut state = self.state();
-            let number = state.take_number();
-            let author = state.linewright.clone();
-            let record = PullRecord::new(
-                &state,
-                number,
-                &pull.title,
-                &pull.body,
-                author,
-                &pull.head,
-                now,
-            );
-            state.pulls.insert(number, record);
-            number
-        };
+        let number = self.open_linewrights_pull(&pull.head, &pull.title, &pull.body);
         self.paused(Write::OpenPull { head: pull.head }).await?;
         Ok(number)
     }
