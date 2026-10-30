@@ -193,7 +193,19 @@ check_clippy() {
   fi
   cargo clippy "${args[@]}"
 }
-check_test() { nextest run --locked --cargo-quiet --no-input-handler; }
+# An override in .config/nextest.toml that matches no test, such as one
+# left behind by a rename, would silently stop applying, so each must match
+# one.
+check_test() {
+  local filter status=0
+  while IFS= read -r filter; do
+    if [ -z "$(nextest list --locked --cargo-quiet --message-format oneline -E "$filter")" ]; then
+      echo ".config/nextest.toml: the override filter $filter matches no test"
+      status=1
+    fi
+  done < <(sed -n "s/^filter = '\(.*\)'$/\1/p" .config/nextest.toml)
+  [ "$status" = 0 ] && nextest run --locked --cargo-quiet --no-input-handler
+}
 check_doc() { cargo doc --no-deps --locked --quiet; }
 
 stages=("fmt markdown compose css" "clippy" "test doc")
