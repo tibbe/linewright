@@ -548,3 +548,436 @@ fn the_closing_pull_requests_a_snapshot_lacks_are_linewrights_closed_unmerged_cl
         BTreeSet::from([Number(40)])
     );
 }
+
+/// Tickets #1, #2 and #3: #1 closed by alice's open pull request #30, which
+/// Linewright is assigned to, #2 by Linewright's #20; and #41, a person's
+/// pull request merged within the windows.
+fn refreshed_pulls() -> Snapshot {
+    Snapshot {
+        issues: vec![
+            closed_by(ticket(1, "One"), 30, "alice"),
+            closed_by(ticket(2, "Two"), 20, LINEWRIGHT),
+            ticket(3, "Three"),
+        ],
+        pulls: vec![open_pull(20, LINEWRIGHT, &[2], &[LINEWRIGHT])],
+        peoples_pulls: vec![open_pull(30, "alice", &[1], &[LINEWRIGHT])],
+        merged: vec![merged_pull(41, "alice", &[])],
+        ..snapshot(vec![], vec![])
+    }
+}
+
+fn peoples(closes: &[u64], pull: Option<Pull>) -> PullHeldRead {
+    PullHeldRead::Peoples(PeoplesPullRead {
+        closes: closes.iter().copied().map(Number).collect(),
+        pull,
+    })
+}
+
+#[test]
+fn a_pull_request_read_is_held_as_read_and_frees_the_issues_a_persons_closes_or_closed_while_open()
+{
+    let renamed = Pull {
+        title: "Do two, renamed".into(),
+        ..open_pull(20, LINEWRIGHT, &[2], &[LINEWRIGHT])
+    };
+    let assigned = open_pull(32, "alice", &[3], &[LINEWRIGHT]);
+    let cases = [
+        (
+            "a person's pull request read closed",
+            30,
+            peoples(&[], None),
+            None,
+            vec![1],
+            Snapshot {
+                peoples_pulls: vec![],
+                ..refreshed_pulls()
+            },
+        ),
+        (
+            "a person's pull request opened since, left out",
+            31,
+            peoples(&[3], None),
+            None,
+            vec![3],
+            refreshed_pulls(),
+        ),
+        (
+            "a person's pull request opened since, assigned to Linewright",
+            32,
+            peoples(&[3], Some(assigned.clone())),
+            None,
+            vec![3],
+            Snapshot {
+                peoples_pulls: vec![open_pull(30, "alice", &[1], &[LINEWRIGHT]), assigned],
+                ..refreshed_pulls()
+            },
+        ),
+        (
+            "Linewright's pull request read",
+            20,
+            PullHeldRead::Linewrights(renamed.clone()),
+            None,
+            vec![],
+            Snapshot {
+                pulls: vec![renamed],
+                ..refreshed_pulls()
+            },
+        ),
+        (
+            "Linewright's pull request read merged",
+            20,
+            peoples(&[], None),
+            Some(merged_pull(20, LINEWRIGHT, &[2])),
+            vec![2],
+            Snapshot {
+                pulls: vec![],
+                merged: vec![
+                    merged_pull(20, LINEWRIGHT, &[2]),
+                    merged_pull(41, "alice", &[]),
+                ],
+                ..refreshed_pulls()
+            },
+        ),
+        (
+            "a merged pull request read out of the windows",
+            41,
+            peoples(&[], None),
+            None,
+            vec![],
+            Snapshot {
+                merged: vec![],
+                ..refreshed_pulls()
+            },
+        ),
+        (
+            "a pull request the store lacks",
+            99,
+            peoples(&[], None),
+            None,
+            vec![],
+            refreshed_pulls(),
+        ),
+    ];
+
+    for (case, number, held, merged, to_read, after) in cases {
+        let mut snapshot = refreshed_pulls();
+
+        let read = snapshot.took_pull(Number(number), PullRead { held, merged });
+
+        let to_read: Vec<Number> = to_read.into_iter().map(Number).collect();
+        assert_eq!(read, to_read, "{case}");
+        assert_eq!(snapshot, after, "{case}");
+    }
+}
+
+/// Tracking issue #1, with its ticket #6 `state`.
+fn tracking_six(state: SubIssueState) -> Issue {
+    Issue {
+        sub_issues: vec![SubIssue {
+            number: Number(6),
+            author: linewright(),
+            state,
+        }],
+        ..tracking(1, &[])
+    }
+}
+
+/// Ticket #5, which #6 blocks, seen as `open`.
+fn blocked_five(open: bool) -> Issue {
+    Issue {
+        blocked_by: vec![Linked {
+            number: Number(6),
+            open,
+        }],
+        ..ticket(5, "Five")
+    }
+}
+
+/// Linewright's pull request #21, closing #6, closed unmerged.
+fn ended_21() -> Pull {
+    Pull {
+        state: PullState::Closed {
+            at: at(IN_DONE_WINDOW),
+        },
+        ..open_pull(21, LINEWRIGHT, &[6], &[])
+    }
+}
+
+/// #7, closed within the Done window.
+fn closed_seven() -> ClosedItem {
+    closed_item(&ticket(7, "Seven"), IN_DONE_WINDOW)
+}
+
+/// Ticket #6 of tracking issue #1, blocking #5 and closed by Linewright's
+/// open pull request #20 and its #21, closed unmerged; and #7, closed
+/// within the Done window.
+fn refreshed_issues() -> Snapshot {
+    Snapshot {
+        issues: vec![
+            tracking_six(SubIssueState::Open),
+            blocked_five(true),
+            ticket(6, "Six"),
+        ],
+        pulls: vec![open_pull(20, LINEWRIGHT, &[6], &[]), ended_21()],
+        closed: vec![closed_seven()],
+        ..snapshot(vec![], vec![])
+    }
+}
+
+#[test]
+fn an_issue_read_is_held_as_read_and_one_that_left_has_linewrights_ended_pull_requests_closing_it_read_again()
+ {
+    let relabeled = Issue {
+        labels: vec!["ready-for-human".into()],
+        ..ticket(6, "Six")
+    };
+    let renamed = Pull {
+        title: "Do six, renamed".into(),
+        ..open_pull(20, LINEWRIGHT, &[6], &[])
+    };
+    let closed_six = |closed_at| {
+        closed_item(
+            &Issue {
+                open: false,
+                ..ticket(6, "Six")
+            },
+            closed_at,
+        )
+    };
+    let closed_five = |closed_at| {
+        closed_item(
+            &Issue {
+                open: false,
+                ..blocked_five(true)
+            },
+            closed_at,
+        )
+    };
+    let both_pulls = || vec![open_pull(20, LINEWRIGHT, &[6], &[]), ended_21()];
+    let issue_taken = |pulls_read: &[u64], pulls_to_read: &[u64]| IssueTaken {
+        pulls_read: pulls_read.iter().copied().map(Number).collect(),
+        pulls_to_read: pulls_to_read.iter().copied().map(Number).collect(),
+    };
+    let holding = |issues, pulls, closed| Snapshot {
+        issues,
+        pulls,
+        closed,
+        ..snapshot(vec![], vec![])
+    };
+    let cases = [
+        (
+            "held, relabeled, with Linewright's pull request closing it",
+            6,
+            IssueRead::Held {
+                issue: Box::new(relabeled.clone()),
+                pulls: vec![renamed.clone()],
+            },
+            issue_taken(&[20], &[]),
+            holding(
+                vec![
+                    tracking_six(SubIssueState::Open),
+                    blocked_five(true),
+                    relabeled,
+                ],
+                vec![renamed, ended_21()],
+                vec![closed_seven()],
+            ),
+        ),
+        (
+            "held as it was",
+            6,
+            IssueRead::Held {
+                issue: Box::new(ticket(6, "Six")),
+                pulls: vec![open_pull(20, LINEWRIGHT, &[6], &[])],
+            },
+            issue_taken(&[20], &[]),
+            refreshed_issues(),
+        ),
+        (
+            "held closed, read open again",
+            7,
+            IssueRead::Held {
+                issue: Box::new(ticket(7, "Seven")),
+                pulls: vec![],
+            },
+            issue_taken(&[], &[]),
+            holding(
+                vec![
+                    tracking_six(SubIssueState::Open),
+                    blocked_five(true),
+                    ticket(6, "Six"),
+                    ticket(7, "Seven"),
+                ],
+                both_pulls(),
+                vec![],
+            ),
+        ),
+        (
+            "left out, open",
+            6,
+            IssueRead::LeftOut { open: true },
+            issue_taken(&[], &[21]),
+            holding(
+                vec![tracking_six(SubIssueState::Open), blocked_five(true)],
+                both_pulls(),
+                vec![closed_seven()],
+            ),
+        ),
+        (
+            "closed before the Done window, a ticket of a lane held",
+            6,
+            IssueRead::Closed(Box::new(closed_six(BEFORE_DONE_WINDOW))),
+            issue_taken(&[], &[21]),
+            holding(
+                vec![
+                    tracking_six(SubIssueState::Closed {
+                        at: Some(at(BEFORE_DONE_WINDOW)),
+                    }),
+                    blocked_five(false),
+                ],
+                both_pulls(),
+                vec![closed_six(BEFORE_DONE_WINDOW), closed_seven()],
+            ),
+        ),
+        (
+            "closed within the Done window",
+            5,
+            IssueRead::Closed(Box::new(closed_five(IN_DONE_WINDOW))),
+            issue_taken(&[], &[]),
+            holding(
+                vec![tracking_six(SubIssueState::Open), ticket(6, "Six")],
+                both_pulls(),
+                vec![closed_five(IN_DONE_WINDOW), closed_seven()],
+            ),
+        ),
+        (
+            "closed before the Done window, of no lane",
+            5,
+            IssueRead::Closed(Box::new(closed_five(BEFORE_DONE_WINDOW))),
+            issue_taken(&[], &[]),
+            holding(
+                vec![tracking_six(SubIssueState::Open), ticket(6, "Six")],
+                both_pulls(),
+                vec![closed_seven()],
+            ),
+        ),
+        (
+            "gone",
+            6,
+            IssueRead::Gone,
+            issue_taken(&[], &[21]),
+            holding(
+                vec![tracking(1, &[]), ticket(5, "Five")],
+                both_pulls(),
+                vec![closed_seven()],
+            ),
+        ),
+        (
+            "an issue the store lacks",
+            99,
+            IssueRead::Gone,
+            issue_taken(&[], &[]),
+            refreshed_issues(),
+        ),
+    ];
+
+    for (case, number, read, taken, after) in cases {
+        let mut snapshot = refreshed_issues();
+
+        let took = snapshot.took_issue(Number(number), read, windows(), &linewright());
+
+        assert_eq!(took, taken, "{case}");
+        assert_eq!(snapshot, after, "{case}");
+    }
+}
+
+#[test]
+fn linewrights_ended_pull_request_read_again_is_held_as_read_or_dropped() {
+    let closed = |title: &str| Pull {
+        title: title.into(),
+        state: PullState::Closed {
+            at: at(IN_DONE_WINDOW),
+        },
+        ..open_pull(21, LINEWRIGHT, &[6], &[])
+    };
+    let held = || Snapshot {
+        pulls: vec![closed("Pull 21")],
+        ..snapshot(vec![], vec![])
+    };
+    let cases = [
+        (
+            "read",
+            Some(closed("Renamed")),
+            Snapshot {
+                pulls: vec![closed("Renamed")],
+                ..held()
+            },
+        ),
+        (
+            "no longer held",
+            None,
+            Snapshot {
+                pulls: vec![],
+                ..held()
+            },
+        ),
+    ];
+
+    for (case, read, after) in cases {
+        let mut snapshot = held();
+
+        snapshot.took_ended_pull(Number(21), read);
+
+        assert_eq!(snapshot, after, "{case}");
+    }
+}
+
+#[test]
+fn a_pull_request_read_frees_the_other_issues_it_closes_or_closed_while_open() {
+    let snapshot = Snapshot {
+        issues: vec![
+            closed_by(ticket(1, "One"), 20, LINEWRIGHT),
+            ticket(2, "Two"),
+            ticket(3, "Three"),
+            closed_by(ticket(4, "Four"), 22, LINEWRIGHT),
+        ],
+        pulls: vec![
+            // Edited not to close #1, and to close #2 besides #3.
+            open_pull(20, LINEWRIGHT, &[2, 3], &[]),
+            open_pull(22, LINEWRIGHT, &[4], &[]),
+        ],
+        ..snapshot(vec![], vec![])
+    };
+    let cases = [
+        (
+            "a pull request closing others",
+            vec![Item::Pull(Number(20))],
+            vec![
+                Item::Issue(Number(1)),
+                Item::Issue(Number(2)),
+                Item::Issue(Number(3)),
+            ],
+        ),
+        (
+            "a pull request closing an issue read with it",
+            vec![Item::Pull(Number(20)), Item::Issue(Number(2))],
+            vec![Item::Issue(Number(1)), Item::Issue(Number(3))],
+        ),
+        ("an issue", vec![Item::Issue(Number(4))], vec![]),
+        (
+            "a pull request it lacks",
+            vec![Item::Pull(Number(99))],
+            vec![],
+        ),
+    ];
+
+    for (case, read, others) in cases {
+        let read = BTreeSet::from_iter(read);
+
+        assert_eq!(
+            snapshot.closed_by_pulls_read(&read),
+            BTreeSet::from_iter(others),
+            "{case}"
+        );
+    }
+}

@@ -1,0 +1,23 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": null
+    }
+  },
+  "errors": [
+    {
+      "type": "NOT_FOUND",
+      "path": [
+        "repository",
+        "pullRequest"
+      ],
+      "locations": [
+        {
+          "line": 1,
+          "column": 73
+        }
+      ],
+      "message": "Could not resolve to a PullRequest with the number of 999999."
+    }
+  ]
+}

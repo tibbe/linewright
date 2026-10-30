@@ -1972,6 +1972,59 @@ impl<'a> Held<'a> {
     }
 }
 
+/// What [`Store::issue`](crate::store::Store::issue) reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IssueRead {
+    Held {
+        issue: Box<Issue>,
+        /// Linewright's pull requests that close the issue.
+        pulls: Vec<Pull>,
+    },
+    LeftOut {
+        open: bool,
+    },
+    /// Left out of the open issues, and closed: one a snapshot may hold
+    /// among its closed items.
+    Closed(Box<ClosedItem>),
+    Gone,
+}
+
+/// What [`Store::peoples_pull`](crate::store::Store::peoples_pull) reads.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PeoplesPullRead {
+    /// The issues it closes while it is open: none when it is not open, or
+    /// the store has no such pull request.
+    pub closes: Vec<Number>,
+    /// `None` when a snapshot leaves it out of the people's pull requests,
+    /// as it does Linewright's own.
+    pub pull: Option<Pull>,
+}
+
+/// What a refresh reads of a pull request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PullRead {
+    pub held: PullHeldRead,
+    /// As [`Store::merged_pull`](crate::store::Store::merged_pull) reads it.
+    pub merged: Option<MergedPull>,
+}
+
+/// A pull request read as Linewright's, or else as the people's read it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PullHeldRead {
+    Linewrights(Pull),
+    Peoples(PeoplesPullRead),
+}
+
+/// What a snapshot that took an issue's read says of the pull requests.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IssueTaken {
+    /// Linewright's pull requests read with the issue.
+    pub pulls_read: Vec<Number>,
+    /// Linewright's ended pull requests to read again, held only while the
+    /// issue they close is, which the issue's read left.
+    pub pulls_to_read: Vec<Number>,
+}
+
 impl Snapshot {
     pub fn issue(&self, number: Number) -> Option<&Issue> {
         self.issues.iter().find(|i| i.number == number)
@@ -2057,6 +2110,107 @@ impl Snapshot {
             name = format!("{base}-{n}");
         }
         name
+    }
+
+    /// Takes in what a refresh read of pull request #`number`, and returns
+    /// the issues to read again: those a person's pull request closes, or
+    /// closed while it was open.
+    pub fn took_pull(&mut self, number: Number, read: PullRead) -> Vec<Number> {
+        let mut closing = BTreeSet::new();
+        match read.held {
+            PullHeldRead::Linewrights(pull) => self.put_pull(pull),
+            PullHeldRead::Peoples(PeoplesPullRead { closes, pull }) => {
+                self.remove_pull(number);
+                closing.extend(self.issues_closing(number, &closes));
+                match pull {
+                    Some(pull) => self.put_peoples_pull(pull),
+                    None => self.remove_peoples_pull(number),
+                }
+            }
+        }
+        match read.merged {
+            Some(merged) => self.put_merged(merged),
+            None => self.remove_merged(number),
+        }
+        closing.into_iter().collect()
+    }
+
+    /// Takes in what a refresh read of issue #`number`, holding it among the
+    /// closed items as a snapshot taken in `windows` would.
+    pub fn took_issue(
+        &mut self,
+        number: Number,
+        read: IssueRead,
+        windows: Windows,
+        linewright: &Login,
+    ) -> IssueTaken {
+        self.remove_closed(number);
+        let mut taken = IssueTaken::default();
+        let left = match read {
+            IssueRead::Held { issue, pulls } => {
+                self.relink(number, SubIssueState::open(issue.open));
+                self.put_issue(*issue);
+                for pull in pulls {
+                    taken.pulls_read.push(pull.number);
+                    self.put_pull(pull);
+                }
+                false
+            }
+            IssueRead::LeftOut { open } => {
+                self.relink(number, SubIssueState::open(open));
+                true
+            }
+            IssueRead::Closed(closed) => {
+                self.relink(
+                    number,
+                    SubIssueState::Closed {
+                        at: Some(closed.closed_at),
+                    },
+                );
+                if self.keeps_closed(&closed, windows, linewright) {
+                    self.put_closed(*closed);
+                }
+                true
+            }
+            IssueRead::Gone => {
+                self.unlink(number);
+                true
+            }
+        };
+        if left {
+            self.remove_issue(number);
+            taken.pulls_to_read = self.ended_pulls_closing(number);
+        }
+        taken
+    }
+
+    /// Takes in what a refresh read again of Linewright's ended pull request
+    /// #`number` ([`IssueTaken::pulls_to_read`]).
+    pub fn took_ended_pull(&mut self, number: Number, pull: Option<Pull>) {
+        match pull {
+            Some(pull) => self.put_pull(pull),
+            None => self.remove_pull(number),
+        }
+    }
+
+    /// The issues, besides those `read`, that a pull request it read closes
+    /// or closed while open: a pull request frees an issue when it ends or
+    /// stops closing it.
+    pub fn closed_by_pulls_read(&self, read: &BTreeSet<Item>) -> BTreeSet<Item> {
+        let mut others = BTreeSet::new();
+        for item in read {
+            let Item::Pull(pr) = *item else { continue };
+            let Some(pull) = self.pull(pr) else {
+                continue;
+            };
+            others.extend(
+                self.issues_closing(pr, &pull.closes)
+                    .into_iter()
+                    .map(Item::Issue)
+                    .filter(|other| !read.contains(other)),
+            );
+        }
+        others
     }
 
     pub fn put_issue(&mut self, issue: Issue) {
