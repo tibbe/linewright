@@ -10,9 +10,9 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    CheckFailure, ClosedItem, Issue, IssueCloseReason, Item, Login, Marking, MergeMethod,
-    MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule, Windows,
-    label,
+    CheckFailure, ClosedItem, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking,
+    MergeMethod, MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule,
+    Windows, label,
 };
 use crate::redaction::Redaction;
 
@@ -279,6 +279,11 @@ pub struct PeoplesPullRead {
 pub enum AnyItem {
     HeldIssue(Box<Issue>),
     LeftOutIssue(Box<Issue>),
+    /// A closed issue, with its closing.
+    ClosedIssue {
+        issue: Box<Issue>,
+        closing: IssueClosing,
+    },
     /// A pull request open, or closed without merging.
     Pull(Box<Pull>),
     Merged {
@@ -307,7 +312,9 @@ impl AnyItem {
 
     pub fn number(&self) -> Number {
         match self {
-            AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => issue.number,
+            AnyItem::HeldIssue(issue)
+            | AnyItem::LeftOutIssue(issue)
+            | AnyItem::ClosedIssue { issue, .. } => issue.number,
             AnyItem::Pull(pull) => pull.number,
             AnyItem::Merged { pull, .. } => pull.number,
         }
@@ -315,7 +322,9 @@ impl AnyItem {
 
     pub fn item(&self) -> Item {
         match self {
-            AnyItem::HeldIssue(_) | AnyItem::LeftOutIssue(_) => Item::Issue(self.number()),
+            AnyItem::HeldIssue(_) | AnyItem::LeftOutIssue(_) | AnyItem::ClosedIssue { .. } => {
+                Item::Issue(self.number())
+            }
             AnyItem::Pull(_) | AnyItem::Merged { .. } => Item::Pull(self.number()),
         }
     }
@@ -323,7 +332,9 @@ impl AnyItem {
     /// As [`Issue::is_stalled`].
     pub fn is_stalled(&self) -> bool {
         match self {
-            AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => issue.is_stalled(),
+            AnyItem::HeldIssue(issue)
+            | AnyItem::LeftOutIssue(issue)
+            | AnyItem::ClosedIssue { issue, .. } => issue.is_stalled(),
             AnyItem::Pull(pull) => pull.is_stalled(),
             AnyItem::Merged { pull, .. } => pull.is_stalled(),
         }

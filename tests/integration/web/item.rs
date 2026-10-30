@@ -96,6 +96,59 @@ async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_la
     web.stop().await;
 }
 
+/// #793: an open issue Linewright worked, whose status label a person
+/// removed, with no run in flight and no open pull request closing it.
+#[tokio::test]
+async fn the_item_page_of_an_issue_linewright_worked_whose_status_label_a_person_removed_says_left_alone()
+ {
+    let world = World::new().await;
+    let issue = world
+        .store
+        .open_issue("maintainer", "Odd crash", "It crashed.", &[]);
+    world
+        .store
+        .label_as(LINEWRIGHT, issue, "ready-for-human")
+        .unwrap();
+    world.store.unlabel_as(issue, "ready-for-human").unwrap();
+    let web = Web::start(world).await;
+
+    let html = web.page(&format!("/items/{}", issue.0)).await;
+    let board = web.page("/").await;
+
+    assert_eq!(
+        fact(&item_facts(&html), "State"),
+        "Left alone · labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
+         `ready-for-human`"
+    );
+    assert!(
+        select(&board, "#board .lane").is_empty(),
+        "{}",
+        board.html()
+    );
+    web.stop().await;
+}
+
+#[tokio::test]
+async fn the_item_page_of_an_issue_holding_ready_for_human_that_linewright_has_not_worked_names_the_label()
+ {
+    let world = World::new().await;
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Odd crash",
+        "It crashed.",
+        &["ready-for-human"],
+    );
+    let web = Web::start(world).await;
+
+    let html = web.page(&format!("/items/{}", issue.0)).await;
+
+    assert_eq!(
+        fact(&item_facts(&html), "State"),
+        "Left alone · holds `ready-for-human`, and Linewright has not worked it"
+    );
+    web.stop().await;
+}
+
 #[tokio::test]
 async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
     let world = with_ticket().await;
@@ -109,7 +162,8 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
     let facts = item_facts(&html);
     assert_eq!(
         fact(&facts, "State"),
-        "Left alone · waits on a person, and Linewright has not worked it"
+        "Left alone · labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
+         `ready-for-human`"
     );
     assert!(
         select(&html, "#item dl .badge").is_empty(),
@@ -605,33 +659,6 @@ async fn a_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_it_fini
 
     let state = fact(&item_facts(&html), "State").to_string();
     assert!(state.starts_with("Tracking · finished 2026-"), "{state}");
-    web.stop().await;
-}
-
-#[tokio::test]
-async fn the_item_page_names_the_items_a_left_alone_reason_names_by_number_and_title() {
-    let world = with_ticket().await;
-    for (branch, title) in [("first", "First try"), ("second", "Second try")] {
-        world
-            .store
-            .open_pull_as(
-                LINEWRIGHT,
-                branch,
-                title,
-                "Closes #1.",
-                &[(&format!("src/{branch}.txt"), "try\n")],
-            )
-            .await
-            .unwrap();
-    }
-    let web = Web::start(world).await;
-
-    let html = web.page("/items/2").await;
-
-    assert_eq!(
-        fact(&item_facts(&html), "State"),
-        "Left alone · for #1: Do the thing, which Linewright works on through #3: Second try"
-    );
     web.stop().await;
 }
 

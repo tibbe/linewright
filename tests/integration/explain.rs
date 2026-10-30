@@ -974,7 +974,7 @@ fn a_tracking_issue_with_no_tickets_and_no_cut_in_flight_is_not_managed() {
     );
 }
 
-fn left_alone_text(view: &View, read: &AnyItem) -> Vec<String> {
+fn read_text(view: &View, read: &AnyItem) -> Vec<String> {
     let answer = explain_read(view, &[], read, at(NOW));
     render_answer(&answer, false)
         .lines()
@@ -990,7 +990,7 @@ fn a_closed_issue_is_left_alone_as_closed() {
     };
 
     assert_eq!(
-        left_alone_text(
+        read_text(
             &view(vec![], vec![]),
             &AnyItem::LeftOutIssue(Box::new(closed))
         ),
@@ -1015,11 +1015,11 @@ fn an_open_issue_linewright_has_not_worked_that_waits_on_a_person_is_left_alone_
         AnyItem::LeftOutIssue(Box::new(asked.clone())),
     ] {
         assert_eq!(
-            left_alone_text(&view(vec![asked.clone()], vec![]), &read)[1..],
+            read_text(&view(vec![asked.clone()], vec![]), &read)[1..],
             [
                 "state: open issue",
                 "last read: 2026-10-01 12:00:30 UTC",
-                "left alone: it waits on a person, and Linewright has not worked it",
+                "left alone: it holds `needs-info`, and Linewright has not worked it",
             ]
         );
     }
@@ -1049,12 +1049,57 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
     };
 
     assert_eq!(
-        left_alone_text(
+        read_text(
             &view(vec![unlabeled.clone()], vec![]),
             &AnyItem::HeldIssue(Box::new(unlabeled))
         )[3],
         "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
          `ready-for-human`"
+    );
+}
+
+/// #793: an open issue Linewright worked, whose status label a person
+/// removed, with no run in flight and no open pull request closing it.
+#[test]
+fn an_issue_linewright_worked_whose_status_label_a_person_removed_is_left_alone() {
+    let taken_back = Issue {
+        labels: vec![],
+        events: vec![
+            IssueEvent::Labeled {
+                label: "ready-for-agent".into(),
+                by: Some(Login::new("factory")),
+                at: at("2026-09-30T10:00:00Z"),
+            },
+            IssueEvent::Unlabeled {
+                label: "ready-for-agent".into(),
+                at: at("2026-09-30T11:00:00Z"),
+            },
+        ],
+        ..ticket(42, "Add invoices")
+    };
+    let view = view(vec![taken_back.clone()], vec![]);
+
+    assert_eq!(explain(&view, &[], Number(42), at(NOW)), None);
+    assert_eq!(
+        read_text(&view, &AnyItem::HeldIssue(Box::new(taken_back)))[3],
+        "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
+         `ready-for-human`"
+    );
+}
+
+#[test]
+fn an_issue_with_no_status_label_is_explained_while_its_run_is_in_flight() {
+    let unlabeled = Issue {
+        labels: vec![],
+        assignees: vec![Login::new("factory")],
+        ..ticket(42, "Add invoices")
+    };
+    let mut view = view(vec![unlabeled], vec![]);
+    view.in_flight = vec![in_flight("42/implement-1", "2026-10-01T11:50:00Z")];
+
+    assert_eq!(
+        text(&view, 42)[1],
+        "state: labeled none of the status labels, its run in flight"
     );
 }
 
@@ -1069,7 +1114,7 @@ fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_is_n
 
     assert_eq!(explain(&view, &[], Number(42), at(NOW)), None);
     assert_eq!(
-        left_alone_text(&view, &AnyItem::HeldIssue(Box::new(unmarked)))[3],
+        read_text(&view, &AnyItem::HeldIssue(Box::new(unmarked)))[3],
         "left alone: it is not marked for Linewright"
     );
 }
@@ -1085,8 +1130,8 @@ fn with_a_required_label_an_unmarked_issue_that_would_wait_on_a_person_were_it_m
     view.policy.require_label = Some("linewright".into());
 
     assert_eq!(
-        left_alone_text(&view, &AnyItem::HeldIssue(Box::new(asked)))[3],
-        "left alone: it waits on a person, and Linewright has not worked it"
+        read_text(&view, &AnyItem::HeldIssue(Box::new(asked)))[3],
+        "left alone: it holds `needs-info`, and Linewright has not worked it"
     );
 }
 
@@ -1121,7 +1166,7 @@ fn a_tracking_issue_with_no_tickets_is_left_alone_as_such() {
     };
 
     assert_eq!(
-        left_alone_text(
+        read_text(
             &view(vec![tracking.clone()], vec![]),
             &AnyItem::HeldIssue(Box::new(tracking))
         )[1..],
@@ -1143,7 +1188,7 @@ fn an_issue_the_read_places_in_the_pipeline_is_explained_as_read_then() {
     let labeled = ticket(42, "Add invoices");
 
     assert_eq!(
-        left_alone_text(
+        read_text(
             &view(vec![unlabeled], vec![]),
             &AnyItem::HeldIssue(Box::new(labeled))
         ),
@@ -1156,26 +1201,30 @@ fn an_issue_the_read_places_in_the_pipeline_is_explained_as_read_then() {
     );
 }
 
+/// A person's pull request #`number`, that Linewright has not worked and
+/// is not assigned to.
 fn someones_pull(number: u64) -> Pull {
     Pull {
         author: Login::new("maintainer"),
         title: "Tidy up".into(),
         closes: vec![],
+        assignees: vec![],
         ..draft(number, 1, &[])
     }
 }
 
 #[test]
-fn a_closed_pull_request_is_left_alone_as_closed() {
+fn a_closed_pull_request_linewright_has_not_worked_is_left_alone_as_closed() {
     let closed = Pull {
         state: PullState::Closed {
             at: at("2026-10-01T11:00:00Z"),
         },
-        ..draft(43, 42, &[])
+        closes: vec![Number(42)],
+        ..someones_pull(43)
     };
 
     assert_eq!(
-        left_alone_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(closed)))[1..],
+        read_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(closed)))[1..],
         [
             "parent: #42, an issue it closes",
             "state: closed pull request",
@@ -1188,7 +1237,7 @@ fn a_closed_pull_request_is_left_alone_as_closed() {
 #[test]
 fn a_pull_request_linewright_did_not_open_names_who_did() {
     assert_eq!(
-        left_alone_text(
+        read_text(
             &view(vec![], vec![]),
             &AnyItem::Pull(Box::new(someones_pull(43)))
         ),
@@ -1196,26 +1245,54 @@ fn a_pull_request_linewright_did_not_open_names_who_did() {
             "#43: Tidy up",
             "state: open pull request",
             "last read: 2026-10-01 12:00:30 UTC",
-            "left alone: maintainer opened it, and Linewright works only on its own pull requests",
+            "left alone: maintainer opened it, and Linewright has not worked it and is not \
+             assigned to it",
         ]
     );
 }
 
 #[test]
-fn linewrights_pull_request_closing_no_issue_says_so() {
+fn a_persons_pull_request_linewright_is_assigned_to_or_commented_on_is_in_review() {
+    let assigned = Pull {
+        assignees: vec![Login::new("factory")],
+        ..someones_pull(43)
+    };
+    let commented = Pull {
+        comments: vec![Comment {
+            author: Login::new("factory"),
+            body: "Looks good.".into(),
+            created_at: at("2026-10-01T11:00:00Z"),
+        }],
+        ..someones_pull(44)
+    };
+
+    let state =
+        |pull: Pull| read_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(pull)))[1].clone();
+
+    assert_eq!(
+        [state(assigned), state(commented)],
+        [
+            "state: in review: #43 (draft, no checks)",
+            "state: in review: #44 (draft, no checks)",
+        ]
+    );
+}
+
+#[test]
+fn linewrights_pull_request_closing_no_issue_is_in_review() {
     let for_nothing = Pull {
         closes: vec![],
         ..draft(43, 42, &[])
     };
 
     assert_eq!(
-        left_alone_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(for_nothing)))[3],
-        "left alone: it is Linewright's, and closes no issue Linewright could work on"
+        read_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(for_nothing)))[1],
+        "state: in review: #43 (draft, no checks)"
     );
 }
 
 #[test]
-fn linewrights_older_pull_request_for_an_issue_names_the_one_it_works_through() {
+fn linewrights_older_pull_request_for_an_issue_is_in_review_too() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
         ..ticket(42, "Add invoices")
@@ -1224,8 +1301,8 @@ fn linewrights_older_pull_request_for_an_issue_names_the_one_it_works_through() 
     let view = view(vec![claimed], vec![older.clone(), draft(44, 42, &[])]);
 
     assert_eq!(
-        left_alone_text(&view, &AnyItem::Pull(Box::new(older)))[4],
-        "left alone: it is Linewright's for #42, which it works on through #44"
+        read_text(&view, &AnyItem::Pull(Box::new(older)))[2],
+        "state: in review: #43 (draft, no checks)"
     );
 }
 
@@ -1247,7 +1324,7 @@ fn merged(labels: &[&str]) -> MergedPull {
 }
 
 fn merged_text(view: &View, pull: MergedPull) -> String {
-    let lines = left_alone_text(
+    let lines = read_text(
         view,
         &AnyItem::Merged {
             pull: Box::new(pull),
@@ -1262,16 +1339,6 @@ fn merged_text(view: &View, pull: MergedPull) -> String {
 fn a_merged_pull_request_names_the_rule_that_makes_it_no_spec_change() {
     let view = view(vec![], vec![]);
 
-    assert_eq!(
-        merged_text(
-            &view,
-            MergedPull {
-                author: Login::new("factory"),
-                ..merged(&[])
-            }
-        ),
-        "left alone: it is no spec change: Linewright opened it"
-    );
     assert_eq!(
         merged_text(
             &view,
@@ -1501,7 +1568,7 @@ fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issue(
     let opened = draft(43, 42, &[CheckState::Pending]);
 
     assert_eq!(
-        left_alone_text(
+        read_text(
             &view(vec![claimed], vec![]),
             &AnyItem::Pull(Box::new(opened))
         ),
@@ -1529,7 +1596,7 @@ fn linewrights_pull_request_is_worked_whatever_the_labels_of_the_issue_it_is_for
 
     for issue in [handed_back, unlabeled] {
         assert_eq!(
-            left_alone_text(
+            read_text(
                 &view(vec![issue], vec![]),
                 &AnyItem::Pull(Box::new(open.clone()))
             ),
@@ -1607,7 +1674,7 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
                 "state": "open",
                 "last_read": "2026-10-01T12:00:30Z",
                 "stalled": false,
-                "left_alone": {"reason": "waits-on-a-person"},
+                "left_alone": {"reason": "no-pipeline-label"},
                 "run_in_flight": null,
                 "past_runs": [],
                 "past_runs_left_out": 0,
@@ -1639,10 +1706,7 @@ fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_closes() {
     let superseded = view(vec![claimed], vec![older.clone(), draft(44, 42, &[])]);
 
     assert_eq!(
-        family_lines(&left_alone_text(
-            &superseded,
-            &AnyItem::Pull(Box::new(older))
-        )),
+        family_lines(&read_text(&superseded, &AnyItem::Pull(Box::new(older)))),
         ["parent: #42, an issue it closes"]
     );
 }
@@ -1659,7 +1723,7 @@ fn linewrights_merged_pull_request_names_the_issue_it_closes() {
         ..merged(&[])
     };
 
-    let lines = left_alone_text(
+    let lines = read_text(
         &view(vec![], vec![]),
         &AnyItem::Merged {
             pull: Box::new(done),
@@ -1668,11 +1732,48 @@ fn linewrights_merged_pull_request_names_the_issue_it_closes() {
     );
 
     assert_eq!(
-        lines[..3],
+        lines,
         [
             "#43: Do #42",
             "parent: #42, an issue it closes",
-            "state: merged pull request",
+            "state: merged",
+            "last read: 2026-10-01 12:00:30 UTC",
+        ]
+    );
+}
+
+#[test]
+fn a_persons_merged_pull_request_linewright_commented_on_is_merged() {
+    let commented = MergedPull {
+        files: vec!["src/main.rs".into()],
+        events: vec![IssueEvent::Commented {
+            by: Login::new("factory"),
+            at: at("2026-10-01T08:00:00Z"),
+        }],
+        ..merged(&[])
+    };
+
+    assert_eq!(
+        read_merged_text(&view(vec![], vec![]), commented)[1],
+        "state: merged"
+    );
+}
+
+#[test]
+fn linewrights_pull_request_closed_unmerged_is_closed_without_merging() {
+    let closed = Pull {
+        state: PullState::Closed {
+            at: at("2026-10-01T11:00:00Z"),
+        },
+        ..draft(43, 42, &[])
+    };
+
+    assert_eq!(
+        read_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(closed)))[1..],
+        [
+            "parent: #42, an issue it closes",
+            "state: closed without merging",
+            "last read: 2026-10-01 12:00:30 UTC",
         ]
     );
 }
@@ -1707,7 +1808,7 @@ fn a_pull_request_someone_else_opened_names_the_issue_it_closes() {
         AnyItem::Pull(Box::new(someones_open)),
     ] {
         assert_eq!(
-            family_lines(&left_alone_text(&view(vec![], vec![]), &read)),
+            family_lines(&read_text(&view(vec![], vec![]), &read)),
             ["parent: #42, an issue it closes"]
         );
     }
@@ -1716,10 +1817,12 @@ fn a_pull_request_someone_else_opened_names_the_issue_it_closes() {
 #[test]
 fn the_json_of_a_closed_pull_request_names_the_issue_it_closes() {
     let closed = Pull {
+        title: "Do #42".into(),
         state: PullState::Closed {
             at: at("2026-10-01T11:00:00Z"),
         },
-        ..draft(43, 42, &[])
+        closes: vec![Number(42)],
+        ..someones_pull(43)
     };
     let answer = explain_read(
         &view(vec![], vec![]),
@@ -1833,7 +1936,7 @@ fn a_closed_ticket_names_its_tracking_issue() {
         AnyItem::LeftOutIssue(Box::new(closed)),
     ] {
         assert_eq!(
-            family_lines(&left_alone_text(&view(vec![], vec![]), &read)),
+            family_lines(&read_text(&view(vec![], vec![]), &read)),
             ["parent: #40, its tracking issue"]
         );
     }
@@ -1946,7 +2049,7 @@ fn a_spec_change_cut_into_tickets_names_its_tracking_issue() {
         tracking_issues: vec![Number(40)],
     };
 
-    let lines = left_alone_text(&view(vec![], vec![]), &designed);
+    let lines = read_text(&view(vec![], vec![]), &designed);
 
     assert_eq!(
         lines[..3],
@@ -1982,7 +2085,7 @@ fn a_spec_change_labeled_before_the_design_label_names_its_tracking_issue() {
     };
 
     assert_eq!(
-        family_lines(&left_alone_text(&view(vec![], vec![]), &designed)),
+        family_lines(&read_text(&view(vec![], vec![]), &designed)),
         ["child: #40, its tracking issue"]
     );
 }
@@ -1995,7 +2098,7 @@ fn a_spec_change_cut_again_names_its_newest_tracking_issue() {
     };
 
     assert_eq!(
-        family_lines(&left_alone_text(&view(vec![], vec![]), &designed)),
+        family_lines(&read_text(&view(vec![], vec![]), &designed)),
         ["child: #44, its tracking issue"]
     );
 }
@@ -2008,7 +2111,7 @@ fn a_spec_change_not_cut_names_no_tracking_issue_from_a_cut_discarded_part_way()
     };
 
     assert_eq!(
-        family_lines(&left_alone_text(&view(vec![], vec![]), &handed_back)),
+        family_lines(&read_text(&view(vec![], vec![]), &handed_back)),
         Vec::<&str>::new()
     );
 }
@@ -2285,7 +2388,7 @@ fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
     open.closed_by.insert(0, ended(43));
 
     assert_eq!(
-        family_lines(&left_alone_text(
+        family_lines(&read_text(
             &view(vec![], vec![]),
             &AnyItem::LeftOutIssue(Box::new(closed))
         )),

@@ -1276,3 +1276,25 @@ fn polls_failed_are_in_the_json_and_a_client_reads_an_answer_without_them() {
     let read: Status = serde_json::from_value(json).unwrap();
     assert_eq!(read.linewright.failed_polls, None);
 }
+
+#[test]
+fn the_open_managed_items_are_listed_but_those_in_done() {
+    let merged_into = Issue {
+        closed_by: vec![ClosingPull {
+            number: Number(30),
+            author: Login::new("factory"),
+            state: PullState::Merged {
+                at: at("2026-10-01T10:00:00Z"),
+            },
+            updated_at: at("2026-10-01T10:00:00Z"),
+            base_ref: "main".into(),
+        }],
+        ..ticket(1, "Merged into")
+    };
+    let mut view = view(vec![merged_into, ticket(2, "Ready")]);
+    let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
+    snapshot.peoples_pulls = vec![common::open_pull(40, "alice", &[], &["factory"])];
+    snapshot.merged = vec![common::merged_pull(30, "factory", &[1])];
+
+    assert_eq!(managed_numbers(&view), [Number(2), Number(40)]);
+}

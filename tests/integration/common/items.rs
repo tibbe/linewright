@@ -9,6 +9,7 @@ use linewright::reconcile::{Drain, LiveRun, Memory, Policy, Subject, WorkKind};
 use linewright::runs::InFlight;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{Polls, View};
+use linewright::store::AnyItem;
 
 use super::clock::at;
 
@@ -187,5 +188,82 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
         automations: AutomationFiles::default(),
         last_scheduled_runs: LastScheduledRuns::default(),
         unusable: vec![],
+    }
+}
+
+/// Closed `issue`'s closing: closed as completed by a person at
+/// `closed_at`.
+fn closed_as_completed(closed_at: &str) -> IssueClosing {
+    IssueClosing {
+        at: at(closed_at),
+        merged_by: None,
+        reason: Some(IssueCloseReason::Completed),
+    }
+}
+
+/// `issue`, closed as completed by a person at `closed_at`, as a store
+/// reads it.
+pub fn read_closed(issue: Issue, closed_at: &str) -> AnyItem {
+    AnyItem::ClosedIssue {
+        issue: Box::new(Issue {
+            open: false,
+            ..issue
+        }),
+        closing: closed_as_completed(closed_at),
+    }
+}
+
+/// `issue`, closed as completed by a person at `closed_at`, as a snapshot
+/// holds it.
+pub fn closed_item(issue: &Issue, closed_at: &str) -> ClosedItem {
+    ClosedItem::of_issue(issue, closed_as_completed(closed_at))
+}
+
+/// Open pull request #`number` by `author`, closing `closes`, assigned to
+/// `assignees`.
+pub fn open_pull(number: u64, author: &str, closes: &[u64], assignees: &[&str]) -> Pull {
+    Pull {
+        number: Number(number),
+        title: format!("Pull {number}"),
+        body: String::new(),
+        author: Login::new(author),
+        created_at: at("2026-10-01T09:00:00Z"),
+        updated_at: at("2026-10-01T09:00:00Z"),
+        base_ref: "main".into(),
+        head_ref: format!("{number}-pull"),
+        head_sha: "abc123".into(),
+        state: PullState::Open { draft: false },
+        closes: closes.iter().copied().map(Number).collect(),
+        pushes: vec![],
+        mergeability: Mergeability::Unknown,
+        rebaseability: Rebaseability::Unknown,
+        checks: vec![],
+        comments: vec![],
+        reviews: vec![],
+        threads: vec![],
+        labels: vec![],
+        labelings: vec![],
+        assignees: assignees.iter().map(|a| Login::new(*a)).collect(),
+        assignments: vec![],
+        review_decision: None,
+    }
+}
+
+/// Pull request #`number` by `author`, merged into `main` at 10:00 on
+/// 2026-10-01, closing `closes`.
+pub fn merged_pull(number: u64, author: &str, closes: &[u64]) -> MergedPull {
+    MergedPull {
+        number: Number(number),
+        title: format!("Merged {number}"),
+        body: String::new(),
+        author: Login::new(author),
+        merged_at: at("2026-10-01T10:00:00Z"),
+        updated_at: at("2026-10-01T10:00:00Z"),
+        base_ref: "main".into(),
+        labels: vec![],
+        closes: closes.iter().copied().map(Number).collect(),
+        files: vec!["src/lib.rs".into()],
+        assignees: vec![],
+        events: vec![],
     }
 }

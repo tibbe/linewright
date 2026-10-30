@@ -5,12 +5,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, Login, Marking, Merge, MergedPull,
-    Number, Pull, PullState, Snapshot, StatusLabel, Timestamp, Tracks, label, last_labeling,
+    Asks, CheckState, ClosedItem, ClosedKind, ClosingPull, Issue, IssueCloseReason, IssueClosing,
+    Login, Marking, Merge, MergedPull, Number, Pull, PullState, Snapshot, StatusLabel, SubIssue,
+    Timestamp, Tracks, label, last_labeling,
 };
 use crate::phrase::Phrase;
 use crate::reconcile::{
-    NotSpecChange, NotWorked, Policy, SpecChange, Wait, open_pull_for, spec_change, worked_ticket,
+    NotSpecChange, Policy, SpecChange, Wait, open_pull_for, spec_change, ticket_of,
 };
 use crate::status::View;
 
@@ -18,7 +19,8 @@ use crate::status::View;
 #[derive(Clone, Copy, Debug)]
 pub enum Held<'a> {
     /// An issue as the view holds an open one. One read closed without its
-    /// closing, as `explain` may read it, is judged closed.
+    /// closing, which a store reads only where GitHub gives no time it
+    /// closed, is left alone as closed.
     Issue(&'a Issue),
     /// An issue or a pull request closed, with its closing.
     Closed(&'a ClosedItem),
@@ -70,6 +72,7 @@ impl Managed {
             | S::ReadyToDesign
             | S::Claimed
             | S::ReadyToClaim
+            | S::Unlabeled
             | S::MergedInto { .. } => false,
         }
     }
@@ -98,10 +101,14 @@ pub enum ItemState {
     ReadyToDesign,
     Claimed,
     ReadyToClaim,
-    /// A pull request of Linewright's in review, for the issue
-    /// `pull_request_for`.
+    /// An open issue with no status label, managed through its run in
+    /// flight.
+    Unlabeled,
+    /// A managed pull request in review, for the issue `pull_request_for`,
+    /// the first it closes that the snapshot holds, if it closes any.
     PullRequest {
-        pull_request_for: Number,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pull_request_for: Option<Number>,
         #[serde(flatten)]
         review: InReview,
     },
@@ -187,9 +194,9 @@ pub enum Ended {
     ClosedIn(Number),
     /// An issue closed otherwise, with GitHub's reason where it is known.
     Closed(Option<IssueCloseReason>),
-    /// A pull request of Linewright's, merged.
+    /// A pull request merged.
     Merged,
-    /// A pull request of Linewright's, closed without merging.
+    /// A pull request closed without merging.
     ClosedUnmerged,
     /// A spec change designed with nothing to build.
     NothingToBuild,
@@ -252,11 +259,16 @@ pub enum IssueExclusion {
     NotMarked {
         label: String,
     },
-    /// It waits on a person, and Linewright has not worked it.
-    WaitsOnAPerson,
-    /// Linewright has worked it, and no column holds it.
+    /// It holds `label`, which asks for a person's work, and Linewright has
+    /// not worked it.
+    WaitsOnAPerson {
+        label: StatusLabel,
+    },
+    /// It holds no status label, and nothing else makes it managed.
     NoPipelineLabel,
     NoTickets,
+    /// A tracking issue with no status label and none of its tickets open.
+    NoOpenTickets,
 }
 
 impl IssueExclusion {
@@ -265,9 +277,9 @@ impl IssueExclusion {
     pub(crate) fn worded(&self) -> Phrase {
         match self {
             IssueExclusion::NotMarked { .. } => "not marked for Linewright".into(),
-            IssueExclusion::WaitsOnAPerson => {
-                "waits on a person, and Linewright has not worked it".into()
-            }
+            IssueExclusion::WaitsOnAPerson { label } => Phrase::from("holds ")
+                .code(label.label())
+                .text(", and Linewright has not worked it"),
             IssueExclusion::NoPipelineLabel => Phrase::from("labeled none of ").then(Phrase::list(
                 StatusLabel::ALL.map(|status| Phrase::default().code(status.label())),
                 "or",
@@ -275,6 +287,7 @@ impl IssueExclusion {
             IssueExclusion::NoTickets => {
                 "a tracking issue with no tickets, and none are being cut".into()
             }
+            IssueExclusion::NoOpenTickets => "a tracking issue with no open ticket".into(),
         }
     }
 }
@@ -283,9 +296,8 @@ impl IssueExclusion {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum PullExclusion {
-    NotLinewrights { author: Login },
-    ClosesNoIssue,
-    Superseded { issue: Number, by: Number },
+    /// A person's, that Linewright has not worked and is not assigned to.
+    NotWorked { author: Login },
 }
 
 /// Whether Linewright manages `held`, and if so where it stands; otherwise
@@ -299,9 +311,20 @@ pub fn classify(view: &View, held: Held<'_>, now: Timestamp) -> Result<Managed, 
     judge(view, held, waiting_for, now)
 }
 
+/// What the view holds as #`number`: a closed item, held with its closing,
+/// before the same item held as an open one would be.
+pub fn held(snapshot: &Snapshot, number: Number) -> Option<Held<'_>> {
+    snapshot
+        .closed_item(number)
+        .map(Held::Closed)
+        .or_else(|| snapshot.issue(number).map(Held::Issue))
+        .or_else(|| snapshot.any_pull(number).map(Held::Pull))
+        .or_else(|| snapshot.merged_pull(number).map(Held::Merged))
+}
+
 /// Every managed item the view holds, open, closed and merged, each once:
 /// the merged pull requests first, then the open issues, the open pull
-/// requests and the closed items.
+/// requests, Linewright's then the people's, and the closed items.
 pub fn managed(view: &View, now: Timestamp) -> Vec<Managed> {
     let snapshot = &view.snapshot;
     let mut waits = view.decisions(now).waits;
@@ -314,6 +337,7 @@ pub fn managed(view: &View, now: Timestamp) -> Vec<Managed> {
             snapshot
                 .pulls
                 .iter()
+                .chain(&snapshot.peoples_pulls)
                 .filter(|p| p.is_open())
                 .map(Held::Pull),
         )
@@ -338,19 +362,35 @@ fn judge(
         number: held.number(),
         title: title.to_string(),
         closes: closes.to_vec(),
-        closed: matches!(held, Held::Closed(_)),
+        closed: match held {
+            Held::Issue(issue) => !issue.open,
+            Held::Closed(_) => true,
+            Held::Pull(pull) => !pull.is_open(),
+            Held::Merged(_) => false,
+        },
         state,
         waiting_for: waits,
     };
     match held {
         Held::Issue(issue) if !issue.open => Err(LeftAloneItem::Issue(LeftAloneIssue::Closed)),
-        Held::Issue(issue) => match standing(issue, snapshot, policy, &waiting_for) {
+        Held::Issue(issue) => match standing(issue, view, &waiting_for) {
             Ok(state) => Ok(managed(&issue.title, &[], state, waiting_for)),
             Err(left_alone) => Err(LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone })),
         },
-        Held::Pull(pull) if !pull.is_open() => {
-            Err(LeftAloneItem::PullRequest(LeftAlonePull::Closed))
-        }
+        Held::Pull(pull) if !pull.is_open() => match pull.state {
+            PullState::Closed { at } if pull.worked_by(&policy.linewright) => Ok(managed(
+                &pull.title,
+                &pull.closes,
+                ItemState::Ended {
+                    ended: Ended::ClosedUnmerged,
+                    at,
+                },
+                waiting_for,
+            )),
+            PullState::Open { .. } | PullState::Closed { .. } | PullState::Merged { .. } => {
+                Err(LeftAloneItem::PullRequest(LeftAlonePull::Closed))
+            }
+        },
         Held::Pull(pull) => match pull_standing(pull, snapshot, &policy.linewright) {
             Ok(state) => Ok(managed(&pull.title, &pull.closes, state, waiting_for)),
             Err(left_alone) => Err(LeftAloneItem::PullRequest(LeftAlonePull::Open {
@@ -388,67 +428,77 @@ fn judge(
     }
 }
 
-/// Where open `issue` stands, or why Linewright leaves it alone: it is
-/// managed (`GLOSSARY.md`, **Managed**) or left alone as
-/// [`Issue::candidate`] tells.
-fn standing(
-    issue: &Issue,
-    snapshot: &Snapshot,
-    policy: &Policy,
-    waiting_for: &[Wait],
-) -> Result<ItemState, IssueExclusion> {
+/// Where open `issue` stands, or why Linewright leaves it alone
+/// (`docs/specs/repository.md`, Managed items): of the issues Linewright
+/// worked or that ask for its work ([`Issue::candidate`]), it leaves alone
+/// one with no status label, no run in flight, no open pull request closing
+/// it and no open ticket it tracks, whatever it did on it before.
+fn standing(issue: &Issue, view: &View, waiting_for: &[Wait]) -> Result<ItemState, IssueExclusion> {
+    let snapshot = &view.snapshot;
+    let policy = &view.policy;
     let linewright = &policy.linewright;
     let marking = policy.marking(&issue.labels);
     let closing = snapshot.pulls_closing(issue);
     if !issue.candidate(linewright, &closing, marking) {
-        return Err(match &policy.require_label {
-            Some(label)
-                if marking == Marking::Unmarked
-                    && issue.asks_for_work(linewright, Marking::Marked) =>
-            {
-                IssueExclusion::NotMarked {
-                    label: label.clone(),
-                }
+        return Err(match (issue.status_label(), &policy.require_label) {
+            (Some(status), _) if status.asks() == Asks::Person => {
+                IssueExclusion::WaitsOnAPerson { label: status }
             }
-            _ => IssueExclusion::WaitsOnAPerson,
+            (Some(_), Some(label)) if marking == Marking::Unmarked => IssueExclusion::NotMarked {
+                label: label.clone(),
+            },
+            _ => IssueExclusion::NoPipelineLabel,
         });
     }
-    // An issue Linewright worked that a pull request closing it merged
-    // into is in Done, whatever else holds of it.
+    let tracks = issue.tracks(linewright);
+    let tickets: Vec<&SubIssue> = tracks
+        .map(|tracks| tracks.tickets(&issue.sub_issues, linewright).collect())
+        .unwrap_or_default();
+    if issue.status_label().is_none()
+        && !view.has_live_run(issue.number)
+        && !closing.iter().any(ClosingPull::is_open)
+        && !tickets.iter().any(|ticket| ticket.is_open())
+    {
+        return Err(match tracks {
+            Some(_) if tickets.is_empty() => IssueExclusion::NoTickets,
+            Some(_) => IssueExclusion::NoOpenTickets,
+            None => IssueExclusion::NoPipelineLabel,
+        });
+    }
+    // An issue that a pull request closing it merged into is in Done,
+    // whatever else holds of it.
     let merge = issue
         .merged_since_opened(&closing, &snapshot.default_branch)
-        .filter(|_| issue.tracks(linewright).is_none() && issue.worked_by(linewright, &closing));
-    let state = match (issue_state(issue, snapshot, policy), merge) {
-        (Ok(labeled), Some(merge)) => {
-            return Ok(ItemState::MergedInto {
-                pull_request: merge.pull_request,
-                at: merge.at,
-                labeled: Box::new(labeled),
-            });
-        }
-        (Err(_), Some(merge)) => {
-            return Ok(ItemState::Ended {
+        .filter(|_| tracks.is_none());
+    let state = issue_state(issue, snapshot, policy);
+    if let Some(merge) = merge {
+        // One with no status label has no state its labels give.
+        return Ok(if state == ItemState::Unlabeled {
+            ItemState::Ended {
                 ended: Ended::ClosedIn(merge.pull_request),
                 at: merge.at,
-            });
-        }
-        (state, None) => state?,
-    };
+            }
+        } else {
+            ItemState::MergedInto {
+                pull_request: merge.pull_request,
+                at: merge.at,
+                labeled: Box::new(state),
+            }
+        });
+    }
     if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
         return Err(IssueExclusion::NoTickets);
     }
     Ok(state)
 }
 
-fn issue_state(
-    issue: &Issue,
-    snapshot: &Snapshot,
-    policy: &Policy,
-) -> Result<ItemState, IssueExclusion> {
+/// Where open `issue` stands by its tracking, the pull requests closing it
+/// and its status label.
+fn issue_state(issue: &Issue, snapshot: &Snapshot, policy: &Policy) -> ItemState {
     let open_pull = open_pull_for(snapshot, issue.number, &policy.linewright);
     let closing = snapshot.pulls_closing(issue);
     let open_closing = closing.iter().find(|p| p.is_open());
-    let state = if issue.tracks(&policy.linewright).is_some() {
+    if issue.tracks(&policy.linewright).is_some() {
         ItemState::Tracking {
             tickets_closed: issue.sub_issues.iter().filter(|t| !t.is_open()).count(),
             tickets: issue.sub_issues.len(),
@@ -479,29 +529,25 @@ fn issue_state(
                     (false, false) => ItemState::ReadyToDesign,
                 }
             }
-            None => return Err(IssueExclusion::NoPipelineLabel),
+            None => ItemState::Unlabeled,
         }
-    };
-    Ok(state)
+    }
 }
 
-/// Where open `pull` stands: Linewright works on it for the issue it
-/// closes, unless a newer one of its pull requests supersedes it.
+/// Where open `pull` stands: in review, if Linewright opened it, worked it
+/// or is assigned to it, for the issue it is for, if any.
 fn pull_standing(
     pull: &Pull,
     snapshot: &Snapshot,
     linewright: &Login,
 ) -> Result<ItemState, PullExclusion> {
-    let ticket =
-        worked_ticket(snapshot, pull, linewright).map_err(|not_worked| match not_worked {
-            NotWorked::NotLinewrights => PullExclusion::NotLinewrights {
-                author: pull.author.clone(),
-            },
-            NotWorked::ForNoIssue => PullExclusion::ClosesNoIssue,
-            NotWorked::Superseded { ticket, by } => PullExclusion::Superseded { issue: ticket, by },
-        })?;
+    if pull.held(linewright).is_none() {
+        return Err(PullExclusion::NotWorked {
+            author: pull.author.clone(),
+        });
+    }
     Ok(ItemState::PullRequest {
-        pull_request_for: ticket,
+        pull_request_for: ticket_of(snapshot, pull),
         review: InReview::of(pull),
     })
 }
@@ -510,8 +556,9 @@ fn pull_standing(
 /// which the decisions' waits for it follow; or why it is no spec change.
 /// A spec change Linewright was unassigned from has been worked
 /// (`GLOSSARY.md`, **Managed**), so it stays managed, though Linewright does
-/// not cut it. Linewright's own pull request and a spec change designed have
-/// ended.
+/// not cut it. Any other that Linewright worked has ended: a spec change
+/// designed with nothing to build as such, the rest as merged
+/// (`docs/specs/design_system.md`, Cards).
 fn merged_standing(
     pr: &MergedPull,
     snapshot: &Snapshot,
@@ -526,7 +573,7 @@ fn merged_standing(
             ItemState::WaitingForDesign,
             vec![Wait::Unassigned { required_label }],
         )),
-        Err(NotSpecChange::Linewrights) => ended(Ended::Merged, pr.merged_at),
+        Err(because) if !pr.worked_by(linewright) => Err(because),
         Err(NotSpecChange::Designed { .. }) if is_cut(snapshot, pr.number, linewright) => {
             ended(Ended::Merged, pr.merged_at)
         }
@@ -535,23 +582,37 @@ fn merged_standing(
                 .map_or(pr.merged_at, |labeling| labeling.at);
             ended(Ended::NothingToBuild, designed)
         }
-        Err(because) => Err(because),
+        Err(_) => ended(Ended::Merged, pr.merged_at),
     }
 }
 
 /// Whether spec change #`spec_change` was cut into tickets: a tracking issue
 /// the snapshot holds, open or closed, tracks it.
 pub(crate) fn is_cut(snapshot: &Snapshot, spec_change: Number, linewright: &Login) -> bool {
+    tracking_issues(snapshot, spec_change, linewright)
+        .next()
+        .is_some()
+}
+
+/// The tracking issues the snapshot holds, open or closed, that track spec
+/// change #`spec_change`.
+pub(crate) fn tracking_issues<'a>(
+    snapshot: &'a Snapshot,
+    spec_change: Number,
+    linewright: &'a Login,
+) -> impl Iterator<Item = Number> + 'a {
     let tracks = Some(Tracks::SpecChange(spec_change));
     let open = snapshot
         .issues
         .iter()
-        .filter(|issue| issue.open)
-        .any(|issue| issue.tracks(linewright) == tracks);
-    open || snapshot
+        .filter(move |issue| issue.open && issue.tracks(linewright) == tracks)
+        .map(|issue| issue.number);
+    let closed = snapshot
         .closed
         .iter()
-        .any(|item| item.tracks(linewright) == tracks)
+        .filter(move |item| item.tracks(linewright) == tracks)
+        .map(|item| item.number);
+    open.chain(closed)
 }
 
 /// Where closed `item` stands, if Linewright worked it: a tracking issue
@@ -573,40 +634,16 @@ fn closed_standing(
                 tickets,
             })
         }
-        ClosedKind::Issue {
-            facts,
-            merged_by,
-            reason,
-            ..
-        } => {
-            let closing = Closing {
-                at: item.closed_at,
-                merged_by: *merged_by,
-                reason: *reason,
-            };
+        ClosedKind::Issue { facts, .. } => {
             let merge = facts.work.merged_since_opened(&snapshot.default_branch);
-            let (ended, at) = issue_ended(merge, closing);
+            let (ended, at) = issue_ended(merge, item.issue_closing()?);
             Some(ItemState::Ended { ended, at })
         }
-        // Of the pull requests closed unmerged, only Linewright's own have
-        // ended under its work; a person's that it worked is left alone.
-        ClosedKind::Pull { author, .. } => author
-            .as_ref()
-            .is_none_or(|author| author == linewright)
-            .then_some(ItemState::Ended {
-                ended: Ended::ClosedUnmerged,
-                at: item.closed_at,
-            }),
+        ClosedKind::Pull { .. } => Some(ItemState::Ended {
+            ended: Ended::ClosedUnmerged,
+            at: item.closed_at,
+        }),
     }
-}
-
-/// An issue's closing: when, the pull request whose merge closed it where it
-/// is known, and GitHub's reason.
-#[derive(Clone, Copy)]
-struct Closing {
-    at: Timestamp,
-    merged_by: Option<Number>,
-    reason: Option<IssueCloseReason>,
 }
 
 /// How a closed issue Linewright worked ended (`docs/specs/design_system.md`,
@@ -614,7 +651,7 @@ struct Closing {
 /// request that closes it to merge into the default branch since it was last
 /// opened, and `closing`: "closed in" names that pull request before the
 /// closer.
-fn issue_ended(merge: Option<Merge>, closing: Closing) -> (Ended, Timestamp) {
+fn issue_ended(merge: Option<Merge>, closing: IssueClosing) -> (Ended, Timestamp) {
     match merge {
         Some(merge) => (
             Ended::ClosedIn(merge.pull_request),

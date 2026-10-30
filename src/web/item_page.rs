@@ -160,12 +160,9 @@ fn left_alone_worded(item: &LeftAloneItem) -> Phrase {
         | LeftAloneItem::PullRequest(LeftAlonePull::Closed) => "closed".into(),
         LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }) => left_alone.worded(),
         LeftAloneItem::PullRequest(LeftAlonePull::Open { left_alone }) => match left_alone {
-            PullExclusion::NotLinewrights { author } => format!("opened by {author}").into(),
-            PullExclusion::ClosesNoIssue => "closes no issue Linewright could work on".into(),
-            PullExclusion::Superseded { issue, by } => Phrase::from("for ")
-                .item(*issue)
-                .text(", which Linewright works on through ")
-                .item(*by),
+            PullExclusion::NotWorked { author } => {
+                format!("opened by {author}, and Linewright has not worked it").into()
+            }
         },
         LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }) => match left_alone {
             NotSpecChange::Linewrights => "opened by Linewright".into(),

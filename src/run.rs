@@ -573,7 +573,11 @@ async fn snapshot_or_store_issue<'a>(
         return Ok(Cow::Borrowed(issue));
     }
     match shell.store.any_item(number).await.map_err(infra)? {
-        Some(AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue)) => Ok(Cow::Owned(*issue)),
+        Some(
+            AnyItem::HeldIssue(issue)
+            | AnyItem::LeftOutIssue(issue)
+            | AnyItem::ClosedIssue { issue, .. },
+        ) => Ok(Cow::Owned(*issue)),
         _ => Err(infra(anyhow::anyhow!("there is no issue {number}"))),
     }
 }

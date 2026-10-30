@@ -16,11 +16,11 @@ use super::{
 use crate::clock::Clock;
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
-    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, Labeling, Linked, Login,
-    ManagedFacts, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull,
+    ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueClosing, IssueEvent, Labeling,
+    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull,
     PullHeld, PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review, ReviewDecision,
     ReviewState, Snapshot, SubIssue, SubIssueState, Thread, TicketBranch, TicketBranchName,
-    Timestamp, Windows, WorkFacts, closed_within, closing_references, label, pull_events,
+    Timestamp, Windows, closed_within, closing_references, label, pull_events,
 };
 use crate::git::{self, Merged};
 
@@ -183,6 +183,17 @@ struct Closing {
     /// The pull request whose merge closed the issue.
     merged_by: Option<Number>,
     reason: IssueCloseReason,
+}
+
+impl IssueRecord {
+    /// Its closing, while it is closed.
+    fn issue_closing(&self) -> Option<IssueClosing> {
+        self.closing.map(|closing| IssueClosing {
+            at: closing.at,
+            merged_by: closing.merged_by,
+            reason: Some(closing.reason),
+        })
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -1278,36 +1289,10 @@ impl State {
     /// The issue as the snapshot holds it among its closed items: `None`
     /// when it is open.
     fn closed_issue(&self, record: &IssueRecord) -> Option<ClosedItem> {
-        let closing = record.closing?;
-        let issue = self.issue_view(record);
-        Some(ClosedItem {
-            number: issue.number,
-            title: issue.title,
-            closed_at: closing.at,
-            updated_at: issue.updated_at,
-            kind: ClosedKind::Issue {
-                parent: issue.parent,
-                merged_by: closing.merged_by,
-                reason: Some(closing.reason),
-                facts: ManagedFacts {
-                    filed: issue.filed,
-                    sub_issues: issue.sub_issues,
-                    labels: issue.labels,
-                    work: WorkFacts {
-                        author: Some(issue.author),
-                        assignees: issue.assignees,
-                        // As GitHub's timeline, comments among the events.
-                        events: {
-                            let mut events = issue.events;
-                            events.extend(issue.comments.iter().map(Comment::event));
-                            events.sort_by_key(IssueEvent::at);
-                            events
-                        },
-                        closed_by: issue.closed_by,
-                    },
-                },
-            },
-        })
+        Some(ClosedItem::of_issue(
+            &self.issue_view(record),
+            record.issue_closing()?,
+        ))
     }
 
     fn tracking_issues_of(&self, spec_change: Number) -> Vec<Number> {
@@ -1815,6 +1800,12 @@ impl Store for LocalStore {
         {
             let state = self.state();
             if let Some(record) = state.issues.get(&number) {
+                if let Some(closing) = record.issue_closing() {
+                    return Ok(Some(AnyItem::ClosedIssue {
+                        issue: Box::new(state.issue_view(record)),
+                        closing,
+                    }));
+                }
                 return Ok(Some(AnyItem::issue(
                     state.issue_view(record),
                     &state.linewright,

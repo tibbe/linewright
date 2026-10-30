@@ -6,6 +6,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationFiles, AutomationName, LastScheduledRuns};
+use crate::board;
 use crate::domain::{Item, Number, Requirement, Snapshot, Timestamp, label};
 use crate::managed::{self, ItemState, Managed};
 use crate::phrase::Phrase;
@@ -79,6 +80,12 @@ impl View {
         self.in_flight
             .iter()
             .any(|run| run.id.of.item() == Some(number))
+    }
+
+    /// Whether a run is in flight on #`number`, or counts as one for what
+    /// starts, as a cut that ended since the snapshot was taken does.
+    pub(crate) fn has_live_run(&self, number: Number) -> bool {
+        self.has_run_in_flight(number) || self.live.iter().any(|run| run.subject.number() == number)
     }
 }
 
@@ -230,6 +237,7 @@ pub(crate) fn shown(state: ItemState) -> ItemState {
         | ItemState::ReadyToDesign
         | ItemState::Claimed
         | ItemState::ReadyToClaim
+        | ItemState::Unlabeled
         | ItemState::Ended { .. } => state,
     }
 }
@@ -372,8 +380,7 @@ pub fn status(
         items: managed::managed(view, now)
             .into_iter()
             .filter(|item| {
-                let ended = matches!(item.state, ItemState::Ended { .. });
-                !item.closed && !ended && !view.has_run_in_flight(item.number)
+                !item.closed && !board::in_done(&item.state) && !view.has_run_in_flight(item.number)
             })
             .map(Listed::of)
             .collect(),
@@ -685,6 +692,7 @@ pub(crate) fn describe(state: &ItemState) -> Phrase {
         ItemState::ReadyToDesign => "ready to claim, waiting for its design".into(),
         ItemState::Claimed => "claimed: being implemented".into(),
         ItemState::ReadyToClaim => "ready to claim".into(),
+        ItemState::Unlabeled => "labeled none of the status labels, its run in flight".into(),
         ItemState::PullRequest { review, .. } => review.describe(),
         ItemState::Ended { ended, .. } => ended.worded(),
         ItemState::MergedInto { labeled, .. } => describe(labeled),

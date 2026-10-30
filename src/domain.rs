@@ -723,6 +723,12 @@ fn tickets_cut<'a>(
     sub_issues.iter().filter(move |s| is_cut(s, linewright))
 }
 
+/// Whether an issue under `parent`, opened by `author`, is a ticket cut
+/// from its parent's item, as [`Issue::was_cut`] tells.
+fn was_cut(parent: Option<Parent>, author: Option<&Login>, linewright: &Login) -> bool {
+    parent.is_some_and(|parent| parent.spec_change.is_some() || author == Some(linewright))
+}
+
 fn is_cut(sub_issue: &SubIssue, linewright: &Login) -> bool {
     sub_issue.author == *linewright
 }
@@ -830,7 +836,7 @@ impl Issue {
     /// issue it cut. Its design is then that item's, not its own
     /// (docs/specs/repository.md, "Handing back").
     pub fn was_cut(&self, linewright: &Login) -> bool {
-        self.cut_from().is_some() || (self.parent.is_some() && self.author == *linewright)
+        was_cut(self.parent, Some(&self.author), linewright)
     }
 
     /// Its sub-issues `linewright` opened: the tickets it cut from the issue.
@@ -1464,6 +1470,12 @@ impl ManagedFacts {
         tracks(self.filed, &self.labels, &self.sub_issues, linewright)
     }
 
+    /// Whether the issue, under `parent`, is a ticket cut from its parent's
+    /// item, as [`Issue::was_cut`] tells.
+    pub fn was_cut(&self, parent: Option<Parent>, linewright: &Login) -> bool {
+        was_cut(parent, self.work.author.as_ref(), linewright)
+    }
+
     fn signs(&self, open: bool, linewright: &Login) -> ManagedSigns<'_> {
         let work = &self.work;
         ManagedSigns {
@@ -1706,6 +1718,15 @@ pub struct Snapshot {
     pub closed: Vec<ClosedItem>,
 }
 
+/// An issue's closing: when, the pull request whose merge closed it where it
+/// is known, and GitHub's reason, where it is known.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IssueClosing {
+    pub at: Timestamp,
+    pub merged_by: Option<Number>,
+    pub reason: Option<IssueCloseReason>,
+}
+
 /// An issue or pull request a snapshot holds closed ([`Snapshot::closed`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClosedItem {
@@ -1721,6 +1742,58 @@ pub struct ClosedItem {
 }
 
 impl ClosedItem {
+    /// Closed `issue`, as a snapshot holds it with its `closing`.
+    pub fn of_issue(issue: &Issue, closing: IssueClosing) -> ClosedItem {
+        let mut timeline = issue.timeline();
+        timeline.sort_by_key(IssueEvent::at);
+        ClosedItem {
+            number: issue.number,
+            title: issue.title.clone(),
+            closed_at: closing.at,
+            updated_at: issue.updated_at,
+            kind: ClosedKind::Issue {
+                parent: issue.parent,
+                facts: ManagedFacts {
+                    filed: issue.filed,
+                    sub_issues: issue.sub_issues.clone(),
+                    labels: issue.labels.clone(),
+                    work: WorkFacts {
+                        author: Some(issue.author.clone()),
+                        assignees: issue.assignees.clone(),
+                        events: timeline,
+                        closed_by: issue.closed_by.clone(),
+                    },
+                },
+                merged_by: closing.merged_by,
+                reason: closing.reason,
+            },
+        }
+    }
+
+    /// Its closing, if it is an issue.
+    pub fn issue_closing(&self) -> Option<IssueClosing> {
+        match &self.kind {
+            ClosedKind::Issue {
+                merged_by, reason, ..
+            } => Some(IssueClosing {
+                at: self.closed_at,
+                merged_by: *merged_by,
+                reason: *reason,
+            }),
+            ClosedKind::Pull { .. } => None,
+        }
+    }
+
+    /// The pull requests that close it, in number order, if it is an issue.
+    pub fn closing_pulls(&self) -> Vec<ClosingPull> {
+        let mut closing = match &self.kind {
+            ClosedKind::Issue { facts, .. } => facts.work.closed_by.clone(),
+            ClosedKind::Pull { .. } => vec![],
+        };
+        closing.sort_by_key(|pull| pull.number);
+        closing
+    }
+
     /// What it tracks, if it is a tracking issue, as [`Issue::tracks`] tells.
     pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
         match &self.kind {
@@ -1908,6 +1981,18 @@ impl Snapshot {
         self.pulls.iter().find(|p| p.number == number)
     }
 
+    /// #`number` among Linewright's pull requests or the people's it may
+    /// manage.
+    pub fn any_pull(&self, number: Number) -> Option<&Pull> {
+        self.pull(number)
+            .or_else(|| self.peoples_pulls.iter().find(|pull| pull.number == number))
+    }
+
+    /// #`number` among the closed items.
+    pub fn closed_item(&self, number: Number) -> Option<&ClosedItem> {
+        self.closed.iter().find(|item| item.number == number)
+    }
+
     pub fn merged_pull(&self, number: Number) -> Option<&MergedPull> {
         self.merged.iter().find(|p| p.number == number)
     }
@@ -1916,12 +2001,12 @@ impl Snapshot {
     /// merged one the snapshot holds.
     pub fn is_stalled(&self, number: Number) -> bool {
         self.issue(number).is_some_and(Issue::is_stalled)
-            || self.pull(number).is_some_and(Pull::is_stalled)
+            || self.any_pull(number).is_some_and(Pull::is_stalled)
             || self.merged_pull(number).is_some_and(MergedPull::is_stalled)
     }
 
-    /// The title of #`number`, of the issues, pull requests, merged ones and
-    /// closed items the snapshot holds.
+    /// The title of #`number`, of the issues, pull requests, Linewright's or
+    /// the people's, merged ones and closed items the snapshot holds.
     pub fn title(&self, number: Number) -> Option<&str> {
         self.held(number).next().map(Held::title)
     }
@@ -1936,7 +2021,7 @@ impl Snapshot {
     /// holds as #`number`.
     fn held(&self, number: Number) -> impl Iterator<Item = Held<'_>> {
         let issue = self.issue(number).map(Held::Issue);
-        let pull = self.pull(number).map(Held::Pull);
+        let pull = self.any_pull(number).map(Held::Pull);
         let merged = self.merged_pull(number).map(Held::Merged);
         let closed = self
             .closed

@@ -2986,10 +2986,22 @@ impl Store for GitHub {
         // GitHub resolves no issue for a pull request's number.
         if let Some(issue) = self.gql_issue(number).await? {
             let linewright = self.linewright();
-            return Ok(Some(AnyItem::issue(
-                issue.into_issue(&linewright),
-                &linewright,
-            )));
+            let open = issue.state == IssueState::Open;
+            let issue = issue.into_issue(&linewright);
+            if !open {
+                let closed: Option<GqlClosedIssue> =
+                    self.issue_with(number, CLOSED_ISSUE_FIELDS).await?;
+                let closing = closed
+                    .and_then(|i| i.into_closed(&linewright))
+                    .and_then(|closed| closed.issue_closing());
+                if let Some(closing) = closing {
+                    return Ok(Some(AnyItem::ClosedIssue {
+                        issue: Box::new(issue),
+                        closing,
+                    }));
+                }
+            }
+            return Ok(Some(AnyItem::issue(issue, &linewright)));
         }
         let Some(pr) = self.gql_pull(number).await? else {
             return Ok(None);
