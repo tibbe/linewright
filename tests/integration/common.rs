@@ -75,8 +75,11 @@
 //!     back.
 //!   - `spec_change_handed_back`, `spec_change_blocked_filing_a_spec_gap`: a
 //!     spec change design handed back.
-//!   - `ready_for_review`, `held_for_a_code_owners_review`: a pull request
-//!     marked ready, or held by auto-merge for a code owner's review.
+//!   - `ready_for_review`, `ready_for_review_on_green_checks`,
+//!     `held_for_a_code_owners_review`: a pull request marked ready once CI's
+//!     grace has passed or on green checks, or held by auto-merge for a code
+//!     owner's review.
+//!   - `reworked`: a pull request the maintainer asked to rework, reworked.
 //!   - `rework_timed_out_with_edits`: a ticket in review whose rework timed
 //!     out.
 //! - `triage_for_the_maintainer`, `triage_asking`: script each triage to ask

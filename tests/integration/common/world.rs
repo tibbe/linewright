@@ -23,6 +23,7 @@ use linewright::work_settings::{Environments, Partial, Setup, WorkSettings};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::back_door::{ASKS_FOR_REWORK, RENAME, RENAMED, RENAMED_COMMENT};
 use super::cli::REPO;
 use super::clock::FakeClock;
 use super::files::commit_in;
@@ -680,15 +681,11 @@ impl World {
 
     pub fn rework_asked(&self, pr: Number) {
         self.store
-            .comment_as("maintainer", pr, "Rename it.")
+            .comment_as(ASKS_FOR_REWORK, pr, "Rename it.")
             .unwrap();
         self.harness.on(WorkKind::Rework, |call| {
-            commit_in(
-                &call.spec.dir,
-                &[("src/renamed.txt", "renamed\n")],
-                "Rename",
-            );
-            Ok(serde_json::json!({"outcome": "done", "comment": "Renamed."}).to_string())
+            commit_in(&call.spec.dir, &[RENAMED], RENAME);
+            Ok(serde_json::json!({"outcome": "done", "comment": RENAMED_COMMENT}).to_string())
         });
     }
 }

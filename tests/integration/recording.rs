@@ -126,17 +126,11 @@ async fn a_pull_request_stalled_and_handed_back_is_labeled_stalled_before_linewr
 #[tokio::test]
 async fn a_reply_to_needs_info_adds_needs_triage_before_removing_needs_info() {
     let mut world = World::new().await;
-    triaged_to(&world, "needs-info");
-    let issue = world
-        .store
-        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
-    world.poll().await;
-    assert_eq!(labels(&world.issue(issue)), ["bug", "needs-info"]);
+    let issue = world.issue_asking_its_reporter().await;
     world
         .store
         .comment_as("reporter", issue, "Version 3.")
         .unwrap();
-    triaged_to(&world, "ready-for-agent");
     let mut paused = world.store.pause_after(adding(issue, "needs-triage"));
     let store = world.store.clone();
 

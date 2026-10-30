@@ -914,31 +914,12 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
 
 #[tokio::test]
 async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_its_tickets() {
-    let mut world = World::new().await;
-    world.harness.on(linewright::reconcile::WorkKind::Design, |_| {
-        Ok(serde_json::json!({
-            "outcome": "designed", "design": "A gadget store.", "tickets": [
-                {"id": "store", "title": "Store gadgets", "body": "Gadgets persist.", "blocked_by": []},
-            ],
-            "comment": "One slice.",
-        }).to_string())
-    });
-    let spec_change = world
-        .store
-        .merge_change(
-            "maintainer",
-            "Gadgets",
-            "Adds gadgets.",
-            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
-        )
-        .await
-        .unwrap();
-    world.poll().await;
-    let issues = world.store.issues();
-    let [tracking, ticket] = &issues[..] else {
-        panic!("expected a tracking issue and a ticket, got {issues:#?}");
-    };
-    let (tracking, ticket) = (tracking.number, ticket.number);
+    let world = World::new().await;
+    let SpecCut {
+        spec_change,
+        tracking,
+        tickets: [first, second],
+    } = world.spec_change_cut_into_tickets().await;
     let answering = Answering::start(world, false).await;
 
     let spec_change_says = answering.lw(&["explain", &spec_change.0.to_string()]).await;
@@ -960,10 +941,11 @@ async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_
     );
     let tracking_lines: Vec<&str> = tracking_says.stdout.lines().collect();
     assert_eq!(
-        tracking_lines[1..3],
+        tracking_lines[1..4],
         [
             &format!("parent: {spec_change}, the spec change it tracks"),
-            &format!("child: {ticket}, one of its tickets"),
+            &format!("child: {first}, one of its tickets"),
+            &format!("child: {second}, one of its tickets"),
         ],
         "{}",
         tracking_says.stderr
