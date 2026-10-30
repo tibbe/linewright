@@ -359,8 +359,12 @@ pub enum Stop {
         branch: String,
     },
     Draft,
-    /// Its review decision, whatever it is.
-    Review(ReviewDecision),
+    /// GitHub's review decision is that changes are requested.
+    ChangesRequested,
+    /// GitHub requires a review it has not had ([`Pull::review_required`]).
+    ReviewRequired,
+    /// GitHub's review decision is approved.
+    Approved,
 }
 
 impl Stop {
@@ -370,10 +374,8 @@ impl Stop {
         match self {
             Stop::Stalled | Stop::ChecksFailed | Stop::Conflicts => Some(CardStatus::Failed),
             Stop::Running(_) | Stop::ChecksRunning => Some(CardStatus::InFlight),
-            Stop::Review(ReviewDecision::ChangesRequested | ReviewDecision::ReviewRequired) => {
-                Some(CardStatus::WaitingForAPerson)
-            }
-            Stop::Behind { .. } | Stop::Draft | Stop::Review(ReviewDecision::Approved) => None,
+            Stop::ChangesRequested | Stop::ReviewRequired => Some(CardStatus::WaitingForAPerson),
+            Stop::Behind { .. } | Stop::Draft | Stop::Approved => None,
         }
     }
 }
@@ -780,6 +782,8 @@ fn merge_stop(
         pull.is_some_and(|pull| pull.checks.iter().any(|check| check.state == held))
     };
     let mergeability = pull.map(|pull| &pull.mergeability);
+    let decided =
+        |decision: ReviewDecision| pull.is_some_and(|pull| pull.review_decision == Some(decision));
     let stops = [
         pull.is_some_and(Pull::is_stalled).then_some(Stop::Stalled),
         run.map(Stop::Running),
@@ -790,7 +794,10 @@ fn merge_stop(
             branch: snapshot.default_branch.clone(),
         }),
         matches!(pull_state, Some(PullState::Open { draft: true })).then_some(Stop::Draft),
-        pull.and_then(|pull| pull.review_decision).map(Stop::Review),
+        decided(ReviewDecision::ChangesRequested).then_some(Stop::ChangesRequested),
+        pull.is_some_and(Pull::review_required)
+            .then_some(Stop::ReviewRequired),
+        decided(ReviewDecision::Approved).then_some(Stop::Approved),
     ];
     first(stops)
 }

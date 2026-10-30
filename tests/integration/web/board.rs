@@ -848,6 +848,86 @@ async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with
     web.stop().await;
 }
 
+#[tokio::test]
+async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_says_review_required()
+ {
+    use linewright::domain::{CheckState, Requirement};
+    let mut world = World::new().await;
+    let mut in_review = vec![];
+    for state in [CheckState::Passed, CheckState::Pending] {
+        let (ticket, pr) = world.ticket_in_review().await;
+        world
+            .store
+            .set_checks(pr, vec![check("test", state, "")])
+            .await
+            .unwrap();
+        in_review.push((ticket, pr));
+    }
+    let [(ticket, pr), (running_ticket, running)] = in_review[..] else {
+        unreachable!();
+    };
+    // Closes an issue closed before the Done window, so no issue on the
+    // board: it is a card of its own.
+    let untidy = world
+        .store
+        .open_issue("maintainer", "Untidy", "Tidy it.", &[]);
+    let lone = world
+        .store
+        .open_pull_as(
+            LINEWRIGHT,
+            "tidy",
+            "Tidy up",
+            &format!("Closes {untidy}."),
+            &[("src/tidy.txt", "tidy\n")],
+        )
+        .await
+        .unwrap();
+    for blocked in [pr, running, lone] {
+        world.store.block_merge(
+            blocked,
+            vec![Requirement::CodeOwnerReview {
+                owners: vec!["maintainer".into()],
+            }],
+        );
+    }
+    world.poll().await;
+    world.store.close_issue_as_completed(untidy).unwrap();
+    world.clock.advance(chrono::TimeDelta::days(8));
+    let web = Web::start(world).await;
+
+    let html = web.page("/").await;
+
+    let mut shown: Vec<String> = cards_shown(&html)
+        .into_iter()
+        .map(|(card, _)| card)
+        .collect();
+    shown.sort();
+    assert_eq!(
+        shown,
+        [
+            format!("In review: {ticket}: Do the thing | {pr} · review required"),
+            format!("In review: {running_ticket}: Do the thing | {running} · checks running"),
+            format!("In review: {lone}: Tidy up | review required"),
+        ]
+    );
+    // `docs/specs/design_system.md`, Cards: "review required" is waiting for
+    // a person.
+    let mut waiting: Vec<String> = select(&html, "#board .card")
+        .into_iter()
+        .filter(|card| has_classes(*card, &["toned", WAITING_FOR_A_PERSON]))
+        .map(|card| text(select_in(card, "h3")[0]))
+        .collect();
+    waiting.sort();
+    assert_eq!(
+        waiting,
+        [
+            format!("{ticket}: Do the thing"),
+            format!("{lone}: Tidy up"),
+        ]
+    );
+    web.stop().await;
+}
+
 /// The board's cards once one of them says `line`.
 async fn eventually_on_the_board(web: &Web, line: &str) -> Vec<(String, bool)> {
     let waited = tokio::time::timeout(Duration::from_secs(10), async {
