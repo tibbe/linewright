@@ -9,3 +9,13 @@ status-level = "leak"
 final-status-level = "leak"
 failure-output = "immediate"
 fail-fast = false
+
+# CI's test job selects this profile with NEXTEST_PROFILE=ci; a local run,
+# an agent's included, should not, as the 8s budget above is meant for it.
+# Shared CI runners are slower and more variable, so tests a change didn't
+# touch would go past 8s there. In CI the limit only catches a stuck test:
+# named at 30s, killed at 60s. The 8s budget is enforced where the tests
+# are written. The default profile's overrides apply here too
+# (https://nexte.st/docs/configuration/per-test-overrides/).
+[profile.ci]
+slow-timeout = { period = "30s", terminate-after = 2 }

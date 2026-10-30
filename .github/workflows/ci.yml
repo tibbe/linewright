@@ -71,6 +71,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: git config --global user.name ci && git config --global user.email ci@example.com
       - run: scripts/check test
+        # The ci profile in .config/nextest.toml says why CI's test timeouts
+        # differ from a local run's.
+        env:
+          NEXTEST_PROFILE: ci
 
   doc:
     needs: changes
