@@ -26,14 +26,26 @@ fn claude_code(program: &Path) -> ClaudeCode {
 }
 
 fn harness_without_token(dir: &Path) -> ClaudeCode {
-    harness_streaming(
-        dir,
-        &[json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."})],
-    )
+    harness_streaming(dir, &[done()])
 }
 
 fn harness_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
     claude_code(&fake_claude_streaming(dir, events))
+}
+
+/// Claude Code as the fake `claude`, carrying out `turn` on each turn.
+fn harness_running(dir: &Path, turn: Vec<Step>) -> ClaudeCode {
+    claude_code(&fake_claude_turning(dir, turn))
+}
+
+/// A turn's result, `Done.`.
+fn done() -> Value {
+    json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."})
+}
+
+/// An assistant message saying `text`.
+fn saying(text: &str) -> Value {
+    json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
 }
 
 /// Waits until the session whose record is `record` has streamed `text`.
@@ -148,13 +160,7 @@ fn init_naming(model: &str) -> Value {
 #[tokio::test]
 async fn a_session_reports_the_model_its_init_event_names() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_streaming(
-        dir.path(),
-        &[
-            init_naming("claude-opus-5-5"),
-            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
-        ],
-    );
+    let harness = harness_streaming(dir.path(), &[init_naming("claude-opus-5-5"), done()]);
     let mut session = triage_session(dir.path());
     session.model = Some("opus".into());
     let reports = reports_of(&mut session);
@@ -172,19 +178,16 @@ async fn a_session_reports_the_model_its_init_event_names() {
 #[tokio::test]
 async fn a_session_that_times_out_has_reported_the_model_it_ran() {
     let dir = tempfile::tempdir().unwrap();
-    let program = dir.path().join("claude");
-    write_program(
-        &program,
-        &format!(
-            "#!/bin/sh\n\
-             cat > /dev/null\n\
-             echo '{}'\n\
-             echo '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"Still reading.\"}}]}}}}'\n\
-             exec sleep 30\n",
-            init_naming("claude-sonnet-5-5")
-        ),
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![
+                init_naming("claude-sonnet-5-5"),
+                saying("Still reading."),
+            ]),
+            Step::Hang,
+        ],
     );
-    let harness = claude_code(&program);
     let mut session = triage_session(dir.path());
     let reports = reports_of(&mut session);
 
@@ -758,13 +761,7 @@ async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
 async fn a_turn_refused_part_way_for_the_usage_limit_names_its_session_to_resume() {
     let dir = tempfile::tempdir().unwrap();
     let mut stream = refused_for_the_usage_limit(&rejected());
-    stream.insert(
-        1,
-        json!({
-            "type": "assistant",
-            "message": {"content": [{"type": "text", "text": "Reading the ticket."}]},
-        }),
-    );
+    stream.insert(1, saying("Reading the ticket."));
     let harness = harness_streaming(dir.path(), &stream);
 
     let error = harness
@@ -822,15 +819,10 @@ async fn a_session_that_ends_without_a_result_says_the_harness_exited() {
 #[tokio::test]
 async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
     let dir = tempfile::tempdir().unwrap();
-    let program = dir.path().join("claude");
-    write_program(
-        &program,
-        "#!/bin/sh\n\
-         cat > /dev/null\n\
-         echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Still reading.\"}]}}'\n\
-         exec sleep 30\n",
+    let harness = harness_running(
+        dir.path(),
+        vec![Step::Stream(vec![saying("Still reading.")]), Step::Hang],
     );
-    let harness = claude_code(&program);
     let session = triage_session(dir.path());
 
     let error = timed_out_once_said(harness, session, "Still reading.").await;
@@ -851,7 +843,7 @@ async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
                 "type": "rate_limit_event",
                 "rate_limit_info": {"status": "allowed_warning", "resetsAt": 1_791_877_800},
             }),
-            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
+            done(),
         ],
     );
 
@@ -872,7 +864,7 @@ async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it
                 "timestamp": "2026-10-13T10:09:11.268Z",
                 "message": {"content": [{"type": "text", "text": "Done."}]},
             }),
-            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
+            done(),
         ],
     );
     let spec = triage_session(dir.path());
@@ -912,22 +904,15 @@ async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it
 #[tokio::test]
 async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
     let dir = tempfile::tempdir().unwrap();
-    let program = dir.path().join("claude");
     let go = dir.path().join("go");
-    write_program(
-        &program,
-        &format!(
-            "#!/bin/sh\n\
-             cat > /dev/null\n\
-             echo '{}'\n\
-             while [ ! -e '{}' ]; do sleep 0.01; done\n\
-             echo '{}'\n",
-            json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "Looking."}]}}),
-            go.display(),
-            json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
-        ),
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![saying("Looking.")]),
+            Step::WaitFor(go.clone()),
+            Step::Stream(vec![done()]),
+        ],
     );
-    let harness = claude_code(&program);
     let spec = triage_session(dir.path());
 
     let turn = tokio::spawn(async move { harness.start(&spec).await });
@@ -942,23 +927,17 @@ const CREDENTIAL: &str = "ghp_s3cr3t";
 /// A session that prints `CREDENTIAL` in all it says, as one that ran `env`
 /// would, and ends with `last`, if any.
 fn harness_printing_a_secret(dir: &Path, last: Option<Value>) -> ClaudeCode {
-    let program = dir.join("claude");
-    let said = json!({"type": "assistant", "message": {"content": [
-        {"type": "text", "text": format!("GH_TOKEN={CREDENTIAL}")},
-    ]}});
-    write_program(
-        &program,
-        &format!(
-            "#!/bin/sh\n\
-             cat > /dev/null\n\
-             echo 'GH_TOKEN={CREDENTIAL}' >&2\n\
-             cat <<'EOF'\n{said}\n{last}\nEOF\n",
-            last = last.map(|last| last.to_string()).unwrap_or_default(),
-        ),
+    let said = saying(&format!("GH_TOKEN={CREDENTIAL}"));
+    let harness = harness_running(
+        dir,
+        vec![
+            Step::Stderr(format!("GH_TOKEN={CREDENTIAL}\n")),
+            Step::Stream([said].into_iter().chain(last).collect()),
+        ],
     );
     ClaudeCode {
         redaction: redaction_of(&[("GH_TOKEN", CREDENTIAL)]),
-        ..claude_code(&program)
+        ..harness
     }
 }
 
@@ -1048,19 +1027,14 @@ async fn a_secret_that_holds_another_is_redacted_whole() {
 #[tokio::test]
 async fn a_session_runs_in_a_process_group_of_its_own() {
     let dir = tempfile::tempdir().unwrap();
-    let program = dir.path().join("claude");
     let group = dir.path().join("pgid.log");
-    write_program(
-        &program,
-        &format!(
-            "#!/bin/sh\n\
-             cat > /dev/null\n\
-             ps -o pgid= -p $$ > '{}'\n\
-             echo '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Done.\"}}'\n",
-            group.display()
-        ),
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::WriteProcessGroup(group.clone()),
+            Step::Stream(vec![done()]),
+        ],
     );
-    let harness = claude_code(&program);
 
     harness.start(&triage_session(dir.path())).await.unwrap();
 
@@ -1069,22 +1043,15 @@ async fn a_session_runs_in_a_process_group_of_its_own() {
 
 /// A Claude Code that, like the shell commands Claude Code runs, starts a
 /// process in a session of its own and in the background, writes its PID to
-/// `dir/left.pid`, says `Started.` and then runs `then`.
-fn harness_leaving_a_process(dir: &Path, then: &str) -> ClaudeCode {
-    let program = dir.join("claude");
-    write_program(
-        &program,
-        &format!(
-            "#!/bin/sh\n\
-             cat > /dev/null\n\
-             perl -MPOSIX -e 'POSIX::setsid(); exec \"sleep\", \"300\"' &\n\
-             echo $! > '{pid}'\n\
-             echo '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"Started.\"}}]}}}}'\n\
-             {then}\n",
-            pid = dir.join("left.pid").display(),
-        ),
-    );
-    claude_code(&program)
+/// `dir/left.pid`, says `Started.` and then carries out `then`.
+fn harness_leaving_a_process(dir: &Path, then: Vec<Step>) -> ClaudeCode {
+    let turn = [
+        Step::LeaveInOwnSession {
+            pid: dir.join("left.pid"),
+        },
+        Step::Stream(vec![saying("Started.")]),
+    ];
+    harness_running(dir, turn.into_iter().chain(then).collect())
 }
 
 fn left_process(dir: &Path) -> rustix::process::Pid {
@@ -1102,10 +1069,7 @@ fn has_ended(pid: rustix::process::Pid) -> bool {
 #[tokio::test]
 async fn what_a_session_started_has_ended_once_it_ends_with_a_result() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_leaving_a_process(
-        dir.path(),
-        "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Done.\"}'",
-    );
+    let harness = harness_leaving_a_process(dir.path(), vec![Step::Stream(vec![done()])]);
 
     harness.start(&triage_session(dir.path())).await.unwrap();
 
@@ -1116,7 +1080,7 @@ async fn what_a_session_started_has_ended_once_it_ends_with_a_result() {
 #[tokio::test]
 async fn what_a_session_started_has_ended_once_it_crashes() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_leaving_a_process(dir.path(), "exit 3");
+    let harness = harness_leaving_a_process(dir.path(), vec![Step::Exit(3)]);
 
     let error = harness
         .start(&triage_session(dir.path()))
@@ -1130,7 +1094,7 @@ async fn what_a_session_started_has_ended_once_it_crashes() {
 #[tokio::test]
 async fn what_a_session_started_has_ended_once_it_times_out() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_leaving_a_process(dir.path(), "exec sleep 300");
+    let harness = harness_leaving_a_process(dir.path(), vec![Step::Hang]);
     let session = triage_session(dir.path());
 
     let error = timed_out_once_said(harness, session, "Started.").await;
@@ -1143,7 +1107,7 @@ async fn what_a_session_started_has_ended_once_it_times_out() {
 #[tokio::test]
 async fn what_a_session_started_ends_once_its_turn_is_dropped() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_leaving_a_process(dir.path(), "exec sleep 300");
+    let harness = harness_leaving_a_process(dir.path(), vec![Step::Hang]);
     let session = triage_session(dir.path());
 
     let turn = tokio::spawn(async move { harness.start(&session).await });
@@ -1183,15 +1147,10 @@ async fn a_harness_that_cannot_be_started_is_an_infrastructure_failure() {
 #[tokio::test]
 async fn a_process_a_session_left_holding_its_output_does_not_hold_the_turn() {
     let dir = tempfile::tempdir().unwrap();
-    let program = dir.path().join("claude");
-    write_program(
-        &program,
-        "#!/bin/sh\n\
-         cat > /dev/null\n\
-         sleep 300 &\n\
-         echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Done.\"}'\n",
+    let harness = harness_running(
+        dir.path(),
+        vec![Step::LeaveHoldingOutput, Step::Stream(vec![done()])],
     );
-    let harness = claude_code(&program);
 
     let turn = harness.start(&triage_session(dir.path())).await.unwrap();
 
