@@ -8,18 +8,21 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::apply::hand_back::{
+    self, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail, SendBack, Stopped,
+    TryAgain,
+};
+use crate::apply::{Asks, Designed, StatusTo};
 use crate::attachments::{self, Dir, Refusal};
 use crate::automation::Automation;
 use crate::briefs::{Briefs, OperatorPrompts};
 use crate::clock::Clock;
 use crate::domain::{
-    HandBackKind, Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp,
-    Windows, addressed_to, closing_references, label,
+    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp, Windows,
+    addressed_to, closing_references, label,
 };
 use crate::git::{self, Updated, WorkState};
-use crate::harness::{
-    self, Harness, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
-};
+use crate::harness::{Harness, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::prompts::{self, DesignOf, PullTask, Repo, Ticket};
 use crate::reconcile::{
     Feedback, Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
@@ -124,57 +127,6 @@ enum Failure {
     },
     Cancelled,
     UsageLimit(UsageLimit),
-}
-
-/// Linewright's letting go of an item it cannot finish (`GLOSSARY.md`,
-/// **Hand-back**).
-pub(crate) struct HandBack {
-    pub(crate) kind: HandBackKind,
-    pub(crate) reason: String,
-    /// The end of a log, when what wrote it is the reason.
-    pub(crate) log_tail: Option<LogTail>,
-}
-
-/// The end of a log a hand-back gives, and what it is the end of. Its text
-/// is never empty.
-pub(crate) struct LogTail {
-    pub(crate) of: Logged,
-    pub(crate) text: String,
-}
-
-/// What a log tail is the end of.
-pub(crate) enum Logged {
-    Session,
-    Setup,
-}
-
-impl LogTail {
-    /// The end of the session's log `text`, unless it holds nothing.
-    fn session(text: &str) -> Option<LogTail> {
-        let text = text.trim();
-        (!text.is_empty()).then(|| LogTail {
-            of: Logged::Session,
-            text: text.to_string(),
-        })
-    }
-
-    /// The end of the setup command's output `text`, unless it holds
-    /// nothing.
-    fn setup(text: &str) -> Option<LogTail> {
-        let text = text.trim();
-        (!text.is_empty()).then(|| LogTail {
-            of: Logged::Setup,
-            text: text.to_string(),
-        })
-    }
-
-    /// What it is the end of, as a hand-back heads it.
-    fn heading(&self) -> &'static str {
-        match self.of {
-            Logged::Session => "The end of the session's log",
-            Logged::Setup => "The end of the setup command's output",
-        }
-    }
 }
 
 /// What a run works with, from its start to its end.
@@ -347,11 +299,9 @@ async fn push(shell: &Shell, dir: &Path, branch: &str, mode: PushMode) -> Pushed
 fn pushed(branch: &str, pushed: Pushed, again: TryAgain) -> Result<(), Failure> {
     match pushed {
         Pushed::Done => Ok(()),
-        Pushed::Refused(reason) => Err(Failure::HandBack(HandBack {
-            kind: HandBackKind::Stall,
-            reason: refused_push(branch, &reason, again),
-            log_tail: None,
-        })),
+        Pushed::Refused(reason) => Err(Failure::HandBack(hand_back::refused_push(
+            branch, &reason, again,
+        ))),
         // Only an update that needed no session pushes without one to send
         // it back to, and its commits GitHub already took.
         Pushed::Protected(secrets) => Err(infra(anyhow::anyhow!(
@@ -376,32 +326,12 @@ async fn push_result(
     match push(shell, dir, branch, mode).await {
         Pushed::Protected(secrets) => Err(Rejection::Retry {
             followup: prompts::pushed_secret(&ctx.with.briefs.prompts, &secrets),
-            note: Some(protected_note(&secrets)),
+            note: Some(hand_back::protected_note(&secrets)),
         }),
         other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
             pushed(branch, other, again).map_err(Rejection::Fail)
         }
     }
-}
-
-#[derive(Clone, Copy)]
-enum TryAgain {
-    Relabel,
-    Reassign,
-}
-
-fn refused_push(branch: &str, reason: &str, again: TryAgain) -> String {
-    let remedy = match again {
-        TryAgain::Relabel => format!(
-            "Grant the permission and apply `{}` again, or make the change yourself.",
-            label::READY_FOR_AGENT
-        ),
-        TryAgain::Reassign => "Grant the permission, or make the change yourself.".to_string(),
-    };
-    format!(
-        "GitHub refused to push the branch `{branch}` because Linewright's token lacks a \
-         permission. GitHub's reason: {reason}\n\nThe work was not kept. {remedy}"
-    )
 }
 
 pub(crate) async fn run(shell: Arc<Shell>, work: Work, snapshot: Arc<Snapshot>, ctx: Ctx) {
@@ -434,13 +364,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 error: e,
                 note,
                 log_tail,
-            }) => {
-                break HandBack {
-                    kind: HandBackKind::Stall,
-                    reason: format!("The run failed twice on its infrastructure: {e:#}{note}"),
-                    log_tail,
-                };
-            }
+            }) => break hand_back::failed_twice(&e, &note, log_tail),
             Err(Failure::Cancelled) => {
                 info!(subject = ?subject, "run cancelled; its branch is kept");
                 return Ending::Cancelled;
@@ -453,13 +377,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 );
                 return Ending::UsageLimit;
             }
-            Err(Failure::Apply { error: e, note }) => {
-                break HandBack {
-                    kind: HandBackKind::Stall,
-                    reason: format!("Recording the run's outcome failed: {e:#}{note}"),
-                    log_tail: None,
-                };
-            }
+            Err(Failure::Apply { error: e, note }) => break hand_back::recording_failed(&e, &note),
             Err(Failure::HandBack(hand_back)) => break hand_back,
         }
     };
@@ -490,10 +408,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
     };
     let hand_back = HandBack {
         reason: posted(&hand_back.reason),
-        log_tail: hand_back.log_tail.map(|tail| LogTail {
-            text: posted(&tail.text),
-            ..tail
-        }),
+        log_tail: hand_back.log_tail.and_then(|tail| tail.rewritten(posted)),
         ..hand_back
     };
     info!(subject = ?subject, reason = hand_back.reason, "handing back");
@@ -502,7 +417,9 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             self::hand_back(shell, snapshot, Item::Issue(issue), &hand_back).await
         }
         Subject::Pull(pr) => self::hand_back(shell, snapshot, Item::Pull(pr), &hand_back).await,
-        Subject::SpecChange(pr) => hand_back_spec_change(shell, pr, &hand_back).await,
+        Subject::SpecChange(pr) => {
+            write_hand_back(shell, pr, HandedBack::SpecChange, &hand_back).await
+        }
     };
     match handed {
         Ok(()) => Ending::HandedBack,
@@ -636,31 +553,6 @@ fn stopped(pr: &Pull, linewright: &Login) -> Option<PullStop> {
     Some(stop)
 }
 
-/// The writes that change what an item asks for, which a run makes last
-/// (docs/specs/repository.md, Writes, "Order"), made by [`ask`].
-#[derive(Default)]
-pub(crate) struct Asks {
-    pub designed: Option<Designed>,
-    /// Label the item [`label::STALLED`].
-    pub stall: bool,
-    pub status: Option<StatusTo>,
-    /// Unassign Linewright from the item.
-    pub unassign: bool,
-}
-
-/// Whether the item is to carry [`label::DESIGNED`].
-pub(crate) enum Designed {
-    Add,
-    Remove,
-}
-
-pub(crate) enum StatusTo {
-    /// Hold this status label and no other.
-    Set(StatusLabel),
-    /// Hold no status label, as a tracking issue does.
-    Clear,
-}
-
 /// Makes `asks`' writes on `number` in the order docs/specs/repository.md,
 /// Writes, "Order", asks for: `linewright:designed`, the stall, the
 /// new status label, the removal of the others, the unassignment.
@@ -705,86 +597,23 @@ pub(crate) async fn hand_back(
             let issue = snapshot
                 .issue(n)
                 .with_context(|| format!("{n} is not in the snapshot"))?;
-            hand_back_issue(shell, issue, hand_back).await
+            write_hand_back(shell, n, HandedBack::Issue(issue), hand_back).await
         }
-        Item::Pull(pr) => hand_back_pull(shell, pr, hand_back).await,
+        Item::Pull(pr) => write_hand_back(shell, pr, HandedBack::Pull, hand_back).await,
     }
 }
 
-/// Its own design goes with it, so that the next attempt designs it again.
-async fn hand_back_issue(shell: &Shell, issue: &Issue, hand_back: &HandBack) -> Result<()> {
-    let n = issue.number;
-    shell.store.comment(n, &with_log(hand_back)).await?;
-    let asks = Asks {
-        designed: (!issue.was_cut(&shell.policy.linewright)).then_some(Designed::Remove),
-        stall: stalls(hand_back),
-        status: Some(StatusTo::Set(StatusLabel::ReadyForHuman)),
-        unassign: true,
-    };
-    ask(&*shell.store, n, &asks).await
-}
-
-async fn hand_back_pull(shell: &Shell, pr: Number, hand_back: &HandBack) -> Result<()> {
-    hand_back_pr(shell, pr, hand_back, "try again", None).await
-}
-
-async fn hand_back_spec_change(shell: &Shell, pr: Number, hand_back: &HandBack) -> Result<()> {
-    hand_back_pr(
-        shell,
-        pr,
-        hand_back,
-        "design it again",
-        Some(Designed::Remove),
-    )
-    .await
-}
-
-/// Hands back the pull request `pr`, telling whoever reads it that
-/// assigning Linewright again will `try_again`.
-async fn hand_back_pr(
+/// Hands `item`, numbered `n`, back for `hand_back`.
+async fn write_hand_back(
     shell: &Shell,
-    pr: Number,
+    n: Number,
+    item: HandedBack<'_>,
     hand_back: &HandBack,
-    try_again: &str,
-    designed: Option<Designed>,
 ) -> Result<()> {
-    let body = format!(
-        "{}\n\nAssign @{} to this pull request again to {try_again}.",
-        with_log(hand_back),
-        shell.policy.linewright
-    );
-    shell.store.comment(pr, &body).await?;
-    let asks = Asks {
-        designed,
-        stall: stalls(hand_back),
-        unassign: true,
-        ..Asks::default()
-    };
-    ask(&*shell.store, pr, &asks).await
-}
-
-/// Whether `hand_back` labels its item a stall. The label goes on while
-/// Linewright is still assigned: an item left so by a stop asks for the
-/// work it stalled on, and the stall is cleared as it is worked again,
-/// unless the item is let go of instead (docs/specs/repository.md,
-/// "Stalls").
-fn stalls(hand_back: &HandBack) -> bool {
-    match hand_back.kind {
-        HandBackKind::Stall => true,
-        HandBackKind::Decision => false,
-    }
-}
-
-fn with_log(hand_back: &HandBack) -> String {
-    let reason = &hand_back.reason;
-    match &hand_back.log_tail {
-        Some(tail) => format!(
-            "{reason}\n\n<details><summary>{}</summary>\n\n```\n{}\n```\n\n</details>",
-            tail.heading(),
-            tail.text
-        ),
-        None => reason.clone(),
-    }
+    let HandBackWrites { comment, asks } =
+        hand_back::hand_back(item, hand_back, &shell.policy.linewright);
+    shell.store.comment(n, &comment).await?;
+    ask(&*shell.store, n, &asks).await
 }
 
 /// A run's clone, removed when dropped: the run is done with it then.
@@ -952,9 +781,9 @@ enum Unbegun {
 impl Unbegun {
     /// The failure, noted with what `keep` keeps of the work the session
     /// left.
-    async fn keeping(self, keep: impl AsyncFnOnce() -> String) -> Failure {
+    async fn keeping<'a>(self, keep: impl AsyncFnOnce() -> Stopped<'a>) -> Failure {
         match self {
-            Unbegun::InSession(failure) => failure.noted(&keep().await),
+            Unbegun::InSession(failure) => failure.noted(&keep().await.note()),
             Unbegun::Begun(failure) => failure,
         }
     }
@@ -1054,8 +883,23 @@ where
         };
         let step = match rejection {
             Rejection::Fail(failure) => return Err(unbegun(failure)),
-            Rejection::Retry { followup, note } => send_back(shell, spec, &turn, followup, retries)
-                .map_err(|failure| unbegun(failure.noted(note.as_deref().unwrap_or_default())))?,
+            Rejection::Retry { followup, note } => {
+                let session_log = scrub(&turn.message, &spec.dir);
+                match hand_back::send_back(*retries, shell.result_retries, &followup, &session_log)
+                {
+                    SendBack::Retry { retries: sent } => {
+                        *retries = sent;
+                        Step::Resume {
+                            session: turn.session.clone(),
+                            prompt: followup,
+                        }
+                    }
+                    SendBack::HandBack(hand_back) => {
+                        let failure = Failure::HandBack(hand_back);
+                        return Err(unbegun(failure.noted(note.as_deref().unwrap_or_default())));
+                    }
+                }
+            }
             Rejection::Resume(followup) => {
                 *retries = 0;
                 Step::Resume {
@@ -1068,32 +912,6 @@ where
             .await
             .map_err(in_session)?;
     }
-}
-
-/// The step that sends the result `turn` answered with back to its session
-/// with `followup`, counted in `retries`, or the hand-back once that is past
-/// `result-retries`.
-fn send_back(
-    shell: &Shell,
-    spec: &SessionSpec,
-    turn: &Turn,
-    followup: String,
-    retries: &mut u32,
-) -> Result<Step, Failure> {
-    if *retries < shell.result_retries {
-        *retries += 1;
-        return Ok(Step::Resume {
-            session: turn.session.clone(),
-            prompt: followup,
-        });
-    }
-    Err(Failure::HandBack(HandBack {
-        kind: HandBackKind::Stall,
-        reason: format!(
-            "The session's result still could not be used after {retries} follow-up(s).\n\n{followup}"
-        ),
-        log_tail: LogTail::session(&tail(&scrub(&turn.message, &spec.dir), 40)),
-    }))
 }
 
 enum Step {
@@ -1130,17 +948,16 @@ async fn take_turn(
                 return Err(infra(anyhow::anyhow!(reason)));
             }
             Err(SessionError::TimedOut { log_tail }) => {
-                return Err(timed_out(
-                    &ctx.with.settings,
+                return Err(Failure::HandBack(hand_back::timed_out(
+                    &ctx.with.settings.timeout_setting,
                     LogTail::session(&scrub(&log_tail, &spec.dir)),
-                ));
+                )));
             }
             Err(SessionError::Failed { reason, log_tail }) => {
-                return Err(Failure::HandBack(HandBack {
-                    kind: HandBackKind::Stall,
-                    reason: format!("The session ended unexpectedly: {reason}"),
-                    log_tail: LogTail::session(&scrub(&log_tail, &spec.dir)),
-                }));
+                return Err(Failure::HandBack(hand_back::session_failed(
+                    &reason,
+                    &scrub(&log_tail, &spec.dir),
+                )));
             }
         };
         let _ = shell.report_refusal.send(limit);
@@ -1178,21 +995,6 @@ async fn cancellable<T>(ctx: &Ctx, turn: impl Future<Output = T>) -> Result<T, F
     }
 }
 
-/// The hand-back of a session that timed out, with `log_tail` as its log
-/// (docs/specs/runs.md, "Limits", Session timeout): it is not retried.
-fn timed_out(settings: &SessionSettings, log_tail: Option<LogTail>) -> Failure {
-    Failure::HandBack(HandBack {
-        kind: HandBackKind::Stall,
-        reason: format!(
-            "The session ended unexpectedly: {}. The work may need cutting smaller, or {} \
-             may need to be longer.",
-            harness::TIMED_OUT,
-            settings.timeout_setting
-        ),
-        log_tail,
-    })
-}
-
 fn followup_name(record: &Path) -> String {
     let n = (1..=usize::MAX)
         .find(|n| !record.join(transcript::followup_file(*n)).exists())
@@ -1202,11 +1004,6 @@ fn followup_name(record: &Path) -> String {
 
 fn scrub(text: &str, dir: &Path) -> String {
     text.replace(&dir.to_string_lossy().into_owned(), ".")
-}
-
-fn tail(text: &str, lines: usize) -> String {
-    let all: Vec<&str> = text.lines().collect();
-    all[all.len().saturating_sub(lines)..].join("\n")
 }
 
 /// A session opened in its clone, whose prompt is still to be filled.
@@ -1297,12 +1094,17 @@ async fn set_up(
 /// it does (docs/specs/runs.md, "Setup", Failing): a command still running
 /// at the session's deadline is the session timing out.
 fn set_up_failure(ran: &setup::Ran, dir: &Path, settings: &SessionSettings) -> Option<Failure> {
-    let log_tail = || LogTail::setup(&scrub(&tail(&ran.output, 40), dir));
+    let log_tail = || LogTail::setup(&scrub(&ran.output, dir));
     let failed = match ran.status {
         setup::Status::Exited(0) => return None,
         setup::Status::Exited(code) => format!("exited with status {code}"),
         setup::Status::Signalled(signal) => format!("was ended by signal {signal}"),
-        setup::Status::TimedOut => return Some(timed_out(settings, log_tail())),
+        setup::Status::TimedOut => {
+            return Some(Failure::HandBack(hand_back::timed_out(
+                &settings.timeout_setting,
+                log_tail(),
+            )));
+        }
         setup::Status::Cancelled => return Some(Failure::Cancelled),
     };
     Some(Failure::Infrastructure {
@@ -1385,17 +1187,9 @@ async fn post_attachments(
             Err(AttachError::RefusedFile { reason }) => {
                 return sent_back(prompts::attachment_refused(prompts, file.path(), &reason));
             }
-            Err(AttachError::RefusedToken { reason }) => Failure::HandBack(HandBack {
-                kind: HandBackKind::Stall,
-                reason: format!(
-                    "GitHub refused Linewright's token the upload of the attachment `{}`. \
-                     GitHub's reason: {reason}\n\nLinewright's token needs write access to \
-                     the repository, in a classic or fine-grained personal access token, to \
-                     attach files to what it posts.",
-                    file.name()
-                ),
-                log_tail: None,
-            }),
+            Err(AttachError::RefusedToken { reason }) => {
+                Failure::HandBack(hand_back::refused_attachment(file.name(), &reason))
+            }
             Err(AttachError::Failed(e)) => infra(e),
         };
         return Err(Refused::Untouched(Rejection::Fail(failure)));
@@ -1554,6 +1348,21 @@ where
     .map_err(Failure::from)
 }
 
+/// A run blocked on `question`, which `stopped`, files its spec gaps for
+/// `item` and hands it back.
+async fn run_blocked(
+    shell: &Shell,
+    question: &str,
+    spec_gaps: &[SpecGap],
+    item: Number,
+    stopped: &Stopped<'_>,
+) -> Result<(), Failure> {
+    file_spec_gaps(shell, spec_gaps, item)
+        .await
+        .map_err(|e| apply(e).noted(&stopped.note()))?;
+    Err(Failure::HandBack(hand_back::blocked(question, stopped)))
+}
+
 /// A design blocked on `question` files its spec gaps and hands its item
 /// back.
 async fn design_blocked(
@@ -1565,19 +1374,7 @@ async fn design_blocked(
     file_spec_gaps(shell, spec_gaps, item)
         .await
         .map_err(apply)?;
-    Err(Failure::HandBack(HandBack {
-        kind: HandBackKind::Decision,
-        reason: blocked_on(question),
-        log_tail: None,
-    }))
-}
-
-fn design_gave_up(of: DesignOf, reason: &str, turn: &Turn) -> Failure {
-    Failure::HandBack(HandBack {
-        kind: HandBackKind::Decision,
-        reason: format!("The designer handed the {} back:\n\n{reason}", of.noun()),
-        log_tail: LogTail::session(&turn.log_tail),
-    })
+    Err(Failure::HandBack(hand_back::design_blocked(question)))
 }
 
 async fn design_spec_change(
@@ -1630,9 +1427,11 @@ async fn design_spec_change(
             question,
             spec_gaps,
         } => design_blocked(shell, &question, &spec_gaps, filed_gaps.item).await,
-        DesignResult::GaveUp { reason } => {
-            Err(design_gave_up(DesignOf::SpecChange, &reason, &turn))
-        }
+        DesignResult::GaveUp { reason } => Err(Failure::HandBack(hand_back::design_gave_up(
+            DesignOf::SpecChange,
+            &reason,
+            &turn.log_tail,
+        ))),
     }
 }
 
@@ -1702,18 +1501,18 @@ async fn design_issue(
             };
             ask(&**store, n, &asks).await.map_err(apply)
         }
-        DesignResult::NothingToBuild { reason } => Err(Failure::HandBack(HandBack {
-            kind: HandBackKind::Decision,
-            reason: format!(
-                "There is nothing to build: the code already does what this issue asks.\n\n{reason}"
-            ),
-            log_tail: None,
-        })),
+        DesignResult::NothingToBuild { reason } => {
+            Err(Failure::HandBack(hand_back::nothing_to_build(&reason)))
+        }
         DesignResult::Blocked {
             question,
             spec_gaps,
         } => design_blocked(shell, &question, &spec_gaps, filed_gaps.item).await,
-        DesignResult::GaveUp { reason } => Err(design_gave_up(DesignOf::Issue, &reason, &turn)),
+        DesignResult::GaveUp { reason } => Err(Failure::HandBack(hand_back::design_gave_up(
+            DesignOf::Issue,
+            &reason,
+            &turn.log_tail,
+        ))),
     }
 }
 
@@ -1853,21 +1652,6 @@ fn in_order(tickets: &[FiledTicket]) -> String {
         .collect()
 }
 
-/// What became of the work of a run that stopped before it finished.
-enum Kept {
-    Nothing,
-    Pushed,
-    /// The work holds a secret, so it was not pushed.
-    Held(Held),
-    /// GitHub's push protection refused the push over the secrets it found,
-    /// redacted.
-    Protected(FoundSecrets),
-    /// GitHub refused the push for a missing permission, saying why.
-    Refused(String),
-    /// Committing or pushing the work failed, saying why.
-    Failed(String),
-}
-
 /// Keeps the work of an implement run that stopped before it finished on the
 /// ticket's branch: docs/specs/runs.md, "Ending".
 async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch: &str) -> Kept {
@@ -1971,34 +1755,6 @@ fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
     kept
 }
 
-/// What a hand-back adds to say where the work it `kept` on `branch` is, and
-/// how to `try_again` when GitHub refused it.
-fn kept_note(branch: &str, kept: &Kept, try_again: TryAgain) -> String {
-    match kept {
-        Kept::Nothing => String::new(),
-        Kept::Pushed => format!("\n\nThe work so far is on the branch `{branch}`."),
-        Kept::Held(held) => format!(
-            "\n\nThe work so far was not kept: the commit `{}` adds the value of `{}`, a \
-             secret, to `{}`.",
-            held.commit, held.variable, held.file
-        ),
-        Kept::Protected(secrets) => protected_note(secrets),
-        Kept::Refused(reason) => format!("\n\n{}", refused_push(branch, reason, try_again)),
-        Kept::Failed(error) => {
-            format!("\n\nKeeping the work so far on the branch `{branch}` failed: {error}")
-        }
-    }
-}
-
-/// What a hand-back adds to say the work was not kept, as GitHub's push
-/// protection found `secrets` in it.
-fn protected_note(secrets: &FoundSecrets) -> String {
-    format!(
-        "\n\nThe work so far was not kept, as it holds a secret: GitHub's push protection \
-         found {secrets}."
-    )
-}
-
 async fn implement(
     shell: &Shell,
     ctx: &Ctx,
@@ -2063,9 +1819,10 @@ async fn implement(
         }
         Ok(result)
     };
-    let keep = async || {
-        let kept = keep_unfinished_work(shell, &ws.dir, &upstream, &branch).await;
-        kept_note(&branch, &kept, TryAgain::Relabel)
+    let keep = async || Stopped {
+        branch: &branch,
+        kept: keep_unfinished_work(shell, &ws.dir, &upstream, &branch).await,
+        try_again: TryAgain::Relabel,
     };
     // A finished result is pushed as it begins applying, after its
     // attachments, so that one GitHub refuses over a secret goes back to its
@@ -2090,7 +1847,9 @@ async fn implement(
     };
     let (result, turn) = match converse(shell, ctx, &mut spec, Step::Start, accept, begin).await {
         Ok(conversation) => conversation,
-        Err(unbegun) => return Err(unbegun.keeping(keep).await),
+        Err(unbegun) => {
+            return Err(unbegun.keeping(keep).await);
+        }
     };
     let store = &shell.store;
     match result {
@@ -2135,37 +1894,17 @@ async fn implement(
         ImplementResult::Blocked {
             question,
             spec_gaps,
-        } => {
-            let kept = keep().await;
-            file_spec_gaps(shell, &spec_gaps, ticket.number())
-                .await
-                .map_err(|e| apply(e).noted(&kept))?;
-            Err(Failure::HandBack(HandBack {
-                kind: HandBackKind::Decision,
-                reason: format!("{}{kept}", blocked_on(&question)),
-                log_tail: None,
-            }))
-        }
+        } => run_blocked(shell, &question, &spec_gaps, ticket.number(), &keep().await).await,
         ImplementResult::GaveUp { reason } => {
-            let kept = keep().await;
-            Err(Failure::HandBack(HandBack {
-                kind: HandBackKind::Decision,
-                reason: format!(
-                    "The implementer handed the ticket back:\n\n{}{kept}",
-                    reason.trim()
-                ),
-                log_tail: LogTail::session(&turn.log_tail),
-            }))
+            let stopped = keep().await;
+            Err(Failure::HandBack(hand_back::gave_up(
+                Implementing::Ticket,
+                &reason,
+                &turn.log_tail,
+                &stopped,
+            )))
         }
     }
-}
-
-/// The reason of a hand-back blocked on `question`.
-fn blocked_on(question: &str) -> String {
-    format!(
-        "Blocked on a question the spec cannot decide:\n\n{}",
-        question.trim()
-    )
 }
 
 fn closing(body: &str, closes: &[Number]) -> String {
@@ -2372,9 +2111,10 @@ async fn pull_work(
         }
         Ok(result)
     };
-    let keep = async || {
-        let kept = keep_unfinished_pull_work(shell, dir, pr, &start, &before).await;
-        kept_note(&pr.head_ref, &kept, TryAgain::Reassign)
+    let keep = async || Stopped {
+        branch: &pr.head_ref,
+        kept: keep_unfinished_pull_work(shell, dir, pr, &start, &before).await,
+        try_again: TryAgain::Reassign,
     };
     let shown = Mutex::new(Shown {
         until: ctx.as_of,
@@ -2440,7 +2180,9 @@ async fn pull_work(
     let ((result, pr_now, read_at), turn) =
         match converse(shell, ctx, &mut spec, Step::Start, accept, begin).await {
             Ok(conversation) => conversation,
-            Err(unbegun) => return Err(unbegun.keeping(keep).await),
+            Err(unbegun) => {
+                return Err(unbegun.keeping(keep).await);
+            }
         };
     let feedback_authors = lock(shown).feedback_authors.clone();
     match result {
@@ -2471,27 +2213,15 @@ async fn pull_work(
         PullWorkResult::Blocked {
             question,
             spec_gaps,
-        } => {
-            let kept = keep().await;
-            file_spec_gaps(shell, &spec_gaps, ticket.number())
-                .await
-                .map_err(|e| apply(e).noted(&kept))?;
-            Err(Failure::HandBack(HandBack {
-                kind: HandBackKind::Decision,
-                reason: format!("{}{kept}", blocked_on(&question)),
-                log_tail: None,
-            }))
-        }
+        } => run_blocked(shell, &question, &spec_gaps, ticket.number(), &keep().await).await,
         PullWorkResult::GaveUp { reason } => {
-            let kept = keep().await;
-            Err(Failure::HandBack(HandBack {
-                kind: HandBackKind::Decision,
-                reason: format!(
-                    "The implementer handed the pull request back:\n\n{}{kept}",
-                    reason.trim()
-                ),
-                log_tail: LogTail::session(&turn.log_tail),
-            }))
+            let stopped = keep().await;
+            Err(Failure::HandBack(hand_back::gave_up(
+                Implementing::PullRequest,
+                &reason,
+                &turn.log_tail,
+                &stopped,
+            )))
         }
     }
 }
@@ -2668,7 +2398,7 @@ pub(crate) async fn automation(
 
 /// An automation run's `error`, with `log_tail` under it.
 fn with_tail(error: &anyhow::Error, log_tail: &LogTail) -> anyhow::Error {
-    anyhow::anyhow!("{error:#}\n\n{}:\n{}", log_tail.heading(), log_tail.text)
+    anyhow::anyhow!("{error:#}\n\n{}:\n{}", log_tail.heading(), log_tail.text())
 }
 
 /// Drops the issues past `max-issues` from `result`, which are not filed.

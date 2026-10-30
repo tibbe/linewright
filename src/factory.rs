@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::api::{Publish, Served};
+use crate::apply;
 use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
@@ -871,9 +872,9 @@ impl Factory {
             }
             Action::Relabel { issue, to } => {
                 info!(issue = issue.0, %to, "relabeling");
-                let asks = run::Asks {
-                    status: Some(run::StatusTo::Set(*to)),
-                    ..run::Asks::default()
+                let asks = apply::Asks {
+                    status: Some(apply::StatusTo::Set(*to)),
+                    ..apply::Asks::default()
                 };
                 run::ask(&**store, *issue, &asks).await?;
             }
@@ -887,7 +888,7 @@ impl Factory {
             }
             Action::HandBack { item, kind, reason } => {
                 info!(%item, reason, "handing back");
-                let hand_back = run::HandBack {
+                let hand_back = apply::hand_back::HandBack {
                     kind: *kind,
                     reason: reason.clone(),
                     log_tail: None,

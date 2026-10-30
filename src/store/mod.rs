@@ -166,6 +166,11 @@ pub struct FoundSecret {
 pub struct FoundSecrets(Vec<FoundSecret>);
 
 impl FoundSecrets {
+    /// The secrets `found`, unless there are none.
+    pub fn new(found: Vec<FoundSecret>) -> Option<FoundSecrets> {
+        (!found.is_empty()).then_some(FoundSecrets(found))
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &FoundSecret> {
         self.0.iter()
     }
@@ -225,7 +230,7 @@ fn found_secrets(output: &str) -> Option<FoundSecrets> {
             });
         }
     }
-    (!found.is_empty()).then_some(FoundSecrets(found))
+    FoundSecrets::new(found)
 }
 
 /// GitHub's reason in the output of a `git push` it refused because the
