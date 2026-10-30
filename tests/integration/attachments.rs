@@ -21,8 +21,20 @@ struct Record {
 
 impl Record {
     fn new() -> Record {
+        Record::under("")
+    }
+
+    /// A record under a parent named `Application Support`, as in macOS's
+    /// default data directory, so the attachments directory's path has a
+    /// space in it.
+    fn spaced() -> Record {
+        Record::under("Application Support")
+    }
+
+    /// A record at `parent` in a new temporary directory.
+    fn under(parent: &str) -> Record {
         let record = tempfile::tempdir().unwrap();
-        let dir = Dir::create(record.path()).unwrap();
+        let dir = Dir::create(&record.path().join(parent)).unwrap();
         Record {
             _record: record,
             dir,
@@ -115,6 +127,45 @@ fn an_html_img_s_src_becomes_its_url() {
         "<p align=\"center\">\n<img alt=\"Wide\" \
          src=\"https://github.com/user-attachments/assets/wide.png\" width=\"600\">\n</p>\n\n\
          Inline <img src='https://github.com/user-attachments/assets/wide.png'/> too.\n"
+    );
+}
+
+#[test]
+fn a_bracketed_path_with_a_space_becomes_its_url() {
+    let record = Record::spaced();
+    let shot = record.put("home_before.png", b"png");
+    let dir = record.path();
+    assert!(dir.contains(' '));
+    let markdown = format!(
+        "![Home before](<{dir}/home_before.png>)\n\n\
+         See [the shot](<{dir}/home_before.png> \"Shot\") and [again][shot].\n\n\
+         [shot]: <{dir}/home_before.png>\n"
+    );
+    let files: Vec<PathBuf> = record
+        .resolve(&markdown)
+        .unwrap()
+        .files()
+        .iter()
+        .map(|file| file.path().to_path_buf())
+        .collect();
+    assert_eq!(files, [shot]);
+    assert_eq!(
+        record.rewritten(&markdown),
+        "![Home before](<https://github.com/user-attachments/assets/home_before.png>)\n\n\
+         See [the shot](<https://github.com/user-attachments/assets/home_before.png> \"Shot\") \
+         and [again][shot].\n\n\
+         [shot]: <https://github.com/user-attachments/assets/home_before.png>\n"
+    );
+}
+
+#[test]
+fn a_bracketed_video_with_a_space_in_its_path_alone_in_its_paragraph_becomes_its_bare_url() {
+    let record = Record::spaced();
+    record.put("demo.mp4", b"mp4");
+    let dir = record.path();
+    assert_eq!(
+        record.rewritten(&format!("The demo:\n\n![The demo](<{dir}/demo.mp4>)\n")),
+        "The demo:\n\nhttps://github.com/user-attachments/assets/demo.mp4\n"
     );
 }
 
