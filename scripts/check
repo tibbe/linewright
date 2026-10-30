@@ -196,8 +196,18 @@ check_clippy() {
 # An override in .config/nextest.toml that matches no test, such as one
 # left behind by a rename, would silently stop applying, so each must match
 # one.
+#
+# The tests run the git binary that the `git` on the path runs. A `git` on
+# the path may be a stub that finds another git on every run, as macOS's
+# /usr/bin/git does with xcrun, which takes twice as long as the git command
+# itself, and the tests run git hundreds of times each. git's install puts
+# a `git` in the directory `git --exec-path` names, which holds only git and
+# its helpers, so putting it first on the path shadows nothing else.
 check_test() {
-  local filter status=0
+  local filter status=0 exec_path
+  if exec_path="$(git --exec-path 2>/dev/null)" && [ -x "$exec_path/git" ]; then
+    export PATH="$exec_path:$PATH"
+  fi
   while IFS= read -r filter; do
     if [ -z "$(nextest list --locked --cargo-quiet --message-format oneline -E "$filter")" ]; then
       echo ".config/nextest.toml: the override filter $filter matches no test"
