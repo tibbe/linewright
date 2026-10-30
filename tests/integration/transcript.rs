@@ -5,6 +5,8 @@ use linewright::transcript::{
 };
 use serde_json::json;
 
+use crate::common::json_objects;
+
 fn recorded() -> SessionRecord {
     SessionRecord {
         output: [
@@ -250,6 +252,118 @@ session 1: started 2026-10-13 10:00:00 UTC
          0:02  Read(a.png) → 0 lines\n \
          0:02  Read(b.txt) → 2 lines\n"
     );
+}
+
+/// `docs/specs/monitoring.md`, logs, Running in JSON.
+#[test]
+fn json_gives_a_tool_call_null_for_what_it_holds_once_it_returns() {
+    let record = SessionRecord {
+        output: [
+            json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-13T10:00:02Z",
+                "message": {"content": [
+                    {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "a.txt"}},
+                    {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "cargo test"}},
+                ]},
+            }),
+            json!({
+                "type": "user",
+                "timestamp": "2026-10-13T10:00:03Z",
+                "message": {"content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "one\ntwo"},
+                ]},
+            }),
+        ]
+        .iter()
+        .map(|event| format!("{event}\n"))
+        .collect(),
+        ..SessionRecord::default()
+    };
+    let json = |verbosity| {
+        json_objects(&transcript::json_lines(
+            &of(std::slice::from_ref(&record)),
+            verbosity,
+        ))
+    };
+    let with_stamp = |line| {
+        with_keys(
+            line,
+            json!({"session": 1, "at": "2026-10-13T10:00:02Z", "elapsed_seconds": 2, "depth": 0}),
+        )
+    };
+
+    assert_eq!(
+        json(Verbosity::Compact)[2..],
+        [
+            with_stamp(json!({
+                "type": "tool",
+                "tool_use_id": "t1",
+                "tool": "Read",
+                "argument": "a.txt",
+                "account": "2 lines",
+                "error": false,
+            })),
+            with_stamp(json!({
+                "type": "tool",
+                "tool_use_id": "t2",
+                "tool": "Bash",
+                "argument": "cargo test",
+                "account": "running",
+                "error": null,
+            })),
+        ]
+    );
+    assert_eq!(
+        json(Verbosity::Full)[2..],
+        [
+            with_stamp(json!({
+                "type": "tool",
+                "tool_use_id": "t1",
+                "tool": "Read",
+                "argument": "a.txt",
+                "account": "2 lines",
+                "error": false,
+                "input": {"file_path": "a.txt"},
+                "result": "one\ntwo",
+                "content": null,
+                "details": null,
+            })),
+            with_stamp(json!({
+                "type": "tool",
+                "tool_use_id": "t2",
+                "tool": "Bash",
+                "argument": "cargo test",
+                "account": "running",
+                "error": null,
+                "input": {"command": "cargo test"},
+                "result": null,
+                "content": null,
+                "details": null,
+            })),
+        ]
+    );
+}
+
+/// `object` with the keys of `more` too.
+fn with_keys(object: serde_json::Value, more: serde_json::Value) -> serde_json::Value {
+    let (serde_json::Value::Object(mut object), serde_json::Value::Object(more)) = (object, more)
+    else {
+        panic!("only objects have keys");
+    };
+    object.extend(more);
+    serde_json::Value::Object(object)
+}
+
+/// `record` as written up to the agent's first tool call, its result still
+/// to come.
+fn first_call_made(record: &SessionRecord) -> SessionRecord {
+    let called = record.output.find(r#""type": "tool_use""#).unwrap();
+    written(
+        record,
+        called + record.output[called..].find('\n').unwrap() + 1,
+    )
 }
 
 fn written(record: &SessionRecord, bytes: usize) -> SessionRecord {
@@ -846,7 +960,7 @@ fn a_setup_command_shows_running_until_it_ends() {
 
 /// `docs/specs/monitoring.md`, logs, Setup.
 #[test]
-fn json_gives_a_setup_command_with_its_account_and_output_once_it_has_ended() {
+fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ended() {
     let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
     let [succeeded, failed] = after_setting_up();
 
@@ -866,6 +980,9 @@ fn json_gives_a_setup_command_with_its_account_and_output_once_it_has_ended() {
             "elapsed_seconds": 0,
             "depth": 0,
             "command": "npm ci",
+            "status": null,
+            "duration_seconds": null,
+            "output": null,
         })
     );
     for verbosity in [Verbosity::Compact, Verbosity::Full] {
@@ -923,6 +1040,79 @@ fn json_gives_a_setup_command_with_its_account_and_output_once_it_has_ended() {
         ),
         " 0:00  setup: sleep 9 → timed out, 1s\n"
     );
+}
+
+/// `docs/specs/monitoring.md`, logs, Following in JSON.
+#[test]
+fn following_gives_a_tool_call_as_the_object_it_has_running_then_the_one_it_has_ended() {
+    let recorded = recorded();
+    let running = first_call_made(&recorded);
+    let snapshot = |record: &SessionRecord| -> Vec<serde_json::Value> {
+        json_objects(&transcript::json_lines(
+            &of(std::slice::from_ref(record)),
+            Verbosity::Full,
+        ))
+        .into_iter()
+        .filter(|line| line["type"] == "tool")
+        .take(1)
+        .collect()
+    };
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Full,
+        None,
+    );
+
+    let mut followed = json(&follower.update(std::slice::from_ref(&running)));
+    followed.extend(json(&follower.update(std::slice::from_ref(&recorded))));
+    let first_call =
+        followed.iter().find(|line| line["type"] == "tool").unwrap()["tool_use_id"].clone();
+    let objects: Vec<serde_json::Value> = followed
+        .into_iter()
+        .filter(|line| line["tool_use_id"] == first_call)
+        .collect();
+
+    assert_eq!(objects.len(), 2, "{objects:#?}");
+    assert_eq!(objects[0]["account"], "running");
+    assert_eq!(objects[..1], snapshot(&running));
+    // Its end is stamped with when it ended (`docs/specs/design_system.md`,
+    // Transcripts, Followed).
+    let unstamped = |line: &serde_json::Value| {
+        let mut line = line.clone();
+        let fields = line.as_object_mut().unwrap();
+        fields.remove("at");
+        fields.remove("elapsed_seconds");
+        line
+    };
+    assert_eq!(unstamped(&objects[1]), unstamped(&snapshot(&recorded)[0]));
+}
+
+/// `docs/specs/monitoring.md`, logs, Running in JSON.
+#[test]
+fn a_setup_line_ended_in_part_does_not_read() {
+    let line = |ended| {
+        serde_json::from_value::<transcript::Line>(with_keys(
+            json!({
+                "type": "setup",
+                "session": 1,
+                "at": "2026-10-13T10:00:00Z",
+                "elapsed_seconds": 0,
+                "depth": 0,
+                "command": "npm ci",
+            }),
+            ended,
+        ))
+    };
+
+    assert!(line(json!({"status": null, "duration_seconds": null, "output": null})).is_ok());
+    assert!(line(json!({"status": {"exited": 0}, "duration_seconds": 1.0, "output": ""})).is_ok());
+    for part in [
+        json!({"status": {"exited": 0}, "duration_seconds": null, "output": null}),
+        json!({"status": {"exited": 0}, "duration_seconds": 1.0, "output": null}),
+        json!({"status": null, "duration_seconds": 1.0, "output": "added 3 packages\n"}),
+    ] {
+        assert!(line(part.clone()).is_err(), "{part}");
+    }
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Followed.
