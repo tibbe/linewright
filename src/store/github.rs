@@ -1544,7 +1544,7 @@ const ISSUE_FIELDS: Fragment = Fragment {
   subIssues(first: 100) { nodes { number state closedAt author { __typename login } } }
   parent { number title body author { __typename login } }
   blockedBy(first: 50) { nodes { number state } }
-  closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt updatedAt baseRefName author { __typename login } } }
   ",
     // Only an issue's status labels need their removals.
     assignment_timeline!(unlabelings),
@@ -1583,6 +1583,9 @@ struct GqlClosingPull {
     merged_at: Option<Timestamp>,
     closed_at: Option<Timestamp>,
     updated_at: Timestamp,
+    /// Empty, as not known, in a payload recorded before Linewright read it.
+    #[serde(default)]
+    base_ref_name: String,
     author: Option<Actor>,
 }
 
@@ -1591,8 +1594,10 @@ struct GqlClosingPull {
 /// when a person closed it
 /// (<https://docs.github.com/en/graphql/reference/objects#closedevent>).
 /// With its assignees, labelings, assignments and the pull requests closing
-/// it, which tell whether Linewright worked it. Twenty issues with the six
-/// connections each cost 121 requests, which rounds to 1 point
+/// it, which tell whether Linewright worked it, and its reopenings, which
+/// with those pull requests' merges tell when it entered Done. Twenty
+/// issues with the six connections each cost 121 requests, which rounds to
+/// 1 point
 /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
 const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
     name: "ClosedIssueFields",
@@ -1604,14 +1609,15 @@ const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
   assignees(first: 20) { nodes { login } }
   subIssues(first: 100) { nodes { number state closedAt author { __typename login } } }
   parent { number title body author { __typename login } }
-  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt baseRefName author { __typename login } } }
   timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) { nodes { ... on ClosedEvent { closer { __typename ... on PullRequest { number } } } } }
-  assignments: timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+  assignments: timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, REOPENED_EVENT]) {
     nodes {
       __typename
       ... on LabeledEvent { ",
         labeling_fields!(),
         " }
+      ... on ReopenedEvent { createdAt }
       ",
         assignment_fields!(),
         "
@@ -1795,7 +1801,7 @@ const MANAGED_FACTS_FIELDS: Fragment = Fragment {
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
   subIssues(first: 100) { nodes { number state closedAt author { __typename login } } }
-  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt author { __typename login } } }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft mergedAt closedAt updatedAt baseRefName author { __typename login } } }
   timelineItems(last: 100, itemTypes: [LABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
     nodes {
       __typename
@@ -2114,6 +2120,7 @@ fn closing_pulls(nodes: Option<Nodes<GqlClosingPull>>) -> Vec<ClosingPull> {
             state: pull_state(&p.state, p.is_draft, p.merged_at, p.closed_at),
             author: login(p.author),
             updated_at: p.updated_at,
+            base_ref: p.base_ref_name,
         })
         .collect()
 }
@@ -2450,6 +2457,7 @@ impl GqlPull {
             author: login(self.author),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            base_ref: self.base_ref_name,
             head_ref: self.head_ref_name,
             head_sha: self.head_ref_oid,
             state,
@@ -3873,6 +3881,18 @@ mod tests {
         assert_eq!(pull.updated_at, at("2026-10-17T14:04:59Z"));
     }
 
+    /// `fixtures/pull-changes-requested.json`, as in
+    /// [`a_pull_request_is_held_with_githubs_review_decision_and_none_where_github_gives_none`].
+    #[test]
+    fn a_pull_request_is_held_with_the_branch_it_merges_into() {
+        let pr: GqlPull =
+            serde_json::from_str(include_str!("fixtures/pull-changes-requested.json")).unwrap();
+
+        let pull = pr.into_pull(vec![], &BranchRules::default());
+
+        assert_eq!(pull.base_ref, "main");
+    }
+
     /// `fixtures/merged-pull.json` is `MergedFields` as GitHub returned it
     /// for <https://github.com/tibbe/linewright/pull/477>, a spec change
     /// Linewright designed after its merge.
@@ -4110,6 +4130,7 @@ mod tests {
                 author: Login::new(author),
                 state,
                 updated_at: at("15:00"),
+                base_ref: String::new(),
             })
         );
     }
@@ -4288,6 +4309,7 @@ mod tests {
                                         at: at("2026-10-20T14:10:30Z"),
                                     },
                                     updated_at: at("2026-10-20T14:10:34Z"),
+                                    base_ref: String::new(),
                                 }],
                             }
                         },
@@ -4512,7 +4534,47 @@ mod tests {
                     at: at("2026-10-27T05:54:12Z"),
                 },
                 updated_at: at("2026-10-27T05:54:14Z"),
+                base_ref: String::new(),
             }]
+        );
+    }
+
+    /// `fixtures/closed-issue-reopened.json` is `ClosedIssueFields` as GitHub
+    /// returned it for <https://github.com/rust-lang/cargo/issues/15010>,
+    /// which its merged pull request #16807 closed, someone reopened, and its
+    /// merged pull request #17354 closed again.
+    #[test]
+    fn a_closed_issue_is_held_with_its_reopenings_and_the_branch_each_pull_request_closing_it_merged_into()
+     {
+        let issue: GqlClosedIssue =
+            serde_json::from_str(include_str!("fixtures/closed-issue-reopened.json")).unwrap();
+
+        let closed = issue.into_closed(&Login::new("tibbe-bot")).unwrap();
+
+        let ClosedKind::Issue {
+            facts: ManagedFacts { work, .. },
+            ..
+        } = closed.kind
+        else {
+            panic!("an issue");
+        };
+        let reopenings: Vec<&IssueEvent> = work
+            .events
+            .iter()
+            .filter(|event| matches!(event, IssueEvent::Reopened { .. }))
+            .collect();
+        assert_eq!(
+            reopenings,
+            [&IssueEvent::Reopened {
+                at: at("2026-07-20T15:02:16Z")
+            }]
+        );
+        assert_eq!(
+            work.closed_by
+                .iter()
+                .map(|pull| (pull.number.0, pull.base_ref.as_str()))
+                .collect::<Vec<_>>(),
+            [(16807, "master"), (17354, "master")]
         );
     }
 

@@ -5,9 +5,9 @@
 use std::cmp::Reverse;
 
 use crate::domain::{
-    CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, Login, Mergeability, Number, Pull,
-    PullState, ReviewDecision, StatusLabel, SubIssue, Timestamp, Tracks, last_labeling,
-    last_unassigned,
+    CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, Login, Merge, Mergeability,
+    Number, Pull, PullState, ReviewDecision, StatusLabel, SubIssue, Timestamp, Tracks,
+    last_labeling, last_unassigned,
 };
 use crate::reconcile::{NotSpecChange, Wait, WorkKind};
 use crate::runs::{Ending, Recorded, RunOf, State};
@@ -96,7 +96,8 @@ impl Lane {
         self.columns.iter().all(Vec::is_empty)
     }
 
-    /// When its last card's item finished, if every card is in Done.
+    /// When its last card entered Done, if every card is in Done
+    /// (`docs/specs/design_system.md`, The board, Finished lanes).
     pub fn finished(&self) -> Option<Timestamp> {
         let open = Column::ALL
             .into_iter()
@@ -108,7 +109,7 @@ impl Lane {
         self.cards(Column::Done)
             .iter()
             .filter_map(|card| match card.line {
-                Some(CardLine::Ended { ended, at }) => Some(ended.finished(at)),
+                Some(CardLine::Ended { at, .. }) => Some(at),
                 _ => None,
             })
             .max()
@@ -225,18 +226,16 @@ impl Card {
         self.line.as_ref().and_then(CardLine::status)
     }
 
-    /// The card in Done of an item that ended as `ended` at `closed_at`.
+    /// The card in Done of an item that ended as `ended`, entering Done at
+    /// `at`.
     fn ended(
         number: Number,
         title: &str,
         ended: Ended,
-        closed_at: Timestamp,
+        at: Timestamp,
         changed: Timestamp,
     ) -> (Column, Card) {
-        let line = CardLine::Ended {
-            ended,
-            at: closed_at,
-        };
+        let line = CardLine::Ended { ended, at };
         let card = Card::new(number, title, ended.of_pull_request(), Some(line), changed);
         (Column::Done, card)
     }
@@ -277,7 +276,7 @@ pub enum CardLine {
     // Done.
     Ended {
         ended: Ended,
-        /// When it closed.
+        /// When it entered Done.
         at: Timestamp,
     },
 }
@@ -381,7 +380,8 @@ impl Stop {
 /// How an item in Done ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ended {
-    /// An issue closed by the merge of the pull request.
+    /// An issue the pull request closes, the first to merge since it was
+    /// last opened.
     ClosedIn(Number),
     /// An issue closed otherwise, with GitHub's reason where it is known.
     Closed(Option<IssueCloseReason>),
@@ -389,8 +389,8 @@ pub enum Ended {
     Merged,
     /// A pull request of Linewright's, closed without merging.
     ClosedUnmerged,
-    /// A spec change designed with nothing to build, at `designed`.
-    NothingToBuild { designed: Timestamp },
+    /// A spec change designed with nothing to build.
+    NothingToBuild,
 }
 
 impl Ended {
@@ -398,20 +398,7 @@ impl Ended {
     fn of_pull_request(self) -> bool {
         match self {
             Ended::ClosedIn(_) | Ended::Closed(_) => false,
-            Ended::Merged | Ended::ClosedUnmerged | Ended::NothingToBuild { .. } => true,
-        }
-    }
-
-    /// When the item that ended so, closing at `closed_at`, finished
-    /// (`docs/specs/design_system.md`, The board, Finished lanes): when it
-    /// closed, or for a spec change with nothing to build, when it was
-    /// designed.
-    fn finished(self, closed_at: Timestamp) -> Timestamp {
-        match self {
-            Ended::NothingToBuild { designed } => designed,
-            Ended::ClosedIn(_) | Ended::Closed(_) | Ended::Merged | Ended::ClosedUnmerged => {
-                closed_at
-            }
+            Ended::Merged | Ended::ClosedUnmerged | Ended::NothingToBuild => true,
         }
     }
 }
@@ -428,7 +415,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         .into_iter()
         .partition(|managed| snapshot.pull(managed.number).is_some());
     let changed = |on: &[Number]| last_change(view, recorded, on, now);
-    let closing = |item: Number| -> Vec<&Managed> {
+    let pulls_closing = |item: Number| -> Vec<&Managed> {
         pulls
             .iter()
             .filter(|pull| {
@@ -439,10 +426,37 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             .collect()
     };
 
+    let default_branch = &snapshot.default_branch;
+    // An open issue with a pull request that closes it merged is in Done, the
+    // rightmost column, whatever else holds of it, so `column` never sees it.
+    let merged: Vec<(&Issue, Ended, Timestamp)> = snapshot
+        .issues
+        .iter()
+        .filter(|issue| issue.open && issue.tracks(linewright).is_none())
+        .filter_map(|issue| {
+            let closed_by = snapshot.pulls_closing(issue);
+            let merge = issue.merged_since_opened(&closed_by, default_branch);
+            let (ended, at) = issue_ended(merge, None)?;
+            issue
+                .worked_by(linewright, &closed_by)
+                .then_some((issue, ended, at))
+        })
+        .collect();
+
     let mut cards: Vec<(Column, Card)> = vec![];
     let mut own_cards: Vec<(Column, Card)> = vec![];
-    for managed in &items {
-        let folded = closing(managed.number);
+    for &(issue, ended, at) in &merged {
+        cards.push(Card::ended(
+            issue.number,
+            &issue.title,
+            ended,
+            at,
+            changed(&[issue.number]),
+        ));
+    }
+    let in_done = |number: Number| merged.iter().any(|(issue, ..)| issue.number == number);
+    for managed in items.iter().filter(|managed| !in_done(managed.number)) {
+        let folded = pulls_closing(managed.number);
         let mut on: Vec<Number> = vec![managed.number];
         on.extend(folded.iter().map(|pull| pull.number));
         let run = run_on(view, &on, now);
@@ -485,20 +499,31 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     }
     for item in &closed {
         let ClosedKind::Issue {
-            merged_by, reason, ..
-        } = item.kind
+            facts,
+            merged_by,
+            reason,
+            ..
+        } = &item.kind
         else {
             continue;
         };
         if item.tracks(linewright).is_some() || !item.worked_by(linewright) {
             continue;
         }
-        let ended = merged_by.map_or(Ended::Closed(reason), Ended::ClosedIn);
+        let closing = Closing {
+            at: item.closed_at,
+            merged_by: *merged_by,
+            reason: *reason,
+        };
+        let merge = facts.work.merged_since_opened(default_branch);
+        let Some((ended, at)) = issue_ended(merge, Some(closing)) else {
+            continue;
+        };
         cards.push(Card::ended(
             item.number,
             &item.title,
             ended,
-            item.closed_at,
+            at,
             changed(&[item.number]),
         ));
     }
@@ -595,8 +620,8 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             cards.push(Card::ended(
                 pr.number,
                 &pr.title,
-                Ended::NothingToBuild { designed },
-                pr.merged_at,
+                Ended::NothingToBuild,
+                designed,
                 changed(&[pr.number]),
             ));
         }
@@ -639,6 +664,36 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         lanes,
         needing_a_person,
         own_cards,
+    }
+}
+
+/// An issue's closing: when, the pull request whose merge closed it where it
+/// is known, and GitHub's reason.
+struct Closing {
+    at: Timestamp,
+    merged_by: Option<Number>,
+    reason: Option<IssueCloseReason>,
+}
+
+/// Whether an issue Linewright worked is in Done (`docs/specs/design_system.md`,
+/// The board, Cards) and if so how it ended and when it entered Done, from
+/// `merge`, the first pull request that closes it to merge into the default
+/// branch since it was last opened, and `closing`, if it is closed: either
+/// puts it in Done, and "closed in" names that pull request before the
+/// closer.
+fn issue_ended(merge: Option<Merge>, closing: Option<Closing>) -> Option<(Ended, Timestamp)> {
+    match (merge, closing) {
+        (Some(merge), closing) => Some((
+            Ended::ClosedIn(merge.pull_request),
+            closing.map_or(merge.at, |closing| merge.at.min(closing.at)),
+        )),
+        (None, Some(closing)) => Some((
+            closing
+                .merged_by
+                .map_or(Ended::Closed(closing.reason), Ended::ClosedIn),
+            closing.at,
+        )),
+        (None, None) => None,
     }
 }
 

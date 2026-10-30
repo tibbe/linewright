@@ -31,6 +31,7 @@ fn pull() -> Pull {
         author: Login::new("factory"),
         created_at: created(),
         updated_at: created(),
+        base_ref: "main".into(),
         head_ref: "7-count-the-widgets".into(),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: true },

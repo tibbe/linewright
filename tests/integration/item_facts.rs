@@ -129,6 +129,7 @@ fn pull(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         author: Login::new("factory"),
         created_at: at("2026-10-01T11:58:00Z"),
         updated_at: at("2026-10-01T11:58:00Z"),
+        base_ref: "main".into(),
         head_ref: format!("{closes}-do"),
         head_sha: "abc123".into(),
         state: PullState::Open { draft: false },
@@ -510,6 +511,7 @@ fn a_closed_issue_out_of_the_window_is_left_alone_as_closed() {
 fn an_item_left_out_of_the_view_lists_the_open_or_merged_pull_requests_closing_it() {
     let closing = |number, state| ClosingPull {
         number: Number(number),
+        base_ref: "main".into(),
         author: Login::new("someone"),
         state,
         updated_at: at("2026-09-30T09:00:00Z"),

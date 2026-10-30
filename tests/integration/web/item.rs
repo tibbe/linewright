@@ -705,3 +705,24 @@ async fn the_item_pages_stream_names_a_blocker_by_its_number_and_title() {
     );
     web.stop().await;
 }
+
+#[tokio::test]
+async fn the_item_page_of_an_issue_whose_pull_request_merged_before_it_closed_shows_it_in_done() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .merge_pull_before_its_issues_close(pr)
+        .await
+        .unwrap();
+    let web = Web::start(world).await;
+
+    let html = web.page(&format!("/items/{}", ticket.0)).await;
+
+    let state = fact(&item_facts(&html), "State").to_string();
+    assert!(
+        state.starts_with(&format!("Done · closed in {pr} · 2026-")),
+        "{state}"
+    );
+    web.stop().await;
+}

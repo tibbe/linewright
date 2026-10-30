@@ -151,6 +151,6 @@ fn ended_worded(ended: Ended) -> Phrase {
         Ended::Closed(Some(IssueCloseReason::Duplicate)) => "closed as a duplicate".into(),
         Ended::Merged => "merged".into(),
         Ended::ClosedUnmerged => "closed without merging".into(),
-        Ended::NothingToBuild { .. } => "merged · nothing to build".into(),
+        Ended::NothingToBuild => "merged · nothing to build".into(),
     }
 }

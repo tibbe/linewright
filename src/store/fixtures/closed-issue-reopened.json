@@ -1,0 +1,140 @@
+{
+  "number": 15010,
+  "title": "Re-organize build-dir by package + hash, rather than artifact type",
+  "body": "*[View all comments](https://triagebot.infra.rust-lang.org/gh-comments/rust-lang/cargo/issues/15010)*\n\n### Call of Testing\nAlso include anyone is following this issue and missed it, we put out a call of testing of the new v2 `build-dir` layout in a blog post [here](https://blog.rust-lang.org/2026/03/13/call-for-testing-build-dir-layout-v2/)\nSee the blog post for details and testing instructions\n\n---\n\nImplementation:\n- [x] #15848\n- [x] #15947\n- [x] #16351\n- [x] #16807\n\nDocumentation: https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#build-dir-new-layout\n\nResolves\n- Shadowing binaries on Windows (#7919)\n- Collisions between intermediate build artifacts (#8794, #16673)\n- Inconsistent use of `-Cextra-filename` (#8332)\n- Slow performance when intermediate artifacts accumulate (#16665)\n\nPast efforts\n- #6668\n\n## Overview\n\n- `.fingerprint`, `deps/`, `build-script`, and `build-script-execution/` move under `build/<pkgname>/<unit-id>`\n  - `-L` params to `rustc` were updated\n  - `cargo clean -p` was updated\n  - `incremental/` is untouched\n- `-Cextra-filename` is removed from all bins (#16351)\n\n## Known issues\n\n- As a side effect, we pass a lot more parameters to rustc, likely making `cargo -vv` more annoying, similar to #13941\n- It also makes impossible to just copy paste commands into your shell if the limit is exceeded. See [bjorn3's comment](https://github.com/rust-lang/cargo/pull/15947#issuecomment-3393205232).\n- This will break people relying on `build-dir` internals\n  - See [#t-cargo > build-dir tool compatibility @ 💬](https://rust-lang.zulipchat.com/#narrow/channel/246057-t-cargo/topic/build-dir.20tool.20compatibility/near/546267015)\n- Increases the need for solutions for when people rely on `build-dir` internals\n  - #13672\n  - #5026\n  - #13663\n  - rust-lang/rfcs#3553 (more precise determination of what is built than `cargo metadata`)\n- `cargo clean -p` only cleans up files for the current layout rather than supporting both\n\n## Unresolved issues\n\nOpen questions\n- [x] Transition plan: while `build-dir` isn't stable, enough tools rely on the layout that we'd want to setup a transition plan so they can have time to test against the new layout and work to support both\n- [x] What do we call the directory?  I said `build/` as its all encompassing\n  - [#t-cargo > directory naming with new build layout @ 💬](https://rust-lang.zulipchat.com/#narrow/channel/246057-t-cargo/topic/directory.20naming.20with.20new.20build.20layout/near/562137402)\n- [x] Can the old `build/` and `deps/` content live in the same place?\n  - Seems to work\n- [x] How should we handle `incremental/`?\n  - rustc loads incremental artifacts only for local crates. cross-crates is from rmeta. Therefore per-crate incremental artifacts should be fine.\n  - Given incremental directory has its own flock mechanism, we don't need to add flock for that directory.\n  - See [#t-compiler > ✔ Cargo switching to one &#96;-C incremental&#96; directory per c...](https://rust-lang.zulipchat.com/#narrow/channel/131828-t-compiler/topic/.E2.9C.94.20Cargo.20switching.20to.20one.20.60-C.20incremental.60.20directory.20per.20c.2E.2E.2E/with/538742374)\n- [x] Under the new layout, should `cargo clean -p` also cleans old layout paths?  See https://github.com/rust-lang/cargo/pull/15947#discussion_r2407136912\n- [x] Is the current handling of build scripts sufficient or should we explicitly split them into separate entries.  We separated build script build and execution\n- [ ] Move the `#[derive(Default)]` back for `CliUnstable` — https://github.com/rust-lang/cargo/pull/16807#discussion_r3523327989\n- [ ] https://github.com/rust-lang/cargo/issues/17182\n\n## Future extensions\n\n- #4282\n- #5931\n- #5026\n\nDeferred layout changes\n- Can we remove `-Cextra-filename` completely as it is redundant with the build-unit's `<name>/<hash>`\n  - It may not be possible to remove `-Cextra-filename` for rlibs. rustc relies on it. See https://github.com/rust-lang/cargo/pull/15947#issuecomment-3393205232\n- Can we remove `<tuple>` from the parent path?\n  - In addition to reducing path length pressure on Windows, could allow sharing of host builds between platforms\n  - Blocked on #4282\n- Can we remove `<profile>` from the parent path?\n  - In addition to reducing path length pressure on Windows, could allow sharing when build units have the same settings across profiles\n  - `<hash>` is the `-C extra-filename` hash and doesn't encompass all of fingerprinting, so we'd need to audit if there are cases that don't change the hash that we'd still need per-profile\n  - Changing of local source is one example, so at least local packages still need to be scoped by profile\n  - Blocked on #4282\n- Can we simplify how fingerprints are stored, reducing pressure on path lengths\n- If Windows filesystem perf issues crop up with `<pkgname>/<hash>`, we can go with prefixes to reduce the number of items within a directory. See [bjorn3's comment](https://github.com/rust-lang/cargo/pull/15947#issuecomment-3393205232).\n  - if `deps/` hasn't been a problem, this is unlikely to be a problem\n\n\n## About tracking issues\n\nTracking issues are used to record the overall progress of implementation.\nThey are also used as hubs connecting to other relevant issues, e.g., bugs or open design questions.\nA tracking issue is however *not* meant for large scale discussion, questions, or bug reports about a feature.\nInstead, open a dedicated issue for the specific matter and add the relevant feature gate label.\n\n\n---\n\n## Original\n\n*note:* I specify `build-dir` to clarify which half of #14125 I'm referring to.  The files and layout of `build-dir` does not have compatibility guarantees ([source](https://doc.rust-lang.org/cargo/reference/build-cache.html)).\n\nCurrently, `build-dir` is laid out like\n- `target/`\n  - `<target-platform>/`?\n    - `<profile>/`\n      - `incremental/`\n      - `build/`\n        - `<package>-<hash>/`\n          - `build*script-*`\n      - `deps/`\n        - `<package>-<hash>*`\n\nCurrently,\n- `cargo clean -p <package>` will operate on everything for `<package>`\n\nIn the future, we could have\n- GC will track and operate on everything for `<package>-<hash>` (#5026)\n- Change the locking so only overlapping `<package>-<hash>` that are being built block (#4282)\n- Centrally cache `<package>-<hash>` artifacts across all projects (#5931)\n- Reduced overhead on systems that are slow when there are a lot of files within a directory (see also rust-lang/cargo#15691)\n\nThese could be aided by re-arranging the `build-dir` to be organized around `<package>-<hash>`, like\n- `target/`\n  - `<target-platform>/`?\n    - `<profile>/`\n      - `incremental/`\n      - `build/`\n        - `<package>-<hash>/`\n            - `build*script-*`\n            - `*.d`\n\nSide effects\n- We'll have to change how we invoke rustc which will increase the length of the command-line\n  - Currently, we blindly point rustc at `deps/` and rustc finds the files it needs.  We'll instead need to point to each individual artifact rustc may need.\n\n\n<!-- TRIAGEBOT_START -->\n\n<!-- TRIAGEBOT_ASSIGN_START -->\n\n<!-- TRIAGEBOT_ASSIGN_END -->\n<!-- TRIAGEBOT_END -->",
+  "closedAt": "2026-08-18T03:17:51Z",
+  "updatedAt": "2026-10-08T12:13:07Z",
+  "stateReason": "COMPLETED",
+  "author": {
+    "__typename": "User",
+    "login": "epage"
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "C-cleanup"
+      },
+      {
+        "name": "C-tracking-issue"
+      },
+      {
+        "name": "A-layout"
+      }
+    ]
+  },
+  "assignees": {
+    "nodes": [
+      {
+        "login": "ranger-ross"
+      }
+    ]
+  },
+  "subIssues": {
+    "nodes": []
+  },
+  "parent": null,
+  "closedByPullRequestsReferences": {
+    "nodes": [
+      {
+        "number": 16807,
+        "state": "MERGED",
+        "isDraft": false,
+        "mergedAt": "2026-07-06T13:43:03Z",
+        "closedAt": "2026-07-06T13:43:03Z",
+        "updatedAt": "2026-07-08T14:23:44Z",
+        "baseRefName": "master",
+        "author": {
+          "__typename": "User",
+          "login": "ranger-ross"
+        }
+      },
+      {
+        "number": 17354,
+        "state": "MERGED",
+        "isDraft": false,
+        "mergedAt": "2026-08-18T03:17:50Z",
+        "closedAt": "2026-08-18T03:17:50Z",
+        "updatedAt": "2026-08-19T08:56:35Z",
+        "baseRefName": "master",
+        "author": {
+          "__typename": "User",
+          "login": "ranger-ross"
+        }
+      }
+    ]
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "closer": {
+          "__typename": "PullRequest",
+          "number": 17354
+        }
+      }
+    ]
+  },
+  "assignments": {
+    "nodes": [
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2025-01-03T14:17:57Z",
+        "actor": {
+          "__typename": "User",
+          "login": "epage"
+        },
+        "label": {
+          "name": "A-layout"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2025-01-03T14:17:57Z",
+        "actor": {
+          "__typename": "User",
+          "login": "epage"
+        },
+        "label": {
+          "name": "C-cleanup"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2025-01-03T14:17:57Z",
+        "actor": {
+          "__typename": "User",
+          "login": "epage"
+        },
+        "label": {
+          "name": "S-needs-design"
+        }
+      },
+      {
+        "__typename": "AssignedEvent",
+        "createdAt": "2025-10-16T17:04:03Z",
+        "actor": {
+          "__typename": "User",
+          "login": "rustbot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "ranger-ross"
+        }
+      },
+      {
+        "__typename": "LabeledEvent",
+        "createdAt": "2025-12-30T15:29:34Z",
+        "actor": {
+          "__typename": "User",
+          "login": "epage"
+        },
+        "label": {
+          "name": "C-tracking-issue"
+        }
+      },
+      {
+        "__typename": "ReopenedEvent",
+        "createdAt": "2026-07-20T15:02:16Z"
+      }
+    ]
+  }
+}
