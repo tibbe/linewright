@@ -5,6 +5,7 @@ use std::time::Duration;
 use chrono::TimeDelta;
 use common::*;
 use linewright::domain::Login;
+use linewright::drain::{self, Said, Timeout, Waiting, Was};
 use linewright::factory::{Factory, ServeEnd};
 use linewright::harness::SessionError;
 use linewright::runs::{Ending, Runs, State};
@@ -225,5 +226,140 @@ async fn a_stop_while_a_run_records_its_outcome_waits_for_it_to_record_all_of_it
         !info_with(&log, "the run is applying its result; left to finish").is_empty(),
         "{}",
         log.text()
+    );
+}
+
+fn run(id: &str) -> linewright::runs::RunId {
+    id.parse().unwrap()
+}
+
+#[test]
+fn a_drain_with_no_run_in_flight_says_only_that_serve_exited() {
+    let mut waiting = Waiting::default();
+
+    assert_eq!(waiting.seen(&[]), []);
+    assert_eq!(waiting.exited(), [Said::Exited]);
+}
+
+#[test]
+fn a_drain_names_each_run_in_flight_once_and_again_as_it_ends() {
+    let mut waiting = Waiting::default();
+
+    let first = waiting.seen(&[run("1/triage-1")]);
+    let again = waiting.seen(&[run("1/triage-1"), run("2/implement-1")]);
+    let one_ended = waiting.seen(&[run("2/implement-1")]);
+    let exited = waiting.exited();
+
+    assert_eq!(
+        first,
+        [Said::WaitingFor {
+            run: run("1/triage-1")
+        }]
+    );
+    assert_eq!(
+        again,
+        [Said::WaitingFor {
+            run: run("2/implement-1")
+        }]
+    );
+    assert_eq!(
+        one_ended,
+        [Said::Ended {
+            run: run("1/triage-1")
+        }]
+    );
+    assert_eq!(
+        exited,
+        [
+            Said::Ended {
+                run: run("2/implement-1")
+            },
+            Said::Exited
+        ]
+    );
+}
+
+/// `drain`'s output is the monitoring commands' (`docs/specs/operation.md`,
+/// Stopping): with `--json`, the same as JSON.
+#[test]
+fn each_thing_a_drain_says_is_one_json_object_on_a_line() {
+    let said = [
+        Said::Taken { was: Was::Serving },
+        Said::WaitingFor {
+            run: run("1/triage-1"),
+        },
+        Said::Ended {
+            run: run("1/triage-1"),
+        },
+        Said::BecameAStop,
+        Said::Exited,
+    ];
+
+    let json: Vec<String> = said.iter().map(drain::json).collect();
+
+    assert_eq!(
+        json,
+        [
+            "{\"event\":\"taken\",\"was\":\"serving\"}\n",
+            "{\"event\":\"waiting-for\",\"run\":\"1/triage-1\"}\n",
+            "{\"event\":\"ended\",\"run\":\"1/triage-1\"}\n",
+            "{\"event\":\"became-a-stop\"}\n",
+            "{\"event\":\"exited\"}\n",
+        ]
+    );
+}
+
+#[test]
+fn a_drain_says_where_serve_was_in_ending_when_it_took_it() {
+    let taken = [
+        (linewright::ending::Ending::Serving, "drain: begun\n"),
+        (
+            linewright::ending::Ending::Draining { deadline: None },
+            "drain: already under way\n",
+        ),
+        (
+            linewright::ending::Ending::Stopping {
+                by: linewright::ending::StopBy::Signal,
+            },
+            "stop: already under way\n",
+        ),
+    ];
+
+    for (ending, line) in taken {
+        let was = Was::of(ending).unwrap();
+        assert_eq!(
+            drain::render(&Said::Taken { was }, false),
+            line,
+            "{ending:?}"
+        );
+    }
+    assert_eq!(Was::of(linewright::ending::Ending::Exited), None);
+}
+
+#[test]
+fn a_drains_timeout_is_a_duration_its_deadline_that_long_after_it_is_taken() {
+    let timeout = Timeout::parse("1h").unwrap();
+
+    assert_eq!(
+        timeout.deadline(at("2026-10-01T12:00:00Z")),
+        Some(at("2026-10-01T13:00:00Z"))
+    );
+    assert_eq!(
+        Timeout::parse("90m")
+            .unwrap()
+            .deadline(at("2026-10-01T12:00:00Z")),
+        Some(at("2026-10-01T13:30:00Z"))
+    );
+    assert_eq!(
+        Timeout::from(i64::MAX).deadline(at("2026-10-01T12:00:00Z")),
+        None
+    );
+}
+
+#[test]
+fn a_timeout_that_is_not_a_duration_says_so() {
+    assert_eq!(
+        Timeout::parse("soon"),
+        Err("\"soon\" is not a duration (2h)".to_string())
     );
 }

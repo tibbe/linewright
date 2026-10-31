@@ -177,3 +177,28 @@ async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_an
         "{second_after:?}"
     );
 }
+
+/// A `serve` restarted after a drain serves the web UI on the address the
+/// one before it had, though a page's stream was still open as it stopped.
+#[tokio::test]
+async fn a_web_ui_stopped_with_a_stream_open_frees_its_address() {
+    let pages = pages().await;
+    let ui = pages.listen(&[]).await;
+    let address = ui.local_address();
+    let connection = tokio::net::TcpStream::connect(address).await.unwrap();
+    let stream = send_over(
+        connection,
+        hyper::Method::GET,
+        Some("localhost"),
+        "/events/",
+    )
+    .await;
+    assert_eq!(stream.status(), 200);
+
+    tokio::time::timeout(Duration::from_secs(10), ui.stop())
+        .await
+        .expect("the web UI stops");
+
+    std::net::TcpListener::bind(address).expect("the web UI's address is free");
+    drop(stream);
+}

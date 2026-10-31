@@ -773,6 +773,16 @@ pub enum RequestError {
 }
 
 impl RequestError {
+    /// The exit status of a command `serve` refused this way
+    /// (`docs/specs/monitoring.md`, Errors).
+    pub fn exit_code(&self) -> u8 {
+        match self {
+            RequestError::NotServing { .. } => 3,
+            RequestError::NotFound(_) => 4,
+            RequestError::HungUp(_) | RequestError::Other(_) => 1,
+        }
+    }
+
     fn failed(e: anyhow::Error, hung_up: bool) -> RequestError {
         if hung_up {
             RequestError::HungUp(e)
@@ -1029,7 +1039,9 @@ fn hung_up(e: &std::io::Error) -> bool {
     )
 }
 
-fn check(status: StatusCode, body: &Bytes) -> Result<(), RequestError> {
+/// What `serve`'s answer `body` with `status` says went wrong, if anything:
+/// [`RequestError::NotFound`] only for an item or run it names as missing.
+pub fn check(status: StatusCode, body: &Bytes) -> Result<(), RequestError> {
     let answer = serde_json::from_slice::<ErrorAnswer>(body);
     if let Ok(ErrorAnswer {
         error,

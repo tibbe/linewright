@@ -309,18 +309,11 @@ trait Routed {
     fn router(&self) -> &Router;
 
     async fn response(&self, path: &str) -> axum::response::Response {
-        let request = axum::http::Request::get(path)
-            .header("Host", "localhost")
-            .body(Body::empty())
-            .unwrap();
-        self.router().clone().oneshot(request).await.unwrap()
+        routed(self.router(), hyper::Method::GET, Some("localhost"), path).await
     }
 
     async fn get(&self, path: &str) -> (u16, String) {
-        let response = self.response(path).await;
-        let status = response.status().as_u16();
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        (status, String::from_utf8(body.to_vec()).unwrap())
+        status_and_body(self.response(path).await).await
     }
 
     async fn page(&self, path: &str) -> Html {

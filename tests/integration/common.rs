@@ -171,6 +171,9 @@
 //! # `http`: requests over a connection
 //!
 //! - `send_over`: sends a request over a stream, with a `Host` or none.
+//! - `routed`: a router's answer, in-process, to a request with a `Host` or
+//!   none.
+//! - `status_and_body`: an answer's status and its whole body.
 //!
 //! # `files`: git and files
 //!
@@ -182,6 +185,8 @@
 //! # `cli`: running `lw`
 //!
 //! - `REPO`: the repository `lw` is run on.
+//! - `socket_dir_in`: the directory of `serve`'s socket under a runtime
+//!   directory, as `lw` finds it there.
 //! - `world_in_work_dir`: a world whose work dir is `REPO`'s in a temporary
 //!   directory.
 //! - `Output`: the exit code, stdout and stderr of an `lw`.

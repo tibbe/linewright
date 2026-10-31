@@ -1,3 +1,28 @@
+/// The answer of `router`, in-process, to a request for `path` with
+/// `host` as its `Host`, or none.
+pub async fn routed(
+    router: &axum::Router,
+    method: hyper::Method,
+    host: Option<&str>,
+    path: &str,
+) -> axum::response::Response {
+    use tower::ServiceExt as _;
+    let mut request = axum::http::Request::builder().method(method).uri(path);
+    if let Some(host) = host {
+        request = request.header("Host", host);
+    }
+    let request = request.body(axum::body::Body::empty()).unwrap();
+    router.clone().oneshot(request).await.unwrap()
+}
+
+/// The status of `response` and its whole body.
+pub async fn status_and_body(response: axum::response::Response) -> (u16, String) {
+    use http_body_util::BodyExt as _;
+    let status = response.status().as_u16();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(body.to_vec()).unwrap())
+}
+
 /// Sends a request for `path` over `stream`, with `host` as its `Host`, or
 /// none, and gives the answer as soon as its head arrives, as an event
 /// stream's body does not end.

@@ -36,8 +36,6 @@ const HARNESS_PROGRAM: &str = "claude";
 
 /// Clap exits with 2 too for a command line it cannot parse.
 const WRONG_COMMAND_LINE: u8 = 2;
-const NOT_SERVING: u8 = 3;
-const NO_SUCH_ITEM: u8 = 4;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -112,7 +110,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
     };
     let body = match api::get_answer(&socket_dir(), &repo, resource).await {
         Ok(body) => body,
-        Err(e) => return print_answer(Err(refused(e))),
+        Err(e) => return print_answer(Err(refused(&e))),
     };
     let text = if json {
         String::from_utf8_lossy(&body).into_owned()
@@ -154,7 +152,7 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
             Ok(taken) => taken,
             Err(e) => return print_answer(Err(e)),
         },
-        Err(e) => return print_answer(Err(refused(e))),
+        Err(e) => return print_answer(Err(refused(&e))),
     };
     let mut waiting = Waiting::default();
     say(&[Said::Taken { was: taken.was }]);
@@ -199,7 +197,7 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
             },
             // Asked again: a `serve` that hangs up is about to exit.
             Err(RequestError::HungUp(_)) => continue,
-            Err(e) => return print_answer(Err(refused(e))),
+            Err(e) => return print_answer(Err(refused(&e))),
         };
         // One started since, as a supervisor restarts it, is another.
         match status.filter(|status| status.linewright.serving_since == taken.serving_since) {
@@ -358,7 +356,7 @@ async fn follow_logs(
                 let after = after.map(|resume| resume.after);
                 return follow_records(&work_dir, &query, after, printing).await;
             }
-            Err(e) => return print_answer(Err(refused(e))),
+            Err(e) => return print_answer(Err(refused(&e))),
         }
     }
 }
@@ -415,7 +413,7 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
             Ok(value) => Ok(Answer::Read(value)),
             Err(e) => Err(unanswered(e)),
         },
-        Err(e) => Err(refused(e)),
+        Err(e) => Err(refused(&e)),
     }
 }
 
@@ -425,17 +423,14 @@ fn failed(e: &anyhow::Error) -> (u8, String) {
 
 fn unanswered(e: Unanswered) -> (u8, String) {
     match e {
-        Unanswered::NoSuch { error, .. } => (NO_SUCH_ITEM, error),
+        Unanswered::NoSuch { error, .. } => refused(&RequestError::NotFound(error)),
         Unanswered::Failed(e) => failed(&e),
     }
 }
 
-fn refused(e: RequestError) -> (u8, String) {
-    match e {
-        RequestError::NotServing { .. } => (NOT_SERVING, e.to_string()),
-        RequestError::NotFound(_) => (NO_SUCH_ITEM, e.to_string()),
-        RequestError::HungUp(e) | RequestError::Other(e) => failed(&e),
-    }
+/// An error's whole chain, as [`failed`] gives it.
+fn refused(e: &RequestError) -> (u8, String) {
+    (e.exit_code(), format!("{e:#}"))
 }
 
 enum Answer<T> {
