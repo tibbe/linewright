@@ -999,3 +999,42 @@ fn only_a_name_linewright_gives_a_tickets_branch_names_one() {
         assert_eq!(issue_of(name), None, "{name}");
     }
 }
+
+#[test]
+fn a_tickets_branch_is_named_for_it_with_the_first_number_from_2_no_open_pull_request_holds() {
+    let ticket = ticket(12, "Blue gadgets");
+    let on = |head: &str, state: PullState| Pull {
+        head_ref: head.into(),
+        state,
+        ..open_pull(20, "alice", &[], &[])
+    };
+    let open = PullState::Open { draft: false };
+    let closed = PullState::Closed {
+        at: at("2026-10-01T09:00:00Z"),
+    };
+    let cases = [
+        ("no pull request", vec![], "12-blue-gadgets"),
+        (
+            "the name held by an open pull request",
+            vec![on("12-blue-gadgets", open)],
+            "12-blue-gadgets-2",
+        ),
+        (
+            "the name and the next held by open pull requests",
+            vec![on("12-blue-gadgets", open), on("12-blue-gadgets-2", open)],
+            "12-blue-gadgets-3",
+        ),
+        (
+            "the name held by a closed pull request",
+            vec![on("12-blue-gadgets", closed)],
+            "12-blue-gadgets",
+        ),
+    ];
+    for (case, pulls, branch) in cases {
+        let snapshot = Snapshot {
+            pulls,
+            ..snapshot(vec![ticket.clone()], vec![])
+        };
+        assert_eq!(snapshot.ticket_branch(&ticket), branch, "{case}");
+    }
+}
