@@ -869,6 +869,35 @@ mod tests {
     }
 
     #[test]
+    fn a_pull_request_title_is_trimmed_and_a_blank_one_sent_back() {
+        let error = rejected::<ImplementResult>(&done(&json!({"pr_title": " "})));
+        assert!(
+            error.contains("`/pr_title`: \" \" does not match"),
+            "{error}"
+        );
+        let result =
+            parse::<ImplementResult>(&done(&json!({"pr_title": " Report gadgets "})).to_string());
+        assert_eq!(
+            result,
+            Ok(ImplementResult::Done {
+                pr_title: "Report gadgets".into(),
+                pr_body: "Gadgets.".into(),
+                spec_gaps: vec![],
+            })
+        );
+    }
+
+    #[test]
+    fn asking_something_that_is_not_a_login_is_sent_back() {
+        let error = triage(&json!({"outcome": "needs-info", "category": "bug", "comment": "Which version?", "ask": ["the reporter"]}))
+            .unwrap_err();
+        assert!(
+            error.contains("`/ask/0`: \"the reporter\" does not match"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn a_triage_outcome_outside_the_three_states_is_sent_back() {
         let error =
             triage(&json!({"outcome": "done", "category": "bug", "comment": "Fine."})).unwrap_err();
@@ -905,6 +934,17 @@ mod tests {
             &json!({"outcome": "designed", "design": "D.", "tickets": [ticket("a", &[])]}),
         );
         assert!(error.contains("`/comment` is missing"), "{error}");
+    }
+
+    #[test]
+    fn a_spec_change_designed_with_no_tickets_is_sent_back() {
+        let error = rejected::<DesignResult<Cut>>(
+            &json!({"outcome": "designed", "design": "Nothing new.", "tickets": [], "comment": "None."}),
+        );
+        assert!(
+            error.contains("`/tickets`: [] has less than 1 item"),
+            "{error}"
+        );
     }
 
     #[test]

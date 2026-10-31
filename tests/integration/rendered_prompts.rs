@@ -272,3 +272,69 @@ fn automation_is_filled_as_before() {
 
     assert_eq!(prompt, expected("automation.txt"));
 }
+
+#[test]
+fn implement_of_a_ticket_of_a_spec_changes_tracking_issue_is_filled_as_before() {
+    let name = repo_name();
+    let ticket_issue = issue(7, "Count the widgets", "Count them.");
+    let tracking = Issue {
+        filed: Some(Filed::Tracking {
+            spec_change: Number(5),
+        }),
+        ..issue(4, "Spec change: Count widgets", "The tickets.")
+    };
+    let ticket = Ticket::new(
+        &ticket_issue,
+        Some(Cow::Borrowed(&tracking)),
+        vec![],
+        Some("+Widgets are counted.\n".into()),
+    );
+    let prompt = prompts::implement(
+        &common::placeholders_only().prompts,
+        &repo(&name),
+        &ticket,
+        "7-count-the-widgets",
+        &BranchStart::New,
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_eq!(prompt, expected("implement-spec-change-ticket.txt"));
+}
+
+#[test]
+fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
+    let name = repo_name();
+    let ticket_issue = issue(7, "Count the widgets", "Count them.");
+    let parent = Issue {
+        comments: vec![Comment {
+            author: Login::new("designer"),
+            body: "Store them in one table.".into(),
+            created_at: created(),
+        }],
+        ..issue(4, "Widgets", "All of them.")
+    };
+    let ticket = Ticket::new(&ticket_issue, Some(Cow::Borrowed(&parent)), vec![], None);
+    let comment = Comment {
+        author: Login::new("maintainer"),
+        body: "Name it `count`.".into(),
+        created_at: created(),
+    };
+    let prompt = prompts::pull_work(
+        &common::placeholders_only().prompts,
+        &repo(&name),
+        &ticket,
+        &pull(),
+        &PullTask::Rework {
+            feedback: Feedback {
+                comments: vec![&comment],
+                reviews: vec![],
+                threads: vec![],
+            },
+            conflict: None,
+        },
+        None,
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_eq!(prompt, expected("rework-of-a-ticket-with-a-parent.txt"));
+}

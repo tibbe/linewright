@@ -1,0 +1,64 @@
+## facts
+
+- Repository: `owner/widgets`
+- Default branch: `main`
+- Spec: the tracked files matching `docs/specs/**/*.md`
+- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
+
+## default_branch
+
+main
+
+## branch
+
+7-count-the-widgets
+
+## holding
+
+fresh from `main`.
+
+## ticket
+
+### The ticket: #7 Count the widgets
+
+Opened by @reporter. Labels: bug.
+
+Count them.
+
+#### Comments
+
+**@maintainer** (2026-10-01 12:00 UTC):
+
+Seen it too.
+
+### Parent issue
+
+#4, the tracking issue of the spec change #5.
+
+#### The parent issue's comments
+
+**@maintainer** (2026-10-01 12:00 UTC):
+
+Seen it too.
+
+#### The spec change's spec diff
+
+```diff
++Widgets are counted.
+```
+
+## output
+
+End your session with a final message that is a single JSON object and nothing else, one of:
+
+- `done`, with the pull request to open: `{ "outcome": "done", "pr_title": "<the pull request title, per the linewright:pr skill>", "pr_body": "<the pull request body, per the linewright:pr skill, without a closing reference to the ticket: Linewright adds it>", "spec_gaps": [SPEC_GAP], "declined_findings": [DECLINED] }`
+- `blocked`, on a spec gap only the maintainer can answer: `{ "outcome": "blocked", "question": "<the question the maintainer must answer>", "spec_gaps": [SPEC_GAP] }`
+- `gave-up`, when the work cannot be done: `{ "outcome": "gave-up", "reason": "<why>" }`
+
+where
+
+- `SPEC_GAP` is `{ "title": "<issue title>", "body": "<the spec change needed, in Markdown>" }`, and `spec_gaps` lists the gaps that did not block the ticket (often none).
+- `DECLINED` is `{ "finding": "<the review finding, as the review put it>", "evidence": "<the quote that shows it is wrong on the facts>" }`, and `declined_findings` lists the review findings you did not apply (often none).
+
+To show a screenshot or a video in the Markdown your result posts, save the file in your attachments directory, `/work/sessions/issue-7/20261001T120000Z-implement/attachments`, and refer to it by its absolute path there: as the destination of a Markdown image (`![what it shows](</path/to/file.png>)`) or link (`[what it is](</path/to/file.mp4>)`), or as an HTML `img`'s `src`. Keep the angle brackets around the path, since it may contain spaces. Linewright uploads each file you refer to and puts its URL in place of the path. A video (`.mp4`, `.mov` or `.webm`) embedded alone in its paragraph plays inline; anywhere else it becomes a link to it.
+
