@@ -536,6 +536,80 @@ impl Discard {
     pub fn all_pulls(&self) -> impl Iterator<Item = Number> + '_ {
         self.peoples_pulls.iter().chain(&self.pulls).copied()
     }
+
+    /// What it posts on each item it closes, and on the item designed again
+    /// when that is an issue.
+    pub fn notes(&self) -> DiscardNotes {
+        let designed = self.item.designed();
+        let discarded =
+            |what: &str| format!("{designed} is being designed again, so this {what} discarded.");
+        DiscardNotes {
+            on_pull: discarded("pull request for a ticket of its earlier cut is"),
+            on_ticket: discarded("ticket from its earlier cut is"),
+            on_parent: match self.item {
+                CutItem::SpecChange { tracking, .. } => ParentNote::Tracking {
+                    tracking,
+                    note: discarded("tracking issue and its tickets are"),
+                },
+                CutItem::Issue(issue) => {
+                    let mut pulls: Vec<Number> = self.all_pulls().collect();
+                    pulls.sort_unstable();
+                    ParentNote::Issue {
+                        issue,
+                        note: discarded_from_issue(&self.tickets, &pulls),
+                    }
+                }
+            },
+        }
+    }
+}
+
+/// What a discarded cut posts, by [`Discard::notes`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscardNotes {
+    /// On each pull request it closes.
+    pub on_pull: String,
+    /// On each ticket it closes.
+    pub on_ticket: String,
+    pub on_parent: ParentNote,
+}
+
+/// What a discarded cut posts on the issue its tickets are under.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParentNote {
+    /// On a spec change's `tracking` issue, which it closes.
+    Tracking { tracking: Number, note: String },
+    /// On the `issue` designed again, which stays open.
+    Issue { issue: Number, note: String },
+}
+
+/// What an issue says of the `tickets` and `pulls` of its earlier cut that
+/// were discarded, at least one of them.
+fn discarded_from_issue(tickets: &[Number], pulls: &[Number]) -> String {
+    let listed = |one: &str, many: &str, numbers: &[Number]| {
+        let numbers: Vec<String> = numbers.iter().map(Number::to_string).collect();
+        match numbers.as_slice() {
+            [] => None,
+            [only] => Some(format!("{one} {only}")),
+            [rest @ .., last] => Some(format!("{many} {} and {last}", rest.join(", "))),
+        }
+    };
+    let lists: Vec<String> = [
+        listed("ticket", "tickets", tickets),
+        listed("pull request", "pull requests", pulls),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let verb = if tickets.len() + pulls.len() == 1 {
+        "is"
+    } else {
+        "are"
+    };
+    format!(
+        "This issue is being designed again, so the {} of its earlier cut {verb} discarded.",
+        lists.join(" and ")
+    )
 }
 
 /// An item cut into tickets.

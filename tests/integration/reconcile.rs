@@ -5247,3 +5247,103 @@ fn a_drain_has_drained_once_no_run_is_in_flight() {
 fn serve_not_draining_has_not_drained_with_no_run_in_flight() {
     assert!(!Memory::default().drained(0));
 }
+
+fn numbers(numbers: &[u64]) -> Vec<Number> {
+    numbers.iter().copied().map(Number).collect()
+}
+
+#[rstest::rstest]
+#[case::of_a_spec_change_the_tracking_issue_says_its_tickets_are_discarded(
+    CutItem::SpecChange { pr: Number(5), tracking: Number(9) },
+    &[],
+    &[10, 11],
+    &[20],
+    ParentNote::Tracking {
+        tracking: Number(9),
+        note: "#5 is being designed again, so this tracking issue and its tickets are discarded."
+            .into()
+    }
+)]
+#[case::of_an_issue_with_one_ticket_it_names_it(
+    CutItem::Issue(Number(4)),
+    &[],
+    &[10],
+    &[],
+    ParentNote::Issue {
+        issue: Number(4),
+        note: "This issue is being designed again, so the ticket #10 of its earlier cut is discarded."
+            .into()
+    }
+)]
+#[case::of_an_issue_with_only_a_pull_request_it_names_it(
+    CutItem::Issue(Number(4)),
+    &[],
+    &[],
+    &[20],
+    ParentNote::Issue {
+        issue: Number(4),
+        note: "This issue is being designed again, so the pull request #20 of its earlier cut is \
+         discarded."
+            .into()
+    }
+)]
+#[case::of_an_issue_it_lists_the_tickets_then_every_pull_request_in_order(
+    CutItem::Issue(Number(4)),
+    &[31],
+    &[10, 11, 12],
+    &[22, 20],
+    ParentNote::Issue {
+        issue: Number(4),
+        note: "This issue is being designed again, so the tickets #10, #11 and #12 and pull \
+         requests #20, #22 and #31 of its earlier cut are discarded."
+            .into()
+    }
+)]
+fn a_discarded_cut_says_on_its_parent_what_it_discarded(
+    #[case] item: CutItem,
+    #[case] peoples_pulls: &[u64],
+    #[case] tickets: &[u64],
+    #[case] pulls: &[u64],
+    #[case] on_parent: ParentNote,
+) {
+    let discard = Discard {
+        item,
+        peoples_pulls: numbers(peoples_pulls),
+        tickets: numbers(tickets),
+        pulls: numbers(pulls),
+    };
+
+    assert_eq!(discard.notes().on_parent, on_parent);
+}
+
+#[rstest::rstest]
+#[case::of_a_spec_change(
+    CutItem::SpecChange { pr: Number(5), tracking: Number(9) },
+    "#5 is being designed again, so this pull request for a ticket of its earlier cut is \
+     discarded.",
+    "#5 is being designed again, so this ticket from its earlier cut is discarded."
+)]
+#[case::of_an_issue(
+    CutItem::Issue(Number(4)),
+    "#4 is being designed again, so this pull request for a ticket of its earlier cut is \
+     discarded.",
+    "#4 is being designed again, so this ticket from its earlier cut is discarded."
+)]
+fn a_discarded_cut_says_on_each_pull_request_and_ticket_it_closes_what_is_designed_again(
+    #[case] item: CutItem,
+    #[case] on_pull: &str,
+    #[case] on_ticket: &str,
+) {
+    let discard = Discard {
+        item,
+        peoples_pulls: vec![Number(31)],
+        tickets: vec![Number(10)],
+        pulls: vec![Number(20)],
+    };
+
+    let notes = discard.notes();
+    assert_eq!(
+        (notes.on_pull.as_str(), notes.on_ticket.as_str()),
+        (on_pull, on_ticket)
+    );
+}

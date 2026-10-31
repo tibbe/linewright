@@ -24,7 +24,7 @@ use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
 use crate::holds::Holds;
 use crate::reconcile::{
-    Action, Automations, CutItem, Discard, DoneRun, Drain, FailedMerge, LiveRun, Memory, Policy,
+    Action, Automations, Discard, DoneRun, Drain, FailedMerge, LiveRun, Memory, ParentNote, Policy,
     Subject, Work, WorkKind, held_back_by_drain, hold_note, reconcile,
 };
 use crate::repo_files::{RepoLayer, Unusable, holding};
@@ -948,48 +948,40 @@ impl Factory {
             }
             Action::DiscardCut(discarding) => {
                 let Discard {
-                    item,
                     peoples_pulls,
                     tickets,
                     pulls,
+                    ..
                 } = discarding;
-                let designed = item.designed();
-                warn!(item = designed.0, "discarding a cut to design it again");
-                let on_pull =
-                    discard_note(designed, "pull request for a ticket of its earlier cut is");
+                warn!(
+                    item = discarding.item.designed().0,
+                    "discarding a cut to design it again"
+                );
+                let notes = discarding.notes();
                 // A pull request of a person is seen only through its open
                 // ticket, so it closes first; the discard leaves the ticket
                 // alone until it is closed, so nothing hands it back.
                 for pr in peoples_pulls {
-                    store.comment(*pr, &on_pull).await?;
+                    store.comment(*pr, &notes.on_pull).await?;
                     store.close_pull(*pr).await?;
                 }
                 // Each ticket closes before Linewright's pull request, so
                 // that Linewright never sees its pull request closed unmerged
                 // while the ticket is open, which would hand the ticket back.
-                let on_ticket = discard_note(designed, "ticket from its earlier cut is");
                 for ticket in tickets {
-                    discard(store.as_ref(), *ticket, &on_ticket).await?;
+                    discard(store.as_ref(), *ticket, &notes.on_ticket).await?;
                 }
                 for pr in pulls {
-                    store.comment(*pr, &on_pull).await?;
+                    store.comment(*pr, &notes.on_pull).await?;
                     store.close_pull(*pr).await?;
                 }
                 // The parent last, so that a discard that stops part way is
                 // found again on the next poll.
-                match item {
-                    CutItem::SpecChange { tracking, .. } => {
-                        let on_tracking =
-                            discard_note(designed, "tracking issue and its tickets are");
-                        discard(store.as_ref(), *tracking, &on_tracking).await?;
+                match &notes.on_parent {
+                    ParentNote::Tracking { tracking, note } => {
+                        discard(store.as_ref(), *tracking, note).await?;
                     }
-                    CutItem::Issue(issue) => {
-                        let mut closed: Vec<Number> = discarding.all_pulls().collect();
-                        closed.sort_unstable();
-                        store
-                            .comment(*issue, &discarded_note(tickets, &closed))
-                            .await?;
-                    }
+                    ParentNote::Issue { issue, note } => store.comment(*issue, note).await?,
                 }
             }
             Action::DeleteBranch { branch } => {
@@ -1101,41 +1093,6 @@ async fn run_and_log(
 async fn discard(store: &dyn Store, issue: Number, note: &str) -> Result<()> {
     store.comment(issue, note).await?;
     store.close_issue(issue, IssueCloseReason::NotPlanned).await
-}
-
-/// What an item of a cut discarded to design `designed` again says, the
-/// item being `what` and its verb.
-fn discard_note(designed: Number, what: &str) -> String {
-    format!("{designed} is being designed again, so this {what} discarded.")
-}
-
-/// What an issue says of the `tickets` and `pulls` of its earlier cut that
-/// were discarded, at least one of them.
-fn discarded_note(tickets: &[Number], pulls: &[Number]) -> String {
-    let listed = |one: &str, many: &str, numbers: &[Number]| {
-        let numbers: Vec<String> = numbers.iter().map(Number::to_string).collect();
-        match numbers.as_slice() {
-            [] => None,
-            [only] => Some(format!("{one} {only}")),
-            [rest @ .., last] => Some(format!("{many} {} and {last}", rest.join(", "))),
-        }
-    };
-    let lists: Vec<String> = [
-        listed("ticket", "tickets", tickets),
-        listed("pull request", "pull requests", pulls),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let verb = if tickets.len() + pulls.len() == 1 {
-        "is"
-    } else {
-        "are"
-    };
-    format!(
-        "This issue is being designed again, so the {} of its earlier cut {verb} discarded.",
-        lists.join(" and ")
-    )
 }
 
 async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str) -> Result<()> {
