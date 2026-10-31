@@ -7,6 +7,8 @@ use common::{
 };
 use linewright::domain::*;
 use linewright::explain::{Answer, Explanation, explain, explain_read, render, render_answer};
+use linewright::prompts::Readers;
+use linewright::repo_files::{FileError, Unusable};
 use linewright::runs::{Ending, Recorded, Started, State};
 use linewright::status::View;
 use linewright::store::AnyItem;
@@ -155,6 +157,43 @@ fn while_draining_work_held_back_waits_for_the_drain() {
     assert_eq!(
         text(&draining, 42)[3],
         "waiting for: the drain, until `serve` restarts"
+    );
+}
+
+fn unusable(path: &str, error: &str) -> Unusable {
+    Unusable {
+        file: FileError {
+            path: path.into(),
+            error: error.into(),
+        },
+        holds: Readers::Every,
+    }
+}
+
+#[test]
+fn work_held_by_a_file_of_the_repositorys_waits_for_the_default_branch_to_fix_it() {
+    let held = View {
+        unusable: vec![
+            unusable(
+                ".linewright/prompts/implment.md",
+                "not one of Linewright's prompts",
+            ),
+            unusable(
+                ".linewright/config.toml",
+                "the setting `max-runs` is the operator's",
+            ),
+        ],
+        ..view(vec![ticket(42, "Add invoices")], vec![])
+    };
+
+    assert_eq!(
+        text(&held, 42)[3..],
+        [
+            "waiting for: the default branch to fix `.linewright/prompts/implment.md`, \
+             which Linewright cannot use: not one of Linewright's prompts",
+            "waiting for: the default branch to fix `.linewright/config.toml`, \
+             which Linewright cannot use: the setting `max-runs` is the operator's",
+        ]
     );
 }
 

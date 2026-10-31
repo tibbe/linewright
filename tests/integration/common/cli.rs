@@ -4,6 +4,12 @@ use super::world::World;
 
 pub const REPO: &str = "owner/widgets";
 
+/// The directory of `serve`'s socket with `runtime_dir` as
+/// `XDG_RUNTIME_DIR`, where `lw` looks for it.
+pub fn socket_dir_in(runtime_dir: &Path) -> std::path::PathBuf {
+    linewright::api::socket_dir(Some(runtime_dir.to_path_buf()), Path::new("/unused"), 0)
+}
+
 /// A world whose work dir is `REPO`'s in a temporary directory, the one
 /// `lw_in` is given.
 pub async fn world_in_work_dir() -> (World, tempfile::TempDir) {

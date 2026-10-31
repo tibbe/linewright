@@ -1,3 +1,4 @@
+mod api;
 mod apply;
 mod attachments;
 mod automation_file;
@@ -19,6 +20,7 @@ mod front_door;
 mod git;
 mod harness;
 mod holds;
+mod host;
 mod item_facts;
 mod live_runs;
 mod local_api;

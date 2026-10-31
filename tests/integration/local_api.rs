@@ -1,6 +1,5 @@
 use crate::common;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -31,7 +30,7 @@ impl Answering {
     /// with webhooks on if `webhooks`, and waits for its first poll.
     async fn start(world: World, webhooks: bool) -> Answering {
         let runtime_dir = tempfile::tempdir().unwrap();
-        let claimed = api::claim(&socket_dir(runtime_dir.path()), REPO).unwrap();
+        let claimed = api::claim(&socket_dir_in(runtime_dir.path()), REPO).unwrap();
         Answering::start_claimed(world, webhooks, runtime_dir, claimed).await
     }
 
@@ -62,7 +61,7 @@ impl Answering {
     /// off, without waiting for its first poll.
     async fn start_polling(world: World, poll_interval: Duration) -> Answering {
         let runtime_dir = tempfile::tempdir().unwrap();
-        let claimed = api::claim(&socket_dir(runtime_dir.path()), REPO).unwrap();
+        let claimed = api::claim(&socket_dir_in(runtime_dir.path()), REPO).unwrap();
         Answering::serve(world, false, runtime_dir, claimed, poll_interval).await
     }
 
@@ -167,10 +166,6 @@ impl Answering {
     }
 }
 
-fn socket_dir(runtime_dir: &Path) -> std::path::PathBuf {
-    api::socket_dir(Some(runtime_dir.to_path_buf()), Path::new("/unused"), 0)
-}
-
 /// How long a test gives one `lw` to answer: more than the 5s `lw` asks a
 /// serve that hangs up again for, and less than `eventually_async` waits, so a
 /// hung `lw` in it is named.
@@ -239,7 +234,7 @@ async fn send(
     host: &str,
     resource: &str,
 ) -> hyper::Response<hyper::body::Incoming> {
-    let path = api::socket_path(&socket_dir(runtime_dir), REPO);
+    let path = api::socket_path(&socket_dir_in(runtime_dir), REPO);
     let stream = tokio::net::UnixStream::connect(path).await.unwrap();
     send_over(stream, method, Some(host), resource).await
 }
@@ -298,11 +293,8 @@ async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
         "{}",
         output.stdout
     );
-    assert_eq!(lines[3], "runs in flight: 0 of 4");
-    assert_eq!(
-        lines[5],
-        "#1: with the maintainer — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — Do the thing"
-    );
+    // To a pipe.
+    assert!(!output.stdout.contains('\x1b'), "{:?}", output.stdout);
     answering.stop().await;
 }
 
@@ -343,7 +335,6 @@ async fn status_shows_the_polls_failed_since_the_last_that_succeeded_with_the_la
     answering.serving.drain();
 
     let text = answering.lw(&["status"]).await;
-    let json = answering.lw(&["status", "--json"]).await;
 
     // The fake clock ticks a second at each reading, so the times are
     // checked to the minute.
@@ -359,61 +350,6 @@ async fn status_shows_the_polls_failed_since_the_last_that_succeeded_with_the_la
         " UTC: taking a snapshot: GitHub refused [redacted]",
         "{line}"
     );
-    let json: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
-    let failed = &json["linewright"]["failed_polls"];
-    assert_eq!(failed["count"], 2);
-    assert!(
-        failed["since"]
-            .as_str()
-            .unwrap()
-            .starts_with("2026-10-01T12:00:")
-    );
-    assert!(
-        failed["last_at"]
-            .as_str()
-            .unwrap()
-            .starts_with("2026-10-01T12:05:")
-    );
-    assert_eq!(
-        failed["last_error"],
-        "taking a snapshot: GitHub refused [redacted]"
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn a_first_poll_that_fails_shows_before_any_poll_has_succeeded() {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    world.store.fail_reads("Bad credentials");
-    let answering = Answering::start_polling(world, Duration::from_hours(1)).await;
-    polls_failed(&answering, 1).await;
-
-    let output = answering.lw(&["status"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines[1], "last poll: none yet");
-    assert!(
-        lines[2].starts_with("next poll: 2026-10-01 13:00:"),
-        "an hour on: {}",
-        output.stdout
-    );
-    assert!(
-        lines[3].starts_with("polls failed: 1 at 2026-10-01 12:00:")
-            && lines[3].ends_with(" UTC: taking a snapshot: Bad credentials"),
-        "{}",
-        output.stdout
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn status_to_a_pipe_is_not_coloured() {
-    let answering = Answering::start(with_ticket_and_automation().await, false).await;
-
-    let output = answering.lw(&["status"]).await;
-
-    assert!(!output.stdout.contains('\x1b'), "{:?}", output.stdout);
     answering.stop().await;
 }
 
@@ -427,9 +363,6 @@ async fn status_json_prints_the_api_answer_as_it_is() {
     assert_eq!(status, 200);
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(output.stdout, format!("{answer}\n"));
-    let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
-    assert_eq!(json["items"][0]["number"], 1);
-    assert_eq!(json["items"][0]["state"], "with-the-maintainer");
     answering.stop().await;
 }
 
@@ -445,7 +378,6 @@ async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
     let answering = Answering::start(world, false).await;
 
     let output = answering.lw(&["status"]).await;
-    let (_, answer) = get(answering.runtime_dir.path(), "localhost", "/api/status").await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert!(
@@ -456,9 +388,6 @@ async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
         "{}",
         output.stdout
     );
-    let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
-    assert_eq!(json["automations"][0]["last_run_id"], "weekly/1");
-    assert_eq!(json["automations"][0]["last_run_started_by"], "hand");
     answering.stop().await;
 }
 
@@ -493,84 +422,10 @@ async fn with_webhooks_on_status_shows_the_last_accepted_delivery_and_those_refu
 }
 
 #[tokio::test]
-async fn the_socket_serves_no_web_ui() {
-    let answering = Answering::start(with_ticket_and_automation().await, false).await;
-    let dir = answering.runtime_dir.path();
-
-    for path in [
-        "/",
-        "/items/1",
-        "/events/items/1",
-        "/server",
-        "/assets/linewright.css",
-    ] {
-        let (status, body) = get(dir, "localhost", path).await;
-
-        assert_eq!(status, 404, "{path}: {body}");
-        assert!(body.contains("no such resource"), "{path}: {body}");
-    }
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn a_request_whose_host_is_not_local_is_refused() {
-    let answering = Answering::start(World::new().await, false).await;
-    let dir = answering.runtime_dir.path();
-
-    let refused = [
-        get(dir, "evil.example", "/api/status").await,
-        get(dir, "evil.example:80", "/api/status").await,
-        get(dir, "localhost.evil.example", "/api/status").await,
-    ];
-    let answered = [
-        get(dir, "localhost", "/api/status").await,
-        get(dir, "127.0.0.1:8080", "/api/status").await,
-        get(dir, "[::1]:8080", "/api/status").await,
-        get(dir, "LOCALHOST.", "/api/status").await,
-        get(dir, "localhost.:8080", "/api/status").await,
-    ];
-
-    for (status, body) in refused {
-        assert_eq!(status, 403, "{body}");
-        assert!(!body.contains("owner/widgets"), "{body}");
-    }
-    for (status, body) in answered {
-        assert_eq!(status, 200, "{body}");
-    }
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn only_serves_user_can_open_the_socket() {
-    let answering = Answering::start(World::new().await, false).await;
-    let dir = socket_dir(answering.runtime_dir.path());
-    let socket = api::socket_path(&dir, REPO);
-
-    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
-
-    assert_eq!(mode(&dir), 0o700);
-    assert_eq!(mode(&socket), 0o600);
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn status_reaches_the_serve_of_the_repository_whatever_the_case_of_its_name() {
-    let answering = Answering::start(World::new().await, false).await;
-    let dir = answering.runtime_dir.path();
-
-    let same = lw_with(dir, &["--repo", "Owner/Widgets", "status"], &[]).await;
-    let other = lw_with(dir, &["--repo", "owner/gadgets", "status"], &[]).await;
-
-    assert_eq!(same.code, Some(0), "{}", same.stderr);
-    assert_eq!(other.code, Some(3), "{}", other.stderr);
-    answering.stop().await;
-}
-
-#[tokio::test]
 async fn a_second_serve_for_the_repository_exits_saying_one_already_runs() {
     let answering = Answering::start(World::new().await, false).await;
 
-    let in_process = api::claim(&socket_dir(answering.runtime_dir.path()), REPO);
+    let in_process = api::claim(&socket_dir_in(answering.runtime_dir.path()), REPO);
     let output = answering.lw(&["serve"]).await;
 
     assert!(
@@ -582,41 +437,6 @@ async fn a_second_serve_for_the_repository_exits_saying_one_already_runs() {
     let (status, _) = get(answering.runtime_dir.path(), "localhost", "/api/status").await;
     assert_eq!(status, 200, "the first still answers");
     answering.stop().await;
-}
-
-#[tokio::test]
-async fn a_socket_a_dead_serve_left_behind_does_not_block_a_new_one() {
-    let runtime_dir = tempfile::tempdir().unwrap();
-    let dir = socket_dir(runtime_dir.path());
-    std::fs::create_dir(&dir).unwrap();
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let socket = api::socket_path(&dir, REPO);
-    drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
-    std::fs::write(socket.with_extension("lock"), "").unwrap();
-    assert!(socket.exists());
-
-    let claimed = api::claim(&dir, REPO);
-
-    assert!(claimed.is_ok(), "{:?}", claimed.err());
-}
-
-#[tokio::test]
-async fn once_a_serve_stops_another_can_start() {
-    let answering = Answering::start(World::new().await, false).await;
-    let dir = socket_dir(answering.runtime_dir.path());
-    let Answering {
-        serving,
-        api,
-        runtime_dir: _runtime_dir,
-        ..
-    } = answering;
-
-    within(STOPPING, "the API stops", api.stop()).await;
-    within(STOPPING, "serving stops", serving.stop()).await;
-
-    // A process another test forks holds a copy of the lock until it runs
-    // its program, so the lock may stay taken for a moment.
-    eventually(|| api::claim(&dir, REPO).is_ok()).await;
 }
 
 #[tokio::test]
@@ -735,42 +555,6 @@ async fn a_run_whose_serve_died_is_listed_as_interrupted() {
 }
 
 #[tokio::test]
-async fn a_resource_serve_does_not_have_is_an_error_not_a_missing_item() {
-    let answering = Answering::start(World::new().await, false).await;
-
-    let answer = api::get_answer(&socket_dir(answering.runtime_dir.path()), REPO, "/nope").await;
-
-    assert!(
-        matches!(answer, Err(api::RequestError::Other(_))),
-        "{:?}",
-        answer.err()
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn the_api_answers_under_api_and_no_longer_at_the_root() {
-    let answering = Answering::start(with_ticket_and_automation().await, false).await;
-    let dir = answering.runtime_dir.path();
-
-    let at_the_root = [
-        get(dir, "localhost", "/status").await,
-        get(dir, "localhost", "/logs?item=1").await,
-        get(dir, "localhost", "/logs/follow?item=1").await,
-        get(dir, "localhost", "/stop").await,
-        request(dir, hyper::Method::POST, "localhost", "/drain").await,
-    ];
-    let under_api = get(dir, "localhost", "/api/status").await;
-
-    for (status, body) in at_the_root {
-        assert_eq!(status, 404, "{body}");
-        assert_eq!(body, r#"{"error":"no such resource"}"#);
-    }
-    assert_eq!(under_api.0, 200, "{}", under_api.1);
-    answering.stop().await;
-}
-
-#[tokio::test]
 async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewright_waits_for() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
 
@@ -791,25 +575,6 @@ async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewr
     assert_eq!(
         lines[3],
         "waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn explain_json_prints_the_api_answer_as_it_is() {
-    let answering = Answering::start(with_ticket_and_automation().await, false).await;
-    let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/api/items/1").await;
-
-    let output = answering.lw(&["explain", "1", "--json"]).await;
-
-    assert_eq!(status, 200);
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, format!("{answer}\n"));
-    let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
-    assert_eq!(json["state"], "with-the-maintainer");
-    assert_eq!(
-        json["waiting_for"],
-        serde_json::json!([{"wait": "maintainer"}])
     );
     answering.stop().await;
 }
@@ -838,52 +603,6 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
 }
 
 #[tokio::test]
-async fn explain_names_the_tracking_issue_of_a_spec_change_cut_into_tickets_and_its_tickets() {
-    let world = World::new().await;
-    let SpecCut {
-        spec_change,
-        tracking,
-        tickets: [first, second],
-    } = world.spec_change_cut_into_tickets().await;
-    let answering = Answering::start(world, false).await;
-
-    let spec_change_says = answering.lw(&["explain", &spec_change.0.to_string()]).await;
-    let tracking_says = answering.lw(&["explain", &tracking.0.to_string()]).await;
-    let json = answering
-        .lw(&["explain", &spec_change.0.to_string(), "--json"])
-        .await;
-
-    let spec_change_lines: Vec<&str> = spec_change_says.stdout.lines().collect();
-    assert_eq!(
-        spec_change_lines[..3],
-        [
-            &format!("{spec_change}: Gadgets"),
-            &format!("child: {tracking}, its tracking issue"),
-            "state: merged",
-        ],
-        "{}",
-        spec_change_says.stderr
-    );
-    let tracking_lines: Vec<&str> = tracking_says.stdout.lines().collect();
-    assert_eq!(
-        tracking_lines[1..4],
-        [
-            &format!("parent: {spec_change}, the spec change it tracks"),
-            &format!("child: {first}, one of its tickets"),
-            &format!("child: {second}, one of its tickets"),
-        ],
-        "{}",
-        tracking_says.stderr
-    );
-    let json: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
-    assert_eq!(
-        json["children"],
-        serde_json::json!([{"number": tracking.0, "role": "tracking-issue"}])
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
 async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
     let answering = Answering::start(World::new().await, false).await;
 
@@ -893,17 +612,6 @@ async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
     assert_eq!(output.stdout, "");
     assert!(output.stderr.contains("#7"), "{}", output.stderr);
     answering.stop().await;
-}
-
-#[tokio::test]
-async fn explain_without_serve_running_exits_3_saying_so() {
-    let runtime_dir = tempfile::tempdir().unwrap();
-
-    let output = lw(runtime_dir.path(), &["explain", "1"]).await;
-
-    assert_eq!(output.code, Some(3));
-    assert_eq!(output.stdout, "");
-    assert!(output.stderr.contains("not running"), "{}", output.stderr);
 }
 
 #[tokio::test]
@@ -988,70 +696,42 @@ fn runs_in_flight(answer: &str) -> usize {
 }
 
 #[tokio::test]
-async fn status_and_explain_show_the_run_in_flight_without_its_quiet_time_in_json() {
+async fn status_and_explain_show_the_run_in_flight_until_it_ends() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
-    let clock = world.clock.clone();
     let answering = Answering::start(world, false).await;
     eventually_async(|| async {
         runs_in_flight(&answering.lw(&["status", "--json"]).await.stdout) == 1
     })
     .await;
 
-    clock.advance(chrono::TimeDelta::minutes(25));
     let status = answering.lw(&["status"]).await;
     let explained = answering.lw(&["explain", "1"]).await;
     let status_json = answering.lw(&["status", "--json"]).await;
     let explain_json = answering.lw(&["explain", "1", "--json"]).await;
+    drop(agent);
+    eventually_async(|| async {
+        runs_in_flight(&answering.lw(&["status", "--json"]).await.stdout) == 0
+    })
+    .await;
+    let ended = answering.lw(&["explain", "1", "--json"]).await;
 
-    let lines: Vec<&str> = status.stdout.lines().collect();
-    assert_eq!(
-        lines[3..5],
-        ["runs in flight: 1 of 4", ""],
+    assert!(
+        line_starting(&status.stdout, "1/triage-1: ").is_some(),
         "{}",
         status.stdout
     );
     assert!(
-        lines[5].starts_with("1/triage-1: #1 triage, running for 25m"),
-        "{}",
-        status.stdout
-    );
-    assert_eq!(
-        line_starting(&status.stdout, "#1:"),
-        None,
-        "{}",
-        status.stdout
-    );
-    assert!(
-        line_starting(&explained.stdout, "run in flight: ").is_some_and(
-            |line| line.starts_with("run in flight: 1/triage-1: #1 triage, running for 25m")
-        ),
+        line_starting(&explained.stdout, "run in flight: 1/triage-1: ").is_some(),
         "{}",
         explained.stdout
     );
-    for text in [&status.stdout, &explained.stdout] {
-        assert!(!text.contains("quiet"), "{text}");
-    }
     let status_json: serde_json::Value = serde_json::from_str(&status_json.stdout).unwrap();
     let explain_json: serde_json::Value = serde_json::from_str(&explain_json.stdout).unwrap();
-    for answer in [&status_json["runs"][0], &explain_json["run_in_flight"]] {
-        assert_eq!(answer["id"], "1/triage-1", "{answer}");
-        assert!(
-            answer["duration_seconds"].as_i64().unwrap() >= 25 * 60,
-            "{answer}"
-        );
-        assert_eq!(answer.get("quiet_seconds"), None, "{answer}");
-    }
-
-    drop(agent);
-    let past = "past run: 1/triage-1: done — #1 triage, started ";
-    eventually_async(|| async {
-        line_starting(&answering.lw(&["explain", "1"]).await.stdout, past).is_some()
-    })
-    .await;
-    let ended = answering.lw(&["status", "--json"]).await;
+    assert_eq!(status_json["runs"][0]["id"], "1/triage-1");
+    assert_eq!(explain_json["run_in_flight"]["id"], "1/triage-1");
     let ended: serde_json::Value = serde_json::from_str(&ended.stdout).unwrap();
-    assert_eq!(ended["runs"], serde_json::json!([]));
+    assert_eq!(ended["run_in_flight"], serde_json::Value::Null, "{ended}");
     answering.stop().await;
 }
 
@@ -1240,7 +920,7 @@ async fn events(
 ) -> Vec<api::ServerEvent> {
     let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
     let reading = tokio::spawn({
-        let dir = socket_dir(runtime_dir);
+        let dir = socket_dir_in(runtime_dir);
         let resource = resource.to_string();
         let last_id = last_id.map(str::to_string);
         async move {
@@ -1433,7 +1113,7 @@ async fn shows_the_rest_once_serve_stops(answering: &Answering, follow: Watching
 }
 
 fn stand_in_socket(runtime_dir: &Path) -> (std::path::PathBuf, tokio::net::UnixListener) {
-    let path = api::socket_path(&socket_dir(runtime_dir), REPO);
+    let path = api::socket_path(&socket_dir_in(runtime_dir), REPO);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let listener = tokio::net::UnixListener::bind(&path).unwrap();
     (path, listener)
@@ -1454,7 +1134,7 @@ fn stops_as_asked(
     stops: Stops,
 ) -> tokio::task::JoinHandle<()> {
     let (path, listener) = stand_in_socket(runtime_dir);
-    let serving = api::socket_path(&socket_dir(serving_dir), REPO);
+    let serving = api::socket_path(&socket_dir_in(serving_dir), REPO);
     tokio::spawn(async move {
         let mut passing = tokio::task::JoinSet::new();
         let mut asked = 0;
@@ -1565,75 +1245,6 @@ async fn drain_names_the_run_in_flight_and_again_as_it_ends_and_returns_once_ser
 }
 
 #[tokio::test]
-async fn drain_with_no_run_in_flight_returns_once_serve_has_exited() {
-    let answering = Answering::start(World::new().await, false).await;
-    let runtime_dir = answering.runtime_dir.path().to_path_buf();
-    let exited = answering.exits_once_served();
-
-    let output = lw(&runtime_dir, &["drain"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, "drain: begun\nserve: exited\n");
-    assert_eq!(
-        within(STOPPING, "serve exits", exited).await.unwrap(),
-        ServeEnd::Drained
-    );
-}
-
-#[tokio::test]
-async fn once_drain_returns_a_new_serve_can_serve_the_web_ui_on_the_same_address() {
-    let answering = Answering::start(World::new().await, false).await;
-    let runtime_dir = answering.runtime_dir.path().to_path_buf();
-    let address = answering.ui.local_address();
-    let connection = tokio::net::TcpStream::connect(address).await.unwrap();
-    let stream = send_over(
-        connection,
-        hyper::Method::GET,
-        Some("localhost"),
-        "/events/",
-    )
-    .await;
-    assert_eq!(stream.status(), 200);
-    let exited = answering.exits_once_served();
-
-    let drain = Watching::start(&runtime_dir, &["drain"]);
-    let (code, _, stderr) = drain.exits().await;
-
-    assert_eq!(code, Some(0), "{stderr}");
-    std::net::TcpListener::bind(address).expect("the web UI's address is free");
-    drop(stream);
-    within(STOPPING, "serve exits", exited).await.unwrap();
-}
-
-#[tokio::test]
-async fn drain_json_prints_the_same_facts_one_object_per_line() {
-    let (agent, answering) = triage_held().await;
-    let runtime_dir = answering.runtime_dir.path().to_path_buf();
-    let exited = answering.exits_once_served();
-
-    let drain = Watching::start(&runtime_dir, &["drain", "--json"]);
-    drain.shows("1/triage-1").await;
-    drop(agent);
-    let (code, shown, stderr) = drain.exits().await;
-
-    assert_eq!(code, Some(0), "{stderr}");
-    let said: Vec<serde_json::Value> = shown
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(
-        said,
-        [
-            serde_json::json!({"event": "taken", "was": "serving"}),
-            serde_json::json!({"event": "waiting-for", "run": "1/triage-1"}),
-            serde_json::json!({"event": "ended", "run": "1/triage-1"}),
-            serde_json::json!({"event": "exited"}),
-        ]
-    );
-    within(STOPPING, "serve exits", exited).await.unwrap();
-}
-
-#[tokio::test]
 async fn drain_no_wait_returns_once_serve_has_taken_it_and_serve_goes_on_draining() {
     let (agent, answering) = triage_held().await;
 
@@ -1675,11 +1286,11 @@ async fn killing_a_waiting_drain_leaves_serve_draining() {
     );
 }
 
-async fn drain_of_serve_already_draining_says_so_and_waits_for_it_to_exit(
-    begin: impl AsyncFnOnce(&Answering),
-) {
+#[tokio::test]
+async fn drain_of_serve_draining_after_an_earlier_drain_says_so_and_waits_for_it_to_exit() {
     let (agent, answering) = triage_held().await;
-    begin(&answering).await;
+    let earlier = answering.lw(&["drain", "--no-wait"]).await;
+    assert_eq!(earlier.code, Some(0), "{}", earlier.stderr);
     let runtime_dir = answering.runtime_dir.path().to_path_buf();
     let exited = answering.exits_once_served();
 
@@ -1690,30 +1301,14 @@ async fn drain_of_serve_already_draining_says_so_and_waits_for_it_to_exit(
 
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
-        shown,
-        "drain: already under way\nwaiting for: 1/triage-1\nended: 1/triage-1\nserve: exited\n"
+        shown.lines().next(),
+        Some("drain: already under way"),
+        "{shown}"
     );
     assert_eq!(
         within(STOPPING, "serve exits", exited).await.unwrap(),
         ServeEnd::Drained
     );
-}
-
-#[tokio::test]
-async fn drain_of_serve_draining_after_sigterm_says_so_and_waits_for_it_to_exit() {
-    drain_of_serve_already_draining_says_so_and_waits_for_it_to_exit(async |answering| {
-        answering.ends.on(Event::Signal(Signal::Terminate));
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn drain_of_serve_draining_after_an_earlier_drain_says_so_and_waits_for_it_to_exit() {
-    drain_of_serve_already_draining_says_so_and_waits_for_it_to_exit(async |answering| {
-        let earlier = answering.lw(&["drain", "--no-wait"]).await;
-        assert_eq!(earlier.code, Some(0), "{}", earlier.stderr);
-    })
-    .await;
 }
 
 #[tokio::test]
@@ -1737,62 +1332,11 @@ async fn drain_of_serve_stopping_says_so_and_waits_for_it_to_exit() {
     let (code, shown, stderr) = drain.exits().await;
 
     assert_eq!(code, Some(0), "{stderr}");
-    assert!(shown.starts_with("stop: already under way\n"), "{shown}");
-    assert!(shown.ends_with("serve: exited\n"), "{shown}");
-}
-
-#[tokio::test]
-async fn drain_without_serve_running_exits_3_saying_so() {
-    let runtime_dir = tempfile::tempdir().unwrap();
-
-    let output = lw(runtime_dir.path(), &["drain"]).await;
-
-    assert_eq!(output.code, Some(3));
-    assert_eq!(output.stdout, "");
-    assert!(output.stderr.contains("not running"), "{}", output.stderr);
-    assert!(output.stderr.contains(REPO), "{}", output.stderr);
-}
-
-#[tokio::test]
-async fn status_shows_a_drain_from_drain_as_one_from_sigterm() {
-    let from_drain = Answering::start(World::new().await, false).await;
-    let from_sigterm = Answering::start(World::new().await, false).await;
-
-    from_drain.lw(&["drain", "--no-wait"]).await;
-    from_sigterm.ends.on(Event::Signal(Signal::Terminate));
-    let mut shown = vec![];
-    for answering in [&from_drain, &from_sigterm] {
-        let text = answering.lw(&["status"]).await.stdout;
-        let json = answering.lw(&["status", "--json"]).await.stdout;
-        let json: serde_json::Value = serde_json::from_str(&json).unwrap();
-        shown.push((text, json["linewright"]["drain"].clone()));
-    }
-
-    for (text, json) in &shown {
-        assert!(
-            drain_line(text).is_some_and(|line| line.starts_with("drain: under way since ")),
-            "{text}"
-        );
-        let since = json["since"].as_str().unwrap_or_default();
-        assert!(since.starts_with("2026-10-01T12:"), "{json}");
-        assert_eq!(json["deadline"], serde_json::Value::Null, "{json}");
-    }
-    from_drain.stop().await;
-    from_sigterm.stop().await;
-}
-
-#[tokio::test]
-async fn a_drain_whose_host_is_not_local_is_refused_and_changes_nothing() {
-    let answering = Answering::start(World::new().await, false).await;
-    let dir = answering.runtime_dir.path();
-
-    let (status, body) = request(dir, hyper::Method::POST, "evil.example", "/api/drain").await;
-    let shown = answering.lw(&["status"]).await;
-
-    assert_eq!(status, 403, "{body}");
-    assert_eq!(drain_line(&shown.stdout), None, "{}", shown.stdout);
-    assert!(!answering.serving.has_ended());
-    answering.stop().await;
+    assert_eq!(
+        shown.lines().next(),
+        Some("stop: already under way"),
+        "{shown}"
+    );
 }
 
 #[tokio::test]
@@ -1816,7 +1360,7 @@ async fn drain_returns_once_serve_has_exited_though_another_has_started_since() 
     let claimed = within(STOPPING, "the socket is claimed again", async {
         loop {
             // A process another test forks may hold the lock a moment.
-            match api::claim(&socket_dir(runtime_dir.path()), REPO) {
+            match api::claim(&socket_dir_in(runtime_dir.path()), REPO) {
                 Ok(claimed) => return claimed,
                 Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
             }
@@ -1874,158 +1418,11 @@ async fn a_drain_whose_run_outlasts_its_timeout_becomes_a_stop_at_the_deadline()
 }
 
 #[tokio::test]
-async fn a_drain_whose_run_ends_before_its_timeout_is_an_ordinary_drain() {
-    let (agent, answering) = triage_held().await;
-    let runtime_dir = answering.runtime_dir.path().to_path_buf();
-    let exited = answering.exits_once_served();
-
-    let drain = Watching::start(&runtime_dir, &["drain", "--timeout", "1h"]);
-    drain.shows("waiting for: 1/triage-1\n").await;
-    drop(agent);
-    let (code, shown, stderr) = drain.exits().await;
-
-    assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(
-        shown,
-        "drain: begun\nwaiting for: 1/triage-1\nended: 1/triage-1\nserve: exited\n"
-    );
-    assert_eq!(
-        within(STOPPING, "serve exits", exited).await.unwrap(),
-        ServeEnd::Drained
-    );
-}
-
-/// The JSON `status` shows of the drain under way.
-async fn drain_shown(answering: &Answering) -> (String, serde_json::Value) {
-    let text = answering.lw(&["status"]).await.stdout;
-    let json = answering.lw(&["status", "--json"]).await.stdout;
-    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
-    let line = drain_line(&text).unwrap_or_default().to_string();
-    (line, json["linewright"]["drain"].clone())
-}
-
-#[tokio::test]
-async fn status_shows_the_deadline_of_a_drain_with_a_timeout() {
-    let (_agent, answering) = triage_held().await;
-
-    let drained = answering
-        .lw(&["drain", "--no-wait", "--timeout", "1h"])
-        .await;
-    let (line, json) = drain_shown(&answering).await;
-
-    assert_eq!(drained.code, Some(0), "{}", drained.stderr);
-    assert!(
-        line.starts_with("drain: under way since 2026-10-01 12:")
-            && line.contains("; deadline 2026-10-01 13:"),
-        "{line}"
-    );
-    assert!(
-        json["deadline"]
-            .as_str()
-            .is_some_and(|at| at.starts_with("2026-10-01T13:")),
-        "{json}"
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn a_later_drain_with_a_longer_timeout_sets_the_deadline() {
-    let (_agent, answering) = triage_held().await;
-    answering
-        .lw(&["drain", "--no-wait", "--timeout", "1h"])
-        .await;
-
-    let later = answering
-        .lw(&["drain", "--no-wait", "--timeout", "3h"])
-        .await;
-    answering.clock.advance(chrono::TimeDelta::hours(2));
-    let (line, json) = drain_shown(&answering).await;
-
-    assert_eq!(later.code, Some(0), "{}", later.stderr);
-    assert!(line.contains("; deadline 2026-10-01 15:"), "{line}");
-    assert!(
-        json["deadline"]
-            .as_str()
-            .is_some_and(|at| at.starts_with("2026-10-01T15:")),
-        "{json}"
-    );
-    assert!(!answering.serving.has_ended());
-    let Answering {
-        serving,
-        api,
-        clock,
-        ..
-    } = answering;
-    clock.advance(chrono::TimeDelta::hours(2));
-    assert_eq!(
-        within(STOPPING, "serve stops", serving.finished()).await,
-        ServeEnd::Stop
-    );
-    within(STOPPING, "the API stops", api.stop()).await;
-}
-
-#[tokio::test]
-async fn a_later_drain_without_a_timeout_leaves_the_drain_with_no_deadline() {
-    let (agent, answering) = triage_held().await;
-    answering
-        .lw(&["drain", "--no-wait", "--timeout", "1h"])
-        .await;
-
-    let later = answering.lw(&["drain", "--no-wait"]).await;
-    answering.clock.advance(chrono::TimeDelta::hours(2));
-    let (line, json) = drain_shown(&answering).await;
-
-    assert_eq!(later.code, Some(0), "{}", later.stderr);
-    assert!(line.starts_with("drain: under way since "), "{line}");
-    assert!(!line.contains("deadline"), "{line}");
-    assert_eq!(json["deadline"], serde_json::Value::Null, "{json}");
-    assert!(!answering.serving.has_ended());
-    let exited = answering.exits_once_served();
-    drop(agent);
-    assert_eq!(
-        within(STOPPING, "serve exits", exited).await.unwrap(),
-        ServeEnd::Drained
-    );
-}
-
-#[tokio::test]
-async fn a_drain_with_a_timeout_to_serve_already_stopping_sets_no_deadline() {
-    let (_agent, answering) = triage_held().await;
-    answering.ends.on(Event::Signal(Signal::Quit));
-
-    let drained = answering
-        .lw(&["drain", "--no-wait", "--timeout", "1h"])
-        .await;
-
-    assert_eq!(drained.code, Some(0), "{}", drained.stderr);
-    assert_eq!(
-        drained.stdout.lines().next(),
-        Some("stop: already under way")
-    );
-    assert_eq!(answering.ends.deadline(), None);
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn a_timeout_that_is_not_a_duration_exits_2() {
-    let runtime_dir = tempfile::tempdir().unwrap();
-
-    let output = lw(runtime_dir.path(), &["drain", "--timeout", "soon"]).await;
-
-    assert_eq!(output.code, Some(2), "{}", output.stderr);
-    assert!(
-        output.stderr.contains("\"soon\" is not a duration"),
-        "{}",
-        output.stderr
-    );
-}
-
-#[tokio::test]
 async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing() {
     use tokio::io::AsyncWriteExt;
     let answering = Answering::start(World::new().await, false).await;
     let runtime_dir = answering.runtime_dir.path().to_path_buf();
-    let dir = socket_dir(&runtime_dir);
+    let dir = socket_dir_in(&runtime_dir);
     let socket = api::socket_path(&dir, REPO);
     // Half a request, which `serve` waits for the rest of as it stops.
     let mut open = tokio::net::UnixStream::connect(&socket).await.unwrap();
@@ -2075,84 +1472,6 @@ async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing(
 }
 
 #[tokio::test]
-async fn drain_returns_once_a_killed_serve_has_left_its_socket_behind() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let runtime_dir = tempfile::tempdir().unwrap();
-    let (path, listener) = stand_in_socket(runtime_dir.path());
-    std::fs::set_permissions(
-        path.parent().unwrap(),
-        std::fs::Permissions::from_mode(0o700),
-    )
-    .unwrap();
-    // Left as the kernel releases the lock of a `serve` killed.
-    std::fs::write(path.with_extension("lock"), "").unwrap();
-    // Takes the drain, then dies without removing its socket.
-    let killed = tokio::spawn(async move {
-        let (mut asked, _) = listener.accept().await.unwrap();
-        let mut request = vec![];
-        while !request.ends_with(b"\r\n\r\n") {
-            let mut byte = [0];
-            asked.read_exact(&mut byte).await.unwrap();
-            request.push(byte[0]);
-        }
-        let body = r#"{"was":"serving","serving_since":"2026-10-01T12:00:00Z","runs":[]}"#;
-        let answer = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        asked.write_all(answer.as_bytes()).await.unwrap();
-        asked.shutdown().await.unwrap();
-    });
-
-    let output = lw(runtime_dir.path(), &["drain"]).await;
-
-    killed.await.unwrap();
-    assert!(path.exists());
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, "drain: begun\nserve: exited\n");
-}
-
-#[tokio::test]
-async fn a_serve_starting_while_drain_looks_at_the_claim_takes_it() {
-    let runtime_dir = tempfile::tempdir().unwrap();
-    let dir = socket_dir(runtime_dir.path());
-    std::fs::create_dir(&dir).unwrap();
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let lock = std::fs::File::create(api::socket_path(&dir, REPO).with_extension("lock")).unwrap();
-    // As `drain` looks, held for longer.
-    lock.lock_shared().unwrap();
-    let looked = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        drop(lock);
-    });
-
-    let claimed = tokio::task::spawn_blocking(move || api::claim(&dir, REPO))
-        .await
-        .unwrap();
-
-    looked.await.unwrap();
-    assert!(claimed.is_ok(), "{:?}", claimed.err());
-}
-
-#[tokio::test]
-async fn following_a_transcript_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
-    let (agent, answering, _runtime_dir) = triage_under_way().await;
-
-    let response = send(
-        answering.runtime_dir.path(),
-        hyper::Method::GET,
-        "localhost",
-        "/api/logs/follow?item=1",
-    )
-    .await;
-
-    assert_eq!(response.status(), 200);
-    assert_passes_through_a_proxy(response.headers());
-    drop(agent);
-    answering.stop().await;
-}
-
-#[tokio::test]
 async fn status_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights() {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     world
@@ -2174,113 +1493,6 @@ async fn status_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linew
         output.stdout.lines().any(|line| line
             == "repository file Linewright cannot use: `.linewright/prompts/implment.md`: \
                 not one of Linewright's prompts"),
-        "{}",
-        output.stdout
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn status_shows_each_file_in_the_automations_that_is_not_an_automation_as_not_parsing() {
-    let world = with_ticket_and_automation().await;
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[
-                (".linewright/automations/notes.txt", "Notes.\n"),
-                (".linewright/automations/sub/x.md", "Look.\n"),
-                (".linewright/automations/.gitkeep", ""),
-            ],
-            "Keep notes",
-        )
-        .await
-        .unwrap();
-    let answering = Answering::start(world, false).await;
-
-    let output = answering.lw(&["status"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let unparsed: Vec<&str> = output
-        .stdout
-        .lines()
-        .filter(|line| line.contains("does not parse"))
-        .collect();
-    let rule = "an automation is a `.md` file directly in `.linewright/automations/`";
-    assert_eq!(
-        unparsed,
-        [
-            format!(".linewright/automations/notes.txt: does not parse: {rule}"),
-            format!(".linewright/automations/sub/x.md: does not parse: {rule}"),
-        ],
-        "{}",
-        output.stdout
-    );
-    assert!(
-        output
-            .stdout
-            .lines()
-            .any(|line| line.starts_with("automation weekly next run")),
-        "{}",
-        output.stdout
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn explain_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights() {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    let ticket = open_ticket(&world, "Gadgets");
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(".linewright/prompts/implment.md", "Implement it.\n")],
-            "Tune the implementing",
-        )
-        .await
-        .unwrap();
-    let answering = Answering::start(world, false).await;
-
-    let output = answering.lw(&["explain", &ticket.0.to_string()]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert!(
-        output.stdout.lines().any(|line| line
-            == "waiting for: the default branch to fix `.linewright/prompts/implment.md`, \
-                which Linewright cannot use: not one of Linewright's prompts"),
-        "{}",
-        output.stdout
-    );
-    answering.stop().await;
-}
-
-#[tokio::test]
-async fn explain_names_the_file_of_the_repositorys_a_ticket_waits_for_and_its_error() {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    let ticket = open_ticket(&world, "Gadgets");
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(".linewright/config.toml", "max-runs = 9\n")],
-            "Configure Linewright",
-        )
-        .await
-        .unwrap();
-    let answering = Answering::start(world, false).await;
-
-    let output = answering.lw(&["explain", &ticket.0.to_string()]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert!(
-        output.stdout.lines().any(|line| line
-            == "waiting for: the default branch to fix `.linewright/config.toml`, which \
-                Linewright cannot use: the setting `max-runs` is the operator's: the \
-                repository's file holds `model`, `effort`, `session-timeout`, `setup`"),
         "{}",
         output.stdout
     );
