@@ -105,6 +105,9 @@ host's user-level setup. Isolation is best effort, of what sessions can
 observe of each other, not of where they run: sessions share the host and its
 user, so what a session reaches outside its clone is not isolated.
 
+When a turn ends, however it ends, every process it started ends with it,
+including those that left its process group or session.
+
 ## Out of scope
 
 - One container per run, instead of agents as processes beside Linewright.
