@@ -62,6 +62,9 @@ checks through the front door.
 - **The front door.** Where the back door writes what a stage would leave, a
   test runs the stage and checks that it leaves the same, field for field.
 - **Real git.** Tests run real git, in the code under test and in the fakes.
+- **Fake programs.** A test runs only programs that cargo builds or that are
+  installed on the machine. It tells a fake what to do with data, such as a
+  scenario file.
 
 ### Anti-patterns
 
