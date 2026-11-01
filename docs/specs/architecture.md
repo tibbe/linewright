@@ -26,7 +26,9 @@ lives in the store and nowhere else.
 - **Reconciling.** Each poll takes a snapshot of the store and reconciles it
   with the runs in flight. Between polls the snapshot is kept, and a webhook
   delivery reads the items it names into it again and reconciles.
-- **Machine state is in the store** ([State](repository.md#state)).
+- **Machine state is in the store**: an item's state is derived from it,
+  and from Linewright's run while one is in flight on the item
+  ([State](repository.md#state)).
   Linewright may keep bookkeeping no person sets under the work directory.
 - **Identity is a user account**: a token for a GitHub user dedicated to
   Linewright

@@ -90,11 +90,11 @@ people there keep it, except that at every startup it sets each
 - **Linewright's labels.** Labels only Linewright uses are prefixed
   `linewright:`. Each records what Linewright has done to an item, beside the
   status labels: Linewright sets and clears it, and a person may change it
-  to steer; for example, removing `linewright:designed` from an item whose
-  design is its own has it designed again.
+  to steer ([Steering](#steering)).
 - **Status labels.** The first four are the status labels: what an issue
   needs next, one at a time. Whoever sets one removes the others; an issue
-  carrying more than one holds the newest, and Linewright removes the rest.
+  carrying more than one holds the newest, and Linewright removes the rest
+  ([Working an item](#working-an-item)).
   Pull requests carry none: a pull request's draft, review and check state
   say what it needs.
 
@@ -103,27 +103,8 @@ people there keep it, except that at every startup it sets each
 Assignees say who is working on an item: Linewright claims an item by
 assigning itself and lets go of it by unassigning itself.
 
-- **While assigned.** It is assigned to an open issue only while the issue's
-  label asks for its work, and to a pull request or a spec change only while
-  it works it. The people it assigns to an open issue, it unassigns when the
-  issue's label asks for its work again. A closed item keeps its labels and
-  assignees.
-- **Claiming on its own.** On its own, Linewright claims an issue that is
-  unassigned, marked for it, whose status label asks for its work, and that
-  it can start: no open issue blocks it and no open pull request closes it.
-  An item Linewright was unassigned from, by itself or by anyone, is not
-  claimed again on its own until its status label or the required label is
-  applied again.
-- **Assigned by hand.** Assigning Linewright to an item by hand asks it to
-  work the item, marked for it or not and beside any other assignee. An issue
-  it works as its label says, holding one it cannot start yet; one whose
-  label asks nothing of it, it lets go of with a comment saying what the
-  issue needs first. A pull request or a spec change it goes on with.
-- **Cancelling.** A run is cancelled when its item stops asking for the run:
-  Linewright is unassigned from the item, the item is closed, or an issue's
-  label stops asking for the run, such as `needs-triage` relabeled
-  `ready-for-agent` during triage. When a cancel takes effect is under
-  [Runs](runs.md).
+- **Closed items.** Linewright leaves a closed item's labels and assignees
+  as they are.
 - **Handing back.** Handing an item back is how Linewright lets go of an item
   it cannot finish: it labels an issue `ready-for-human`, unassigns itself
   from the item, removes `linewright:designed` where the design is the item's
@@ -131,7 +112,7 @@ assigning itself and lets go of it by unassigning itself.
 - **Stalls.** A hand-back is a stall when Linewright judged nothing:
   something it relies on failed it, and a person fixes what failed or has
   Linewright try again. A stall labels the item `linewright:stalled` as well,
-  cleared when Linewright next claims or works the item. For example, a
+  cleared as under [Working an item](#working-an-item). For example, a
   session that timed out, a push GitHub refused, checks still failing after
   the fix attempts and a merge that failed twice are stalls; a question the
   spec cannot decide, a design with nothing to build, a session that gave up
@@ -145,50 +126,100 @@ assigning itself and lets go of it by unassigning itself.
 
 ## State
 
-State GitHub already shows is derived from it, never labeled.
+An item's state is the first row of its table below that holds, derived from
+what GitHub shows and, while a run is in flight on the item, from the run.
 
-- **In review.** An issue is in review while an open pull request closes it.
+| An issue that                                                                                                                         | State                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| is closed, or has had a pull request that closes it merge into the default branch since it was last opened or given a status label | done                                         |
+| has an open pull request that closes it                                                                                               | in review                                    |
+| is a tracking issue ([Cutting](design.md#cutting))                                                                                    | tracking                                     |
+| holds `needs-triage` and is assigned to Linewright                                                                                    | being triaged                                |
+| holds `ready-for-agent`, is assigned to Linewright and is without `linewright:designed`                                              | being designed                               |
+| holds `ready-for-agent` and is assigned to Linewright                                                                                 | being implemented                            |
+| holds a status label                                                                                                                  | its status label's, such as `needs-info`     |
+| has a run in flight                                                                                                                   | the one it was in when the run started       |
+| otherwise                                                                                                                             | no state                                     |
 
-The lifecycle of an issue. `triage` and `work` each group several states,
-given under [Triage](triage.md) and [Pull requests](pull_requests.md);
-`ready-for-agent` and `ready-for-human` are the labels between them, and
-`tracking` is an issue cut into tickets, under [Design](design.md).
+| A pull request that       | State  |
+| ------------------------- | ------ |
+| is open                   | open   |
+| is merged                 | merged |
+| is closed without merging | closed |
 
-| State           | Event                                  | Next            | Effect                                     |
-| --------------- | -------------------------------------- | --------------- | ------------------------------------------ |
-| —               | reporter files an issue                | triage          |                                            |
-| —               | maintainer labels                      | ready-for-agent |                                            |
-| —               | Linewright creates a ticket            | ready-for-agent |                                            |
-| triage          | clear and within the spec              | ready-for-agent |                                            |
-| triage          | maintainer must decide                 | ready-for-human |                                            |
-| triage          | status label removed                   | —               |                                            |
-| ready-for-human | maintainer labels needs-triage         | triage          |                                            |
-| ready-for-human | maintainer labels                      | ready-for-agent |                                            |
-| ready-for-human | status label removed                   | —               |                                            |
-| ready-for-agent | Linewright assigned                    | work            |                                            |
-| ready-for-agent | status label removed                   | —               |                                            |
-| work            | Linewright unassigned                  | ready-for-agent | not claimed on its own until labeled again |
-| work            | status label removed, no PR closes it  | —               | Linewright lets go of it                   |
-| work            | handed back                            | ready-for-human |                                            |
-| work            | PR closed unmerged                     | ready-for-human |                                            |
-| work            | cut into tickets                       | tracking        | tickets filed as sub-issues                |
-| tracking        | every sub-issue closed                 | —               | issue closed                               |
-| work            | PR merged                              | —               | issue closed                               |
+## Working an item
+
+Linewright changes an item's labels and assignees, and starts work on it,
+only as this table gives: at each poll, the first row that holds for the
+item. Its writes are made in their order ([Writes](#writes)).
+
+| State | When | Linewright | State after |
+| --- | --- | --- | --- |
+| any | the issue has tickets cut from it among its sub-issues and is without `linewright:designed` | discards the cut ([Discarding a cut](design.md#designing)) | as [State](#state) derives |
+| being designed, being implemented | a person has closed without merging a pull request Linewright opened that closes it, since the issue was last opened or given a status label | hands it back | `ready-for-human` |
+| `needs-info`, `ready-for-human`, no state | Linewright is assigned to the issue | unassigns itself, with a comment saying what the issue needs first where a person assigned it | unchanged |
+| `needs-triage`, `ready-for-agent` | a person Linewright asked ([Answers](triage.md#answers)) is assigned to it | unassigns them | unchanged |
+| tracking | it holds a status label or Linewright's assignment | removes the status label, then unassigns itself | tracking |
+| tracking | it has sub-issues and every one is closed | closes it | done |
+| `needs-info` | a reply has come ([Answers](triage.md#answers)) | labels it `needs-triage` | `needs-triage` |
+| `needs-triage`, `ready-for-agent` | Linewright may claim it | assigns itself | being triaged, being designed, or being implemented where it carries `linewright:designed` |
+| being triaged | no run is in flight on it | starts a triage run ([Triage](triage.md)) | being triaged |
+| being triaged | the triage run ends with `ready-for-agent` | labels it `ready-for-agent` | being designed, or being implemented where it carries `linewright:designed` |
+| being triaged | the triage run ends with `needs-info` | labels it `needs-info`, then assigns the people asked whom GitHub lets it assign | `needs-info` |
+| being triaged | the triage run ends with `ready-for-human` | labels it `ready-for-human` | `ready-for-human` |
+| being designed | no run is in flight on it | starts a design run ([Design](design.md)) | being designed |
+| being designed | the design run builds it as it is | labels it `linewright:designed` | being implemented |
+| being designed | the design run cuts it into tickets ([Cutting](design.md#cutting)) | creates the tickets, then labels it `linewright:designed` | tracking |
+| being designed | the design run finds nothing to build, in an issue Linewright created | closes it as completed | done |
+| being designed | the design run finds nothing to build in any other issue, or cannot make a design | hands it back | `ready-for-human` |
+| being implemented | no run is in flight on it | starts an implement run ([Implementation](implementation.md)) | being implemented |
+| being implemented | the implement run builds it | opens a pull request that closes it | in review |
+| being triaged, being designed, being implemented | its run cannot finish ([Ending](runs.md#ending)) | hands it back | `ready-for-human` |
+| merged | a spec change Linewright may take up ([Spec changes](sources_of_work.md#spec-changes)) | opens its issue | merged |
+| open | a pull request Linewright opened, that it may claim | assigns itself | open |
+| open | a pull request Linewright opened and is assigned to, for which [Pull requests](pull_requests.md) asks for a fix-ci, rework or update run or a merge | starts that run, or merges it | open, or merged |
+| open | a run on it cannot finish ([Ending](runs.md#ending)) | hands it back | open |
+| any | the issue carries more than one status label | removes all but the newest | unchanged |
+| any | it carries `linewright:stalled` and Linewright is assigned to it | removes `linewright:stalled` | unchanged |
+
+- **Claiming.** On its own, Linewright claims an issue that is unassigned,
+  marked for it and that it can start: no open issue blocks it. It claims a
+  pull request it opened. An item Linewright was unassigned from, by itself or
+  by anyone, is not claimed again on its own until its status label or the
+  required label is applied again.
+- **Blocked.** A run starts on an issue only once no open issue blocks it.
+- **A run in flight.** While a run is in flight on an item, only the rows for
+  how that run ends hold for it.
+
+## Steering
+
+A person steers an item through GitHub, and Linewright follows.
+
+| State | A person | Linewright | State after |
+| --- | --- | --- | --- |
+| any | closes the issue | cancels a run on it | done |
+| done | opens the issue again | | as [State](#state) derives |
+| any | changes or removes the issue's status label | cancels a run the label no longer asks for ([Labels](#labels)) | as [State](#state) derives |
+| any | unassigns Linewright | cancels a run on the item | as [State](#state) derives |
+| any | assigns Linewright to an issue, marked for it or not and beside any other assignee | | as [State](#state) derives |
+| any | removes `linewright:designed` | | as [State](#state) derives |
+| open | merges or closes a pull request | cancels a run on it | merged, or closed |
+| open | assigns Linewright to a pull request Linewright opened | goes on with it, addressing what came in meanwhile | open |
+| merged | assigns Linewright to a spec change not yet taken up ([Spec changes](sources_of_work.md#spec-changes)) | opens its issue, then unassigns itself | merged |
+| open, merged, closed | assigns Linewright to any other pull request it did not open | unassigns itself with a comment | unchanged |
+
+- **Cancelling.** When a cancel takes effect is under [Runs](runs.md).
 
 ## Managed items
 
-Linewright manages the items it has worked or that ask for its work, except
-an open issue that holds no status label, has no run in flight, has no open
-pull request closing it and is not the tracking issue of an open ticket,
-whatever Linewright did on it before, such as one whose status label a person
-removed.
+Linewright manages an item it has worked or that asks for its work, while the
+item has a state ([State](#state)).
 
-- **Worked.** Linewright has opened the item, or recorded an outcome of its
-  work on it ([Comments](#comments)).
+- **Worked.** GitHub shows Linewright opening the item, claiming it, applying
+  a label to it or opening a pull request that closes it. A comment alone is
+  not working it.
 - **Asking for its work.** An open item Linewright is assigned to, or one
-  marked for Linewright whose status label asks for its work; and a spec
-  change Linewright takes up ([Spec changes](sources_of_work.md#spec-changes)),
-  until it is designed.
+  marked for Linewright whose status label asks for its work.
 
 ## Writes
 
@@ -196,9 +227,12 @@ Linewright changes an item so that, stopped between any two of its writes,
 the item is in a state the spec already decides, asking for the work again or
 for nothing the change has not yet recorded.
 
-- **Order.** The write that changes what an item asks for, such as its status
-  label, its assignment or a pull request that closes it, comes last; for
-  example, a new status label is added before the old one is removed.
+- **Order.** The writes that change what an item asks for, such as
+  `linewright:designed`, its status label, its assignment or a pull request
+  that closes it, come last.
+- **Among them.** `linewright:designed` comes first, then the status label,
+  then the assignment; for example, a new status label is added before the
+  old one is removed, and both before Linewright unassigns itself.
 - **One writer.** One of Linewright's runs or actions writes an item at a
   time.
 - **A person's change during a run.** While a run works an item, Linewright

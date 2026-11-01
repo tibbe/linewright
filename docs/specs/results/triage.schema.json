@@ -4,7 +4,7 @@
   "type": "object",
   "properties": {
     "outcome": {
-      "description": "The state the issue moves to.",
+      "description": "The status label the issue gets.",
       "enum": [
         "ready-for-agent",
         "needs-info",

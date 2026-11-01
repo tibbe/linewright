@@ -29,8 +29,16 @@ The spec is the tracked files matching the spec glob, and the spec as merged
 is what gets built.
 
 - **A spec change.** A pull request not Linewright's own, merged into the
-  default branch, that touched a spec file. Linewright takes up those merged
-  within the lookback window (`spec-lookback`).
+  default branch, that touched a spec file.
+- **Taking it up.** Linewright may take up a spec change that is not yet
+  taken up, merged within the lookback window (`spec-lookback`) and marked
+  for it.
+- **Its issue.** Taking up a spec change opens its issue: "Spec change: <PR
+  title>", linking the pull request and labeled `ready-for-agent`. The issue
+  is the spec change's work from then on.
+- **Taken up.** A spec change is taken up once an issue Linewright created,
+  titled "Spec change: …", links it, or once it carries
+  `linewright:designed`. Its issue is the first such issue.
 - **A push to the default branch.** A push straight to the default branch is
   the maintainer's own change, outside the factory.
 

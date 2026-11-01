@@ -51,7 +51,7 @@ filled besides those of every prompt ([Contract](runs.md#contract)).
 | `{{default_branch}}` | the default branch                                                                                                                                                                                                                                  |
 | `{{branch}}`         | the ticket's branch                                                                                                                                                                                                                                 |
 | `{{holding}}`        | whether the branch is new or holds earlier work, and its unfinished commit                                                                                                                                                                          |
-| `{{ticket}}`         | the ticket and its comments (the triage brief, the design, earlier hand-backs); its parent issue, if it has one, by number, and the parent's comments, which hold its design ([Design](design.md)); for a ticket cut from a spec change, the spec change, by number, and its spec diff; and the spec gaps already filed for it |
+| `{{ticket}}`         | the ticket and its comments (the triage brief, the design, earlier hand-backs); its parent issue, if it has one, by number, and the parent's comments, which hold its design ([Design](design.md)); for a spec change's issue or a ticket cut from one, the spec change, by number, and its spec diff; and the spec gaps already filed for it |
 
 The session ends with a result that matches
 [`results/implement.schema.json`](results/implement.schema.json).

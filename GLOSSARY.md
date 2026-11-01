@@ -113,9 +113,19 @@ rather than by its own judgement.
 _Avoid_: blocked, broken, stuck, failed, errored, error, action required,
 needs attention
 
+**State**:
+Of an item: where it stands in the pipeline, such as `needs-info`, in review
+or tracking.
+_Avoid_: status, stage, phase, column
+
 **In review**:
-An issue's status while an open pull request closes it.
+An issue's state while its work waits on the review of a pull request that
+closes it.
 _Avoid_: pending, in progress
+
+**Done**:
+An issue's state once its work has ended.
+_Avoid_: closed, resolved, completed
 
 **Marked for Linewright**:
 An item Linewright may start work on of its own accord: every item, or, where
@@ -145,8 +155,8 @@ How pressing what a board card's line reports is.
 _Avoid_: state, flag, priority
 
 **Worked**:
-Of an item: Linewright has done work on it, such as triaging, designing or
-implementing it.
+Of an item: Linewright has done work on it that GitHub shows as its own, such
+as opening, claiming or labeling it.
 
 **Managed**:
 Of an item: one Linewright counts as its work, whether to come, under way or

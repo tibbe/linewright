@@ -41,31 +41,14 @@ Once Linewright opens a PR, the PR is the item its work is on.
 - **The issues it closes.** A PR is tied to issues only by GitHub's closing
   references, the closing keywords in its body and the issues linked to it by
   hand: it closes those issues.
-- **Assignment.** Linewright works the PR while it is assigned to it, as under
-  [Repository](repository.md). Unassigned, Linewright starts no more work on
-  the PR; assigned again, it goes on and addresses what came in meanwhile.
+- **Assignment.** Linewright works the PR while it is assigned to it, and a
+  person steers it as under [Steering](repository.md#steering).
 - **A person's commits.** Commits a person pushes to the branch are kept:
   every run starts from the branch as it is.
 - **Description.** A run that changes a PR so its description no longer fits
   rewrites the description, keeping the issues it closes.
-- **Closed without merging.** A PR closed without merging is the maintainer's
-  no: each issue it closes that Linewright has claimed is handed back.
-
-The `work` states of the issue lifecycle, derived as under
-[Repository](repository.md):
-
-| State     | Event                      | Next      | Effect       |
-| --------- | -------------------------- | --------- | ------------ |
-| —         | Linewright assigned        | claimed   |              |
-| —         | Linewright assigned, already designed | designed | |
-| claimed   | design posted              | designed  |              |
-| claimed   | nothing to build, or cannot design | — | handed back  |
-| designed  | cut into tickets           | —         | becomes their tracking issue |
-| designed  | PR opened that closes it   | in review |              |
-| designed  | cannot finish              | —         | handed back  |
-| in review | PR edited not to close it  | designed  |              |
-| in review | PR merged                  | —         | issue closed |
-| in review | PR closed unmerged         | —         | handed back  |
+- **Closed without merging.** A PR Linewright opened that a person closes
+  without merging is the maintainer's no ([Steering](repository.md#steering)).
 
 ## CI
 
