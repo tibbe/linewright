@@ -11,7 +11,7 @@ jobs:
     # Not on a pull request that changes only documentation. The output is
     # empty on a push, which skips `changes`, so the job runs then.
     if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -19,21 +19,21 @@ jobs:
       - run: scripts/check fmt
 
   markdown:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: scripts/check markdown
 
   compose:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: scripts/check compose
 
   css:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -42,7 +42,7 @@ jobs:
   clippy:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, macos-26]
+        runner: [ubuntu-26.04, macos-26]
     runs-on: ${{ matrix.runner }}
     # The tests take a few minutes; a hung one fails here rather than run
     # for hours.
@@ -77,7 +77,7 @@ jobs:
   doc:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -89,7 +89,7 @@ jobs:
 
   changes:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     outputs:
       base-image: ${{ steps.changes.outputs.base-image }}
@@ -142,7 +142,7 @@ jobs:
   ci:
     if: always()
     needs: [fmt, markdown, compose, css, clippy, test, doc, changes, base-image, deploy-images, binaries]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
