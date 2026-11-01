@@ -880,6 +880,13 @@ impl Factory {
                 info!(issue = issue.0, ?assignees, "unassigning the people asked");
                 store.unassign_people(*issue, assignees).await?;
             }
+            Action::UnassignFromPull { pr, comment } => {
+                info!(pr = pr.0, "letting go of a pull request it did not open");
+                // Commented first, so that a stop between the two leaves it
+                // assigned, to be let go of at the next poll.
+                store.comment(*pr, comment).await?;
+                store.unassign(*pr).await?;
+            }
             Action::RemoveStatusLabel { issue, label } => {
                 info!(issue = issue.0, %label, "removing a status label");
                 store.remove_label(*issue, label.label()).await?;

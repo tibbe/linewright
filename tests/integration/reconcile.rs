@@ -91,24 +91,6 @@ fn triage_comment(minute: i64) -> Comment {
     comment(LINEWRIGHT, minute, "What version are you on?")
 }
 
-#[test]
-fn a_reply_to_needs_info_sends_the_issue_back_to_triage() {
-    let mut asked = labeled(issue(1), label::NEEDS_INFO);
-    asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
-
-    assert_eq!(
-        decide(&snapshot(vec![asked])),
-        vec![
-            Action::Relabel {
-                issue: Number(1),
-                to: StatusLabel::NeedsTriage,
-            },
-            claim(1),
-            triage(1),
-        ]
-    );
-}
-
 fn assigned_by(mut issue: Issue, assignee: &str, actor: &str, minute: i64) -> Issue {
     issue.assignees.push(Login::new(assignee));
     issue
@@ -128,24 +110,38 @@ fn unassign_asked(issue: u64, assignees: &[&str]) -> Action {
     }
 }
 
+/// `asked`, labeled `needs-triage` in place of `needs-info` at `minute`,
+/// as taking a reply leaves it.
+fn back_to_triage(asked: Issue, minute: i64) -> Issue {
+    let mut relabeled = labeled_at(asked, label::NEEDS_TRIAGE, minute);
+    relabeled.labels = vec![label::NEEDS_TRIAGE.into()];
+    relabeled
+}
+
 #[test]
-fn a_reply_unassigns_the_people_linewright_asked_then_it_claims_the_issue_to_triage_it_again() {
+fn a_reply_sends_the_issue_back_to_triage_then_the_people_linewright_asked_are_unassigned() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
     asked = assigned_by(asked, "tester", LINEWRIGHT, 1);
     asked.comments = vec![triage_comment(1), comment("tester", 2, "Version 3.")];
+    let relabeled = back_to_triage(asked.clone(), 3);
+    let mut unassigned = relabeled.clone();
+    unassigned.assignees.clear();
 
     assert_eq!(
         decide(&snapshot(vec![asked])),
-        vec![
-            unassign_asked(1, &["reporter", "tester"]),
-            Action::Relabel {
-                issue: Number(1),
-                to: StatusLabel::NeedsTriage,
-            },
-            claim(1),
-            triage(1),
-        ]
+        vec![Action::Relabel {
+            issue: Number(1),
+            to: StatusLabel::NeedsTriage,
+        }]
+    );
+    assert_eq!(
+        decide(&snapshot(vec![relabeled])),
+        vec![unassign_asked(1, &["reporter", "tester"])]
+    );
+    assert_eq!(
+        decide(&snapshot(vec![unassigned])),
+        vec![claim(1), triage(1)]
     );
 }
 
@@ -155,18 +151,9 @@ fn a_reply_leaves_a_person_someone_else_assigned_and_triage_waits_for_them() {
     asked = assigned_by(asked, "maintainer", "maintainer", 0);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
     asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
-    let world = snapshot(vec![asked]);
+    let world = snapshot(vec![back_to_triage(asked, 3)]);
 
-    assert_eq!(
-        decide(&world),
-        vec![
-            unassign_asked(1, &["reporter"]),
-            Action::Relabel {
-                issue: Number(1),
-                to: StatusLabel::NeedsTriage,
-            },
-        ]
-    );
+    assert_eq!(decide(&world), vec![unassign_asked(1, &["reporter"])]);
     assert_eq!(
         waits_on(&world, 1),
         [Wait::Assignee {
@@ -201,15 +188,7 @@ fn needs_triage_applied_by_hand_after_a_question_unassigns_the_people_asked() {
 
     assert_eq!(
         decide(&snapshot(vec![asked])),
-        vec![
-            Action::RemoveStatusLabel {
-                issue: Number(1),
-                label: StatusLabel::NeedsInfo,
-            },
-            unassign_asked(1, &["reporter"]),
-            claim(1),
-            triage(1),
-        ]
+        vec![unassign_asked(1, &["reporter"])]
     );
 }
 
@@ -226,15 +205,7 @@ fn ready_for_agent_applied_by_hand_after_a_question_unassigns_the_people_asked()
 
     assert_eq!(
         decide(&snapshot(vec![asked])),
-        vec![
-            Action::RemoveStatusLabel {
-                issue: Number(1),
-                label: StatusLabel::NeedsInfo,
-            },
-            unassign_asked(1, &["reporter"]),
-            claim(1),
-            design(1),
-        ]
+        vec![unassign_asked(1, &["reporter"])]
     );
 }
 
@@ -253,7 +224,7 @@ fn ready_for_human_after_a_question_keeps_the_people_asked_until_ready_for_agent
 
     assert_eq!(
         decide(&snapshot(vec![asked])),
-        vec![unassign_asked(1, &["reporter"]), claim(1), design(1)]
+        vec![unassign_asked(1, &["reporter"])]
     );
 }
 
@@ -283,31 +254,6 @@ fn no_one_is_unassigned_before_a_reply() {
     asked.comments = vec![triage_comment(1)];
 
     assert_eq!(decide(&snapshot(vec![asked])), vec![]);
-}
-
-#[test]
-fn a_reply_to_a_question_opening_with_the_old_marker_line_sends_the_issue_back_to_triage() {
-    let mut asked = labeled(issue(1), label::NEEDS_INFO);
-    asked.comments = vec![
-        comment(
-            LINEWRIGHT,
-            1,
-            "> *Linewright, triage*\n\nWhat version are you on?",
-        ),
-        comment("maintainer", 2, "Version 3, I checked."),
-    ];
-
-    assert_eq!(
-        decide(&snapshot(vec![asked])),
-        vec![
-            Action::Relabel {
-                issue: Number(1),
-                to: StatusLabel::NeedsTriage,
-            },
-            claim(1),
-            triage(1),
-        ]
-    );
 }
 
 #[test]
@@ -353,18 +299,14 @@ fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_co
         ];
         snapshot(vec![answered])
     };
-    let unlabel_ready_for_human = Action::RemoveStatusLabel {
-        issue: Number(1),
-        label: StatusLabel::ReadyForHuman,
-    };
 
     assert_eq!(
         decide(&answered_with(StatusLabel::ReadyForAgent)),
-        vec![unlabel_ready_for_human.clone(), claim(1), design(1)]
+        vec![claim(1), design(1)]
     );
     assert_eq!(
         decide(&answered_with(StatusLabel::NeedsTriage)),
-        vec![unlabel_ready_for_human, claim(1), triage(1)]
+        vec![claim(1), triage(1)]
     );
 }
 
@@ -380,17 +322,19 @@ fn of_two_status_labels_the_newer_is_kept_and_followed() {
                 issue: Number(1),
                 label: older,
             };
+            // The claim is the first row that holds, then the start; the
+            // older label is removed only where no row before it holds.
             let follow = match newer {
                 StatusLabel::NeedsTriage => vec![claim(1), triage(1)],
                 StatusLabel::ReadyForAgent => {
                     vec![claim(1), design(1)]
                 }
-                StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => vec![],
+                StatusLabel::NeedsInfo | StatusLabel::ReadyForHuman => vec![unlabel],
             };
 
             assert_eq!(
                 decide(&snapshot(vec![labeled_both(older, newer)])),
-                [vec![unlabel], follow].concat(),
+                follow,
                 "`{older}` applied before `{newer}`"
             );
         }
@@ -476,13 +420,7 @@ fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_l
             );
             assert_eq!(
                 decide(&world),
-                vec![
-                    Action::RemoveStatusLabel {
-                        issue: Number(1),
-                        label: older,
-                    },
-                    let_go(1),
-                ],
+                vec![let_go(1)],
                 "{older} relabeled {newer}, once the run ended"
             );
         }
@@ -774,14 +712,11 @@ fn an_issue_assigned_to_linewright_by_hand_that_cannot_start_yet_is_held_assigne
 
 #[test]
 fn a_claimed_issue_whose_label_asks_for_linewrights_work_is_not_let_go() {
-    let mut replied = claimed(labeled(issue(3), label::NEEDS_INFO));
-    replied.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
     let mut in_review = claimed(closed_by(ticket(4), 43, "alice"));
     in_review.labels.push("bug".into());
     let world = snapshot(vec![
         claimed(labeled(issue(1), label::NEEDS_TRIAGE)),
         claimed(ticket(2)),
-        replied,
         in_review,
     ]);
 
@@ -1399,14 +1334,7 @@ fn a_ticket_sent_back_to_triage_is_triaged_not_implemented() {
 
     assert_eq!(
         decide(&snapshot(vec![sent_back])),
-        vec![
-            Action::RemoveStatusLabel {
-                issue: Number(2),
-                label: StatusLabel::ReadyForAgent,
-            },
-            claim(2),
-            triage(2)
-        ]
+        vec![claim(2), triage(2)]
     );
 }
 
@@ -2048,12 +1976,22 @@ fn clear_stall(item: Item) -> Action {
 }
 
 #[test]
-fn a_stalled_ticket_relabeled_ready_for_agent_has_its_stall_cleared_as_it_is_claimed() {
+fn a_stalled_ticket_relabeled_ready_for_agent_is_claimed_and_implemented_with_its_stall_kept() {
     let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
 
-    assert_eq!(
-        decide(&world),
-        vec![claim(2), clear_stall(Item::Issue(Number(2))), implement(2)]
+    assert_eq!(decide(&world), vec![claim(2), implement(2)]);
+}
+
+#[test]
+fn a_stalled_issue_linewright_is_assigned_to_has_its_stall_cleared_once_no_other_row_holds() {
+    let mut world = in_review(pull(20, 2));
+    world.issues[0].labels.push(label::STALLED.into());
+
+    let actions = decide(&world);
+
+    assert!(
+        actions.contains(&clear_stall(Item::Issue(Number(2)))),
+        "{actions:?}"
     );
 }
 
@@ -2078,29 +2016,9 @@ fn a_stalled_issue_left_assigned_with_two_status_labels_is_let_go_of_with_its_st
     );
     let world = snapshot(vec![labeled(handed_back, label::STALLED)]);
 
-    let actions = decide(&world);
-
-    assert!(
-        actions.contains(&Action::RemoveStatusLabel {
-            issue: Number(1),
-            label: StatusLabel::ReadyForAgent,
-        }),
-        "{actions:?}"
-    );
-    assert!(
-        actions.iter().any(|a| matches!(
-            a,
-            Action::LetGo {
-                issue: Number(1),
-                ..
-            }
-        )),
-        "{actions:?}"
-    );
-    assert!(
-        !actions.contains(&clear_stall(Item::Issue(Number(1)))),
-        "{actions:?}"
-    );
+    // Letting go is the first row that holds, before removing the older
+    // label.
+    assert_eq!(decide(&world), vec![let_go(1)]);
 }
 
 #[test]
@@ -3118,7 +3036,9 @@ fn a_ticket_whose_pull_request_merged_waits_for_github_to_close_it_until_labeled
 
     assert_eq!(at(&merged, 10), vec![]);
     assert_eq!(at(&unclaimed, 10), vec![]);
-    assert_eq!(at(&labeled_as_it_merged, 10), vec![]);
+    // Labeled as it merged, the merge is not since the label: the issue is
+    // not done (`docs/specs/repository.md`, State).
+    assert_eq!(at(&labeled_as_it_merged, 10), vec![implement(2)]);
     assert_eq!(at(&relabeled, 10), vec![implement(2)]);
 }
 
@@ -3640,7 +3560,7 @@ fn with_a_required_label_only_a_labeled_needs_triage_issue_is_triaged() {
 }
 
 #[test]
-fn with_a_required_label_only_a_labeled_issue_answered_after_a_triage_question_is_triaged_again() {
+fn with_a_required_label_a_reply_sends_an_issue_back_to_triage_marked_or_not() {
     let mut unlabeled = labeled(issue(1), label::NEEDS_INFO);
     unlabeled.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
     let mut with_label = labeled(unlabeled.clone(), REQUIRED);
@@ -3648,19 +3568,15 @@ fn with_a_required_label_only_a_labeled_issue_answered_after_a_triage_question_i
 
     assert_eq!(
         deciding_with_label(&snapshot(vec![unlabeled, with_label])),
-        vec![
-            Action::Relabel {
-                issue: Number(2),
-                to: StatusLabel::NeedsTriage,
-            },
-            claim(2),
-            triage(2),
-        ]
+        [1, 2].map(|issue| Action::Relabel {
+            issue: Number(issue),
+            to: StatusLabel::NeedsTriage,
+        })
     );
 }
 
 #[test]
-fn with_a_required_label_only_a_labeled_issue_relabeled_after_a_question_has_the_people_asked_unassigned()
+fn with_a_required_label_an_issue_relabeled_after_a_question_has_the_people_asked_unassigned_marked_or_not()
  {
     let mut unlabeled = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     unlabeled = assigned_by(unlabeled, "reporter", LINEWRIGHT, 1);
@@ -3675,7 +3591,11 @@ fn with_a_required_label_only_a_labeled_issue_relabeled_after_a_question_has_the
 
     assert_eq!(
         deciding_with_label(&snapshot(vec![unlabeled, retriaged, with_label])),
-        vec![unassign_asked(3, &["reporter"]), claim(3), design(3)]
+        vec![
+            unassign_asked(1, &["reporter"]),
+            unassign_asked(2, &["reporter"]),
+            unassign_asked(3, &["reporter"]),
+        ]
     );
 }
 
@@ -4026,8 +3946,6 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
         starts,
         vec![
             rework(2, 20),
-            claim(1),
-            triage(1),
             Action::Claim {
                 item: Item::Pull(Number(5))
             },
@@ -4401,17 +4319,13 @@ fn handed_back_issues(actions: &[Action]) -> Vec<u64> {
 
 #[test]
 fn a_pull_request_closing_two_issues_is_worked_while_both_wait_for_it_whatever_their_labels() {
-    // Linewright lets go of an issue labeled for a person, not of its pull
-    // request.
-    for (label, let_go_of) in [
-        (label::READY_FOR_AGENT, vec![]),
-        (label::READY_FOR_HUMAN, vec![let_go(42)]),
-    ] {
+    // An issue in review is not let go of, whatever its label.
+    for label in [label::READY_FOR_AGENT, label::READY_FOR_HUMAN] {
         let world = pull_closing_42_and_12(label);
 
         let decided = decided(&world);
 
-        assert_eq!(decided.actions, [let_go_of, vec![fix_ci(42, 43)]].concat());
+        assert_eq!(decided.actions, vec![fix_ci(42, 43)]);
         for issue in [12, 42] {
             assert_eq!(
                 decided.waits[&Number(issue)],
@@ -4436,7 +4350,7 @@ fn a_pull_request_closed_unmerged_hands_back_each_claimed_issue_it_closes_once()
 }
 
 #[test]
-fn a_pull_request_closed_unmerged_hands_back_its_claimed_issue_and_an_unclaimed_ticket_it_closes_is_claimed_and_worked()
+fn a_pull_request_closed_unmerged_hands_back_its_claimed_issue_and_an_unclaimed_ticket_it_closes_is_claimed_to_be_handed_back()
  {
     let mut world = pull_closing_42_and_12(label::READY_FOR_AGENT);
     world.issues[1].assignees.clear();
@@ -4452,7 +4366,6 @@ fn a_pull_request_closed_unmerged_hands_back_its_claimed_issue_and_an_unclaimed_
                 reason: "#43 was closed without merging.".into(),
             },
             claim(12),
-            implement(12),
         ]
     );
 }
@@ -4471,19 +4384,19 @@ fn a_ticket_in_review_with_linewrights_pull_request_waits_for_it_alone_whatever_
 }
 
 #[test]
-fn a_ticket_claimed_after_the_pull_request_closing_it_was_closed_is_implemented() {
+fn a_ticket_claimed_after_linewrights_pull_request_closing_it_was_closed_is_handed_back() {
     let world = snapshot(vec![assigned_at(closed_by(ticket(2), 20, LINEWRIGHT), 7)]);
     let world = closed_unmerged(world, 20, 5);
 
-    assert_eq!(decide(&world), vec![implement(2)]);
+    assert_eq!(handed_back_issues(&decide(&world)), [2]);
 }
 
 #[test]
-fn someone_elses_pull_request_closed_unmerged_hands_back_a_ticket_claimed_before() {
+fn someone_elses_pull_request_closed_unmerged_hands_nothing_back() {
     let world = snapshot(vec![assigned_at(closed_by(ticket(2), 20, "alice"), 0)]);
     let world = closed_unmerged(world, 20, 5);
 
-    assert_eq!(handed_back_issues(&decide(&world)), [2]);
+    assert_eq!(decide(&world), vec![implement(2)]);
 }
 
 #[test]
@@ -4894,11 +4807,9 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
     );
     let fixing = [live_on_pull(20, WorkKind::FixCi)];
 
-    for (world, let_go_of) in [(unlabeled, vec![let_go(2)]), (unassigned, vec![])] {
-        assert_eq!(
-            at(&world, 10),
-            [let_go_of.clone(), vec![fix_ci.clone()]].concat()
-        );
+    // An issue in review is not let go of.
+    for world in [unlabeled, unassigned] {
+        assert_eq!(at(&world, 10), vec![fix_ci.clone()]);
         assert_eq!(
             reconcile(
                 &world,
@@ -4909,7 +4820,7 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
                 &policy(),
                 &[]
             ),
-            let_go_of
+            vec![]
         );
     }
 }
@@ -5083,17 +4994,18 @@ fn a_reply_to_needs_info_after_linewright_let_go_claims_the_issue_to_triage_it_a
         1,
     );
     asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
+    let relabeled = back_to_triage(asked.clone(), 3);
 
     assert_eq!(
         decide(&snapshot(vec![asked])),
-        vec![
-            Action::Relabel {
-                issue: Number(1),
-                to: StatusLabel::NeedsTriage,
-            },
-            claim(1),
-            triage(1),
-        ]
+        vec![Action::Relabel {
+            issue: Number(1),
+            to: StatusLabel::NeedsTriage,
+        }]
+    );
+    assert_eq!(
+        decide(&snapshot(vec![relabeled])),
+        vec![claim(1), triage(1)]
     );
 }
 
@@ -5380,4 +5292,38 @@ fn a_discarded_cut_says_on_each_pull_request_and_ticket_it_closes_what_is_design
         (notes.on_pull.as_str(), notes.on_ticket.as_str()),
         (on_pull, on_ticket)
     );
+}
+
+/// `docs/specs/repository.md`, Steering: Linewright assigned to a pull
+/// request it did not open, open or merged, and no spec change, unassigns
+/// itself with a comment.
+#[test]
+fn linewright_assigned_to_a_pull_request_it_did_not_open_lets_go_of_it_with_a_comment() {
+    let linewright = Login::new(LINEWRIGHT);
+    let mut theirs = pull(30, 2);
+    theirs.author = Login::new("alice");
+    let mut merged_code = merged(31, &["src/main.rs"]);
+    merged_code.assignees = vec![linewright.clone()];
+    let mut spec_change = merged(32, &["docs/specs/product.md"]);
+    spec_change.assignees = vec![linewright];
+    let mut unassigned = pull(33, 3);
+    unassigned.author = Login::new("alice");
+    unassigned.assignees = vec![];
+    let mut world = snapshot(vec![]);
+    world.peoples_pulls = vec![theirs, unassigned];
+    world.merged = vec![merged_code, spec_change];
+
+    let let_go: Vec<Number> = decide(&world)
+        .into_iter()
+        .filter_map(|action| {
+            if let Action::UnassignFromPull { pr, comment } = action {
+                assert!(comment.contains(LINEWRIGHT), "{comment}");
+                Some(pr)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert_eq!(let_go, [Number(30), Number(31)]);
 }

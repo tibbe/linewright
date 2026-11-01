@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::TimeDelta;
@@ -6,14 +5,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    Asked, Asks, Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel,
-    HandBackKind, Issue, Item, Linked, Login, Marking, MergeMethod, MergeMethods, Mergeability,
-    MergedPull, Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
-    StatusLabel, SubIssue, Thread, TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule,
-    Windows, label, last_assigned, last_assignment, last_labeling, last_unassignment,
+    Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, HandBackKind, Issue,
+    Item, Linked, Login, Marking, Merge, MergeMethod, MergeMethods, Mergeability, MergedPull,
+    Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
+    StatusLabel, SubIssue, Thread, TicketBranchName, Timestamp, UpdateMethod, UpdateRule, Windows,
+    label,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
+use crate::lifecycle::{
+    Cancel, IssueFacts, IssueStage, NotClaimed, Opener, PullClaim, PullFacts, PullRow, PullWorking,
+    Row, State, cancels, done_by_merge, issue_state, may_claim, pull_row, pull_state, row,
+};
 use crate::phrase::Phrase;
 use crate::repo_files::{FileError, Unusable, holding};
 use crate::spec_glob::SpecGlob;
@@ -439,6 +442,12 @@ pub enum Action {
         kind: HandBackKind,
         reason: String,
     },
+    /// Post `comment`, then unassign Linewright from a pull request it did
+    /// not open.
+    UnassignFromPull {
+        pr: Number,
+        comment: String,
+    },
     /// Remove [`label::STALLED`] from an item Linewright works again.
     ClearStall {
         item: Item,
@@ -501,6 +510,7 @@ impl Action {
                 .chain([Item::Pull(*pr)])
                 .collect(),
             Action::MarkReady { pr }
+            | Action::UnassignFromPull { pr, .. }
             | Action::MarkReadyForMergeState { pr }
             | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
             Action::HandBack { item, .. } | Action::ClearStall { item } => vec![*item],
@@ -779,7 +789,6 @@ pub fn decisions(
     };
     let held_by_runs = held_by_runs(snapshot, live, memory, &policy.linewright);
     let mut plan = Plan {
-        now,
         held,
         unusable,
         snapshot,
@@ -818,7 +827,12 @@ pub fn decisions(
         .collect();
     let discarded_tickets: Vec<Number> = discards.iter().flat_map(|d| d.tickets.clone()).collect();
     let discarded_pulls: Vec<Number> = discards.iter().flat_map(Discard::all_pulls).collect();
-    for discard in &discards {
+    // An issue's own cut is discarded by its row of the Working an item
+    // table, below.
+    for discard in discards
+        .iter()
+        .filter(|d| matches!(d.item, CutItem::SpecChange { .. }))
+    {
         plan.act(Action::DiscardCut(discard.clone()));
     }
 
@@ -840,24 +854,43 @@ pub fn decisions(
     for (pr, ticket) in worked_pulls(snapshot, &policy.linewright)
         .filter(|(pr, _)| !discarded_pulls.contains(&pr.number))
     {
-        match pull_claim(pr, &policy.linewright) {
-            PullClaim::Claimed => {}
-            PullClaim::NeverAssigned => plan.claim(Item::Pull(pr.number)),
-            PullClaim::Unassigned => {
-                plan.wait(
-                    pr.number,
-                    Wait::Unassigned {
-                        required_label: None,
-                    },
-                );
-                continue;
-            }
+        let claim = PullClaim::of(&pr.assignees, &pr.assignments, &policy.linewright);
+        if claim == PullClaim::Unassigned {
+            plan.wait(
+                pr.number,
+                Wait::Unassigned {
+                    required_label: None,
+                },
+            );
+            continue;
         }
-        if let Some(stage) = running(Subject::Pull(pr.number)) {
+        let run = running(Subject::Pull(pr.number));
+        if let Some(stage) = run {
             plan.wait(pr.number, Wait::Run { stage });
-        } else {
-            in_review(ticket, pr, memory, policy, &mut plan);
         }
+        let work = in_review(ticket, pr, memory, policy, now);
+        let working = match (run, &work) {
+            (Some(_), _) => PullWorking::RunInFlight,
+            (None, PullWork::Wait(_)) => PullWorking::Waiting,
+            (None, PullWork::Start(_) | PullWork::StartRebase(..) | PullWork::Act(_)) => {
+                PullWorking::Asked
+            }
+        };
+        let facts = PullFacts {
+            opener: Opener::Linewright,
+            claim,
+            working,
+            stalled: pr.is_stalled(),
+        };
+        let holding = pull_row(&facts, pull_state(&pr.state), &policy.linewright);
+        if run.is_none() {
+            work_pull(pr.number, holding, Some(work), &mut plan);
+        }
+    }
+
+    for (number, facts, state) in others_pulls(snapshot, now, policy) {
+        let holding = pull_row(&facts, state, &policy.linewright);
+        work_pull(number, holding, None, &mut plan);
     }
 
     for issue in snapshot
@@ -865,122 +898,21 @@ pub fn decisions(
         .iter()
         .filter(|i| i.open && !discarded_tickets.contains(&i.number))
     {
-        let subject = Subject::Issue(issue.number);
-        let tracks = issue.tracks(&policy.linewright);
-        // A spec change's tracking issue gets its label as its cut ends.
-        let spec_change = issue.spec_change();
-        let cut = match (spec_change, tracks) {
-            (Some(spec_change), _) => running(Subject::SpecChange(spec_change)),
-            (None, Some(_)) => running(subject),
-            (None, None) => None,
-        };
-        if let Some(stage) = cut {
-            plan.wait(issue.number, Wait::Run { stage });
-        }
-        let cutting = cut.is_some()
-            || spec_change.is_some_and(|sc| pending.contains(&sc) || discarded.contains(&sc));
-        if tracks.is_some() && !cutting && !issue.sub_issues.is_empty() {
-            let open = open_numbers(issue.sub_issues.iter().map(SubIssue::linked));
-            if open.is_empty() {
-                plan.act(Action::CloseTracking {
-                    issue: issue.number,
-                });
-            } else {
-                plan.wait(issue.number, Wait::Tickets { open });
-            }
-        }
-        if tracks == Some(Tracks::Cut) && cut.is_none() {
-            // What the cut lets go of after the label, should it have stopped
-            // before: a tracking issue carries no status label, and is
-            // worked through its tickets.
-            for label in StatusLabel::ALL
-                .into_iter()
-                .filter(|s| issue.has_label(s.label()))
-            {
-                plan.act(Action::RemoveStatusLabel {
-                    issue: issue.number,
-                    label,
-                });
-            }
-            if issue.is_assigned(&policy.linewright) {
-                plan.act(Action::LetGo {
-                    issue: issue.number,
-                    comment: None,
-                });
-            }
-            continue;
-        }
-        let discarding = discards
-            .iter()
-            .any(|d| d.item == CutItem::Issue(issue.number));
-        for label in issue.stale_status_labels() {
-            plan.act(Action::RemoveStatusLabel {
-                issue: issue.number,
-                label,
-            });
-        }
-        let replied = has_reply_to_needs_info(issue, policy);
-        let asked = if replied {
-            Ok(Asked::Triage)
-        } else {
-            asked_work(issue.status_label())
-        };
-        let issue = &*let_go_of_people_asked(issue, asked, policy, &mut plan);
-        if replied {
-            plan.act(Action::Relabel {
-                issue: issue.number,
-                to: StatusLabel::NeedsTriage,
-            });
-        }
-        if let Err(unasked) = asked
-            && issue.is_assigned(&policy.linewright)
-        {
-            plan.act(Action::LetGo {
-                issue: issue.number,
-                comment: answers_hand_assignment(issue, &policy.linewright)
-                    .then(|| let_go_comment(unasked, &policy.linewright)),
-            });
-        }
-        let closing = snapshot.pulls_closing(issue);
-        let open_closing: Vec<&ClosingPull> = closing.iter().filter(|p| p.is_open()).collect();
-        if !open_closing.is_empty() {
-            if let Some(stage) = running(subject) {
+        // A spec change's tracking issue is cut, and its cut discarded, with
+        // the spec change.
+        if let Some(spec_change) = issue.spec_change() {
+            if let Some(stage) = running(Subject::SpecChange(spec_change)) {
                 plan.wait(issue.number, Wait::Run { stage });
+                continue;
             }
-            let mut linewrights = false;
-            for pull in open_closing {
-                let pull_request = pull.number;
-                let wait = if pull.author == policy.linewright {
-                    linewrights = true;
-                    Wait::PullRequest { pull_request }
-                } else {
-                    Wait::ClosingPullRequest { pull_request }
-                };
-                plan.wait(issue.number, wait);
-            }
-            // Someone else's pull request may be closed with the ticket left
-            // to Linewright, which then waits for its blockers; once
-            // Linewright's ends, they hold nothing back.
-            if !linewrights && issue.holds(StatusLabel::ReadyForAgent) {
-                wait_for_blockers(issue, &mut plan);
-            }
-        } else if tracks.is_some() || cutting || discarding {
-            // A tracking issue is worked through its tickets, and an issue
-            // whose cut is discarded is designed again once its tickets are
-            // closed.
-        } else {
-            match asked {
-                Ok(Asked::Triage) => triage(issue, replied, running(subject), policy, &mut plan),
-                Ok(Asked::DesignAndImplementation) => {
-                    implementation(issue, &closing, running(subject), policy, &mut plan);
-                }
-                Err(_) => {
-                    for wait in labeled_waits(issue, policy) {
-                        plan.wait(issue.number, wait);
-                    }
-                }
+            if pending.contains(&spec_change) || discarded.contains(&spec_change) {
+                continue;
             }
         }
+        let discard = discards
+            .iter()
+            .find(|d| d.item == CutItem::Issue(issue.number));
+        work_issue(issue, discard, &running, policy, &mut plan);
     }
 
     for branch in &snapshot.ticket_branches {
@@ -1018,6 +950,81 @@ pub fn decisions(
         .actions
         .extend(schedule(automations, now, room, unusable));
     decisions
+}
+
+/// The pull requests of others' Linewright is assigned to, with what the
+/// Working an item table reads of each and its state: the open ones, and
+/// the merged ones, which may be spec changes.
+fn others_pulls(
+    snapshot: &Snapshot,
+    now: Timestamp,
+    policy: &Policy,
+) -> Vec<(Number, PullFacts, State)> {
+    let linewright = &policy.linewright;
+    let facts = |opener: Opener| PullFacts {
+        opener,
+        claim: PullClaim::Claimed,
+        working: PullWorking::Waiting,
+        stalled: false,
+    };
+    let open = snapshot
+        .peoples_pulls
+        .iter()
+        .filter(|p| p.is_open() && &p.author != linewright && p.is_assigned(linewright))
+        .map(|p| (p.number, facts(Opener::Person), State::Open));
+    let merged = snapshot
+        .merged
+        .iter()
+        .filter(|p| p.is_assigned(linewright))
+        .filter_map(|p| {
+            let opener = match spec_change(p, &snapshot.default_branch, now, policy) {
+                Err(NotSpecChange::Linewrights) => return None,
+                Err(NotSpecChange::OtherBranch { .. } | NotSpecChange::NoSpecFile { .. }) => {
+                    Opener::Person
+                }
+                Ok(_)
+                | Err(
+                    NotSpecChange::Designed { .. }
+                    | NotSpecChange::BeforeLookback { .. }
+                    | NotSpecChange::RequiredLabel { .. },
+                ) => Opener::SpecChange,
+            };
+            Some((p.number, facts(opener), State::Merged))
+        });
+    open.chain(merged).collect()
+}
+
+/// Works pull request `number` by `holding`, the row that holds for it, and
+/// `work`, what Pull requests asks of it where Linewright opened it.
+fn work_pull(number: Number, holding: Option<PullRow>, work: Option<PullWork>, plan: &mut Plan) {
+    let works = match holding {
+        Some(PullRow::Claim) => {
+            plan.claim(Item::Pull(number));
+            true
+        }
+        Some(PullRow::Work) => true,
+        Some(PullRow::LetGo { comment }) => {
+            plan.act(Action::UnassignFromPull {
+                pr: number,
+                comment,
+            });
+            false
+        }
+        Some(PullRow::ClearStall) => {
+            plan.act(Action::ClearStall {
+                item: Item::Pull(number),
+            });
+            false
+        }
+        None => false,
+    };
+    match work {
+        Some(PullWork::Wait(wait)) => plan.wait(number, wait),
+        Some(PullWork::Start(work)) if works => plan.start(work),
+        Some(PullWork::StartRebase(work, rebase)) if works => plan.start_rebase(work, rebase),
+        Some(PullWork::Act(action)) if works => plan.act(action),
+        Some(PullWork::Start(_) | PullWork::StartRebase(..) | PullWork::Act(_)) | None => {}
+    }
 }
 
 /// The rest of a plan made before a drain began, as the drain has it: with
@@ -1066,6 +1073,7 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             | Action::LetGo { .. }
             | Action::Relabel { .. }
             | Action::UnassignAsked { .. }
+            | Action::UnassignFromPull { .. }
             | Action::RemoveStatusLabel { .. }
             | Action::HandBack { .. }
             | Action::MarkReady { .. }
@@ -1079,52 +1087,34 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
         .collect()
 }
 
-/// `actions`, with the stall of each open item Linewright works again
-/// cleared: one it is assigned to and `actions` do not let go of, or claims
-/// in `actions` (`docs/specs/repository.md`, "Stalls"), and that no live run
-/// holds. Each clear follows its claim, so that a stop before the claim
-/// leaves the label.
+/// `actions`, with the stall of each spec change Linewright works again
+/// cleared: one it is assigned to, or claims in `actions`
+/// (`docs/specs/repository.md`, "Stalls"), and that no live run holds. Each
+/// clear follows its claim, so that a stop before the claim leaves the
+/// label. An issue's and a pull request's stalls are cleared by their rows
+/// of the Working an item table.
 fn clearing_stalls(
     snapshot: &Snapshot,
     actions: Vec<Action>,
     held_by_runs: &BTreeMap<Item, WorkKind>,
     linewright: &Login,
 ) -> Vec<Action> {
-    let let_go: BTreeSet<Number> = actions
-        .iter()
-        .filter_map(|action| {
-            if let Action::LetGo { issue, .. } = action {
-                Some(*issue)
-            } else {
-                None
-            }
-        })
-        .collect();
-    let issues = snapshot
-        .issues
-        .iter()
-        .filter(|i| i.open && i.is_stalled() && i.is_assigned(linewright))
-        .filter(|i| !let_go.contains(&i.number))
-        .map(|i| Item::Issue(i.number));
-    let pulls = snapshot
-        .pulls
-        .iter()
-        .filter(|p| p.is_open() && p.is_stalled() && p.is_assigned(linewright))
-        .map(|p| Item::Pull(p.number));
-    let spec_changes = snapshot
+    let spec_change = |item: Item| match item {
+        Item::Pull(number) => snapshot.merged_pull(number),
+        Item::Issue(_) => None,
+    };
+    let mut cleared: Vec<Action> = snapshot
         .merged
         .iter()
         .filter(|p| p.is_stalled() && p.is_assigned(linewright))
-        .map(|p| Item::Pull(p.number));
-    let mut cleared: Vec<Action> = issues
-        .chain(pulls)
-        .chain(spec_changes)
-        .map(|item| Action::ClearStall { item })
+        .map(|p| Action::ClearStall {
+            item: Item::Pull(p.number),
+        })
         .filter(|clear| held_back(clear, snapshot, held_by_runs).is_empty())
         .collect();
     for action in actions {
         let clear = if let Action::Claim { item } = action
-            && snapshot.is_stalled(item.number())
+            && spec_change(item).is_some_and(MergedPull::is_stalled)
         {
             Some(Action::ClearStall { item })
         } else {
@@ -1290,34 +1280,23 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
             }
         }
         Subject::Issue(number) => {
-            let Some(issue) = snapshot.issue(number).filter(|i| i.open) else {
+            let Some(issue) = snapshot.issue(number) else {
                 return Some(format!("{number} was closed"));
             };
-            let wanted = match run.kind {
-                WorkKind::Triage => Asked::Triage,
-                WorkKind::Design
-                | WorkKind::Implement
-                | WorkKind::Rework
-                | WorkKind::FixCi
-                | WorkKind::Update => Asked::DesignAndImplementation,
-            };
-            let asks = issue.status_label().map(StatusLabel::asks);
-            if asks != Some(Asks::Linewright(wanted)) {
-                Some(format!("`{}` was removed from {number}", wanted.label()))
-            } else if !issue.is_assigned(&policy.linewright) {
-                Some(format!(
-                    "{} was unassigned from {number}",
-                    policy.linewright
-                ))
-            } else {
-                None
-            }
+            cancels(run.kind, issue, &policy.linewright).map(|cancel| match cancel {
+                Cancel::Closed => format!("{number} was closed"),
+                Cancel::Relabeled(label) => {
+                    format!("`{}` was removed from {number}", label.label())
+                }
+                Cancel::Unassigned => {
+                    format!("{} was unassigned from {number}", policy.linewright)
+                }
+            })
         }
     }
 }
 
 struct Plan<'a> {
-    now: Timestamp,
     /// What holds back the starts beyond the room for them.
     held: Held,
     /// The repository's files that hold the runs that would read them.
@@ -1481,58 +1460,210 @@ fn rank(kind: WorkKind) -> u8 {
     }
 }
 
-/// What an issue whose label asks nothing of Linewright is labeled.
-#[derive(Clone, Copy)]
-enum Unasked {
-    /// A status label that asks for a person's work.
-    Person(StatusLabel),
-    NoStatusLabel,
-}
-
-/// What an issue labeled `status` asks of Linewright.
-fn asked_work(status: Option<StatusLabel>) -> Result<Asked, Unasked> {
-    let status = status.ok_or(Unasked::NoStatusLabel)?;
-    match status.asks() {
-        Asks::Linewright(asked) => Ok(asked),
-        Asks::Person => Err(Unasked::Person(status)),
+/// Works `issue` by the row of the Working an item table that holds for it
+/// (`docs/specs/repository.md`), noting what it waits for. `discard` is the
+/// discard of its cut, where it has one to discard.
+fn work_issue(
+    issue: &Issue,
+    discard: Option<&Discard>,
+    running: &impl Fn(Subject) -> Option<WorkKind>,
+    policy: &Policy,
+    plan: &mut Plan,
+) {
+    let linewright = &policy.linewright;
+    let number = issue.number;
+    let closing = plan.snapshot.pulls_closing(issue);
+    let merge = done_by_merge(&issue.events, &closing, &plan.snapshot.default_branch);
+    let run = running(Subject::Issue(number));
+    let state = issue_state(issue, &closing, merge, run, linewright);
+    let facts = IssueFacts {
+        issue,
+        closing: &closing,
+        run_in_flight: run.is_some(),
+        discard,
+    };
+    if let Some(stage) = run {
+        plan.wait(number, Wait::Run { stage });
+    }
+    standing_waits(issue, state, merge, &closing, policy, plan);
+    let Some(holding) = row(&facts, state, policy) else {
+        if run.is_none() {
+            idle_waits(issue, state, policy, plan);
+        }
+        return;
+    };
+    match holding {
+        Row::DiscardCut(cut) => plan.act(Action::DiscardCut(cut)),
+        Row::HandBack { pull } => plan.act(Action::HandBack {
+            item: Item::Issue(number),
+            kind: HandBackKind::Decision,
+            reason: format!("{pull} was closed without merging."),
+        }),
+        Row::LetGo { comment } => let_go(number, comment, plan),
+        Row::UnassignAsked { people } => {
+            // What it waits for once they are unassigned, such as someone
+            // else assigned.
+            let mut without = issue.clone();
+            without.assignees.retain(|a| !people.contains(a));
+            idle_waits(&without, state, policy, plan);
+            plan.act(Action::UnassignAsked {
+                issue: number,
+                assignees: people,
+            });
+        }
+        Row::CleanUpTracking {
+            labels,
+            let_go: lets_go,
+        } => {
+            remove_status_labels(number, labels, plan);
+            if lets_go {
+                let_go(number, None, plan);
+            }
+        }
+        Row::CloseTracking => plan.act(Action::CloseTracking { issue: number }),
+        Row::TakeReply => plan.act(Action::Relabel {
+            issue: number,
+            to: StatusLabel::NeedsTriage,
+        }),
+        Row::Claim => {
+            // The claim leaves the issue in a state whose row starts its run,
+            // and both are made in this poll, so that a hold keeps an issue
+            // it cannot start unclaimed.
+            let mut claimed = issue.clone();
+            claimed.assignees.push(linewright.clone());
+            let claimed_state = issue_state(&claimed, &closing, merge, None, linewright);
+            let facts = IssueFacts {
+                issue: &claimed,
+                ..facts
+            };
+            if let Some(Row::Start(stage)) = row(&facts, claimed_state, policy) {
+                plan.claim_and_start(Item::Issue(number), issue_work(stage, number));
+            } else {
+                plan.claim(Item::Issue(number));
+            }
+        }
+        Row::Start(stage) => plan.start(issue_work(stage, number)),
+        Row::RemoveStaleStatusLabels(labels) => remove_status_labels(number, labels, plan),
+        Row::ClearStall => plan.act(Action::ClearStall {
+            item: Item::Issue(number),
+        }),
     }
 }
 
-/// Whether letting go of `issue`, whose label asks nothing of Linewright,
-/// answers a person's assignment of Linewright: a person made the last one,
-/// its label asked nothing of Linewright then either, and Linewright has not
-/// commented since.
-fn answers_hand_assignment(issue: &Issue, linewright: &Login) -> bool {
-    let Some((assigned, actor)) = last_assignment(&issue.events, linewright) else {
-        return false;
-    };
-    let unasked_then = asked_work(issue.status_label_as_of(assigned)).is_err();
-    // A comment since means this one was posted, and a stop came before
-    // the unassignment.
-    let commented = issue
-        .comments
-        .iter()
-        .any(|c| &c.author == linewright && c.created_at >= assigned.at);
-    actor != linewright && unasked_then && !commented
+/// The run of `stage` on `issue`.
+fn issue_work(stage: IssueStage, issue: Number) -> Work {
+    match stage {
+        IssueStage::Triage => Work::Triage { issue },
+        IssueStage::Design => Work::DesignIssue { issue },
+        IssueStage::Implement => Work::Implement { issue },
+    }
 }
 
-/// The comment letting go of an issue assigned to Linewright by hand whose
-/// label asks nothing of it, labeled `unasked`.
-fn let_go_comment(unasked: Unasked, linewright: &Login) -> String {
-    let waits = match unasked {
-        Unasked::Person(StatusLabel::NeedsInfo) => format!(
-            "This issue waits for an answer to its question (`{}`)",
-            label::NEEDS_INFO
-        ),
-        Unasked::Person(held) => format!("This issue waits for a person's decision (`{held}`)"),
-        Unasked::NoStatusLabel => "This issue has no status label".into(),
-    };
-    format!(
-        "{waits}, so @{linewright} has let go of it. Label it `{}` to have it implemented or \
-         `{}` to have it assessed, and assign @{linewright} again.",
-        label::READY_FOR_AGENT,
-        label::NEEDS_TRIAGE,
-    )
+fn remove_status_labels(issue: Number, labels: Vec<StatusLabel>, plan: &mut Plan) {
+    for label in labels {
+        plan.act(Action::RemoveStatusLabel { issue, label });
+    }
+}
+
+fn let_go(issue: Number, comment: Option<String>, plan: &mut Plan) {
+    plan.act(Action::LetGo { issue, comment });
+}
+
+/// What `issue`, in `state`, waits for whatever Linewright does: the pull
+/// requests that close it, its tickets, a person, or, done by `merge`, its
+/// label applied again.
+fn standing_waits(
+    issue: &Issue,
+    state: Option<State>,
+    merge: Option<Merge>,
+    closing: &[ClosingPull],
+    policy: &Policy,
+    plan: &mut Plan,
+) {
+    let number = issue.number;
+    match state {
+        Some(State::InReview) => {
+            let mut linewrights = false;
+            for pull in closing.iter().filter(|p| p.is_open()) {
+                let pull_request = pull.number;
+                let wait = if pull.author == policy.linewright {
+                    linewrights = true;
+                    Wait::PullRequest { pull_request }
+                } else {
+                    Wait::ClosingPullRequest { pull_request }
+                };
+                plan.wait(number, wait);
+            }
+            // Someone else's pull request may be closed with the ticket left
+            // to Linewright, which then waits for its blockers; once
+            // Linewright's ends, they hold nothing back.
+            if !linewrights && issue.holds(StatusLabel::ReadyForAgent) {
+                wait_for_blockers(issue, plan);
+            }
+        }
+        Some(State::Tracking) => {
+            let open = open_numbers(issue.sub_issues.iter().map(SubIssue::linked));
+            if !open.is_empty() {
+                plan.wait(number, Wait::Tickets { open });
+            }
+        }
+        Some(State::NeedsInfo | State::ReadyForHuman) => {
+            for wait in labeled_waits(issue, policy) {
+                plan.wait(number, wait);
+            }
+        }
+        // GitHub closes the issue shortly after the merge; until then, only
+        // applying a status label again asks for more work.
+        Some(State::Done) => {
+            if let Some(merge) = merge {
+                plan.wait(
+                    number,
+                    Wait::Relabel {
+                        label: issue.status_label().unwrap_or(StatusLabel::ReadyForAgent),
+                        since: Relabel::Merged {
+                            pull_request: merge.pull_request,
+                        },
+                    },
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// What `issue`, in `state`, with no run in flight and no row holding for
+/// it, waits for before Linewright claims it or starts its run.
+fn idle_waits(issue: &Issue, state: Option<State>, policy: &Policy, plan: &mut Plan) {
+    match state {
+        Some(State::NeedsTriage | State::ReadyForAgent) => {
+            if let Some(status) = issue.status_label()
+                && let Err(not_claimed) = may_claim(issue, status, policy)
+            {
+                let waits = match not_claimed {
+                    NotClaimed::Blocked(blockers) => blockers
+                        .into_iter()
+                        .map(|blocker| Wait::Blocker { issue: blocker })
+                        .collect(),
+                    NotClaimed::Assigned(assignees) => assignees
+                        .into_iter()
+                        .map(|assignee| Wait::Assignee { assignee })
+                        .collect(),
+                    NotClaimed::Unassigned => vec![Wait::Relabel {
+                        label: status,
+                        since: Relabel::Unassigned {
+                            required_label: policy.require_label.clone(),
+                        },
+                    }],
+                    NotClaimed::Unmarked => required_label(policy).into_iter().collect(),
+                };
+                plan.wait_all(issue.number, waits);
+            }
+        }
+        Some(State::BeingTriaged | State::BeingDesigned | State::BeingImplemented) => {
+            wait_for_blockers(issue, plan);
+        }
+        _ => {}
+    }
 }
 
 fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
@@ -1641,134 +1772,6 @@ fn required_label(policy: &Policy) -> Option<Wait> {
         })
 }
 
-/// No open pull request closes `issue`. `replied` is a reply to `needs-info`
-/// that labels it `needs-triage` again in this poll.
-fn triage(issue: &Issue, replied: bool, live: Option<WorkKind>, policy: &Policy, plan: &mut Plan) {
-    let work = Work::Triage {
-        issue: issue.number,
-    };
-    if let Some(stage) = live {
-        return plan.wait(issue.number, Wait::Run { stage });
-    }
-    if wait_for_blockers(issue, plan) {
-        return;
-    }
-    if issue.is_assigned(&policy.linewright) {
-        return plan.start(work);
-    }
-    match may_claim(issue, StatusLabel::NeedsTriage, replied, policy) {
-        Ok(()) => plan.claim_and_start(Item::Issue(issue.number), work),
-        Err(waits) => plan.wait_all(issue.number, waits),
-    }
-}
-
-/// Whether Linewright may claim `issue`, labeled `status`, on its own, as far
-/// as its assignees and labels go, or what it waits for first. `relabeled` is
-/// `status` applied again in this poll.
-fn may_claim(
-    issue: &Issue,
-    status: StatusLabel,
-    relabeled: bool,
-    policy: &Policy,
-) -> Result<(), Vec<Wait>> {
-    if !issue.assignees.is_empty() {
-        let assignees = issue.assignees.iter().map(|assignee| Wait::Assignee {
-            assignee: assignee.clone(),
-        });
-        return Err(assignees.collect());
-    }
-    if !relabeled && unassigned_since(issue, policy, status) {
-        return Err(vec![Wait::Relabel {
-            label: status,
-            since: Relabel::Unassigned {
-                required_label: policy.require_label.clone(),
-            },
-        }]);
-    }
-    if !policy.marks(&issue.labels) {
-        return Err(required_label(policy).into_iter().collect());
-    }
-    Ok(())
-}
-
-/// No open pull request closes `issue`; `closing` are the ended ones that do.
-fn implementation(
-    issue: &Issue,
-    closing: &[ClosingPull],
-    live: Option<WorkKind>,
-    policy: &Policy,
-    plan: &mut Plan,
-) {
-    let claimed = issue.is_assigned(&policy.linewright);
-    if let Some(stage) = live {
-        return plan.wait(issue.number, Wait::Run { stage });
-    }
-    if !claimed {
-        let relabeled = false;
-        if let Err(waits) = may_claim(issue, StatusLabel::ReadyForAgent, relabeled, policy) {
-            return plan.wait_all(issue.number, waits);
-        }
-    }
-    // GitHub closes the issue shortly after the merge; until then, only
-    // applying the label again asks for more work. Reopened since, the
-    // issue is worked as any other.
-    let relabeled_since = |at| {
-        issue
-            .last_labeled(StatusLabel::ReadyForAgent)
-            .is_some_and(|l| l > at)
-    };
-    let reopened_since = |at| issue.last_reopened().is_some_and(|r| r > at);
-    if let Some(merged) = closing.iter().find(|p| match p.state {
-        PullState::Merged { at } => !relabeled_since(at) && !reopened_since(at),
-        PullState::Open { .. } | PullState::Closed { .. } => false,
-    }) {
-        return plan.wait(
-            issue.number,
-            Wait::Relabel {
-                label: StatusLabel::ReadyForAgent,
-                since: Relabel::Merged {
-                    pull_request: merged.number,
-                },
-            },
-        );
-    }
-    if claimed {
-        let claimed_at = last_assigned(&issue.events, &policy.linewright);
-        let refused = closing.iter().find(|p| match p.state {
-            PullState::Closed { at } => {
-                claimed_at.is_none_or(|since| since <= at) && !relabeled_since(at)
-            }
-            PullState::Open { .. } | PullState::Merged { .. } => false,
-        });
-        if let Some(refused) = refused {
-            return plan.act(Action::HandBack {
-                item: Item::Issue(issue.number),
-                kind: HandBackKind::Decision,
-                reason: format!("{} was closed without merging.", refused.number),
-            });
-        }
-    }
-    if wait_for_blockers(issue, plan) {
-        return;
-    }
-    // An issue in review keeps its label, so one whose pull request stops
-    // closing it is implemented again with no new design.
-    let work = if issue.has_label(label::DESIGNED) {
-        Work::Implement {
-            issue: issue.number,
-        }
-    } else {
-        Work::DesignIssue {
-            issue: issue.number,
-        }
-    };
-    if claimed {
-        plan.start(work);
-    } else {
-        plan.claim_and_start(Item::Issue(issue.number), work);
-    }
-}
-
 /// Returns whether any blocker is open.
 fn wait_for_blockers(issue: &Issue, plan: &mut Plan) -> bool {
     let blockers = issue.open_blockers();
@@ -1778,7 +1781,28 @@ fn wait_for_blockers(issue: &Issue, plan: &mut Plan) -> bool {
     !blockers.is_empty()
 }
 
-fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: &mut Plan) {
+/// What Pull requests asks of a pull request Linewright works
+/// (`docs/specs/pull_requests.md`), one at a time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PullWork {
+    Start(Work),
+    /// Start the update, remembering that it rebases the head it was
+    /// decided at.
+    StartRebase(Work, TriedRebase),
+    Act(Action),
+    /// Nothing yet: it waits for this.
+    Wait(Wait),
+}
+
+/// What Pull requests asks of `pr`, Linewright's pull request for `ticket`,
+/// at `now`.
+fn in_review(
+    ticket: Number,
+    pr: &Pull,
+    memory: &Memory,
+    policy: &Policy,
+    now: Timestamp,
+) -> PullWork {
     let pr_number = pr.number;
     let linewright = &policy.linewright;
     let restarted = restarted_at(pr, linewright);
@@ -1789,7 +1813,7 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
     )
     .is_empty()
     {
-        return plan.start(Work::Rework {
+        return PullWork::Start(Work::Rework {
             issue: ticket,
             pr: pr_number,
         });
@@ -1806,12 +1830,12 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         let rebase = TriedRebase {
             pr: pr_number,
             head: pr.head_sha.clone(),
-            at: plan.now,
+            at: now,
         };
-        return plan.start_rebase(update, rebase);
+        return PullWork::StartRebase(update, rebase);
     }
     if behind {
-        return plan.start(update);
+        return PullWork::Start(update);
     }
     let names = |state: CheckState| -> Vec<String> {
         pr.checks
@@ -1828,17 +1852,16 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
         .chain([pr.created_at])
         .max()
         .unwrap_or(pr.created_at);
-    let now = plan.now;
     let ci = Wait::Ci {
         pull_request: pr_number,
     };
     if pr.checks.is_empty() && now < pushed + policy.ci_grace {
-        return plan.wait(pr_number, ci);
+        return PullWork::Wait(ci);
     }
     let waiting_since = restarted.map_or(pushed, |r| r.max(pushed));
     if !pending.is_empty() {
-        if now > waiting_since + policy.ci_timeout {
-            plan.act(Action::HandBack {
+        return if now > waiting_since + policy.ci_timeout {
+            PullWork::Act(Action::HandBack {
                 item: Item::Pull(pr_number),
                 kind: HandBackKind::Stall,
                 reason: format!(
@@ -1846,11 +1869,10 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
                     Phrase::default().span(policy.ci_timeout, None),
                     code_list(&pending)
                 ),
-            });
+            })
         } else {
-            plan.wait(pr_number, ci);
-        }
-        return;
+            PullWork::Wait(ci)
+        };
     }
     if !failed.is_empty() {
         let cycle_start = [
@@ -1865,39 +1887,34 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
             .done_runs_of(pr_number, WorkKind::FixCi)
             .filter(|r| Some(r.done_at) > cycle_start)
             .count();
-        if attempts < policy.ci_attempts as usize {
-            plan.start(Work::FixCi {
+        return if attempts < policy.ci_attempts as usize {
+            PullWork::Start(Work::FixCi {
                 issue: ticket,
                 pr: pr_number,
                 failing: failed,
-            });
+            })
         } else {
-            plan.act(Action::HandBack {
+            PullWork::Act(Action::HandBack {
                 item: Item::Pull(pr_number),
                 kind: HandBackKind::Stall,
                 reason: format!(
                     "{} still failing after {attempts} fix attempts.",
                     code_list(&failed)
                 ),
-            });
-        }
-        return;
+            })
+        };
     }
     let draft = pr.state == (PullState::Open { draft: true });
     let method = match policy.auto_merge {
         Some(method) if !is_held(pr, linewright) => method,
         _ => {
-            if draft {
-                plan.act(Action::MarkReady { pr: pr_number });
+            return if draft {
+                PullWork::Act(Action::MarkReady { pr: pr_number })
             } else {
-                plan.wait(
-                    pr_number,
-                    Wait::Review {
-                        pull_request: pr_number,
-                    },
-                );
-            }
-            return;
+                PullWork::Wait(Wait::Review {
+                    pull_request: pr_number,
+                })
+            };
         }
     };
     let merge_state = Wait::MergeState {
@@ -1907,8 +1924,8 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
     // rebaseable, once at each head.
     match &pr.mergeability {
         Mergeability::Clean if method == MergeMethod::Rebase => match pr.rebaseability {
-            Rebaseability::Rebaseable => merge(pr, draft, method, memory, restarted, plan),
-            Rebaseability::NotRebaseable => plan.act(Action::HandBack {
+            Rebaseability::Rebaseable => merge(pr, draft, method, memory, restarted),
+            Rebaseability::NotRebaseable => PullWork::Act(Action::HandBack {
                 item: Item::Pull(pr_number),
                 kind: HandBackKind::Stall,
                 reason: format!(
@@ -1916,51 +1933,30 @@ fn in_review(ticket: Number, pr: &Pull, memory: &Memory, policy: &Policy, plan: 
                      onto the default branch, so it cannot be merged by rebase."
                 ),
             }),
-            Rebaseability::Unknown => plan.wait(pr_number, merge_state),
+            Rebaseability::Unknown => PullWork::Wait(merge_state),
         },
-        Mergeability::Clean => merge(pr, draft, method, memory, restarted, plan),
+        Mergeability::Clean => merge(pr, draft, method, memory, restarted),
         Mergeability::Blocked { requires }
             if draft || !memory.held.is_held_for(pr_number, requires) =>
         {
-            plan.act(Action::HoldForReview {
+            PullWork::Act(Action::HoldForReview {
                 pr: pr_number,
                 draft,
                 requires: requires.clone(),
-            });
+            })
         }
-        Mergeability::Blocked { requires } => plan.wait(
-            pr_number,
-            Wait::Requirements {
-                pull_request: pr_number,
-                requires: requires.clone(),
-            },
-        ),
+        Mergeability::Blocked { requires } => PullWork::Wait(Wait::Requirements {
+            pull_request: pr_number,
+            requires: requires.clone(),
+        }),
         Mergeability::Unknown if draft => {
-            plan.act(Action::MarkReadyForMergeState { pr: pr_number });
+            PullWork::Act(Action::MarkReadyForMergeState { pr: pr_number })
         }
-        Mergeability::Unknown => plan.wait(pr_number, merge_state),
+        Mergeability::Unknown => PullWork::Wait(merge_state),
         // Brought up to date above.
-        Mergeability::Behind | Mergeability::Conflicting => {}
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PullClaim {
-    Claimed,
-    /// Neither assigned nor unassigned ever, as a pull request Linewright
-    /// opened before it assigned itself to those it opens.
-    NeverAssigned,
-    Unassigned,
-}
-
-fn pull_claim(pr: &Pull, linewright: &Login) -> PullClaim {
-    let ever_assigned = pr.assignments.iter().any(|a| a.assignee() == linewright);
-    if pr.is_assigned(linewright) {
-        PullClaim::Claimed
-    } else if ever_assigned {
-        PullClaim::Unassigned
-    } else {
-        PullClaim::NeverAssigned
+        Mergeability::Behind | Mergeability::Conflicting => {
+            unreachable!("a pull request behind or conflicting is brought up to date first")
+        }
     }
 }
 
@@ -1978,7 +1974,7 @@ pub fn pull_stop(pr: &Pull, linewright: &Login) -> Option<PullStop> {
     match pr.state {
         PullState::Merged { .. } => Some(PullStop::Merged),
         PullState::Closed { .. } => Some(PullStop::Closed),
-        PullState::Open { .. } => match pull_claim(pr, linewright) {
+        PullState::Open { .. } => match PullClaim::of(&pr.assignees, &pr.assignments, linewright) {
             PullClaim::Unassigned => Some(PullStop::Unassigned),
             PullClaim::Claimed | PullClaim::NeverAssigned => None,
         },
@@ -2021,20 +2017,17 @@ fn merge(
     method: MergeMethod,
     memory: &Memory,
     restarted: Option<Timestamp>,
-    plan: &mut Plan,
-) {
+) -> PullWork {
     match merge_failed_twice(pr, &memory.failed_merges, restarted) {
-        Some(failed) => {
-            plan.act(Action::HandBack {
-                item: Item::Pull(pr.number),
-                kind: HandBackKind::Stall,
-                reason: format!(
-                    "Merging {} failed twice. GitHub's reason: {}",
-                    pr.number, failed.reason
-                ),
-            });
-        }
-        None => plan.act(Action::Merge {
+        Some(failed) => PullWork::Act(Action::HandBack {
+            item: Item::Pull(pr.number),
+            kind: HandBackKind::Stall,
+            reason: format!(
+                "Merging {} failed twice. GitHub's reason: {}",
+                pr.number, failed.reason
+            ),
+        }),
+        None => PullWork::Act(Action::Merge {
             pr: pr.number,
             head: pr.head_sha.clone(),
             draft,
@@ -2156,70 +2149,6 @@ fn code_list(names: &[String]) -> String {
         .map(|n| format!("`{n}`"))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// Whether Linewright was unassigned from `issue`, by anyone, after it was
-/// last labeled with `status` or with the required label.
-fn unassigned_since(issue: &Issue, policy: &Policy, status: StatusLabel) -> bool {
-    let Some(unassigned) = last_unassignment(&issue.events, &policy.linewright) else {
-        return false;
-    };
-    [Some(status.label()), policy.require_label.as_deref()]
-        .into_iter()
-        .flatten()
-        .filter_map(|l| last_labeling(&issue.events, l))
-        .max()
-        .is_none_or(|labeled| unassigned > labeled)
-}
-
-/// `issue` without the people Linewright assigned to it, those its
-/// `needs-info` question asked, unassigning them when its label asks for
-/// Linewright's work again (`asked`), by a reply or by hand, and Linewright
-/// may start on it.
-fn let_go_of_people_asked<'a>(
-    issue: &'a Issue,
-    asked: Result<Asked, Unasked>,
-    policy: &Policy,
-    plan: &mut Plan,
-) -> Cow<'a, Issue> {
-    let people_asked = issue.assigned_by(&policy.linewright);
-    if asked.is_err() || !policy.marks(&issue.labels) || people_asked.is_empty() {
-        return Cow::Borrowed(issue);
-    }
-    // Unassigned before the relabeling, so that a stop between the two
-    // leaves the reply to be found again.
-    let mut without_asked = issue.clone();
-    without_asked
-        .assignees
-        .retain(|a| !people_asked.contains(a));
-    plan.act(Action::UnassignAsked {
-        issue: issue.number,
-        assignees: people_asked,
-    });
-    Cow::Owned(without_asked)
-}
-
-fn has_reply_to_needs_info(issue: &Issue, policy: &Policy) -> bool {
-    let linewright = &policy.linewright;
-    if !issue.holds(StatusLabel::NeedsInfo) || !policy.marks(&issue.labels) {
-        return false;
-    }
-    let Some(last) = issue
-        .comments
-        .iter()
-        .filter(|c| &c.author == linewright)
-        .map(|c| c.created_at)
-        .max()
-    else {
-        return false;
-    };
-    let asked = issue
-        .last_labeled(StatusLabel::NeedsInfo)
-        .map_or(last, |labeled| labeled.max(last));
-    issue
-        .comments
-        .iter()
-        .any(|c| &c.author != linewright && c.created_at > asked)
 }
 
 pub fn pending_spec_changes<'a>(

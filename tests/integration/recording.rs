@@ -145,7 +145,7 @@ async fn a_reply_to_needs_info_adds_needs_triage_before_removing_needs_info() {
     cycled.unwrap();
     world.factory.settle().await;
 
-    assert_eq!(labels(&world.issue(issue)), ["bug", "ready-for-agent"]);
+    assert_eq!(labels(&world.issue(issue)), ["bug", "needs-triage"]);
 }
 
 #[tokio::test]
@@ -315,4 +315,45 @@ async fn an_implement_run_files_its_spec_gaps_before_opening_its_pull_request() 
         .last()
         .expect("the run opened its pull request");
     assert_eq!(world.store.snapshot_pull(pr).await.closes, [ticket]);
+}
+
+#[tokio::test]
+async fn linewright_assigned_to_a_pull_request_it_did_not_open_comments_before_unassigning_itself()
+{
+    let mut world = World::new().await;
+    let pr = world
+        .store
+        .open_pull_as(
+            "alice",
+            "alice-fix",
+            "Fix widgets",
+            "Fixes widgets.",
+            &[("src/widgets.rs", "fixed\n")],
+        )
+        .await
+        .unwrap();
+    world.store.assign_as("maintainer", pr, LINEWRIGHT).unwrap();
+    let mut paused = world.store.pause_after(Write::Comment { number: pr });
+    let store = world.store.clone();
+
+    let (cycled, ()) = tokio::join!(world.factory.cycle(), async {
+        paused.reached().await;
+        assert_eq!(store.pull_assignees(pr), [Login::new(LINEWRIGHT)]);
+        paused.release();
+    });
+    cycled.unwrap();
+    world.factory.settle().await;
+
+    assert_eq!(world.store.pull_assignees(pr), []);
+    let comments = world.store.snapshot_pull(pr).await.comments;
+    let [comment] = &comments[..] else {
+        panic!("expected one comment, got {comments:#?}");
+    };
+    assert_eq!(
+        comment.body,
+        format!(
+            "@{LINEWRIGHT} works only on the pull requests it opens and on spec changes, so it \
+             has let go of this one."
+        )
+    );
 }
