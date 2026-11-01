@@ -382,9 +382,14 @@ pub struct Linked {
 pub struct SubIssue {
     pub number: Number,
     pub author: Login,
-    /// Who added it to its parent: `None` where GitHub's timeline no longer
-    /// shows it, or in a snapshot written before Linewright read it, which
-    /// counts as added by Linewright.
+    /// Who added it to its parent, or `None` where
+    ///
+    /// - GitHub's timeline does not yet show the add, a moment after it was
+    ///   made;
+    /// - the timeline no longer shows it;
+    /// - the snapshot was written before Linewright read it.
+    ///
+    /// Each counts as added by Linewright until a later read finds the adder.
     pub added_by: Option<Login>,
     pub state: SubIssueState,
 }
