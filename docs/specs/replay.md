@@ -44,7 +44,7 @@ seeded from the case.
   request is handed back.
 - **Merging.** The local store has no branch rules, so with `--auto-merge`
   every green pull request merges and the tickets it blocked run in turn.
-- **CI.** The local store has no CI and the grace period is none, so a pull
+- **CI.** The local store has no CI and `ci-grace` is none, so a pull
   request is marked ready for review as soon as it opens.
 - **The output.** The output directory holds everything the replay produced,
   as plain files a coding agent reads directly. Replay runs the whole

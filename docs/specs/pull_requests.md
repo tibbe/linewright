@@ -50,20 +50,36 @@ Once Linewright opens a PR, the PR is the item its work is on.
 - **Closed without merging.** A PR Linewright opened that a person closes
   without merging is the maintainer's no ([Steering](repository.md#steering)).
 
+## Working a pull request
+
+Linewright works a pull request it opened as this table gives: at each poll,
+the first row that holds ([Working an item](repository.md#working-an-item)).
+Its state is GitHub's: a draft, or ready for review.
+
+| State | When | Linewright | State after |
+| --- | --- | --- | --- |
+| any | feedback has come ([Rework](#rework)) | starts a rework run | unchanged |
+| any | GitHub reports it behind the default branch, or in conflict with it | starts an update run ([Keeping up to date](#keeping-up-to-date)) | unchanged |
+| any | it cannot be merged by a method the repository allows, and no run has ended on it since its last push | starts an update run | unchanged |
+| any | none of its checks has appeared, and its last push was less than `ci-grace` ago | waits for its checks | unchanged |
+| any | a check is still running `ci-timeout` after its last push, or after Linewright was last assigned to it where that is later | hands it back, naming the checks still running | unchanged |
+| any | a check is still running | waits for its checks | unchanged |
+| any | a check failed, and fewer than `ci-attempts` fix-ci runs have ended on it this round | starts a fix-ci run ([CI](#ci)) | unchanged |
+| any | a check failed | hands it back, naming the failing checks | unchanged |
+| draft | otherwise | marks it ready for review | ready for review |
+| ready for review | `auto-merge` is off, or a person holds its merge ([Merging](#merging)) | waits for review | ready for review |
+| ready for review | two merges of it have failed this round | hands it back with GitHub's reason | ready for review |
+| ready for review | GitHub blocks the merge, and Linewright has not commented on it this round | comments naming what GitHub requires | ready for review |
+| ready for review | GitHub blocks the merge, or has not reported whether it allows it | waits for what GitHub requires | ready for review |
+| ready for review | otherwise | merges it ([Merging](#merging)) | merged |
+
+- **Its checks.** The check runs and commit statuses on its head.
+- **A round.** A round starts when Linewright opens the pull request, when a
+  rework run on it ends and when Linewright is assigned to it again.
+
 ## CI
 
-The PR stays a draft until its CI is green.
-
-1. Linewright waits for check runs and commit statuses on the head to appear,
-   then to complete.
-2. Green: the PR is marked ready for review.
-
-- **1a. None appear within the grace period, default 5 min.** The repository
-  has no CI for drafts.
-- **1b. Checks are still running after the completion timeout, default 6 h.**
-  The PR is handed back naming the checks still running.
-- **1c. A check fails.** A fix session is started, at most 2 attempts, then
-  the PR is handed back naming the failing check.
+A fix-ci run fixes the checks that failed on the PR's head.
 
 - **What a fix session is given.** For each failing check, its name, what it
   reports about the failure, the end of the output of the step that failed (at
@@ -74,9 +90,9 @@ The PR stays a draft until its CI is green.
 
 ## Rework
 
-A comment or review from anyone other than Linewright, posted after
-Linewright's last push, starts a rework run; a review that only approves
-starts nothing.
+A comment or review from anyone other than Linewright is feedback until a
+rework run that was given it ends done ([Ending](runs.md#ending)); a review
+that only approves is not feedback.
 
 - **The run.** It brings the branch up to date, addresses the comments,
   pushes, replies in each thread and re-requests review from the people whose
@@ -91,11 +107,9 @@ starts nothing.
 
 ## Keeping up to date
 
-Every run first brings the branch up to date with the default branch.
+Every run first brings the branch up to date with the default branch, and
+an update run does only that.
 
-- **An update alone.** A PR GitHub reports behind the default branch, or not
-  mergeable by a method the repository allows, gets a run for that alone,
-  which needs an agent only for a conflict.
 - **Merge or rebase.** By default an update merges the default branch into
   the branch, so reviewed history stays as it is, unless the branch would then
   not be mergeable by every method the repository allows; then the branch is
@@ -108,21 +122,17 @@ Every run first brings the branch up to date with the default branch.
 
 ## Merging
 
-Without `--auto-merge`, the maintainer merges the PR with whatever method the
-repository allows; with it, Linewright merges each green PR it opened.
+With `--auto-merge`, Linewright merges the PRs it opened
+([Working a pull request](#working-a-pull-request)); without it, the
+maintainer merges them, with whatever method the repository allows.
 
 - **Method.** Linewright merges with the `merge-method` setting: by default a
   rebase where the repository requires linear history, and otherwise the first
   method of merge, squash and rebase that the repository allows. This is
   Linewright merging, not GitHub's auto-merge feature.
-- **What GitHub allows.** It merges only when GitHub allows it. A PR GitHub
-  blocks is marked ready for review with a comment naming what GitHub
-  requires, and is merged once GitHub allows it.
-- **Review.** A PR a person has commented on or reviewed is merged only once
-  that person's newest comment or review is an approval. Bots' comments don't
+- **Review.** A person who has commented on or reviewed a PR holds its merge
+  until their newest comment or review is an approval. Bots' comments don't
   hold a merge.
-- **A failed merge.** A merge that fails is retried once on the next poll,
-  then the PR is handed back with GitHub's reason.
 - **Which PRs.** Auto-merge covers every open PR Linewright opened, including
   those opened while it ran without `--auto-merge`.
 
