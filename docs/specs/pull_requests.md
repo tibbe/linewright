@@ -69,7 +69,7 @@ Its state is GitHub's: a draft, or ready for review.
 | draft | otherwise | marks it ready for review | ready for review |
 | ready for review | `auto-merge` is off, or a person holds its merge ([Merging](#merging)) | waits for review | ready for review |
 | ready for review | two merges of it have failed this round | hands it back with GitHub's reason | ready for review |
-| ready for review | GitHub blocks the merge, and Linewright has not commented on it this round | comments naming what GitHub requires | ready for review |
+| ready for review | GitHub blocks the merge, and Linewright has not commented on it this round naming what GitHub requires | comments naming what GitHub requires | ready for review |
 | ready for review | GitHub blocks the merge, or has not reported whether it allows it | waits for what GitHub requires | ready for review |
 | ready for review | otherwise | merges it ([Merging](#merging)) | merged |
 
