@@ -25,10 +25,10 @@ brief an implementer works from.
 
 ## Outcomes
 
-A triage run ends in one of three states and posts the
+A triage run ends by applying one of three status labels, and posts the
 agent's comment on the issue.
 
-| State             | Means                                  |
+| Label             | Means                                  |
 | ----------------- | -------------------------------------- |
 | `ready-for-agent` | an agent can work the issue            |
 | `needs-info`      | the people asked owe a fact            |
@@ -44,23 +44,12 @@ agent's comment on the issue.
 
 The label says who must answer, and how.
 
-- **`needs-info`.** The people asked answer in the thread. Linewright assigns
-  the people it asks, those GitHub lets it assign, and names them all in the
-  comment. A reply, a comment from anyone other than Linewright posted after
-  its question, puts the issue back to `needs-triage`.
+- **`needs-info`.** The people asked answer in the thread. Linewright names
+  them all in the comment. A reply is a comment from anyone other than
+  Linewright posted after its question.
 - **`ready-for-human`.** A maintainer answers with a label,
   `ready-for-agent` to implement as decided or `needs-triage` to triage
   again.
-
-The `triage` states of the issue lifecycle; both are labels.
-
-| State          | Event                                | Next              | Effect |
-| -------------- | ------------------------------------ | ----------------- | ------ |
-| —              | `needs-triage` applied               | `needs-triage`    |        |
-| `needs-triage` | a person owes a fact                 | `needs-info`      |        |
-| `needs-info`   | a person comments                    | `needs-triage`    |        |
-| `needs-triage` | triage ends in `ready-for-agent`     | `ready-for-agent` |        |
-| `needs-triage` | triage ends in `ready-for-human`     | `ready-for-human` |        |
 
 ## The session
 

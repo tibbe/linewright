@@ -127,7 +127,8 @@ their tracking issue: it loses `ready-for-agent`, is not built itself, and
 closes once every sub-issue is closed. To have it designed again, say what you
 want in the thread, remove `linewright:designed` from it, then label it
 `ready-for-agent`. Linewright closes its tickets that are still open as not
-planned and designs the issue again. Sub-issues you added stay as they are.
+planned, removes its tickets from the issue's sub-issues, and designs the
+issue again. Sub-issues you added stay as they are.
 
 ## Assigning Linewright
 

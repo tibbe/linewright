@@ -25,7 +25,7 @@ two themes of its own.
 
 ## Status
 
-| Outcome or state                            | Colour     |
+| Outcome, card status, check or ending       | Colour     |
 | ------------------------------------------- | ---------- |
 | done, merged, green                         | `success`  |
 | failed, CI failing                          | `error`    |

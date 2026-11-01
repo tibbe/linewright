@@ -82,17 +82,20 @@ order:
 - **What it shows.** For issue or pull request #N:
   - its parents and its children in the pipeline, such as the issues a pull
     request closes, or the pull requests that close a ticket;
-  - where it is in the pipeline, in the states of the issue lifecycle under
-    [Repository](repository.md), whether it is stalled, and when `serve`
-    last read it;
+  - its state ([States](design_system.md#states)), whether it is stalled,
+    and when `serve` last read it;
   - each thing Linewright waits for before it acts on #N next, naming what
     ends the wait, such as "the usage limit, until 14:30 UTC" or "the drain,
     until `serve` restarts";
   - its run in flight;
   - its latest three past runs, as `runs N` lists them.
 - **An item Linewright leaves.** For an item that is not managed,
-  `serve` reads #N from GitHub and `explain` says why Linewright leaves it,
-  naming the fact or setting that keeps it out.
+  `serve` reads #N from GitHub and `explain` gives its state as for a managed
+  item, where it has one, and says why Linewright leaves it, naming the fact
+  or setting that keeps it out.
+- **State in JSON.** An item's state is its name under
+  [State](repository.md#state), in kebab-case, such as `being-implemented`,
+  and null for an item with no state.
 
 ## runs
 

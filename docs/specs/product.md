@@ -77,13 +77,13 @@ The pipeline, end to end:
 
 ```mermaid
 flowchart LR
-    spec[Spec PR merged] --> design[Design]
+    spec[Spec PR merged] -- Linewright opens its issue --> ready
     issue[Issue labeled needs-triage] --> triage[Triage]
     automation[Automation] -.-> ready
     triage --> ready[Issue labeled ready-for-agent]
-    ready --> design
-    design -- an issue that fits one session --> impl[Implement, review, commit]
-    design -- a spec change, or an issue that needs cutting --> tickets[Tickets] --> impl
+    ready --> design[Design]
+    design -- fits one session --> impl[Implement, review, commit]
+    design -- needs cutting --> tickets[Tickets] --> impl
     impl --> draft[Draft PR, CI green]
     draft --> review[Ready for review]
     review -- person comments --> impl

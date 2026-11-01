@@ -42,8 +42,29 @@
 
 ## Status
 
-- An outcome or a state has an icon and a colour, shared by those that mean
-  the same, and is never told by colour alone.
+- An outcome, a card status, a check's result and how an item in Done ended
+  each have an icon and a colour, shared by those that mean the same, and
+  are never told by colour alone.
+
+## States
+
+An item's state ([State](repository.md#state)) is shown in these words.
+
+| State             | Shown as               |
+| ----------------- | ---------------------- |
+| `needs-triage`    | Waiting for triage     |
+| being triaged     | Being triaged          |
+| `needs-info`      | Waiting for an answer  |
+| `ready-for-human` | Waiting for a decision |
+| `ready-for-agent` | Waiting for Linewright |
+| being designed    | Being designed         |
+| being implemented | Being implemented      |
+| in review         | In review              |
+| tracking          | Tracking               |
+| done              | Done                   |
+| open              | Open                   |
+| merged            | Merged                 |
+| closed            | Closed                 |
 
 ## Board
 
@@ -160,36 +181,31 @@ when `ui-address` is empty.
 
 The board shows the managed items
 ([Managed items](repository.md#managed-items)) as cards in six columns, in
-this order. Every managed item but a tracking issue, which heads its lane, is
-in one of them.
+this order, each card in the column of its item's state
+([State](repository.md#state)). A tracking issue has no card.
 
-| Column         | Holds a managed item that                                                                            |
-| -------------- | ---------------------------------------------------------------------------------------------------- |
-| Triage         | holds `needs-triage`                                                                                 |
-| Needs a person | holds `needs-info` or `ready-for-human`                                                              |
-| Ready          | holds `ready-for-agent` and is not claimed, or is a spec change not yet designed                     |
-| Working        | is claimed for design or implementation, or has a run in flight that no other column shows           |
-| In review      | has an open pull request that closes it, or is an open pull request                                  |
-| Done           | is closed or merged, or has had a pull request that closes it merge into the default branch since it was last opened; but for a spec change not yet designed |
+| Column         | An issue's states                     | A pull request's states |
+| -------------- | ------------------------------------- | ----------------------- |
+| Triage         | `needs-triage`                        |                         |
+| Needs a person | `needs-info`, `ready-for-human`       |                         |
+| Ready          | `ready-for-agent`                     |                         |
+| Working        | being triaged, being designed, being implemented |              |
+| In review      | in review                             | open                    |
+| Done           | done                                  | merged, closed          |
 
-- **Two columns.** An item that fits two columns is in the one further
-  right.
 - **One card per piece of work.** The card is the issue; a pull request, and
   a run on it, show on the card of each issue it closes that has one, and a
   pull request that closes no issue with a card has its own.
-- **A spec change.** Until it is designed, its card is its pull request;
-  designed, it is its tracking issue's lane where one was cut, and otherwise
-  its pull request, in Done, saying there was nothing to build.
 - **Lanes.** A lane per piece of work: where the work was cut, headed by its
   tracking issue's number and title and its tickets closed of total, with
   its managed tickets as its cards; otherwise headed by the item's number and
   title, with the item as its one card.
 - **Finished lanes.** A lane is finished once its cards are all in Done and,
-  where it has a tracking issue, that issue is closed. It shows as its head
+  where it has a tracking issue, that issue is done. It shows as its head
   alone, with when it finished: when the last of its cards entered Done or
-  its tracking issue closed, or, for a spec change designed with nothing to
-  build, when it was designed. It opens on click. The finished lanes sit
-  together under one fold that says how many there are and opens on click.
+  its tracking issue became done. It opens on click. The finished
+  lanes sit together under one fold that says how many there are and opens
+  on click.
   A finished lane leaves the board once it finished before the Done window
   (`done-window`) opened.
 - **Order of lanes.** The unfinished lanes come first, latest changed first,
@@ -224,23 +240,24 @@ to add is the title alone.
 
 | Column         | The line                                                                                                                                                                                                                                                               | When                                                                                                                                                    | Card status |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
-| Triage         | nothing but the time                                                                                                                                                                                                                                                   |                                                                                                                                                         |  |
+| Triage         | as in Ready                                                                                                                                                                                                                                                            | as in Ready                                                                                                                                             | as in Ready |
 | Needs a person | "stalled"                                                                                                                                                                                                                                                              | it holds `linewright:stalled`                                                                                                                           | failed |
 |                | "asked alice", "asked alice and bob", "asked alice, bob and carol": the issue's assignees, in GitHub's order; "people asked" with none                                                                                                                                 | it holds `needs-info`                                                                                                                                   | waiting for a person |
-|                | "handed back"                                                                                                                                                                                                                                                          | it holds `ready-for-human`, and Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged              | waiting for a person |
-|                | "decision needed"                                                                                                                                                                                                                                                      | it holds `ready-for-human` otherwise                                                                                                                    | waiting for a person |
+|                | "handed back"                                                                                                                                                                                                                                                          | Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged                                             | waiting for a person |
+|                | "decision needed"                                                                                                                                                                                                                                                      | otherwise                                                                                                                                               | waiting for a person |
 | Ready          | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |  |
 |                | "assigned to alice"                                                                                                                                                                                                                                                    | someone other than Linewright is assigned to it                                                                                                         |  |
 |                | "unassigned"                                                                                                                                                                                                                                                           | Linewright was unassigned from it                                                                                                                       |  |
+|                | "not marked for Linewright"                                                                                                                                                                                                                                            | it is not marked for Linewright                                                                                                                         |  |
 |                | "paused for the usage limit", "paused for the drain"                                                                                                                                                                                                                   | it would start, but for the hold                                                                                                                        | paused or queued |
 |                | "queued"                                                                                                                                                                                                                                                               | it would start, but the runs in flight are at `max-runs`                                                                                                | paused or queued |
 |                | nothing but the time                                                                                                                                                                                                                                                   | otherwise: the next poll acts on it                                                                                                                     |  |
 | Working        | its stage and how long it has run, "implementation · 12m"                                                                                                                                                                                                              | a run is in flight                                                                                                                                      | in flight |
+|                | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |  |
 |                | "paused for the usage limit", "paused for the drain", "queued"                                                                                                                                                                                                         | no run is in flight, as in Ready                                                                                                                        | paused or queued |
 | In review      | its pull request, where the card is not the pull request itself, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" | that of what stops it merging |
-| Done           | "closed in #42", the first pull request that closes it to merge since it was last opened                                                                                                                                                                              | an issue a merged pull request closes                                                                                                                   |  |
+| Done           | "closed in #42", the pull request whose merge made it done                                                                                                                                                                                                             | an issue a merged pull request made done                                                                                                                |  |
 |                | "closed as completed", "closed as not planned" or "closed as a duplicate", GitHub's reason; "closed" where the reason is not known                                                                                                                                     | an issue closed otherwise                                                                                                                               |  |
-|                | "merged · nothing to build"                                                                                                                                                                                                                                            | a spec change designed with nothing to build                                                                                                            |  |
 |                | "merged"                                                                                                                                                                                                                                                               | a pull request merged                                                                                                                                   |  |
 |                | "closed without merging"                                                                                                                                                                                                                                               | a pull request closed unmerged                                                                                                                          |  |
 
@@ -249,6 +266,8 @@ What stops a pull request merging, in the order the line picks from:
 | What stops it merging                                     | When                                       | Card status |
 | --------------------------------------------------------- | ------------------------------------------ | --- |
 | "stalled"                                                 | it holds `linewright:stalled`              | failed |
+| "handed back"                                             | Linewright opened it, is not assigned to it, and its last act on it was letting go of it | waiting for a person |
+| "unassigned"                                              | Linewright opened it and is not assigned to it otherwise | |
 | its stage and how long it has run, as in Working          | a run is in flight on it                   | in flight |
 | "checks failed"                                           | a check failed                             | failed |
 | "checks running"                                          | a check has not finished                   | in flight |
@@ -267,19 +286,20 @@ order below, then its runs ([Lists of runs](#lists-of-runs)).
 
 - **Heading.** #N's number and title as on its card, and under them when
   `serve` last read #N, such as "as of 2 minutes ago".
-- **Its card.** For an item shown on another's card, such as a pull request
-  on the card of the issue it closes, the card it would have on its own.
+- **Its card.** For an item without a card of its own, such as a pull request on
+  the card of the issue it closes, the card it would have on its own; for a
+  tracking issue, its lane head.
 - **Related items.** An item a fact lists is shown as its card is, with its
   card status's icon in place of its line, and a tracking issue as its lane
   head is.
 
 | Fact           | Holds                                                                                                                                  | Shown                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| State          | #N's column, then its card's line, with its card status ([Cards](#cards)), on the board or off it; for a tracking issue, "Tracking", and once its lane is finished when it finished, such as "Tracking · finished 2 days ago"; for an item that is not managed, "Left alone", then what keeps it out, such as "labeled none of `needs-triage`, …", "not marked for Linewright" or "holds `ready-for-human`, and Linewright has not worked it" | always                         |
+| State          | #N's state ([States](#states)), then its card's line where it says more, with its card status ([Cards](#cards)), such as "Being implemented · implementation · 12m"; for a tracking issue, its state, then, once its lane is finished, when it finished, such as "Done · finished 2 days ago"; for an item that is not managed, its state where it has one, then "Left alone" and what keeps it out ([Managed items](repository.md#managed-items)), such as "not marked for Linewright" | always                         |
 | Waiting for    | each thing Linewright waits for before it acts on #N next, one per line, naming what ends it, such as "the usage limit, until 14:30", in plain text | while it waits for any         |
-| Tracking issue | a ticket's tracking issue, or the tracking issue cut from a spec change                                                                | while there is one             |
+| Tracking issue | a ticket's tracking issue                                                                                                              | while there is one             |
 | Tickets        | a tracking issue's tickets, with how many are closed of the total, such as "3 of 5 closed"                                             | while it has any               |
-| Spec change    | the pull request of the spec change a tracking issue tracks                                                                            | while there is one             |
+| Spec change    | the spec change a spec change's issue was opened for ([Spec changes](sources_of_work.md#spec-changes))                                  | while there is one             |
 | Pull requests  | the open or merged pull requests that close #N                                                                                         | while there are any            |
 | Closes         | the issues a pull request closes                                                                                                       | while there are any            |
 
