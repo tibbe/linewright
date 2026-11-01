@@ -541,14 +541,14 @@ fn the_managed_items_follow_the_linewright_section_each_as_its_number_and_where_
 
 /// An issue Linewright cut into tickets #8, closed, and #9, open.
 fn cut_issue() -> Issue {
-    Issue {
+    labeled_by_linewright(Issue {
         labels: vec![label::DESIGNED.into()],
         sub_issues: vec![
             sub_issue(8, false, "factory"),
             sub_issue(9, true, "factory"),
         ],
         ..ready_issue()
-    }
+    })
 }
 
 #[test]

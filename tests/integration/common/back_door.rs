@@ -387,6 +387,10 @@ impl World {
             .await
             .unwrap();
         self.store
+            .add_label(tracking, "linewright:designed")
+            .await
+            .unwrap();
+        self.store
             .add_label(spec_change, "linewright:designed")
             .await
             .unwrap();

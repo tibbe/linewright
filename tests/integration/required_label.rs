@@ -50,7 +50,7 @@ async fn the_tracking_issue_and_every_ticket_of_a_spec_change_carry_the_required
     assert_eq!(
         all_labels(&world),
         [
-            vec![REQUIRED.to_string()],
+            vec![REQUIRED.to_string(), "linewright:designed".to_string()],
             vec![
                 REQUIRED.to_string(),
                 "linewright:designed".to_string(),
@@ -115,7 +115,7 @@ async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
     assert_eq!(
         all_labels(&world),
         [
-            vec![],
+            vec!["linewright:designed".to_string()],
             vec![
                 "linewright:designed".to_string(),
                 "ready-for-agent".to_string()
@@ -134,7 +134,7 @@ async fn a_missing_required_label_is_not_created_and_the_filing_completes() {
     assert_eq!(
         all_labels(&world),
         [
-            vec![],
+            vec!["linewright:designed".to_string()],
             vec![
                 "linewright:designed".to_string(),
                 "ready-for-agent".to_string()

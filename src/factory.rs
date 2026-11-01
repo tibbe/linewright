@@ -160,6 +160,9 @@ pub struct Factory {
     /// The items Linewright's actions and runs changed since the kept
     /// snapshot last read them.
     written: BTreeSet<Item>,
+    /// Whether the first poll since startup has labeled the old tracking
+    /// issues ([`Snapshot::unlabeled_tracking_issues`]).
+    labeled_old_tracking_issues: bool,
 }
 
 enum HoldsRecord {
@@ -303,6 +306,7 @@ impl Factory {
             holds_record,
             kept: None,
             written: BTreeSet::new(),
+            labeled_old_tracking_issues: false,
         })
     }
 
@@ -328,11 +332,16 @@ impl Factory {
         self.reap();
         let shell = &self.shell;
         let now = shell.clock.now();
-        let snapshot = shell
+        let windows = shell.policy.windows(now);
+        let mut snapshot = shell
             .store
-            .snapshot(shell.policy.windows(now))
+            .snapshot(windows)
             .await
             .context("taking a snapshot")?;
+        if !self.labeled_old_tracking_issues {
+            label_old_tracking_issues(&mut snapshot, shell, windows).await?;
+            self.labeled_old_tracking_issues = true;
+        }
         let repo = self.read_repo_files().await?;
         self.memory.ended_cuts.clear();
         self.written.clear();
@@ -1100,6 +1109,29 @@ async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str
         store.mark_ready(pr).await?;
     }
     store.comment(pr, note).await
+}
+
+/// Labels `linewright:designed` the open spec changes' tracking issues
+/// Linewright filed before a tracking issue carried it, which it would
+/// otherwise take for cuts to discard, and reads them into `snapshot` again.
+/// Run once after startup, before anything is reconciled; one already
+/// labeled is left as it is.
+async fn label_old_tracking_issues(
+    snapshot: &mut Snapshot,
+    shell: &Shell,
+    windows: Windows,
+) -> Result<()> {
+    let old = snapshot.unlabeled_tracking_issues(&shell.policy.linewright);
+    for &issue in &old {
+        shell
+            .store
+            .add_label(issue, label::DESIGNED)
+            .await
+            .with_context(|| format!("labeling the tracking issue {issue} {}", label::DESIGNED))?;
+        info!(%issue, "labeled an old tracking issue {}", label::DESIGNED);
+    }
+    read_all(snapshot, shell, old.into_iter().map(Item::Issue), windows).await?;
+    Ok(())
 }
 
 async fn read_all(

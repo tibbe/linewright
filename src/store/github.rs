@@ -89,8 +89,18 @@ macro_rules! comment_fields {
     };
 }
 
-/// A pull request's labelings, assignments and comments, which tell whether
-/// Linewright worked it ([`PullSigns`]), read as [`GqlEvent`]s.
+/// Who added each sub-issue, which tells the tickets Linewright cut
+/// ([`SubIssue::added_by`]), read as [`GqlSubIssueAdded`]s: in a timeline of
+/// their own, so that no other event crowds them out.
+macro_rules! sub_issue_adds {
+    () => {
+        "subIssueAdds: timelineItems(last: 100, itemTypes: [SUB_ISSUE_ADDED_EVENT]) { nodes { ... on SubIssueAddedEvent { actor { __typename login } subIssue { number } } } }"
+    };
+}
+
+/// A pull request's labelings and assignments, which tell whether
+/// Linewright worked it ([`PullSigns`]), and its comments, read as
+/// [`GqlEvent`]s.
 macro_rules! work_timeline {
     () => {
         concat!(
@@ -570,8 +580,8 @@ impl GitHub {
     }
 
     /// The issues or pull requests, as `kind` says, of `numbers` that GitHub
-    /// has, each read with `fields`, twenty to a query by aliases. Twenty
-    /// with seven connections each cost 140 requests, which rounds to 1 point
+    /// has, each read with `fields`, fifteen to a query by aliases. Fifteen
+    /// with eight connections each cost 121 requests, which rounds to 1 point
     /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
     async fn numbered<T: DeserializeOwned>(
         &self,
@@ -581,7 +591,7 @@ impl GitHub {
     ) -> Result<Vec<T>> {
         let numbers: Vec<Number> = numbers.iter().copied().collect();
         let mut items = vec![];
-        for batch in numbers.chunks(20) {
+        for batch in numbers.chunks(15) {
             let response = self
                 .graphql_response(
                     &numbered_query(kind, batch, fields),
@@ -1258,7 +1268,7 @@ impl GqlPeoplesPull {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Actor {
     #[serde(rename = "__typename")]
     typename: String,
@@ -1497,13 +1507,20 @@ struct SubIssueNode {
     closed_at: Option<Timestamp>,
 }
 
-fn sub_issues(nodes: Option<Nodes<SubIssueNode>>) -> Vec<SubIssue> {
+/// The sub-issues of `nodes`, each with who last added it among `adds`, the
+/// additions their parent's timeline holds: none where it holds none.
+fn sub_issues(
+    nodes: Option<Nodes<SubIssueNode>>,
+    adds: Option<Nodes<GqlSubIssueAdded>>,
+) -> Vec<SubIssue> {
     let nodes = nodes.map(|n| n.nodes).unwrap_or_default();
+    let adds = adds.map(|a| a.nodes).unwrap_or_default();
     nodes
         .into_iter()
         .map(|n| SubIssue {
             number: Number(n.linked.number),
             author: login(n.author),
+            added_by: added_by(&adds, n.linked.number),
             state: if linked_of(&n.linked).open {
                 SubIssueState::Open
             } else {
@@ -1511,6 +1528,14 @@ fn sub_issues(nodes: Option<Nodes<SubIssueNode>>) -> Vec<SubIssue> {
             },
         })
         .collect()
+}
+
+/// Who last added sub-issue #`number` among `adds`, oldest first.
+fn added_by(adds: &[GqlSubIssueAdded], number: u64) -> Option<Login> {
+    adds.iter()
+        .rev()
+        .find(|add| add.sub_issue.as_ref().is_some_and(|s| s.number == number))
+        .map(|add| login(add.actor.clone()))
 }
 
 #[derive(Deserialize)]
@@ -1651,6 +1676,9 @@ const ISSUE_FIELDS: Fragment = Fragment {
     // Only an issue's status labels need their removals.
     assignment_timeline!(unlabelings),
     "
+  ",
+    sub_issue_adds!(),
+    "
 }"
     ),
 };
@@ -1673,6 +1701,9 @@ struct GqlIssue {
     blocked_by: Option<Nodes<LinkedNode>>,
     closed_by_pull_requests_references: Option<Nodes<GqlClosingPull>>,
     timeline_items: Nodes<GqlEvent>,
+    /// `None` in a payload recorded before Linewright read it.
+    #[serde(default)]
+    sub_issue_adds: Option<Nodes<GqlSubIssueAdded>>,
 }
 
 #[derive(Deserialize)]
@@ -1696,10 +1727,10 @@ struct GqlClosingPull {
 /// when a person closed it
 /// (<https://docs.github.com/en/graphql/reference/objects#closedevent>).
 /// With its assignees, labelings, assignments, comments and the pull
-/// requests closing it, which tell whether Linewright worked it, and its
+/// requests closing it, which tell whether Linewright worked it, its
 /// reopenings, which with those pull requests' merges tell when it entered
-/// Done. Twenty issues with the six connections each cost 121 requests,
-/// which rounds to 1 point
+/// Done, and who added its sub-issues. Fifteen issues with the seven
+/// connections each cost 106 requests, which rounds to 1 point
 /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
 const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
     name: "ClosedIssueFields",
@@ -1728,6 +1759,9 @@ const CLOSED_ISSUE_FIELDS: Fragment = Fragment {
         "
     }
   }
+  ",
+        sub_issue_adds!(),
+        "
 }"
     ),
 };
@@ -1749,6 +1783,9 @@ struct GqlClosedIssue {
     closed_by_pull_requests_references: Option<Nodes<GqlClosingPull>>,
     timeline_items: Nodes<GqlClosedEvent>,
     assignments: Nodes<GqlEvent>,
+    /// As [`GqlIssue::sub_issue_adds`].
+    #[serde(default)]
+    sub_issue_adds: Option<Nodes<GqlSubIssueAdded>>,
 }
 
 #[derive(Deserialize)]
@@ -1788,7 +1825,7 @@ impl GqlClosedIssue {
                 parent: self.parent.map(|p| p.into_parent(linewright)),
                 facts: ManagedFacts {
                     filed: Filed::read(&author, &self.title, &self.body, linewright),
-                    sub_issues: sub_issues(self.sub_issues),
+                    sub_issues: sub_issues(self.sub_issues, self.sub_issue_adds),
                     labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
                     work: WorkFacts {
                         author: Some(author),
@@ -1955,7 +1992,9 @@ impl GqlFactsIssue {
         ManagedFacts {
             filed: Filed::read(&author, &self.title, &self.body, linewright),
             labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
-            sub_issues: sub_issues(self.sub_issues),
+            // Who added them is not read: whether Linewright may manage the
+            // issue does not turn on it.
+            sub_issues: sub_issues(self.sub_issues, None),
             work: WorkFacts {
                 author: Some(author),
                 assignees: logins(self.assignees),
@@ -2157,6 +2196,21 @@ enum GqlEvent {
     Assignment(GqlAssignment),
 }
 
+/// A sub-issue added to an issue, by `actor`
+/// (<https://docs.github.com/en/graphql/reference/objects#subissueaddedevent>).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlSubIssueAdded {
+    actor: Option<Actor>,
+    /// `None` where the reader may not see the sub-issue.
+    sub_issue: Option<SubIssueNumber>,
+}
+
+#[derive(Deserialize)]
+struct SubIssueNumber {
+    number: u64,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "__typename")]
 enum GqlAssignment {
@@ -2218,6 +2272,7 @@ impl GqlIssue {
         let i = self;
         let author = login(i.author);
         let filed = Filed::read(&author, &i.title, &i.body, linewright);
+        let sub_issues = sub_issues(i.sub_issues, i.sub_issue_adds);
         let events = events(i.timeline_items.nodes);
         Issue {
             number: Number(i.number),
@@ -2231,7 +2286,7 @@ impl GqlIssue {
             assignees: logins(i.assignees),
             comments: i.comments.nodes.into_iter().map(Comment::from).collect(),
             blocked_by: linked(i.blocked_by),
-            sub_issues: sub_issues(i.sub_issues),
+            sub_issues,
             parent: i.parent.map(|p| p.into_parent(linewright)),
             events,
             filed,
@@ -4243,7 +4298,7 @@ mod tests {
             serde_json::from_str(include_str!("fixtures/sub-issues.json")).unwrap();
 
         assert_eq!(
-            sub_issues(Some(nodes)),
+            sub_issues(Some(nodes), None),
             [
                 (374, "2026-10-20T07:25:56Z"),
                 (375, "2026-10-20T07:37:18Z"),
@@ -4254,10 +4309,62 @@ mod tests {
             .map(|(number, closed_at)| SubIssue {
                 number: Number(number),
                 author: Login::new("tibbe-bot"),
+                added_by: None,
                 state: SubIssueState::Closed {
                     at: Some(at(closed_at)),
                 },
             })
+        );
+    }
+
+    /// `fixtures/issue-sub-issues-added.json` is `IssueFields` as GitHub
+    /// returned it for <https://github.com/tibbe/linewright/issues/900>,
+    /// whose sub-issues Linewright, as `tibbe-bot`, opened and added.
+    #[test]
+    fn an_issues_sub_issues_are_read_with_who_added_them() {
+        let issue: GqlIssue =
+            serde_json::from_str(include_str!("fixtures/issue-sub-issues-added.json")).unwrap();
+
+        let issue = issue.into_issue(&Login::new("tibbe-bot"));
+
+        let added: Vec<(u64, Option<&str>)> = issue
+            .sub_issues
+            .iter()
+            .map(|s| (s.number.0, s.added_by.as_ref().map(Login::as_str)))
+            .collect();
+        assert_eq!(
+            added,
+            (901..=907)
+                .map(|number| (number, Some("tibbe-bot")))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// `fixtures/closed-issue-sub-issues-added.json` is `ClosedIssueFields`
+    /// as GitHub returned it for
+    /// <https://github.com/tibbe/linewright/issues/308>, whose sub-issues
+    /// tibbe opened and added.
+    #[test]
+    fn a_closed_issues_sub_issues_are_read_with_who_added_them() {
+        let issue: GqlClosedIssue =
+            serde_json::from_str(include_str!("fixtures/closed-issue-sub-issues-added.json"))
+                .unwrap();
+
+        let closed = issue.into_closed(&Login::new("tibbe-bot")).unwrap();
+
+        let ClosedKind::Issue { facts, .. } = closed.kind else {
+            panic!("#308 is an issue");
+        };
+        let added: Vec<(u64, Option<&str>)> = facts
+            .sub_issues
+            .iter()
+            .map(|s| (s.number.0, s.added_by.as_ref().map(Login::as_str)))
+            .collect();
+        assert_eq!(
+            added,
+            (300..=307)
+                .map(|number| (number, Some("tibbe")))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -4415,6 +4522,7 @@ mod tests {
         let ticket = |number, closed_at| SubIssue {
             number: Number(number),
             author: Login::new("tibbe-bot"),
+            added_by: None,
             state: SubIssueState::Closed {
                 at: Some(at(closed_at)),
             },
@@ -4951,7 +5059,7 @@ mod tests {
     /// only commented on #13318 and #14664, people's, and did nothing on the
     /// rest.
     #[test]
-    fn pull_requests_closed_unmerged_that_linewright_worked_are_held_whoever_opened_them() {
+    fn pull_requests_closed_unmerged_that_linewright_only_commented_on_are_not_held() {
         // `babakks` standing in for Linewright.
         let closed = closed_pulls_held(
             include_str!("fixtures/closed-pulls-commented.json"),
@@ -4959,20 +5067,7 @@ mod tests {
             "babakks",
         );
 
-        let held: Vec<(Number, Option<&Login>)> = closed
-            .iter()
-            .map(|item| match &item.kind {
-                ClosedKind::Pull { author, .. } => (item.number, author.as_ref()),
-                ClosedKind::Issue { .. } => panic!("a pull request"),
-            })
-            .collect();
-        assert_eq!(
-            held,
-            [
-                (Number(13318), Some(&Login::new("Iron-Ham"))),
-                (Number(14664), Some(&Login::new("astrojuanlu"))),
-            ]
-        );
+        assert_eq!(closed, []);
     }
 
     /// `fixtures/open-pulls-listed.json` is the first page of the open pull
@@ -4981,7 +5076,7 @@ mod tests {
     /// assigned by another to #13017, only commented on #14017, and did
     /// nothing on #9847.
     #[test]
-    fn listed_open_pull_requests_are_held_as_linewrights_own_or_as_a_persons_linewright_worked_or_is_assigned_to()
+    fn listed_open_pull_requests_are_held_as_linewrights_own_or_as_a_persons_linewright_labeled_or_is_assigned_to()
      {
         let page: Page<GqlOpenPull> =
             serde_json::from_str(include_str!("fixtures/open-pulls-listed.json")).unwrap();
@@ -5002,7 +5097,7 @@ mod tests {
                 Some(PullHeld::Linewrights),
                 Some(PullHeld::Peoples),
                 Some(PullHeld::Peoples),
-                Some(PullHeld::Peoples),
+                None,
                 None,
             ]
         );
@@ -5079,7 +5174,7 @@ mod tests {
     /// above, which `tibbe-bot` also commented on. Its timeline is kept to
     /// that comment.
     #[test]
-    fn a_merged_pull_request_lists_its_comments_and_is_worked_by_who_commented_on_it() {
+    fn a_merged_pull_request_lists_its_comments_and_is_not_worked_by_who_only_commented_on_it() {
         let mut pr: Value =
             serde_json::from_str(include_str!("fixtures/merged-pull-commented.json")).unwrap();
         pr["timelineItems"]["nodes"]
@@ -5097,8 +5192,7 @@ mod tests {
                 at: at("2026-10-30T09:14:45Z"),
             }]
         );
-        assert!(merged.worked_by(&Login::new("tibbe-bot")));
-        assert!(!merged.worked_by(&Login::new("alice")));
+        assert!(!merged.worked_by(&Login::new("tibbe-bot")));
     }
 
     /// `fixtures/managed-facts-commented.json` is the page of
@@ -5108,7 +5202,7 @@ mod tests {
     /// #14841, #14842, #14855, #14856 and #14868 are labeled `needs-triage`,
     /// which asks for the work of whoever triages.
     #[test]
-    fn an_open_issue_linewright_only_commented_on_is_indexed() {
+    fn an_open_issue_linewright_only_commented_on_is_not_indexed() {
         let mut index = ManagedIndex::default();
 
         // `mislav` standing in for Linewright.
@@ -5118,7 +5212,7 @@ mod tests {
 
         assert_eq!(
             index.open,
-            numbers(&[5773, 14822, 14827, 14841, 14842, 14855, 14856, 14868])
+            numbers(&[14822, 14827, 14841, 14842, 14855, 14856, 14868])
         );
     }
 
@@ -5127,7 +5221,7 @@ mod tests {
     /// <https://github.com/cli/cli> last updated on 2026-10-30. Of them, its
     /// maintainer `BagToad` only commented on #14711.
     #[test]
-    fn a_closed_issue_linewright_only_commented_on_is_held() {
+    fn a_closed_issue_linewright_only_commented_on_is_not_held() {
         let page: Page<GqlClosedIssue> =
             serde_json::from_str(include_str!("fixtures/closed-issues-commented.json")).unwrap();
 
@@ -5135,7 +5229,7 @@ mod tests {
         let closed = managed_closed(page.nodes, &Login::new("BagToad"));
 
         let held: Vec<Number> = closed.iter().map(|item| item.number).collect();
-        assert_eq!(held, [Number(14711)]);
+        assert_eq!(held, []);
     }
 
     /// `fixtures/labels.json` is the example response GitHub documents for

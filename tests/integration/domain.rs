@@ -46,7 +46,7 @@ fn persons_issue() -> Issue {
 }
 
 #[test]
-fn an_issue_is_worked_once_linewright_opened_it_recorded_work_on_it_tracks_the_tickets_it_cut_or_opened_a_pull_request_closing_it()
+fn an_issue_is_worked_once_linewright_opened_claimed_or_labeled_it_or_opened_a_pull_request_closing_it()
  {
     let cases = [
         (
@@ -66,7 +66,7 @@ fn an_issue_is_worked_once_linewright_opened_it_recorded_work_on_it_tracks_the_t
                 ..persons_issue()
             },
             vec![],
-            true,
+            false,
         ),
         (
             "commented on by a person",
@@ -129,24 +129,15 @@ fn an_issue_is_worked_once_linewright_opened_it_recorded_work_on_it_tracks_the_t
             false,
         ),
         (
-            "designed, tracking a ticket Linewright cut from it",
+            "labeled designed by Linewright, tracking a ticket it cut from it",
             Issue {
                 labels: vec![label::DESIGNED.into()],
+                events: vec![labeling(label::DESIGNED, LINEWRIGHT)],
                 sub_issues: vec![sub_issue(2, true, LINEWRIGHT)],
                 ..persons_issue()
             },
             vec![],
             true,
-        ),
-        (
-            "designed, with a sub-issue a person opened",
-            Issue {
-                labels: vec![label::DESIGNED.into()],
-                sub_issues: vec![sub_issue(2, true, "alice")],
-                ..persons_issue()
-            },
-            vec![],
-            false,
         ),
     ];
 
@@ -165,7 +156,7 @@ fn a_closed_issue_is_worked_as_an_open_one_is_and_a_closed_pull_request_held_is_
                 comments: vec![comment(LINEWRIGHT)],
                 ..persons_issue()
             }),
-            true,
+            false,
         ),
         (
             "an issue only assigned to Linewright by hand",
@@ -257,13 +248,13 @@ fn a_pull_request_is_held_as_linewrights_when_it_opened_it_and_as_a_persons_whil
             false,
         ),
         (
-            "a person's Linewright commented on",
+            "a person's Linewright only commented on",
             Pull {
                 comments: vec![comment(LINEWRIGHT)],
                 ..persons(&[])
             },
-            Some(PullHeld::Peoples),
-            true,
+            None,
+            false,
         ),
         (
             "a person's Linewright labeled",
@@ -290,7 +281,11 @@ fn a_pull_request_is_held_as_linewrights_when_it_opened_it_and_as_a_persons_whil
         (
             "a person's Linewright worked, closed unmerged",
             closed(Pull {
-                comments: vec![comment(LINEWRIGHT)],
+                labelings: vec![Labeling {
+                    label: label::STALLED.into(),
+                    by: Some(linewright()),
+                    at: at("2026-10-01T09:30:00Z"),
+                }],
                 ..persons(&[])
             }),
             None,
@@ -302,6 +297,123 @@ fn a_pull_request_is_held_as_linewrights_when_it_opened_it_and_as_a_persons_whil
         assert_eq!(pull.held(&linewright()), held, "{case}");
         assert_eq!(pull.worked_by(&linewright()), worked, "{case}");
     }
+}
+
+/// Sub-issue #`number`, open, which `author` opened and `added_by` added.
+fn added(number: u64, author: &str, added_by: Option<&str>) -> SubIssue {
+    SubIssue {
+        added_by: added_by.map(Login::new),
+        ..sub_issue(number, true, author)
+    }
+}
+
+#[test]
+fn an_issue_is_a_tracking_issue_while_it_carries_designed_and_has_tickets_linewright_opened_and_added()
+ {
+    let designed = |sub_issues: Vec<SubIssue>| Issue {
+        labels: vec![label::DESIGNED.into()],
+        sub_issues,
+        ..persons_issue()
+    };
+    let spec_changes = |labels: Vec<String>, sub_issues: Vec<SubIssue>| Issue {
+        labels,
+        sub_issues,
+        ..tracking(1, &[])
+    };
+    let cases = [
+        (
+            "designed, with a ticket Linewright opened and added",
+            designed(vec![added(2, LINEWRIGHT, Some(LINEWRIGHT))]),
+            Some(Tracks::Cut),
+            vec![2],
+        ),
+        (
+            "designed, with a ticket Linewright opened, read before who added it was",
+            designed(vec![added(2, LINEWRIGHT, None)]),
+            Some(Tracks::Cut),
+            vec![2],
+        ),
+        (
+            "designed, with an issue Linewright opened that a person added",
+            designed(vec![added(2, LINEWRIGHT, Some("alice"))]),
+            None,
+            vec![],
+        ),
+        (
+            "designed, with a ticket beside an issue Linewright opened that a person added",
+            designed(vec![
+                added(2, LINEWRIGHT, Some(LINEWRIGHT)),
+                added(3, LINEWRIGHT, Some("alice")),
+                added(4, "alice", Some("alice")),
+            ]),
+            Some(Tracks::Cut),
+            vec![2],
+        ),
+        (
+            "a spec change's, with Linewright's tickets but without designed",
+            spec_changes(vec![], vec![added(2, LINEWRIGHT, Some(LINEWRIGHT))]),
+            None,
+            vec![2],
+        ),
+        (
+            "a spec change's, designed, with no tickets",
+            spec_changes(vec![label::DESIGNED.into()], vec![]),
+            None,
+            vec![],
+        ),
+        (
+            "a spec change's, designed, with Linewright's tickets",
+            spec_changes(
+                vec![label::DESIGNED.into()],
+                vec![
+                    added(2, LINEWRIGHT, Some(LINEWRIGHT)),
+                    added(3, LINEWRIGHT, Some("alice")),
+                ],
+            ),
+            Some(Tracks::SpecChange(Number(70))),
+            vec![2],
+        ),
+    ];
+
+    for (case, issue, tracks, tickets) in cases {
+        assert_eq!(issue.tracks(&linewright()), tracks, "{case}");
+        let cut: Vec<u64> = issue
+            .tickets_cut(&linewright())
+            .map(|t| t.number.0)
+            .collect();
+        assert_eq!(cut, tickets, "{case}");
+    }
+}
+
+#[test]
+fn the_tracking_issues_to_label_at_startup_are_the_open_spec_change_ones_with_tickets_and_without_designed()
+ {
+    let unlabeled = |issue: Issue| Issue {
+        labels: vec![],
+        ..issue
+    };
+    let snapshot = snapshot(
+        vec![
+            unlabeled(tracking(1, &[(10, true)])),
+            tracking(2, &[(20, true)]),
+            unlabeled(Issue {
+                open: false,
+                ..tracking(3, &[(30, false)])
+            }),
+            unlabeled(tracking(7, &[])),
+            unlabeled(Issue {
+                sub_issues: vec![added(50, LINEWRIGHT, Some("alice"))],
+                ..tracking(5, &[])
+            }),
+            unlabeled(cut()),
+        ],
+        vec![],
+    );
+
+    assert_eq!(
+        snapshot.unlabeled_tracking_issues(&linewright()),
+        [Number(1)]
+    );
 }
 
 /// Windows at noon on 2026-10-01, the Done window opened at noon on
@@ -322,7 +434,7 @@ const BEFORE_DONE_WINDOW: &str = "2026-09-20T12:00:00Z";
 fn tracking(number: u64, tickets: &[(u64, bool)]) -> Issue {
     Issue {
         author: linewright(),
-        labels: vec![],
+        labels: vec![label::DESIGNED.into()],
         filed: Some(Filed::Tracking {
             spec_change: Number(70),
         }),
@@ -674,9 +786,8 @@ fn a_pull_request_read_is_held_as_read_and_frees_the_issues_a_persons_closes_or_
 fn tracking_six(state: SubIssueState) -> Issue {
     Issue {
         sub_issues: vec![SubIssue {
-            number: Number(6),
-            author: linewright(),
             state,
+            ..sub_issue(6, true, LINEWRIGHT)
         }],
         ..tracking(1, &[])
     }

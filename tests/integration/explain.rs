@@ -1000,7 +1000,7 @@ fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_the_label_again
 fn a_tracking_issue_with_no_tickets_and_no_cut_in_flight_is_not_managed() {
     let tracking = Issue {
         author: Login::new("factory"),
-        labels: vec![],
+        labels: vec![label::DESIGNED.into()],
         filed: Some(Filed::Tracking {
             spec_change: Number(5),
         }),
@@ -1206,10 +1206,10 @@ fn with_a_required_label_an_issue_without_it_that_linewright_handed_back_is_mana
 }
 
 #[test]
-fn a_tracking_issue_with_no_tickets_is_left_alone_as_such() {
+fn a_spec_changes_issue_with_no_tickets_is_no_tracking_issue_and_left_alone_unlabeled() {
     let tracking = Issue {
         author: Login::new("factory"),
-        labels: vec![],
+        labels: vec![label::DESIGNED.into()],
         filed: Some(Filed::Tracking {
             spec_change: Number(5),
         }),
@@ -1222,10 +1222,10 @@ fn a_tracking_issue_with_no_tickets_is_left_alone_as_such() {
             &AnyItem::HeldIssue(Box::new(tracking))
         )[1..],
         [
-            "parent: #5, the spec change it tracks",
             "state: open issue",
             "last read: 2026-10-01 12:00:30 UTC",
-            "left alone: it is a tracking issue with no tickets, and none are being cut",
+            "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
+             `ready-for-human`",
         ]
     );
 }
@@ -1303,16 +1303,16 @@ fn a_pull_request_linewright_did_not_open_names_who_did() {
 }
 
 #[test]
-fn a_persons_pull_request_linewright_is_assigned_to_or_commented_on_is_in_review() {
+fn a_persons_pull_request_linewright_is_assigned_to_or_labeled_is_in_review() {
     let assigned = Pull {
         assignees: vec![Login::new("factory")],
         ..someones_pull(43)
     };
-    let commented = Pull {
-        comments: vec![Comment {
-            author: Login::new("factory"),
-            body: "Looks good.".into(),
-            created_at: at("2026-10-01T11:00:00Z"),
+    let labeled = Pull {
+        labelings: vec![Labeling {
+            label: "enhancement".into(),
+            by: Some(Login::new("factory")),
+            at: at("2026-10-01T11:00:00Z"),
         }],
         ..someones_pull(44)
     };
@@ -1321,7 +1321,7 @@ fn a_persons_pull_request_linewright_is_assigned_to_or_commented_on_is_in_review
         |pull: Pull| read_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(pull)))[1].clone();
 
     assert_eq!(
-        [state(assigned), state(commented)],
+        [state(assigned), state(labeled)],
         [
             "state: in review: #43 (draft, no checks)",
             "state: in review: #44 (draft, no checks)",
@@ -1794,19 +1794,30 @@ fn linewrights_merged_pull_request_names_the_issue_it_closes() {
 }
 
 #[test]
-fn a_persons_merged_pull_request_linewright_commented_on_is_merged() {
-    let commented = MergedPull {
+fn a_persons_merged_pull_request_linewright_labeled_is_merged_and_one_it_only_commented_on_is_not_worked()
+ {
+    let worked = |event| MergedPull {
         files: vec!["src/main.rs".into()],
-        events: vec![IssueEvent::Commented {
-            by: Login::new("factory"),
-            at: at("2026-10-01T08:00:00Z"),
-        }],
+        events: vec![event],
         ..merged(&[])
     };
+    let labeled = worked(IssueEvent::Labeled {
+        label: "enhancement".into(),
+        by: Some(Login::new("factory")),
+        at: at("2026-10-01T08:00:00Z"),
+    });
+    let commented = worked(IssueEvent::Commented {
+        by: Login::new("factory"),
+        at: at("2026-10-01T08:00:00Z"),
+    });
 
     assert_eq!(
-        read_merged_text(&view(vec![], vec![]), commented)[1],
+        read_merged_text(&view(vec![], vec![]), labeled)[1],
         "state: merged"
+    );
+    assert_eq!(
+        read_merged_text(&view(vec![], vec![]), commented)[1],
+        "state: merged pull request"
     );
 }
 
@@ -1929,7 +1940,7 @@ fn a_ticket_names_its_tracking_issue() {
 fn tracking_40() -> Issue {
     Issue {
         author: Login::new("factory"),
-        labels: vec![],
+        labels: vec![label::DESIGNED.into()],
         sub_issues: vec![
             sub_issue(41, false, "factory"),
             sub_issue(42, true, "factory"),
@@ -2010,7 +2021,7 @@ fn an_issue_whose_parent_is_no_tracking_issue_names_no_parent() {
 /// An issue Linewright cut into the tickets #41, closed, and #42, open, a
 /// person's sub-issue #43 beside them.
 fn cut_40() -> Issue {
-    Issue {
+    labeled_by_linewright(Issue {
         labels: vec![label::DESIGNED.into()],
         sub_issues: vec![
             sub_issue(41, false, "factory"),
@@ -2018,7 +2029,7 @@ fn cut_40() -> Issue {
             sub_issue(43, true, "maintainer"),
         ],
         ..ticket(40, "Add invoices")
-    }
+    })
 }
 
 fn ticket_cut_from_40() -> Issue {

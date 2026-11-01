@@ -375,12 +375,17 @@ pub struct Linked {
     pub open: bool,
 }
 
-/// A sub-issue, with who opened it: Linewright opens the tickets it cuts.
+/// A sub-issue, with who opened it and who added it: Linewright opens the
+/// tickets it cuts and adds them itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "SubIssueRecord", into = "SubIssueRecord")]
 pub struct SubIssue {
     pub number: Number,
     pub author: Login,
+    /// Who added it to its parent: `None` where GitHub's timeline no longer
+    /// shows it, or in a snapshot written before Linewright read it, which
+    /// counts as added by Linewright.
+    pub added_by: Option<Login>,
     pub state: SubIssueState,
 }
 
@@ -427,6 +432,8 @@ struct SubIssueRecord {
     linked: Linked,
     author: Login,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    added_by: Option<Login>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     closed_at: Option<Timestamp>,
 }
 
@@ -435,6 +442,7 @@ impl From<SubIssueRecord> for SubIssue {
         SubIssue {
             number: record.linked.number,
             author: record.author,
+            added_by: record.added_by,
             state: if record.linked.open {
                 SubIssueState::Open
             } else {
@@ -451,6 +459,7 @@ impl From<SubIssue> for SubIssueRecord {
         SubIssueRecord {
             linked: sub_issue.linked(),
             author: sub_issue.author,
+            added_by: sub_issue.added_by,
             closed_at: match sub_issue.state {
                 SubIssueState::Open => None,
                 SubIssueState::Closed { at } => at,
@@ -638,6 +647,14 @@ pub enum Filed {
 }
 
 impl Filed {
+    /// The spec change it was filed as the tracking issue of.
+    pub fn spec_change(self) -> Option<Number> {
+        match self {
+            Filed::Tracking { spec_change } => Some(spec_change),
+            Filed::SpecGap { .. } => None,
+        }
+    }
+
     pub fn read(author: &Login, title: &str, body: &str, linewright: &Login) -> Option<Filed> {
         if author != linewright {
             return None;
@@ -675,30 +692,16 @@ fn tracks(
     sub_issues: &[SubIssue],
     linewright: &Login,
 ) -> Option<Tracks> {
-    match filed {
-        Some(Filed::Tracking { spec_change }) => Some(Tracks::SpecChange(spec_change)),
-        _ if labels.iter().any(|l| l == label::DESIGNED)
-            && tickets_cut(sub_issues, linewright).next().is_some() =>
-        {
-            Some(Tracks::Cut)
-        }
-        _ => None,
+    if !labels.iter().any(|l| l == label::DESIGNED)
+        || tickets_cut(sub_issues, linewright).next().is_none()
+    {
+        return None;
     }
-}
-
-impl Tracks {
-    /// Those of `sub_issues` that are its tickets: for a cut issue, those
-    /// `linewright` opened.
-    pub fn tickets<'a>(
-        self,
-        sub_issues: &'a [SubIssue],
-        linewright: &'a Login,
-    ) -> impl Iterator<Item = &'a SubIssue> {
-        sub_issues.iter().filter(move |s| match self {
-            Tracks::SpecChange(_) => true,
-            Tracks::Cut => is_cut(s, linewright),
-        })
-    }
+    Some(
+        filed
+            .and_then(Filed::spec_change)
+            .map_or(Tracks::Cut, Tracks::SpecChange),
+    )
 }
 
 /// When `tickets` finished: once every one is closed, when the last of them
@@ -715,8 +718,9 @@ pub fn tickets_finished(tickets: &[&SubIssue]) -> Option<Timestamp> {
         .max()
 }
 
-/// Those of `sub_issues` `linewright` opened: the tickets it cut.
-fn tickets_cut<'a>(
+/// Those of `sub_issues` `linewright` opened and added: the tickets it cut
+/// (`docs/specs/design.md`, Cutting).
+pub fn tickets_cut<'a>(
     sub_issues: &'a [SubIssue],
     linewright: &'a Login,
 ) -> impl Iterator<Item = &'a SubIssue> {
@@ -731,6 +735,10 @@ fn was_cut(parent: Option<Parent>, author: Option<&Login>, linewright: &Login) -
 
 fn is_cut(sub_issue: &SubIssue, linewright: &Login) -> bool {
     sub_issue.author == *linewright
+        && sub_issue
+            .added_by
+            .as_ref()
+            .is_none_or(|added_by| added_by == linewright)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -743,10 +751,7 @@ impl Parent {
     pub fn new(number: Number, filed: Option<Filed>) -> Parent {
         Parent {
             number,
-            spec_change: match filed {
-                Some(Filed::Tracking { spec_change }) => Some(spec_change),
-                _ => None,
-            },
+            spec_change: filed.and_then(Filed::spec_change),
         }
     }
 }
@@ -827,6 +832,12 @@ impl Issue {
         last_labeling(&self.events, status.label())
     }
 
+    /// The spec change Linewright filed it as the tracking issue of, if it
+    /// did.
+    pub fn spec_change(&self) -> Option<Number> {
+        self.filed.and_then(Filed::spec_change)
+    }
+
     pub fn cut_from(&self) -> Option<Number> {
         self.parent.and_then(|parent| parent.spec_change)
     }
@@ -839,14 +850,16 @@ impl Issue {
         was_cut(self.parent, Some(&self.author), linewright)
     }
 
-    /// Its sub-issues `linewright` opened: the tickets it cut from the issue.
+    /// Its sub-issues `linewright` opened and added: the tickets it cut from
+    /// the issue.
     pub fn tickets_cut<'a>(&'a self, linewright: &'a Login) -> impl Iterator<Item = &'a SubIssue> {
         tickets_cut(&self.sub_issues, linewright)
     }
 
     /// What it tracks, if it is a tracking issue (docs/specs/design.md,
-    /// "Cutting"). An issue cut into tickets is labeled designed last, so one
-    /// with tickets but no label is a cut that stopped part way, and tracks
+    /// "Cutting"): it carries `linewright:designed` and has tickets cut from
+    /// it. An issue cut into tickets is labeled designed last, so one with
+    /// tickets but no label is a cut that stopped part way, and tracks
     /// nothing yet.
     pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
         tracks(self.filed, &self.labels, &self.sub_issues, linewright)
@@ -887,23 +900,17 @@ impl Issue {
         self.events.iter().cloned().chain(comments).collect()
     }
 
-    /// What tells whether `linewright` manages it, with `closing` the pull
-    /// requests that close it and `timeline` its [`Issue::timeline`].
-    fn signs<'a>(
-        &'a self,
-        linewright: &Login,
-        closing: &'a [ClosingPull],
-        timeline: &'a [IssueEvent],
-    ) -> ManagedSigns<'a> {
+    /// What tells whether Linewright manages it, with `closing` the pull
+    /// requests that close it.
+    fn signs<'a>(&'a self, closing: &'a [ClosingPull]) -> ManagedSigns<'a> {
         ManagedSigns {
             open: self.open,
             labels: &self.labels,
             assignees: &self.assignees,
             work: WorkSigns {
                 author: Some(&self.author),
-                events: timeline,
+                events: &self.events,
                 closed_by: closing,
-                tracks: self.tracks(linewright).is_some(),
             },
         }
     }
@@ -912,10 +919,7 @@ impl Issue {
     /// `closing` the pull requests that close it, such as
     /// [`Snapshot::pulls_closing`] gives.
     pub fn worked_by(&self, linewright: &Login, closing: &[ClosingPull]) -> bool {
-        let timeline = self.timeline();
-        self.signs(linewright, closing, &timeline)
-            .work
-            .worked_by(linewright)
+        self.signs(closing).work.worked_by(linewright)
     }
 
     /// Whether it asks for `linewright`'s work (`docs/specs/repository.md`,
@@ -925,8 +929,7 @@ impl Issue {
     /// design is a merged pull request, which `reconcile::spec_change`
     /// tells.
     pub fn asks_for_work(&self, linewright: &Login, marking: Marking) -> bool {
-        let timeline = self.timeline();
-        self.signs(linewright, &self.closed_by, &timeline)
+        self.signs(&self.closed_by)
             .asks_for_work(linewright, marking)
     }
 
@@ -936,9 +939,7 @@ impl Issue {
     /// [`Issue::asks_for_work`] tells with `marking`. Whether it is managed
     /// is `managed::classify`'s to decide.
     pub fn candidate(&self, linewright: &Login, closing: &[ClosingPull], marking: Marking) -> bool {
-        let timeline = self.timeline();
-        self.signs(linewright, closing, &timeline)
-            .candidate(linewright, marking)
+        self.signs(closing).candidate(linewright, marking)
     }
 
     pub fn last_reopened(&self) -> Option<Timestamp> {
@@ -1272,13 +1273,12 @@ pub enum PullHeld {
 
 impl PullSigns<'_> {
     /// Whether `linewright` worked it, as [`Issue::worked_by`] tells: it
-    /// opened it, assigned itself to it, labeled it or commented on it.
+    /// opened it, assigned itself to it or labeled it.
     pub fn worked_by(&self, linewright: &Login) -> bool {
         WorkSigns {
             author: Some(self.author),
             events: self.events,
             closed_by: &[],
-            tracks: false,
         }
         .worked_by(linewright)
     }
@@ -1476,7 +1476,7 @@ impl ManagedFacts {
         was_cut(parent, self.work.author.as_ref(), linewright)
     }
 
-    fn signs(&self, open: bool, linewright: &Login) -> ManagedSigns<'_> {
+    fn signs(&self, open: bool) -> ManagedSigns<'_> {
         let work = &self.work;
         ManagedSigns {
             open,
@@ -1486,22 +1486,20 @@ impl ManagedFacts {
                 author: work.author.as_ref(),
                 events: &work.events,
                 closed_by: &work.closed_by,
-                tracks: self.tracks(linewright).is_some(),
             },
         }
     }
 
     /// Whether `linewright` has worked it, as [`Issue::worked_by`] tells.
     pub fn worked_by(&self, linewright: &Login) -> bool {
-        self.signs(false, linewright).work.worked_by(linewright)
+        self.signs(false).work.worked_by(linewright)
     }
 
     /// Whether `linewright` may manage it, `open` or not, as
     /// [`Issue::candidate`] tells of an issue marked for Linewright with the
     /// pull requests closing it.
     pub fn candidate(&self, open: bool, linewright: &Login) -> bool {
-        self.signs(open, linewright)
-            .candidate(linewright, Marking::Marked)
+        self.signs(open).candidate(linewright, Marking::Marked)
     }
 }
 
@@ -1534,38 +1532,34 @@ impl ManagedSigns<'_> {
 /// (`GLOSSARY.md`, **Worked**).
 struct WorkSigns<'a> {
     author: Option<&'a Login>,
-    /// Its comments among them.
     events: &'a [IssueEvent],
     closed_by: &'a [ClosingPull],
-    /// Whether it is a tracking issue.
-    tracks: bool,
 }
 
 impl WorkSigns<'_> {
     /// Whether `linewright` worked it (`docs/specs/repository.md`, Managed
     /// items):
     ///
-    /// - it filed it, or tracks tickets with it: it opened it;
-    /// - it assigned itself to it once;
+    /// - it opened it;
+    /// - it assigned itself to it once: it claimed it;
     /// - it applied a label to it;
-    /// - it wrote a comment on it;
-    /// - it wrote a pull request closing it: it opened that pull request.
+    /// - it opened a pull request closing it.
     ///
-    /// Being assigned alone is not working it: that asks for its work.
+    /// A comment alone is not working it, and being assigned alone asks for
+    /// its work.
     fn worked_by(&self, linewright: &Login) -> bool {
         self.author == Some(linewright)
             || self.events.iter().any(|event| match event {
                 IssueEvent::Labeled { by, .. } => by.as_ref() == Some(linewright),
-                IssueEvent::Commented { by, .. } => by == linewright,
                 IssueEvent::Assignment(Assignment::Assigned {
                     assignee, actor, ..
                 }) => assignee == linewright && actor == linewright,
                 IssueEvent::Unlabeled { .. }
+                | IssueEvent::Commented { .. }
                 | IssueEvent::Reopened { .. }
                 | IssueEvent::Assignment(Assignment::Unassigned { .. }) => false,
             })
             || self.closed_by.iter().any(|pr| pr.author == *linewright)
-            || self.tracks
     }
 }
 
@@ -2346,6 +2340,23 @@ impl Snapshot {
         }
     }
 
+    /// The open issues `linewright` filed as a spec change's tracking issue,
+    /// with tickets cut from them, that lack `linewright:designed`: those
+    /// it filed before a tracking issue carried the label, which Linewright
+    /// labels at startup so that their cuts are not discarded.
+    pub fn unlabeled_tracking_issues(&self, linewright: &Login) -> Vec<Number> {
+        self.issues
+            .iter()
+            .filter(|issue| {
+                issue.open
+                    && issue.spec_change().is_some()
+                    && !issue.has_label(label::DESIGNED)
+                    && issue.tickets_cut(linewright).next().is_some()
+            })
+            .map(|issue| issue.number)
+            .collect()
+    }
+
     /// The closed tickets of the tracking issues it holds, open or closed,
     /// that it does not yet hold among the closed items, which a store reads
     /// after the rest.
@@ -2388,13 +2399,13 @@ impl Snapshot {
             .issues
             .iter()
             .filter(|issue| issue.open)
-            .filter_map(|issue| Some((issue.tracks(linewright)?, &issue.sub_issues)));
+            .filter_map(|issue| issue.tracks(linewright).map(|_| &issue.sub_issues));
         let closed = self.closed.iter().filter_map(|item| match &item.kind {
-            ClosedKind::Issue { facts, .. } => Some((item.tracks(linewright)?, &facts.sub_issues)),
+            ClosedKind::Issue { facts, .. } => item.tracks(linewright).map(|_| &facts.sub_issues),
             ClosedKind::Pull { .. } => None,
         });
         open.chain(closed)
-            .flat_map(|(tracks, sub_issues)| tracks.tickets(sub_issues, linewright))
+            .flat_map(|sub_issues| tickets_cut(sub_issues, linewright))
     }
 }
 
@@ -2583,9 +2594,10 @@ mod tests {
     }
 
     /// A snapshot as Linewright wrote it before a sub-issue held when it
-    /// closed.
+    /// closed and who added it.
     #[test]
-    fn a_snapshot_written_before_sub_issues_held_their_close_time_loads_with_it_unknown() {
+    fn a_snapshot_written_before_sub_issues_held_their_close_time_and_adder_loads_with_both_unknown()
+     {
         let snapshot: Snapshot = serde_json::from_str(
             r#"{
               "default_branch": "main",
@@ -2603,10 +2615,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            snapshot.issues[0].sub_issues[0].state,
-            SubIssueState::Closed { at: None }
-        );
+        let sub_issue = &snapshot.issues[0].sub_issues[0];
+        assert_eq!(sub_issue.state, SubIssueState::Closed { at: None });
+        assert_eq!(sub_issue.added_by, None);
     }
 
     /// A snapshot as Linewright wrote it before it held a closed issue's

@@ -6,7 +6,7 @@ use std::cmp::Reverse;
 
 use crate::domain::{
     CheckState, ClosedKind, Issue, Login, Mergeability, Number, Pull, PullState, ReviewDecision,
-    StatusLabel, SubIssue, Timestamp, Tracks, last_labeling, last_unassigned,
+    StatusLabel, SubIssue, Timestamp, last_labeling, last_unassigned, tickets_cut,
 };
 pub use crate::managed::Ended;
 use crate::managed::{self, ItemState, Managed};
@@ -799,25 +799,23 @@ impl Tracker {
         let snapshot = &view.snapshot;
         let linewright = &view.policy.linewright;
         if let Some(issue) = snapshot.issue(number).filter(|issue| issue.open) {
-            let tracks = issue.tracks(linewright)?;
+            issue.tracks(linewright)?;
             return Some(Tracker::new(
                 number,
                 &issue.title,
-                tracks,
                 &issue.sub_issues,
                 None,
                 linewright,
             ));
         }
         let item = snapshot.closed.iter().find(|item| item.number == number)?;
-        let tracks = item.tracks(linewright)?;
+        item.tracks(linewright)?;
         let ClosedKind::Issue { facts, .. } = &item.kind else {
             return None;
         };
         Some(Tracker::new(
             number,
             &item.title,
-            tracks,
             &facts.sub_issues,
             Some(item.closed_at),
             linewright,
@@ -827,12 +825,11 @@ impl Tracker {
     fn new(
         number: Number,
         title: &str,
-        tracks: Tracks,
         sub_issues: &[SubIssue],
         closed: Option<Timestamp>,
         linewright: &Login,
     ) -> Tracker {
-        let tickets: Vec<&SubIssue> = tracks.tickets(sub_issues, linewright).collect();
+        let tickets: Vec<&SubIssue> = tickets_cut(sub_issues, linewright).collect();
         Tracker {
             number,
             title: title.to_string(),

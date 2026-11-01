@@ -1028,3 +1028,46 @@ fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signa
         "draining: exiting once no run is in flight; the next signal stops instead"
     );
 }
+
+/// How many times `issue` was labeled `linewright:designed`.
+fn designed_labelings(issue: &linewright::domain::Issue) -> usize {
+    issue
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(event, linewright::domain::IssueEvent::Labeled { label: name, .. }
+                if name == label::DESIGNED)
+        })
+        .count()
+}
+
+/// A spec change cut into tickets under a tracking issue, as Linewright
+/// left it before a spec change's tracking issue carried
+/// `linewright:designed`.
+async fn old_spec_change_cut(world: &World) -> SpecCut {
+    let cut = world.spec_change_cut_into_tickets().await;
+    world
+        .store
+        .unlabel_as(cut.tracking, label::DESIGNED)
+        .unwrap();
+    cut
+}
+
+#[tokio::test]
+async fn startup_labels_an_old_open_spec_change_tracking_issue_designed_once_and_its_cut_goes_on() {
+    let mut world = World::new().await;
+    let cut = old_spec_change_cut(&world).await;
+    let before = designed_labelings(&world.issue(cut.tracking));
+
+    for _ in 0..2 {
+        world.restart(|_| {}).await;
+        world.poll().await;
+    }
+
+    let tracking = world.issue(cut.tracking);
+    assert!(tracking.has_label(label::DESIGNED), "{tracking:?}");
+    assert_eq!(designed_labelings(&tracking), before + 1);
+    for ticket in cut.tickets {
+        assert!(world.issue(ticket).open, "#{ticket} was closed");
+    }
+}

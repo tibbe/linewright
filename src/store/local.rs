@@ -176,9 +176,16 @@ struct IssueRecord {
     issue: Issue,
     issue_type: Option<String>,
     blocked_by: Vec<Number>,
-    sub_issues: Vec<Number>,
+    sub_issues: Vec<Added>,
     /// Set while the issue is closed.
     closing: Option<Closing>,
+}
+
+/// A sub-issue, with who added it.
+#[derive(Clone, Serialize)]
+struct Added {
+    number: Number,
+    by: Login,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -422,6 +429,13 @@ impl LocalStore {
             Written::Pull(pull) => pull.comments.push(comment),
         }
         Ok(())
+    }
+
+    /// `actor` adds issue #`child` to #`parent`'s sub-issues.
+    pub fn add_sub_issue_as(&self, actor: &str, parent: Number, child: Number) -> Result<()> {
+        let now = self.now();
+        self.state()
+            .add_sub_issue(parent, child, Login::new(actor), now)
     }
 
     /// `actor` labels the issue or pull request #`number` `label`.
@@ -1301,11 +1315,12 @@ impl State {
             sub_issues: record
                 .sub_issues
                 .iter()
-                .map(|number| {
+                .map(|Added { number, by }| {
                     let sub_issue = &self.issues[number];
                     SubIssue {
                         number: *number,
                         author: sub_issue.issue.author.clone(),
+                        added_by: Some(by.clone()),
                         state: match sub_issue.closing {
                             None => SubIssueState::Open,
                             Some(closing) => SubIssueState::Closed {
@@ -1318,7 +1333,7 @@ impl State {
             parent: self
                 .issues
                 .values()
-                .find(|r| r.sub_issues.contains(&issue.number))
+                .find(|r| r.sub_issues.iter().any(|a| a.number == issue.number))
                 .map(|r| Parent::new(r.issue.number, self.filed(&r.issue))),
             filed: self.filed(issue),
             closed_by: self
@@ -1371,6 +1386,19 @@ impl State {
 
     fn filed(&self, issue: &Issue) -> Option<Filed> {
         Filed::read(&issue.author, &issue.title, &issue.body, &self.linewright)
+    }
+
+    fn add_sub_issue(
+        &mut self,
+        parent: Number,
+        child: Number,
+        by: Login,
+        now: Timestamp,
+    ) -> Result<()> {
+        self.issue_written(child, now)?;
+        let added = Added { number: child, by };
+        self.issue_written(parent, now)?.sub_issues.push(added);
+        Ok(())
     }
 
     fn add_label(&mut self, number: Number, label: &str, by: &Login, now: Timestamp) -> Result<()> {
@@ -2256,9 +2284,8 @@ impl Store for LocalStore {
     async fn add_sub_issue(&self, parent: Number, child: Number) -> Result<()> {
         let now = self.now();
         let mut state = self.state();
-        state.issue_written(child, now)?;
-        state.issue_written(parent, now)?.sub_issues.push(child);
-        Ok(())
+        let linewright = state.linewright.clone();
+        state.add_sub_issue(parent, child, linewright, now)
     }
 
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()> {

@@ -3143,9 +3143,12 @@ fn a_ticket_linewright_is_still_assigned_to_reopened_after_its_pull_request_merg
     assert_eq!(at(&reopened_before_it_merged, 10), vec![]);
 }
 
+/// Spec change #`pr`'s tracking issue #`number`, with Linewright's
+/// `tickets`, each open or not.
 fn tracking(number: u64, pr: u64, tickets: &[(u64, bool)]) -> Issue {
     let mut tracking = issue(number);
     tracking.author = Login::new(LINEWRIGHT);
+    tracking.labels = vec![label::DESIGNED.into()];
     tracking.title = format!("Spec change: Spec PR {pr}");
     tracking.filed = Some(Filed::Tracking {
         spec_change: Number(pr),
@@ -3316,6 +3319,37 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_desi
     );
     assert_eq!(decided.waits.get(&Number(9)), None);
     assert_eq!(decide(&snapshot(vec![discarded])), vec![design(9)]);
+}
+
+#[test]
+fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_added_as_a_sub_issue() {
+    let mut undesigned = cut_issue(9, &[(10, true)]);
+    undesigned.labels.clear();
+    undesigned.sub_issues.push(SubIssue {
+        added_by: Some(Login::new("maintainer")),
+        ..sub_issue(11, true, LINEWRIGHT)
+    });
+
+    assert_eq!(
+        decide(&snapshot(vec![undesigned])),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::Issue(Number(9)),
+            peoples_pulls: vec![],
+            tickets: vec![Number(10)],
+            pulls: vec![],
+        })]
+    );
+}
+
+#[test]
+fn an_issue_with_only_linewrights_issues_a_person_added_as_sub_issues_is_no_tracking_issue() {
+    let mut designed = labeled(claimed(readied(9)), label::DESIGNED);
+    designed.sub_issues = vec![SubIssue {
+        added_by: Some(Login::new("maintainer")),
+        ..sub_issue(11, false, LINEWRIGHT)
+    }];
+
+    assert_eq!(decide(&snapshot(vec![designed])), vec![implement(9)]);
 }
 
 #[test]

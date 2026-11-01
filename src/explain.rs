@@ -786,7 +786,6 @@ fn describe_issue_exclusion(exclusion: &IssueExclusion) -> Phrase {
         IssueExclusion::WaitsOnAPerson { .. } => "it ",
         IssueExclusion::NotMarked { .. }
         | IssueExclusion::NoPipelineLabel
-        | IssueExclusion::NoTickets
         | IssueExclusion::NoOpenTickets => "it is ",
     };
     Phrase::from(subject).then(exclusion.worded())

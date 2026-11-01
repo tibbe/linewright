@@ -5,7 +5,8 @@
 
 use crate::board::{self, Board, Card, CardStatus, Column, Lane, LaneHeading};
 use crate::domain::{
-    ClosedKind, ClosingPull, Number, PullState, SubIssue, Timestamp, Tracks, tickets_finished,
+    ClosedKind, ClosingPull, Number, PullState, SubIssue, Timestamp, Tracks, tickets_cut,
+    tickets_finished,
 };
 use crate::explain::{Answer, ChildRole, ParentRole};
 use crate::managed::{self, LeftAloneItem};
@@ -212,5 +213,6 @@ fn tickets_of(number: Number, view: &View) -> Option<Vec<&SubIssue>> {
             };
             (closed.tracks(linewright), &facts.sub_issues)
         };
-    Some(tracks?.tickets(sub_issues, linewright).collect())
+    tracks?;
+    Some(tickets_cut(sub_issues, linewright).collect())
 }

@@ -1,0 +1,200 @@
+{
+  "assignees": {
+    "nodes": []
+  },
+  "assignments": {
+    "nodes": [
+      {
+        "__typename": "LabeledEvent",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "createdAt": "2026-10-17T14:33:18Z",
+        "label": {
+          "name": "ready-for-human"
+        }
+      }
+    ]
+  },
+  "author": {
+    "__typename": "User",
+    "login": "tibbe"
+  },
+  "body": "A retrospective of the 23 agent sessions behind two spec changes:\n\n- #268 (tracking issue #269, tickets #270–#273)\n- #277 (tracking issue #281, tickets #282–#288)\n\nThe sessions cost about $64: $14 for #269 and $50 for #281. They ran the briefs of Linewright 8c2638f, before the deployment moved to c8060e9, and each worked in a clone of `main` as it was then.\n\nThe work came out well. Every pull request but #276 passed CI on its first push, and none needed changes in review. The cost was in how the work was done. Each finding is a sub-issue, most severe first:\n\n1. #300 Keep Linewright's secrets out of agent sessions and their transcripts\n2. #301 Give work two tickets need its own ticket when cutting a spec change\n3. #302 Keep an update run to the update\n4. #303 Fix the shared build cache, which breaks when the session that started it ends\n5. #304 Make a hung test name itself, locally and in CI\n6. #305 Give agents a code map so they read less of the largest files\n7. #306 Close the gaps the code reviewers left\n8. #307 Catch with checks the mechanical mistakes the reviewers keep finding\n\n## Already on `main`\n\nWhat the same runs show about two changes merged since:\n\n- **1b79095 (review once):** it saves about 3.5 minutes where a second review round ran. But those second rounds caught real bugs three times, so it goes with #306. It also makes #302 worse.\n- **20276fe (the spec change's diff, and less of the spec read):** it changes little. Reading the spec cost 17–78K characters a run, against far more code.\n\n## Seen along the way\n\nThese are about Linewright's own behaviour, not the agents' environment:\n\n- Five tickets got an `implement-2` run that started and was cancelled 2–6s after the ticket closed.\n- Each pull request gets two \"Ready for review\" comments.\n- #292 and #291 merged before #290, whose ticket blocked #284 and #285. That forced two more update runs on #290.\n",
+  "closedAt": "2026-10-19T13:59:47Z",
+  "closedByPullRequestsReferences": {
+    "nodes": []
+  },
+  "labels": {
+    "nodes": [
+      {
+        "name": "ready-for-human"
+      }
+    ]
+  },
+  "number": 308,
+  "parent": null,
+  "stateReason": "COMPLETED",
+  "subIssueAdds": {
+    "nodes": [
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "subIssue": {
+          "number": 300
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "subIssue": {
+          "number": 301
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "subIssue": {
+          "number": 302
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "subIssue": {
+          "number": 303
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "subIssue": {
+          "number": 304
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "subIssue": {
+          "number": 305
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "subIssue": {
+          "number": 306
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "subIssue": {
+          "number": 307
+        }
+      }
+    ]
+  },
+  "subIssues": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closedAt": "2026-10-18T06:15:04Z",
+        "number": 300,
+        "state": "CLOSED"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closedAt": "2026-10-19T13:59:17Z",
+        "number": 301,
+        "state": "CLOSED"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closedAt": "2026-10-18T07:12:54Z",
+        "number": 302,
+        "state": "CLOSED"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closedAt": "2026-10-18T06:07:36Z",
+        "number": 303,
+        "state": "CLOSED"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closedAt": "2026-10-19T08:52:33Z",
+        "number": 304,
+        "state": "CLOSED"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closedAt": "2026-10-18T06:16:11Z",
+        "number": 305,
+        "state": "CLOSED"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closedAt": "2026-10-18T13:02:55Z",
+        "number": 306,
+        "state": "CLOSED"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closedAt": "2026-10-18T07:35:28Z",
+        "number": 307,
+        "state": "CLOSED"
+      }
+    ]
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "closer": null
+      }
+    ]
+  },
+  "title": "Retro: the agents' environment, from the runs on #269 and #281",
+  "updatedAt": "2026-10-19T13:59:47Z"
+}

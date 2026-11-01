@@ -26,7 +26,7 @@ contracts![
     an_issue_closed_as_not_planned_reads_back_closed_as_not_planned,
     an_issue_closed_as_a_duplicate_reads_back_closed_as_a_duplicate,
     a_snapshot_holds_an_issue_closed_within_its_windows,
-    a_sub_issue_and_its_parent_name_each_other,
+    a_sub_issue_and_its_parent_name_each_other_with_who_added_it,
     a_blocker_is_listed_open_until_it_closes,
     no_issue_is_read_for_a_number_the_store_lacks,
 ];
@@ -414,7 +414,9 @@ async fn a_snapshot_holds_an_issue_closed_within_its_windows(sandbox: Sandbox) -
         .await
 }
 
-async fn a_sub_issue_and_its_parent_name_each_other(sandbox: Sandbox) -> Result<()> {
+async fn a_sub_issue_and_its_parent_name_each_other_with_who_added_it(
+    sandbox: Sandbox,
+) -> Result<()> {
     let parent = open(&sandbox, "parent").await?;
     let child = open(&sandbox, "child").await?;
 
@@ -423,7 +425,8 @@ async fn a_sub_issue_and_its_parent_name_each_other(sandbox: Sandbox) -> Result<
     let linewright = linewright(&sandbox).await?;
     let expected = SubIssue {
         number: child,
-        author: linewright,
+        author: linewright.clone(),
+        added_by: Some(linewright),
         state: SubIssueState::Open,
     };
     equal(

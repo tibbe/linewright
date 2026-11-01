@@ -133,11 +133,11 @@ fn a_board_with_a_finished_lane() -> View {
             "2026-10-01T09:30:00Z",
         ),
         closed_item(
-            &Issue {
+            &labeled_by_linewright(Issue {
                 labels: vec![label::DESIGNED.into()],
                 sub_issues: vec![sub_issue(6, false, LINEWRIGHT)],
                 ..ticket(5, "Small thing")
-            },
+            }),
             "2026-10-01T09:40:00Z",
         ),
     ]);
