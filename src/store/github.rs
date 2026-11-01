@@ -8,7 +8,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use base64::Engine;
 use reqwest::{Method, StatusCode};
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -196,6 +196,16 @@ struct Answer {
 }
 
 impl Answer {
+    /// GitHub's refusal of `request` this answer gives, or its failure to
+    /// carry it out.
+    fn refusal(self, request: String) -> ErrorResponse {
+        ErrorResponse {
+            request,
+            status: self.status,
+            body: self.body,
+        }
+    }
+
     async fn read(response: reqwest::Response) -> Result<Answer> {
         Ok(Answer {
             status: response.status(),
@@ -231,15 +241,77 @@ where
                 retries += 1;
             }
             Some(_) => {
-                return Err(ErrorResponse {
-                    request: request.to_string(),
-                    status: answer.status,
-                    body: answer.body,
-                }
-                .into());
+                return Err(answer.refusal(request.to_string()).into());
             }
         }
     }
+}
+
+/// How long a failed request waits before it is made again: GitHub asks for
+/// at least a second between writes
+/// (<https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#pause-between-mutative-requests>).
+const RETRY_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How far before a write was sent [`retried_once`]'s look reaches back,
+/// for the difference between this host's clock and GitHub's.
+const CLOCK_SKEW: chrono::TimeDelta = chrono::TimeDelta::minutes(1);
+
+/// Whether a retry could end `error` differently (runs.md, Ending,
+/// **Retries**): GitHub gave no answer, as when the connection closed before
+/// it, or answered with a server error. A refusal (4xx) would be given again.
+fn retryable(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|e| !e.is_builder())
+            || cause
+                .downcast_ref::<ErrorResponse>()
+                .is_some_and(|r| r.status.is_server_error())
+    })
+}
+
+/// What `attempt`, the requests of `request`, gives, attempted once more
+/// when it fails as a retry could end differently ([`retryable`]). GitHub
+/// may have made what a write asked for though its answer was lost, so before
+/// the second attempt `look` looks for it, and what it finds stands in for
+/// that attempt.
+async fn retried_once<T, A, AFut, L, LFut>(request: &str, mut attempt: A, look: L) -> Result<T>
+where
+    A: FnMut() -> AFut,
+    AFut: Future<Output = Result<T>>,
+    L: FnOnce() -> LFut,
+    LFut: Future<Output = Result<Option<T>>>,
+{
+    let first = match attempt().await {
+        Err(e) if retryable(&e) => e,
+        done => return done,
+    };
+    tracing::warn!(request, error = format!("{first:#}"), "retrying");
+    tokio::time::sleep(RETRY_WAIT).await;
+    let found = look().await.with_context(|| {
+        format!("{request} failed ({first:#}), and looking for what it made failed")
+    })?;
+    if let Some(found) = found {
+        return Ok(found);
+    }
+    attempt()
+        .await
+        .with_context(|| format!("{request} failed twice, first with {first:#}, then"))
+}
+
+/// When a write about to be sent may have been made, by GitHub's clock.
+fn since_sent() -> Timestamp {
+    chrono::Utc::now() - CLOCK_SKEW
+}
+
+/// `time` as GitHub takes it in a query: `YYYY-MM-DDTHH:MM:SSZ`.
+fn query_time(time: Timestamp) -> String {
+    time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// The look of a request that makes nothing, which finds nothing.
+async fn finds_nothing<T>() -> Result<Option<T>> {
+    Ok(None)
 }
 
 /// The URL of the attachment GitHub gave `answer` to `request`, an upload
@@ -272,6 +344,126 @@ fn attached(request: &str, answer: Answer) -> Result<String, AttachError> {
         }
         _ => Err(AttachError::Failed(refusal.into())),
     }
+}
+
+/// An issue or pull request as GitHub lists it
+/// (<https://docs.github.com/en/rest/issues/issues#list-repository-issues>).
+#[derive(Deserialize)]
+struct ListedIssue {
+    number: u64,
+    title: String,
+    body: Option<String>,
+    user: RestUser,
+    created_at: Timestamp,
+    /// Present on a pull request only.
+    pull_request: Option<Value>,
+}
+
+/// <https://docs.github.com/en/rest/issues/comments#list-issue-comments>
+#[derive(Deserialize)]
+struct ListedComment {
+    body: Option<String>,
+    user: RestUser,
+    created_at: Timestamp,
+}
+
+/// <https://docs.github.com/en/rest/pulls/pulls#list-pull-requests>
+#[derive(Deserialize)]
+struct ListedPull {
+    number: u64,
+    user: RestUser,
+}
+
+/// What GitHub answers a `POST` that made an issue or a pull request with.
+#[derive(Deserialize)]
+struct Made {
+    number: Number,
+}
+
+/// An issue a link names, as GitHub lists sub-issues and blocking issues.
+#[derive(Deserialize)]
+struct ListedIssueId {
+    id: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadComment {
+    author: Option<Actor>,
+    body: String,
+    created_at: Timestamp,
+}
+
+#[derive(Deserialize)]
+struct ThreadData {
+    node: ThreadNode,
+}
+
+#[derive(Deserialize)]
+struct ThreadNode {
+    comments: Nodes<ThreadComment>,
+}
+
+/// The issue among `listed` that `linewright` opened as `issue` since
+/// `since`: what a `create_issue` whose answer was lost made.
+fn issue_made(
+    listed: Vec<ListedIssue>,
+    linewright: &Login,
+    issue: &NewIssue,
+    since: Timestamp,
+) -> Option<Number> {
+    listed
+        .into_iter()
+        .find(|listed| {
+            listed.pull_request.is_none()
+                && Login::new(listed.user.login.as_str()) == *linewright
+                && listed.created_at >= since
+                && listed.title == issue.title
+                && listed.body.as_deref().unwrap_or_default() == issue.body
+        })
+        .map(|listed| Number(listed.number))
+}
+
+/// Whether `linewright` commented `body` among `listed` since `since`.
+fn commented(listed: Vec<ListedComment>, linewright: &Login, body: &str, since: Timestamp) -> bool {
+    listed.into_iter().any(|comment| {
+        Login::new(comment.user.login.as_str()) == *linewright
+            && comment.created_at >= since
+            && comment.body.as_deref().unwrap_or_default() == body
+    })
+}
+
+/// The pull request among `listed`, all from one head, that `linewright`
+/// opened.
+fn pull_made(listed: Vec<ListedPull>, linewright: &Login) -> Option<Number> {
+    listed
+        .into_iter()
+        .find(|pull| Login::new(pull.user.login.as_str()) == *linewright)
+        .map(|pull| Number(pull.number))
+}
+
+/// Whether `linewright` replied `body` in the thread of `comments` since
+/// `since`.
+fn replied(comments: Vec<ThreadComment>, linewright: &Login, body: &str, since: Timestamp) -> bool {
+    comments.into_iter().any(|comment| {
+        comment
+            .author
+            .is_some_and(|a| Login::new(a.login) == *linewright)
+            && comment.created_at >= since
+            && comment.body == body
+    })
+}
+
+/// Whether `listed` holds the issue whose id is `id`.
+fn linked_already(listed: &[ListedIssueId], id: u64) -> bool {
+    listed.iter().any(|issue| issue.id == id)
+}
+
+fn gql_data<T>(response: GqlResponse<T>) -> Result<T> {
+    if !response.errors.is_empty() {
+        bail!("GraphQL errors: {}", Value::Array(response.errors));
+    }
+    response.data.context("GraphQL returned no data")
 }
 
 #[derive(Clone, Deserialize)]
@@ -311,7 +503,8 @@ impl GitHub {
     }
 
     pub async fn repo_get(&self, path: &str) -> Result<Value> {
-        self.rest(Method::GET, &self.repo_path(path), None).await
+        self.rest_once(Method::GET, &self.repo_path(path), None)
+            .await
     }
 
     pub fn full_name(&self) -> String {
@@ -356,24 +549,65 @@ impl GitHub {
             .with_context(|| format!("{method} {path}"))
     }
 
+    /// The answer to the request, with each rate limit waited out.
+    async fn answer(&self, method: &Method, path: &str, body: Option<&Value>) -> Result<Answer> {
+        let request = format!("{method} {path}");
+        waiting_out_rate_limits(&request, || async {
+            Answer::read(self.send(method.clone(), path, body.cloned()).await?).await
+        })
+        .await
+    }
+
+    /// The answer to a request that makes nothing, made again once when a
+    /// retry could end it differently ([`retried_once`]): when GitHub gives
+    /// none or a server error, which fails it.
+    async fn answer_retried(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Answer> {
+        let request = format!("{method} {path}");
+        retried_once(
+            &request,
+            || async {
+                let answer = self.answer(&method, path, body.as_ref()).await?;
+                if answer.status.is_server_error() {
+                    return Err(answer.refusal(request.clone()).into());
+                }
+                Ok(answer)
+            },
+            finds_nothing,
+        )
+        .await
+    }
+
+    /// The request, made again once when a retry could end it differently
+    /// ([`retried_once`]); not for a request that makes something.
     async fn rest<T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
         body: Option<Value>,
     ) -> Result<T> {
+        retried_once(
+            &format!("{method} {path}"),
+            || self.rest_once(method.clone(), path, body.clone()),
+            finds_nothing,
+        )
+        .await
+    }
+
+    async fn rest_once<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<T> {
         let request = format!("{method} {path}");
-        let answer = waiting_out_rate_limits(&request, || async {
-            Answer::read(self.send(method.clone(), path, body.clone()).await?).await
-        })
-        .await?;
+        let answer = self.answer(&method, path, body.as_ref()).await?;
         if !answer.status.is_success() {
-            return Err(ErrorResponse {
-                request,
-                status: answer.status,
-                body: answer.body,
-            }
-            .into());
+            return Err(answer.refusal(request).into());
         }
         let text = if answer.body.is_empty() {
             "null"
@@ -421,11 +655,19 @@ impl GitHub {
     }
 
     async fn graphql<T: DeserializeOwned>(&self, query: &str, variables: Value) -> Result<T> {
-        let response: GqlResponse<T> = self.graphql_response(query, variables).await?;
-        if !response.errors.is_empty() {
-            bail!("GraphQL errors: {}", Value::Array(response.errors));
-        }
-        response.data.context("GraphQL returned no data")
+        gql_data(self.graphql_response(query, variables).await?)
+    }
+
+    /// The answer to a mutation that makes something, made once.
+    async fn graphql_once<T: DeserializeOwned>(&self, query: &str, variables: Value) -> Result<T> {
+        gql_data(
+            self.rest_once(
+                Method::POST,
+                "/graphql",
+                Some(json!({"query": query, "variables": variables})),
+            )
+            .await?,
+        )
     }
 
     /// `None` when GitHub resolves nothing the query names, such as a deleted
@@ -493,6 +735,38 @@ impl GitHub {
         Ok(issue.id)
     }
 
+    /// What a `POST` of `body` to `path` makes, made at most once: when its
+    /// answer is lost, `look` finds what it made ([`retried_once`]).
+    async fn make<T, L, LFut>(&self, path: &str, body: Value, look: L) -> Result<T>
+    where
+        T: DeserializeOwned,
+        L: FnOnce() -> LFut,
+        LFut: Future<Output = Result<Option<T>>>,
+    {
+        retried_once(
+            &format!("POST {path}"),
+            || self.rest_once(Method::POST, path, Some(body.clone())),
+            look,
+        )
+        .await
+    }
+
+    /// Links the issue whose id is `id` by a `POST` of `body` to
+    /// `list_path`, a path under the repository that lists the issues linked
+    /// so.
+    async fn link(&self, list_path: &str, body: Value, id: u64) -> Result<()> {
+        let path = self.repo_path(list_path);
+        let IgnoredAny = self
+            .make(&path, body, || async {
+                let listed: Vec<ListedIssueId> = self
+                    .rest(Method::GET, &format!("{path}?per_page=100"), None)
+                    .await?;
+                Ok(linked_already(&listed, id).then_some(IgnoredAny))
+            })
+            .await?;
+        Ok(())
+    }
+
     /// The repository's numeric id, which the upload of an attachment names.
     async fn repository_id(&self) -> Result<u64> {
         #[derive(Deserialize)]
@@ -501,7 +775,10 @@ impl GitHub {
         }
         self.repository_id
             .get_or_try_init(|| async {
-                let repo: Id = self.rest(Method::GET, &self.repo_path(""), None).await?;
+                // Read for `attach`, which is not retried.
+                let repo: Id = self
+                    .rest_once(Method::GET, &self.repo_path(""), None)
+                    .await?;
                 Ok(repo.id)
             })
             .await
@@ -3374,12 +3651,12 @@ impl Store for GitHub {
             path_segments.join("/"),
             percent_encode(branch)
         ));
-        let response = self.send(Method::GET, &resource, None).await?;
-        let status = response.status();
+        let answer = self.answer_retried(Method::GET, &resource, None).await?;
+        let status = answer.status;
         if status == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let text = response.text().await?;
+        let text = answer.body;
         if !status.is_success() {
             bail!("reading {path} on {branch}: {status}: {text}");
         }
@@ -3412,14 +3689,14 @@ impl Store for GitHub {
 
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {
         let resource = self.repo_path(&tree_path(branch, dir));
-        let response = self.send(Method::GET, &resource, None).await?;
-        let status = response.status();
+        let answer = self.answer_retried(Method::GET, &resource, None).await?;
+        let status = answer.status;
         // GitHub answers 404 for a branch or path it does not have, and 422
         // for a path that is not a tree.
         if status == StatusCode::NOT_FOUND || status == StatusCode::UNPROCESSABLE_ENTITY {
             return Ok(vec![]);
         }
-        let text = response.text().await?;
+        let text = answer.body;
         if !status.is_success() {
             bail!("listing {dir} on {branch}: {status}: {text}");
         }
@@ -3472,11 +3749,10 @@ impl Store for GitHub {
 
     async fn delete_branch(&self, branch: &str) -> Result<()> {
         let path = format!("/git/refs/heads/{}", percent_encode(branch));
-        let response = self
-            .send(Method::DELETE, &self.repo_path(&path), None)
+        let answer = self
+            .answer_retried(Method::DELETE, &self.repo_path(&path), None)
             .await?;
-        let status = response.status();
-        branch_deleted(branch, status, &response.text().await?)
+        branch_deleted(branch, answer.status, &answer.body)
     }
 
     async fn add_label(&self, number: Number, label: &str) -> Result<()> {
@@ -3489,8 +3765,8 @@ impl Store for GitHub {
     }
 
     async fn remove_label(&self, number: Number, label: &str) -> Result<()> {
-        let response = self
-            .send(
+        let answer = self
+            .answer_retried(
                 Method::DELETE,
                 &self.repo_path(&format!(
                     "/issues/{}/labels/{}",
@@ -3500,12 +3776,9 @@ impl Store for GitHub {
                 None,
             )
             .await?;
-        match response.status() {
+        match answer.status {
             s if s.is_success() || s == StatusCode::NOT_FOUND => Ok(()),
-            s => bail!(
-                "removing {label} from {number}: {s}: {}",
-                response.text().await?
-            ),
+            s => bail!("removing {label} from {number}: {s}: {}", answer.body),
         }
     }
 
@@ -3567,27 +3840,45 @@ impl Store for GitHub {
     }
 
     async fn comment(&self, number: Number, body: &str) -> Result<()> {
-        self.rest_ok(
-            Method::POST,
-            &self.repo_path(&format!("/issues/{}/comments", number.0)),
-            Some(json!({"body": body})),
-        )
-        .await
+        let path = self.repo_path(&format!("/issues/{}/comments", number.0));
+        let since = since_sent();
+        let IgnoredAny = self
+            .make(&path, json!({"body": body}), || async {
+                let listed: Vec<ListedComment> = self
+                    .rest(
+                        Method::GET,
+                        &format!("{path}?since={}&per_page=100", query_time(since)),
+                        None,
+                    )
+                    .await?;
+                Ok(commented(listed, &self.linewright(), body, since).then_some(IgnoredAny))
+            })
+            .await?;
+        Ok(())
     }
 
     async fn create_issue(&self, issue: NewIssue) -> Result<Number> {
-        #[derive(Deserialize)]
-        struct Created {
-            number: u64,
-        }
-        let created: Created = self
-            .rest(
-                Method::POST,
-                &self.repo_path("/issues"),
-                Some(json!({"title": issue.title, "body": issue.body, "labels": issue.labels})),
-            )
+        let path = self.repo_path("/issues");
+        let since = since_sent();
+        let body = json!({"title": issue.title, "body": issue.body, "labels": issue.labels});
+        let made: Made = self
+            .make(&path, body, || async {
+                let listed: Vec<ListedIssue> = self
+                    .rest(
+                        Method::GET,
+                        &format!(
+                            "{path}?creator={}&state=all&sort=created&direction=desc&since={}&per_page=100",
+                            percent_encode(&self.viewer.login),
+                            query_time(since)
+                        ),
+                        None,
+                    )
+                    .await?;
+                let number = issue_made(listed, &self.linewright(), &issue, since);
+                Ok(number.map(|number| Made { number }))
+            })
             .await?;
-        Ok(Number(created.number))
+        Ok(made.number)
     }
 
     async fn edit_body(&self, number: Number, body: &str) -> Result<()> {
@@ -3624,10 +3915,10 @@ impl Store for GitHub {
 
     async fn add_sub_issue(&self, parent: Number, child: Number) -> Result<()> {
         let id = self.issue_id(child).await?;
-        self.rest_ok(
-            Method::POST,
-            &self.repo_path(&format!("/issues/{}/sub_issues", parent.0)),
-            Some(json!({"sub_issue_id": id})),
+        self.link(
+            &format!("/issues/{}/sub_issues", parent.0),
+            json!({"sub_issue_id": id}),
+            id,
         )
         .await
     }
@@ -3645,34 +3936,39 @@ impl Store for GitHub {
 
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()> {
         let id = self.issue_id(blocker).await?;
-        self.rest_ok(
-            Method::POST,
-            &self.repo_path(&format!("/issues/{}/dependencies/blocked_by", issue.0)),
-            Some(json!({"issue_id": id})),
+        self.link(
+            &format!("/issues/{}/dependencies/blocked_by", issue.0),
+            json!({"issue_id": id}),
+            id,
         )
         .await
     }
 
     async fn open_pull(&self, pull: NewPull) -> Result<Number> {
-        #[derive(Deserialize)]
-        struct Created {
-            number: u64,
-        }
         let base: Value = self.rest(Method::GET, &self.repo_path(""), None).await?;
-        let created: Created = self
-            .rest(
-                Method::POST,
-                &self.repo_path("/pulls"),
-                Some(json!({
-                    "head": pull.head,
-                    "base": base["default_branch"],
-                    "title": pull.title,
-                    "body": pull.body,
-                    "draft": true,
-                })),
-            )
+        let path = self.repo_path("/pulls");
+        let body = json!({
+            "head": pull.head,
+            "base": base["default_branch"],
+            "title": pull.title,
+            "body": pull.body,
+            "draft": true,
+        });
+        let made: Made = self
+            .make(&path, body, || async {
+                let head = format!("{}:{}", self.owner, pull.head);
+                let listed: Vec<ListedPull> = self
+                    .rest(
+                        Method::GET,
+                        &format!("{path}?head={}&state=open", percent_encode(&head)),
+                        None,
+                    )
+                    .await?;
+                let number = pull_made(listed, &self.linewright());
+                Ok(number.map(|number| Made { number }))
+            })
             .await?;
-        Ok(Number(created.number))
+        Ok(made.number)
     }
 
     async fn mark_ready(&self, pr: Number) -> Result<()> {
@@ -3697,8 +3993,8 @@ impl Store for GitHub {
     }
 
     async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()> {
-        let response = self
-            .send(
+        let answer = self
+            .answer_retried(
                 Method::POST,
                 &self.repo_path(&format!("/pulls/{}/requested_reviewers", pr.0)),
                 Some(json!({"reviewers": reviewers})),
@@ -3706,28 +4002,30 @@ impl Store for GitHub {
             .await?;
         // A reviewer who is not a collaborator cannot be requested; the
         // review request is a courtesy, not the outcome.
-        if response.status() == StatusCode::UNPROCESSABLE_ENTITY {
-            let body = response.text().await?;
-            tracing::warn!(pr = pr.0, body, "review request refused");
+        if answer.status == StatusCode::UNPROCESSABLE_ENTITY {
+            tracing::warn!(pr = pr.0, body = answer.body, "review request refused");
             return Ok(());
         }
-        if !response.status().is_success() {
+        if !answer.status.is_success() {
             bail!(
                 "requesting review on {pr}: {}: {}",
-                response.status(),
-                response.text().await?
+                answer.status,
+                answer.body
             );
         }
         Ok(())
     }
 
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
-        self.rest_ok(
+        // Not retried: a merge that fails is tried again by the next poll
+        // (repository.md, **Stalls**).
+        self.rest_once::<Value>(
             Method::PUT,
             &self.repo_path(&format!("/pulls/{}/merge", pr.0)),
             Some(json!({"sha": head, "merge_method": method})),
         )
         .await
+        .map(|_| ())
         .map_err(|e| match e.downcast::<ErrorResponse>() {
             Ok(refused) => anyhow!(refused.message()),
             Err(e) => e,
@@ -3735,15 +4033,37 @@ impl Store for GitHub {
     }
 
     async fn reply_in_thread(&self, _pr: Number, thread: &str, body: &str) -> Result<()> {
-        let _: Value = self
-            .graphql(
-                "mutation($thread: ID!, $body: String!) {
-                  addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { clientMutationId }
-                }",
-                json!({"thread": thread, "body": body}),
-            )
-            .await?;
-        Ok(())
+        let since = since_sent();
+        retried_once(
+            "POST /graphql addPullRequestReviewThreadReply",
+            || async {
+                self.graphql_once::<Value>(
+                    "mutation($thread: ID!, $body: String!) {
+                      addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { clientMutationId }
+                    }",
+                    json!({"thread": thread, "body": body}),
+                )
+                .await
+                .map(|_| ())
+            },
+            || async {
+                let data: ThreadData = self
+                    .graphql(
+                        "query($thread: ID!) {
+                          node(id: $thread) {
+                            ... on PullRequestReviewThread {
+                              comments(last: 100) { nodes { author { __typename login } body createdAt } }
+                            }
+                          }
+                        }",
+                        json!({"thread": thread}),
+                    )
+                    .await?;
+                let comments = data.node.comments.nodes;
+                Ok(replied(comments, &self.linewright(), body, since).then_some(()))
+            },
+        )
+        .await
     }
 
     async fn resolve_thread(&self, _pr: Number, thread: &str) -> Result<()> {
@@ -5647,5 +5967,383 @@ mod tests {
         );
         assert_eq!(sent, 2);
         assert!(start.elapsed() >= std::time::Duration::from_secs(120));
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use std::cell::Cell;
+    use std::time::Duration;
+
+    use super::*;
+
+    const CREATE: &str = "POST /repos/tibbe/linewright/issues";
+
+    /// The error of a request whose connection closes before GitHub answers,
+    /// as #934's did.
+    #[track_caller]
+    fn lost_answer() -> impl Future<Output = anyhow::Error> {
+        let caller = std::panic::Location::caller();
+        async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .unwrap_or_else(|e| panic!("binding at {caller}: {e}"));
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 1024];
+                let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut request).await;
+            });
+            let github = GitHub {
+                api: format!("http://{address}"),
+                ..github()
+            };
+            let answered = github
+                .rest_once::<Value>(
+                    Method::POST,
+                    "/repos/tibbe/linewright/issues",
+                    Some(json!({})),
+                )
+                .await;
+            answered.map_or_else(|e| e, |v| panic!("answered at {caller}: {v}"))
+        }
+    }
+
+    fn github() -> GitHub {
+        GitHub {
+            http: reqwest::Client::new(),
+            api: API.into(),
+            token: "token".into(),
+            owner: "tibbe".into(),
+            name: "linewright".into(),
+            viewer: Viewer {
+                login: "tibbe-bot".into(),
+                id: 1,
+            },
+            repository_id: Arc::default(),
+            index: Arc::default(),
+        }
+    }
+
+    #[track_caller]
+    fn answered(status: u16) -> anyhow::Error {
+        ErrorResponse {
+            request: CREATE.into(),
+            status: StatusCode::from_u16(status).unwrap(),
+            body: String::new(),
+        }
+        .into()
+    }
+
+    #[test_log::test(tokio::test(start_paused = true))]
+    async fn a_lost_answer_whose_look_finds_the_write_gives_what_it_found_sending_nothing_again() {
+        let mut tries = vec![Err(lost_answer().await)].into_iter();
+        let sent = Cell::new(0);
+
+        let made = retried_once(
+            CREATE,
+            || {
+                sent.set(sent.get() + 1);
+                std::future::ready(tries.next().expect("a try left"))
+            },
+            || async { Ok(Some(Number(934))) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(made, Number(934));
+        assert_eq!(sent.get(), 1);
+    }
+
+    #[test_log::test(tokio::test(start_paused = true))]
+    async fn a_lost_answer_whose_look_finds_nothing_is_sent_once_more() {
+        let mut tries = vec![Err(lost_answer().await), Ok(Number(934))].into_iter();
+        let start = tokio::time::Instant::now();
+
+        let made = retried_once(
+            CREATE,
+            || std::future::ready(tries.next().expect("a try left")),
+            || async { Ok(None) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(made, Number(934));
+        assert!(start.elapsed() >= Duration::from_secs(1));
+    }
+
+    #[test_log::test(tokio::test(start_paused = true))]
+    async fn a_server_error_is_retried_once() {
+        let mut tries = vec![Err(answered(502)), Ok(Number(934))].into_iter();
+
+        let made = retried_once(
+            CREATE,
+            || std::future::ready(tries.next().expect("a try left")),
+            finds_nothing,
+        )
+        .await;
+
+        assert_eq!(made.unwrap(), Number(934));
+    }
+
+    #[test_log::test(tokio::test(start_paused = true))]
+    async fn a_refusal_is_not_retried() {
+        let mut tries = vec![Err(answered(422))].into_iter();
+        let looked = Cell::new(false);
+
+        let made: Result<Number> = retried_once(
+            CREATE,
+            || std::future::ready(tries.next().expect("a try left")),
+            || async {
+                looked.set(true);
+                Ok(None)
+            },
+        )
+        .await;
+
+        let refusal = made.unwrap_err();
+        assert_eq!(
+            refusal.downcast_ref::<ErrorResponse>().unwrap().status,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert!(!looked.get());
+    }
+
+    #[test_log::test(tokio::test(start_paused = true))]
+    async fn a_second_failure_fails_saying_both() {
+        let mut tries = vec![Err(lost_answer().await), Err(answered(503))].into_iter();
+
+        let made: Result<Number> = retried_once(
+            CREATE,
+            || std::future::ready(tries.next().expect("a try left")),
+            finds_nothing,
+        )
+        .await;
+
+        let error = format!("{:#}", made.unwrap_err());
+        assert!(
+            error.starts_with(&format!("{CREATE} failed twice")),
+            "{error}"
+        );
+        assert!(
+            error.contains("connection closed before message completed"),
+            "{error}"
+        );
+        assert!(error.contains("503 Service Unavailable"), "{error}");
+    }
+
+    #[test_log::test(tokio::test(start_paused = true))]
+    async fn a_failed_look_fails_saying_what_the_write_met() {
+        let mut tries = vec![Err(lost_answer().await)].into_iter();
+
+        let made: Result<Number> = retried_once(
+            CREATE,
+            || std::future::ready(tries.next().expect("a try left")),
+            || async { Err(answered(500)) },
+        )
+        .await;
+
+        let error = format!("{:#}", made.unwrap_err());
+        assert!(
+            error.contains("connection closed before message completed"),
+            "{error}"
+        );
+        assert!(error.contains("500 Internal Server Error"), "{error}");
+    }
+
+    #[track_caller]
+    fn at(time: &str) -> Timestamp {
+        time.parse().unwrap()
+    }
+
+    /// `fixtures/issues-created.json` is what GitHub returned for the six
+    /// issues and pull requests `tibbe-bot` opened last on
+    /// <https://github.com/tibbe/linewright>, newest first, cut here to the
+    /// fields read. Among them is #934, whose answer was lost.
+    #[track_caller]
+    fn issues_created() -> Vec<ListedIssue> {
+        serde_json::from_str(include_str!("fixtures/issues-created.json")).unwrap()
+    }
+
+    /// The issue that would have been opened as the `index`th of
+    /// `fixtures/issues-created.json`.
+    #[track_caller]
+    fn opened_as(index: usize) -> NewIssue {
+        let listed: Vec<Value> =
+            serde_json::from_str(include_str!("fixtures/issues-created.json")).unwrap();
+        NewIssue {
+            title: listed[index]["title"].as_str().unwrap().into(),
+            body: listed[index]["body"].as_str().unwrap().into(),
+            labels: vec!["ready-for-human".into()],
+        }
+    }
+
+    #[track_caller]
+    fn issue_934() -> NewIssue {
+        opened_as(2)
+    }
+
+    #[test_log::test]
+    fn an_issue_linewright_opened_since_the_request_is_found_by_its_title_and_body() {
+        let made = issue_made(
+            issues_created(),
+            &Login::new("tibbe-bot"),
+            &issue_934(),
+            at("2026-11-01T09:29:22Z"),
+        );
+
+        assert_eq!(made, Some(Number(934)));
+    }
+
+    #[test_log::test]
+    fn an_issue_someone_else_opened_is_not_taken_for_linewrights() {
+        let made = issue_made(
+            issues_created(),
+            &Login::new("tibbe"),
+            &issue_934(),
+            at("2026-11-01T09:29:22Z"),
+        );
+
+        assert_eq!(made, None);
+    }
+
+    #[test_log::test]
+    fn an_issue_opened_before_the_request_is_not_taken_for_its() {
+        let made = issue_made(
+            issues_created(),
+            &Login::new("tibbe-bot"),
+            &issue_934(),
+            at("2026-11-01T09:31:00Z"),
+        );
+
+        assert_eq!(made, None);
+    }
+
+    #[test_log::test]
+    fn a_pull_request_is_not_taken_for_an_issue() {
+        let pull_935 = opened_as(0);
+
+        let made = issue_made(
+            issues_created(),
+            &Login::new("tibbe-bot"),
+            &pull_935,
+            at("2026-11-01T09:45:00Z"),
+        );
+
+        assert_eq!(made, None);
+    }
+
+    /// `fixtures/issue-comments.json` is what GitHub returned for the
+    /// comments on <https://github.com/tibbe/linewright/issues/930>, cut
+    /// here to the fields read.
+    #[track_caller]
+    fn comments_on_930() -> Vec<ListedComment> {
+        serde_json::from_str(include_str!("fixtures/issue-comments.json")).unwrap()
+    }
+
+    const HANDED_BACK: &str = "Recording the run's outcome failed: POST /repos/tibbe/linewright/issues: error sending request for url (https://api.github.com/repos/tibbe/linewright/issues): client error (SendRequest): connection closed before message completed";
+
+    #[test_log::test]
+    fn a_comment_linewright_made_since_the_request_is_found_by_its_body() {
+        assert!(commented(
+            comments_on_930(),
+            &Login::new("tibbe-bot"),
+            HANDED_BACK,
+            at("2026-11-01T09:29:23Z")
+        ));
+    }
+
+    #[test_log::test]
+    fn a_comment_with_another_body_another_author_or_made_before_the_request_is_not_found() {
+        let since = at("2026-11-01T09:29:23Z");
+
+        assert!(!commented(
+            comments_on_930(),
+            &Login::new("tibbe-bot"),
+            "Another body",
+            since
+        ));
+        assert!(!commented(
+            comments_on_930(),
+            &Login::new("tibbe"),
+            HANDED_BACK,
+            since
+        ));
+        assert!(!commented(
+            comments_on_930(),
+            &Login::new("tibbe-bot"),
+            HANDED_BACK,
+            at("2026-11-01T09:31:00Z")
+        ));
+    }
+
+    /// `fixtures/pulls-by-head.json` is what GitHub returned for the pull
+    /// requests from `tibbe:931-work-a-pull-request-by-a-facts-record-an` on
+    /// <https://github.com/tibbe/linewright>, cut here to the fields read.
+    #[test_log::test]
+    fn a_pull_request_is_found_by_its_head_when_linewright_opened_it() {
+        let listed = || -> Vec<ListedPull> {
+            serde_json::from_str(include_str!("fixtures/pulls-by-head.json")).unwrap()
+        };
+
+        assert_eq!(
+            pull_made(listed(), &Login::new("tibbe-bot")),
+            Some(Number(935))
+        );
+        assert_eq!(pull_made(listed(), &Login::new("tibbe")), None);
+    }
+
+    /// `fixtures/thread-comments.json` is what GitHub returned for the
+    /// comments of a review thread on
+    /// <https://github.com/tibbe/linewright/pull/862>: `tibbe`'s, then
+    /// `tibbe-bot`'s reply.
+    #[track_caller]
+    fn thread_on_862() -> Vec<ThreadComment> {
+        let response: GqlResponse<ThreadData> =
+            serde_json::from_str(include_str!("fixtures/thread-comments.json")).unwrap();
+        response.data.unwrap().node.comments.nodes
+    }
+
+    #[test_log::test]
+    fn a_reply_linewright_made_since_the_request_is_found_by_its_body() {
+        let since = at("2026-10-30T20:50:00Z");
+
+        assert!(replied(
+            thread_on_862(),
+            &Login::new("tibbe-bot"),
+            "Removed the comment from the test step.",
+            since
+        ));
+        assert!(!replied(
+            thread_on_862(),
+            &Login::new("tibbe-bot"),
+            "Don't narrate code or config.",
+            since
+        ));
+        assert!(!replied(
+            thread_on_862(),
+            &Login::new("tibbe-bot"),
+            "Removed the comment from the test step.",
+            at("2026-10-30T20:52:00Z")
+        ));
+    }
+
+    /// `fixtures/sub-issues-listed.json` and `fixtures/blocked-by.json` are
+    /// what GitHub returned for the sub-issues of
+    /// <https://github.com/tibbe/linewright/issues/900> and the issues
+    /// blocking #744, cut here to the fields read.
+    #[test_log::test]
+    fn a_link_is_found_by_the_linked_issues_id() {
+        let sub_issues = || -> Vec<ListedIssueId> {
+            serde_json::from_str(include_str!("fixtures/sub-issues-listed.json")).unwrap()
+        };
+        let blocked_by: Vec<ListedIssueId> =
+            serde_json::from_str(include_str!("fixtures/blocked-by.json")).unwrap();
+
+        // #903's id.
+        assert!(linked_already(&sub_issues(), 6_142_173_193));
+        // #743's.
+        assert!(!linked_already(&sub_issues(), 6_080_099_910));
+        assert!(linked_already(&blocked_by, 6_080_099_910));
     }
 }

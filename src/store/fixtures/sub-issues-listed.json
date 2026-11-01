@@ -1,0 +1,37 @@
+[
+  {
+    "id": 6142172756,
+    "number": 901,
+    "title": "Read the tracking and worked facts as the spec defines them"
+  },
+  {
+    "id": 6142172932,
+    "number": 902,
+    "title": "Derive an item's state in one place and show it"
+  },
+  {
+    "id": 6142173193,
+    "number": 903,
+    "title": "Work an item by the first row of the Working an item table"
+  },
+  {
+    "id": 6142173445,
+    "number": 904,
+    "title": "Card lines by the new Cards table"
+  },
+  {
+    "id": 6142173708,
+    "number": 905,
+    "title": "Discard a cut without touching people's work"
+  },
+  {
+    "id": 6142173953,
+    "number": 906,
+    "title": "Design a spec change's issue with its spec diff"
+  },
+  {
+    "id": 6142174197,
+    "number": 907,
+    "title": "Take up a spec change by opening its issue"
+  }
+]
