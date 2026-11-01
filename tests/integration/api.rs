@@ -82,7 +82,7 @@ impl Drop for Routed {
 
 /// `docs/specs/monitoring.md`, Commands: the local API answers under
 /// `/api/`, and serves none of the web UI.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_api_answers_under_api_and_nothing_else() {
     let routed = Routed::over(&[]);
     let elsewhere = [
@@ -110,7 +110,7 @@ async fn the_api_answers_under_api_and_nothing_else() {
     assert_eq!(status, 200, "{body}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_request_whose_host_is_not_local_is_refused() {
     let routed = Routed::over(&[]);
 
@@ -125,7 +125,7 @@ async fn a_request_whose_host_is_not_local_is_refused() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_drain_whose_host_is_not_local_is_refused_and_changes_nothing() {
     let routed = Routed::over(&[]);
 
@@ -138,7 +138,7 @@ async fn a_drain_whose_host_is_not_local_is_refused_and_changes_nothing() {
     assert!(!routed.ends.stopping().is_cancelled());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn following_a_transcript_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
     let record = item_run_record(1, "triage", 1, Some("done"), &serde_json::json!([]));
     let routed = Routed::over(&[("runs/items/1/triage-1.json", &record)]);
@@ -161,7 +161,7 @@ fn mode(path: &Path) -> u32 {
 
 /// `docs/specs/monitoring.md`, Commands: only the user `serve` runs as can
 /// open its socket.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_claim_lets_only_its_user_open_the_socket() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let dir = socket_dir_in(runtime_dir.path());
@@ -173,7 +173,7 @@ async fn a_claim_lets_only_its_user_open_the_socket() {
 }
 
 /// GitHub names repositories case-insensitively.
-#[test]
+#[test_log::test]
 fn a_repositorys_socket_is_the_same_whatever_the_case_of_its_name() {
     let dir = Path::new("/run/user/1000/linewright");
 
@@ -187,7 +187,7 @@ fn a_repositorys_socket_is_the_same_whatever_the_case_of_its_name() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_claim_is_held_until_the_api_stops_and_then_can_be_taken_again() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let dir = socket_dir_in(runtime_dir.path());
@@ -231,7 +231,7 @@ fn left_by_a_killed_serve(runtime_dir: &Path) -> std::path::PathBuf {
     dir
 }
 
-#[test]
+#[test_log::test]
 fn a_socket_a_killed_serve_left_behind_is_not_claimed() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let dir = left_by_a_killed_serve(runtime_dir.path());
@@ -240,14 +240,14 @@ fn a_socket_a_killed_serve_left_behind_is_not_claimed() {
     assert!(!api::is_claimed(&dir, REPO).unwrap());
 }
 
-#[test]
+#[test_log::test]
 fn nothing_is_claimed_where_no_serve_has_run() {
     let runtime_dir = tempfile::tempdir().unwrap();
 
     assert!(!api::is_claimed(&socket_dir_in(runtime_dir.path()), REPO).unwrap());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_socket_a_dead_serve_left_behind_does_not_block_a_new_one() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let dir = left_by_a_killed_serve(runtime_dir.path());
@@ -257,7 +257,7 @@ async fn a_socket_a_dead_serve_left_behind_does_not_block_a_new_one() {
     assert!(claimed.is_ok(), "{:?}", claimed.err());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_serve_starting_while_drain_looks_at_the_claim_takes_it() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let dir = private_socket_dir(runtime_dir.path());
@@ -277,7 +277,7 @@ async fn a_serve_starting_while_drain_looks_at_the_claim_takes_it() {
     assert!(claimed.is_ok(), "{:?}", claimed.err());
 }
 
-#[test]
+#[test_log::test]
 fn an_answer_naming_what_is_missing_is_a_missing_item_and_any_other_error_is_not() {
     let missing = api::check(
         StatusCode::NOT_FOUND,
@@ -308,7 +308,7 @@ fn an_answer_naming_what_is_missing_is_a_missing_item_and_any_other_error_is_not
 
 /// `docs/specs/monitoring.md`, Errors: 3 with no `serve` running, 4 for no
 /// such item or run, and 1 for any other error.
-#[test]
+#[test_log::test]
 fn each_refusal_exits_with_its_own_status() {
     let refusals = [
         (

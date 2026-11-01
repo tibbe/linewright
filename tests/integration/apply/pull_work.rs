@@ -157,7 +157,7 @@ fn a_reply_resolves_its_thread_only_where_a_bot_opened_it(
     );
 }
 
-#[test]
+#[test_log::test]
 fn every_reply_is_made_in_order_and_the_comment_is_posted() {
     let writes = done(
         &pull(
@@ -281,7 +281,7 @@ fn late_feedback_is_what_came_after_the_time(#[case] minute: i64, #[case] kept: 
     );
 }
 
-#[test]
+#[test_log::test]
 fn late_feedback_in_a_thread_keeps_only_its_late_comments() {
     let thread = thread("T2-1", &["maintainer", "reviewer", "designer"]);
     let feedback = Feedback {

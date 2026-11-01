@@ -60,7 +60,7 @@ type Case = (
     Option<State>,
 );
 
-#[test]
+#[test_log::test]
 fn an_issue_s_state_is_the_first_row_of_the_state_table_that_holds() {
     let tracking = Issue {
         sub_issues: vec![sub_issue(2, true, LINEWRIGHT)],
@@ -187,7 +187,7 @@ fn an_issue_s_state_is_the_first_row_of_the_state_table_that_holds() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_labeled_needs_triage_assigned_to_linewright_with_an_open_pull_request_closing_it_is_in_review()
  {
     let issue = issue(&["needs-triage"], &[LINEWRIGHT]);
@@ -198,7 +198,7 @@ fn an_issue_labeled_needs_triage_assigned_to_linewright_with_an_open_pull_reques
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_relabeled_after_a_merge_is_not_done() {
     let merged = [closing(2, merged_at("2026-10-01T08:00:00Z"))];
     let relabeled = issue(&["ready-for-agent"], &[]);
@@ -226,7 +226,7 @@ fn an_issue_relabeled_after_a_merge_is_not_done() {
     assert_eq!(state_of(&unlabeled_since, &merged, None), Some(State::Done));
 }
 
-#[test]
+#[test_log::test]
 fn a_merge_into_another_branch_does_not_make_an_issue_done() {
     let into_a_release = ClosingPull {
         base_ref: "release".into(),
@@ -239,7 +239,7 @@ fn a_merge_into_another_branch_does_not_make_an_issue_done() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_is_open_merged_or_closed() {
     assert_eq!(pull_state(&PullState::Open { draft: true }), State::Open);
     assert_eq!(
@@ -254,7 +254,7 @@ fn a_pull_request_is_open_merged_or_closed() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn each_state_has_its_words_and_its_name_in_json() {
     let expected = [
         (State::NeedsTriage, "Waiting for triage", "needs-triage"),
@@ -292,7 +292,7 @@ fn each_state_has_its_words_and_its_name_in_json() {
 
 /// `docs/specs/design_system.md`, The board: a card is in its state's
 /// column, and a tracking issue has no card.
-#[test]
+#[test_log::test]
 fn each_state_s_card_is_in_the_column_the_board_gives_it() {
     let expected = [
         (State::NeedsTriage, Some(Column::Triage)),
@@ -397,7 +397,7 @@ fn discard_of(issue: &Issue) -> Option<Discard> {
 
 /// `docs/specs/repository.md`, Working an item: each row of the table, other
 /// than those for how a run ends and for spec changes.
-#[test]
+#[test_log::test]
 fn an_issue_is_worked_by_the_first_row_of_the_working_an_item_table_that_holds() {
     let tracking_with = |labels: &[&str], assignees: &[&str]| {
         let mut labels = labels.to_vec();
@@ -564,7 +564,7 @@ fn an_issue_is_worked_by_the_first_row_of_the_working_an_item_table_that_holds()
     }
 }
 
-#[test]
+#[test_log::test]
 fn where_two_rows_hold_the_first_is_taken() {
     let asked = commented(
         assigned(issue(&["needs-info"], &[]), LINEWRIGHT, LINEWRIGHT),
@@ -629,7 +629,7 @@ fn where_two_rows_hold_the_first_is_taken() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_reply_to_a_question_opening_with_the_old_marker_line_is_taken() {
     let asked = Issue {
         comments: vec![
@@ -650,7 +650,7 @@ fn a_reply_to_a_question_opening_with_the_old_marker_line_is_taken() {
     assert_eq!(row_of(&asked, &[]), Some(Row::TakeReply));
 }
 
-#[test]
+#[test_log::test]
 fn linewright_lets_go_of_an_issue_a_person_assigned_it_to_with_a_comment() {
     let by_hand = assigned(issue(&["ready-for-human"], &[]), LINEWRIGHT, "maintainer");
 
@@ -660,7 +660,7 @@ fn linewright_lets_go_of_an_issue_a_person_assigned_it_to_with_a_comment() {
     ));
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_a_person_closed_before_the_issue_was_labeled_again_hands_nothing_back() {
     let relabeled = Issue {
         events: vec![IssueEvent::Labeled {
@@ -689,7 +689,7 @@ fn a_pull_request_a_person_closed_before_the_issue_was_labeled_again_hands_nothi
 }
 
 /// `docs/specs/repository.md`, Working an item: "Claiming" and "Blocked".
-#[test]
+#[test_log::test]
 fn an_issue_is_claimed_only_unassigned_marked_unblocked_and_not_unassigned_since_labeled() {
     let blocked = Issue {
         blocked_by: vec![Linked {
@@ -732,7 +732,7 @@ fn an_issue_is_claimed_only_unassigned_marked_unblocked_and_not_unassigned_since
     assert_eq!(row(&facts, Some(State::NeedsTriage), &unmarked), None);
 }
 
-#[test]
+#[test_log::test]
 fn while_a_run_is_in_flight_no_row_holds() {
     let claimed = issue(
         &["ready-for-agent", label::DESIGNED, label::STALLED],
@@ -745,7 +745,7 @@ fn while_a_run_is_in_flight_no_row_holds() {
 /// `docs/specs/repository.md`, Steering: closing the issue, changing or
 /// removing its status label and unassigning Linewright cancel a run the
 /// issue no longer asks for.
-#[test]
+#[test_log::test]
 fn a_run_is_cancelled_as_the_steering_table_says() {
     let designed = &["ready-for-agent", label::DESIGNED];
     let cases: Vec<(&str, WorkKind, Issue, Option<Cancel>)> = vec![
@@ -795,7 +795,7 @@ fn a_run_is_cancelled_as_the_steering_table_says() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_person_changing_linewright_designed_during_a_design_or_implement_run_cancels_neither() {
     let designed = issue(&["ready-for-agent", label::DESIGNED], &[LINEWRIGHT]);
     let undesigned = issue(&["ready-for-agent"], &[LINEWRIGHT]);
@@ -820,7 +820,7 @@ fn pull_facts(opener: Opener, claim: PullClaim, working: PullWorking) -> PullFac
 
 /// `docs/specs/repository.md`, Working an item and Steering: the rows of a
 /// pull request, other than those for how a run ends and for spec changes.
-#[test]
+#[test_log::test]
 fn a_pull_request_is_worked_by_the_first_row_that_holds() {
     use Opener::{Linewright, Person, SpecChange};
     use PullClaim::{Claimed, NeverAssigned, Unassigned};

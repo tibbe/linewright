@@ -82,7 +82,7 @@ fn card_state(facts: &ItemFacts) -> (Column, Option<CardLine>) {
     (*column, card.line.clone())
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_in_ready_blocked_by_another_is_in_ready_saying_so_under_its_tracking_issue() {
     let blocked = Issue {
         blocked_by: vec![Linked {
@@ -173,7 +173,7 @@ fn in_review_with_checks_failed() -> View {
     )
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_in_review_whose_pull_requests_checks_failed_says_so_and_lists_the_pull_request() {
     let facts = facts_of(&in_review_with_checks_failed(), 1);
 
@@ -196,7 +196,7 @@ fn an_issue_in_review_whose_pull_requests_checks_failed_says_so_and_lists_the_pu
     assert_eq!(facts.closes, []);
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_shown_on_the_card_of_the_issue_it_closes_has_the_card_it_would_have_on_its_own() {
     let facts = facts_of(&in_review_with_checks_failed(), 10);
 
@@ -287,7 +287,7 @@ fn tracking_five() -> View {
 
 /// `docs/specs/design_system.md`, The item page: an unfinished tracking
 /// issue's State is its state alone.
-#[test]
+#[test_log::test]
 fn a_tracking_issue_is_tracking_and_has_its_tickets_closed_of_total() {
     let facts = facts_of(&tracking_five(), 20);
 
@@ -322,7 +322,7 @@ fn a_tracking_issue_is_tracking_and_has_its_tickets_closed_of_total() {
     assert_eq!(facts.tracking_issue, None);
 }
 
-#[test]
+#[test_log::test]
 fn a_merged_spec_change_names_the_tracking_issue_cut_from_it() {
     let view = tracking_five();
     let read = AnyItem::Merged {
@@ -363,7 +363,7 @@ fn tracking_closed_at(closed_at: &str) -> View {
     view
 }
 
-#[test]
+#[test_log::test]
 fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_closed() {
     let facts = facts_of(&tracking_closed_at("2026-09-30T12:00:00Z"), 20);
 
@@ -379,7 +379,7 @@ fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_
 /// `docs/specs/design_system.md`, The board, Finished lanes: a lane
 /// finished when its last ticket closed or its tracking issue closed,
 /// whichever is later, on the board or off it.
-#[test]
+#[test_log::test]
 fn a_tracking_issue_closed_after_its_last_ticket_finished_when_it_closed() {
     let on_board = tracking_closed_at("2026-09-30T18:00:00Z");
     let (off_board, tracking) = tracking_finished_before_the_window(false);
@@ -434,7 +434,7 @@ fn tracking_finished_before_the_window(open: bool) -> (View, Issue) {
 /// issue with none of its tickets open is tracking, so managed, and heads
 /// its lane, unfinished until it is done (`docs/specs/design_system.md`, The
 /// board, Finished lanes).
-#[test]
+#[test_log::test]
 fn an_open_tracking_issue_with_none_of_its_tickets_open_is_tracking_and_unfinished() {
     let (view, tracking) = tracking_finished_before_the_window(true);
     let read = AnyItem::HeldIssue(Box::new(tracking));
@@ -456,7 +456,7 @@ fn an_open_tracking_issue_with_none_of_its_tickets_open_is_tracking_and_unfinish
 
 /// `docs/specs/design_system.md`, The item page, State: a tracking issue
 /// says when it finished off the board too.
-#[test]
+#[test_log::test]
 fn a_closed_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_its_last_ticket_closed() {
     let (view, tracking) = tracking_finished_before_the_window(false);
 
@@ -471,7 +471,7 @@ fn a_closed_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_its_la
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_tracking_issue_with_a_ticket_open_is_tracking() {
     let tracking = Issue {
         open: false,
@@ -503,7 +503,7 @@ fn a_closed_tracking_issue_with_a_ticket_open_is_tracking() {
 
 /// A snapshot written before sub-issues held when they closed knows of no
 /// close time for them.
-#[test]
+#[test_log::test]
 fn a_closed_tracking_issue_with_a_ticket_closed_at_an_unknown_time_is_tracking() {
     let tracking = Issue {
         open: false,
@@ -539,7 +539,7 @@ fn a_closed_tracking_issue_with_a_ticket_closed_at_an_unknown_time_is_tracking()
 /// `docs/specs/design_system.md`, The item page, Related items: a tracking
 /// issue heading no lane has no lane head to be shown as, so it is shown by
 /// its number and title, with no card status.
-#[test]
+#[test_log::test]
 fn a_tracking_issue_heading_no_lane_is_related_by_its_number_and_title_alone() {
     let mut view = view(vec![tracking_issue(20, 15, &[])], vec![]);
     std::sync::Arc::make_mut(&mut view.snapshot).merged = vec![spec_change(15)];
@@ -556,7 +556,7 @@ fn a_tracking_issue_heading_no_lane_is_related_by_its_number_and_title_alone() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_issue_linewright_has_not_worked_is_left_alone_as_closed() {
     let read = read_closed(ticket(7, "Old idea"), "2026-09-20T12:00:00Z");
 
@@ -572,7 +572,7 @@ fn a_closed_issue_linewright_has_not_worked_is_left_alone_as_closed() {
     assert_eq!(facts.last_read, at(NOW));
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_closed_issue_linewright_has_not_worked_is_left_alone_as_closed_with_the_label_or_without()
  {
     let mut required = view(vec![], vec![]);
@@ -601,7 +601,7 @@ fn with_a_required_label_a_closed_issue_linewright_has_not_worked_is_left_alone_
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_issue_linewright_worked_is_in_done_with_the_line_it_had_on_the_board_after_it_left_it()
 {
     let worked = labeled_by_linewright(ticket(7, "Old idea"));
@@ -634,7 +634,7 @@ fn a_closed_issue_linewright_worked_is_in_done_with_the_line_it_had_on_the_board
     assert_eq!(card_state(&left_the_board), (Column::Done, done));
 }
 
-#[test]
+#[test_log::test]
 fn an_item_left_out_of_the_view_lists_the_open_or_merged_pull_requests_closing_it() {
     let closing = |number, state| ClosingPull {
         number: Number(number),
@@ -679,7 +679,7 @@ fn an_item_left_out_of_the_view_lists_the_open_or_merged_pull_requests_closing_i
     assert_eq!(numbers, [Number(30), Number(32)]);
 }
 
-#[test]
+#[test_log::test]
 fn what_linewright_waits_for_is_listed_only_while_it_waits_for_any() {
     let handed_back = labeled_by_linewright(Issue {
         labels: vec!["ready-for-human".into()],
@@ -691,7 +691,7 @@ fn what_linewright_waits_for_is_listed_only_while_it_waits_for_any() {
     assert_eq!(facts_of(&view, 2).waiting_for, []);
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_issue_lists_the_merged_pull_requests_closing_it() {
     let merged = ClosingPull {
         number: Number(30),

@@ -300,10 +300,28 @@ check_clippy() {
 # itself, and the tests run git hundreds of times each. git's install puts
 # a `git` in the directory `git --exec-path` names, which holds only git and
 # its helpers, so putting it first on the path shadows nothing else.
+#
+# Every test is `#[test_log::test]`, around `#[tokio::test]` where it is
+# async, so that a failing test's output shows what was logged up to the
+# failure. Outside CI a bare `#[test]` or `#[tokio::test]` is rewritten; in CI
+# it fails the check.
 check_test() {
-  local filter status=0 exec_path
+  local filter status=0 exec_path bare
   if exec_path="$(git --exec-path 2>/dev/null)" && [ -x "$exec_path/git" ]; then
     export PATH="$exec_path:$PATH"
+  fi
+  local attribute='^[ \t]*#\[(tokio::)?test(\(.*\))?\][ \t]*$'
+  if bare="$(grep -rlE --include='*.rs' "$attribute" src tests)"; then
+    if $fix; then
+      # shellcheck disable=SC2086 # one path per line, none with spaces
+      perl -pi -e 's/^([ \t]*)#\[test\][ \t]*$/$1#[test_log::test]/;
+        s/^([ \t]*)#\[tokio::test(\(.*\))?\][ \t]*$/$1#[test_log::test(tokio::test$2)]/' $bare
+    else
+      # shellcheck disable=SC2016 # the backticks are Markdown's
+      grep -rnE --include='*.rs' "$attribute" src tests |
+        sed 's/$/: use `#[test_log::test]`, around `#[tokio::test]` where async/'
+      status=1
+    fi
   fi
   while IFS= read -r filter; do
     if [ -z "$(nextest list --locked --cargo-quiet --message-format oneline -E "$filter")" ]; then

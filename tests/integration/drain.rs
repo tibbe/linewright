@@ -75,7 +75,7 @@ fn info_with(log: &Log, phrase: &str) -> Vec<String> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_drain_waits_for_the_run_in_flight_which_ends_as_it_would_have() {
     let (log, _guard) = Log::capture();
     let world = World::new().await;
@@ -119,7 +119,7 @@ async fn a_drain_waits_for_the_run_in_flight_which_ends_as_it_would_have() {
     assert_eq!(info_with(&log, "drained").len(), 1, "{}", log.text());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_drain_waits_for_a_run_waiting_out_the_usage_limit() {
     let world = World::new().await;
     let refused = std::sync::atomic::AtomicBool::new(false);
@@ -162,7 +162,7 @@ async fn a_drain_waits_for_a_run_waiting_out_the_usage_limit() {
     assert_eq!(ended_runs(&ended), [Ending::Done]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_stop_while_draining_cancels_the_runs_in_flight() {
     let world = World::new().await;
     implement(&world);
@@ -197,7 +197,7 @@ async fn a_stop_while_draining_cancels_the_runs_in_flight() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_stop_while_a_run_records_its_outcome_waits_for_it_to_record_all_of_it() {
     let (log, _guard) = Log::capture();
     let world = World::new().await;
@@ -233,7 +233,7 @@ fn run(id: &str) -> linewright::runs::RunId {
     id.parse().unwrap()
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_with_no_run_in_flight_says_only_that_serve_exited() {
     let mut waiting = Waiting::default();
 
@@ -241,7 +241,7 @@ fn a_drain_with_no_run_in_flight_says_only_that_serve_exited() {
     assert_eq!(waiting.exited(), [Said::Exited]);
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_names_each_run_in_flight_once_and_again_as_it_ends() {
     let mut waiting = Waiting::default();
 
@@ -281,7 +281,7 @@ fn a_drain_names_each_run_in_flight_once_and_again_as_it_ends() {
 
 /// `drain`'s output is the monitoring commands' (`docs/specs/operation.md`,
 /// Stopping): with `--json`, the same as JSON.
-#[test]
+#[test_log::test]
 fn each_thing_a_drain_says_is_one_json_object_on_a_line() {
     let said = [
         Said::Taken { was: Was::Serving },
@@ -309,7 +309,7 @@ fn each_thing_a_drain_says_is_one_json_object_on_a_line() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_says_where_serve_was_in_ending_when_it_took_it() {
     let taken = [
         (linewright::ending::Ending::Serving, "drain: begun\n"),
@@ -336,7 +336,7 @@ fn a_drain_says_where_serve_was_in_ending_when_it_took_it() {
     assert_eq!(Was::of(linewright::ending::Ending::Exited), None);
 }
 
-#[test]
+#[test_log::test]
 fn a_drains_timeout_is_a_duration_its_deadline_that_long_after_it_is_taken() {
     let timeout = Timeout::parse("1h").unwrap();
 
@@ -356,7 +356,7 @@ fn a_drains_timeout_is_a_duration_its_deadline_that_long_after_it_is_taken() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_timeout_that_is_not_a_duration_says_so() {
     assert_eq!(
         Timeout::parse("soon"),

@@ -19,7 +19,7 @@ fn holding_every_run(path: &str, error: &str) -> Unusable {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_file_that_is_not_one_of_linewrights_holds_every_run() {
     let files = [
         ".linewright/prompts/implment.md",
@@ -65,7 +65,7 @@ fn a_file_that_is_not_one_of_linewrights_holds_every_run() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn hidden_files_and_the_automations_are_no_files_of_the_layer() {
     let dir = tempfile::tempdir().unwrap();
     let store = common::store_holding(

@@ -96,7 +96,7 @@ fn spec_change_case_allowing(
     .unwrap();
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_records_as_files() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(dir.path(), &[]);
@@ -237,7 +237,7 @@ fn files_under(dir: &Path) -> Vec<(std::path::PathBuf, String)> {
     files
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(dir.path(), &[]);
@@ -311,7 +311,7 @@ fn replay_saying(dir: &Path, env: &[(&str, &str)], saw: &str) -> (String, String
     (pull, log)
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_session_leaves_redacted_the_variables_secrets_names_and_none_that_only_look_secret() {
     let dir = tempfile::tempdir().unwrap();
     let env = [
@@ -343,7 +343,7 @@ fn a_replayed_session_leaves_redacted_the_variables_secrets_names_and_none_that_
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_session_leaves_a_secret_of_1_to_5_characters_in_what_it_said_and_warns_of_it() {
     let dir = tempfile::tempdir().unwrap();
     let env = [
@@ -370,7 +370,7 @@ fn a_replayed_session_leaves_a_secret_of_1_to_5_characters_in_what_it_said_and_w
     assert_eq!(warned, ["ANTHROPIC_API_KEY", "PIN"], "{log}");
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_session_leaves_redacted_the_credentials_the_table_passes_unnamed() {
     let dir = tempfile::tempdir().unwrap();
     let env = [
@@ -406,7 +406,7 @@ fn a_replayed_session_leaves_redacted_the_credentials_the_table_passes_unnamed()
     assert_eq!(warned, ["ANTHROPIC_CUSTOM_HEADERS", "http_proxy"], "{log}");
 }
 
-#[test]
+#[test_log::test]
 fn a_replay_with_secrets_naming_an_unset_variable_runs_no_session() {
     let dir = tempfile::tempdir().unwrap();
     let bin = case_with_fake_claude(dir.path());
@@ -429,7 +429,7 @@ fn a_replay_with_secrets_naming_an_unset_variable_runs_no_session() {
     assert!(!dir.path().join("out/sessions").exists());
 }
 
-#[test]
+#[test_log::test]
 fn a_replay_with_secrets_naming_a_variable_set_to_a_value_that_is_not_utf_8_runs() {
     let dir = tempfile::tempdir().unwrap();
     let bin = case_with_fake_claude(dir.path());
@@ -454,7 +454,7 @@ fn a_replay_with_secrets_naming_a_variable_set_to_a_value_that_is_not_utf_8_runs
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_holds() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -472,7 +472,7 @@ fn a_replayed_session_gets_no_github_token_whatever_the_operators_environment_ho
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_session_with_linewrights_credentials_empty_keeps_all_it_said() {
     let dir = tempfile::tempdir().unwrap();
     let empty = CREDENTIALS.map(|(variable, _)| (variable, ""));
@@ -483,7 +483,7 @@ fn a_replayed_session_with_linewrights_credentials_empty_keeps_all_it_said() {
     assert!(pull.contains("Nothing to build."), "{pull}");
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_session_runs_its_commands_in_bash_whatever_the_operators_shell() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -502,7 +502,7 @@ fn a_replayed_session_runs_its_commands_in_bash_whatever_the_operators_shell() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_session_cannot_update_the_harness_whatever_session_env_passes() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -522,7 +522,7 @@ fn a_replayed_session_cannot_update_the_harness_whatever_session_env_passes() {
     assert_eq!(values, ["DISABLE_UPDATES=1"], "{env}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_replay_runs_no_automations() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(
@@ -571,7 +571,7 @@ async fn a_replay_runs_no_automations() {
     assert_eq!(harness.automation_prompts(), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_it_blocked() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case(dir.path(), &[]);
@@ -616,7 +616,7 @@ async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_replay_with_auto_merge_refuses_a_merge_method_the_case_repository_does_not_allow() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case_allowing(dir.path(), &[], &[MergeMethod::Rebase]);
@@ -639,7 +639,7 @@ async fn a_replay_with_auto_merge_refuses_a_merge_method_the_case_repository_doe
     assert!(format!("{error:#}").contains("only `rebase`"), "{error:#}");
 }
 
-#[test]
+#[test_log::test]
 fn a_replayed_sessions_record_keeps_its_transcript() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -656,7 +656,7 @@ fn a_replayed_sessions_record_keeps_its_transcript() {
     assert!(!session.join("trace.jsonl").exists());
 }
 
-#[test]
+#[test_log::test]
 fn a_captured_case_keeps_the_transcripts_of_the_sessions_that_handled_it() {
     let dir = tempfile::tempdir().unwrap();
     let sessions = dir.path().join("sessions");
@@ -679,7 +679,7 @@ fn a_captured_case_keeps_the_transcripts_of_the_sessions_that_handled_it() {
     assert!(!case.join("traces").exists());
 }
 
-#[test]
+#[test_log::test]
 fn a_captured_case_keeps_the_attachments_of_its_sessions_but_not_what_a_symlink_points_to() {
     let dir = tempfile::tempdir().unwrap();
     let sessions = dir.path().join("sessions");

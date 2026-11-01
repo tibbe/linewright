@@ -1,23 +1,28 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::future::Future;
+use std::panic::Location;
+use std::sync::{Arc, Mutex};
+
+use tracing_subscriber::fmt::TestWriter;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 #[derive(Clone, Default)]
 pub struct Log(Arc<Mutex<Vec<u8>>>);
 
 impl Log {
-    /// Captures what this thread logs until the guard is dropped. A
-    /// `#[tokio::test]` runs every task on its one thread.
+    /// Captures what this thread logs until the guard is dropped, as well as
+    /// writing it to the test's output. A `#[tokio::test]` runs every task on
+    /// its one thread.
+    ///
+    /// While just one subscriber exists, tracing caches whether a log line is
+    /// wanted from the subscriber of the thread that first reaches it, so
+    /// another test's thread would turn this one's lines off. The global one
+    /// each test's `test_log` attribute installs makes it ask each thread's
+    /// own.
     pub fn capture() -> (Log, tracing::subscriber::DefaultGuard) {
-        // While just one subscriber exists, tracing caches whether a log line
-        // is wanted from the subscriber of the thread that first reaches it,
-        // so another test's thread would turn this one's lines off. A second
-        // subscriber, kept for the whole run, makes it ask each thread's own.
-        static SECOND_SUBSCRIBER: OnceLock<tracing::Dispatch> = OnceLock::new();
-        SECOND_SUBSCRIBER
-            .get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
         let log = Log::default();
         let writer = log.clone();
         let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
+            .with_writer((move || writer.clone()).and(TestWriter::with_stderr))
             .with_ansi(false)
             .finish();
         (log, tracing::subscriber::set_default(subscriber))
@@ -58,16 +63,26 @@ impl Log {
     }
 }
 
-pub async fn eventually(done: impl Fn() -> bool) {
-    eventually_async(|| std::future::ready(done())).await;
+/// Waits until `done` holds, failing the test at the line that waited if it
+/// doesn't within 10s.
+#[track_caller]
+pub fn eventually(done: impl Fn() -> bool) -> impl Future<Output = ()> {
+    eventually_async(move || std::future::ready(done()))
 }
 
-pub async fn eventually_async<F: Future<Output = bool>>(done: impl Fn() -> F) {
-    let waited = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while !done().await {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await;
-    assert!(waited.is_ok(), "timed out");
+/// [`eventually`], for a condition that is async.
+#[track_caller]
+pub fn eventually_async<F: Future<Output = bool>>(
+    done: impl Fn() -> F,
+) -> impl Future<Output = ()> {
+    let caller = Location::caller();
+    async move {
+        let waited = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !done().await {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(waited.is_ok(), "timed out waiting at {caller}");
+    }
 }

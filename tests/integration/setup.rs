@@ -52,7 +52,7 @@ fn open_for_triage(world: &World) -> linewright::domain::Number {
         .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"])
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_repositorys_setup_runs_in_the_clones_root_and_the_sessions_environment_before_the_session_starts()
  {
     let mut world = World::with(|config| {
@@ -120,7 +120,7 @@ fn lines_of(marks: &Path, name: &str) -> Vec<String> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_setup_command_that_fails_twice_hands_the_item_back_with_the_end_of_its_output() {
     let marks = marks();
     let command = format!(
@@ -152,7 +152,7 @@ async fn a_setup_command_that_fails_twice_hands_the_item_back_with_the_end_of_it
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_setup_commands_time_counts_against_its_sessions_timeout() {
     let mut world = World::with(|config| {
         config.work.flags_and_env.setup = Some(setup("sleep 2"));
@@ -181,7 +181,7 @@ async fn the_setup_commands_time_counts_against_its_sessions_timeout() {
     assert!(left > Duration::from_secs(5), "{left:?}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_setup_command_that_outlasts_its_sessions_timeout_is_the_session_timing_out() {
     let marks = marks();
     let command = format!(
@@ -236,7 +236,7 @@ async fn moved_past_setting_up(conflicting: bool, marks: &Path) -> (World, Numbe
     .await
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_update_with_a_conflict_runs_the_setup_command_on_the_branch_before_updating_it() {
     let marks = marks();
     let (mut world, _) = moved_past_setting_up(true, marks.path()).await;
@@ -271,7 +271,7 @@ fn running(pid: &str) -> bool {
     !stat.trim().is_empty() && !stat.trim().starts_with('Z')
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn cancelling_a_run_during_its_setup_command_ends_the_command_at_once() {
     let marks = marks();
     let pid = marks.path().join("pid");
@@ -297,7 +297,7 @@ async fn cancelling_a_run_during_its_setup_command_ends_the_command_at_once() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn what_the_setup_command_leaves_running_is_ended_once_the_run_ends() {
     let marks = marks();
     let pid = marks.path().join("pid");
@@ -341,7 +341,7 @@ async fn gone(pid: &str) -> bool {
     false
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_automations_run_whose_setup_command_fails_fails_with_the_end_of_its_output() {
     let world = World::new().await;
     world
@@ -374,7 +374,7 @@ async fn an_automations_run_whose_setup_command_fails_fails_with_the_end_of_its_
     assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_bash_that_does_not_start_hands_back_after_a_retry_without_a_tail() {
     let mut world = World::with(|config| {
         config.bash = "/nowhere/bash".into();

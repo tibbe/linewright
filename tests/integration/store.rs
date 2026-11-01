@@ -17,7 +17,7 @@ fn read(linear_history: bool, allowed: &[MergeMethod]) -> RepoSettings {
     )
 }
 
-#[test]
+#[test_log::test]
 fn the_repositorys_settings_decide_how_a_branch_is_updated_and_merged() {
     for (linear_history, allowed, update_rule, merge_method) in [
         (
@@ -66,7 +66,7 @@ fn the_repositorys_settings_decide_how_a_branch_is_updated_and_merged() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_configs_update_branch_and_merge_method_win_over_the_repositorys() {
     let merging_by = |merge_method| Some(AutoMerge { merge_method });
     for (allowed, update_method, auto_merge, update_rule, merge_method) in [
@@ -125,7 +125,7 @@ fn the_configs_update_branch_and_merge_method_win_over_the_repositorys() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_settings_that_cannot_merge_are_an_error_saying_what_to_set() {
     for (linear_history, allowed, update_method, merge_method, error) in [
         (
@@ -161,7 +161,7 @@ fn with_auto_merge_settings_that_cannot_merge_are_an_error_saying_what_to_set() 
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_push_refused_for_a_missing_permission_gives_githubs_reason() {
     const TOKEN_WITHOUT_WORKFLOW: &str = "refusing to allow a Personal Access Token to create \
          or update workflow `.github/workflows/ci.yml` without `workflow` scope";
@@ -186,7 +186,7 @@ fn a_push_refused_for_a_missing_permission_gives_githubs_reason() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_push_refused_for_another_reason_names_no_missing_permission() {
     for output in [
         rejected("pre-receive hook declined"),

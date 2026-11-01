@@ -25,7 +25,7 @@ async fn two_issues_triaged() -> Pages {
     pages
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
     let pages = two_issues_triaged().await;
 
@@ -96,7 +96,7 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
     assert_no_status_by_colour_alone(&html);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_pages_stream_lists_the_runs_again_as_one_starts_and_ends() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
@@ -143,7 +143,7 @@ async fn the_runs_pages_stream_lists_the_runs_again_as_one_starts_and_ends() {
     web.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_marks_one_by_hand() {
     let pages = Pages::of(view(vec![], vec![])).await;
     for (n, by, started, ended) in [
@@ -203,7 +203,7 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
     assert!(badge[0].contains(&"badge-ghost"), "{badge:?}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_page_leaves_an_interrupted_runs_duration_empty() {
     let pages = Pages::of(a_ticket()).await;
     record_interrupted(&pages, 1, 1, "2026-10-01T11:00:00Z");
@@ -226,7 +226,7 @@ async fn the_runs_page_leaves_an_interrupted_runs_duration_empty() {
     assert_no_status_by_colour_alone(&html);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_page_names_an_item_linewright_does_not_hold_by_its_number_alone() {
     let pages = Pages::of(a_ticket()).await;
     record_interrupted(&pages, 9, 1, "2026-10-01T11:00:00Z");
@@ -246,7 +246,7 @@ async fn the_runs_page_names_an_item_linewright_does_not_hold_by_its_number_alon
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_page_with_no_runs_to_list_says_so_in_place_of_the_table() {
     let pages = Pages::of(a_ticket()).await;
 
@@ -259,7 +259,7 @@ async fn the_runs_page_with_no_runs_to_list_says_so_in_place_of_the_table() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_page_narrowed_to_an_item_without_runs_says_so_in_place_of_the_table() {
     let pages = Pages::of(a_ticket()).await;
 
@@ -283,7 +283,7 @@ async fn the_runs_page_narrowed_to_an_item_without_runs_says_so_in_place_of_the_
     assert_eq!(text(select(&runs, "#runs")[0]), "No runs");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_page_says_why_a_narrowing_does_not_read() {
     let pages = Pages::of(a_ticket()).await;
 
@@ -297,7 +297,7 @@ async fn the_runs_page_says_why_a_narrowing_does_not_read() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_on_one_line_whole_in_the_tooltip()
  {
     let pages = two_issues_triaged().await;
@@ -327,7 +327,7 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
 }
 
 /// `docs/specs/web/design_system.md`, Status: handed back is `warning`.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_runs_and_item_pages_show_a_handed_back_runs_outcome_in_warning() {
     let pages = Pages::of(view(vec![ticket(1, "Do it")], vec![])).await;
     pages.record(&json!({

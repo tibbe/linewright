@@ -54,7 +54,7 @@ fn evaluated(sources: &[&str]) -> String {
         .to_std_string_escaped()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_update_neither_opens_nor_closes_a_fold_and_morphs_every_other_attribute() {
     let script = served_script().await;
 
@@ -214,7 +214,7 @@ async fn with_tips(page: &str, asked: &str) -> Vec<String> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_tip_shows_the_innermost_trigger_unless_a_cut_text_holds_it() {
     let page = r#"
 var plain = node({ "data-tip": "plain" }, "x");
@@ -287,7 +287,7 @@ async fn after_each(page: &str, steps: &[&str]) -> Vec<String> {
     .await
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_tip_hides_once_the_pointer_has_left_the_trigger_and_the_tip() {
     let tips = after_each(
         TWO_TRIGGERS,
@@ -319,7 +319,7 @@ async fn the_tip_hides_once_the_pointer_has_left_the_trigger_and_the_tip() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn one_tip_shows_on_hover_or_keyboard_focus_until_focus_moves() {
     let tips = after_each(
         TWO_TRIGGERS,
@@ -349,7 +349,7 @@ async fn one_tip_shows_on_hover_or_keyboard_focus_until_focus_moves() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn keyboard_focus_on_what_holds_a_cut_text_shows_it_whole_until_focus_moves() {
     let page = r##"
 var head = node({ "data-tip-cut": "" }, "#4: Old idea — finished on Oct 1");
@@ -374,7 +374,7 @@ page(summary, uncutSummary);
     assert_eq!(tips, ["#4: Old idea — finished on Oct 1", "-", "-"]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn escape_hides_the_tip_until_the_pointer_leaves_the_trigger_or_focus_moves() {
     let escape = r#"fire("keydown", { key: "Escape" });"#;
     let tips = after_each(
@@ -415,7 +415,7 @@ async fn escape_hides_the_tip_until_the_pointer_leaves_the_trigger_or_focus_move
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_trigger_an_update_brings_shows_its_tip_and_one_it_takes_away_hides_it() {
     let update = r#"fire("htmx:sse:after:message", { detail: { message: { id: "" } } });"#;
     let tips = after_each(
@@ -450,7 +450,7 @@ async fn a_trigger_an_update_brings_shows_its_tip_and_one_it_takes_away_hides_it
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_trigger_whose_tip_is_not_in_its_text_or_label_is_described_by_it_while_it_shows() {
     let page = r##"
 var time = node({ "data-tip": "Oct 23, 2026, 11:00:00 UTC" }, "1 hour ago");
@@ -480,7 +480,7 @@ const described = () =>
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_tip_lies_over_its_trigger_above_it_or_below_where_there_is_no_room_inside_the_viewport()
  {
     let page = r#"
@@ -584,7 +584,7 @@ fn times(datetimes: &[&str]) -> String {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days_with_its_absolute_time_in_the_tip()
  {
     // Each as old, as of `NOW`, as its comment says.
@@ -656,7 +656,7 @@ async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days_w
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_future_time_reads_as_its_absolute_time_with_no_tip() {
     let page = r#"time({ dateTime: "2026-10-23T12:00:01Z", dataset: { tip: "stale" } });"#;
 
@@ -672,7 +672,7 @@ async fn a_future_time_reads_as_its_absolute_time_with_no_tip() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_runs_duration_reads_its_two_largest_units_that_are_not_zero() {
     // 45 s, 1 min 43 s, 3 h 2 min 7 s, 1 day 0 h 5 min 9 s and none, settled,
     // then 3 h 2 min 7 s of a run in flight.

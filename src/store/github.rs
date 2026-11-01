@@ -3748,7 +3748,7 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
+    #[test_log::test]
     fn a_pull_request_lists_its_assignees_and_who_assigned_and_unassigned_whom_when() {
         let mut pr = review_required(&json!([]));
         pr.assignees = serde_json::from_value(json!({"nodes": [{"login": "factory"}]})).unwrap();
@@ -3794,7 +3794,7 @@ mod tests {
         requires.iter().map(Requirement::to_string).collect()
     }
 
-    #[test]
+    #[test_log::test]
     fn a_team_requested_as_code_owner_requires_a_code_owners_review_without_naming_it() {
         let pr = review_required(&json!([code_owner(&json!({"__typename": "Team"}))]));
 
@@ -3804,7 +3804,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn users_requested_as_code_owners_are_named() {
         let pr = review_required(&json!([
             code_owner(&json!({"__typename": "User", "login": "alice"})),
@@ -3817,7 +3817,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_user_requested_as_code_owner_with_a_team_is_not_named_alone() {
         let pr = review_required(&json!([
             code_owner(&json!({"__typename": "User", "login": "alice"})),
@@ -3830,7 +3830,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_review_required_without_code_owners_requested_requires_an_approval() {
         let pr = review_required(&json!([{
             "asCodeOwner": false,
@@ -3848,7 +3848,7 @@ mod tests {
     /// which its maintainer requested changes. The other decisions are
     /// GitHub's documented values
     /// (<https://docs.github.com/en/graphql/reference/enums#pullrequestreviewdecision>).
-    #[test]
+    #[test_log::test]
     fn a_pull_request_is_held_with_githubs_review_decision_and_none_where_github_gives_none() {
         let decision = |review_decision: Option<Value>| {
             let mut pr: Value =
@@ -3894,7 +3894,7 @@ mod tests {
             .unwrap()
     }
 
-    #[test]
+    #[test_log::test]
     fn a_check_run_with_a_conclusion_is_finished_whatever_its_status() {
         let css_state = |status: &str, conclusion: Value| {
             let mut pr = concluded_in_progress();
@@ -3923,7 +3923,7 @@ mod tests {
         assert_eq!(css_state("COMPLETED", json!("FAILURE")), CheckState::Failed);
     }
 
-    #[test]
+    #[test_log::test]
     fn a_required_check_run_that_concluded_successfully_in_progress_is_not_missing() {
         let pr: GqlPull = serde_json::from_value(concluded_in_progress()).unwrap();
         let rules = BranchRules {
@@ -3947,7 +3947,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[test_log::test]
     fn a_code_owner_requested_under_rules_requiring_its_review_is_required_without_a_review_decision()
      {
         let pr = no_review_decision(&json!([code_owner(
@@ -3962,7 +3962,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_team_requested_as_code_owner_under_rules_requiring_its_review_is_required_unnamed() {
         let pr = no_review_decision(&json!([code_owner(&json!({"__typename": "Team"}))]));
 
@@ -3972,7 +3972,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_code_owner_requested_without_a_review_decision_or_a_rule_requiring_it_is_not_required() {
         let pr = no_review_decision(&json!([code_owner(
             &json!({"__typename": "User", "login": "tibbe"})
@@ -3981,7 +3981,7 @@ mod tests {
         assert_eq!(pr.requirements(&BranchRules::default()), []);
     }
 
-    #[test]
+    #[test_log::test]
     fn rules_requiring_a_code_owners_review_require_none_when_no_code_owner_is_requested() {
         let pr = no_review_decision(&json!([{
             "asCodeOwner": false,
@@ -3991,7 +3991,7 @@ mod tests {
         assert_eq!(pr.requirements(&code_owner_review_ruled()), []);
     }
 
-    #[test]
+    #[test_log::test]
     fn a_branchs_rules_give_its_required_checks_and_whether_a_code_owners_review_is_required() {
         // As `GET /repos/tibbe/linewright/rules/branches/main` returns them.
         let rules: Vec<Value> = serde_json::from_value(json!([
@@ -4026,7 +4026,7 @@ mod tests {
     /// `fixtures/issue-reopened.json` is `IssueFields` as GitHub returned it
     /// for <https://github.com/rust-lang/cargo/issues/11777>, closed by a merged
     /// pull request and reopened.
-    #[test]
+    #[test_log::test]
     fn an_issue_lists_its_reopenings_among_its_labelings() {
         let issue: GqlIssue =
             serde_json::from_str(include_str!("fixtures/issue-reopened.json")).unwrap();
@@ -4072,7 +4072,7 @@ mod tests {
     /// it for <https://github.com/tibbe/linewright/issues/731>, which tibbe
     /// filed and labeled `needs-triage`, and Linewright, as `tibbe-bot`,
     /// triaged and handed back.
-    #[test]
+    #[test_log::test]
     fn an_issue_lists_who_applied_each_label() {
         let issue: GqlIssue =
             serde_json::from_str(include_str!("fixtures/issue-handed-back.json")).unwrap();
@@ -4089,7 +4089,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn an_issue_is_held_with_when_github_last_updated_it_and_each_pull_request_closing_it() {
         let issue: GqlIssue =
             serde_json::from_str(include_str!("fixtures/issue-reopened.json")).unwrap();
@@ -4109,7 +4109,7 @@ mod tests {
 
     /// `fixtures/pull-changes-requested.json`, as in
     /// [`a_pull_request_is_held_with_githubs_review_decision_and_none_where_github_gives_none`].
-    #[test]
+    #[test_log::test]
     fn a_pull_request_is_held_with_when_github_last_updated_it() {
         let pr: GqlPull =
             serde_json::from_str(include_str!("fixtures/pull-changes-requested.json")).unwrap();
@@ -4121,7 +4121,7 @@ mod tests {
 
     /// `fixtures/pull-changes-requested.json`, as in
     /// [`a_pull_request_is_held_with_githubs_review_decision_and_none_where_github_gives_none`].
-    #[test]
+    #[test_log::test]
     fn a_pull_request_is_held_with_the_branch_it_merges_into() {
         let pr: GqlPull =
             serde_json::from_str(include_str!("fixtures/pull-changes-requested.json")).unwrap();
@@ -4134,7 +4134,7 @@ mod tests {
     /// `fixtures/merged-pull.json` is `MergedFields` as GitHub returned it
     /// for <https://github.com/tibbe/linewright/pull/477>, a spec change
     /// Linewright designed after its merge.
-    #[test]
+    #[test_log::test]
     fn a_merged_pull_request_is_held_with_when_github_last_updated_it() {
         let pr: GqlMerged =
             serde_json::from_str(include_str!("fixtures/merged-pull.json")).unwrap();
@@ -4146,7 +4146,7 @@ mod tests {
 
     /// `fixtures/merged-pull.json`, as above: merged at 14:56:28, and
     /// labeled designed, which updated it, at 15:05:15.
-    #[test]
+    #[test_log::test]
     fn a_spec_change_merged_before_the_lookback_window_is_held_while_it_was_designed_within_the_done_window()
      {
         let pr: GqlMerged =
@@ -4165,7 +4165,7 @@ mod tests {
         assert_eq!(pr.held_merged_at("release", designed_within), None);
     }
 
-    #[test]
+    #[test_log::test]
     fn an_issue_lists_its_labelings_unlabelings_and_assignments_with_who_made_them() {
         let issue: GqlIssue = serde_json::from_value(json!({
             "number": 12, "title": "Store gadgets", "body": "",
@@ -4219,7 +4219,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_merged_pull_request_lists_its_assignees_and_when_each_was_assigned_unassigned_and_labeled()
     {
         let pr: GqlMerged = serde_json::from_value(json!({
@@ -4304,7 +4304,7 @@ mod tests {
     /// `fixtures/sub-issues.json` is the `subIssues` connection GitHub
     /// returned for <https://github.com/tibbe/linewright/issues/373>, the
     /// tracking issue of tickets its account opened, all of them closed.
-    #[test]
+    #[test_log::test]
     fn an_issues_sub_issues_are_read_with_who_opened_them_and_when_they_closed() {
         let nodes: Nodes<SubIssueNode> =
             serde_json::from_str(include_str!("fixtures/sub-issues.json")).unwrap();
@@ -4332,7 +4332,7 @@ mod tests {
     /// `fixtures/issue-sub-issues-added.json` is `IssueFields` as GitHub
     /// returned it for <https://github.com/tibbe/linewright/issues/900>,
     /// whose sub-issues Linewright, as `tibbe-bot`, opened and added.
-    #[test]
+    #[test_log::test]
     fn an_issues_sub_issues_are_read_with_who_added_them() {
         let issue: GqlIssue =
             serde_json::from_str(include_str!("fixtures/issue-sub-issues-added.json")).unwrap();
@@ -4356,7 +4356,7 @@ mod tests {
     /// as GitHub returned it for
     /// <https://github.com/tibbe/linewright/issues/308>, whose sub-issues
     /// tibbe opened and added.
-    #[test]
+    #[test_log::test]
     fn a_closed_issues_sub_issues_are_read_with_who_added_them() {
         let issue: GqlClosedIssue =
             serde_json::from_str(include_str!("fixtures/closed-issue-sub-issues-added.json"))
@@ -4380,7 +4380,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_ticket_is_closed_by_its_pull_requests_open_closed_or_merged_whoever_opened_them() {
         let issue = ticket(
             &Value::Null,
@@ -4425,7 +4425,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_ticket_whose_parent_is_a_tracking_issue_knows_the_spec_change() {
         let issue = ticket_with_parent(&json!({
             "number": 11, "title": "Spec change: Gadgets",
@@ -4442,7 +4442,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_ticket_whose_parent_a_person_opened_knows_no_spec_change() {
         let issue = ticket_with_parent(&json!({
             "number": 11, "title": "Spec change: Gadgets",
@@ -4459,7 +4459,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_ticket_without_a_parent_has_none() {
         assert_eq!(ticket_with_parent(&Value::Null).parent, None);
     }
@@ -4474,7 +4474,7 @@ mod tests {
         })
     }
 
-    #[test]
+    #[test_log::test]
     fn a_spec_changes_tracking_issues_are_the_issues_linewright_filed_for_it_here() {
         let tracking = |number| {
             referenced_by(
@@ -4519,7 +4519,7 @@ mod tests {
     /// the tracking issue #387, which Linewright closed once its tickets
     /// were, and its tickets #388 and #389, each closed by its merged pull
     /// request.
-    #[test]
+    #[test_log::test]
     fn issues_closed_since_the_window_opened_are_held_with_the_pull_request_whose_merge_closed_them()
      {
         let page: Page<GqlClosedIssue> =
@@ -4617,7 +4617,7 @@ mod tests {
     /// <https://github.com/tibbe/linewright>: #388, a ticket its account
     /// opened, closed by the merge of #390; #719, an issue a person opened,
     /// unlabeled and assigned only to them; and #99999, which does not exist.
-    #[test]
+    #[test_log::test]
     fn closed_issues_read_by_number_are_those_the_snapshot_would_hold_were_they_open() {
         let response =
             serde_json::from_str(include_str!("fixtures/closed-issues-numbered.json")).unwrap();
@@ -4696,7 +4696,7 @@ mod tests {
     /// Linewright never worked them. #731 is a person's issue that Linewright,
     /// as `tibbe-bot`, claimed, labeled `ready-for-human` in a hand-back and
     /// let go of, which no filter by its labels, assignees or author finds.
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn startup_reads_every_open_issue_and_the_closed_ones_since_the_windows_to_index_the_managed_ones()
      {
         let (index, asked) = started().await;
@@ -4718,7 +4718,7 @@ mod tests {
     /// #731 of `fixtures/managed-facts-closed.json`, as it would read open,
     /// with its labels removed: a person's issue Linewright claimed and
     /// labeled, then let go of.
-    #[test]
+    #[test_log::test]
     fn an_open_issue_linewright_labeled_and_claimed_is_indexed_once_its_labels_and_assignment_are_gone()
      {
         let page: Value = serde_json::from_str(CLOSED_FACTS).unwrap();
@@ -4748,7 +4748,7 @@ mod tests {
     /// issues of <https://github.com/tibbe/linewright> updated since 22:00:
     /// among them #786, #789 and #791, closed since startup, and #796, a
     /// person's.
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn a_poll_after_startup_reads_only_the_issues_updated_since_the_last_poll_to_keep_the_index()
      {
         let (started, _) = started().await;
@@ -4810,7 +4810,7 @@ mod tests {
     /// A refresh reads items one by one between polls, so the issues a poll
     /// reads to keep the index are those updated since the poll before it,
     /// whatever was refreshed in between.
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn the_reads_of_a_refresh_leave_the_next_poll_reading_the_issues_updated_since_the_last_poll()
      {
         let (started, _) = started().await;
@@ -4860,7 +4860,7 @@ mod tests {
     /// returned it for <https://github.com/tibbe/linewright/issues/673>, a
     /// person's issue Linewright claimed, let go of, claimed again and closed
     /// with its merged pull request #675.
-    #[test]
+    #[test_log::test]
     fn a_closed_issue_is_held_with_its_assignees_assignments_and_the_pull_requests_closing_it() {
         let issue: GqlClosedIssue =
             serde_json::from_str(include_str!("fixtures/closed-issue-worked.json")).unwrap();
@@ -4915,7 +4915,7 @@ mod tests {
     /// returned it for <https://github.com/rust-lang/cargo/issues/15010>,
     /// which its merged pull request #16807 closed, someone reopened, and its
     /// merged pull request #17354 closed again.
-    #[test]
+    #[test_log::test]
     fn a_closed_issue_is_held_with_its_reopenings_and_the_branch_each_pull_request_closing_it_merged_into()
      {
         let issue: GqlClosedIssue =
@@ -4953,7 +4953,7 @@ mod tests {
     /// `fixtures/closed-issue-handed-back.json` is `ClosedIssueFields` as
     /// GitHub returned it for <https://github.com/tibbe/linewright/issues/731>,
     /// as in [`an_issue_lists_who_applied_each_label`].
-    #[test]
+    #[test_log::test]
     fn a_closed_issue_is_held_with_who_applied_each_label() {
         let issue: GqlClosedIssue =
             serde_json::from_str(include_str!("fixtures/closed-issue-handed-back.json")).unwrap();
@@ -4980,7 +4980,7 @@ mod tests {
     /// `fixtures/closed-issue-not-planned.json` is `ClosedIssueFields` as
     /// GitHub returned it for <https://github.com/tibbe/linewright/issues/305>,
     /// which its maintainer closed as not planned.
-    #[test]
+    #[test_log::test]
     fn an_issue_closed_as_not_planned_is_held_with_that_reason() {
         let issue: GqlClosedIssue =
             serde_json::from_str(include_str!("fixtures/closed-issue-not-planned.json")).unwrap();
@@ -4995,7 +4995,7 @@ mod tests {
 
     /// The fixture with GitHub's other documented reasons
     /// (<https://docs.github.com/en/graphql/reference/enums#issuestatereason>).
-    #[test]
+    #[test_log::test]
     fn a_closed_issue_is_held_with_githubs_reason_and_none_where_github_gives_none() {
         let reason = |state_reason: Value| {
             let mut issue: Value =
@@ -5035,7 +5035,7 @@ mod tests {
     /// GitHub returned for <https://github.com/tibbe/linewright>: the one,
     /// #321, its maintainer opened and closed without merging, which no one
     /// labeled, assigned or commented on.
-    #[test]
+    #[test_log::test]
     fn pull_requests_closed_unmerged_since_the_window_opened_are_held_when_linewright_opened_them()
     {
         let closed = |since, linewright| {
@@ -5070,7 +5070,7 @@ mod tests {
     /// 2026-10-30. Of those closed since 1 October, its maintainer `babakks`
     /// only commented on #13318 and #14664, people's, and did nothing on the
     /// rest.
-    #[test]
+    #[test_log::test]
     fn pull_requests_closed_unmerged_that_linewright_only_commented_on_are_not_held() {
         // `babakks` standing in for Linewright.
         let closed = closed_pulls_held(
@@ -5087,7 +5087,7 @@ mod tests {
     /// them, its maintainer `babakks` opened #11500, labeled #13013, was
     /// assigned by another to #13017, only commented on #14017, and did
     /// nothing on #9847.
-    #[test]
+    #[test_log::test]
     fn listed_open_pull_requests_are_held_as_linewrights_own_or_as_a_persons_linewright_labeled_or_is_assigned_to()
      {
         let page: Page<GqlOpenPull> =
@@ -5120,7 +5120,7 @@ mod tests {
     /// <https://github.com/cli/cli> on 2026-10-30: #13017, open, which
     /// `babakks` was assigned to; #9847, open, which `babakks` did nothing
     /// on; and #14664, which `babakks` commented on, closed.
-    #[test]
+    #[test_log::test]
     fn a_persons_pull_request_is_read_in_full_while_it_is_open_and_linewright_may_manage_it() {
         let response: GqlResponse<RepoData<BTreeMap<String, Option<GqlPeoplesPull>>>> =
             serde_json::from_str(include_str!("fixtures/peoples-pulls.json")).unwrap();
@@ -5141,7 +5141,7 @@ mod tests {
     /// `fixtures/pull-labeled.json` is `PullFields` as GitHub returned it
     /// for <https://github.com/tibbe/linewright/pull/817>, a spec change of
     /// `tibbe`'s that `tibbe-bot` assigned itself to and labeled designed.
-    #[test]
+    #[test_log::test]
     fn a_pull_request_lists_who_applied_each_label_when_and_is_worked_by_who_applied_one() {
         let pr: GqlPull = serde_json::from_str(include_str!("fixtures/pull-labeled.json")).unwrap();
 
@@ -5166,7 +5166,7 @@ mod tests {
     /// repository itself; and
     /// `fixtures/pull-check-run-concluded-in-progress.json` an open pull
     /// request from a branch of the repository itself.
-    #[test]
+    #[test_log::test]
     fn the_pushes_of_a_pull_request_are_read_only_while_it_is_open_from_a_branch_of_the_repository()
     {
         let read = |recorded: &str| serde_json::from_str::<GqlPull>(recorded).unwrap();
@@ -5185,7 +5185,7 @@ mod tests {
     /// returned it for <https://github.com/tibbe/linewright/pull/817>, as
     /// above, which `tibbe-bot` also commented on. Its timeline is kept to
     /// that comment.
-    #[test]
+    #[test_log::test]
     fn a_merged_pull_request_lists_its_comments_and_is_not_worked_by_who_only_commented_on_it() {
         let mut pr: Value =
             serde_json::from_str(include_str!("fixtures/merged-pull-commented.json")).unwrap();
@@ -5213,7 +5213,7 @@ mod tests {
     /// maintainer `mislav` only commented on #5773 of them; #14822, #14827,
     /// #14841, #14842, #14855, #14856 and #14868 are labeled `needs-triage`,
     /// which asks for the work of whoever triages.
-    #[test]
+    #[test_log::test]
     fn an_open_issue_linewright_only_commented_on_is_not_indexed() {
         let mut index = ManagedIndex::default();
 
@@ -5232,7 +5232,7 @@ mod tests {
     /// `ClosedIssueFields` GitHub returned for the closed issues of
     /// <https://github.com/cli/cli> last updated on 2026-10-30. Of them, its
     /// maintainer `BagToad` only commented on #14711.
-    #[test]
+    #[test_log::test]
     fn a_closed_issue_linewright_only_commented_on_is_not_held() {
         let page: Page<GqlClosedIssue> =
             serde_json::from_str(include_str!("fixtures/closed-issues-commented.json")).unwrap();
@@ -5247,7 +5247,7 @@ mod tests {
     /// `fixtures/labels.json` is the example response GitHub documents for
     /// listing a repository's labels
     /// (<https://docs.github.com/en/rest/issues/labels#list-labels-for-a-repository>).
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn the_repositorys_labels_are_read_with_their_descriptions_from_every_page() {
         let documented: Vec<RestLabel> =
             serde_json::from_str(include_str!("fixtures/labels.json")).unwrap();
@@ -5284,7 +5284,7 @@ mod tests {
     /// (<https://docs.github.com/en/rest/issues/labels#update-a-label>):
     /// `PATCH /repos/{owner}/{repo}/labels/{name}`, the name a path segment,
     /// with the new `description` in the body.
-    #[test]
+    #[test_log::test]
     fn a_label_named_with_a_colon_is_described_at_its_percent_encoded_name() {
         let (method, path, body) =
             describe_label_request("linewright:stalled", "Handed back in a stall");
@@ -5297,7 +5297,7 @@ mod tests {
     /// One alias per path, each asking for the blob at `BRANCH:PATH`
     /// (<https://docs.github.com/en/graphql/reference/objects#repository>,
     /// `object`), the expression a variable of its own.
-    #[test]
+    #[test_log::test]
     fn files_are_read_in_one_query_an_alias_per_path() {
         let paths = [
             ".linewright/config.toml".to_string(),
@@ -5329,7 +5329,7 @@ mod tests {
     /// (<https://docs.github.com/en/rest/git/trees#get-a-tree>):
     /// `GET /repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1`, the tree
     /// named as `BRANCH:DIR`, one percent-encoded path segment.
-    #[test]
+    #[test_log::test]
     fn a_directory_is_listed_from_its_tree_at_the_head_of_the_branch() {
         assert_eq!(
             tree_path("7-a/b", ".linewright/automations"),
@@ -5339,7 +5339,7 @@ mod tests {
 
     /// `fixtures/linewright-tree.json` is what GitHub returned for
     /// `main:.linewright` on <https://github.com/tibbe/linewright>.
-    #[test]
+    #[test_log::test]
     fn a_tree_lists_each_file_under_it_by_its_path_leaving_out_its_subtrees() {
         let tree = serde_json::from_str(include_str!("fixtures/linewright-tree.json")).unwrap();
 
@@ -5356,7 +5356,7 @@ mod tests {
     /// `fixtures/linux-tree-truncated.json` is what GitHub returned for
     /// `master` on <https://github.com/torvalds/linux>, cut here to its first
     /// three entries.
-    #[test]
+    #[test_log::test]
     fn a_tree_too_large_for_github_to_list_whole_is_an_error() {
         let tree =
             serde_json::from_str(include_str!("fixtures/linux-tree-truncated.json")).unwrap();
@@ -5367,7 +5367,7 @@ mod tests {
     /// `fixtures/repository-files.json` is what GitHub returned for that
     /// query on <https://github.com/rust-lang/rust>, asking for a PNG
     /// image, a path with no file, a directory and the script `x`.
-    #[test]
+    #[test_log::test]
     fn files_read_are_by_path_with_binary_ones_marked_and_paths_with_no_file_left_out() {
         let paths = [
             "src/librustdoc/html/static/images/favicon-32x32.png",
@@ -5398,7 +5398,7 @@ mod tests {
     /// `fixtures/repository-file-truncated.json` is what GitHub returned for
     /// that query on <https://github.com/torvalds/linux>, asking for
     /// `MAINTAINERS` (951 kB), its text cut here to its first line.
-    #[test]
+    #[test_log::test]
     fn a_file_too_large_for_github_to_give_whole_is_read_as_too_large() {
         let paths = ["MAINTAINERS".to_string()];
 
@@ -5448,7 +5448,7 @@ mod tests {
 
     /// As gh's `TestUpload` and `TestUploadAuthentication`
     /// (`internal/attachments/client_test.go` in cli/cli) expect it.
-    #[test]
+    #[test_log::test]
     fn an_attachment_is_uploaded_as_gh_uploads_it() {
         let request = github("github-token")
             .attach_request(1234, "shot.png", "image/png", b"the bytes".to_vec())
@@ -5475,7 +5475,7 @@ mod tests {
     /// `attachment-forbidden.json`, whose message is GitHub's for a token
     /// that lacks a permission
     /// (<https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#resource-not-accessible>).
-    #[test]
+    #[test_log::test]
     fn an_uploaded_attachment_gives_its_url() {
         let url = attached(
             UPLOAD,
@@ -5488,7 +5488,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_file_github_refuses_is_refused_with_githubs_reason() {
         let refused = attached(
             UPLOAD,
@@ -5506,7 +5506,7 @@ mod tests {
 
     /// GitHub answers a token that cannot write with 404, as gh's
     /// `uploadPermissions` says.
-    #[test]
+    #[test_log::test]
     fn an_upload_not_found_refuses_the_token() {
         let refused = attached(
             UPLOAD,
@@ -5519,7 +5519,7 @@ mod tests {
         assert_eq!(reason, "Not Found");
     }
 
-    #[test]
+    #[test_log::test]
     fn an_upload_forbidden_refuses_the_token() {
         let refused = attached(
             UPLOAD,
@@ -5532,7 +5532,7 @@ mod tests {
         assert_eq!(reason, "Resource not accessible by personal access token");
     }
 
-    #[tokio::test(start_paused = true)]
+    #[test_log::test(tokio::test(start_paused = true))]
     async fn a_rate_limited_upload_is_sent_again_once_the_limit_is_waited_out() {
         let start = tokio::time::Instant::now();
 

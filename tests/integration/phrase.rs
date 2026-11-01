@@ -3,7 +3,7 @@ use chrono::{TimeZone, Utc};
 use linewright::domain::Number;
 use linewright::phrase::Phrase;
 
-#[test]
+#[test_log::test]
 fn a_phrase_reads_as_the_commands_word_items_times_durations_and_labels() {
     let at = Utc.with_ymd_and_hms(2026, 3, 4, 5, 6, 7).unwrap();
     let phrase = Phrase::from("waiting for ")
@@ -23,21 +23,21 @@ fn a_phrase_reads_as_the_commands_word_items_times_durations_and_labels() {
 }
 
 /// `docs/specs/design_system.md`, Time, Durations.
-#[test]
+#[test_log::test]
 fn a_duration_reads_as_its_two_largest_units_that_are_not_zero() {
     let shown = [45, 103, 10_929, 86_700]
         .map(|seconds| Phrase::default().duration(seconds, None).to_string());
     assert_eq!(shown, ["45s", "1m 43s", "3h 2m", "1d 5m"]);
 }
 
-#[test]
+#[test_log::test]
 fn phrases_join_with_a_separator() {
     let joined = Phrase::join([Number(1), Number(2), Number(3)].map(Phrase::from), ", ");
     assert_eq!(joined.to_string(), "#1, #2, #3");
     assert_eq!(Phrase::join([], "; ").to_string(), "");
 }
 
-#[test]
+#[test_log::test]
 fn a_list_puts_its_conjunction_before_its_last_phrase() {
     let list = |numbers: &[u64], conjunction| {
         Phrase::list(

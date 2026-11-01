@@ -102,7 +102,7 @@ fn holds(html: &Html) -> Vec<(String, String)> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_name() {
     let pages = Pages::of(View {
         last_scheduled_runs: ["hourly", "weekly"]
@@ -149,7 +149,7 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
     assert_eq!(events_path(&html), Some("/events/automations"));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_automations_table_pins_its_heads_in_a_box_scrolling_both_ways_under_the_unparsed_files()
  {
     let pages = Pages::of(with(&[("weekly", WEEKLY)], true)).await;
@@ -166,7 +166,7 @@ async fn the_automations_table_pins_its_heads_in_a_box_scrolling_both_ways_under
     assert_eq!(after_the_unparsed.len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_automation_file_that_does_not_parse_is_a_hold_on_every_page_linking_to_the_automations_page()
  {
     let pages = Pages::of(with(&[], true)).await;
@@ -183,7 +183,7 @@ async fn an_automation_file_that_does_not_parse_is_a_hold_on_every_page_linking_
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_automation_whose_last_run_failed_is_a_hold_linking_to_the_run_until_a_newer_one_starts()
 {
     let pages = Pages::of(with(&[("weekly", WEEKLY)], false)).await;
@@ -216,7 +216,7 @@ async fn an_automation_whose_last_run_failed_is_a_hold_linking_to_the_run_until_
     assert_eq!(holds(&done), Vec::<(String, String)>::new());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_handed_back_is_a_failed_last_run() {
     let pages = Pages::of(with(&[("weekly", WEEKLY)], false)).await;
     record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("handed-back"));
@@ -232,7 +232,7 @@ async fn a_run_handed_back_is_a_failed_last_run() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
     let dir = tempfile::tempdir().unwrap();
     let clock = std::sync::Arc::new(FakeClock::new());
@@ -258,7 +258,7 @@ async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_what_changed() {
     let web = Web::start(with_automations(&[("weekly", WEEKLY)]).await).await;
     let mut events = stream(&web, "/events/automations").await;

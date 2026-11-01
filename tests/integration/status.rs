@@ -104,7 +104,7 @@ fn after_linewright_with(view: &View, recorded: &[Recorded], now: &str) -> Vec<S
     lines[blank + 1..].to_vec()
 }
 
-#[test]
+#[test_log::test]
 fn the_linewright_section_says_since_when_serve_runs_its_polls_and_the_runs_in_flight() {
     let view = View {
         live: [1, 2].map(implementing).to_vec(),
@@ -123,7 +123,7 @@ fn the_linewright_section_says_since_when_serve_runs_its_polls_and_the_runs_in_f
     );
 }
 
-#[test]
+#[test_log::test]
 fn before_the_first_poll_there_is_no_last_poll_and_the_next_is_due_now() {
     assert_eq!(
         text(None, "2026-10-01T11:00:05Z"),
@@ -136,7 +136,7 @@ fn before_the_first_poll_there_is_no_last_poll_and_the_next_is_due_now() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_usage_limit_in_force_is_shown_with_its_reset() {
     let view = View {
         memory: limited_until("2026-10-01T14:30:00Z"),
@@ -154,7 +154,7 @@ fn a_usage_limit_in_force_is_shown_with_its_reset() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_under_way_is_shown_with_since_when_after_the_usage_limit() {
     let view = View {
         memory: Memory {
@@ -206,7 +206,7 @@ fn with_unusable_files() -> View {
     }
 }
 
-#[test]
+#[test_log::test]
 fn each_file_of_the_repositorys_linewright_cannot_use_is_shown_with_its_error_after_the_usage_limit()
  {
     let lines = text(Some(&with_unusable_files()), "2026-10-01T12:00:30Z");
@@ -225,7 +225,7 @@ fn each_file_of_the_repositorys_linewright_cannot_use_is_shown_with_its_error_af
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_repository_whose_files_linewright_can_use_shows_none() {
     let lines = text(Some(&view(vec![])), "2026-10-01T12:00:30Z");
 
@@ -235,7 +235,7 @@ fn a_repository_whose_files_linewright_can_use_shows_none() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_files_of_the_repositorys_linewright_cannot_use_are_in_the_json_and_a_client_reads_an_answer_without_them()
  {
     let answer = status(
@@ -274,7 +274,7 @@ fn the_files_of_the_repositorys_linewright_cannot_use_are_in_the_json_and_a_clie
     assert_eq!(read.linewright.unusable_files, []);
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
     let draining = View {
         memory: draining_since("2026-10-01T12:00:20Z"),
@@ -310,7 +310,7 @@ fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
     assert_eq!(none["linewright"]["drain"], serde_json::Value::Null);
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_with_a_deadline_shows_it_in_text_and_json() {
     let draining = View {
         memory: draining_since("2026-10-01T12:00:20Z"),
@@ -334,7 +334,7 @@ fn a_drain_with_a_deadline_shows_it_in_text_and_json() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn while_draining_an_item_waits_for_the_drain() {
     let view = View {
         memory: draining_since("2026-10-01T12:00:20Z"),
@@ -349,7 +349,7 @@ fn while_draining_an_item_waits_for_the_drain() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
     let view = View {
         memory: limited_until("2026-10-01T12:00:10Z"),
@@ -369,7 +369,7 @@ fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
     assert_eq!(answer.linewright.usage_limit_resets_at, None);
 }
 
-#[test]
+#[test_log::test]
 fn with_webhooks_on_the_last_accepted_delivery_and_the_refused_ones_are_shown() {
     let webhooks = Received {
         last_accepted: Some(at("2026-10-01T11:59:00Z")),
@@ -388,7 +388,7 @@ fn with_webhooks_on_the_last_accepted_delivery_and_the_refused_ones_are_shown() 
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_webhooks_on_and_no_delivery_yet_none_is_shown_accepted() {
     let lines = text_with(
         Some(Received::default()),
@@ -405,7 +405,7 @@ fn with_webhooks_on_and_no_delivery_yet_none_is_shown_accepted() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn each_run_in_flight_follows_the_linewright_section_with_how_long_it_has_run() {
     let view = View {
         in_flight: vec![
@@ -428,7 +428,7 @@ fn each_run_in_flight_follows_the_linewright_section_with_how_long_it_has_run() 
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_with_a_run_in_flight_shows_as_its_run_not_among_the_other_items() {
     let busy = Issue {
         number: Number(9),
@@ -452,7 +452,7 @@ fn an_item_with_a_run_in_flight_shows_as_its_run_not_among_the_other_items() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_and_waits_for_it() {
     let closed = closed_by(ready_issue(), 43, "alice");
 
@@ -462,7 +462,7 @@ fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_and_waits_for_it
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
     let assigned = Issue {
         assignees: vec![Login::new("alice")],
@@ -475,7 +475,7 @@ fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_blocked_ticket_linewright_is_assigned_to_by_hand_shows_as_held_by_its_blocker() {
     let held = Issue {
         assignees: vec![Login::new("factory"), Login::new("alice")],
@@ -497,7 +497,7 @@ fn a_blocked_ticket_linewright_is_assigned_to_by_hand_shows_as_held_by_its_block
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_managed_items_follow_the_linewright_section_each_as_its_number_and_where_it_is() {
     let blocked = Issue {
         number: Number(8),
@@ -553,7 +553,7 @@ fn cut_issue() -> Issue {
     })
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_cut_into_tickets_shows_as_their_tracking_issue_with_its_closed_tickets() {
     assert_eq!(
         after_linewright(&view(vec![cut_issue()]), "2026-10-01T12:00:30Z"),
@@ -563,7 +563,7 @@ fn an_issue_cut_into_tickets_shows_as_their_tracking_issue_with_its_closed_ticke
 
 /// `docs/specs/monitoring.md`, status: only the open managed items; a
 /// closed tracking issue is done.
-#[test]
+#[test_log::test]
 fn a_closed_tracking_issue_is_not_among_the_items() {
     let closed = Issue {
         number: Number(6),
@@ -580,7 +580,7 @@ fn a_closed_tracking_issue_is_not_among_the_items() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_not_designed_yet_shows_as_waiting_for_or_in_its_design() {
     let undesigned = Issue {
         labels: vec!["ready-for-agent".into()],
@@ -603,7 +603,7 @@ fn an_issue_not_designed_yet_shows_as_waiting_for_or_in_its_design() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_carrying_two_status_labels_shows_by_the_newer() {
     let handed_back = Issue {
         number: Number(8),
@@ -624,7 +624,7 @@ fn an_issue_carrying_two_status_labels_shows_by_the_newer() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn each_managed_item_says_in_one_line_what_linewright_waits_for_on_it() {
     let blocked_and_held = Issue {
         number: Number(8),
@@ -675,7 +675,7 @@ fn each_managed_item_says_in_one_line_what_linewright_waits_for_on_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
@@ -697,7 +697,7 @@ fn an_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_newer_run_by_hand_is_the_last_run_and_leaves_the_next_run_as_it_was() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
@@ -716,7 +716,7 @@ fn a_newer_run_by_hand_is_the_last_run_and_leaves_the_next_run_as_it_was() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_newer_scheduled_run_is_the_last_run_with_no_mark() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
@@ -732,7 +732,7 @@ fn a_newer_scheduled_run_is_the_last_run_with_no_mark() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn only_the_automations_own_runs_count_toward_its_last_run() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
@@ -747,7 +747,7 @@ fn only_the_automations_own_runs_count_toward_its_last_run() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_seen_but_never_run_has_no_last_run_yet_and_its_next_run_as_before() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
@@ -764,7 +764,7 @@ fn an_automation_seen_but_never_run_has_no_last_run_yet_and_its_next_run_as_befo
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_is_due_now() {
     let view = View {
         automations: files(&[("hourly", "0 * * * *")], &[]),
@@ -781,7 +781,7 @@ fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_is_due_now()
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_whose_schedule_never_ticks_again_has_no_next_run() {
     let view = View {
         automations: files(&[("leap", "0 0 30 2 *")], &[]),
@@ -798,7 +798,7 @@ fn an_automation_whose_schedule_never_ticks_again_has_no_next_run() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_no_poll_has_seen_yet_has_no_next_run_until_one_does() {
     let view = View {
         automations: files(&[("hourly", "0 * * * *")], &[]),
@@ -814,7 +814,7 @@ fn an_automation_no_poll_has_seen_yet_has_no_next_run_until_one_does() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_parse() {
     let view = View {
         automations: files(
@@ -842,7 +842,7 @@ fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_pars
     );
 }
 
-#[test]
+#[test_log::test]
 fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
     let view = View {
         automations: files(
@@ -868,7 +868,7 @@ fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
     assert!(!plain.contains('\x1b'), "{plain}");
 }
 
-#[test]
+#[test_log::test]
 fn the_answer_reads_back_from_its_json_as_it_was() {
     let webhooks = Received {
         last_accepted: Some(at("2026-10-01T11:59:00Z")),
@@ -903,7 +903,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
     assert_eq!(serde_json::from_str::<Status>(&json).unwrap(), answer);
 }
 
-#[test]
+#[test_log::test]
 fn the_json_names_each_fact() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
@@ -987,7 +987,7 @@ fn the_json_names_each_fact() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_says_when_a_webhook_delivery_was_last_refused_and_reads_without_it() {
     let webhooks = Received {
         last_accepted: Some(at("2026-10-01T11:59:00Z")),
@@ -1021,7 +1021,7 @@ fn the_json_says_when_a_webhook_delivery_was_last_refused_and_reads_without_it()
     assert_eq!(read.linewright.webhooks.unwrap().last_refused, None);
 }
 
-#[test]
+#[test_log::test]
 fn before_an_automations_first_run_its_json_has_no_last_run() {
     let view = View {
         automations: files(&[("weekly", "0 6 * * 1")], &[]),
@@ -1052,7 +1052,7 @@ fn before_an_automations_first_run_its_json_has_no_last_run() {
     assert_eq!(serde_json::from_str::<Status>(&json).unwrap(), answer);
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_is_managed_with_its_own_waits_and_its_ticket_waits_for_it() {
     let pr = Pull {
         number: Number(43),
@@ -1129,17 +1129,17 @@ fn managed_numbers(view: &View) -> Vec<Number> {
     .collect()
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_is_not_managed() {
     assert_eq!(managed_numbers(&unmarked_view(ready_issue())), []);
 }
 
-#[test]
+#[test_log::test]
 fn without_a_required_label_an_issue_asking_for_a_step_is_managed() {
     assert_eq!(managed_numbers(&view(vec![ready_issue()])), [Number(7)]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_without_the_required_label_that_linewright_has_worked_is_managed() {
     let handed_back = Issue {
         labels: vec!["ready-for-agent".into(), label::STALLED.into()],
@@ -1164,7 +1164,7 @@ fn an_issue_without_the_required_label_that_linewright_has_worked_is_managed() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_without_the_required_label_that_someone_elses_pull_request_closes_is_not_managed() {
     let closed = closed_by(ready_issue(), 43, "alice");
 
@@ -1181,7 +1181,7 @@ fn failed(previous: Option<FailedPolls>, time: &str, error: &str) -> Option<Fail
     )
 }
 
-#[test]
+#[test_log::test]
 fn each_failed_poll_counts_from_the_first_and_keeps_the_latest_error() {
     let once = failed(None, "2026-10-01T12:00:00Z", "GitHub is down");
     let twice = failed(once, "2026-10-01T12:01:00Z", "bad credentials");
@@ -1197,7 +1197,7 @@ fn each_failed_poll_counts_from_the_first_and_keeps_the_latest_error() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_poll_that_succeeds_clears_the_failed_polls() {
     let once = failed(None, "2026-10-01T12:00:00Z", "GitHub is down");
 
@@ -1213,7 +1213,7 @@ fn two_failed() -> Polling {
     }
 }
 
-#[test]
+#[test_log::test]
 fn polls_failed_since_the_last_that_succeeded_show_after_the_next_poll() {
     let answer = status(
         &serving(),
@@ -1237,7 +1237,7 @@ fn polls_failed_since_the_last_that_succeeded_show_after_the_next_poll() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn polls_failed_before_the_first_that_succeeded_show_with_the_next_poll() {
     let polling = Polling {
         next: at("2026-10-01T11:01:00Z"),
@@ -1266,7 +1266,7 @@ fn polls_failed_before_the_first_that_succeeded_show_with_the_next_poll() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn polls_failed_are_in_the_json_and_a_client_reads_an_answer_without_them() {
     let answer = status(
         &serving(),
@@ -1296,7 +1296,7 @@ fn polls_failed_are_in_the_json_and_a_client_reads_an_answer_without_them() {
     assert_eq!(read.linewright.failed_polls, None);
 }
 
-#[test]
+#[test_log::test]
 fn the_open_managed_items_are_listed_but_those_in_done() {
     let merged_into = Issue {
         closed_by: vec![ClosingPull {

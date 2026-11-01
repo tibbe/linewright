@@ -74,7 +74,7 @@ fn claimed(store: &LocalStore, issue: Number) -> bool {
     issue.assignees.contains(&Login::new(LINEWRIGHT))
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_labeled_ready_for_agent_is_claimed_on_the_delivery() {
     let world = World::new().await;
     implement(&world);
@@ -108,7 +108,7 @@ fn about_issue(number: Number) -> serde_json::Value {
     json!({"issue": {"number": number.0}})
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_refresh_holds_the_closed_issues_a_fresh_snapshot_would() {
     let world = World::new().await;
     let ticket = world.tracking_with_a_closed_ticket().await;
@@ -136,7 +136,7 @@ async fn a_refresh_holds_the_closed_issues_a_fresh_snapshot_would() {
     served.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn polls_go_on_at_the_poll_interval_while_deliveries_arrive() {
     let world = World::new().await;
     let issue = world
@@ -156,7 +156,7 @@ async fn polls_go_on_at_the_poll_interval_while_deliveries_arrive() {
     served.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_failed_read_for_a_delivery_is_logged_and_the_next_poll_catches_up() {
     let (log, _guard) = Log::capture();
     let world = World::new().await;

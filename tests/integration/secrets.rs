@@ -25,7 +25,7 @@ fn held_in(variables: &[(&str, &str)], text: &str) -> Option<String> {
         .map(|held| held.variable)
 }
 
-#[test]
+#[test_log::test]
 fn the_harness_s_credentials_are_secrets_without_being_named() {
     for name in [
         "ANTHROPIC_API_KEY",
@@ -47,7 +47,7 @@ fn the_harness_s_credentials_are_secrets_without_being_named() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_harness_s_other_variables_are_not_secrets() {
     let env = [
         ("ANTHROPIC_BASE_URL", "https://gateway.example.com"),
@@ -58,7 +58,7 @@ fn the_harness_s_other_variables_are_not_secrets() {
     assert_eq!(redacted(&env, text), text);
 }
 
-#[test]
+#[test_log::test]
 fn a_credential_only_session_env_passes_is_not_a_secret_unless_named() {
     let env = [("AWS_BEARER_TOKEN_BEDROCK", "bedrock-s3cr3t")];
     assert_eq!(redacted(&env, "bedrock-s3cr3t"), "bedrock-s3cr3t");
@@ -69,7 +69,7 @@ fn a_credential_only_session_env_passes_is_not_a_secret_unless_named() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_proxy_password_is_a_secret_as_written_and_percent_decoded() {
     let env = [("HTTPS_PROXY", "http://bot:p%40ss-w0rd@proxy:3128")];
     assert_eq!(
@@ -81,7 +81,7 @@ fn a_proxy_password_is_a_secret_as_written_and_percent_decoded() {
     assert_eq!(held_in(&env, "bot proxy:3128"), None);
 }
 
-#[test]
+#[test_log::test]
 fn a_proxy_password_is_found_in_every_form_the_url_takes() {
     for (name, url, password) in [
         ("HTTP_PROXY", "bot:hunter2-long@proxy:3128", "hunter2-long"),
@@ -123,7 +123,7 @@ fn a_proxy_password_is_found_in_every_form_the_url_takes() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_proxy_url_without_a_password_gives_no_secret() {
     for url in [
         "http://proxy:3128",
@@ -145,7 +145,7 @@ fn a_proxy_url_without_a_password_gives_no_secret() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn no_proxy_gives_no_secret() {
     let env = [
         ("NO_PROXY", "bot:hunter2-long@internal.example.com"),
@@ -154,14 +154,14 @@ fn no_proxy_gives_no_secret() {
     assert_eq!(redacted(&env, "hunter2-long"), "hunter2-long");
 }
 
-#[test]
+#[test_log::test]
 fn a_percent_decoded_proxy_password_that_is_not_utf_8_is_skipped() {
     let env = [("HTTPS_PROXY", "http://bot:s3cr3t%FF@proxy:3128")];
     assert_eq!(redacted(&env, "s3cr3t%FF"), "[redacted]");
     assert_eq!(redacted(&env, "s3cr3t\u{fffd}"), "s3cr3t\u{fffd}");
 }
 
-#[test]
+#[test_log::test]
 fn a_proxy_password_of_1_to_5_characters_is_set_aside_by_its_variable() {
     let env = [
         ("HTTPS_PROXY", "http://bot:p%40s@proxy:3128"),
@@ -172,7 +172,7 @@ fn a_proxy_password_of_1_to_5_characters_is_set_aside_by_its_variable() {
     assert_eq!(secrets.redaction().apply("p@s p%40s"), "p@s p%40s");
 }
 
-#[test]
+#[test_log::test]
 fn a_header_value_is_a_secret_whole_and_without_its_scheme() {
     let env = [(
         "ANTHROPIC_CUSTOM_HEADERS",
@@ -192,7 +192,7 @@ fn a_header_value_is_a_secret_whole_and_without_its_scheme() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn every_header_s_value_is_a_secret_whatever_its_name() {
     let env = [(
         "ANTHROPIC_CUSTOM_HEADERS",
@@ -214,7 +214,7 @@ fn every_header_s_value_is_a_secret_whatever_its_name() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn header_names_and_lines_that_are_not_headers_are_not_secrets() {
     let env = [(
         "ANTHROPIC_CUSTOM_HEADERS",
@@ -225,7 +225,7 @@ fn header_names_and_lines_that_are_not_headers_are_not_secrets() {
     assert_eq!(held_in(&env, text), None);
 }
 
-#[test]
+#[test_log::test]
 fn a_header_value_of_1_to_5_characters_is_set_aside_by_its_variable() {
     let env = [(
         "ANTHROPIC_CUSTOM_HEADERS",
@@ -237,7 +237,7 @@ fn a_header_value_of_1_to_5_characters_is_set_aside_by_its_variable() {
     assert_eq!(held_in(&env, "dev"), None);
 }
 
-#[test]
+#[test_log::test]
 fn a_file_s_bytes_hold_a_secret_even_among_bytes_that_are_not_text() {
     let secrets = secrets_unnamed(&[("ANTHROPIC_API_KEY", "harness-s3cr3t")]);
     let mut bytes = vec![0x89, b'P', b'N', b'G', 0xff, 0x00];
@@ -247,7 +247,7 @@ fn a_file_s_bytes_hold_a_secret_even_among_bytes_that_are_not_text() {
     assert_eq!(secrets.held_in(&[0x89, b'P', b'N', b'G', 0xff]), None);
 }
 
-#[test]
+#[test_log::test]
 fn a_file_s_bytes_holding_a_short_secret_hold_none() {
     let secrets = secrets_unnamed(&[("ANTHROPIC_API_KEY", "s3cr3")]);
     assert_eq!(secrets.held_in(b"the s3cr3 is out"), None);

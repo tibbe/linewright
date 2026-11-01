@@ -13,7 +13,7 @@ use linewright::work_settings::{Effort, Partial, StageTable};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Triage, |_| {
@@ -51,7 +51,7 @@ async fn a_new_issue_is_triaged_into_a_category_a_state_and_a_brief() {
     assert_eq!(claims, 1, "claimed once before triage");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_cancel_after_an_implement_run_begins_pushing_its_result_does_not_stop_it() {
     let mut world = World::new().await;
     implement(&world);
@@ -74,7 +74,7 @@ async fn a_cancel_after_an_implement_run_begins_pushing_its_result_does_not_stop
     assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn an_implement_run_cancelled_as_its_session_answers_keeps_its_work_and_posts_nothing() {
     let mut world = World::new().await;
     let (mut gate, post) = gate();
@@ -108,7 +108,7 @@ async fn an_implement_run_cancelled_as_its_session_answers_keeps_its_work_and_po
     assert_eq!(ended_runs(&world), [linewright::runs::Ending::Cancelled]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_cancel_after_a_rework_begins_pushing_its_result_does_not_stop_it() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -140,7 +140,7 @@ async fn a_cancel_after_a_rework_begins_pushing_its_result_does_not_stop_it() {
     assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn a_rework_cancelled_before_its_push_by_its_pull_request_closing_pushes_and_posts_nothing() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -178,7 +178,7 @@ async fn a_rework_cancelled_before_its_push_by_its_pull_request_closing_pushes_a
     assert_eq!(ended_runs(&world), [linewright::runs::Ending::Cancelled]);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn an_attempt_retried_after_an_infrastructure_failure_can_be_cancelled_during_its_new_session()
  {
     let mut world = World::new().await;
@@ -230,7 +230,7 @@ async fn triage_cancelled_while_recording(world: &mut World) -> (Number, Paused)
     (issue, paused)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_triage_run_cancelled_while_it_records_its_result_records_all_of_it() {
     let (log, _guard) = Log::capture();
     let mut world = World::new().await;
@@ -251,7 +251,7 @@ async fn a_triage_run_cancelled_while_it_records_its_result_records_all_of_it() 
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_whose_recording_fails_after_a_cancel_arrived_is_handed_back() {
     let mut world = World::new().await;
     let (issue, paused) = triage_cancelled_while_recording(&mut world).await;
@@ -264,7 +264,7 @@ async fn a_run_whose_recording_fails_after_a_cancel_arrived_is_handed_back() {
     assert_eq!(ended_runs(&world), [linewright::runs::Ending::HandedBack]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn sessions_running_at_once_get_different_scratch_directories() {
     let mut world = World::new().await;
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -306,7 +306,7 @@ async fn sessions_running_at_once_get_different_scratch_directories() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
     let mut world = World::new().await;
     let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -344,7 +344,7 @@ async fn an_implementing_session_is_given_linewrights_skills_as_its_plugin() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_given_a_second_status_label_keeps_only_the_newer() {
     let mut world = World::new().await;
     let issue = world.store.open_issue(
@@ -368,7 +368,7 @@ fn assignees(issue: &Issue) -> Vec<&str> {
     issue.assignees.iter().map(Login::as_str).collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn needs_info_assigns_the_people_asked_and_names_them_all_even_one_github_refuses() {
     let mut world = World::new().await;
     triage_asking(
@@ -389,7 +389,7 @@ async fn needs_info_assigns_the_people_asked_and_names_them_all_even_one_github_
     assert_eq!(last_comment(&issue), "@outsider\n\nWhich version, @tester?");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_reply_sends_the_issue_back_to_triage_then_unassigns_the_people_asked_then_linewright_claims_it()
  {
     let mut world = World::new().await;
@@ -417,7 +417,7 @@ async fn a_reply_sends_the_issue_back_to_triage_then_unassigns_the_people_asked_
     assert_eq!(assignees(&triaged), [LINEWRIGHT]);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() {
     let mut world = World::new().await;
     let (release, released) = std::sync::mpsc::channel::<()>();
@@ -454,7 +454,7 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
     assert_eq!(issue.assignees, []);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_ready_pull_requests()
 {
     let mut world = World::new().await;
@@ -512,7 +512,7 @@ async fn implemented_a_ticket_cut_from_a_spec_change() -> (World, SpecCut) {
     (world, cut)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_requests_closed() {
     let mut world = World::new().await;
     let (cut, pr) = world.spec_change_ticket_in_review().await;
@@ -568,7 +568,7 @@ fn assert_briefed_with_the_spec_diff(brief: &str) {
     assert!(!brief.contains("Gadgets live here."), "{brief}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_cut_from_a_spec_change_is_briefed_with_the_spec_changes_spec_diff() {
     let (world, _) = implemented_a_ticket_cut_from_a_spec_change().await;
 
@@ -576,7 +576,7 @@ async fn a_ticket_cut_from_a_spec_change_is_briefed_with_the_spec_changes_spec_d
     assert_briefed_with_the_spec_diff(&prompts[0]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn sessions_on_the_pull_request_of_a_ticket_cut_from_a_spec_change_are_briefed_with_its_spec_diff()
  {
     let mut world = World::new().await;
@@ -591,7 +591,7 @@ async fn sessions_on_the_pull_request_of_a_ticket_cut_from_a_spec_change_are_bri
 }
 
 use linewright::domain::{CheckState, Login, ReviewState};
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_requested_again() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -652,7 +652,7 @@ async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_r
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_requests_review_from_a_person_whose_feedback_arrived_while_it_worked() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -692,7 +692,7 @@ async fn a_rework_requests_review_from_a_person_whose_feedback_arrived_while_it_
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_whose_pull_request_is_edited_not_to_close_it_is_worked_again_beside_it() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -718,7 +718,7 @@ async fn a_ticket_whose_pull_request_is_edited_not_to_close_it_is_worked_again_b
     assert!(prompt.contains(&new.head_ref), "{prompt}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_whose_pull_request_closes_while_it_works_pushes_and_records_nothing() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -750,7 +750,7 @@ async fn a_run_whose_pull_request_closes_while_it_works_pushes_and_records_nothi
     assert!(!view.comments.iter().any(|c| c.body == "Renamed as asked."));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn feedback_posted_while_the_session_works_is_addressed_before_the_push() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -798,7 +798,7 @@ async fn feedback_posted_while_the_session_works_is_addressed_before_the_push() 
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_that_needed_no_change_answers_its_feedback_also_after_a_restart() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -857,7 +857,7 @@ fn readied_after_their_design<'a>(at_comment: &'a [Issue], at_designed: &[Issue]
     tracking
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_tickets_of_a_spec_change_are_readied_only_once_their_design_is_on_the_tracking_issue()
 {
     let mut world = World::new().await;
@@ -888,7 +888,7 @@ async fn the_tickets_of_a_spec_change_are_readied_only_once_their_design_is_on_t
     assert!(!spec_labels.contains(&"linewright:designed".to_string()));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn feedback_posted_while_a_rework_records_its_outcome_starts_another() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -913,7 +913,7 @@ async fn feedback_posted_while_a_rework_records_its_outcome_starts_another() {
     assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 2);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn failing_ci_is_fixed_by_the_agent_and_after_the_last_attempt_handed_back() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -1011,7 +1011,7 @@ fn assert_ticket_left_as_it_was(world: &World, ticket: Number) {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -1036,7 +1036,7 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
     assert!(world.factory.is_idle());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is_named_in_the_hand_back()
  {
     let mut world = World::with(|config| {
@@ -1120,7 +1120,7 @@ fn design_noting_assignees(world: &World, result: serde_json::Value) -> Arc<Mute
     seen
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn linewright_is_assigned_to_a_spec_change_while_designing_it_and_unassigned_after() {
     for result in [
         one_ticket(),
@@ -1143,7 +1143,7 @@ async fn linewright_is_assigned_to_a_spec_change_while_designing_it_and_unassign
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_change_with_nothing_to_build_says_why_and_files_no_issues() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |_| {
@@ -1160,7 +1160,7 @@ async fn a_spec_change_with_nothing_to_build_says_why_and_files_no_issues() {
     assert_eq!(world.store.issues(), []);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_handed_back_spec_change_loses_its_design_label() {
     let mut world = World::new().await;
     let store = world.store.clone();
@@ -1183,7 +1183,7 @@ async fn a_handed_back_spec_change_loses_its_design_label() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_design_files_its_spec_gaps_and_its_tickets() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |_| {
@@ -1225,7 +1225,7 @@ async fn spec_change_issue(world: &World) -> Number {
     )
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_changes_issue_is_designed_from_the_spec_change_and_its_diff_and_becomes_its_tickets_tracking_issue()
  {
     let mut world = World::new().await;
@@ -1249,7 +1249,7 @@ async fn a_spec_changes_issue_is_designed_from_the_spec_change_and_its_diff_and_
     assert_eq!(tickets.len(), 2);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_changes_issue_built_as_it_is_is_implemented_from_the_spec_change_and_its_diff() {
     let mut world = World::new().await;
     design_answering(
@@ -1280,7 +1280,7 @@ async fn a_spec_changes_issue_built_as_it_is_is_implemented_from_the_spec_change
     assert!(world.issue(issue).open);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_design_with_nothing_to_build_closes_a_spec_changes_issue_as_completed_saying_why() {
     let mut world = World::new().await;
     design_answering(
@@ -1306,7 +1306,7 @@ fn design_answering(world: &World, result: Value) {
         .on(WorkKind::Design, move |_| Ok(result.to_string()));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_readied_issue_is_designed_on_the_issue_and_the_next_poll_implements_it() {
     let mut world = World::new().await;
     design_answering(
@@ -1352,7 +1352,7 @@ async fn issue_cut_into_tickets() -> (World, Number, [Number; 2]) {
     (world, issue, tickets)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_tickets_of_an_issue_are_readied_only_once_their_design_is_on_it() {
     let mut world = World::new().await;
     tickets_script(&world);
@@ -1372,7 +1372,7 @@ async fn the_tickets_of_an_issue_are_readied_only_once_their_design_is_on_it() {
     assert!(!labels(tracking).contains(&"linewright:designed"));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_cut_into_tickets_is_closed_once_all_of_them_are() {
     let (mut world, issue, tickets) = issue_cut_into_tickets().await;
 
@@ -1386,7 +1386,7 @@ async fn an_issue_cut_into_tickets_is_closed_once_all_of_them_are() {
     assert_eq!(last_comment(&closed), "All tickets are closed.");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_added_as_a_sub_issue()
 {
     let mut world = World::new().await;
@@ -1429,7 +1429,7 @@ async fn close_reason(world: &World, number: Number) -> Option<IssueCloseReason>
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_tracking_issue_whose_design_label_was_removed_has_its_cut_discarded_and_is_designed_again()
  {
     let (mut world, issue, tickets) = issue_cut_into_tickets().await;
@@ -1493,7 +1493,7 @@ async fn a_tracking_issue_whose_design_label_was_removed_has_its_cut_discarded_a
     assert!(recut.iter().all(|t| !tickets.contains(t)), "{recut:?}");
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn unassigning_linewright_from_a_spec_change_while_it_is_cut_cancels_the_cut() {
     let mut world = World::new().await;
     let (release, released) = std::sync::mpsc::channel::<()>();
@@ -1524,7 +1524,7 @@ async fn unassigning_linewright_from_a_spec_change_while_it_is_cut_cancels_the_c
     assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_closed_while_its_run_works_gets_no_hand_back() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -1556,7 +1556,7 @@ async fn a_pull_request_closed_while_its_run_works_gets_no_hand_back() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions() {
     let mut world = World::new().await;
     let ticket = world.ticket_blocked_filing_a_spec_gap().await;
@@ -1569,7 +1569,7 @@ async fn a_spec_gap_already_filed_for_a_ticket_is_shown_to_later_sessions() {
     assert!(prompts[0].contains("Spec: gadget colors"));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_closed_without_merging_hands_its_ticket_back() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;
@@ -1627,7 +1627,7 @@ fn asks_written(issue: &Issue) -> Vec<String> {
 /// `docs/specs/repository.md`, Working an item and Writes: an issue goes
 /// from `needs-triage` to in review a row at a time, and a person closing
 /// Linewright's pull request has it handed back.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_is_worked_from_needs_triage_to_in_review_and_handed_back_when_its_pull_request_is_closed()
  {
     let mut world = World::new().await;
@@ -1691,7 +1691,7 @@ async fn an_issue_is_worked_from_needs_triage_to_in_review_and_handed_back_when_
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_whose_label_asks_nothing_assigned_to_linewright_by_hand_is_let_go_with_a_comment()
 {
     let mut world = World::new().await;
@@ -1762,7 +1762,7 @@ fn finish_gadgets(dir: &std::path::Path) {
     commit_in(dir, &[("src/gadgets.txt", "gadgets\n")], "Finish gadgets");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_handed_back_tickets_next_run_starts_from_its_branch_and_is_told_it_holds_earlier_work() {
     let mut world = World::new().await;
     let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
@@ -1803,7 +1803,7 @@ fn subjects(world: &World, branch: &str) -> Vec<String> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_timed_out_session_leaves_its_uncommitted_edits_on_the_tickets_branch_as_an_unfinished_commit()
  {
     let mut world = World::new().await;
@@ -1830,7 +1830,7 @@ async fn a_timed_out_session_leaves_its_uncommitted_edits_on_the_tickets_branch_
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_unfinished_commit()
  {
     use linewright::harness::SessionError;
@@ -1912,7 +1912,7 @@ async fn cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, Number)
     ticket
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn a_run_cancelled_by_closing_its_ticket_pushes_its_work_and_the_branch_is_deleted_after() {
     let mut world = World::new().await;
 
@@ -1927,7 +1927,7 @@ async fn a_run_cancelled_by_closing_its_ticket_pushes_its_work_and_the_branch_is
     assert!(!has_branch(&world, &branch));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_that_ends_with_nothing_committed_or_uncommitted_pushes_nothing_and_names_no_branch()
 {
     let mut world = World::new().await;
@@ -1954,7 +1954,7 @@ async fn a_run_that_ends_with_nothing_committed_or_uncommitted_pushes_nothing_an
     assert!(!comment.contains(&branch), "{comment}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_request() {
     let mut world = World::new().await;
     let (ticket, branch) = world.ticket_timed_out_with_edits().await;
@@ -1976,7 +1976,7 @@ async fn a_done_answer_that_never_folds_in_the_unfinished_commit_opens_no_pull_r
     assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_that_fails_on_its_infrastructure_is_retried_from_its_unfinished_commit_and_names_the_branch()
  {
     let mut world = World::new().await;
@@ -2018,7 +2018,7 @@ async fn a_run_that_fails_on_its_infrastructure_is_retried_from_its_unfinished_c
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_timed_out_rework_leaves_its_uncommitted_edits_on_the_pull_requests_branch_as_an_unfinished_commit()
  {
     let mut world = World::new().await;
@@ -2040,7 +2040,7 @@ async fn a_timed_out_rework_leaves_its_uncommitted_edits_on_the_pull_requests_br
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_timed_out_ci_fix_leaves_its_uncommitted_edits_on_the_pull_requests_branch_as_an_unfinished_commit()
  {
     let mut world = World::new().await;
@@ -2066,7 +2066,7 @@ async fn a_timed_out_ci_fix_leaves_its_uncommitted_edits_on_the_pull_requests_br
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_unfinished_commit()
  {
     use linewright::harness::SessionError;
@@ -2152,7 +2152,7 @@ async fn rework_cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, 
     pr
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn a_rework_cancelled_by_unassigning_linewright_keeps_its_edits_as_an_unfinished_commit_and_posts_and_starts_nothing()
  {
     let mut world = World::new().await;
@@ -2185,7 +2185,7 @@ async fn a_rework_cancelled_by_unassigning_linewright_keeps_its_edits_as_an_unfi
     assert_eq!(world.harness.prompts(WorkKind::Rework).len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_stopped_rework_leaves_commits_a_person_pushed_while_it_worked_and_says_its_push_was_rejected()
  {
     let mut world = World::new().await;
@@ -2227,7 +2227,7 @@ async fn a_stopped_rework_leaves_commits_a_person_pushed_while_it_worked_and_say
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -2363,7 +2363,7 @@ fn contains(world: &World, branch: &str, commit: &str) -> bool {
         .success()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn by_default_a_conflict_is_resolved_in_a_rebase_where_the_repository_allows_rebase_merging()
 {
     let (mut world, pr) = moved_past_in_conflict().await;
@@ -2376,7 +2376,7 @@ async fn by_default_a_conflict_is_resolved_in_a_rebase_where_the_repository_allo
     assert_eq!(view.mergeability, linewright::domain::Mergeability::Clean);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
     let (mut world, pr) = moved_past_in_conflict().await;
     world
@@ -2441,7 +2441,7 @@ async fn merged_in_conflict(
     (world, pr, file)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_branch_with_a_merge_commit_github_cannot_rebase_is_rebased_by_an_update_run() {
     use linewright::domain::{Mergeability, Rebaseability};
 
@@ -2463,7 +2463,7 @@ async fn a_branch_with_a_merge_commit_github_cannot_rebase_is_rebased_by_an_upda
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rebase_that_leaves_the_branch_as_it_was_pushes_nothing_and_is_not_tried_again() {
     let (mut world, pr, _) = merged_in_conflict(|_| {}).await;
     let before = world.store.snapshot_pull(pr).await;
@@ -2507,7 +2507,7 @@ fn history(world: &World) -> Vec<(String, usize)> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocked_is_worked() {
     use linewright::domain::{MergeMethod, PullState};
     use linewright::store::Store;
@@ -2550,7 +2550,7 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     assert_eq!(world.store.snapshot_pull(next).await.closes, [second]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_across_a_restart_then_merges()
  {
     use linewright::domain::{PullState, Requirement};
@@ -2588,7 +2588,7 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_ac
     assert!(!world.issue(ticket).open);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_holds_is_not_held_again_once_github_works_out_its_merge_state()
  {
     let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
@@ -2603,7 +2603,7 @@ async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_hold
     assert_eq!(world.store.snapshot_pull(pr).await.comments.len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_and_reassigning_merges_it()
  {
     use linewright::domain::PullState;
@@ -2688,7 +2688,7 @@ fn assert_run_ended_keeping_its_claim(
     assert_eq!(refused.len(), 1, "{refused:?}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_refused_for_the_usage_limit_ends_keeping_its_claim_and_its_work() {
     use linewright::store::Store;
 
@@ -2723,7 +2723,7 @@ async fn a_run_refused_for_the_usage_limit_ends_keeping_its_claim_and_its_work()
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_refused_for_the_usage_limit_whose_work_cannot_be_pushed_still_keeps_its_claim() {
     let (log, _guard) = Log::capture();
     let mut world = World::new().await;
@@ -2755,7 +2755,7 @@ async fn a_run_refused_for_the_usage_limit_whose_work_cannot_be_pushed_still_kee
     assert_run_ended_keeping_its_claim(&world, ticket, &log);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_that_fails_on_its_infrastructure_is_retried_once_then_handed_back() {
     use linewright::harness::SessionError;
 
@@ -2789,7 +2789,7 @@ async fn a_session_that_fails_on_its_infrastructure_is_retried_once_then_handed_
 const WORKFLOW_REFUSAL: &str = "refusing to allow a Personal Access Token to create or update \
      workflow `.github/workflows/ci.yml` without `workflow` scope";
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once_with_the_remedies() {
     let (world, ticket) = implemented_with_pushes_refused(&rejected(WORKFLOW_REFUSAL)).await;
 
@@ -2824,7 +2824,7 @@ async fn implemented_with_pushes_refused(output: &str) -> (World, linewright::do
     (world, ticket)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_hand_back_says_nothing_of_a_secret_the_sessions_work_printed() {
     // A hook the session left in its clone can print one as Linewright
     // pushes.
@@ -2853,7 +2853,7 @@ async fn a_hand_back_says_nothing_of_a_secret_the_sessions_work_printed() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_blocked_run_whose_work_is_refused_for_a_missing_permission_asks_its_question_and_says_the_work_was_not_kept()
  {
     let mut world = World::new().await;
@@ -2885,7 +2885,7 @@ async fn a_blocked_run_whose_work_is_refused_for_a_missing_permission_asks_its_q
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_push_refused_for_a_missing_permission_hands_the_pull_request_back_at_once() {
     let mut world = World::new().await;
     let (ticket, pr) = world.ticket_in_review().await;

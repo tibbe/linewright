@@ -34,7 +34,7 @@ fn item(n: u64) -> Which {
     Which::Item(Number(n))
 }
 
-#[test]
+#[test_log::test]
 fn an_items_run_in_flight_is_the_one_shown() {
     let mut in_flight = run("1/rework-1", "2026-10-14T11:00:00Z", 0);
     in_flight.state = State::InFlight;
@@ -47,7 +47,7 @@ fn an_items_run_in_flight_is_the_one_shown() {
     assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/rework-1");
 }
 
-#[test]
+#[test_log::test]
 fn with_none_in_flight_the_latest_run_that_started_a_session_is_shown() {
     let recorded = vec![
         run("1/implement-1", "2026-10-14T10:00:00Z", 1),
@@ -59,7 +59,7 @@ fn with_none_in_flight_the_latest_run_that_started_a_session_is_shown() {
     assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/rework-1");
 }
 
-#[test]
+#[test_log::test]
 fn with_no_run_that_started_a_session_the_latest_run_is_shown() {
     let recorded = vec![
         run("1/update-1", "2026-10-14T10:00:00Z", 0),
@@ -69,7 +69,7 @@ fn with_no_run_that_started_a_session_the_latest_run_is_shown() {
     assert_eq!(picked(&recorded, &item(1)).unwrap(), "1/update-2");
 }
 
-#[test]
+#[test_log::test]
 fn a_named_run_is_the_one_shown() {
     let recorded = vec![
         run("1/implement-1", "2026-10-14T10:00:00Z", 1),
@@ -113,7 +113,7 @@ fn ticket_and_pull() -> Vec<Recorded> {
     ]
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_requests_runs_are_its_own() {
     let named = |id: &str| Which::Run {
         id: id.parse::<RunId>().unwrap(),
@@ -134,7 +134,7 @@ fn a_pull_requests_runs_are_its_own() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_tickets_runs_are_none_of_its_pull_requests() {
     assert_eq!(
         picked(&ticket_and_pull(), &item(1)).unwrap(),
@@ -142,7 +142,7 @@ fn a_tickets_runs_are_none_of_its_pull_requests() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_with_no_runs_has_none_to_show() {
     let recorded = vec![run("1/implement-1", "2026-10-14T10:00:00Z", 1)];
 
@@ -186,7 +186,7 @@ async fn implemented_as_recorded() -> (World, tempfile::TempDir) {
     (world, work_dir)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn logs_shows_the_items_latest_run_compact() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
@@ -199,7 +199,7 @@ async fn logs_shows_the_items_latest_run_compact() {
     assert_eq!(lines[1], "session 1: started 2026-10-13 10:09:08 UTC");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_unknown_item_or_run_exits_4_saying_so() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
@@ -220,7 +220,7 @@ async fn an_unknown_item_or_run_exits_4_saying_so() {
     assert_eq!(neither.code, Some(2), "{}", neither.stderr);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn following_a_run_that_has_ended_shows_its_transcript_and_exits() {
     let (_world, work_dir) = implemented_as_recorded().await;
 
@@ -250,7 +250,7 @@ async fn world_setting_up_with(setup: &str) -> (World, tempfile::TempDir) {
 }
 
 /// `docs/specs/monitoring.md`, logs, Setup.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn logs_shows_the_setup_command_a_session_ran() {
     let (mut world, work_dir) = world_setting_up_with("echo 'added 3 packages'").await;
     implement_as_recorded(&world);
@@ -273,7 +273,7 @@ async fn logs_shows_the_setup_command_a_session_ran() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript() {
     let record = item_run_record(
         5,
@@ -305,7 +305,7 @@ fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript()
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_named_run_whose_record_does_not_read_fails_saying_why() {
     let (_base, work_dir) = work_dir_holding(&[("runs/items/1/implement-1.json", "not a record")]);
     let named = Which::Run {
@@ -324,7 +324,7 @@ fn a_named_run_whose_record_does_not_read_fails_saying_why() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_session_yet_to_write_anything_counts_as_started() {
     let record = item_run_record(1, "triage", 1, None, &json!(["sessions/1/triage-1"]));
     let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);

@@ -122,7 +122,7 @@ enum Shown {
     LeftAlone,
 }
 
-#[test]
+#[test_log::test]
 fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its_page_agrees() {
     let now = at("2026-10-01T12:00:30Z");
     let items = varied_items();

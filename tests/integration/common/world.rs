@@ -741,12 +741,17 @@ impl Serving {
         self.handle.is_finished()
     }
 
-    /// Waits for serving to end of its own accord.
-    pub async fn ended(self) -> ServeEnd {
-        tokio::time::timeout(std::time::Duration::from_secs(10), self.handle)
-            .await
-            .expect("serving ends")
-            .unwrap()
+    /// Waits for serving to end of its own accord, failing the test at the
+    /// line that waited if it doesn't within 10s.
+    #[track_caller]
+    pub fn ended(self) -> impl Future<Output = ServeEnd> {
+        let caller = std::panic::Location::caller();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), self.handle)
+                .await
+                .unwrap_or_else(|_| panic!("serving had not ended when waited for at {caller}"))
+                .unwrap()
+        }
     }
 
     pub async fn stop(self) -> ServeEnd {

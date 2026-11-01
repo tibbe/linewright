@@ -45,7 +45,7 @@ fn persons_issue() -> Issue {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_is_worked_once_linewright_opened_claimed_or_labeled_it_or_opened_a_pull_request_closing_it()
  {
     let cases = [
@@ -146,7 +146,7 @@ fn an_issue_is_worked_once_linewright_opened_claimed_or_labeled_it_or_opened_a_p
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_issue_is_worked_as_an_open_one_is_and_a_closed_pull_request_held_is_worked() {
     let closed = |issue: Issue| closed_item(&issue, "2026-10-01T11:00:00Z");
     let cases = [
@@ -199,7 +199,7 @@ fn a_closed_issue_is_worked_as_an_open_one_is_and_a_closed_pull_request_held_is_
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_is_held_as_linewrights_when_it_opened_it_and_as_a_persons_while_open_and_assigned_to_or_worked_by_linewright()
  {
     let persons = |assignees: &[&str]| open_pull(60, "alice", &[], assignees);
@@ -307,7 +307,7 @@ fn added(number: u64, author: &str, added_by: Option<&str>) -> SubIssue {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_is_a_tracking_issue_while_it_carries_designed_and_has_tickets_linewright_opened_and_added()
  {
     let designed = |sub_issues: Vec<SubIssue>| Issue {
@@ -385,7 +385,7 @@ fn an_issue_is_a_tracking_issue_while_it_carries_designed_and_has_tickets_linewr
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_linewright_opened_titled_spec_change_and_linking_one_is_that_spec_changes_issue() {
     let cases = [
         (
@@ -437,7 +437,7 @@ fn an_issue_linewright_opened_titled_spec_change_and_linking_one_is_that_spec_ch
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_tracking_issues_to_label_at_startup_are_the_open_spec_change_ones_with_tickets_and_without_designed()
  {
     let unlabeled = |issue: Issue| Issue {
@@ -563,7 +563,7 @@ fn snapshot(issues: Vec<Issue>, closed: Vec<ClosedItem>) -> Snapshot {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_snapshot_keeps_an_item_closed_within_the_done_window_or_a_ticket_of_a_lane_it_holds_and_linewrights_pull_requests_closing_one()
  {
     let snapshot = snapshot(
@@ -627,7 +627,7 @@ fn a_snapshot_keeps_an_item_closed_within_the_done_window_or_a_ticket_of_a_lane_
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_closed_tickets_a_snapshot_lacks_are_those_of_the_lanes_it_holds_open_or_closed() {
     let snapshot = snapshot(
         vec![tracking(1, &[(2, false), (3, true), (7, false)]), cut()],
@@ -640,7 +640,7 @@ fn the_closed_tickets_a_snapshot_lacks_are_those_of_the_lanes_it_holds_open_or_c
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_snapshot_drops_the_closed_items_it_would_not_keep_with_the_tickets_of_a_tracking_issue_dropped()
  {
     let old_tracking = Issue {
@@ -676,7 +676,7 @@ fn closing(number: u64, author: &str, state: PullState) -> ClosingPull {
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_closing_pull_requests_a_snapshot_lacks_are_linewrights_closed_unmerged_closing_the_tickets_it_holds()
  {
     let closed = PullState::Closed {
@@ -745,7 +745,7 @@ fn peoples(closes: &[u64], pull: Option<Pull>) -> PullHeldRead {
     })
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_read_is_held_as_read_and_frees_the_issues_a_persons_closes_or_closed_while_open()
 {
     let renamed = Pull {
@@ -895,7 +895,7 @@ fn refreshed_issues() -> Snapshot {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_read_is_held_as_read_and_one_that_left_has_linewrights_ended_pull_requests_closing_it_read_again()
  {
     let relabeled = Issue {
@@ -1062,7 +1062,7 @@ fn an_issue_read_is_held_as_read_and_one_that_left_has_linewrights_ended_pull_re
     }
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_ended_pull_request_read_again_is_held_as_read_or_dropped() {
     let closed = |title: &str| Pull {
         title: title.into(),
@@ -1103,7 +1103,7 @@ fn linewrights_ended_pull_request_read_again_is_held_as_read_or_dropped() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_read_frees_the_other_issues_it_closes_or_closed_while_open() {
     let snapshot = Snapshot {
         issues: vec![
@@ -1153,7 +1153,7 @@ fn a_pull_request_read_frees_the_other_issues_it_closes_or_closed_while_open() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn only_a_name_linewright_gives_a_tickets_branch_names_one() {
     let issue_of = |name: &str| TicketBranchName::parse(name).map(|branch| branch.issue());
 
@@ -1171,7 +1171,7 @@ fn only_a_name_linewright_gives_a_tickets_branch_names_one() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_tickets_branch_is_named_for_it_with_the_first_number_from_2_no_open_pull_request_holds() {
     let ticket = ticket(12, "Blue gadgets");
     let on = |head: &str, state: PullState| Pull {

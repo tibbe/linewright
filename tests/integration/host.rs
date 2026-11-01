@@ -2,7 +2,7 @@ use linewright::host::HostName;
 
 /// `docs/specs/monitoring.md`, Commands: a local `Host` is `localhost` or a
 /// loopback address, ignoring case, port and a trailing dot.
-#[test]
+#[test_log::test]
 fn a_host_is_local_if_it_names_localhost_or_a_loopback_address() {
     let local = [
         "localhost",
@@ -37,7 +37,7 @@ fn a_host_is_local_if_it_names_localhost_or_a_loopback_address() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_hosts_name_ignores_its_case_port_and_trailing_dot() {
     let same = [
         ("Linewright.Example.COM.", "linewright.example.com"),
@@ -54,7 +54,7 @@ fn a_hosts_name_ignores_its_case_port_and_trailing_dot() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_ipv6_host_without_its_closing_bracket_has_no_name() {
     assert_eq!(HostName::parse("[::1"), None);
 }

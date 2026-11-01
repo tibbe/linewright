@@ -213,7 +213,7 @@ mod tests {
     }
 
     /// `docs/specs/design_system.md`, The server page.
-    #[test]
+    #[test_log::test]
     fn before_the_first_poll_ends_the_facts_always_shown_say_the_next_is_due() {
         assert_eq!(
             worded(&serving()),
@@ -225,7 +225,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn every_fact_shows_in_the_tables_order_while_it_holds() {
         let linewright = Linewright {
             polls: Some(PollsShown {
@@ -293,7 +293,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_single_failed_poll_shows_when_it_failed_and_its_error() {
         let linewright = Linewright {
             failed_polls: Some(FailedPolls {

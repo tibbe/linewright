@@ -12,7 +12,7 @@ async fn snapshot_pull(world: &World, pr: Number) -> Pull {
     snapshot.pull(pr).expect("the snapshot holds it").clone()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_lists_its_assignees_and_who_assigned_and_unassigned_whom_when() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -47,7 +47,7 @@ async fn a_pull_request_lists_its_assignees_and_who_assigned_and_unassigned_whom
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn unassigning_someone_a_pull_request_is_not_assigned_to_records_nothing() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -58,7 +58,7 @@ async fn unassigning_someone_a_pull_request_is_not_assigned_to_records_nothing()
     assert_eq!(snapshot_pull(&world, pr).await.assignments, before);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn branches_whose_names_differ_only_in_case_are_kept_apart() {
     let world = World::new().await;
     let branches = ["1-Gadgets", "1-gadgets"];
@@ -83,7 +83,7 @@ async fn branches_whose_names_differ_only_in_case_are_kept_apart() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_commit_keeps_files_whose_paths_need_quoting_in_git() {
     let world = World::new().await;
     let paths = [
@@ -113,7 +113,7 @@ async fn updated_at(world: &World, number: Number) -> Timestamp {
     snapshot.updated_at(number).expect("the snapshot holds it")
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_write_to_an_issue_moves_when_it_was_last_updated() {
     let world = World::new().await;
     let issue = world
@@ -157,7 +157,7 @@ async fn every_write_to_an_issue_moves_when_it_was_last_updated() {
     written("a reopening").await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_write_to_a_pull_request_moves_when_it_was_last_updated() {
     let world = World::new().await;
     let issue = world.store.open_issue(
@@ -232,7 +232,7 @@ async fn every_write_to_a_pull_request_moves_when_it_was_last_updated() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn closing_a_pull_request_moves_when_it_was_last_updated() {
     let world = World::new().await;
     let issue = world.store.open_issue(
@@ -249,7 +249,7 @@ async fn closing_a_pull_request_moves_when_it_was_last_updated() {
     assert!(world.store.snapshot_pull(pr).await.updated_at > before);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn uploads_of_the_same_bytes_keep_one_file_that_the_exported_items_reach() {
     let world = World::new().await;
     let session = tempfile::tempdir().unwrap();

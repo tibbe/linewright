@@ -5,7 +5,7 @@ async fn pages() -> Pages {
     Pages::of(a_ticket()).await
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
     let pages = pages().await;
 
@@ -74,7 +74,7 @@ async fn a_page_its_stream_and_an_asset(pages: &Pages) -> [String; 3] {
     ["/items/1".into(), "/events/items/1".into(), script]
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_ui_answers_a_local_name_an_ip_address_or_one_of_ui_hosts() {
     let pages = pages().await;
     let ui = pages.listen(&["Linewright.Example.com"]).await;
@@ -100,7 +100,7 @@ async fn the_ui_answers_a_local_name_an_ip_address_or_one_of_ui_hosts() {
     ui.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
     let pages = pages().await;
     let ui = pages.listen(&["linewright.example.com"]).await;
@@ -131,7 +131,7 @@ async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
     ui.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
     let pages = pages().await;
 
@@ -144,7 +144,7 @@ async fn a_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached
 // The keep-alive is a comment line (WHATWG HTML, 9.2.6), sent once a stream
 // has been quiet for 15 seconds (docs/specs/operation.md, Running: Behind a
 // proxy).
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_and_none_before() {
     let pages = pages().await;
     // Paused once serving, so that time moves on only when nothing else can.
@@ -180,7 +180,7 @@ async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_an
 
 /// A `serve` restarted after a drain serves the web UI on the address the
 /// one before it had, though a page's stream was still open as it stopped.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_web_ui_stopped_with_a_stream_open_frees_its_address() {
     let pages = pages().await;
     let ui = pages.listen(&[]).await;

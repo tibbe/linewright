@@ -532,7 +532,7 @@ fn an_implementer_that_gave_up_is_a_decision_with_the_sessions_log(
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_a_person_opened_with_nothing_to_build_is_handed_back_as_a_decision() {
     assert_eq!(
         nothing_to_build(
@@ -549,7 +549,7 @@ fn an_issue_a_person_opened_with_nothing_to_build_is_handed_back_as_a_decision()
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_linewright_opened_with_nothing_to_build_is_closed_saying_why() {
     assert_eq!(
         nothing_to_build(&linewright(), &linewright(), "Gadgets exist already."),
@@ -697,7 +697,7 @@ fn sent_back(follow_ups: &mut FollowUps) -> bool {
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_answer_to_a_new_question_has_follow_ups_of_its_own() {
     let mut follow_ups = FollowUps::default();
     assert!(sent_back(&mut follow_ups));

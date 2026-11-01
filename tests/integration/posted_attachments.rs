@@ -38,7 +38,7 @@ fn implement_with_body(world: &World, body: impl Fn(&Call) -> String + Send + Sy
     });
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_opens_its_pull_request_showing_the_screenshot_its_body_refers_to() {
     let mut world = World::new().await;
     let named = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -70,7 +70,7 @@ async fn an_implement_run_opens_its_pull_request_showing_the_screenshot_its_body
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_uploads_its_attachments_before_it_pushes() {
     let mut world = World::new().await;
     implement_with_body(&world, |call| {
@@ -95,7 +95,7 @@ async fn an_implement_run_uploads_its_attachments_before_it_pushes() {
     assert_eq!(world.store.pulls().len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_triage_comment_shows_the_attachment_it_refers_to() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Triage, |call| {
@@ -118,7 +118,7 @@ async fn a_triage_comment_shows_the_attachment_it_refers_to() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_design_shows_the_attachment_it_refers_to() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |call| {
@@ -140,7 +140,7 @@ async fn a_design_shows_the_attachment_it_refers_to() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_comment_shows_the_attachment_it_refers_to() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -166,7 +166,7 @@ async fn a_rework_comment_shows_the_attachment_it_refers_to() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_cancel_during_the_uploads_followed_by_a_refusal_cancels_the_run_and_posts_nothing() {
     for refusal in [
         AttachRefusal::File("File is too large".into()),
@@ -205,7 +205,7 @@ async fn cancelled_during_the_uploads(refusal: AttachRefusal) {
     assert_eq!(ended_runs(&world), [Ending::Cancelled], "{refusal:?}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_attachment_github_refuses_is_sent_back_with_its_reason() {
     let mut world = World::new().await;
     let store = world.store.clone();
@@ -234,7 +234,7 @@ async fn an_attachment_github_refuses_is_sent_back_with_its_reason() {
     assert_eq!(world.store.pulls().len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_attachment_github_refuses_over_linewrights_token_hands_the_ticket_back_at_once_keeping_the_work()
  {
     let mut world = World::new().await;
@@ -271,7 +271,7 @@ async fn an_attachment_github_refuses_over_linewrights_token_hands_the_ticket_ba
     assert_eq!(world.store.pulls(), []);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_gap_already_filed_is_not_uploaded_for() {
     let mut world = World::new().await;
     let ticket = open_ticket(&world, "Gadgets");

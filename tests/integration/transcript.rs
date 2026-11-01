@@ -34,7 +34,7 @@ fn of(sessions: &[SessionRecord]) -> Transcript {
     }
 }
 
-#[test]
+#[test_log::test]
 fn compact_shows_messages_in_full_and_each_tool_call_on_one_line() {
     let shown = transcript::render(&of(&[recorded()]), Verbosity::Compact, false);
 
@@ -59,7 +59,7 @@ session 1: started 2026-10-13 10:09:08 UTC
     );
 }
 
-#[test]
+#[test_log::test]
 fn verbose_adds_the_brief_the_thinking_each_tools_input_and_result_and_the_follow_ups() {
     let shown = transcript::render(&of(&[recorded()]), Verbosity::Full, false);
 
@@ -107,7 +107,7 @@ fn verbose_adds_the_brief_the_thinking_each_tools_input_and_result_and_the_follo
     assert!(shown.contains("         details: {\n"), "{shown}");
 }
 
-#[test]
+#[test_log::test]
 fn json_prints_one_object_per_entry_and_line() {
     let transcript = of(&[recorded()]);
 
@@ -190,7 +190,7 @@ fn json_prints_one_object_per_entry_and_line() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn verbose_shows_content_of_kinds_it_has_no_line_of_its_own_for() {
     let events = [
         json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
@@ -255,7 +255,7 @@ session 1: started 2026-10-13 10:00:00 UTC
 }
 
 /// `docs/specs/monitoring.md`, logs, Running in JSON.
-#[test]
+#[test_log::test]
 fn json_gives_a_tool_call_null_for_what_it_holds_once_it_returns() {
     let record = SessionRecord {
         output: [
@@ -387,7 +387,7 @@ fn json(lines: &[transcript::FollowedLine]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn following_shows_each_entry_once_it_is_written_and_each_tool_call_when_made_and_when_it_returns()
 {
     let record = recorded();
@@ -446,7 +446,7 @@ session 1: started 2026-10-13 10:09:08 UTC
     );
 }
 
-#[test]
+#[test_log::test]
 fn following_shows_the_same_lines_whatever_pieces_the_output_is_written_in() {
     let record = recorded();
     let follow = |ends: Vec<usize>| {
@@ -482,7 +482,7 @@ fn following_shows_the_same_lines_whatever_pieces_the_output_is_written_in() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn following_after_a_line_gives_the_lines_after_it() {
     let record = recorded();
     let follow = |after| {
@@ -506,7 +506,7 @@ fn following_after_a_line_gives_the_lines_after_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn following_a_run_that_ends_shows_each_of_its_sessions_as_logs_does() {
     let record = recorded();
     let wrote_nothing = SessionRecord::default();
@@ -541,7 +541,7 @@ fn following_a_run_that_ends_shows_each_of_its_sessions_as_logs_does() {
     assert_eq!(headers(&text(&shown)), headers(&logs));
 }
 
-#[test]
+#[test_log::test]
 fn following_shows_a_tool_call_as_running_as_soon_as_it_is_made() {
     let events = |events: &[serde_json::Value]| SessionRecord {
         output: events.iter().map(|event| format!("{event}\n")).collect(),
@@ -597,7 +597,7 @@ fn following_shows_a_tool_call_as_running_as_soon_as_it_is_made() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn following_shows_a_tool_call_again_once_it_ends_in_the_background() {
     let record = SessionRecord {
         output: [
@@ -648,7 +648,7 @@ fn following_shows_a_tool_call_again_once_it_ends_in_the_background() {
     assert_eq!(ids, [json!("t1"), json!("t1"), json!("t1")]);
 }
 
-#[test]
+#[test_log::test]
 fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
     let tool_use = |id: &str, name: &str, input: serde_json::Value| json!({"type": "tool_use", "id": id, "name": name, "input": input});
     let result =
@@ -792,7 +792,7 @@ fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_entry_that_says_no_time_shows_the_time_of_the_one_the_agent_wrote_before_it() {
     let shown = transcript::render(&of(&[recorded()]), Verbosity::Full, false);
     let mut follower = Follower::new(
@@ -870,7 +870,7 @@ fn after_setting_up() -> [SessionRecord; 2] {
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Times and Setup.
-#[test]
+#[test_log::test]
 fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only_in_full_or_when_it_failed()
  {
     let transcript = of(&after_setting_up());
@@ -909,7 +909,7 @@ fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only
     assert!(full[5].starts_with(" 0:12  brief: "), "{full:#?}");
 }
 
-#[test]
+#[test_log::test]
 fn a_setup_command_shows_how_it_ended_and_its_output_unless_it_succeeded_or_was_cancelled() {
     let shown = |status| {
         let record = setting_up(
@@ -937,7 +937,7 @@ fn a_setup_command_shows_how_it_ended_and_its_output_unless_it_succeeded_or_was_
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Running.
-#[test]
+#[test_log::test]
 fn a_setup_command_shows_running_until_it_ends() {
     let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
     let transcript = Transcript {
@@ -959,7 +959,7 @@ fn a_setup_command_shows_running_until_it_ends() {
 }
 
 /// `docs/specs/monitoring.md`, logs, Setup.
-#[test]
+#[test_log::test]
 fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ended() {
     let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
     let [succeeded, failed] = after_setting_up();
@@ -1043,7 +1043,7 @@ fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ende
 }
 
 /// `docs/specs/monitoring.md`, logs, Following in JSON.
-#[test]
+#[test_log::test]
 fn following_gives_a_tool_call_as_the_object_it_has_running_then_the_one_it_has_ended() {
     let recorded = recorded();
     let running = first_call_made(&recorded);
@@ -1088,7 +1088,7 @@ fn following_gives_a_tool_call_as_the_object_it_has_running_then_the_one_it_has_
 }
 
 /// `docs/specs/monitoring.md`, logs, Running in JSON.
-#[test]
+#[test_log::test]
 fn a_setup_line_ended_in_part_does_not_read() {
     let line = |ended| {
         serde_json::from_value::<transcript::Line>(with_keys(
@@ -1116,7 +1116,7 @@ fn a_setup_line_ended_in_part_does_not_read() {
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Followed.
-#[test]
+#[test_log::test]
 fn following_shows_a_setup_command_as_it_starts_and_again_at_its_end_with_its_account() {
     let [succeeded, failed] = after_setting_up();
     let started = succeeded.output.find('\n').unwrap() + 1;
@@ -1192,7 +1192,7 @@ fn recorded_before_setup_events(status: SetupStatus, output: &str) -> SessionRec
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_setup_command_recorded_before_its_start_and_end_were_shows_with_no_time() {
     let succeeded = SessionRecord {
         output: recorded().output,
@@ -1239,7 +1239,7 @@ fn a_setup_command_recorded_before_its_start_and_end_were_shows_with_no_time() {
 
 /// `docs/specs/design_system.md`, Transcripts, Followed: a setup command's
 /// output shows once it has ended, however its end is read.
-#[test]
+#[test_log::test]
 fn a_setup_commands_output_is_read_once_its_end_is_even_when_a_read_stops_inside_the_end() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join(transcript::OUTPUT);
@@ -1298,7 +1298,7 @@ fn with_a_sub_agent_of_3h_2m_9s() -> String {
 }
 
 /// `docs/specs/design_system.md`, Transcripts; Time, Durations.
-#[test]
+#[test_log::test]
 fn a_sub_agent_that_ran_for_hours_shows_how_long_as_a_duration_and_each_line_its_time_past_the_hour()
  {
     let record = SessionRecord {
@@ -1324,7 +1324,7 @@ fn automations_run(n: u32, by: StartedBy) -> Transcript {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_automations_run_by_hand_says_so_in_its_header_and_a_scheduled_one_does_not() {
     let by_hand = automations_run(2, StartedBy::Hand);
     let scheduled = automations_run(1, StartedBy::Schedule);
@@ -1352,7 +1352,7 @@ fn an_automations_run_by_hand_says_so_in_its_header_and_a_scheduled_one_does_not
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_run_that_started_no_session_says_so() {
     let transcript = Transcript {
         run: item_run("2/update-1".parse().unwrap()),
@@ -1369,7 +1369,7 @@ fn a_run_that_started_no_session_says_so() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn following_a_session_yet_to_write_anything_shows_the_runs_header_once() {
     let record = recorded();
     let mut follower = Follower::new(

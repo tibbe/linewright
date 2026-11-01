@@ -1,3 +1,7 @@
+// `test_log::test` puts its setup before each test's body, so a `use` at the
+// top of a test comes after a statement the test never wrote.
+#![allow(clippy::items_after_statements)]
+
 mod api;
 mod apply;
 mod attachments;

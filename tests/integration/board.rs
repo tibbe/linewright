@@ -41,7 +41,7 @@ fn labeled(number: u64, labels: &[&str]) -> Issue {
     })
 }
 
-#[test]
+#[test_log::test]
 fn each_status_label_puts_its_issue_in_its_column() {
     let view = view(
         vec![
@@ -69,7 +69,7 @@ fn each_status_label_puts_its_issue_in_its_column() {
     assert_eq!(board.needing_a_person, 2);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_a_person_filed_that_linewright_labeled_in_a_hand_back_needs_a_person() {
     let handed_back = Issue {
         events: vec![IssueEvent::Labeled {
@@ -188,7 +188,7 @@ fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedI
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_claimed_ticket_and_one_with_a_triage_or_design_run_in_flight_are_in_working() {
     let view = with_runs(
         view(
@@ -212,7 +212,7 @@ fn a_claimed_ticket_and_one_with_a_triage_or_design_run_in_flight_are_in_working
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_with_an_open_pull_request_is_in_review() {
     let view = view(
         vec![assigned(ticket(1, "Reviewed"))],
@@ -225,7 +225,7 @@ fn a_ticket_with_an_open_pull_request_is_in_review() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_closed_within_the_done_window_is_in_done_and_one_closed_before_is_nowhere() {
     let view = with_closed(
         view(vec![], vec![]),
@@ -238,7 +238,7 @@ fn a_ticket_closed_within_the_done_window_is_in_done_and_one_closed_before_is_no
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Done, 2)]);
 }
 
-#[test]
+#[test_log::test]
 fn the_done_window_not_the_spec_lookback_says_how_long_a_closed_ticket_stays_in_done() {
     let mut view = with_closed(
         view(vec![], vec![]),
@@ -256,7 +256,7 @@ fn the_done_window_not_the_spec_lookback_says_how_long_a_closed_ticket_stays_in_
 /// `docs/specs/design_system.md`, The board: a card is in the column of its
 /// item's state, whatever run is in flight on it; here a person labeled #2
 /// `needs-info` while its triage run is in flight.
-#[test]
+#[test_log::test]
 fn a_card_is_in_the_column_of_its_state_whatever_run_is_in_flight() {
     let view = with_runs(
         view(
@@ -307,7 +307,7 @@ fn reviewed(
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stops_it_merging() {
     use CheckState::{Failed, Passed, Pending};
     use Mergeability::{Behind, Clean, Conflicting};
@@ -401,7 +401,7 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
     assert!(numbered().all(|n| !card(&board, n).pull_request));
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_closing_no_issue_on_the_board_is_a_card_of_its_own() {
     let view = view(vec![], vec![pull(10, &[1], &[CheckState::Pending])]);
 
@@ -413,7 +413,7 @@ fn linewrights_pull_request_closing_no_issue_on_the_board_is_a_card_of_its_own()
     assert_eq!(card.line, Some(CardLine::MergeStop(Stop::ChecksRunning)));
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_card_says_only_what_stops_it_merging_and_nothing_when_nothing_does() {
     let view = view(
         vec![],
@@ -452,7 +452,7 @@ fn closed_as(number: u64, reason: IssueCloseReason) -> ClosedItem {
     closed
 }
 
-#[test]
+#[test_log::test]
 fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
     let mut closed_pull = closed_issue(30, "2026-09-29T12:00:00Z", None);
     closed_pull.kind = ClosedKind::Pull {
@@ -556,7 +556,7 @@ fn reopened(when: &str) -> IssueEvent {
     IssueEvent::Reopened { at: at(when) }
 }
 
-#[test]
+#[test_log::test]
 fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since_it_was_last_opened_or_labeled_is_in_done()
  {
     let ready = || labeled(1, &["ready-for-agent", label::DESIGNED]);
@@ -643,7 +643,7 @@ fn with_work(
     closed
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_issue_entered_done_when_its_first_closing_pull_request_since_it_was_last_opened_merged_or_else_when_it_closed()
  {
     let view = with_closed(
@@ -764,7 +764,7 @@ fn cut_from(issue: Issue, tracking: u64, spec_change: u64) -> Issue {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_is_its_pull_request_in_ready_then_in_working_while_being_designed() {
     let waiting = with_merged(view(vec![], vec![]), vec![spec_change(5, &[])]);
     let designing = with_runs(waiting.clone(), &["5/design-1"]);
@@ -780,7 +780,7 @@ fn a_spec_change_is_its_pull_request_in_ready_then_in_working_while_being_design
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_cut_into_tickets_is_its_tracking_issues_lane() {
     let view = with_merged(
         view(
@@ -800,7 +800,7 @@ fn a_spec_change_cut_into_tickets_is_its_tracking_issues_lane() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
     let view = with_merged(
         view(vec![], vec![]),
@@ -820,7 +820,7 @@ fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
     let mut closed_ticket = closed_issue(23, "2026-09-28T12:00:00Z", Some(40));
     closed_ticket.kind = ClosedKind::Issue {
@@ -889,7 +889,7 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
     let cut = Issue {
         labels: vec![label::DESIGNED.into()],
@@ -935,7 +935,7 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_in_review_on_someone_elses_pull_request_names_them() {
     let mut theirs = pull(10, &[1], &[CheckState::Pending]);
     theirs.author = Login::new("someone");
@@ -1022,7 +1022,7 @@ fn updated(issue: Issue, updated_at: &str) -> Issue {
     }
 }
 
-#[test]
+#[test_log::test]
 fn unfinished_lanes_come_first_latest_changed_first_then_the_finished_lanes_latest_finished_first()
 {
     let view = with_closed(
@@ -1064,7 +1064,7 @@ fn unfinished_lanes_come_first_latest_changed_first_then_the_finished_lanes_late
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_lane_whose_card_was_commented_on_most_recently_comes_first() {
     let commented = Issue {
         comments: vec![Comment {
@@ -1085,7 +1085,7 @@ fn a_lane_whose_card_was_commented_on_most_recently_comes_first() {
     assert_eq!(lanes(&board(&view, &[], at(NOW))), [(2, None), (1, None)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_lane_with_a_run_in_flight_comes_before_every_unfinished_lane_without_one() {
     let view = with_runs(
         view(
@@ -1101,7 +1101,7 @@ fn a_lane_with_a_run_in_flight_comes_before_every_unfinished_lane_without_one() 
     assert_eq!(lanes(&board(&view, &[], at(NOW))), [(3, None), (2, None)]);
 }
 
-#[test]
+#[test_log::test]
 fn lanes_changed_at_the_same_time_are_in_number_order() {
     let view = view(
         vec![
@@ -1119,7 +1119,7 @@ fn lanes_changed_at_the_same_time_are_in_number_order() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_lane_needing_a_person_is_not_hoisted_above_one_changed_since() {
     let view = view(
         vec![
@@ -1135,7 +1135,7 @@ fn a_lane_needing_a_person_is_not_hoisted_above_one_changed_since() {
     assert_eq!(board.needing_a_person, 1);
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_closing_a_card_counts_toward_its_lanes_last_change() {
     let linewrights = Pull {
         updated_at: at("2026-10-01T11:00:00Z"),
@@ -1156,7 +1156,7 @@ fn a_pull_request_closing_a_card_counts_toward_its_lanes_last_change() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn someone_elses_open_pull_request_closing_a_card_counts_toward_its_lanes_last_change() {
     let mut theirs = common::closed_by(ticket(2, "Theirs"), 20, "alice");
     theirs.closed_by[0].updated_at = at("2026-10-01T11:30:00Z");
@@ -1171,7 +1171,7 @@ fn someone_elses_open_pull_request_closing_a_card_counts_toward_its_lanes_last_c
     assert_eq!(lanes(&board(&view, &[], at(NOW))), [(2, None), (1, None)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_run_that_ended_without_writing_to_github_counts_toward_its_lanes_last_change() {
     let view = view(
         vec![
@@ -1192,7 +1192,7 @@ fn a_run_that_ended_without_writing_to_github_counts_toward_its_lanes_last_chang
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_run_counts_toward_its_lanes_last_change_from_when_it_started() {
     let view = view(
         vec![
@@ -1216,7 +1216,7 @@ fn a_run_counts_toward_its_lanes_last_change_from_when_it_started() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_closed_in_the_window_is_a_finished_lane_ordered_latest_finished_first() {
     let view = with_merged(
         with_closed(
@@ -1240,7 +1240,7 @@ fn an_item_closed_in_the_window_is_a_finished_lane_ordered_latest_finished_first
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_card() {
     let mut issue = labeled(2, &["needs-triage"]);
     issue.title = "Standalone".into();
@@ -1280,7 +1280,7 @@ fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_c
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_tracking_issue_with_a_run_in_flight_on_it_is_its_lane_and_not_a_card() {
     let view = with_runs(
         view(
@@ -1321,7 +1321,7 @@ fn closed_unmerged(issue: Issue, pr: u64, closed_at: &str) -> Issue {
     issue
 }
 
-#[test]
+#[test_log::test]
 fn a_card_needing_a_person_says_who_was_asked_it_was_handed_back_or_a_decision_is_needed() {
     let view = view(
         vec![
@@ -1365,7 +1365,7 @@ fn a_card_needing_a_person_says_who_was_asked_it_was_handed_back_or_a_decision_i
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_card_waiting_on_the_people_asked_names_its_assignees_in_order_but_linewright() {
     let with_assignees = |number, assignees: &[&str]| Issue {
         assignees: assignees.iter().map(|a| Login::new(*a)).collect(),
@@ -1395,7 +1395,7 @@ fn a_card_waiting_on_the_people_asked_names_its_assignees_in_order_but_linewrigh
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_card_needing_a_person_says_so_first() {
     let view = view(
         vec![
@@ -1423,7 +1423,7 @@ fn a_stalled_card_needing_a_person_says_so_first() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_pull_request_in_review_says_so_ahead_of_a_run_in_flight_and_failed_checks() {
     use CheckState::Failed;
     let stalled = Pull {
@@ -1493,7 +1493,7 @@ fn ready_lines(view: &View) -> [Option<CardLine>; 3] {
     [1, 2, 3].map(|n| line(&board, n))
 }
 
-#[test]
+#[test_log::test]
 fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_back() {
     let blocked = Some(CardLine::BlockedBy(Number(8)));
     let assigned = Some(CardLine::AssignedTo(Login::new("alice")));
@@ -1536,7 +1536,7 @@ fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_bac
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
     let working = view(
         vec![
@@ -1596,7 +1596,7 @@ fn entered(board: &Board, number: u64) -> Option<Timestamp> {
     card(board, number).entered
 }
 
-#[test]
+#[test_log::test]
 fn a_card_in_triage_entered_its_column_when_needs_triage_was_applied_or_the_issue_reopened() {
     let view = view(
         vec![
@@ -1632,7 +1632,7 @@ fn a_card_in_triage_entered_its_column_when_needs_triage_was_applied_or_the_issu
     assert_eq!(line(&board, 1), None, "nothing but the time");
 }
 
-#[test]
+#[test_log::test]
 fn a_card_needing_a_person_entered_its_column_when_the_label_it_holds_was_applied() {
     let view = view(
         vec![
@@ -1665,7 +1665,7 @@ fn a_card_needing_a_person_entered_its_column_when_the_label_it_holds_was_applie
     assert_eq!(line(&board, 1), Some(CardLine::Asked(vec![])));
 }
 
-#[test]
+#[test_log::test]
 fn a_ready_card_entered_its_column_when_ready_for_agent_was_applied_or_linewright_unassigned() {
     let view = view(
         vec![
@@ -1701,7 +1701,7 @@ fn a_ready_card_entered_its_column_when_ready_for_agent_was_applied_or_linewrigh
     assert_eq!(line(&board, 1), Some(CardLine::BlockedBy(Number(9))));
 }
 
-#[test]
+#[test_log::test]
 fn a_ready_spec_change_entered_its_column_when_its_merge_linewright_unassigned_or_the_required_label()
  {
     let unassigned = MergedPull {
@@ -1741,7 +1741,7 @@ fn a_ready_spec_change_entered_its_column_when_its_merge_linewright_unassigned_o
     );
 }
 
-#[test]
+#[test_log::test]
 fn working_in_review_and_done_cards_have_no_time_in_their_column() {
     let view = with_closed(
         with_runs(
@@ -1770,7 +1770,7 @@ fn working_in_review_and_done_cards_have_no_time_in_their_column() {
     assert_eq!([1, 2, 3].map(|n| entered(&board, n)), [None, None, None]);
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_linewright_was_unassigned_from_is_ready() {
     let unassigned = MergedPull {
         assignees: vec![],
@@ -1782,7 +1782,7 @@ fn a_spec_change_linewright_was_unassigned_from_is_ready() {
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(6, Column::Ready, 6)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_an_issue_without_it_is_on_the_board_only_once_linewright_has_worked_it() {
     let unmarked = ticket(1, "Never touched");
     let handed_back = Issue {
@@ -1798,7 +1798,7 @@ fn with_a_required_label_an_issue_without_it_is_on_the_board_only_once_linewrigh
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Ready, 2)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_ready_card_linewright_was_unassigned_from_says_so_after_its_blocker_and_assignee() {
     let unassigned = |issue: Issue| {
         with_events(
@@ -1861,7 +1861,7 @@ fn statuses<const N: usize>(board: &Board, numbers: [u64; N]) -> [(u64, Option<C
 
 /// `docs/specs/design_system.md`, Cards: the Card status column of the table
 /// of lines, on the boards the tests of each line above set up.
-#[test]
+#[test_log::test]
 fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
     use CardStatus::{Failed, InFlight, PausedOrQueued, WaitingForAPerson};
     let needing = view(
@@ -1952,7 +1952,7 @@ fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
 /// `docs/specs/design_system.md`, Cards: in review, a card's status is that
 /// of what stops it merging, the Card status column of its table, on an
 /// item's card or on the pull request's own.
-#[test]
+#[test_log::test]
 fn a_card_in_review_has_the_card_status_of_what_stops_it_merging() {
     use CardStatus::{Failed, InFlight, WaitingForAPerson};
     use CheckState::{Failed as Fails, Passed, Pending};
@@ -2026,7 +2026,7 @@ fn a_card_in_review_has_the_card_status_of_what_stops_it_merging() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_card_in_done_has_no_card_status() {
     let mut closed_pull = closed_issue(30, "2026-09-29T12:00:00Z", None);
     closed_pull.kind = ClosedKind::Pull {
@@ -2094,7 +2094,7 @@ fn placed_requiring_label(work: WorkFacts) -> Vec<(u64, Column, u64)> {
     placed(&board(&view, &[], at(NOW)))
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_closed_issue_without_it_that_linewright_never_worked_is_not_on_the_board()
  {
     let theirs = WorkFacts {
@@ -2106,7 +2106,7 @@ fn with_a_required_label_a_closed_issue_without_it_that_linewright_never_worked_
     assert_eq!(placed_requiring_label(theirs), []);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_closed_issue_carrying_it_that_linewright_never_worked_is_not_on_the_board()
  {
     let mut closed = persons_closed_issue(1);
@@ -2118,7 +2118,7 @@ fn with_a_required_label_a_closed_issue_carrying_it_that_linewright_never_worked
     assert_eq!(placed(&board(&view, &[], at(NOW))), []);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_closed_issue_without_it_that_linewright_filed_is_in_done() {
     let filed = WorkFacts {
         author: Some(Login::new("factory")),
@@ -2128,7 +2128,7 @@ fn with_a_required_label_a_closed_issue_without_it_that_linewright_filed_is_in_d
     assert_eq!(placed_requiring_label(filed), [(1, Column::Done, 1)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_closed_issue_without_it_assigned_to_linewright_by_hand_and_never_worked_is_not_on_the_board()
  {
     let assigned = WorkFacts {
@@ -2144,7 +2144,7 @@ fn with_a_required_label_a_closed_issue_without_it_assigned_to_linewright_by_han
     assert_eq!(placed_requiring_label(assigned), []);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_closed_issue_without_it_linewright_only_commented_on_is_not_on_the_board()
  {
     let commented = WorkFacts {
@@ -2158,7 +2158,7 @@ fn with_a_required_label_a_closed_issue_without_it_linewright_only_commented_on_
     assert_eq!(placed_requiring_label(commented), []);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_closed_issue_without_it_linewright_claimed_and_was_unassigned_from_is_in_done()
  {
     let handed_back = WorkFacts {
@@ -2172,7 +2172,7 @@ fn with_a_required_label_a_closed_issue_without_it_linewright_claimed_and_was_un
     assert_eq!(placed_requiring_label(handed_back), [(1, Column::Done, 1)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_closed_issue_without_it_closed_by_a_pull_request_of_linewrights_is_in_done()
  {
     let closed_by_ours = WorkFacts {
@@ -2194,14 +2194,14 @@ fn with_a_required_label_a_closed_issue_without_it_closed_by_a_pull_request_of_l
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_no_required_label_a_closed_issue_linewright_never_worked_is_not_on_the_board() {
     let view = with_closed(view(vec![], vec![]), vec![persons_closed_issue(1)]);
 
     assert_eq!(placed(&board(&view, &[], at(NOW))), []);
 }
 
-#[test]
+#[test_log::test]
 fn a_merged_pull_request_of_linewrights_closing_an_issue_left_off_the_board_is_a_card_of_its_own() {
     // As in a snapshot taken before Linewright read the pull requests
     // closing a closed issue.
@@ -2216,7 +2216,7 @@ fn a_merged_pull_request_of_linewrights_closing_an_issue_left_off_the_board_is_a
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_unfinished_lane_keeps_a_ticket_closed_before_the_done_window_in_done() {
     let view = with_closed(
         view(
@@ -2235,7 +2235,7 @@ fn an_unfinished_lane_keeps_a_ticket_closed_before_the_done_window_in_done() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_finished_lane_shows_every_ticket_until_it_finished_before_the_done_window_then_leaves_whole() {
     let view = with_closed(
         view(vec![], vec![]),
@@ -2255,7 +2255,7 @@ fn a_finished_lane_shows_every_ticket_until_it_finished_before_the_done_window_t
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_designed_with_nothing_to_build_entered_done_and_finished_when_it_was_designed() {
     let merged_before = |number: u64, designed: Option<&str>| MergedPull {
         merged_at: at("2026-09-01T09:00:00Z"),
@@ -2309,14 +2309,14 @@ fn taken_back(number: u64) -> Issue {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_linewright_worked_whose_status_label_a_person_removed_has_no_card() {
     let view = view(vec![taken_back(1)], vec![]);
 
     assert_eq!(placed(&board(&view, &[], at(NOW))), []);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_with_no_status_label_is_in_working_while_its_run_is_in_flight() {
     let view = with_runs(view(vec![taken_back(1)], vec![]), &["1/implement-1"]);
 
@@ -2326,7 +2326,7 @@ fn an_issue_with_no_status_label_is_in_working_while_its_run_is_in_flight() {
     assert!(matches!(line(&board, 1), Some(CardLine::Running(_))));
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_with_no_status_label_is_in_review_while_an_open_pull_request_closes_it() {
     let view = view(
         vec![taken_back(1), taken_back(2)],
@@ -2365,7 +2365,7 @@ fn persons_pull(number: u64, closes: &[u64]) -> Pull {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_persons_pull_request_linewright_is_assigned_to_or_worked_is_its_own_card_unless_it_closes_an_issue_with_one()
  {
     let labeled = Pull {
@@ -2407,7 +2407,7 @@ fn a_persons_pull_request_linewright_is_assigned_to_or_worked_is_its_own_card_un
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_linewright_worked_that_merged_or_closed_unmerged_is_in_done_whoever_opened_it() {
     let mut closed = closed_issue(31, "2026-09-30T12:00:00Z", None);
     closed.kind = ClosedKind::Pull {
@@ -2451,7 +2451,7 @@ fn a_pull_request_linewright_worked_that_merged_or_closed_unmerged_is_in_done_wh
 
 /// `docs/specs/design_system.md`, The board, Finished lanes: a lane with a
 /// tracking issue is finished only once that issue is closed.
-#[test]
+#[test_log::test]
 fn a_lane_whose_tickets_are_all_closed_is_unfinished_while_its_tracking_issue_is_open() {
     let view = with_closed(
         view(
@@ -2491,7 +2491,7 @@ fn a_lane_whose_tickets_are_all_closed_is_unfinished_while_its_tracking_issue_is
 /// `docs/specs/design_system.md`, The board, Finished lanes: when the last
 /// of its cards entered Done or its tracking issue closed, whichever is
 /// later.
-#[test]
+#[test_log::test]
 fn a_lane_finished_when_its_last_card_entered_done_or_its_tracking_issue_closed_whichever_is_later()
 {
     let view = with_closed(
@@ -2527,7 +2527,7 @@ fn a_lane_finished_when_its_last_card_entered_done_or_its_tracking_issue_closed_
 
 /// `docs/specs/design_system.md`, The board, Lanes: a lane's cards are its
 /// managed tickets, and its head counts every ticket.
-#[test]
+#[test_log::test]
 fn a_ticket_that_is_not_managed_has_no_card_in_its_lane_and_its_head_still_counts_it() {
     let view = view(
         vec![
@@ -2555,7 +2555,7 @@ fn a_ticket_that_is_not_managed_has_no_card_in_its_lane_and_its_head_still_count
 
 /// `docs/specs/design_system.md`, Cards: Ready's "not marked for
 /// Linewright", after its blocker, its assignee and Linewright unassigned.
-#[test]
+#[test_log::test]
 fn a_ready_card_not_marked_for_linewright_says_so_after_its_blocker_assignee_and_unassigned() {
     let unassigned = |issue: Issue| {
         with_events(
@@ -2599,7 +2599,7 @@ fn a_ready_card_not_marked_for_linewright_says_so_after_its_blocker_assignee_and
 
 /// `docs/specs/design_system.md`, Cards: a card in Triage says what one in
 /// Ready would.
-#[test]
+#[test_log::test]
 fn a_triage_card_says_what_a_ready_card_would() {
     let triage = |issue: Issue| Issue {
         labels: vec!["needs-triage".into()],
@@ -2641,7 +2641,7 @@ fn a_triage_card_says_what_a_ready_card_would() {
 /// `docs/specs/design_system.md`, Cards: a Working card for an issue an open
 /// issue blocks says so where no run is in flight, ahead of what holds it
 /// back.
-#[test]
+#[test_log::test]
 fn a_working_card_blocked_by_an_open_issue_says_so_unless_a_run_is_in_flight() {
     let working = View {
         memory: common::limited_until("2026-10-01T13:00:00Z"),
@@ -2670,7 +2670,7 @@ fn a_working_card_blocked_by_an_open_issue_says_so_unless_a_run_is_in_flight() {
 /// Linewright opened and is not assigned to merging is, after a stall,
 /// "handed back" where its last act on it was letting go of it, and
 /// "unassigned" otherwise, ahead of a run in flight and its checks.
-#[test]
+#[test_log::test]
 fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_unassigned() {
     use CheckState::Failed;
     let unassigned = |pull: Pull| Pull {
@@ -2737,7 +2737,7 @@ fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_un
 /// `docs/specs/design_system.md`, Cards: "closed in #N" names the pull
 /// request whose merge made the issue done, one since the issue was last
 /// opened or given a status label (`docs/specs/repository.md`, State).
-#[test]
+#[test_log::test]
 fn a_card_in_done_is_closed_in_the_pull_request_whose_merge_made_it_done() {
     let view = with_closed(
         view(vec![], vec![]),

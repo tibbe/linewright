@@ -2544,12 +2544,12 @@ mod tests {
         )
     }
 
-    #[test]
+    #[test_log::test]
     fn a_snapshot_reads_back_to_the_earlier_window() {
         assert_eq!(windows().read_since(), at("2026-09-24T12:00:00Z"));
     }
 
-    #[test]
+    #[test_log::test]
     fn a_snapshot_holds_a_pull_request_merged_within_the_lookback_or_updated_within_the_done_window()
      {
         let w = windows();
@@ -2562,7 +2562,7 @@ mod tests {
         assert!(!held("2026-09-20T12:00:00Z", "2026-09-22T12:00:00Z"));
     }
 
-    #[test]
+    #[test_log::test]
     fn a_snapshot_holds_an_item_closed_within_the_done_window() {
         assert!(windows().holds_closed(at("2026-09-26T12:00:00Z")));
         assert!(!windows().holds_closed(at("2026-09-22T12:00:00Z")));
@@ -2570,7 +2570,7 @@ mod tests {
 
     /// A snapshot as Linewright wrote it before a sub-issue held when it
     /// closed and who added it.
-    #[test]
+    #[test_log::test]
     fn a_snapshot_written_before_sub_issues_held_their_close_time_and_adder_loads_with_both_unknown()
      {
         let snapshot: Snapshot = serde_json::from_str(
@@ -2597,7 +2597,7 @@ mod tests {
 
     /// A snapshot as Linewright wrote it before it held a closed issue's
     /// reason and a pull request's review decision.
-    #[test]
+    #[test_log::test]
     fn a_snapshot_written_before_reasons_and_review_decisions_loads_with_neither_known() {
         let snapshot: Snapshot = serde_json::from_str(
             r#"{
@@ -2631,7 +2631,7 @@ mod tests {
     /// A snapshot as Linewright wrote it before it held who filed a closed
     /// issue, who was assigned to it and the pull requests closing it: none
     /// of them is known.
-    #[test]
+    #[test_log::test]
     fn a_snapshot_written_before_closed_issues_held_how_they_were_worked_loads_with_none_known() {
         let snapshot: Snapshot = serde_json::from_str(
             r#"{
@@ -2661,7 +2661,7 @@ mod tests {
 
     /// A snapshot as Linewright wrote it before it held when each item was
     /// last updated: the time is unknown, and counts as the oldest.
-    #[test]
+    #[test_log::test]
     fn a_snapshot_written_before_update_times_loads_with_each_item_updated_at_the_epoch() {
         let snapshot: Snapshot = serde_json::from_str(
             r#"{
@@ -2706,7 +2706,7 @@ mod tests {
     /// A snapshot as Linewright wrote it before it held people's pull
     /// requests, a pull request's labelings and the author of a pull request
     /// closed unmerged, which was then always Linewright's.
-    #[test]
+    #[test_log::test]
     fn a_snapshot_written_before_peoples_pull_requests_loads_with_none_and_no_labelings_or_author_known()
      {
         let snapshot: Snapshot = serde_json::from_str(
@@ -2766,21 +2766,21 @@ mod tests {
         }
     }
 
-    #[test]
+    #[test_log::test]
     fn a_wanted_label_the_repository_lacks_is_created_with_its_description() {
         let changes = label::label_changes(&existing(&["bug"]), &[bug(), needs_triage()]);
 
         assert_eq!(changes, [label::LabelChange::Create(needs_triage())]);
     }
 
-    #[test]
+    #[test_log::test]
     fn a_wanted_label_the_repository_has_under_another_case_is_not_created() {
         let changes = label::label_changes(&existing(&["Needs-Triage"]), &[needs_triage()]);
 
         assert_eq!(changes, []);
     }
 
-    #[test]
+    #[test_log::test]
     fn a_label_without_the_linewright_prefix_with_another_description_is_left_as_it_is() {
         let changes = label::label_changes(
             &[label::RepoLabel {
@@ -2800,7 +2800,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[test_log::test]
     fn a_linewright_label_with_another_description_is_described_under_the_repositorys_spelling() {
         let changes = label::label_changes(
             &[label::RepoLabel {
@@ -2819,7 +2819,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_linewright_label_with_no_description_is_described() {
         let changes = label::label_changes(&existing(&["linewright:stalled"]), &[stalled()]);
 
@@ -2832,7 +2832,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_linewright_label_already_holding_its_meaning_is_left_as_it_is() {
         let changes = label::label_changes(
             &[label::RepoLabel {

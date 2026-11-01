@@ -29,7 +29,7 @@ fn for_the_maintainer() -> linewright::status::View {
     )
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_state_in_the_boards_terms()
  {
     let pages = Pages::of(for_the_maintainer()).await;
@@ -71,7 +71,7 @@ async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_s
     assert_no_status_by_colour_alone(&html);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_last_read_it() {
     let pages = Pages::of(for_the_maintainer()).await;
 
@@ -110,7 +110,7 @@ async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_la
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
     let pages = Pages::of(view(vec![], vec![])).await;
     let unlabeled = pages
@@ -131,7 +131,7 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_page_of_no_item_says_there_is_none() {
     let pages = Pages::of(for_the_maintainer()).await;
 
@@ -149,7 +149,7 @@ async fn the_item_page_of_no_item_says_there_is_none() {
     assert_eq!(select(&html, ".drawer-side nav").len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run_past() {
     let pages = Pages::of(linewright::status::View {
         in_flight: vec![in_flight("1/triage-1", "2026-10-01T12:00:00Z")],
@@ -218,7 +218,7 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
     assert_no_status_by_colour_alone(&html);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_page_shows_the_latest_ten_runs_and_links_to_all_of_them_on_the_runs_page() {
     let pages = Pages::of(for_the_maintainer()).await;
     for n in 1..=12 {
@@ -255,7 +255,7 @@ async fn the_item_page_shows_the_latest_ten_runs_and_links_to_all_of_them_on_the
     assert_eq!(select(&html, "#item ~ #runs .scroll-box").len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_page_of_an_item_with_no_runs_says_so() {
     let pages = Pages::of(for_the_maintainer()).await;
 
@@ -268,7 +268,7 @@ async fn the_item_page_of_an_item_with_no_runs_says_so() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_pages_stream_sends_the_runs_of_an_item_linewright_leaves_as_they_change() {
     let pages = Pages::of(view(vec![], vec![])).await;
     let closed = pages
@@ -309,7 +309,7 @@ async fn the_item_pages_stream_sends_the_runs_of_an_item_linewright_leaves_as_th
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed() {
     let web = Web::start(with_ticket().await).await;
     let mut events = stream(&web, "/events/items/1").await;
@@ -348,7 +348,7 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
     web.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_pages_stream_sends_nothing_when_its_runs_agent_produces_output() {
     let pages = Pages::of(linewright::status::View {
         in_flight: vec![in_flight("1/triage-1", "2026-10-01T12:00:00Z")],
@@ -409,7 +409,7 @@ fn blocked(unheld: bool) -> linewright::status::View {
     )
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
     let pages = Pages::of(blocked(false)).await;
 
@@ -436,7 +436,7 @@ async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_page_names_a_blocker_the_snapshot_does_not_hold_by_its_number_alone() {
     let pages = Pages::of(blocked(true)).await;
 
@@ -476,7 +476,7 @@ fn a_lane() -> linewright::status::View {
 
 /// `docs/specs/design_system.md`, The item page: a tracking issue's State is
 /// "Tracking", with no status of its lane's own (Out of scope).
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
     let pages = Pages::of(a_lane()).await;
 
@@ -489,7 +489,7 @@ async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
 
 /// `docs/specs/design_system.md`, The item page, Related items: a tracking
 /// issue is shown as its lane head is, with no card status's icon.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_tickets_tracking_issue_is_shown_as_its_lane_head_is() {
     let pages = Pages::of(a_lane()).await;
 
@@ -516,7 +516,7 @@ async fn a_tickets_tracking_issue_is_shown_as_its_lane_head_is() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_pages_card_line_names_its_pull_request_by_number_alone_and_its_waits_by_title() {
     let pull = Pull {
         title: "First try".into(),
@@ -537,7 +537,7 @@ async fn the_item_pages_card_line_names_its_pull_request_by_number_alone_and_its
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_item_pages_stream_names_a_blocker_by_its_number_and_title() {
     let pages = Pages::of(blocked(false)).await;
     let mut events = stream(&pages, "/events/items/3").await;

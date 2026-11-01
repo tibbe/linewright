@@ -31,7 +31,7 @@ max-issues: 3
 Look at the bugs fixed in the past week ...
 ";
 
-#[test]
+#[test_log::test]
 fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions() {
     let automation: Automation = parse(&name("weekly"), SPEC_EXAMPLE).unwrap();
 
@@ -52,7 +52,7 @@ fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions(
     );
 }
 
-#[test]
+#[test_log::test]
 fn without_session_settings_or_an_issue_cap_an_automation_takes_the_defaults() {
     let automation = parse(
         &name("nightly"),
@@ -68,7 +68,7 @@ fn without_session_settings_or_an_issue_cap_an_automation_takes_the_defaults() {
     assert_eq!(automation.max_issues, 3);
 }
 
-#[test]
+#[test_log::test]
 fn the_schedule_is_in_utc() {
     let automation = parse(
         &name("nightly"),
@@ -86,35 +86,35 @@ fn the_schedule_is_in_utc() {
     assert_eq!(automation.max_issues, 1);
 }
 
-#[test]
+#[test_log::test]
 fn a_file_without_a_schedule_does_not_parse() {
     let error = error("---\nsession-timeout: 60m\n---\nLook.\n");
 
     assert!(error.contains("missing field `on`"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn a_trigger_without_a_schedule_does_not_parse() {
     let error = error("---\non: {}\n---\nLook.\n");
 
     assert!(error.contains("missing field `schedule`"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn an_invalid_cron_expression_does_not_parse() {
     let error = error("---\non:\n  schedule: \"0 25 * * *\"\n---\nLook.\n");
 
     assert!(error.contains("0 25 * * *"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn a_cron_expression_with_seconds_does_not_parse() {
     let error = error("---\non:\n  schedule: \"0 0 6 * * 1\"\n---\nLook.\n");
 
     assert!(error.contains("0 0 6 * * 1"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn bad_yaml_does_not_parse() {
     let error = error("---\non: [schedule\n---\nLook.\n");
 
@@ -124,7 +124,7 @@ fn bad_yaml_does_not_parse() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_file_without_front_matter_does_not_parse() {
     let error = error("Look at the bugs fixed in the past week ...\n");
 
@@ -134,21 +134,21 @@ fn a_file_without_front_matter_does_not_parse() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_unknown_key_does_not_parse() {
     let error = error("---\non:\n  schedule: \"0 6 * * 1\"\nmax_issues: 3\n---\nLook.\n");
 
     assert!(error.contains("max_issues"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn a_session_timeout_that_is_not_a_duration_does_not_parse() {
     let error = error("---\non:\n  schedule: \"0 6 * * 1\"\nsession-timeout: soon\n---\nLook.\n");
 
     assert!(error.contains("`session-timeout` is \"soon\""), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn a_leftover_timeout_does_not_parse_naming_the_key() {
     let error = error("---\non:\n  schedule: \"0 6 * * 1\"\ntimeout: 15m\n---\nLook.\n");
 
@@ -156,7 +156,7 @@ fn a_leftover_timeout_does_not_parse_naming_the_key() {
     assert!(error.contains("`session-timeout`"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn the_front_matter_takes_the_session_settings_the_repositorys_file_takes() {
     let automation = parse(
         &name("weekly"),
@@ -184,7 +184,7 @@ Look.
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_front_matter_takes_no_operator_only_session_setting() {
     let error =
         error("---\non:\n  schedule: \"0 6 * * 1\"\nsession-pass-env: [HOME]\n---\nLook.\n");
@@ -192,7 +192,7 @@ fn the_front_matter_takes_no_operator_only_session_setting() {
     assert!(error.contains("`session-pass-env`"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_names_its_model_and_effort_or_takes_the_whole_pipelines() {
     let chosen = parse(
         &name("weekly"),
@@ -210,7 +210,7 @@ fn an_automation_names_its_model_and_effort_or_takes_the_whole_pipelines() {
     assert_eq!((unset.session.model, unset.session.effort), (None, None));
 }
 
-#[test]
+#[test_log::test]
 fn an_effort_outside_its_levels_does_not_parse() {
     let error = error("---\non:\n  schedule: \"0 6 * * 1\"\neffort: huge\n---\nLook.\n");
 
@@ -221,7 +221,7 @@ fn an_effort_outside_its_levels_does_not_parse() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does_not_parse() {
     let dir = tempfile::tempdir().unwrap();
     let store = common::store_holding(
@@ -268,7 +268,7 @@ async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_last_scheduled_runs_the_previous_version_recorded_are_loaded() {
     let work_dir = tempfile::tempdir().unwrap();
     // Where the previous version recorded them.

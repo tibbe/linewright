@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::common::*;
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_in_review_is_what_the_implement_stage_leaves() {
     let mut front = World::new().await;
     front.implement_a_ticket().await;
@@ -17,7 +17,7 @@ async fn a_ticket_in_review_is_what_the_implement_stage_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_in_review_closing_another_issue_is_what_the_implement_stage_leaves() {
     let mut front = World::new().await;
     implement_closing(&front, open_old_invoices(&front));
@@ -38,7 +38,7 @@ fn open_old_invoices(world: &World) -> linewright::domain::Number {
         .open_issue("maintainer", "Old invoices", "Please.", &[])
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_triaged_for_the_maintainer_is_what_triage_leaves() {
     let mut front = World::new().await;
     triage_for_the_maintainer(&front);
@@ -53,7 +53,7 @@ async fn an_issue_triaged_for_the_maintainer_is_what_triage_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_asking_its_reporter_is_what_triage_leaves() {
     let mut front = World::new().await;
     triage_asking(&front, json!(["reporter"]), "Which version, @reporter?");
@@ -78,7 +78,7 @@ async fn spec_change_designed() -> World {
     world
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_change_cut_into_tickets_is_what_design_leaves() {
     let front = spec_change_designed().await;
     let back = World::new().await;
@@ -88,7 +88,7 @@ async fn a_spec_change_cut_into_tickets_is_what_design_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_change_ticket_in_review_is_what_design_then_the_implement_stage_leave() {
     let mut front = spec_change_designed().await;
     front.poll().await;
@@ -99,7 +99,7 @@ async fn a_spec_change_ticket_in_review_is_what_design_then_the_implement_stage_
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_cut_into_tickets_is_what_design_leaves() {
     let mut front = World::new().await;
     tickets_script(&front);
@@ -113,7 +113,7 @@ async fn an_issue_cut_into_tickets_is_what_design_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_designed_on_the_issue_is_what_design_leaves() {
     let mut front = World::new().await;
     design_issues(&front);
@@ -135,7 +135,7 @@ async fn stalled_ticket_relabeled(world: &World) -> linewright::domain::Number {
     ticket
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_stalled_ticket_designed_on_the_issue_is_what_design_leaves() {
     let mut front = World::new().await;
     stalled_ticket_relabeled(&front).await;
@@ -159,7 +159,7 @@ async fn gadgets_implemented(script: fn(&World)) -> World {
     world
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_handed_back_with_its_branch_is_what_the_implement_stage_leaves() {
     let front = gadgets_implemented(implement_giving_up_with_earlier_work).await;
     let back = World::new().await;
@@ -169,7 +169,7 @@ async fn a_ticket_handed_back_with_its_branch_is_what_the_implement_stage_leaves
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_timed_out_with_edits_is_what_the_implement_stage_leaves() {
     let front = gadgets_implemented(implement_timing_out_with_edits).await;
     let back = World::new().await;
@@ -179,7 +179,7 @@ async fn a_ticket_timed_out_with_edits_is_what_the_implement_stage_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_blocked_filing_a_spec_gap_is_what_the_implement_stage_leaves() {
     let front = gadgets_implemented(implement_blocked_filing_a_spec_gap).await;
     let back = World::new().await;
@@ -199,7 +199,7 @@ async fn spec_change_of_the_spec_designed(script: fn(&World)) -> World {
     world
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_change_handed_back_is_what_design_leaves() {
     let front = spec_change_of_the_spec_designed(design_giving_up).await;
     let back = World::new().await;
@@ -209,7 +209,7 @@ async fn a_spec_change_handed_back_is_what_design_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_change_blocked_filing_a_spec_gap_is_what_design_leaves() {
     let front = spec_change_of_the_spec_designed(design_blocked_filing_a_spec_gap).await;
     let back = World::new().await;
@@ -219,7 +219,7 @@ async fn a_spec_change_blocked_filing_a_spec_gap_is_what_design_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_ready_for_review_is_what_a_poll_leaves_once_cis_grace_has_passed() {
     let mut front = World::new().await;
     front.ticket_in_review().await;
@@ -233,7 +233,7 @@ async fn a_pull_request_ready_for_review_is_what_a_poll_leaves_once_cis_grace_ha
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_held_for_a_code_owners_review_is_what_auto_merge_leaves() {
     let mut front = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (_, front_pr) = front.ticket_in_review().await;
@@ -253,7 +253,7 @@ async fn a_pull_request_held_for_a_code_owners_review_is_what_auto_merge_leaves(
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_timed_out_with_edits_is_what_the_rework_stage_leaves() {
     let mut front = World::new().await;
     let (_, pr) = front.ticket_in_review().await;
@@ -267,7 +267,7 @@ async fn a_rework_timed_out_with_edits_is_what_the_rework_stage_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_ready_for_review_on_green_checks_is_what_a_poll_leaves() {
     let mut front = World::new().await;
     let (_, front_pr) = front.ticket_in_review().await;
@@ -285,7 +285,7 @@ async fn a_pull_request_ready_for_review_on_green_checks_is_what_a_poll_leaves()
     assert_same_state(&front.store, &back.store).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_reworked_is_what_the_rework_stage_leaves() {
     let mut front = World::new().await;
     let (_, front_pr) = front.ticket_in_review().await;

@@ -788,12 +788,12 @@ mod tests {
         json!({"id": id, "title": format!("Ticket {id}"), "body": "Build it.", "blocked_by": blocked_by})
     }
 
-    #[test]
+    #[test_log::test]
     fn every_schema_compiles_offline() {
         compile().unwrap();
     }
 
-    #[test]
+    #[test_log::test]
     fn a_declined_finding_without_evidence_is_sent_back() {
         let error = rejected::<ImplementResult>(&done(
             &json!({"declined_findings": [{"finding": "Rename it."}]}),
@@ -804,14 +804,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn declined_findings_that_are_not_an_array_are_sent_back() {
         let error = rejected::<ImplementResult>(&done(&json!({"declined_findings": "none"})));
         assert!(error.contains("`/declined_findings`: "), "{error}");
         assert!(error.contains("\"array\""), "{error}");
     }
 
-    #[test]
+    #[test_log::test]
     fn a_done_result_with_declined_findings_is_accepted() {
         let result = parse::<ImplementResult>(
             &done(&json!({"declined_findings": [{"finding": "Rename it.", "evidence": "\"keep the name\""}]}))
@@ -823,7 +823,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn an_outcome_no_branch_has_lists_the_allowed_outcomes() {
         let error = rejected::<ImplementResult>(&json!({"outcome": "finished", "reason": "Done."}));
         assert!(
@@ -839,7 +839,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn only_the_errors_of_the_branch_the_outcome_names_are_given() {
         let error = rejected::<ImplementResult>(&json!({"outcome": "blocked"}));
         assert_eq!(
@@ -848,7 +848,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_login_of_39_characters_with_a_leading_at_is_asked() {
         let login = format!("a-{}", "b".repeat(37));
         let result = triage(&json!({"outcome": "needs-info", "category": "bug", "comment": "Which?", "ask": [format!("@{login}")]}))
@@ -861,14 +861,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_login_of_40_characters_is_sent_back() {
         let error = triage(&json!({"outcome": "needs-info", "category": "bug", "comment": "Which?", "ask": ["b".repeat(40)]}))
             .unwrap_err();
         assert!(error.contains("`/ask/0`: "), "{error}");
     }
 
-    #[test]
+    #[test_log::test]
     fn a_pull_request_title_is_trimmed_and_a_blank_one_sent_back() {
         let error = rejected::<ImplementResult>(&done(&json!({"pr_title": " "})));
         assert!(
@@ -887,7 +887,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn asking_something_that_is_not_a_login_is_sent_back() {
         let error = triage(&json!({"outcome": "needs-info", "category": "bug", "comment": "Which version?", "ask": ["the reporter"]}))
             .unwrap_err();
@@ -897,7 +897,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_triage_outcome_outside_the_three_states_is_sent_back() {
         let error =
             triage(&json!({"outcome": "done", "category": "bug", "comment": "Fine."})).unwrap_err();
@@ -907,7 +907,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn an_automations_issue_labeled_other_than_the_two_labels_is_sent_back() {
         let error = rejected::<AutomationResult>(&json!({
             "summary": "One bug.",
@@ -920,7 +920,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_category_outside_the_categories_is_sent_back() {
         let error =
             triage(&json!({"outcome": "ready-for-agent", "category": "chore", "comment": "Fine."}))
@@ -928,7 +928,7 @@ mod tests {
         assert_eq!(error, r#"`category` is "chore"; it must be one of "bug"."#);
     }
 
-    #[test]
+    #[test_log::test]
     fn a_spec_change_designed_with_no_comment_is_sent_back() {
         let error = rejected::<DesignResult<Cut>>(
             &json!({"outcome": "designed", "design": "D.", "tickets": [ticket("a", &[])]}),
@@ -936,7 +936,7 @@ mod tests {
         assert!(error.contains("`/comment` is missing"), "{error}");
     }
 
-    #[test]
+    #[test_log::test]
     fn a_spec_change_designed_with_no_tickets_is_sent_back() {
         let error = rejected::<DesignResult<Cut>>(
             &json!({"outcome": "designed", "design": "Nothing new.", "tickets": [], "comment": "None."}),
@@ -947,7 +947,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn an_issue_designed_with_no_tickets_and_no_comment_is_built_as_it_is() {
         let result: DesignResult<IssueWork> =
             parse(&json!({"outcome": "designed", "design": "D."}).to_string()).unwrap();
@@ -963,7 +963,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn an_issue_designed_with_tickets_and_no_comment_is_sent_back() {
         let error = rejected::<DesignResult<IssueWork>>(
             &json!({"outcome": "designed", "design": "D.", "tickets": [ticket("a", &[])]}),
@@ -978,7 +978,7 @@ mod tests {
         )
     }
 
-    #[test]
+    #[test_log::test]
     fn two_tickets_with_one_id_are_sent_back() {
         assert_eq!(
             cut(&[ticket("a", &[]), ticket("a", &[])]).unwrap_err(),
@@ -986,7 +986,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_ticket_blocked_by_no_ticket_is_sent_back() {
         assert_eq!(
             cut(&[ticket("a", &["b"])]).unwrap_err(),
@@ -995,7 +995,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn tickets_blocking_each_other_are_sent_back() {
         assert_eq!(
             cut(&[ticket("a", &["b"]), ticket("b", &["a"])]).unwrap_err(),
@@ -1003,7 +1003,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_reply_with_a_resolve_that_is_not_a_boolean_is_sent_back() {
         let error = rejected::<PullWorkResult>(&json!({
             "outcome": "done",
@@ -1016,7 +1016,7 @@ mod tests {
 
     const RESULT: &str = r#"{"summary": "Ran."}"#;
 
-    #[test]
+    #[test_log::test]
     fn a_message_braced_but_not_one_object_falls_through_to_its_last_fenced_block() {
         let message = format!(
             "{{ a draft }}\n\n```json\n{{\"summary\": \"Draft.\"}}\n```\n\n```\n{RESULT}\n```\n\nThat is {{ it }}"
@@ -1028,7 +1028,7 @@ mod tests {
         assert_eq!(parse::<AutomationResult>(&message).unwrap().summary, "Ran.");
     }
 
-    #[test]
+    #[test_log::test]
     fn a_last_fenced_block_with_any_info_string_is_found() {
         for fence in ["```JSON", "```", "~~~ json"] {
             let close = &fence[..3];
@@ -1041,13 +1041,13 @@ mod tests {
         }
     }
 
-    #[test]
+    #[test_log::test]
     fn prose_around_a_bare_object_still_parses() {
         let message = format!("Done. The result:\n{RESULT}\nThanks.");
         assert_eq!(parse::<AutomationResult>(&message).unwrap().summary, "Ran.");
     }
 
-    #[test]
+    #[test_log::test]
     fn a_message_with_no_object_is_sent_back() {
         let error = parse::<AutomationResult>("I think it's a bug.").unwrap_err();
         assert!(error.contains("holds no JSON object"), "{error}");

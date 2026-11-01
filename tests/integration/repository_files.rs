@@ -58,7 +58,7 @@ fn is_claimed(world: &World, number: linewright::domain::Number) -> bool {
         .contains(&Login::new(LINEWRIGHT))
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_repositorys_file_on_the_default_branch_sets_its_sessions_settings() {
     let mut world = World::new().await;
     commit_on(
@@ -82,7 +82,7 @@ async fn the_repositorys_file_on_the_default_branch_sets_its_sessions_settings()
     assert_eq!(*effort.lock().unwrap(), Some(Some(Effort::High)));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_on_another_branch_is_sent_the_prompts_of_the_default_branch() {
     let mut world = World::new().await;
     let prompt = |whose: &str| format!("{whose} rework.\n\n{}", shipped("rework.md"));
@@ -109,7 +109,7 @@ async fn a_run_on_another_branch_is_sent_the_prompts_of_the_default_branch() {
     assert!(prompts[0].starts_with("Main's rework."), "{}", prompts[0]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_config_with_a_key_of_the_operators_holds_every_run_until_the_default_branch_fixes_it() {
     let mut world = World::new().await;
     implement(&world);
@@ -154,7 +154,7 @@ async fn a_config_with_a_key_of_the_operators_holds_every_run_until_the_default_
     assert_eq!(world.harness.automation_prompts().len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file() {
     let world = World::new().await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));

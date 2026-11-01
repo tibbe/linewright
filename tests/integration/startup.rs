@@ -4,7 +4,7 @@ use common::*;
 use linewright::domain::{MergeMethod, UpdateMethod, label};
 use linewright::factory::SessionToken;
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_auto_merge_settings_it_cannot_merge_with_stop_startup() {
     let repository = Repository::allowing([MergeMethod::Rebase]);
 
@@ -17,7 +17,7 @@ async fn with_auto_merge_settings_it_cannot_merge_with_stop_startup() {
     assert!(started.is_err(), "startup went ahead");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_auto_merge_the_merge_method_in_effect_is_logged() {
     let (log, _guard) = Log::capture();
     World::start(Repository::default(), |config| {
@@ -76,7 +76,7 @@ fn link_from_path(bin: &std::path::Path, tool: &str) {
     std::os::unix::fs::symlink(found, bin.join(tool)).unwrap();
 }
 
-#[test]
+#[test_log::test]
 fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
     let bin = tempfile::tempdir().unwrap();
     fake_claude(bin.path(), "Done.");
@@ -92,7 +92,7 @@ fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
     assert!(error.contains("`bash` is not on the path"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_given() {
     let bin = tempfile::tempdir().unwrap();
     fake_claude(bin.path(), "Done.");
@@ -127,7 +127,7 @@ fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_g
     assert!(!log.contains("hunter2"), "{log}");
 }
 
-#[test]
+#[test_log::test]
 fn startup_logs_the_variables_a_stages_table_gives_its_sessions() {
     let bin = path_to_start_on();
     let config = tempfile::tempdir().unwrap();
@@ -181,7 +181,7 @@ fn startup_logs_the_variables_a_stages_table_gives_its_sessions() {
     assert!(!log.contains("hunter2"), "{log}");
 }
 
-#[test]
+#[test_log::test]
 fn startup_logs_the_names_but_not_the_values_session_env_sets() {
     let bin = path_to_start_on();
     let config = tempfile::tempdir().unwrap();
@@ -252,7 +252,7 @@ fn path_to_start_on() -> tempfile::TempDir {
     bin
 }
 
-#[test]
+#[test_log::test]
 fn secrets_naming_a_variable_that_is_unset_or_empty_is_an_error_at_startup_naming_it() {
     let bin = path_to_start_on();
     for value in [None, Some("")] {
@@ -279,7 +279,7 @@ fn secrets_naming_a_variable_that_is_unset_or_empty_is_an_error_at_startup_namin
     }
 }
 
-#[test]
+#[test_log::test]
 fn secrets_naming_a_prefix_no_variable_has_is_no_error_at_startup() {
     let bin = path_to_start_on();
 
@@ -297,7 +297,7 @@ fn secrets_naming_a_prefix_no_variable_has_is_no_error_at_startup() {
     assert!(!log.contains("`secrets`"), "{log}");
 }
 
-#[test]
+#[test_log::test]
 fn status_is_not_affected_by_secrets_naming_an_unset_variable() {
     let empty = tempfile::tempdir().unwrap();
 
@@ -311,7 +311,7 @@ fn status_is_not_affected_by_secrets_naming_an_unset_variable() {
     assert!(!error.contains("`secrets`"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn serve_refuses_a_webhook_address_without_the_secret() {
     let empty = tempfile::tempdir().unwrap();
     let (succeeded, error) = lw(
@@ -339,7 +339,7 @@ fn serve_with_status(args: &[&str], env: &[(&str, &str)]) -> (std::process::Exit
     lw_with_status(empty.path(), &args, env)
 }
 
-#[test]
+#[test_log::test]
 fn serve_refuses_ui_hosts_with_no_web_ui() {
     let (flag, flag_error) =
         serve_with_status(&["--ui-address", "", "--ui-hosts", "a.example"], &[]);
@@ -361,7 +361,7 @@ fn serve_refuses_ui_hosts_with_no_web_ui() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn serve_takes_ui_hosts_naming_no_host_with_no_web_ui() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("linewright.toml");
@@ -379,7 +379,7 @@ fn serve_takes_ui_hosts_naming_no_host_with_no_web_ui() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn serve_refuses_a_merge_method_without_auto_merge() {
     let (flag, flag_error) =
         serve_with_status(&["--auto-merge=false", "--merge-method", "squash"], &[]);
@@ -395,7 +395,7 @@ fn serve_refuses_a_merge_method_without_auto_merge() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn serve_refuses_a_webhook_address_it_cannot_listen_on() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = taken.local_addr().unwrap().to_string();
@@ -418,7 +418,7 @@ fn serve_refuses_a_webhook_address_it_cannot_listen_on() {
     assert!(error.contains(&address), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn serve_refuses_a_ui_address_it_cannot_listen_on_before_it_talks_to_github() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = taken.local_addr().unwrap().to_string();
@@ -458,7 +458,7 @@ fn serve_log_lines(ui_address: &str) -> Vec<serde_json::Value> {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn serve_logs_the_address_it_serves_the_web_ui_on() {
     let lines = serve_log_lines("127.0.0.1:0");
 
@@ -472,7 +472,7 @@ fn serve_logs_the_address_it_serves_the_web_ui_on() {
     assert_ne!(port, "0", "{address}");
 }
 
-#[test]
+#[test_log::test]
 fn with_an_empty_ui_address_serve_serves_no_web_ui() {
     let lines = serve_log_lines("");
 
@@ -490,7 +490,7 @@ fn with_an_empty_ui_address_serve_serves_no_web_ui() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn once_does_not_listen_even_with_the_secret() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = taken.local_addr().unwrap().to_string();
@@ -560,7 +560,7 @@ fn without_colors(text: &str) -> String {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn version_names_the_version_and_the_commit_built_from() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .arg("--version")
@@ -575,7 +575,7 @@ fn version_names_the_version_and_the_commit_built_from() {
     assert!(commit.is_some_and(names_head), "{printed}");
 }
 
-#[test]
+#[test_log::test]
 fn help_shows_the_command_as_lw() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .arg("--help")
@@ -590,7 +590,7 @@ fn help_shows_the_command_as_lw() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn help_lists_drain_and_serve_as_polling_until_drained_or_stopped() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .arg("--help")
@@ -616,7 +616,7 @@ fn help_lists_drain_and_serve_as_polling_until_drained_or_stopped() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_error_the_program_prints_itself_starts_with_lw() {
     let dir = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
@@ -631,7 +631,7 @@ fn an_error_the_program_prints_itself_starts_with_lw() {
     assert!(error.starts_with("lw: set `repo`"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn serve_first_logs_the_version_and_the_commit() {
     let log = serve_log("json");
 
@@ -648,7 +648,7 @@ fn serve_first_logs_the_version_and_the_commit() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn serve_first_logs_the_version_and_the_commit_as_text_too() {
     let log = without_colors(&serve_log("text"));
 
@@ -660,7 +660,7 @@ fn serve_first_logs_the_version_and_the_commit_as_text_too() {
     assert!(commit.is_some_and(names_head), "{log}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn startup_creates_the_designed_label_with_what_it_says_an_item_has_had() {
     let world = World::new().await;
 
@@ -670,7 +670,7 @@ async fn startup_creates_the_designed_label_with_what_it_says_an_item_has_had() 
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn startup_creates_the_stalled_label_saying_the_item_was_handed_back_in_a_stall() {
     let world = World::new().await;
 
@@ -680,7 +680,7 @@ async fn startup_creates_the_stalled_label_saying_the_item_was_handed_back_in_a_
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() {
     let world = World::new().await;
 
@@ -702,7 +702,7 @@ async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() 
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn startup_leaves_the_labels_the_repository_has_as_they_are_whatever_their_case() {
     let repository = Repository {
         labels: vec![
@@ -739,7 +739,7 @@ async fn startup_leaves_the_labels_the_repository_has_as_they_are_whatever_their
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn startup_sets_a_linewright_label_with_another_description_back_to_its_meaning() {
     let repository = Repository {
         labels: vec![label::Label {
@@ -758,7 +758,7 @@ async fn startup_sets_a_linewright_label_with_another_description_back_to_its_me
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_token_that_cannot_read_the_repository_is_an_error_naming_its_variable() {
     let repository = Repository {
         unreadable_by: vec!["session-token"],
@@ -775,7 +775,7 @@ async fn a_session_token_that_cannot_read_the_repository_is_an_error_naming_its_
     assert!(error.contains("read access"), "{error}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_token_that_reads_the_repository_starts_without_a_warning() {
     let (log, _guard) = Log::capture();
 
@@ -788,7 +788,7 @@ async fn a_session_token_that_reads_the_repository_starts_without_a_warning() {
     assert_eq!(log.lines("WARN"), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn sessions_given_linewrights_token_are_warned_of_at_startup() {
     let (log, _guard) = Log::capture();
 
@@ -812,14 +812,14 @@ async fn sessions_given_linewrights_token_are_warned_of_at_startup() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn sessions_are_given_the_separate_token_never_linewrights() {
     let session_token = SessionToken::new("linewright-token".into(), Some("session-token".into()));
 
     assert_eq!(session_token.given(), Some("session-token"));
 }
 
-#[test]
+#[test_log::test]
 fn without_a_separate_token_or_with_an_empty_one_sessions_are_given_linewrights() {
     let unset = SessionToken::new("linewright-token".into(), None);
     let empty = SessionToken::new("linewright-token".into(), Some(String::new()));
@@ -828,7 +828,7 @@ fn without_a_separate_token_or_with_an_empty_one_sessions_are_given_linewrights(
     assert_eq!(empty.given(), Some("linewright-token"));
 }
 
-#[test]
+#[test_log::test]
 fn a_prompt_with_a_placeholder_linewright_does_not_fill_is_an_error_naming_it() {
     let prompts = prompts_with("update.md", |text| text.replace("{{ticket}}", "{{tikcet}}"));
 
@@ -851,7 +851,7 @@ fn a_prompt_with_a_placeholder_linewright_does_not_fill_is_an_error_naming_it() 
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
     let prompts = prompts_with("triage.md", |text| text.replace("{{issue}}", ""));
 
@@ -874,7 +874,7 @@ fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn startup_logs_the_files_the_operators_prompts_provide() {
     let prompts = prompts_with("implement.md", |text| text);
     std::fs::write(prompts.path().join(".DS_Store"), "Finder's.").unwrap();
@@ -907,7 +907,7 @@ fn startup_logs_the_files_the_operators_prompts_provide() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_own_prompts_can_be_the_operators_prompts() {
     let prompts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs/prompts");
 
@@ -932,7 +932,7 @@ fn linewrights_own_prompts_can_be_the_operators_prompts() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn files_in_the_operators_prompts_that_are_not_linewrights_are_an_error_naming_each() {
     let prompts = prompts_with("implement.md", |text| text);
     std::fs::write(prompts.path().join("implment.md"), "A misspelling.").unwrap();
@@ -963,7 +963,7 @@ fn files_in_the_operators_prompts_that_are_not_linewrights_are_an_error_naming_e
     );
 }
 
-#[test]
+#[test_log::test]
 fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signal_stops() {
     let bin = tempfile::tempdir().unwrap();
     link_from_path(bin.path(), "git");
@@ -1053,7 +1053,7 @@ async fn old_spec_change_cut(world: &World) -> SpecCut {
     cut
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn startup_labels_an_old_open_spec_change_tracking_issue_designed_once_and_its_cut_goes_on() {
     let mut world = World::new().await;
     let cut = old_spec_change_cut(&world).await;
