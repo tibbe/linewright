@@ -89,8 +89,7 @@ Readings the spec leaves open, each named where the model uses it.
   marked, and not claimed again once Linewright was unassigned until the
   required label is applied again.
 - **A8.** Of the Working an item rows, only the first (a cut left behind)
-  holds for a closed issue: "Linewright leaves a closed item's labels and
-  assignees as they are".
+  holds for a closed issue: every other row's State is an open item's.
 - **A9.** A ticket cut from a spec change's issue, and a spec gap issue its
   design files, reference the spec change.
 - **A10.** A person's comment on a `needs-info` issue Linewright has worked is
