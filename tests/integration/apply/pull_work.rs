@@ -6,8 +6,9 @@ use linewright::domain::{
 };
 use linewright::git::Conflict;
 use linewright::prompts::PullTask;
-use linewright::reconcile::{Feedback, WorkKind};
+use linewright::reconcile::WorkKind;
 use linewright::results::ThreadReply;
+use linewright::working_pull::Feedback;
 use rstest::rstest;
 
 use crate::common::{LINEWRIGHT, at, linewright, logins};

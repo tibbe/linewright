@@ -24,8 +24,8 @@ use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
 use crate::holds::Holds;
 use crate::reconcile::{
-    Action, Automations, Discard, DoneRun, Drain, FailedMerge, LiveRun, Memory, ParentNote, Policy,
-    Subject, Work, WorkKind, held_back_by_drain, hold_note, reconcile,
+    Action, Automations, Discard, Drain, EndedRun, FailedMerge, LiveRun, Memory, ParentNote,
+    Policy, Subject, Work, held_back_by_drain, hold_note, reconcile,
 };
 use crate::repo_files::{RepoLayer, Unusable, holding};
 use crate::run::{self, AutomationEnd, Cancellation, Shell};
@@ -299,7 +299,7 @@ impl Factory {
             last_scheduled_runs,
             automation_files: AutomationFiles::default(),
             memory: Memory {
-                done_runs: done_runs(&runs),
+                ended_runs: ended_runs(&runs),
                 held: held.unwrap_or_default(),
                 ..Memory::default()
             },
@@ -781,10 +781,10 @@ impl Factory {
         let Running::Work(run) = running else {
             return;
         };
-        let done = self.shell.runs.read_run(&in_flight.id);
+        let ended = self.shell.runs.read_run(&in_flight.id);
         self.memory
-            .done_runs
-            .extend(done.as_ref().and_then(Recorded::done_on_pull));
+            .ended_runs
+            .extend(ended.as_ref().and_then(Recorded::ended_on_pull));
         match run.subject {
             // Reading the issue again reads what the run wrote: the issue,
             // and the pull requests that close it.
@@ -814,7 +814,7 @@ impl Factory {
                 let in_flight = running.in_flight();
                 let cancel = Cancellation::default();
                 let reworked = match work.subject() {
-                    Subject::Pull(pr) => self.memory.last_done(pr, WorkKind::Rework),
+                    Subject::Pull(pr) => self.memory.rework_answered_until(pr),
                     Subject::Issue(_) => None,
                 };
                 let ctx = run::Ctx {
@@ -960,9 +960,6 @@ impl Factory {
                     });
                 }
             }
-            Action::RememberRebase(rebase) => {
-                self.memory.tried_rebases.push(rebase.clone());
-            }
             Action::MarkReadyForMergeState { pr } => {
                 info!(pr = pr.0, "marking ready for its merge state");
                 store.mark_ready(*pr).await?;
@@ -1060,10 +1057,10 @@ impl Factory {
     }
 }
 
-fn done_runs(runs: &Runs) -> Vec<DoneRun> {
+fn ended_runs(runs: &Runs) -> Vec<EndedRun> {
     runs.read_or_none()
         .iter()
-        .filter_map(Recorded::done_on_pull)
+        .filter_map(Recorded::ended_on_pull)
         .collect()
 }
 

@@ -2,26 +2,23 @@
 //! facts its rows read about a pull request Linewright opened ([`facts`]),
 //! and the first row that holds ([`row`]).
 //!
-//! Each fact keeps the reading Linewright gave it before the table, and
-//! where that reading's order or outcome differs from the table's, the rows
-//! keep it.
+//! The rows from marking it ready on keep the order and outcomes Linewright
+//! gave them before the table, where those differ from the table's.
 
 use crate::domain::{
-    Assignment, CheckState, Login, MergeMethod, Mergeability, Pull, PullState, Rebaseability,
-    Requirement, ReviewState, Timestamp,
+    Assignment, CheckState, Comment, Login, MergeMethod, Mergeability, Pull, PullState,
+    Rebaseability, Requirement, Review, ReviewState, Thread, Timestamp,
 };
-use crate::reconcile::{Memory, Policy, WorkKind, new_feedback, rebases_to_repair};
+use crate::reconcile::{EndedRun, Memory, Policy, WorkKind};
 
 /// What the rows read about one pull request, worked out once at a poll.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Facts {
-    /// Feedback has come: a comment or review since Linewright's last push,
-    /// the opening or the last rework run.
+    /// Feedback has come: see [`feedback`].
     pub feedback: bool,
     pub branch: Branch,
     pub checks: Checks,
-    /// Fix-ci runs done on it since its opening, the last done rework run
-    /// and Linewright's last assignment again.
+    /// Fix-ci runs that have ended on it this round, however they ended.
     pub fix_ci_runs: usize,
     pub ci_attempts: usize,
     pub draft: bool,
@@ -38,17 +35,13 @@ pub struct Facts {
 /// Whether its branch can be merged as it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Branch {
-    /// GitHub reports it behind the default branch, or in conflict with it,
-    /// and `unmergeable` too.
-    Behind {
-        unmergeable: bool,
-    },
-    /// GitHub reports it not rebaseable, and an update would rebase it.
+    /// GitHub reports it behind the default branch, or in conflict with it.
+    Behind,
+    /// It cannot be merged by a method the repository allows: GitHub reports
+    /// it not rebaseable, and the repository allows rebase.
     Unmergeable {
-        /// Linewright has started an update that rebases this head since
-        /// it was last assigned to it again, as far as this process
-        /// remembers.
-        updated_at_head: bool,
+        /// A run has ended on it since its last push.
+        ended_since_push: bool,
     },
     Mergeable,
 }
@@ -92,7 +85,8 @@ pub enum Verdict {
 pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Facts {
     let linewright = &policy.linewright;
     let restarted = restarted_at(pr, linewright);
-    let reworked = memory.last_done(pr.number, WorkKind::Rework);
+    let ended: Vec<&EndedRun> = memory.ended_on(pr.number).collect();
+    let round_start = round_start(pr, &ended, restarted);
     let names = |state: CheckState| -> Vec<String> {
         pr.checks
             .iter()
@@ -123,22 +117,15 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
     } else {
         Checks::Green
     };
-    let unmergeable = rebases_to_repair(pr, policy);
     let branch = match pr.mergeability {
-        Mergeability::Behind | Mergeability::Conflicting => Branch::Behind { unmergeable },
-        _ if unmergeable => Branch::Unmergeable {
-            updated_at_head: memory.tried_rebases.iter().any(|r| {
-                r.pr == pr.number && r.head == pr.head_sha && restarted.is_none_or(|at| at < r.at)
-            }),
+        Mergeability::Behind | Mergeability::Conflicting => Branch::Behind,
+        _ if unmergeable(pr, policy) => Branch::Unmergeable {
+            ended_since_push: ended.iter().any(|r| r.at > pushed),
         },
         Mergeability::Clean | Mergeability::Blocked { .. } | Mergeability::Unknown => {
             Branch::Mergeable
         }
     };
-    let round_start = [Some(pr.created_at), reworked, restarted]
-        .into_iter()
-        .flatten()
-        .max();
     let auto_merge = policy.auto_merge;
     let verdict = match (&pr.mergeability, auto_merge) {
         (Mergeability::Clean, Some(MergeMethod::Rebase)) => match pr.rebaseability {
@@ -157,12 +144,12 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
         }
     };
     Facts {
-        feedback: !new_feedback(pr, linewright, reworked).is_empty(),
+        feedback: !feedback(pr, linewright, memory.rework_answered_until(pr.number)).is_empty(),
         branch,
         checks,
-        fix_ci_runs: memory
-            .done_runs_of(pr.number, WorkKind::FixCi)
-            .filter(|r| Some(r.done_at) > round_start)
+        fix_ci_runs: ended
+            .iter()
+            .filter(|r| r.kind == WorkKind::FixCi && r.at > round_start)
             .count(),
         ci_attempts: policy.ci_attempts as usize,
         draft: pr.state == (PullState::Open { draft: true }),
@@ -183,11 +170,7 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
     Rework,
-    /// An update run, which Linewright remembers rebasing the head where
-    /// `rebase`.
-    Update {
-        rebase: bool,
-    },
+    Update,
     WaitForChecks,
     HandBackTimedOut {
         running: Vec<String>,
@@ -234,16 +217,12 @@ pub fn row(facts: &Facts) -> Row {
         return Row::Rework;
     }
     match facts.branch {
-        Branch::Behind { unmergeable } => {
-            return Row::Update {
-                rebase: unmergeable,
-            };
-        }
+        Branch::Behind
+        | Branch::Unmergeable {
+            ended_since_push: false,
+        } => return Row::Update,
         Branch::Unmergeable {
-            updated_at_head: false,
-        } => return Row::Update { rebase: true },
-        Branch::Unmergeable {
-            updated_at_head: true,
+            ended_since_push: true,
         }
         | Branch::Mergeable => {}
     }
@@ -305,8 +284,81 @@ pub fn row(facts: &Facts) -> Row {
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Feedback<'a> {
+    pub comments: Vec<&'a Comment>,
+    pub reviews: Vec<&'a Review>,
+    pub threads: Vec<(&'a Thread, Vec<&'a Comment>)>,
+}
+
+impl Feedback<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.comments.is_empty() && self.reviews.is_empty() && self.threads.is_empty()
+    }
+}
+
+/// The feedback on `pr`: the comments, reviews and thread comments from
+/// anyone but Linewright that came after the last rework run that ended done
+/// last read its feedback, at `answered_until`, leaving out a review that
+/// only approves.
+pub fn feedback<'a>(
+    pr: &'a Pull,
+    linewright: &Login,
+    answered_until: Option<Timestamp>,
+) -> Feedback<'a> {
+    let new = |author: &Login, at: Timestamp| {
+        author != linewright && answered_until.is_none_or(|answered| at > answered)
+    };
+    Feedback {
+        comments: pr
+            .comments
+            .iter()
+            .filter(|c| new(&c.author, c.created_at))
+            .collect(),
+        reviews: pr
+            .reviews
+            .iter()
+            .filter(|r| new(&r.author, r.submitted_at))
+            .filter(|r| !(r.state == ReviewState::Approved && r.body.trim().is_empty()))
+            .collect(),
+        threads: pr
+            .threads
+            .iter()
+            .filter_map(|t| {
+                let comments: Vec<_> = t
+                    .comments
+                    .iter()
+                    .filter(|c| new(&c.author, c.created_at))
+                    .collect();
+                (!comments.is_empty()).then_some((t, comments))
+            })
+            .collect(),
+    }
+}
+
+/// It cannot be merged by a method the repository allows: GitHub reports it
+/// not rebaseable, and the repository allows rebase. Whether the update run
+/// rebases it is [`rebases_to_repair`](crate::reconcile::rebases_to_repair)'s
+/// to say.
+fn unmergeable(pr: &Pull, policy: &Policy) -> bool {
+    pr.rebaseability == Rebaseability::NotRebaseable
+        && policy.allowed_merge_methods.contains(MergeMethod::Rebase)
+}
+
+/// When the round of `pr` began: the latest of its opening, the end of the
+/// last rework run on it however it ended, and Linewright's last assignment
+/// to it again.
+fn round_start(pr: &Pull, ended: &[&EndedRun], restarted: Option<Timestamp>) -> Timestamp {
+    ended
+        .iter()
+        .filter(|r| r.kind == WorkKind::Rework)
+        .map(|r| r.at)
+        .chain(restarted)
+        .fold(pr.created_at, Timestamp::max)
+}
+
 /// When Linewright was last assigned again after an unassignment, which
-/// restarts the pull request's retry counters.
+/// starts a round.
 fn restarted_at(pr: &Pull, linewright: &Login) -> Option<Timestamp> {
     let mut unassigned = false;
     let mut restarted = None;

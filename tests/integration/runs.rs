@@ -6,7 +6,7 @@ use chrono::TimeDelta;
 use common::*;
 use linewright::domain::Number;
 use linewright::layer::{Layer, Source};
-use linewright::reconcile::WorkKind;
+use linewright::reconcile::{EndedRun, WorkKind};
 use linewright::runs::{
     self, Ending, Layers, Listing, NoRuns, Query, Ran, Recorded, RunId, RunOf, Runs, SessionEntry,
     Started, StartedBy, State,
@@ -1023,4 +1023,35 @@ fn runs_whose_records_cannot_be_read_are_none_to_an_answer_that_does_without_the
 
     assert!(runs.read().is_err());
     assert_eq!(runs.read_or_none(), []);
+}
+
+#[test_log::test]
+fn the_runs_ended_on_a_pull_request_are_those_whose_record_has_an_end_however_it_ended() {
+    let ended = item_run_record(20, "fix-ci", 1, Some("handed-back"), &json!([]));
+    let interrupted = item_run_record(20, "fix-ci", 2, None, &json!([]));
+    let on_an_issue = item_run_record(2, "implement", 1, Some("done"), &json!([]));
+    let (_base, work_dir) = work_dir_holding(&[
+        ("runs/items/20/fix-ci-1.json", &ended),
+        ("runs/items/20/fix-ci-2.json", &interrupted),
+        ("runs/items/2/implement-1.json", &on_an_issue),
+    ]);
+    let runs = Runs::new(&work_dir.resolve());
+
+    let ended_on_pulls: Vec<EndedRun> = runs
+        .read()
+        .unwrap()
+        .iter()
+        .filter_map(Recorded::ended_on_pull)
+        .collect();
+
+    assert_eq!(
+        ended_on_pulls,
+        [EndedRun {
+            pr: Number(20),
+            kind: WorkKind::FixCi,
+            ending: Ending::HandedBack,
+            at: at("2026-10-14T12:01:00Z"),
+            answered_until: None,
+        }]
+    );
 }

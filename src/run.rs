@@ -29,9 +29,7 @@ use crate::harness::{
     Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
 };
 use crate::prompts::{self, DesignOf, PullTask, Repo, SpecChangeAndDiff, Ticket, TicketRead};
-use crate::reconcile::{
-    Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
-};
+use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop, rebases_to_repair};
 use crate::repo_files::RepoLayer;
 use crate::results::{
     self, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork, Posts, PullWorkResult,
@@ -49,6 +47,7 @@ use crate::transcript;
 use crate::work_settings::{
     Environments, RunKind, SessionSettings, Setup, SetupCommand, WorkSettings,
 };
+use crate::working_pull::feedback;
 
 pub(crate) struct Shell {
     pub store: Arc<dyn Store>,
@@ -1791,7 +1790,7 @@ async fn push_update(
     if stopped(&fresh, linewright).is_some() {
         return Err(Failure::Cancelled);
     }
-    if !late(&new_feedback(&fresh, linewright, ctx.reworked), ctx.as_of).is_empty() {
+    if !late(&feedback(&fresh, linewright, ctx.reworked), ctx.as_of).is_empty() {
         info!(
             pr = pr.number.0,
             "feedback arrived; leaving the update to a rework run"
@@ -1870,10 +1869,10 @@ async fn pull_work(
             .map_err(infra)?,
         Task::Rework | Task::Update => vec![],
     };
-    let feedback = new_feedback(pr, linewright, ctx.reworked);
-    let briefed_authors = feedback_people(&feedback, linewright);
+    let given = feedback(pr, linewright, ctx.reworked);
+    let briefed_authors = feedback_people(&given, linewright);
     let job = match task {
-        Task::Rework => PullJob::Rework(feedback),
+        Task::Rework => PullJob::Rework(given),
         Task::FixCi(_) => PullJob::FixCi(&failures),
         Task::Update => PullJob::Update,
     };
@@ -1959,10 +1958,7 @@ async fn pull_work(
         // anything is pushed, for as long as it keeps coming within the
         // session's time.
         let mut shown = lock(shown);
-        let arrived = late(
-            &new_feedback(&pr_now, linewright, ctx.reworked),
-            shown.until,
-        );
+        let arrived = late(&feedback(&pr_now, linewright, ctx.reworked), shown.until);
         if arrived.is_empty() {
             return Ok((result, pr_now, read_at));
         }
