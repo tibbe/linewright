@@ -5,11 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, HandBackKind, Issue,
-    Item, Linked, Login, Marking, Merge, MergeMethod, MergeMethods, Mergeability, MergedPull,
-    Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
-    StatusLabel, SubIssue, Thread, TicketBranchName, Timestamp, UpdateMethod, UpdateRule, Windows,
-    label,
+    BranchIssue, ClosingPull, Comment, DesignedLabel, HandBackKind, Issue, Item, Linked, Login,
+    Marking, Merge, MergeMethod, MergeMethods, MergedPull, Number, Pull, PullState, Rebaseability,
+    Requirement, Review, ReviewState, Snapshot, StatusLabel, SubIssue, Thread, TicketBranchName,
+    Timestamp, UpdateMethod, UpdateRule, Windows, label,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
@@ -22,6 +21,7 @@ use crate::phrase::Phrase;
 use crate::repo_files::{FileError, Unusable, holding};
 use crate::spec_glob::SpecGlob;
 use crate::work_settings::RunKind;
+use crate::working_pull;
 
 #[derive(Clone, Debug)]
 pub struct Policy {
@@ -261,7 +261,11 @@ impl Memory {
         self.done_runs_of(pr, kind).map(|r| r.done_at).max()
     }
 
-    fn done_runs_of(&self, pr: Number, kind: WorkKind) -> impl Iterator<Item = &DoneRun> {
+    pub(crate) fn done_runs_of(
+        &self,
+        pr: Number,
+        kind: WorkKind,
+    ) -> impl Iterator<Item = &DoneRun> {
         self.done_runs
             .iter()
             .filter(move |r| r.pr == pr && r.kind == kind)
@@ -811,7 +815,7 @@ pub fn decisions(
         if let Some(stage) = run {
             plan.wait(pr.number, Wait::Run { stage });
         }
-        let work = in_review(ticket, pr, memory, policy, now);
+        let work = pull_work(ticket, pr, memory, policy, now);
         let working = match (run, &work) {
             (Some(_), _) => PullWorking::RunInFlight,
             (None, PullWork::Wait(_)) => PullWorking::Waiting,
@@ -1581,169 +1585,93 @@ enum PullWork {
     Wait(Wait),
 }
 
-/// What Pull requests asks of `pr`, Linewright's pull request for `ticket`,
-/// at `now`.
-fn in_review(
+/// What the first row of Working a pull request that holds for `pr`,
+/// Linewright's pull request for `ticket`, asks at `now`.
+fn pull_work(
     ticket: Number,
     pr: &Pull,
     memory: &Memory,
     policy: &Policy,
     now: Timestamp,
 ) -> PullWork {
+    use working_pull::Row;
+
     let pr_number = pr.number;
-    let linewright = &policy.linewright;
-    let restarted = restarted_at(pr, linewright);
-    if !new_feedback(
-        pr,
-        linewright,
-        memory.last_done(pr_number, WorkKind::Rework),
-    )
-    .is_empty()
-    {
-        return PullWork::Start(Work::Rework {
-            issue: ticket,
-            pr: pr_number,
-        });
-    }
-    let behind = matches!(
-        pr.mergeability,
-        Mergeability::Behind | Mergeability::Conflicting
-    );
+    let hand_back = |reason: String| {
+        PullWork::Act(Action::HandBack {
+            item: Item::Pull(pr_number),
+            kind: HandBackKind::Stall,
+            reason,
+        })
+    };
     let update = Work::Update {
         issue: ticket,
         pr: pr_number,
     };
-    if rebases_to_repair(pr, policy) && (behind || !tried_rebase(pr, memory, restarted)) {
-        let rebase = TriedRebase {
-            pr: pr_number,
-            head: pr.head_sha.clone(),
-            at: now,
-        };
-        return PullWork::StartRebase(update, rebase);
-    }
-    if behind {
-        return PullWork::Start(update);
-    }
-    let names = |state: CheckState| -> Vec<String> {
-        pr.checks
-            .iter()
-            .filter(|c| c.state == state)
-            .map(|c| c.name.clone())
-            .collect()
-    };
-    let (pending, failed) = (names(CheckState::Pending), names(CheckState::Failed));
-    let pushed = pr
-        .pushes
-        .iter()
-        .map(|p| p.at)
-        .chain([pr.created_at])
-        .max()
-        .unwrap_or(pr.created_at);
     let ci = Wait::Ci {
         pull_request: pr_number,
     };
-    if pr.checks.is_empty() && now < pushed + policy.ci_grace {
-        return PullWork::Wait(ci);
-    }
-    let waiting_since = restarted.map_or(pushed, |r| r.max(pushed));
-    if !pending.is_empty() {
-        return if now > waiting_since + policy.ci_timeout {
-            PullWork::Act(Action::HandBack {
-                item: Item::Pull(pr_number),
-                kind: HandBackKind::Stall,
-                reason: format!(
-                    "CI did not complete within {}: {} still running.",
-                    Phrase::default().span(policy.ci_timeout, None),
-                    code_list(&pending)
-                ),
-            })
-        } else {
-            PullWork::Wait(ci)
-        };
-    }
-    if !failed.is_empty() {
-        let cycle_start = [
-            Some(pr.created_at),
-            memory.last_done(pr_number, WorkKind::Rework),
-            restarted,
-        ]
-        .into_iter()
-        .flatten()
-        .max();
-        let attempts = memory
-            .done_runs_of(pr_number, WorkKind::FixCi)
-            .filter(|r| Some(r.done_at) > cycle_start)
-            .count();
-        return if attempts < policy.ci_attempts as usize {
-            PullWork::Start(Work::FixCi {
-                issue: ticket,
-                pr: pr_number,
-                failing: failed,
-            })
-        } else {
-            PullWork::Act(Action::HandBack {
-                item: Item::Pull(pr_number),
-                kind: HandBackKind::Stall,
-                reason: format!(
-                    "{} still failing after {attempts} fix attempts.",
-                    code_list(&failed)
-                ),
-            })
-        };
-    }
-    let draft = pr.state == (PullState::Open { draft: true });
-    let method = match policy.auto_merge {
-        Some(method) if !is_held(pr, linewright) => method,
-        _ => {
-            return if draft {
-                PullWork::Act(Action::MarkReady { pr: pr_number })
-            } else {
-                PullWork::Wait(Wait::Review {
-                    pull_request: pr_number,
-                })
-            };
-        }
-    };
-    let merge_state = Wait::MergeState {
-        pull_request: pr_number,
-    };
-    // Behind and conflicting were brought up to date above, and so was not
-    // rebaseable, once at each head.
-    match &pr.mergeability {
-        Mergeability::Clean if method == MergeMethod::Rebase => match pr.rebaseability {
-            Rebaseability::Rebaseable => merge(pr, draft, method, memory, restarted),
-            Rebaseability::NotRebaseable => PullWork::Act(Action::HandBack {
-                item: Item::Pull(pr_number),
-                kind: HandBackKind::Stall,
-                reason: format!(
-                    "GitHub reports {pr_number} not rebaseable though Linewright rebased it \
-                     onto the default branch, so it cannot be merged by rebase."
-                ),
-            }),
-            Rebaseability::Unknown => PullWork::Wait(merge_state),
-        },
-        Mergeability::Clean => merge(pr, draft, method, memory, restarted),
-        Mergeability::Blocked { requires }
-            if draft || !memory.held.is_held_for(pr_number, requires) =>
-        {
-            PullWork::Act(Action::HoldForReview {
-                pr: pr_number,
-                draft,
-                requires: requires.clone(),
-            })
-        }
-        Mergeability::Blocked { requires } => PullWork::Wait(Wait::Requirements {
-            pull_request: pr_number,
-            requires: requires.clone(),
+    match working_pull::row(&working_pull::facts(pr, memory, policy, now)) {
+        Row::Rework => PullWork::Start(Work::Rework {
+            issue: ticket,
+            pr: pr_number,
         }),
-        Mergeability::Unknown if draft => {
+        Row::Rebase => {
+            let rebase = TriedRebase {
+                pr: pr_number,
+                head: pr.head_sha.clone(),
+                at: now,
+            };
+            PullWork::StartRebase(update, rebase)
+        }
+        Row::Update => PullWork::Start(update),
+        Row::WaitForChecks => PullWork::Wait(ci),
+        Row::HandBackTimedOut { running } => hand_back(format!(
+            "CI did not complete within {}: {} still running.",
+            Phrase::default().span(policy.ci_timeout, None),
+            code_list(&running)
+        )),
+        Row::FixCi { failing } => PullWork::Start(Work::FixCi {
+            issue: ticket,
+            pr: pr_number,
+            failing,
+        }),
+        Row::HandBackFailing { failing, attempts } => hand_back(format!(
+            "{} still failing after {attempts} fix attempts.",
+            code_list(&failing)
+        )),
+        Row::MarkReady => PullWork::Act(Action::MarkReady { pr: pr_number }),
+        Row::WaitForReview => PullWork::Wait(Wait::Review {
+            pull_request: pr_number,
+        }),
+        Row::HandBackMergeFailed { reason } => hand_back(format!(
+            "Merging {pr_number} failed twice. GitHub's reason: {reason}"
+        )),
+        Row::Merge { draft, method } => PullWork::Act(Action::Merge {
+            pr: pr_number,
+            head: pr.head_sha.clone(),
+            draft,
+            method,
+        }),
+        Row::HandBackNotRebaseable => hand_back(format!(
+            "GitHub reports {pr_number} not rebaseable though Linewright rebased it onto the \
+             default branch, so it cannot be merged by rebase."
+        )),
+        Row::CommentRequirements { draft, requires } => PullWork::Act(Action::HoldForReview {
+            pr: pr_number,
+            draft,
+            requires,
+        }),
+        Row::WaitForRequirements { requires } => PullWork::Wait(Wait::Requirements {
+            pull_request: pr_number,
+            requires,
+        }),
+        Row::MarkReadyForMergeState => {
             PullWork::Act(Action::MarkReadyForMergeState { pr: pr_number })
         }
-        Mergeability::Unknown => PullWork::Wait(merge_state),
-        // Brought up to date above.
-        Mergeability::Behind | Mergeability::Conflicting => {
-            unreachable!("a pull request behind or conflicting is brought up to date first")
-        }
+        Row::WaitForMergeState => PullWork::Wait(Wait::MergeState {
+            pull_request: pr_number,
+        }),
     }
 }
 
@@ -1768,71 +1696,8 @@ pub fn pull_stop(pr: &Pull, linewright: &Login) -> Option<PullStop> {
     }
 }
 
-/// When Linewright was last assigned again after an unassignment, which
-/// restarts the pull request's retry counters.
-fn restarted_at(pr: &Pull, linewright: &Login) -> Option<Timestamp> {
-    let mut unassigned = false;
-    let mut restarted = None;
-    for assignment in &pr.assignments {
-        match assignment {
-            Assignment::Unassigned { assignee, .. } if assignee == linewright => {
-                unassigned = true;
-            }
-            Assignment::Assigned { assignee, at, .. } if assignee == linewright && unassigned => {
-                restarted = Some(*at);
-            }
-            Assignment::Assigned { .. } | Assignment::Unassigned { .. } => {}
-        }
-    }
-    restarted
-}
-
-fn tried_rebase(pr: &Pull, memory: &Memory, restarted: Option<Timestamp>) -> bool {
-    memory
-        .tried_rebases
-        .iter()
-        .any(|r| r.pr == pr.number && r.head == pr.head_sha && restarted.is_none_or(|at| at < r.at))
-}
-
 pub fn rebases_to_repair(pr: &Pull, policy: &Policy) -> bool {
     pr.rebaseability == Rebaseability::NotRebaseable && policy.rebases_unrebaseable()
-}
-
-fn merge(
-    pr: &Pull,
-    draft: bool,
-    method: MergeMethod,
-    memory: &Memory,
-    restarted: Option<Timestamp>,
-) -> PullWork {
-    match merge_failed_twice(pr, &memory.failed_merges, restarted) {
-        Some(failed) => PullWork::Act(Action::HandBack {
-            item: Item::Pull(pr.number),
-            kind: HandBackKind::Stall,
-            reason: format!(
-                "Merging {} failed twice. GitHub's reason: {}",
-                pr.number, failed.reason
-            ),
-        }),
-        None => PullWork::Act(Action::Merge {
-            pr: pr.number,
-            head: pr.head_sha.clone(),
-            draft,
-            method,
-        }),
-    }
-}
-
-fn merge_failed_twice<'a>(
-    pr: &Pull,
-    failed_merges: &'a [FailedMerge],
-    restarted: Option<Timestamp>,
-) -> Option<&'a FailedMerge> {
-    let failed: Vec<&FailedMerge> = failed_merges
-        .iter()
-        .filter(|f| f.pr == pr.number && restarted.is_none_or(|r| f.at > r))
-        .collect();
-    failed.last().copied().filter(|_| failed.len() >= 2)
 }
 
 pub fn hold_note(requires: &[Requirement]) -> String {
@@ -1845,34 +1710,6 @@ pub fn hold_note(requires: &[Requirement]) -> String {
         format!("GitHub requires {names} before merging")
     };
     format!("Ready for review: {required}. Linewright merges it once GitHub allows it.")
-}
-
-/// The inline comments submitted with an approval are made no later than it,
-/// so they don't hold the merge.
-fn is_held(pr: &Pull, linewright: &Login) -> bool {
-    let comments = pr
-        .comments
-        .iter()
-        .chain(pr.threads.iter().flat_map(|t| &t.comments))
-        .map(|c| (&c.author, c.created_at));
-    let reviews = pr.reviews.iter().map(|r| (&r.author, r.submitted_at));
-    let activity: Vec<_> = comments
-        .chain(reviews)
-        .filter(|(author, _)| author.is_person_besides(linewright))
-        .collect();
-    activity.iter().any(|(person, _)| {
-        let approved = pr
-            .reviews
-            .iter()
-            .filter(|r| &r.author == *person && r.state == ReviewState::Approved)
-            .map(|r| r.submitted_at)
-            .max();
-        approved.is_none_or(|approved| {
-            activity
-                .iter()
-                .any(|(author, at)| author == person && *at > approved)
-        })
-    })
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

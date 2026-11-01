@@ -2194,6 +2194,31 @@ fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_and_not_me
 }
 
 #[test_log::test]
+fn with_auto_merge_by_rebase_a_green_draft_whose_rebaseability_is_unknown_waits_as_a_draft() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Passed)];
+    pr.rebaseability = Rebaseability::Unknown;
+
+    let decided = decisions(
+        &in_review(pr),
+        &[],
+        &Memory::default(),
+        &Automations::default(),
+        t(10),
+        &merging_by(MergeMethod::Rebase),
+        &[],
+    );
+
+    assert_eq!(decided.actions, vec![]);
+    assert_eq!(
+        decided.waits.get(&Number(20)),
+        Some(&vec![Wait::MergeState {
+            pull_request: Number(20)
+        }])
+    );
+}
+
+#[test_log::test]
 fn with_auto_merge_by_rebase_a_pull_request_still_not_rebaseable_after_a_rebase_is_handed_back() {
     let world = in_review(not_rebaseable());
 
