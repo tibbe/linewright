@@ -23,7 +23,7 @@ compose_version=5.6.0
 nextest_version=0.9.148
 tailwind_version=4.3.3
 
-# The model of the spec (docs/specs/model) is checked with Quint
+# The model of the spec (docs/model) is checked with Quint
 # (https://quint-lang.org), which npm installs from the model's lockfile,
 # checking each package's integrity hash. Quint compiles a model to TLA+ with
 # Apalache (https://github.com/apalache-mc/apalache) and checks it with the
@@ -185,12 +185,12 @@ java21() {
 # Quint, from the model's lockfile, with Apalache and the Rust evaluator where
 # Quint looks for them (QUINT_HOME), so that it fetches nothing itself.
 quint() {
-  local lock=docs/specs/model/package-lock.json cache="${XDG_CACHE_HOME:-$HOME/.cache}/linewright"
+  local lock=docs/model/package-lock.json cache="${XDG_CACHE_HOME:-$HOME/.cache}/linewright"
   local dir home="$cache/quint-home" target sha bin tmp status
   dir="$cache/quint-$({ sha256sum "$lock" 2>/dev/null || shasum -a 256 "$lock"; } | cut -c1-16)"
   if [ ! -x "$dir/node_modules/.bin/quint" ]; then
     tmp="$(mktemp -d)"
-    cp docs/specs/model/package.json "$lock" "$tmp/"
+    cp docs/model/package.json "$lock" "$tmp/"
     if (cd "$tmp" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error) &&
       mkdir -p "$cache" && { [ -e "$dir" ] || mv "$tmp" "$dir"; }; then
       rm -rf "$tmp"
@@ -333,13 +333,13 @@ check_test() {
 }
 check_doc() { cargo doc --no-deps --locked --quiet; }
 
-# The model of the spec, as docs/specs/model/README.md says: each model's
+# The model of the spec, as docs/model/README.md says: each model's
 # scenarios, then TLC over its invariants, S6's flaps from the start that
 # keeps their ghost, and its temporal properties.
 check_model() {
   local model file status=0
   for model in pipeline cut spec_change; do
-    file="$PWD/docs/specs/model/$model.qnt"
+    file="$PWD/docs/model/$model.qnt"
     quint test --max-samples 100 "$file" || status=1
     quint verify --backend=tlc --invariant=invariants "$file" || status=1
     quint verify --backend=tlc --init=initFlaps --invariant=S6_noFlap "$file" || status=1
@@ -348,7 +348,7 @@ check_model() {
   # Working a pull request: its invariants and temporal properties, and a
   # witness for each row, the state TLC finds where the row is the first that
   # holds.
-  file="$PWD/docs/specs/model/pull_request.qnt"
+  file="$PWD/docs/model/pull_request.qnt"
   quint verify --backend=tlc --invariant=invariants "$file" || status=1
   quint verify --backend=tlc --temporal=crashSafety,progress "$file" || status=1
   for row in $(seq 0 13); do
