@@ -314,14 +314,13 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
     let titles = select(&html, "#runs tbody td:nth-child(3) > *");
     assert_eq!(titles.len(), 2);
     for title in titles {
-        assert!(has_classes(title, &["line-clamp-1"]), "{}", title.html());
+        assert_cuts_only_the_title(title, 1);
         assert_eq!(
             grows_in_place(title),
             Vec::<&str>::new(),
             "{}",
             title.html()
         );
-        assert!(title.attr("data-tip-cut").is_some(), "{}", title.html());
     }
     assert_eq!(select(&html, "[title]").len(), 0);
 }

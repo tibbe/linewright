@@ -39,25 +39,35 @@ fn card_phrase(card: &Card) -> Option<Phrase> {
 /// A lane's head (`docs/specs/design_system.md`, The board, Lanes and
 /// Finished lanes): the tracking issue's number and title and its tickets
 /// closed of total, or the item's number and title; then when it finished,
-/// if it did.
+/// if it did. What follows the name is one element of its own, which a
+/// holder that cuts the name keeps whole (`styles/linewright.css`,
+/// `.name-cut-1`).
 pub(super) fn lane_head(heading: &LaneHeading, repo: &str) -> Html {
-    let head = match &heading.head {
+    let (name, closed) = match &heading.head {
         LaneHead::Tracking {
             number,
             title,
             tickets_closed,
             tickets,
             ..
-        } => html::titled(*number, title, repo).then(&html::escape(&format!(
-            " — {tickets_closed}/{tickets} tickets closed"
-        ))),
-        LaneHead::Item { number, title } => html::titled(*number, title, repo),
+        } => (
+            html::titled(*number, title, repo),
+            Some(html::escape(&format!(
+                " — {tickets_closed}/{tickets} tickets closed"
+            ))),
+        ),
+        LaneHead::Item { number, title } => (html::titled(*number, title, repo), None),
     };
-    match heading.finished {
-        Some(at) => head
-            .then(&html::escape(" — finished "))
-            .then(&html::time(at)),
-        None => head,
+    let finished = heading
+        .finished
+        .map(|at| html::escape(" — finished ").then(&html::time(at)));
+    let tail = match (closed, finished) {
+        (Some(closed), Some(finished)) => Some(closed.then(&finished)),
+        (closed, finished) => closed.or(finished),
+    };
+    match tail {
+        Some(tail) => name.then(&html::span("tail", &tail)),
+        None => name,
     }
 }
 
