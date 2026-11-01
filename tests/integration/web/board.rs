@@ -1076,3 +1076,37 @@ async fn with_the_spec_lookback_shorter_than_the_done_window_what_finished_betwe
     );
     web.stop().await;
 }
+
+#[tokio::test]
+async fn cards_say_not_marked_for_linewright_blocked_by_and_unassigned_in_the_cards_words() {
+    let mut board = view(
+        vec![
+            labeled(1, "Unmarked", &["ready-for-agent"]),
+            assigned(
+                Issue {
+                    blocked_by: vec![Linked {
+                        number: Number(1),
+                        open: true,
+                    }],
+                    ..labeled(2, "Blocked", &["ready-for-agent", "linewright"])
+                },
+                &[LINEWRIGHT],
+            ),
+        ],
+        // Closes no issue on the board, so it is a card of its own.
+        vec![open_pull(5, LINEWRIGHT, &[9], &[])],
+    );
+    board.policy.require_label = Some("linewright".into());
+    let pages = Pages::of(board).await;
+
+    let shown = sorted_cards(&pages.page("/").await);
+
+    assert_eq!(
+        shown,
+        [
+            "In review: #5: Pull 5 | unassigned",
+            "Ready: #1: Unmarked | not marked for Linewright · 2026-09-30 09:00:00 UTC",
+            "Working: #2: Blocked | blocked by #1",
+        ]
+    );
+}

@@ -207,8 +207,7 @@ impl Ci {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Ended {
-    /// An issue the pull request closes, the first to merge since it was
-    /// last opened.
+    /// An issue made done by the merge of the pull request.
     ClosedIn(Number),
     /// An issue closed otherwise, with GitHub's reason where it is known.
     Closed(Option<IssueCloseReason>),

@@ -2552,3 +2552,227 @@ fn a_ticket_that_is_not_managed_has_no_card_in_its_lane_and_its_head_still_count
         }]
     );
 }
+
+/// `docs/specs/design_system.md`, Cards: Ready's "not marked for
+/// Linewright", after its blocker, its assignee and Linewright unassigned.
+#[test]
+fn a_ready_card_not_marked_for_linewright_says_so_after_its_blocker_assignee_and_unassigned() {
+    let unassigned = |issue: Issue| {
+        with_events(
+            issue,
+            vec![
+                labeling("ready-for-agent", "2026-10-01T09:00:00Z"),
+                assigning_linewright("2026-10-01T10:00:00Z"),
+                unassigning_linewright("2026-10-01T11:00:00Z"),
+            ],
+        )
+    };
+    let worked = |issue: Issue| {
+        with_events(
+            issue,
+            vec![labeling("ready-for-agent", "2026-10-01T09:00:00Z")],
+        )
+    };
+    let view = requiring_label(view(
+        vec![
+            worked(blocked_by(ticket(1, "Blocked"), &[9])),
+            worked(assigned_to(ticket(2, "Theirs"), "alice")),
+            unassigned(ticket(3, "Let go")),
+            worked(ticket(4, "Unmarked")),
+        ],
+        vec![],
+    ));
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        [1, 2, 3, 4].map(|n| line(&board, n)),
+        [
+            Some(CardLine::BlockedBy(Number(9))),
+            Some(CardLine::AssignedTo(Login::new("alice"))),
+            Some(CardLine::Unassigned),
+            Some(CardLine::NotMarked),
+        ]
+    );
+    assert_eq!(card(&board, 4).status(), None);
+}
+
+/// `docs/specs/design_system.md`, Cards: a card in Triage says what one in
+/// Ready would.
+#[test]
+fn a_triage_card_says_what_a_ready_card_would() {
+    let triage = |issue: Issue| Issue {
+        labels: vec!["needs-triage".into()],
+        ..issue
+    };
+    let limited = View {
+        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        ..view(
+            vec![
+                triage(blocked_by(ticket(1, "Blocked"), &[9])),
+                triage(assigned_to(ticket(2, "Theirs"), "alice")),
+                triage(ticket(3, "Held")),
+            ],
+            vec![],
+        )
+    };
+    let unmarked = requiring_label(view(
+        vec![labeled_by_linewright(triage(ticket(4, "Unmarked")))],
+        vec![],
+    ));
+
+    let limited = board(&limited, &[], at(NOW));
+    let unmarked = board(&unmarked, &[], at(NOW));
+
+    assert_eq!(
+        [1, 2, 3].map(|n| (card(&limited, n).line.clone(), card(&limited, n).status())),
+        [
+            (Some(CardLine::BlockedBy(Number(9))), None),
+            (Some(CardLine::AssignedTo(Login::new("alice"))), None),
+            (
+                Some(CardLine::Paused(Hold::UsageLimit)),
+                Some(CardStatus::PausedOrQueued)
+            ),
+        ]
+    );
+    assert_eq!(line(&unmarked, 4), Some(CardLine::NotMarked));
+}
+
+/// `docs/specs/design_system.md`, Cards: a Working card for an issue an open
+/// issue blocks says so where no run is in flight, ahead of what holds it
+/// back.
+#[test]
+fn a_working_card_blocked_by_an_open_issue_says_so_unless_a_run_is_in_flight() {
+    let working = View {
+        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        ..view(
+            vec![
+                assigned(blocked_by(ticket(1, "Blocked"), &[9, 8])),
+                assigned(blocked_by(ticket(2, "Running"), &[9])),
+            ],
+            vec![],
+        )
+    };
+    let working = with_runs(working, &["2/implement-1"]);
+
+    let board = board(&working, &[], at(NOW));
+
+    assert_eq!(
+        [1, 2].map(|n| board.card(Number(n)).map(|(column, _)| column)),
+        [Some(Column::Working), Some(Column::Working)]
+    );
+    assert_eq!(line(&board, 1), Some(CardLine::BlockedBy(Number(8))));
+    assert_eq!(card(&board, 1).status(), None);
+    assert!(matches!(line(&board, 2), Some(CardLine::Running(_))));
+}
+
+/// `docs/specs/design_system.md`, Cards: what stops a pull request
+/// Linewright opened and is not assigned to merging is, after a stall,
+/// "handed back" where its last act on it was letting go of it, and
+/// "unassigned" otherwise, ahead of a run in flight and its checks.
+#[test]
+fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_unassigned() {
+    use CheckState::Failed;
+    let unassigned = |pull: Pull| Pull {
+        assignees: vec![],
+        ..pull
+    };
+    let mut theirs = unassigned(pull(15, &[5], &[Failed]));
+    theirs.author = Login::new("alice");
+    let pulls = vec![
+        unassigned(pull(11, &[1], &[Failed])),
+        unassigned(pull(12, &[2], &[Failed])),
+        Pull {
+            labels: vec![label::STALLED.into()],
+            ..unassigned(pull(13, &[3], &[Failed]))
+        },
+        unassigned(pull(14, &[4], &[Failed])),
+        theirs,
+        // Closes no issue on the board, so it is a card of its own.
+        unassigned(pull(16, &[99], &[Failed])),
+    ];
+    let issues = (1..=5).map(|n| assigned(ticket(n, "Reviewed"))).collect();
+    let view = with_runs(view(issues, pulls), &["12/rework-1"]);
+    let recorded = [
+        recorded("11/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+        recorded("13/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+        // #14: handed back, then worked again.
+        recorded("14/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+        recorded("14/rework-1", "2026-10-01T11:00:00Z", Ending::Done),
+        // #4's own run: not one on its pull request.
+        recorded("4/implement-1", "2026-10-01T11:30:00Z", Ending::HandedBack),
+        recorded("16/rework-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+    ];
+
+    let board = board(&view, &recorded, at(NOW));
+
+    let review = |pull_request: u64, author: Option<&str>, stop| {
+        Some(CardLine::Review {
+            pull_request: Number(pull_request),
+            author: author.map(Login::new),
+            stops: Some(stop),
+        })
+    };
+    assert_eq!(
+        [1, 2, 3, 4, 5, 16].map(|n| line(&board, n)),
+        [
+            review(11, None, Stop::HandedBack),
+            review(12, None, Stop::Unassigned),
+            review(13, None, Stop::Stalled),
+            review(14, None, Stop::Unassigned),
+            review(15, Some("alice"), Stop::ChecksFailed),
+            Some(CardLine::MergeStop(Stop::HandedBack)),
+        ]
+    );
+    assert_eq!(
+        statuses(&board, [1, 2, 16]),
+        [
+            (1, Some(CardStatus::WaitingForAPerson)),
+            (2, None),
+            (16, Some(CardStatus::WaitingForAPerson)),
+        ]
+    );
+}
+
+/// `docs/specs/design_system.md`, Cards: "closed in #N" names the pull
+/// request whose merge made the issue done, one since the issue was last
+/// opened or given a status label (`docs/specs/repository.md`, State).
+#[test]
+fn a_card_in_done_is_closed_in_the_pull_request_whose_merge_made_it_done() {
+    let view = with_closed(
+        view(vec![], vec![]),
+        vec![
+            // Merged, labeled again, then merged again.
+            with_work(
+                closed_issue(1, "2026-09-28T12:00:00Z", Some(12)),
+                vec![labeling("ready-for-agent", "2026-09-27T12:00:00Z")],
+                vec![
+                    merged_into(11, "main", "2026-09-26T12:00:00Z"),
+                    merged_into(12, "main", "2026-09-28T11:59:00Z"),
+                ],
+            ),
+            // Merged, labeled again, then closed by a person.
+            with_work(
+                closed_issue(2, "2026-09-28T12:00:00Z", None),
+                vec![labeling("needs-triage", "2026-09-27T12:00:00Z")],
+                vec![merged_into(21, "main", "2026-09-26T12:00:00Z")],
+            ),
+        ],
+    );
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(
+        [1, 2].map(|n| line(&board, n)),
+        [
+            Some(CardLine::Ended {
+                ended: Ended::ClosedIn(Number(12)),
+                at: at("2026-09-28T11:59:00Z"),
+            }),
+            Some(CardLine::Ended {
+                ended: Ended::Closed(None),
+                at: at("2026-09-28T12:00:00Z"),
+            }),
+        ]
+    );
+}
