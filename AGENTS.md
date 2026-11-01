@@ -25,6 +25,8 @@ specs as what Linewright should do, not as an account of what follows from it or
 of what other systems such as GitHub do. Keep the specs in step with
 user-visible behavior changes.
 
+Every state machine in the specs is expressed as a table.
+
 Changes to specs require human approval.
 
 ## Briefs
