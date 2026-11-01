@@ -3,9 +3,10 @@
 use anyhow::{Result, bail, ensure};
 use linewright::domain::{
     Assignment, ClosedKind, Issue, IssueCloseReason, IssueClosing, IssueEvent, Linked, Login,
-    Number, SubIssue, SubIssueState,
+    Number, SpecChangeIssue, SubIssue, SubIssueState,
 };
 use linewright::store::{AnyItem, IssueRead, NewIssue};
+use linewright::tracking;
 
 use crate::check::{contracts, equal};
 use crate::sandbox::{Sandbox, recent};
@@ -26,6 +27,7 @@ contracts![
     an_issue_closed_as_not_planned_reads_back_closed_as_not_planned,
     an_issue_closed_as_a_duplicate_reads_back_closed_as_a_duplicate,
     a_snapshot_holds_an_issue_closed_within_its_windows,
+    a_snapshot_holds_a_spec_changes_issue_closed,
     a_sub_issue_and_its_parent_name_each_other_with_who_added_it,
     a_removed_sub_issue_and_its_parent_no_longer_name_each_other,
     a_blocker_is_listed_open_until_it_closes,
@@ -411,6 +413,42 @@ async fn a_snapshot_holds_an_issue_closed_within_its_windows(sandbox: Sandbox) -
                 Some(closed) => equal("the closed issue", closed, &*read),
                 None => bail!("the snapshot does not hold {number} closed"),
             }
+        })
+        .await
+}
+
+/// A spec change's issue is found again by its title and the link its body
+/// begins with, closed as well as open, so that the spec change is not
+/// taken up again (`docs/specs/sources_of_work.md`, Spec changes). The
+/// spec change it links need not exist for the link to be read.
+async fn a_snapshot_holds_a_spec_changes_issue_closed(sandbox: Sandbox) -> Result<()> {
+    let spec_change = Number(1);
+    let number = sandbox
+        .store()
+        .create_issue(NewIssue {
+            title: tracking::title(&sandbox.unique("spec-change")),
+            body: tracking::body(spec_change),
+            labels: vec![],
+        })
+        .await?;
+    sandbox
+        .store()
+        .close_issue(number, IssueCloseReason::Completed)
+        .await?;
+
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let expected = SpecChangeIssue {
+                number,
+                spec_change,
+            };
+            ensure!(
+                snapshot.spec_change_issues.contains(&expected),
+                "the snapshot holds {:?}, not {expected:?}",
+                snapshot.spec_change_issues
+            );
+            Ok(())
         })
         .await
 }

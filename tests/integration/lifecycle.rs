@@ -4,10 +4,10 @@ use common::*;
 use linewright::board::Column;
 use linewright::domain::*;
 use linewright::lifecycle::{
-    Cancel, IssueFacts, IssueStage, Opener, PullClaim, PullFacts, PullRow, PullWorking, Row, State,
-    cancels, done_by_merge, issue_state, pull_row, pull_state, row,
+    Cancel, IssueFacts, IssueStage, MergedRow, Opener, PullClaim, PullFacts, PullRow, PullWorking,
+    Row, State, cancels, done_by_merge, issue_state, merged_row, pull_row, pull_state, row,
 };
-use linewright::reconcile::{CutItem, Discard, Policy, WorkKind};
+use linewright::reconcile::{Discard, NotSpecChange, Policy, WorkKind};
 
 /// Issue #1, opened by the maintainer, carrying `labels`, each applied at
 /// 09:00 on 2026-10-01, and assigned to `assignees`.
@@ -389,7 +389,7 @@ fn discard_of(issue: &Issue) -> Option<Discard> {
         .map(SubIssue::linked)
         .collect();
     (!tickets.is_empty()).then(|| Discard {
-        item: CutItem::Issue(issue.number),
+        issue: issue.number,
         pulls: vec![],
         tickets,
     })
@@ -818,11 +818,11 @@ fn pull_facts(opener: Opener, claim: PullClaim, working: PullWorking) -> PullFac
     }
 }
 
-/// `docs/specs/repository.md`, Working an item and Steering: the rows of a
-/// pull request, other than those for how a run ends and for spec changes.
+/// `docs/specs/repository.md`, Working an item and Steering: the rows of an
+/// open pull request, other than those for how a run ends.
 #[test_log::test]
 fn a_pull_request_is_worked_by_the_first_row_that_holds() {
-    use Opener::{Linewright, Person, SpecChange};
+    use Opener::{Linewright, Person};
     use PullClaim::{Claimed, NeverAssigned, Unassigned};
     use PullWorking::{Asked, RunInFlight, Waiting};
     let stalled = |facts: PullFacts| PullFacts {
@@ -878,23 +878,6 @@ fn a_pull_request_is_worked_by_the_first_row_that_holds() {
             }),
         ),
         (
-            "someone else's, merged, Linewright assigned",
-            pull_facts(Person, Claimed, Waiting),
-            State::Merged,
-            Some(PullRow::LetGo {
-                comment: format!(
-                    "@{LINEWRIGHT} works only on the pull requests it opens and on spec \
-                     changes, so it has let go of this one."
-                ),
-            }),
-        ),
-        (
-            "a spec change, Linewright assigned",
-            pull_facts(SpecChange, Claimed, Waiting),
-            State::Merged,
-            None,
-        ),
-        (
             "someone else's, open, Linewright not assigned",
             pull_facts(Person, Unassigned, Waiting),
             State::Open,
@@ -910,5 +893,130 @@ fn a_pull_request_is_worked_by_the_first_row_that_holds() {
 
     for (case, facts, state, expected) in cases {
         assert_eq!(pull_row(&facts, state, &linewright()), expected, "{case}");
+    }
+}
+
+/// A merged pull request's case: its name, the spec change Linewright may
+/// take up or why not, whether Linewright is assigned, and the row expected.
+type MergedCase = (
+    &'static str,
+    Result<(), NotSpecChange>,
+    bool,
+    Option<MergedRow>,
+);
+
+/// `docs/specs/repository.md`, Working an item and Steering: the rows of a
+/// merged pull request a person opened, a spec change Linewright may take up
+/// or why not, with Linewright assigned to it or not.
+#[test_log::test]
+fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
+    let before_lookback = NotSpecChange::BeforeLookback {
+        merged_at: at("2026-09-01T09:00:00Z"),
+        window_opened: at("2026-09-24T09:00:00Z"),
+    };
+    let unmarked = NotSpecChange::RequiredLabel {
+        label: "from-linewright".into(),
+    };
+    let let_go = |comment: &str| {
+        Some(MergedRow::LetGo {
+            comment: comment.into(),
+        })
+    };
+    let cases: Vec<MergedCase> = vec![
+        (
+            "a spec change Linewright may take up",
+            Ok(()),
+            false,
+            Some(MergedRow::TakeUp { let_go: false }),
+        ),
+        (
+            "a spec change Linewright may take up, Linewright assigned",
+            Ok(()),
+            true,
+            Some(MergedRow::TakeUp { let_go: true }),
+        ),
+        (
+            "a spec change before the lookback window",
+            Err(before_lookback.clone()),
+            false,
+            None,
+        ),
+        (
+            "a spec change before the lookback window, Linewright assigned",
+            Err(before_lookback),
+            true,
+            Some(MergedRow::TakeUp { let_go: true }),
+        ),
+        (
+            "a spec change not marked for Linewright",
+            Err(unmarked.clone()),
+            false,
+            None,
+        ),
+        (
+            "a spec change not marked for Linewright, Linewright assigned",
+            Err(unmarked),
+            true,
+            Some(MergedRow::TakeUp { let_go: true }),
+        ),
+        (
+            "a spec change taken up by its issue",
+            Err(NotSpecChange::TakenUp { issue: Number(9) }),
+            false,
+            None,
+        ),
+        (
+            "a spec change taken up by its issue, Linewright assigned",
+            Err(NotSpecChange::TakenUp { issue: Number(9) }),
+            true,
+            let_go(&format!(
+                "This spec change is worked through its issue, #9, so @{LINEWRIGHT} has let go \
+                 of it."
+            )),
+        ),
+        (
+            "a spec change carrying the design label, Linewright assigned",
+            Err(NotSpecChange::Designed {
+                label: DesignedLabel::Designed,
+            }),
+            true,
+            let_go(&format!(
+                "This spec change carries `linewright:designed`, so it was taken up already, \
+                 and @{LINEWRIGHT} has let go of it."
+            )),
+        ),
+        (
+            "no spec change, Linewright assigned",
+            Err(NotSpecChange::NoSpecFile {
+                spec_glob: "docs/**".into(),
+            }),
+            true,
+            let_go(&format!(
+                "@{LINEWRIGHT} works only on the pull requests it opens and on spec changes, \
+                 so it has let go of this one."
+            )),
+        ),
+        (
+            "no spec change",
+            Err(NotSpecChange::OtherBranch {
+                base: "release".into(),
+            }),
+            false,
+            None,
+        ),
+        (
+            "Linewright's, Linewright assigned",
+            Err(NotSpecChange::Linewrights),
+            true,
+            None,
+        ),
+    ];
+
+    for (case, as_spec_change, assigned, expected) in cases {
+        assert_eq!(
+            merged_row(&as_spec_change, assigned, &linewright()),
+            expected,
+            "{case}"
+        );
     }
 }

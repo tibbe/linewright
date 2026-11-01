@@ -5,10 +5,9 @@
 
 use crate::board::{self, Board, Card, CardStatus, Column, Lane, LaneHeading};
 use crate::domain::{
-    ClosedKind, ClosingPull, Number, PullState, SubIssue, Timestamp, Tracks, tickets_cut,
-    tickets_finished,
+    ClosedKind, ClosingPull, Number, PullState, SubIssue, Timestamp, tickets_cut, tickets_finished,
 };
-use crate::explain::{Answer, ChildRole, ParentRole};
+use crate::explain::{Answer, ParentRole};
 use crate::lifecycle::State;
 use crate::managed::{self, LeftAloneItem};
 use crate::reconcile::Wait;
@@ -127,14 +126,7 @@ pub fn item_facts(
         .parents
         .iter()
         .find(|parent| parent.role == ParentRole::TrackingIssue)
-        .map(|parent| parent.number)
-        .or_else(|| {
-            family
-                .children
-                .iter()
-                .find(|child| child.role == ChildRole::TrackingIssue)
-                .map(|child| child.number)
-        });
+        .map(|parent| parent.number);
     let spec_change = family
         .parents
         .iter()
@@ -217,16 +209,15 @@ fn closing_pulls(number: Number, view: &View) -> Vec<ClosingPull> {
 /// tracking issue.
 fn tickets_of(number: Number, view: &View) -> Option<Vec<&SubIssue>> {
     let linewright = &view.policy.linewright;
-    let (tracks, sub_issues): (Option<Tracks>, &[SubIssue]) =
+    let (tracking, sub_issues): (bool, &[SubIssue]) =
         if let Some(issue) = view.snapshot.issue(number) {
-            (issue.tracks(linewright), &issue.sub_issues)
+            (issue.is_tracking(linewright), &issue.sub_issues)
         } else {
             let closed = view.snapshot.closed_item(number)?;
             let ClosedKind::Issue { facts, .. } = &closed.kind else {
                 return None;
             };
-            (closed.tracks(linewright), &facts.sub_issues)
+            (facts.is_tracking(linewright), &facts.sub_issues)
         };
-    tracks?;
-    Some(tickets_cut(sub_issues, linewright).collect())
+    tracking.then(|| tickets_cut(sub_issues, linewright).collect())
 }

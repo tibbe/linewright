@@ -12,7 +12,7 @@ use crate::domain::{
     Asked, Asks, Assignment, ClosingPull, Issue, IssueEvent, Login, Merge, Number, PullState,
     StatusLabel, Timestamp, label, last_assignment, last_labeling, last_unassignment,
 };
-use crate::reconcile::{Discard, Policy, WorkKind};
+use crate::reconcile::{Discard, NotSpecChange, Policy, WorkKind};
 
 /// An item's state: ten of an issue, three of a pull request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,7 +142,7 @@ pub fn issue_state(
         Some(State::Done)
     } else if closing.iter().any(ClosingPull::is_open) {
         Some(State::InReview)
-    } else if issue.tracks(linewright).is_some() {
+    } else if issue.is_tracking(linewright) {
         Some(State::Tracking)
     } else if status == Some(StatusLabel::NeedsTriage) && assigned {
         Some(State::BeingTriaged)
@@ -224,8 +224,7 @@ pub struct IssueFacts<'a> {
 
 /// A row of the Working an item table (`docs/specs/repository.md`) for an
 /// issue, with what it writes. The rows for how a run ends are the run's to
-/// apply, a pull request's are [`PullRow`]s, and a spec change keeps a path
-/// of its own in the reconcile.
+/// apply, and a pull request's are [`PullRow`]s.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
     /// Discards the cut (`docs/specs/design.md`, "Discarding a cut").
@@ -492,10 +491,7 @@ impl PullClaim {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Opener {
     Linewright,
-    /// A person's, which is no spec change.
     Person,
-    /// A spec change, which keeps a path of its own.
-    SpecChange,
 }
 
 /// Where the work on a pull request Linewright opened is.
@@ -534,9 +530,20 @@ pub enum PullRow {
     ClearStall,
 }
 
-/// The first row that holds for the pull request of `facts` in `state`,
-/// other than those for how a run ends and for a spec change: none while a
-/// run is in flight on it. A claim leaves the pull request to its work in
+/// A row of the Working an item table, or of Steering, for a merged pull
+/// request a person opened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MergedRow {
+    /// Takes up a spec change by opening its issue, then unassigns
+    /// Linewright from the spec change where `let_go`.
+    TakeUp { let_go: bool },
+    /// Unassigns Linewright, posting `comment` first.
+    LetGo { comment: String },
+}
+
+/// The first row that holds for the open pull request of `facts` in
+/// `state`, other than those for how a run ends: none while a run is in
+/// flight on it. A claim leaves the pull request to its work in
 /// the same poll.
 pub fn pull_row(facts: &PullFacts, state: State, linewright: &Login) -> Option<PullRow> {
     let PullFacts {
@@ -547,7 +554,7 @@ pub fn pull_row(facts: &PullFacts, state: State, linewright: &Login) -> Option<P
     } = *facts;
     let linewrights_open = opener == Opener::Linewright && state == State::Open;
     let claimed = claim == PullClaim::Claimed;
-    if working == PullWorking::RunInFlight || opener == Opener::SpecChange {
+    if working == PullWorking::RunInFlight {
         None
     } else if linewrights_open && claim == PullClaim::NeverAssigned {
         Some(PullRow::Claim)
@@ -555,15 +562,53 @@ pub fn pull_row(facts: &PullFacts, state: State, linewright: &Login) -> Option<P
         Some(PullRow::Work)
     } else if opener == Opener::Person && claimed {
         Some(PullRow::LetGo {
-            comment: format!(
-                "@{linewright} works only on the pull requests it opens and on spec changes, \
-                 so it has let go of this one."
-            ),
+            comment: not_its_own(linewright),
         })
     } else if linewrights_open && claimed && stalled {
         Some(PullRow::ClearStall)
     } else {
         None
+    }
+}
+
+/// The comment letting go of a pull request Linewright did not open and
+/// that is no spec change.
+fn not_its_own(linewright: &Login) -> String {
+    format!(
+        "@{linewright} works only on the pull requests it opens and on spec changes, so it has \
+         let go of this one."
+    )
+}
+
+/// The first row of the Working an item table, or of Steering, that holds
+/// for a merged pull request a person opened, `as_spec_change` the spec
+/// change Linewright may take up or why not, with Linewright `assigned` to
+/// it or not. Assigned to a spec change not yet taken up, Linewright takes
+/// it up whether it may on its own or not.
+pub fn merged_row(
+    as_spec_change: &Result<(), NotSpecChange>,
+    assigned: bool,
+    linewright: &Login,
+) -> Option<MergedRow> {
+    let let_go = |comment| assigned.then_some(MergedRow::LetGo { comment });
+    match as_spec_change {
+        Ok(()) => Some(MergedRow::TakeUp { let_go: assigned }),
+        Err(NotSpecChange::Linewrights) => None,
+        Err(NotSpecChange::BeforeLookback { .. } | NotSpecChange::RequiredLabel { .. }) => {
+            assigned.then_some(MergedRow::TakeUp { let_go: true })
+        }
+        Err(NotSpecChange::TakenUp { issue }) => let_go(format!(
+            "This spec change is worked through its issue, {issue}, so @{linewright} has let go \
+             of it."
+        )),
+        Err(NotSpecChange::Designed { label }) => let_go(format!(
+            "This spec change carries `{}`, so it was taken up already, and @{linewright} has \
+             let go of it.",
+            label.name()
+        )),
+        Err(NotSpecChange::OtherBranch { .. } | NotSpecChange::NoSpecFile { .. }) => {
+            let_go(not_its_own(linewright))
+        }
     }
 }
 

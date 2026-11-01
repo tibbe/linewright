@@ -764,19 +764,27 @@ fn cut_from(issue: Issue, tracking: u64, spec_change: u64) -> Issue {
     }
 }
 
+/// A spec change is worked through its issue
+/// (`docs/specs/sources_of_work.md`, Spec changes), so it has no card of
+/// its own, whether or not it is taken up yet.
 #[test_log::test]
-fn a_spec_change_is_its_pull_request_in_ready_then_in_working_while_being_designed() {
-    let waiting = with_merged(view(vec![], vec![]), vec![spec_change(5, &[])]);
-    let designing = with_runs(waiting.clone(), &["5/design-1"]);
+fn a_spec_change_has_no_card_and_its_issue_is_a_card_as_any_issue() {
+    let merged = MergedPull {
+        assignees: vec![],
+        ..spec_change(5, &[])
+    };
+    let waiting = with_merged(view(vec![], vec![]), vec![merged.clone()]);
+    let mut opened = ticket(6, "Spec change: Spec 5");
+    opened.labels = vec![label::READY_FOR_AGENT.into()];
+    opened.filed = Some(Filed::SpecChange {
+        spec_change: Number(5),
+    });
+    let taken_up = with_merged(view(vec![opened], vec![]), vec![merged]);
 
+    assert_eq!(placed(&board(&waiting, &[], at(NOW))), []);
     assert_eq!(
-        placed(&board(&waiting, &[], at(NOW))),
-        [(5, Column::Ready, 5)]
-    );
-    assert!(card(&board(&waiting, &[], at(NOW)), 5).pull_request);
-    assert_eq!(
-        placed(&board(&designing, &[], at(NOW))),
-        [(5, Column::Working, 5)]
+        placed(&board(&taken_up, &[], at(NOW))),
+        [(6, Column::Ready, 6)]
     );
 }
 
@@ -791,32 +799,15 @@ fn a_spec_change_cut_into_tickets_is_its_tracking_issues_lane() {
             ],
             vec![],
         ),
-        vec![spec_change(5, &[label::DESIGNED])],
+        vec![MergedPull {
+            assignees: vec![],
+            ..spec_change(5, &[])
+        }],
     );
 
     assert_eq!(
         placed(&board(&view, &[], at(NOW))),
         [(6, Column::Ready, 7), (6, Column::Working, 8)]
-    );
-}
-
-#[test_log::test]
-fn a_spec_change_designed_with_nothing_to_build_is_in_done_saying_so() {
-    let view = with_merged(
-        view(vec![], vec![]),
-        vec![spec_change(5, &[label::DESIGNED])],
-    );
-
-    let board = board(&view, &[], at(NOW));
-
-    assert_eq!(placed(&board), [(5, Column::Done, 5)]);
-    assert!(card(&board, 5).pull_request);
-    assert_eq!(
-        card(&board, 5).line,
-        Some(CardLine::Ended {
-            ended: Ended::NothingToBuild,
-            at: at("2026-10-01T09:00:00Z"),
-        })
     );
 }
 
@@ -1246,23 +1237,17 @@ fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_c
     issue.title = "Standalone".into();
     let mut pull = pull(30, &[99], &[CheckState::Passed]);
     pull.title = "Tidy up".into();
-    let mut spec = spec_change(5, &[]);
-    spec.title = "Add invoices".into();
-    let view = with_merged(view(vec![issue], vec![pull]), vec![spec]);
+    let view = view(vec![issue], vec![pull]);
 
     let board = board(&view, &[], at(NOW));
 
-    // Latest changed first: the pull request, the spec change, the issue.
+    // Latest changed first: the pull request, the issue.
     assert_eq!(
         heads(&board),
         [
             LaneHead::Item {
                 number: Number(30),
                 title: "Tidy up".into()
-            },
-            LaneHead::Item {
-                number: Number(5),
-                title: "Add invoices".into()
             },
             LaneHead::Item {
                 number: Number(2),
@@ -1272,11 +1257,7 @@ fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_c
     );
     assert_eq!(
         placed(&board),
-        [
-            (30, Column::InReview, 30),
-            (5, Column::Ready, 5),
-            (2, Column::Triage, 2),
-        ]
+        [(30, Column::InReview, 30), (2, Column::Triage, 2),]
     );
 }
 
@@ -1702,46 +1683,6 @@ fn a_ready_card_entered_its_column_when_ready_for_agent_was_applied_or_linewrigh
 }
 
 #[test_log::test]
-fn a_ready_spec_change_entered_its_column_when_its_merge_linewright_unassigned_or_the_required_label()
- {
-    let unassigned = MergedPull {
-        events: vec![unassigning_linewright("2026-10-01T10:30:00Z")],
-        ..spec_change(6, &[])
-    };
-    let relabeled = MergedPull {
-        events: vec![
-            unassigning_linewright("2026-10-01T10:30:00Z"),
-            labeling("linewright", "2026-10-01T11:15:00Z"),
-        ],
-        ..spec_change(7, &["linewright"])
-    };
-    let mut view = with_merged(
-        view(vec![], vec![]),
-        vec![spec_change(5, &["linewright"]), unassigned, relabeled],
-    );
-    view.policy.require_label = Some("linewright".into());
-
-    let board = board(&view, &[], at(NOW));
-
-    assert_eq!(
-        placed(&board),
-        [
-            (5, Column::Ready, 5),
-            (6, Column::Ready, 6),
-            (7, Column::Ready, 7),
-        ]
-    );
-    assert_eq!(
-        [5, 6, 7].map(|n| entered(&board, n)),
-        [
-            Some(at("2026-10-01T09:00:00Z")),
-            Some(at("2026-10-01T10:30:00Z")),
-            Some(at("2026-10-01T11:15:00Z")),
-        ]
-    );
-}
-
-#[test_log::test]
 fn working_in_review_and_done_cards_have_no_time_in_their_column() {
     let view = with_closed(
         with_runs(
@@ -1768,18 +1709,6 @@ fn working_in_review_and_done_cards_have_no_time_in_their_column() {
         ]
     );
     assert_eq!([1, 2, 3].map(|n| entered(&board, n)), [None, None, None]);
-}
-
-#[test_log::test]
-fn a_spec_change_linewright_was_unassigned_from_is_ready() {
-    let unassigned = MergedPull {
-        assignees: vec![],
-        events: vec![unassigning_linewright("2026-10-01T10:30:00Z")],
-        ..spec_change(6, &[])
-    };
-    let view = with_merged(view(vec![], vec![]), vec![unassigned]);
-
-    assert_eq!(placed(&board(&view, &[], at(NOW))), [(6, Column::Ready, 6)]);
 }
 
 #[test_log::test]
@@ -1810,23 +1739,15 @@ fn a_ready_card_linewright_was_unassigned_from_says_so_after_its_blocker_and_ass
             ],
         )
     };
-    let spec_change = MergedPull {
-        assignees: vec![],
-        events: vec![unassigning_linewright("2026-10-01T10:30:00Z")],
-        ..spec_change(4, &[])
-    };
     let view = View {
         memory: common::limited_until("2026-10-01T13:00:00Z"),
-        ..with_merged(
-            view(
-                vec![
-                    unassigned(blocked_by(ticket(1, "Blocked"), &[9])),
-                    unassigned(assigned_to(ticket(2, "Theirs"), "alice")),
-                    unassigned(ticket(3, "Let go")),
-                ],
-                vec![],
-            ),
-            vec![spec_change],
+        ..view(
+            vec![
+                unassigned(blocked_by(ticket(1, "Blocked"), &[9])),
+                unassigned(assigned_to(ticket(2, "Theirs"), "alice")),
+                unassigned(ticket(3, "Let go")),
+            ],
+            vec![],
         )
     };
 
@@ -1840,15 +1761,13 @@ fn a_ready_card_linewright_was_unassigned_from_says_so_after_its_blocker_and_ass
             (1, Column::Ready, 1),
             (2, Column::Ready, 2),
             (3, Column::Ready, 3),
-            (4, Column::Ready, 4),
         ]
     );
     assert_eq!(
-        [1, 2, 3, 4].map(|n| line(&board, n)),
+        [1, 2, 3].map(|n| line(&board, n)),
         [
             Some(CardLine::BlockedBy(Number(9))),
             Some(CardLine::AssignedTo(Login::new("alice"))),
-            Some(CardLine::Unassigned),
             Some(CardLine::Unassigned),
         ]
     );
@@ -2252,38 +2171,6 @@ fn a_finished_lane_shows_every_ticket_until_it_finished_before_the_done_window_t
     assert_eq!(
         placed(&board(&view, &[], at(NOW))),
         [(10, Column::Done, 11), (10, Column::Done, 12)]
-    );
-}
-
-#[test_log::test]
-fn a_spec_change_designed_with_nothing_to_build_entered_done_and_finished_when_it_was_designed() {
-    let merged_before = |number: u64, designed: Option<&str>| MergedPull {
-        merged_at: at("2026-09-01T09:00:00Z"),
-        updated_at: at(designed.unwrap_or("2026-09-01T09:00:00Z")),
-        events: designed
-            .map(|when| labeling(label::DESIGNED, when))
-            .into_iter()
-            .collect(),
-        ..spec_change(number, &[label::DESIGNED])
-    };
-    let view = with_merged(
-        view(vec![], vec![]),
-        vec![
-            merged_before(5, Some("2026-09-29T09:00:00Z")),
-            merged_before(6, Some("2026-09-10T09:00:00Z")),
-            merged_before(7, None),
-        ],
-    );
-
-    let board = board(&view, &[], at(NOW));
-
-    assert_eq!(lanes(&board), [(5, Some(at("2026-09-29T09:00:00Z")))]);
-    assert_eq!(
-        card(&board, 5).line,
-        Some(CardLine::Ended {
-            ended: Ended::NothingToBuild,
-            at: at("2026-09-29T09:00:00Z"),
-        })
     );
 }
 

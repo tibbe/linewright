@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
@@ -14,8 +14,9 @@ use crate::domain::{
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
 use crate::lifecycle::{
-    Cancel, IssueFacts, IssueStage, NotClaimed, Opener, PullClaim, PullFacts, PullRow, PullWorking,
-    Row, State, cancels, done_by_merge, issue_state, may_claim, pull_row, pull_state, row,
+    Cancel, IssueFacts, IssueStage, MergedRow, NotClaimed, Opener, PullClaim, PullFacts, PullRow,
+    PullWorking, Row, State, cancels, done_by_merge, issue_state, may_claim, merged_row, pull_row,
+    pull_state, row,
 };
 use crate::phrase::Phrase;
 use crate::repo_files::{FileError, Unusable, holding};
@@ -73,7 +74,6 @@ impl Policy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Subject {
     Issue(Number),
-    SpecChange(Number),
     Pull(Number),
 }
 
@@ -81,9 +81,6 @@ pub enum Subject {
 pub enum Work {
     Triage {
         issue: Number,
-    },
-    DesignSpecChange {
-        pr: Number,
     },
     DesignIssue {
         issue: Number,
@@ -109,7 +106,7 @@ pub enum Work {
 impl Subject {
     pub fn number(self) -> Number {
         match self {
-            Subject::Issue(number) | Subject::SpecChange(number) | Subject::Pull(number) => number,
+            Subject::Issue(number) | Subject::Pull(number) => number,
         }
     }
 }
@@ -120,7 +117,6 @@ impl Work {
             Work::Triage { issue } | Work::DesignIssue { issue } | Work::Implement { issue } => {
                 Subject::Issue(*issue)
             }
-            Work::DesignSpecChange { pr } => Subject::SpecChange(*pr),
             Work::Rework { pr, .. } | Work::FixCi { pr, .. } | Work::Update { pr, .. } => {
                 Subject::Pull(*pr)
             }
@@ -132,10 +128,7 @@ impl Work {
             Work::Triage { issue } | Work::DesignIssue { issue } | Work::Implement { issue } => {
                 *issue
             }
-            Work::DesignSpecChange { pr }
-            | Work::Rework { pr, .. }
-            | Work::FixCi { pr, .. }
-            | Work::Update { pr, .. } => *pr,
+            Work::Rework { pr, .. } | Work::FixCi { pr, .. } | Work::Update { pr, .. } => *pr,
         }
     }
 
@@ -144,17 +137,16 @@ impl Work {
             Work::Triage { issue } | Work::DesignIssue { issue } | Work::Implement { issue } => {
                 Item::Issue(*issue)
             }
-            Work::DesignSpecChange { pr }
-            | Work::Rework { pr, .. }
-            | Work::FixCi { pr, .. }
-            | Work::Update { pr, .. } => Item::Pull(*pr),
+            Work::Rework { pr, .. } | Work::FixCi { pr, .. } | Work::Update { pr, .. } => {
+                Item::Pull(*pr)
+            }
         }
     }
 
     pub fn kind(&self) -> WorkKind {
         match self {
             Work::Triage { .. } => WorkKind::Triage,
-            Work::DesignSpecChange { .. } | Work::DesignIssue { .. } => WorkKind::Design,
+            Work::DesignIssue { .. } => WorkKind::Design,
             Work::Implement { .. } => WorkKind::Implement,
             Work::Rework { .. } => WorkKind::Rework,
             Work::FixCi { .. } => WorkKind::FixCi,
@@ -254,10 +246,6 @@ pub struct Memory {
     pub usage_limit: Option<UsageLimit>,
     /// Set from when a drain of `serve` begins until it exits.
     pub drain: Option<Drain>,
-    /// The cuts into tickets that ended since the snapshot was taken. The
-    /// snapshot may miss what they wrote, so each counts as in flight for
-    /// what starts, though there is nothing left of it to cancel.
-    pub ended_cuts: Vec<Number>,
 }
 
 impl Memory {
@@ -448,6 +436,13 @@ pub enum Action {
         pr: Number,
         comment: String,
     },
+    /// Take up spec change #`pr` by opening its issue, then unassign
+    /// Linewright from the spec change where `let_go`
+    /// (`docs/specs/sources_of_work.md`, Spec changes).
+    OpenSpecChangeIssue {
+        pr: Number,
+        let_go: bool,
+    },
     /// Remove [`label::STALLED`] from an item Linewright works again.
     ClearStall {
         item: Item,
@@ -499,7 +494,7 @@ impl Action {
                 .tickets
                 .iter()
                 .map(|ticket| ticket.number)
-                .chain([discard.item.parent()])
+                .chain([discard.issue])
                 .map(Item::Issue)
                 .chain(discard.pulls.iter().copied().map(Item::Pull))
                 .collect(),
@@ -511,6 +506,7 @@ impl Action {
                 .collect(),
             Action::MarkReady { pr }
             | Action::UnassignFromPull { pr, .. }
+            | Action::OpenSpecChangeIssue { pr, .. }
             | Action::MarkReadyForMergeState { pr }
             | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
             Action::HandBack { item, .. } | Action::ClearStall { item } => vec![*item],
@@ -524,13 +520,13 @@ impl Action {
 }
 
 /// Close `pulls`, then the open `tickets` as not planned, then remove
-/// `tickets` from the sub-issues of the issue they were cut from, leaving
-/// `item` to be designed again (docs/specs/design.md, "Discarding a cut"). A
-/// person's pull request closing a ticket, and a sub-issue a person added,
-/// are left as they are.
+/// `tickets` from the sub-issues of `issue`, the issue they were cut from,
+/// leaving it to be designed again (docs/specs/design.md, "Discarding a
+/// cut"). A person's pull request closing a ticket, and a sub-issue a person
+/// added, are left as they are.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Discard {
-    pub item: CutItem,
+    pub issue: Number,
     /// Linewright's open pull requests that close a ticket of the cut, the
     /// ticket open or closed.
     pub pulls: Vec<Number>,
@@ -548,33 +544,20 @@ impl Discard {
     /// What it posts on each item it closes, and on the issue its tickets are
     /// under.
     pub fn notes(&self) -> DiscardNotes {
-        let designed = self.item.designed();
+        let issue = self.issue;
         let discarded =
-            |what: &str| format!("{designed} is being designed again, so this {what} discarded.");
-        let (on_issue, closing_tracking) = match self.item {
-            CutItem::SpecChange { tracking, .. } => (
-                None,
-                Some(ParentNote {
-                    issue: tracking,
-                    note: discarded("tracking issue and its tickets are"),
-                }),
-            ),
-            CutItem::Issue(issue) => {
-                let tickets = self.open_tickets();
-                let mut pulls = self.pulls.clone();
-                pulls.sort_unstable();
-                let note = (!tickets.is_empty() || !pulls.is_empty()).then(|| ParentNote {
-                    issue,
-                    note: discarded_from_issue(&tickets, &pulls),
-                });
-                (note, None)
-            }
-        };
+            |what: &str| format!("{issue} is being designed again, so this {what} discarded.");
+        let tickets = self.open_tickets();
+        let mut pulls = self.pulls.clone();
+        pulls.sort_unstable();
+        let on_issue = (!tickets.is_empty() || !pulls.is_empty()).then(|| ParentNote {
+            issue,
+            note: discarded_from_issue(&tickets, &pulls),
+        });
         DiscardNotes {
             on_pull: discarded("pull request for a ticket of its earlier cut is"),
             on_ticket: discarded("ticket from its earlier cut is"),
             on_issue,
-            closing_tracking,
         }
     }
 }
@@ -589,8 +572,6 @@ pub struct DiscardNotes {
     /// On the issue designed again, which stays open, before its tickets
     /// leave its sub-issues: where the discard closes anything.
     pub on_issue: Option<ParentNote>,
-    /// On a spec change's tracking issue, closed once its tickets left it.
-    pub closing_tracking: Option<ParentNote>,
 }
 
 /// What a discarded cut posts on `issue`, the issue its tickets are under.
@@ -627,33 +608,6 @@ fn discarded_from_issue(tickets: &[Number], pulls: &[Number]) -> String {
         "This issue is being designed again, so the {} of its earlier cut {verb} discarded.",
         lists.join(" and ")
     )
-}
-
-/// An item cut into tickets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CutItem {
-    /// Its tickets are under `tracking`, an issue Linewright opened for them.
-    SpecChange { pr: Number, tracking: Number },
-    /// Its tickets are under the issue itself.
-    Issue(Number),
-}
-
-impl CutItem {
-    /// The item designed again: the spec change or the issue.
-    pub fn designed(self) -> Number {
-        match self {
-            CutItem::SpecChange { pr, .. } => pr,
-            CutItem::Issue(issue) => issue,
-        }
-    }
-
-    /// The issue its tickets are under.
-    pub fn parent(self) -> Number {
-        match self {
-            CutItem::SpecChange { tracking, .. } => tracking,
-            CutItem::Issue(issue) => issue,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -697,8 +651,7 @@ pub enum Wait {
     PeopleAsked,
     Maintainer,
     /// Linewright was unassigned from the item and is not assigned to it
-    /// again. Applying `required_label`, when set, picks a spec change up
-    /// again too.
+    /// again.
     Unassigned {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         required_label: Option<String>,
@@ -794,7 +747,7 @@ pub fn decisions(
             },
         ),
     };
-    let held_by_runs = held_by_runs(snapshot, live, memory, &policy.linewright);
+    let held_by_runs = held_by_runs(snapshot, live, &policy.linewright);
     let mut plan = Plan {
         held,
         unusable,
@@ -805,14 +758,9 @@ pub fn decisions(
         waits: BTreeMap::new(),
     };
     let running = |subject: Subject| {
-        let ended_cut = match subject {
-            Subject::SpecChange(pr) => memory.ended_cuts.contains(&pr),
-            Subject::Issue(_) | Subject::Pull(_) => false,
-        };
         live.iter()
             .find(|run| run.subject == subject)
             .map(|run| run.kind)
-            .or(ended_cut.then_some(WorkKind::Design))
     };
 
     for run in live {
@@ -824,37 +772,25 @@ pub fn decisions(
         }
     }
 
+    // Each cut is discarded by its issue's row of the Working an item
+    // table, below.
     let discards = discards(snapshot, &running, policy);
-    let discarded: Vec<Number> = discards
-        .iter()
-        .filter_map(|d| match d.item {
-            CutItem::SpecChange { pr, .. } => Some(pr),
-            CutItem::Issue(_) => None,
-        })
-        .collect();
     let discarded_tickets: Vec<Number> = discards.iter().flat_map(Discard::open_tickets).collect();
     let discarded_pulls: Vec<Number> = discards.iter().flat_map(|d| d.pulls.clone()).collect();
-    // An issue's own cut is discarded by its row of the Working an item
-    // table, below.
-    for discard in discards
-        .iter()
-        .filter(|d| matches!(d.item, CutItem::SpecChange { .. }))
-    {
-        plan.act(Action::DiscardCut(discard.clone()));
-    }
 
-    let spec_changes = pending_spec_changes(snapshot, now, policy);
-    let pending: Vec<Number> = spec_changes.iter().map(|pr| pr.number).collect();
-    for pr in spec_changes {
-        let work = Work::DesignSpecChange { pr: pr.number };
-        if let Some(stage) = running(Subject::SpecChange(pr.number)) {
-            plan.wait(pr.number, Wait::Run { stage });
-        } else if discarded.contains(&pr.number) {
-            // Cut again once the discarded set is closed.
-        } else if pr.is_assigned(&policy.linewright) {
-            plan.start(work);
-        } else {
-            plan.claim_and_start(Item::Pull(pr.number), work);
+    for pr in &snapshot.merged {
+        let assigned = pr.is_assigned(&policy.linewright);
+        let as_spec_change = spec_change(pr, snapshot, now, policy);
+        match merged_row(&as_spec_change, assigned, &policy.linewright) {
+            Some(MergedRow::TakeUp { let_go }) => plan.act(Action::OpenSpecChangeIssue {
+                pr: pr.number,
+                let_go,
+            }),
+            Some(MergedRow::LetGo { comment }) => plan.act(Action::UnassignFromPull {
+                pr: pr.number,
+                comment,
+            }),
+            None => {}
         }
     }
 
@@ -895,9 +831,21 @@ pub fn decisions(
         }
     }
 
-    for (number, facts, state) in others_pulls(snapshot, now, policy) {
-        let holding = pull_row(&facts, state, &policy.linewright);
-        work_pull(number, holding, None, &mut plan);
+    // A person's open pull request Linewright is assigned to.
+    let facts = PullFacts {
+        opener: Opener::Person,
+        claim: PullClaim::Claimed,
+        working: PullWorking::Waiting,
+        stalled: false,
+    };
+    for pr in snapshot
+        .peoples_pulls
+        .iter()
+        .filter(|p| p.is_open() && p.author != policy.linewright)
+        .filter(|p| p.is_assigned(&policy.linewright))
+    {
+        let holding = pull_row(&facts, State::Open, &policy.linewright);
+        work_pull(pr.number, holding, None, &mut plan);
     }
 
     for issue in snapshot
@@ -905,20 +853,7 @@ pub fn decisions(
         .iter()
         .filter(|i| i.open && !discarded_tickets.contains(&i.number))
     {
-        // A spec change's tracking issue is cut, and its cut discarded, with
-        // the spec change.
-        if let Some(spec_change) = issue.spec_change() {
-            if let Some(stage) = running(Subject::SpecChange(spec_change)) {
-                plan.wait(issue.number, Wait::Run { stage });
-                continue;
-            }
-            if pending.contains(&spec_change) || discarded.contains(&spec_change) {
-                continue;
-            }
-        }
-        let discard = discards
-            .iter()
-            .find(|d| d.item == CutItem::Issue(issue.number));
+        let discard = discards.iter().find(|d| d.issue == issue.number);
         work_issue(issue, discard, &running, policy, &mut plan);
     }
 
@@ -947,58 +882,10 @@ pub fn decisions(
     }
 
     let (mut decisions, room) = plan.into_decisions(room);
-    decisions.actions = clearing_stalls(
-        snapshot,
-        decisions.actions,
-        &held_by_runs,
-        &policy.linewright,
-    );
     decisions
         .actions
         .extend(schedule(automations, now, room, unusable));
     decisions
-}
-
-/// The pull requests of others' Linewright is assigned to, with what the
-/// Working an item table reads of each and its state: the open ones, and
-/// the merged ones, which may be spec changes.
-fn others_pulls(
-    snapshot: &Snapshot,
-    now: Timestamp,
-    policy: &Policy,
-) -> Vec<(Number, PullFacts, State)> {
-    let linewright = &policy.linewright;
-    let facts = |opener: Opener| PullFacts {
-        opener,
-        claim: PullClaim::Claimed,
-        working: PullWorking::Waiting,
-        stalled: false,
-    };
-    let open = snapshot
-        .peoples_pulls
-        .iter()
-        .filter(|p| p.is_open() && &p.author != linewright && p.is_assigned(linewright))
-        .map(|p| (p.number, facts(Opener::Person), State::Open));
-    let merged = snapshot
-        .merged
-        .iter()
-        .filter(|p| p.is_assigned(linewright))
-        .filter_map(|p| {
-            let opener = match spec_change(p, &snapshot.default_branch, now, policy) {
-                Err(NotSpecChange::Linewrights) => return None,
-                Err(NotSpecChange::OtherBranch { .. } | NotSpecChange::NoSpecFile { .. }) => {
-                    Opener::Person
-                }
-                Ok(_)
-                | Err(
-                    NotSpecChange::Designed { .. }
-                    | NotSpecChange::BeforeLookback { .. }
-                    | NotSpecChange::RequiredLabel { .. },
-                ) => Opener::SpecChange,
-            };
-            Some((p.number, facts(opener), State::Merged))
-        });
-    open.chain(merged).collect()
 }
 
 /// Works pull request `number` by `holding`, the row that holds for it, and
@@ -1081,6 +968,7 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             | Action::Relabel { .. }
             | Action::UnassignAsked { .. }
             | Action::UnassignFromPull { .. }
+            | Action::OpenSpecChangeIssue { .. }
             | Action::RemoveStatusLabel { .. }
             | Action::HandBack { .. }
             | Action::MarkReady { .. }
@@ -1092,45 +980,6 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             | Action::DeleteBranch { .. } => Some(action),
         })
         .collect()
-}
-
-/// `actions`, with the stall of each spec change Linewright works again
-/// cleared: one it is assigned to, or claims in `actions`
-/// (`docs/specs/repository.md`, "Stalls"), and that no live run holds. Each
-/// clear follows its claim, so that a stop before the claim leaves the
-/// label. An issue's and a pull request's stalls are cleared by their rows
-/// of the Working an item table.
-fn clearing_stalls(
-    snapshot: &Snapshot,
-    actions: Vec<Action>,
-    held_by_runs: &BTreeMap<Item, WorkKind>,
-    linewright: &Login,
-) -> Vec<Action> {
-    let spec_change = |item: Item| match item {
-        Item::Pull(number) => snapshot.merged_pull(number),
-        Item::Issue(_) => None,
-    };
-    let mut cleared: Vec<Action> = snapshot
-        .merged
-        .iter()
-        .filter(|p| p.is_stalled() && p.is_assigned(linewright))
-        .map(|p| Action::ClearStall {
-            item: Item::Pull(p.number),
-        })
-        .filter(|clear| held_back(clear, snapshot, held_by_runs).is_empty())
-        .collect();
-    for action in actions {
-        let clear = if let Action::Claim { item } = action
-            && spec_change(item).is_some_and(MergedPull::is_stalled)
-        {
-            Some(Action::ClearStall { item })
-        } else {
-            None
-        };
-        cleared.push(action);
-        cleared.extend(clear);
-    }
-    cleared
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1190,27 +1039,17 @@ fn schedule(
 
 /// The items the live runs hold, each with its run's stage: those a run
 /// writes as it records its result, which no other write may touch until it
-/// ends. A cut in `memory.ended_cuts` holds what it held while live, as the
-/// snapshot may miss what it wrote.
+/// ends.
 ///
 /// The tickets a cut files are not held: each is readied last, so a poll
 /// sees it either unpublished or published to be worked.
 fn held_by_runs(
     snapshot: &Snapshot,
     live: &[LiveRun],
-    memory: &Memory,
     linewright: &Login,
 ) -> BTreeMap<Item, WorkKind> {
-    let ended_cuts = memory
-        .ended_cuts
-        .iter()
-        .map(|pr| (Subject::SpecChange(*pr), WorkKind::Design));
     let mut held = BTreeMap::new();
-    for (subject, stage) in live
-        .iter()
-        .map(|run| (run.subject, run.kind))
-        .chain(ended_cuts)
-    {
+    for (subject, stage) in live.iter().map(|run| (run.subject, run.kind)) {
         match subject {
             Subject::Pull(pr) => {
                 held.insert(Item::Pull(pr), stage);
@@ -1225,16 +1064,6 @@ fn held_by_runs(
                     .filter(|p| p.is_open() && p.author == *linewright && p.closes.contains(&issue))
                 {
                     held.insert(Item::Pull(pull.number), stage);
-                }
-            }
-            Subject::SpecChange(pr) => {
-                held.insert(Item::Pull(pr), stage);
-                for tracking in snapshot
-                    .issues
-                    .iter()
-                    .filter(|i| i.open && i.spec_change() == Some(pr))
-                {
-                    held.insert(Item::Issue(tracking.number), stage);
                 }
             }
         }
@@ -1272,19 +1101,6 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
                     format!("{} was unassigned from {number}", policy.linewright)
                 }
             })
-        }
-        Subject::SpecChange(pr) => {
-            let pr = snapshot.merged_pull(pr)?;
-            if let Some(label) = pr.designed_label() {
-                Some(format!("{} was labeled `{}`", pr.number, label.name()))
-            } else if !pr.is_assigned(&policy.linewright) {
-                Some(format!(
-                    "{} was unassigned from {}",
-                    policy.linewright, pr.number
-                ))
-            } else {
-                None
-            }
         }
         Subject::Issue(number) => {
             let Some(issue) = snapshot.issue(number) else {
@@ -1686,7 +1502,7 @@ fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
 }
 
 /// Every cut of the snapshot to discard (docs/specs/design.md, "Discarding a
-/// cut"), decided before the rest of the plan. An item is labeled designed
+/// cut"), decided before the rest of the plan. An issue is labeled designed
 /// last, so one cut into tickets without the label is a cut that stopped part
 /// way (interrupted, cancelled or handed back) or one whose label was removed
 /// to have it designed again.
@@ -1695,48 +1511,20 @@ fn discards(
     running: &impl Fn(Subject) -> Option<WorkKind>,
     policy: &Policy,
 ) -> Vec<Discard> {
-    let undesigned: BTreeSet<Number> = snapshot
-        .merged
-        .iter()
-        .filter(|pr| pr.designed_label().is_none())
-        .map(|pr| pr.number)
-        .collect();
-    // A spec change's cut, in flight or discarded with the spec change, is
-    // the spec change's, its tracking issue's label or not.
-    let spec_changes_cut = |spec_change: Number| {
-        undesigned.contains(&spec_change) || running(Subject::SpecChange(spec_change)).is_some()
-    };
-    let spec_changes = undesigned
-        .iter()
-        .filter(|&&pr| running(Subject::SpecChange(pr)).is_none())
-        .filter_map(|&pr| {
-            let tracking = snapshot
-                .issues
-                .iter()
-                .find(|i| i.open && i.spec_change() == Some(pr))?;
-            let item = CutItem::SpecChange {
-                pr,
-                tracking: tracking.number,
-            };
-            Some(cut_to_discard(snapshot, item, tracking, policy))
-        });
-    let issues = snapshot
+    snapshot
         .issues
         .iter()
         .filter(|i| {
-            i.open
-                && !i.has_label(label::DESIGNED)
-                && running(Subject::Issue(i.number)).is_none()
-                && !i.spec_change().is_some_and(spec_changes_cut)
+            i.open && !i.has_label(label::DESIGNED) && running(Subject::Issue(i.number)).is_none()
         })
-        .map(|i| cut_to_discard(snapshot, CutItem::Issue(i.number), i, policy))
-        .filter(|d| !d.tickets.is_empty());
-    spec_changes.chain(issues).collect()
+        .map(|i| cut_to_discard(snapshot, i, policy))
+        .filter(|d| !d.tickets.is_empty())
+        .collect()
 }
 
-/// The discard of `item`'s cut, whose tickets are under `parent`.
-fn cut_to_discard(snapshot: &Snapshot, item: CutItem, parent: &Issue, policy: &Policy) -> Discard {
-    let tickets: Vec<Linked> = parent
+/// The discard of `issue`'s cut.
+fn cut_to_discard(snapshot: &Snapshot, issue: &Issue, policy: &Policy) -> Discard {
+    let tickets: Vec<Linked> = issue
         .tickets_cut(&policy.linewright)
         .map(SubIssue::linked)
         .collect();
@@ -1748,7 +1536,7 @@ fn cut_to_discard(snapshot: &Snapshot, item: CutItem, parent: &Issue, policy: &P
         .map(|p| p.number)
         .collect();
     Discard {
-        item,
+        issue: issue.number,
         pulls,
         tickets,
     }
@@ -2150,34 +1938,6 @@ fn code_list(names: &[String]) -> String {
         .join(", ")
 }
 
-pub fn pending_spec_changes<'a>(
-    snapshot: &'a Snapshot,
-    now: Timestamp,
-    policy: &Policy,
-) -> Vec<&'a MergedPull> {
-    snapshot
-        .merged
-        .iter()
-        .filter(|pr| is_spec_change(pr, snapshot, now, policy))
-        .collect()
-}
-
-/// `cancel_reason` does not look at the required label, so a cut under way
-/// survives its removal.
-fn is_spec_change(pr: &MergedPull, snapshot: &Snapshot, now: Timestamp, policy: &Policy) -> bool {
-    spec_change(pr, &snapshot.default_branch, now, policy) == Ok(SpecChange::Pending)
-}
-
-/// What a merged pull request is as a spec change.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SpecChange {
-    /// Linewright cuts it.
-    Pending,
-    /// Linewright was unassigned from it, and `required_label`, when one is
-    /// set, was not applied again since.
-    Unassigned { required_label: Option<String> },
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum NotSpecChange {
@@ -2188,6 +1948,11 @@ pub enum NotSpecChange {
     NoSpecFile {
         spec_glob: String,
     },
+    /// Taken up by its issue, `issue`.
+    TakenUp {
+        issue: Number,
+    },
+    /// Taken up by carrying `label`.
     Designed {
         label: DesignedLabel,
     },
@@ -2200,18 +1965,20 @@ pub enum NotSpecChange {
     },
 }
 
-/// What merged `pr` is as a spec change, or why it is none. Rules that hold
-/// for good are checked first.
+/// Whether merged `pr` is a spec change Linewright may take up, of those
+/// `snapshot` holds at `now`, or why not (`docs/specs/sources_of_work.md`,
+/// Spec changes): why it is no spec change, checked first, then why it may
+/// not be taken up.
 pub fn spec_change(
     pr: &MergedPull,
-    default_branch: &str,
+    snapshot: &Snapshot,
     now: Timestamp,
     policy: &Policy,
-) -> Result<SpecChange, NotSpecChange> {
+) -> Result<(), NotSpecChange> {
     let window_opened = policy.windows(now).lookback_opened();
     let because = if pr.author == policy.linewright {
         NotSpecChange::Linewrights
-    } else if pr.base_ref != default_branch {
+    } else if pr.base_ref != snapshot.default_branch {
         NotSpecChange::OtherBranch {
             base: pr.base_ref.clone(),
         }
@@ -2219,6 +1986,8 @@ pub fn spec_change(
         NotSpecChange::NoSpecFile {
             spec_glob: policy.spec_glob.pattern().to_string(),
         }
+    } else if let Some(issue) = snapshot.spec_change_issue(pr.number) {
+        NotSpecChange::TakenUp { issue }
     } else if let Some(label) = pr.designed_label() {
         NotSpecChange::Designed { label }
     } else if pr.merged_at < window_opened {
@@ -2226,21 +1995,12 @@ pub fn spec_change(
             merged_at: pr.merged_at,
             window_opened,
         }
-    } else if pr.is_assigned(&policy.linewright) {
-        return Ok(SpecChange::Pending);
-    } else if pr
-        .unassigned_since_labeled(&policy.linewright, policy.require_label.as_deref())
-        .is_some()
-    {
-        return Ok(SpecChange::Unassigned {
-            required_label: policy.require_label.clone(),
-        });
     } else if let Some(label) = policy.require_label.as_ref().filter(|l| !pr.has_label(l)) {
         NotSpecChange::RequiredLabel {
             label: label.clone(),
         }
     } else {
-        return Ok(SpecChange::Pending);
+        return Ok(());
     };
     Err(because)
 }

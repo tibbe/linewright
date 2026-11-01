@@ -17,8 +17,8 @@ use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastS
 use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
 use crate::domain::{
-    AutoMerge, IssueCloseReason, Item, Number, PullHeldRead, PullRead, Snapshot, Timestamp,
-    UpdateMethod, Windows, label,
+    AutoMerge, IssueCloseReason, Item, Number, PullHeldRead, PullRead, Snapshot, SpecChangeIssue,
+    Timestamp, UpdateMethod, Windows, label,
 };
 use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
@@ -343,7 +343,6 @@ impl Factory {
             self.labeled_old_tracking_issues = true;
         }
         let repo = self.read_repo_files().await?;
-        self.memory.ended_cuts.clear();
         self.written.clear();
         let kept = Kept {
             snapshot: Arc::new(snapshot),
@@ -795,9 +794,6 @@ impl Factory {
             Subject::Pull(pr) => {
                 self.written.insert(Item::Pull(pr));
             }
-            // A cut writes issues the kept snapshot may lack, such as a
-            // tracking issue it left part way.
-            Subject::SpecChange(pr) => self.memory.ended_cuts.push(pr),
         }
     }
 
@@ -819,7 +815,7 @@ impl Factory {
                 let cancel = Cancellation::default();
                 let reworked = match work.subject() {
                     Subject::Pull(pr) => self.memory.last_done(pr, WorkKind::Rework),
-                    Subject::Issue(_) | Subject::SpecChange(_) => None,
+                    Subject::Issue(_) => None,
                 };
                 let ctx = run::Ctx {
                     with: shell.run_with(&kept.repo, RunKind::Stage(work.kind())),
@@ -886,6 +882,36 @@ impl Factory {
                 // assigned, to be let go of at the next poll.
                 store.comment(*pr, comment).await?;
                 store.unassign(*pr).await?;
+            }
+            Action::OpenSpecChangeIssue { pr, let_go } => {
+                let spec_change = snapshot
+                    .merged_pull(*pr)
+                    .with_context(|| format!("the snapshot holds no merged pull request {pr}"))?;
+                let required = self.shell.creation_label().await?;
+                let new = apply::filing::spec_change_issue(spec_change, required.as_deref());
+                let issue = store.create_issue(new).await?;
+                info!(
+                    pr = pr.0,
+                    issue = issue.0,
+                    "took up a spec change: opened its issue"
+                );
+                // A refresh before the next poll decides on the kept snapshot,
+                // which must hold the issue, so that the spec change is not
+                // taken up twice; it reads the issue in, too.
+                if let Some(latest) = &mut self.kept {
+                    Arc::make_mut(&mut latest.snapshot)
+                        .spec_change_issues
+                        .push(SpecChangeIssue {
+                            number: issue,
+                            spec_change: *pr,
+                        });
+                }
+                self.written.insert(Item::Issue(issue));
+                // The issue first, so that a stop between the two leaves the
+                // spec change assigned, to be let go of at the next poll.
+                if *let_go {
+                    store.unassign(*pr).await?;
+                }
             }
             Action::RemoveStatusLabel { issue, label } => {
                 info!(issue = issue.0, %label, "removing a status label");
@@ -964,14 +990,11 @@ impl Factory {
             }
             Action::DiscardCut(discarding) => {
                 let Discard {
-                    item,
+                    issue,
                     pulls,
                     tickets,
                 } = discarding;
-                warn!(
-                    item = item.designed().0,
-                    "discarding a cut to design it again"
-                );
+                warn!(issue = issue.0, "discarding a cut to design it again");
                 let notes = discarding.notes();
                 // A ticket whose pull request is closed is left alone while
                 // its cut is discarded, so a discard stopped in between does
@@ -983,17 +1006,13 @@ impl Factory {
                 for ticket in discarding.open_tickets() {
                     discard(store.as_ref(), ticket, &notes.on_ticket).await?;
                 }
-                if let Some(ParentNote { issue, note }) = &notes.on_issue {
-                    store.comment(*issue, note).await?;
+                if let Some(ParentNote { issue: on, note }) = &notes.on_issue {
+                    store.comment(*on, note).await?;
                 }
                 // The tickets leave the sub-issues last, so that a discard
                 // that stops part way is found again on the next poll.
-                let parent = item.parent();
                 for ticket in tickets {
-                    store.remove_sub_issue(parent, ticket.number).await?;
-                }
-                if let Some(ParentNote { issue, note }) = &notes.closing_tracking {
-                    discard(store.as_ref(), *issue, note).await?;
+                    store.remove_sub_issue(*issue, ticket.number).await?;
                 }
             }
             Action::DeleteBranch { branch } => {

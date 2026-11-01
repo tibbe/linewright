@@ -6,7 +6,7 @@ use linewright::domain::{
     Assignment, AutoMerge, ClosedKind, Issue, IssueCloseReason, IssueEvent, Linked, Number,
     PullState,
 };
-use linewright::reconcile::{CutItem, Discard, ParentNote, WorkKind};
+use linewright::reconcile::{Discard, ParentNote, WorkKind};
 use linewright::store::local::{LocalStore, Paused, Write};
 use linewright::store::{IssueRead, Store};
 use linewright::work_settings::{Effort, Partial, StageTable};
@@ -454,6 +454,109 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
     assert_eq!(issue.assignees, []);
 }
 
+/// The titles of the spec changes' issues `world`'s store has.
+fn spec_change_issues(world: &World) -> Vec<Number> {
+    world
+        .store
+        .issues()
+        .into_iter()
+        .filter(|issue| issue.title.starts_with("Spec change: "))
+        .map(|issue| issue.number)
+        .collect()
+}
+
+/// `docs/specs/sources_of_work.md`, Spec changes: a merged spec change is
+/// taken up by opening its issue, which is then worked as any issue is, and
+/// no later poll, before or after a restart, opens another.
+#[test_log::test(tokio::test)]
+async fn a_merged_spec_change_opens_one_issue_which_is_claimed_and_designed() {
+    let mut world = World::new().await;
+    tickets_script(&world);
+    let spec_pr = merge_spec_change(&world).await;
+
+    world.poll().await;
+
+    let [issue] = spec_change_issues(&world)[..] else {
+        panic!("expected one issue, got {:#?}", world.store.issues());
+    };
+    assert_eq!(labels(&world.issue(issue)), ["ready-for-agent"]);
+    assert_eq!(
+        world.harness.prompts(WorkKind::Design),
+        Vec::<String>::new()
+    );
+
+    world.poll().await;
+
+    let designed = world.issue(issue);
+    assert_eq!(labels(&designed), ["linewright:designed"]);
+    assert_eq!(designed.sub_issues.len(), 2);
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
+    let assigned = |login: &str| {
+        designed.events.iter().any(|event| {
+            matches!(event, IssueEvent::Assignment(Assignment::Assigned { assignee, .. })
+                if assignee == &Login::new(login))
+        })
+    };
+    assert!(assigned(LINEWRIGHT), "{designed:#?}");
+
+    world.restart(|_| {}).await;
+    world.poll().await;
+
+    assert_eq!(spec_change_issues(&world), [issue]);
+    assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
+    assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
+    assert_eq!(world.store.snapshot_pull(spec_pr).await.comments, []);
+}
+
+/// `docs/specs/repository.md`, Steering: assigned to a spec change not yet
+/// taken up, here one merged before the lookback window opened, Linewright
+/// opens its issue, then unassigns itself.
+#[test_log::test(tokio::test)]
+async fn linewright_assigned_to_a_spec_change_not_yet_taken_up_opens_its_issue_then_unassigns_itself()
+ {
+    let mut world = World::new().await;
+    let spec_pr = merge_spec_change(&world).await;
+    world.clock.advance(TimeDelta::days(30));
+    world.poll().await;
+    assert_eq!(spec_change_issues(&world), []);
+    world
+        .store
+        .assign_as("maintainer", spec_pr, LINEWRIGHT)
+        .unwrap();
+
+    world.poll().await;
+
+    let [issue] = spec_change_issues(&world)[..] else {
+        panic!("expected one issue, got {:#?}", world.store.issues());
+    };
+    assert_eq!(labels(&world.issue(issue)), ["ready-for-agent"]);
+    assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
+    assert_eq!(world.store.snapshot_pull(spec_pr).await.comments, []);
+}
+
+/// `docs/specs/sources_of_work.md`, Spec changes: a spec change whose issue
+/// closed before the Done window opened, while it is still in the lookback
+/// window, is taken up already.
+#[test_log::test(tokio::test)]
+async fn a_spec_change_whose_issue_closed_before_the_done_window_is_not_taken_up_again() {
+    let mut world = World::with(|config| {
+        config.spec_lookback = TimeDelta::days(30);
+        config.done_window = TimeDelta::days(1);
+    })
+    .await;
+    merge_spec_change(&world).await;
+    world.poll().await;
+    let [issue] = spec_change_issues(&world)[..] else {
+        panic!("expected one issue, got {:#?}", world.store.issues());
+    };
+    world.store.close_issue_as_completed(issue).unwrap();
+    world.clock.advance(TimeDelta::days(3));
+
+    world.poll().await;
+
+    assert_eq!(spec_change_issues(&world), [issue]);
+}
+
 #[test_log::test(tokio::test)]
 async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_ready_pull_requests()
 {
@@ -471,6 +574,7 @@ async fn a_merged_spec_change_becomes_tickets_worked_in_dependency_order_into_re
         .await
         .unwrap();
 
+    world.poll().await;
     world.poll().await;
 
     let issues = world.store.issues();
@@ -510,51 +614,6 @@ async fn implemented_a_ticket_cut_from_a_spec_change() -> (World, SpecCut) {
     let cut = world.spec_change_cut_into_tickets().await;
     world.poll().await;
     (world, cut)
-}
-
-#[test_log::test(tokio::test)]
-async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_requests_closed() {
-    let mut world = World::new().await;
-    let (cut, pr) = world.spec_change_ticket_in_review().await;
-    let spec_pr = cut.spec_change;
-    world
-        .store
-        .remove_label(spec_pr, "linewright:designed")
-        .await
-        .unwrap();
-
-    world.poll().await;
-
-    let notes = Discard {
-        item: CutItem::SpecChange {
-            pr: spec_pr,
-            tracking: cut.tracking,
-        },
-        pulls: vec![pr],
-        tickets: cut
-            .tickets
-            .map(|number| Linked { number, open: true })
-            .to_vec(),
-    }
-    .notes();
-    for ticket in cut.tickets {
-        let discarded = world.issue(ticket);
-        assert!(!discarded.open, "{discarded:#?}");
-        assert_eq!(last_comment(&discarded), notes.on_ticket);
-    }
-    let pull = world.store.snapshot_pull(pr).await;
-    assert!(matches!(pull.state, PullState::Closed { .. }), "{pull:#?}");
-    assert_eq!(last_pull_comment(&world, pr).await, notes.on_pull);
-    let tracking = world.issue(cut.tracking);
-    assert!(!tracking.open);
-    assert_eq!(tracking.sub_issues, []);
-    assert_eq!(
-        Some(ParentNote {
-            issue: cut.tracking,
-            note: last_comment(&tracking).into()
-        }),
-        notes.closing_tracking
-    );
 }
 
 /// That `brief` holds the spec diff of the spec change from
@@ -858,37 +917,6 @@ fn readied_after_their_design<'a>(at_comment: &'a [Issue], at_designed: &[Issue]
 }
 
 #[test_log::test(tokio::test)]
-async fn the_tickets_of_a_spec_change_are_readied_only_once_their_design_is_on_the_tracking_issue()
-{
-    let mut world = World::new().await;
-    tickets_script(&world);
-    let spec_pr = world
-        .store
-        .merge_change(
-            "maintainer",
-            "Gadgets",
-            "Adds gadgets.",
-            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
-        )
-        .await
-        .unwrap();
-    let (at_comment, on_comment) = seen(&world, move |store| {
-        (store.issues(), store.pull_labels(spec_pr))
-    });
-    world.store.after_linewrights_next_comment(on_comment);
-    let (at_designed, on_designed) = seen(&world, LocalStore::issues);
-    world
-        .store
-        .after_labeling(spec_pr, "linewright:designed", on_designed);
-
-    world.poll().await;
-
-    let (at_comment, spec_labels) = taken(&at_comment);
-    readied_after_their_design(&at_comment, &taken(&at_designed));
-    assert!(!spec_labels.contains(&"linewright:designed".to_string()));
-}
-
-#[test_log::test(tokio::test)]
 async fn feedback_posted_while_a_rework_records_its_outcome_starts_another() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -1107,82 +1135,6 @@ fn one_ticket() -> serde_json::Value {
     })
 }
 
-/// Has each design answer `result`, noting who was assigned to the spec
-/// change while it ran.
-fn design_noting_assignees(world: &World, result: serde_json::Value) -> Arc<Mutex<Vec<Login>>> {
-    let seen = Arc::new(Mutex::new(vec![]));
-    let (store, noted) = (world.store.clone(), seen.clone());
-    world.harness.on(WorkKind::Design, move |_| {
-        let spec_change = *store.pulls().last().expect("a spec change");
-        *noted.lock().unwrap() = store.pull_assignees(spec_change);
-        Ok(result.to_string())
-    });
-    seen
-}
-
-#[test_log::test(tokio::test)]
-async fn linewright_is_assigned_to_a_spec_change_while_designing_it_and_unassigned_after() {
-    for result in [
-        one_ticket(),
-        json!({"outcome": "nothing-to-build", "reason": "Gadgets exist already."}),
-    ] {
-        let mut world = World::new().await;
-        let seen = design_noting_assignees(&world, result);
-        let spec_pr = merge_spec_change(&world).await;
-
-        world.poll().await;
-
-        assert_eq!(*seen.lock().unwrap(), [Login::new(LINEWRIGHT)]);
-        assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
-        assert!(
-            world
-                .store
-                .pull_labels(spec_pr)
-                .contains(&"linewright:designed".to_string())
-        );
-    }
-}
-
-#[test_log::test(tokio::test)]
-async fn a_spec_change_with_nothing_to_build_says_why_and_files_no_issues() {
-    let mut world = World::new().await;
-    world.harness.on(WorkKind::Design, |_| {
-        Ok(json!({"outcome": "nothing-to-build", "reason": "Gadgets exist already."}).to_string())
-    });
-    let spec_pr = merge_spec_change(&world).await;
-
-    world.poll().await;
-
-    assert_eq!(
-        last_pull_comment(&world, spec_pr).await,
-        "Gadgets exist already."
-    );
-    assert_eq!(world.store.issues(), []);
-}
-
-#[test_log::test(tokio::test)]
-async fn a_handed_back_spec_change_loses_its_design_label() {
-    let mut world = World::new().await;
-    let store = world.store.clone();
-    world.harness.on(WorkKind::Design, move |_| {
-        let spec_change = *store.pulls().last().expect("a spec change");
-        store
-            .label_as("maintainer", spec_change, "linewright:designed")
-            .unwrap();
-        Ok(json!({"outcome": "gave-up", "reason": "Not now."}).to_string())
-    });
-    let spec_pr = merge_spec_change(&world).await;
-
-    world.poll().await;
-
-    assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
-    assert!(
-        last_pull_comment(&world, spec_pr)
-            .await
-            .contains("Not now.")
-    );
-}
-
 #[test_log::test(tokio::test)]
 async fn a_design_files_its_spec_gaps_and_its_tickets() {
     let mut world = World::new().await;
@@ -1192,11 +1144,11 @@ async fn a_design_files_its_spec_gaps_and_its_tickets() {
             json!([{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]);
         Ok(result.to_string())
     });
-    let spec_pr = merge_spec_change(&world).await;
+    merge_spec_change(&world).await;
 
     world.poll().await;
+    world.poll().await;
 
-    assert_eq!(world.store.pull_labels(spec_pr), ["linewright:designed"]);
     let titles: Vec<String> = world.store.issues().into_iter().map(|i| i.title).collect();
     assert_eq!(
         titles,
@@ -1209,14 +1161,8 @@ async fn a_design_files_its_spec_gaps_and_its_tickets() {
 }
 
 /// Merges a spec change, "Gadgets", and opens its issue, ready for an agent.
-/// The spec change carries `linewright:designed`, so that only its issue is
-/// designed.
 async fn spec_change_issue(world: &World) -> Number {
     let spec_change = merge_spec_change(world).await;
-    world
-        .store
-        .label_as("maintainer", spec_change, "linewright:designed")
-        .unwrap();
     world.store.open_issue(
         LINEWRIGHT,
         "Spec change: Gadgets",
@@ -1452,7 +1398,7 @@ async fn a_tracking_issue_whose_design_label_was_removed_has_its_cut_discarded_a
     world.poll().await;
 
     let notes = Discard {
-        item: CutItem::Issue(issue),
+        issue,
         pulls: vec![linewrights],
         tickets: tickets.map(|number| Linked { number, open: true }).to_vec(),
     }
@@ -1491,37 +1437,6 @@ async fn a_tracking_issue_whose_design_label_was_removed_has_its_cut_discarded_a
         .collect();
     assert_eq!(recut.len(), 2, "{recut:?}");
     assert!(recut.iter().all(|t| !tickets.contains(t)), "{recut:?}");
-}
-
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn unassigning_linewright_from_a_spec_change_while_it_is_cut_cancels_the_cut() {
-    let mut world = World::new().await;
-    let (release, released) = std::sync::mpsc::channel::<()>();
-    let released = Mutex::new(released);
-    let (begin, mut begun) = tokio::sync::mpsc::unbounded_channel();
-    world.harness.on(WorkKind::Design, move |_| {
-        begin.send(()).unwrap();
-        released.lock().unwrap().recv().unwrap();
-        Err(linewright::harness::SessionError::TimedOut {
-            log_tail: String::new(),
-        })
-    });
-    let spec_pr = merge_spec_change(&world).await;
-    world.factory.cycle().await.unwrap();
-    begun.recv().await.unwrap();
-
-    world
-        .store
-        .unassign_as("maintainer", spec_pr, LINEWRIGHT)
-        .unwrap();
-    world.factory.cycle().await.unwrap();
-    release.send(()).unwrap();
-    world.factory.settle().await;
-
-    assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
-    assert_eq!(world.store.snapshot_pull(spec_pr).await.comments, []);
-    world.poll().await;
-    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
 }
 
 #[test_log::test(tokio::test)]

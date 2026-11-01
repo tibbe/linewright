@@ -93,7 +93,6 @@ pub enum HandedBack<'a> {
     /// An issue, as it was read.
     Issue(&'a Issue),
     Pull,
-    SpecChange,
 }
 
 /// What a hand-back writes on its item: the comment, then the asks.
@@ -110,18 +109,6 @@ pub struct HandBackWrites {
 /// says that assigning `linewright` again tries again.
 pub fn hand_back(item: HandedBack<'_>, hand_back: &HandBack, linewright: &Login) -> HandBackWrites {
     let stall = stalls(hand_back);
-    let pull = |try_again: &str, designed: Option<Designed>| HandBackWrites {
-        comment: format!(
-            "{}\n\nAssign @{linewright} to this pull request again to {try_again}.",
-            with_log(hand_back),
-        ),
-        asks: Asks {
-            designed,
-            stall,
-            unassign: true,
-            ..Asks::default()
-        },
-    };
     match item {
         HandedBack::Issue(issue) => HandBackWrites {
             comment: with_log(hand_back),
@@ -132,8 +119,17 @@ pub fn hand_back(item: HandedBack<'_>, hand_back: &HandBack, linewright: &Login)
                 unassign: true,
             },
         },
-        HandedBack::Pull => pull("try again", None),
-        HandedBack::SpecChange => pull("design it again", Some(Designed::Remove)),
+        HandedBack::Pull => HandBackWrites {
+            comment: format!(
+                "{}\n\nAssign @{linewright} to this pull request again to try again.",
+                with_log(hand_back),
+            ),
+            asks: Asks {
+                stall,
+                unassign: true,
+                ..Asks::default()
+            },
+        },
     }
 }
 

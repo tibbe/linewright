@@ -68,12 +68,14 @@ async fn an_issue_asking_its_reporter_is_what_triage_leaves() {
     assert_same_state(&front.store, &back.store).await;
 }
 
-/// A world whose spec change of the spec and of code a poll designed.
+/// A world whose spec change of the spec and of code a poll took up, and
+/// the next designed.
 async fn spec_change_designed() -> World {
     let mut world = World::new().await;
     tickets_script(&world);
     implement_gadgets(&world);
     merge_spec_and_code_change(&world).await;
+    world.poll().await;
     world.poll().await;
     world
 }
@@ -185,36 +187,6 @@ async fn a_ticket_blocked_filing_a_spec_gap_is_what_the_implement_stage_leaves()
     let back = World::new().await;
 
     back.ticket_blocked_filing_a_spec_gap().await;
-
-    assert_same_state(&front.store, &back.store).await;
-}
-
-/// A world that designed a spec change of the spec, with each design
-/// scripted by `script`.
-async fn spec_change_of_the_spec_designed(script: fn(&World)) -> World {
-    let mut world = World::new().await;
-    script(&world);
-    merge_spec_change(&world).await;
-    world.poll().await;
-    world
-}
-
-#[test_log::test(tokio::test)]
-async fn a_spec_change_handed_back_is_what_design_leaves() {
-    let front = spec_change_of_the_spec_designed(design_giving_up).await;
-    let back = World::new().await;
-
-    back.spec_change_handed_back().await;
-
-    assert_same_state(&front.store, &back.store).await;
-}
-
-#[test_log::test(tokio::test)]
-async fn a_spec_change_blocked_filing_a_spec_gap_is_what_design_leaves() {
-    let front = spec_change_of_the_spec_designed(design_blocked_filing_a_spec_gap).await;
-    let back = World::new().await;
-
-    back.spec_change_blocked_filing_a_spec_gap().await;
 
     assert_same_state(&front.store, &back.store).await;
 }

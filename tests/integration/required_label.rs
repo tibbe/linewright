@@ -41,10 +41,11 @@ fn all_labels(world: &World) -> Vec<Vec<String>> {
 }
 
 #[test_log::test(tokio::test)]
-async fn the_tracking_issue_and_every_ticket_of_a_spec_change_carry_the_required_label() {
+async fn the_issue_and_every_ticket_of_a_spec_change_carry_the_required_label() {
     let mut world = world(Some(REQUIRED), true).await;
     merged_spec_change(&world).await;
 
+    world.poll().await;
     world.poll().await;
 
     assert_eq!(
@@ -70,6 +71,7 @@ async fn tickets_get_ready_for_agent_only_after_every_blocker_edge_exists() {
     let mut world = world(Some(REQUIRED), true).await;
     merged_spec_change(&world).await;
 
+    world.poll().await;
     world.poll().await;
 
     let issues = world.store.issues();
@@ -111,6 +113,7 @@ async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
     });
 
     world.poll().await;
+    world.poll().await;
 
     assert_eq!(
         all_labels(&world),
@@ -128,6 +131,14 @@ async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
 async fn a_missing_required_label_is_not_created_and_the_filing_completes() {
     let mut world = world(Some(REQUIRED), false).await;
     merged_spec_change(&world).await;
+    world.poll().await;
+    // The spec change's issue cannot carry the missing label, so it is
+    // assigned by hand to be designed.
+    let issue = world.store.issues()[0].number;
+    world
+        .store
+        .assign_as("maintainer", issue, LINEWRIGHT)
+        .unwrap();
 
     world.poll().await;
 

@@ -8,9 +8,7 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::apply::filing::{
-    self, AlreadyFiled, Comment, CutUnder, NewTicket, TrackingIssue, spec_gap_issues,
-};
+use crate::apply::filing::{self, AlreadyFiled, NewTicket, spec_gap_issues};
 use crate::apply::hand_back::{
     self, FollowUps, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail,
     NothingToBuild, SendBack, Stopped, TryAgain,
@@ -36,8 +34,8 @@ use crate::reconcile::{
 };
 use crate::repo_files::RepoLayer;
 use crate::results::{
-    self, AutomationResult, Contract, Cut, DesignResult, ImplementResult, IssueWork, Posts,
-    PullWorkResult, SpecGap, SpecGaps, TriageResult,
+    self, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork, Posts, PullWorkResult,
+    SpecGap, SpecGaps, TriageResult,
 };
 use crate::runs::{Ending, Running, Runs, SessionRecorder};
 use crate::secrets::{Held, Secrets};
@@ -115,7 +113,9 @@ impl Shell {
         }
     }
 
-    async fn creation_label(&self) -> Result<Option<String>> {
+    /// The required label, if one is set and the repository has it, so that
+    /// applying it creates no label.
+    pub(crate) async fn creation_label(&self) -> Result<Option<String>> {
         let Some(name) = &self.policy.require_label else {
             return Ok(None);
         };
@@ -450,9 +450,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             self::hand_back(shell, snapshot, Item::Issue(issue), &hand_back).await
         }
         Subject::Pull(pr) => self::hand_back(shell, snapshot, Item::Pull(pr), &hand_back).await,
-        Subject::SpecChange(pr) => {
-            write_hand_back(shell, pr, HandedBack::SpecChange, &hand_back).await
-        }
     };
     match handed {
         Ok(()) => Ending::HandedBack,
@@ -483,13 +480,6 @@ async fn attempt(
     };
     let (n, pr, task) = match work {
         Work::Triage { issue: n } => return triage(shell, ctx, issue(*n)?).await,
-        Work::DesignSpecChange { pr } => {
-            let pr = snapshot
-                .merged_pull(*pr)
-                .with_context(|| format!("{pr} is not in the snapshot"))
-                .map_err(infra)?;
-            return design_spec_change(shell, ctx, snapshot, pr).await;
-        }
         Work::DesignIssue { issue: n } => {
             return design_issue(shell, ctx, snapshot, issue(*n)?).await;
         }
@@ -736,7 +726,6 @@ impl Drop for Workspace {
 pub fn subject_name(subject: Subject) -> String {
     match subject {
         Subject::Issue(n) => format!("issue-{}", n.0),
-        Subject::SpecChange(n) => format!("pr-{}", n.0),
         Subject::Pull(n) => format!("pull-{}", n.0),
     }
 }
@@ -1295,16 +1284,13 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
 /// Runs a design session on `subject`, sent `prompt` made for its
 /// attachments directory, and begins applying its result, the gaps in
 /// `filed_gaps` dropped from it.
-async fn design_session<C>(
+async fn design_session(
     shell: &Shell,
     ctx: &Ctx,
     subject: Subject,
     filed_gaps: &FiledGaps<'_>,
     prompt: impl FnOnce(&Path) -> String,
-) -> Result<(DesignResult<C>, Turn), Failure>
-where
-    DesignResult<C>: Contract + Posts + SpecGaps,
-{
+) -> Result<(DesignResult<IssueWork>, Turn), Failure> {
     let purpose = Purpose::Work {
         subject,
         kind: WorkKind::Design,
@@ -1313,7 +1299,7 @@ where
     let opened = open_session(shell, ctx, purpose, &mut ws).await?;
     let (mut spec, dir) = opened.spec(prompt);
     let dir = &dir;
-    let begin = |mut result: DesignResult<C>| async move {
+    let begin = |mut result: DesignResult<IssueWork>| async move {
         drop_filed_gaps(&mut result, filed_gaps);
         post_attachments(shell, ctx, dir, &mut result).await?;
         Ok(result)
@@ -1324,7 +1310,7 @@ where
         &mut spec,
         NextTurn::Start,
         |message| async move {
-            results::parse::<DesignResult<C>>(&message).map_err(parse_retry(ctx))
+            results::parse::<DesignResult<IssueWork>>(&message).map_err(parse_retry(ctx))
         },
         begin,
     )
@@ -1361,65 +1347,6 @@ async fn design_blocked(
     Err(Failure::HandBack(hand_back::design_blocked(question)))
 }
 
-async fn design_spec_change(
-    shell: &Shell,
-    ctx: &Ctx,
-    snapshot: &Snapshot,
-    pr: &MergedPull,
-) -> Result<(), Failure> {
-    let diff = spec_diff(shell, pr).await?;
-    let filed_issues = spec_gap::filed_for(snapshot, pr.number);
-    let filed_gaps = FiledGaps {
-        item: pr.number,
-        issues: &filed_issues,
-    };
-    let prompt = |attachments: &Path| {
-        prompts::design_spec_change(
-            &ctx.with.briefs.prompts,
-            &shell.repo(),
-            pr,
-            &diff,
-            &filed_issues,
-            attachments,
-        )
-    };
-    let subject = Subject::SpecChange(pr.number);
-    let (result, turn) = design_session::<Cut>(shell, ctx, subject, &filed_gaps, prompt).await?;
-    match result {
-        DesignResult::Designed {
-            design,
-            cut: Cut { tickets, comment },
-            spec_gaps,
-        } => async {
-            let required = shell.required_label();
-            let to_file = filing::cut(&tickets, CutUnder::SpecChange(pr), required.get().await?);
-            file_cut(shell, pr.number, to_file, &design, &comment).await?;
-            file_spec_gaps(shell, &spec_gaps, pr.number, &required).await?;
-            // The label goes on last, so that a design stopped before it is
-            // discarded and made again (docs/specs/design.md, "Discarding a
-            // cut").
-            ask(&*shell.store, pr.number, &filing::spec_change_designed()).await
-        }
-        .await
-        .map_err(apply),
-        DesignResult::NothingToBuild { reason } => async {
-            shell.store.comment(pr.number, &reason).await?;
-            ask(&*shell.store, pr.number, &filing::spec_change_designed()).await
-        }
-        .await
-        .map_err(apply),
-        DesignResult::Blocked {
-            question,
-            spec_gaps,
-        } => design_blocked(shell, &question, &spec_gaps, filed_gaps.item).await,
-        DesignResult::GaveUp { reason } => Err(Failure::HandBack(hand_back::design_gave_up(
-            DesignOf::SpecChange,
-            &reason,
-            &turn.log_tail,
-        ))),
-    }
-}
-
 /// An issue that fits one session has its design posted on it, where its
 /// implementer reads it; one cut into tickets becomes their tracking issue,
 /// and its design goes there with them (docs/specs/design.md, "Designing").
@@ -1451,8 +1378,7 @@ async fn design_issue(
         )
     };
     let subject = Subject::Issue(issue.number);
-    let (result, turn) =
-        design_session::<IssueWork>(shell, ctx, subject, &filed_gaps, prompt).await?;
+    let (result, turn) = design_session(shell, ctx, subject, &filed_gaps, prompt).await?;
     match result {
         DesignResult::Designed {
             design,
@@ -1466,7 +1392,7 @@ async fn design_issue(
                 match &cut {
                     IssueWork::AsItIs => store.comment(n, &design).await?,
                     IssueWork::Cut(Cut { tickets, comment }) => {
-                        let to_file = filing::cut(tickets, CutUnder::Issue, required.get().await?);
+                        let to_file = filing::cut(tickets, required.get().await?);
                         file_cut(shell, n, to_file, &design, comment).await?;
                     }
                 }
@@ -1518,27 +1444,18 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
         .map_err(infra)
 }
 
-/// Files `cut`, made from the design of `item`, and publishes `design` with
-/// its tickets on their tracking issue: the one `cut` files, or `item`.
+/// Files `cut`, made from the design of `tracking_issue`, and publishes
+/// `design` with its tickets there.
 async fn file_cut(
     shell: &Shell,
-    item: Number,
+    tracking_issue: Number,
     cut: filing::Cut,
     design: &str,
     comment: &str,
 ) -> Result<()> {
     let store = &shell.store;
-    let (tracking_issue, spec_change) = match cut.tracking_issue {
-        Some(TrackingIssue { issue, spec_change }) => {
-            (store.create_issue(issue).await?, Some(spec_change))
-        }
-        None => (item, None),
-    };
     let filed = file_tickets_under(shell, tracking_issue, cut.tickets).await?;
-    let published = filing::published(design, comment, tracking_issue, &filed, spec_change);
-    if let Some(body) = &published.tracking_body {
-        store.edit_body(tracking_issue, body).await?;
-    }
+    let published = filing::published(design, comment, &filed);
     store
         .comment(tracking_issue, &published.design_comment)
         .await?;
@@ -1552,16 +1469,6 @@ async fn file_cut(
     // cut").
     for ticket in &filed {
         ask(&**store, ticket.number, &published.ticket_asks).await?;
-    }
-    if let Some(Comment { on, body }) = &published.spec_change_comment {
-        store.comment(*on, body).await?;
-    }
-    // A new tracking issue is one once it carries the label
-    // (docs/specs/design.md, "Cutting"), which goes on last but for the spec
-    // change's: a stop between the two leaves a cut the spec change's
-    // discard closes.
-    if spec_change.is_some() {
-        store.add_label(tracking_issue, label::DESIGNED).await?;
     }
     Ok(())
 }

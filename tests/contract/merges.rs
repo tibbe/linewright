@@ -541,10 +541,10 @@ async fn a_merged_pull_request_reads_back_merged_with_its_files(sandbox: Sandbox
     match sandbox.store().any_item(pr).await? {
         Some(AnyItem::Merged {
             pull: any,
-            tracking_issues,
+            spec_change_issues,
         }) => {
             equal("any item", &*any, &merged)?;
-            equal("the tracking issues", &tracking_issues, &vec![])?;
+            equal("its issues", &spec_change_issues, &vec![])?;
         }
         other => bail!("any item is {other:?}"),
     }

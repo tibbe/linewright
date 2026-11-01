@@ -622,7 +622,7 @@ fn linewrights_merged_pull_request_shows_its_own_runs() {
         &runs_of_42_and_43(),
         &AnyItem::Merged {
             pull: Box::new(merged),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
         at(NOW),
     );
@@ -1222,6 +1222,7 @@ fn a_spec_changes_issue_with_no_tickets_is_no_tracking_issue_and_left_alone_unla
             &AnyItem::HeldIssue(Box::new(tracking))
         )[1..],
         [
+            "parent: #5, the spec change it was opened for",
             "last read: 2026-10-01 12:00:30 UTC",
             "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
              `ready-for-human`",
@@ -1378,7 +1379,7 @@ fn merged_text(view: &View, pull: MergedPull) -> String {
         view,
         &AnyItem::Merged {
             pull: Box::new(pull),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
     );
     assert_eq!(lines[1], "state: Merged");
@@ -1412,13 +1413,12 @@ fn a_merged_pull_request_names_the_rule_that_makes_it_no_spec_change() {
     );
     assert_eq!(
         merged_text(&view, merged(&["linewright:designed"])),
-        "left alone: it is no spec change: it is labeled `linewright:designed`: designed \
-         already"
+        "left alone: it is a spec change labeled `linewright:designed`: taken up already"
     );
     assert_eq!(
         merged_text(&view, merged(&["linewright:spec-processed"])),
-        "left alone: it is no spec change: it is labeled `linewright:spec-processed`: \
-         designed already"
+        "left alone: it is a spec change labeled `linewright:spec-processed`: taken up \
+         already"
     );
     assert_eq!(
         merged_text(
@@ -1428,7 +1428,7 @@ fn a_merged_pull_request_names_the_rule_that_makes_it_no_spec_change() {
                 ..merged(&[])
             }
         ),
-        "left alone: it is no spec change: it was merged 2026-09-20 09:00:00 UTC, before the \
+        "left alone: it is a spec change merged 2026-09-20 09:00:00 UTC, before the \
          spec-lookback window opened 2026-09-24 12:00:30 UTC"
     );
 }
@@ -1440,31 +1440,8 @@ fn a_merged_pull_request_without_the_required_label_names_it() {
 
     assert_eq!(
         merged_text(&view, merged(&[])),
-        "left alone: it is no spec change: it is not labeled `linewright`, the required label"
+        "left alone: it is a spec change not labeled `linewright`, the required label"
     );
-}
-
-fn unassigned_at(minute: &str) -> MergedPull {
-    MergedPull {
-        events: vec![
-            IssueEvent::Labeled {
-                label: "linewright".into(),
-                by: None,
-                at: at("2026-10-01T09:00:00Z"),
-            },
-            IssueEvent::Assignment(Assignment::Assigned {
-                assignee: Login::new("factory"),
-                actor: Login::new("maintainer"),
-                at: at("2026-10-01T09:10:00Z"),
-            }),
-            IssueEvent::Assignment(Assignment::Unassigned {
-                assignee: Login::new("factory"),
-                actor: Login::new("factory"),
-                at: at(&format!("2026-10-01T09:{minute}:00Z")),
-            }),
-        ],
-        ..merged(&["linewright"])
-    }
 }
 
 fn read_merged_text(view: &View, pull: MergedPull) -> Vec<String> {
@@ -1473,78 +1450,48 @@ fn read_merged_text(view: &View, pull: MergedPull) -> Vec<String> {
         &[],
         &AnyItem::Merged {
             pull: Box::new(pull),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
         at(NOW),
     );
     lines_of(&render_answer(&answer, false))
 }
 
+/// `docs/specs/monitoring.md`, explain: a merged spec change is in its
+/// state, merged, and left alone, its work being its issue's.
 #[test_log::test]
-fn a_merged_pull_request_linewright_was_unassigned_from_waits_for_its_design_and_linewright() {
+fn a_spec_change_not_yet_taken_up_is_merged_and_left_alone_to_be_taken_up() {
     assert_eq!(
-        read_merged_text(&view(vec![], vec![]), unassigned_at("30"))[1..],
+        read_merged_text(&view(vec![], vec![]), merged(&["ready-for-human"]))[1..],
         [
-            "state: Merged · spec change waiting for its design",
+            "state: Merged",
             "last read: 2026-10-01 12:00:30 UTC",
-            "waiting for: the maintainer: Linewright is unassigned, until they assign it again",
+            "left alone: it is a spec change Linewright takes up at its next poll, by opening \
+             its issue",
         ]
     );
 }
 
 #[test_log::test]
-fn with_a_required_label_a_merged_pull_request_linewright_was_unassigned_from_is_managed() {
-    let mut view = view(vec![], vec![]);
-    view.policy.require_label = Some("linewright".into());
-
-    assert_eq!(
-        read_merged_text(&view, unassigned_at("30"))[1..],
-        [
-            "state: Merged · spec change waiting for its design",
-            "last read: 2026-10-01 12:00:30 UTC",
-            "waiting for: the maintainer: Linewright is unassigned, until they assign it again or \
-             label it `linewright`, the required label",
-        ]
-    );
-}
-
-#[test_log::test]
-fn a_ready_for_human_label_on_a_merged_pull_request_does_not_keep_it_from_being_cut() {
-    let answer = explain_read(
-        &view(vec![], vec![]),
-        &[],
-        &AnyItem::Merged {
-            pull: Box::new(merged(&["ready-for-human"])),
-            tracking_issues: vec![],
-        },
-        at(NOW),
-    );
-
-    assert_eq!(
-        render_answer(&answer, false).lines().nth(1),
-        Some("state: Merged · spec change waiting for its design")
-    );
-}
-
-#[test_log::test]
-fn a_spec_change_the_read_finds_is_explained_as_waiting_for_its_design() {
+fn a_spec_change_taken_up_is_merged_and_names_its_issue() {
     let answer = explain_read(
         &view(vec![], vec![]),
         &[],
         &AnyItem::Merged {
             pull: Box::new(merged(&[])),
-            tracking_issues: vec![],
+            spec_change_issues: vec![Number(40)],
         },
         at(NOW),
     );
 
-    assert!(
-        matches!(&answer, Answer::Managed(e) if e.waiting_for.is_empty()),
-        "{answer:?}"
-    );
     assert_eq!(
-        render_answer(&answer, false).lines().nth(1),
-        Some("state: Merged · spec change waiting for its design")
+        lines_of(&render_answer(&answer, false))[1..],
+        [
+            "child: #40, its issue",
+            "state: Merged",
+            "last read: 2026-10-01 12:00:30 UTC",
+            "left alone: it is a spec change worked through its issue, #40",
+        ]
     );
 }
 
@@ -1558,7 +1505,7 @@ fn the_json_of_an_item_left_alone_names_why() {
                 files: vec!["src/main.rs".into()],
                 ..merged(&[])
             }),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
         at(NOW),
     );
@@ -1779,7 +1726,7 @@ fn linewrights_merged_pull_request_names_the_issue_it_closes() {
         &view(vec![], vec![]),
         &AnyItem::Merged {
             pull: Box::new(done),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
     );
 
@@ -1865,7 +1812,7 @@ fn a_pull_request_someone_else_opened_names_the_issue_it_closes() {
     for read in [
         AnyItem::Merged {
             pull: Box::new(someones_merged),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
         AnyItem::Pull(Box::new(someones_closed)),
         AnyItem::Pull(Box::new(someones_open)),
@@ -1961,7 +1908,7 @@ fn a_tracking_issue_names_its_spec_change_and_each_of_its_tickets() {
     assert_eq!(
         family_lines(&text(&view, 40)),
         [
-            "parent: #5, the spec change it tracks",
+            "parent: #5, the spec change it was opened for",
             "child: #41, one of its tickets",
             "child: #42, one of its tickets",
         ]
@@ -2107,76 +2054,33 @@ fn the_json_of_a_ticket_names_its_tracking_issue_by_role() {
 }
 
 #[test_log::test]
-fn a_spec_change_cut_into_tickets_names_its_tracking_issue() {
-    let designed = AnyItem::Merged {
-        pull: Box::new(merged(&["linewright:designed"])),
-        tracking_issues: vec![Number(40)],
+fn the_json_of_a_spec_change_names_its_issue_by_role() {
+    let taken_up = AnyItem::Merged {
+        pull: Box::new(merged(&[])),
+        spec_change_issues: vec![Number(40)],
     };
-
-    let lines = read_text(&view(vec![], vec![]), &designed);
-
-    assert_eq!(
-        lines[..3],
-        [
-            "#5: Add invoices to the spec",
-            "child: #40, its tracking issue",
-            "state: Merged",
-        ]
-    );
-}
-
-#[test_log::test]
-fn the_json_of_a_spec_change_cut_into_tickets_names_its_tracking_issue_by_role() {
-    let designed = AnyItem::Merged {
-        pull: Box::new(merged(&["linewright:designed"])),
-        tracking_issues: vec![Number(40)],
-    };
-    let answer = explain_read(&view(vec![], vec![]), &[], &designed, at(NOW));
+    let answer = explain_read(&view(vec![], vec![]), &[], &taken_up, at(NOW));
     let json = serde_json::to_value(&answer).unwrap();
 
     assert_eq!(json["parent"], serde_json::Value::Null);
     assert_eq!(
         json["children"],
-        serde_json::json!([{"number": 40, "role": "tracking-issue"}])
+        serde_json::json!([{"number": 40, "role": "spec-change-issue"}])
     );
 }
 
+/// `docs/specs/sources_of_work.md`, Spec changes: "Its issue is the first
+/// such issue."
 #[test_log::test]
-fn a_spec_change_labeled_before_the_design_label_names_its_tracking_issue() {
-    let designed = AnyItem::Merged {
-        pull: Box::new(merged(&["linewright:spec-processed"])),
-        tracking_issues: vec![Number(40)],
+fn a_spec_change_linked_by_two_issues_names_the_first() {
+    let taken_up = AnyItem::Merged {
+        pull: Box::new(merged(&[])),
+        spec_change_issues: vec![Number(44), Number(40)],
     };
 
     assert_eq!(
-        family_lines(&read_text(&view(vec![], vec![]), &designed)),
-        ["child: #40, its tracking issue"]
-    );
-}
-
-#[test_log::test]
-fn a_spec_change_cut_again_names_its_newest_tracking_issue() {
-    let designed = AnyItem::Merged {
-        pull: Box::new(merged(&["linewright:designed"])),
-        tracking_issues: vec![Number(44), Number(40)],
-    };
-
-    assert_eq!(
-        family_lines(&read_text(&view(vec![], vec![]), &designed)),
-        ["child: #44, its tracking issue"]
-    );
-}
-
-#[test_log::test]
-fn a_spec_change_not_cut_names_no_tracking_issue_from_a_cut_discarded_part_way() {
-    let handed_back = AnyItem::Merged {
-        pull: Box::new(unassigned_at("30")),
-        tracking_issues: vec![Number(40)],
-    };
-
-    assert_eq!(
-        family_lines(&read_text(&view(vec![], vec![]), &handed_back)),
-        Vec::<&str>::new()
+        family_lines(&read_text(&view(vec![], vec![]), &taken_up)),
+        ["child: #40, its issue"]
     );
 }
 
@@ -2235,14 +2139,14 @@ fn linewrights_pull_request_names_the_issues_it_closes() {
         (
             AnyItem::Merged {
                 pull: Box::new(merged_43(&[42, 12])),
-                tracking_issues: vec![],
+                spec_change_issues: vec![],
             },
             &both[..],
         ),
         (
             AnyItem::Merged {
                 pull: Box::new(merged_43(&[12])),
-                tracking_issues: vec![],
+                spec_change_issues: vec![],
             },
             &only_12[..],
         ),
@@ -2352,7 +2256,7 @@ fn linewrights_pull_request_is_explained_for_the_first_issue_it_closes_whatever_
 }
 
 #[test_log::test]
-fn a_spec_change_cut_into_tickets_names_the_issue_it_closes_and_its_tracking_issue() {
+fn a_spec_change_names_the_issue_it_closes_and_its_own_issue() {
     let designed = MergedPull {
         labels: vec!["linewright:designed".into()],
         files: vec!["docs/specs/invoices.md".into()],
@@ -2360,15 +2264,12 @@ fn a_spec_change_cut_into_tickets_names_the_issue_it_closes_and_its_tracking_iss
     };
     let read = AnyItem::Merged {
         pull: Box::new(designed),
-        tracking_issues: vec![Number(40)],
+        spec_change_issues: vec![Number(40)],
     };
 
     assert_eq!(
         read_family(&view(vec![], vec![]), &implemented_42(), &read),
-        [
-            "parent: #12, an issue it closes",
-            "child: #40, its tracking issue",
-        ]
+        ["parent: #12, an issue it closes", "child: #40, its issue",]
     );
     let answer = explain_read(&view(vec![], vec![]), &implemented_42(), &read, at(NOW));
     let json = serde_json::to_value(&answer).unwrap();
@@ -2378,7 +2279,7 @@ fn a_spec_change_cut_into_tickets_names_the_issue_it_closes_and_its_tracking_iss
     );
     assert_eq!(
         json["children"],
-        serde_json::json!([{"number": 40, "role": "tracking-issue"}])
+        serde_json::json!([{"number": 40, "role": "spec-change-issue"}])
     );
 }
 
@@ -2409,7 +2310,7 @@ fn a_pull_request_names_each_issue_it_closes_as_a_parent() {
         AnyItem::Pull(Box::new(closing_40_and_41(closed))),
         AnyItem::Merged {
             pull: Box::new(merged),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
     ] {
         assert_eq!(
@@ -2512,14 +2413,14 @@ fn a_stalled_spec_change_left_alone_says_so_on_its_state_line_and_in_its_json() 
     let stalled = MergedPull {
         labels: vec!["linewright".into(), label::STALLED.into()],
         merged_at: at("2026-09-01T09:00:00Z"),
-        ..unassigned_at("30")
+        ..merged(&[])
     };
     let answer = explain_read(
         &view(vec![], vec![]),
         &[],
         &AnyItem::Merged {
             pull: Box::new(stalled),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
         at(NOW),
     );

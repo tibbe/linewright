@@ -76,8 +76,8 @@ pub enum DesignResult<C> {
     },
 }
 
-/// The tickets an item's work is cut into, as a spec change's always is
-/// (docs/specs/design.md, "Cutting").
+/// The tickets an issue's work is cut into (docs/specs/design.md,
+/// "Cutting").
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Cut {
     pub tickets: Tickets,
@@ -465,10 +465,6 @@ impl Contract for TriageResult {
     const SCHEMA: ResultSchema = ResultSchema::Triage;
 }
 
-impl Contract for DesignResult<Cut> {
-    const SCHEMA: ResultSchema = ResultSchema::DesignSpecChange;
-}
-
 impl Contract for DesignResult<IssueWork> {
     const SCHEMA: ResultSchema = ResultSchema::DesignIssue;
 }
@@ -489,7 +485,6 @@ impl Contract for AutomationResult {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultSchema {
     Triage,
-    DesignSpecChange,
     DesignIssue,
     Implement,
     PullRequest,
@@ -497,9 +492,8 @@ pub enum ResultSchema {
 }
 
 impl ResultSchema {
-    const ALL: [ResultSchema; 6] = [
+    const ALL: [ResultSchema; 5] = [
         ResultSchema::Triage,
-        ResultSchema::DesignSpecChange,
         ResultSchema::DesignIssue,
         ResultSchema::Implement,
         ResultSchema::PullRequest,
@@ -513,10 +507,6 @@ impl ResultSchema {
             ResultSchema::Triage => (
                 "triage.schema.json",
                 include_str!("../docs/specs/results/triage.schema.json"),
-            ),
-            ResultSchema::DesignSpecChange => (
-                "design-spec-change.schema.json",
-                include_str!("../docs/specs/results/design-spec-change.schema.json"),
             ),
             ResultSchema::DesignIssue => (
                 "design-issue.schema.json",
@@ -929,25 +919,6 @@ mod tests {
     }
 
     #[test_log::test]
-    fn a_spec_change_designed_with_no_comment_is_sent_back() {
-        let error = rejected::<DesignResult<Cut>>(
-            &json!({"outcome": "designed", "design": "D.", "tickets": [ticket("a", &[])]}),
-        );
-        assert!(error.contains("`/comment` is missing"), "{error}");
-    }
-
-    #[test_log::test]
-    fn a_spec_change_designed_with_no_tickets_is_sent_back() {
-        let error = rejected::<DesignResult<Cut>>(
-            &json!({"outcome": "designed", "design": "Nothing new.", "tickets": [], "comment": "None."}),
-        );
-        assert!(
-            error.contains("`/tickets`: [] has less than 1 item"),
-            "{error}"
-        );
-    }
-
-    #[test_log::test]
     fn an_issue_designed_with_no_tickets_and_no_comment_is_built_as_it_is() {
         let result: DesignResult<IssueWork> =
             parse(&json!({"outcome": "designed", "design": "D."}).to_string()).unwrap();
@@ -971,7 +942,7 @@ mod tests {
         assert!(error.contains("`/comment` is missing"), "{error}");
     }
 
-    fn cut(tickets: &[Value]) -> Result<DesignResult<Cut>, String> {
+    fn cut(tickets: &[Value]) -> Result<DesignResult<IssueWork>, String> {
         parse(
             &json!({"outcome": "designed", "design": "D.", "tickets": tickets, "comment": "Cut."})
                 .to_string(),
