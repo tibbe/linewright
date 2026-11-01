@@ -162,7 +162,7 @@ hand, with the tools it installed (`QUINT_HOME` at `quint-home` there, its Java
 writes its output where it runs:
 
 ```sh
-model="$PWD/docs/specs/model"
+model="$PWD/docs/model"
 cd "$(mktemp -d)"
 quint test "$model/cut.qnt"
 quint verify --backend=tlc --invariant=S7_peoplesItemsAreTheirs "$model/cut.qnt"
