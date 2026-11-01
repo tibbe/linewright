@@ -23,6 +23,17 @@ compose_version=5.6.0
 nextest_version=0.9.148
 tailwind_version=4.3.3
 
+# The model of the spec (docs/specs/model) is checked with Quint
+# (https://quint-lang.org), which npm installs from the model's lockfile,
+# checking each package's integrity hash. Quint compiles a model to TLA+ with
+# Apalache (https://github.com/apalache-mc/apalache) and checks it with the
+# TLC in Apalache's release, which needs Java 21, here Temurin's
+# (https://adoptium.net), and runs a model's scenarios on its Rust evaluator
+# (https://github.com/quint-co/quint). The versions are Quint's own pins.
+apalache_version=0.62.4
+quint_evaluator_version=v0.7.1
+temurin_version=21.0.13+9
+
 has_sha256() {
   local actual
   actual="$({ sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1)"
@@ -58,6 +69,25 @@ install_tool() {
 no_release() {
   echo "$1 has no release for $(uname -sm)"
   return 1
+}
+
+# Installs the directory `member` of the tar.gz at `url`, if it has sha256
+# `sha`, as `dir/member`.
+install_tree() {
+  local dir=$1 member=$2 url=$3 sha=$4 tmp
+  tmp="$(mktemp -d)"
+  # Moved into place whole, so a check running at the same time never sees
+  # half of it.
+  if curl -fsSL -o "$tmp/download" "$url" &&
+    has_sha256 "$tmp/download" "$sha" &&
+    mkdir "$tmp/tree" && tar -xzf "$tmp/download" -C "$tmp/tree" &&
+    mkdir -p "$dir" &&
+    { [ -e "$dir/$member" ] || mv "$tmp/tree/$member" "$dir/$member"; }; then
+    rm -rf "$tmp"
+  else
+    rm -rf "$tmp"
+    return 1
+  fi
 }
 
 rumdl() {
@@ -127,6 +157,73 @@ tailwind() {
       "$sha" || return 1
   fi
   "$dir/tailwindcss" "$@"
+}
+
+# The bin directory of a Java 21 runtime.
+java21() {
+  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/linewright/temurin-jre-$temurin_version" target sha
+  local tree="jdk-$temurin_version-jre" home
+  case "$(uname -s)" in
+  Darwin) home="$dir/$tree/Contents/Home" ;;
+  *) home="$dir/$tree" ;;
+  esac
+  if [ ! -x "$home/bin/java" ]; then
+    case "$(uname -sm)" in
+    "Darwin arm64") target=aarch64_mac sha=225bab0a09491ef06835488cd942f5d2befa9a0410a2484f0c8bbcf7506ec09a ;;
+    "Darwin x86_64") target=x64_mac sha=c909674b1c10c261b9a3fb7e9c0efebd303e33f88a4fe84be7135b5e2d711f89 ;;
+    "Linux aarch64" | "Linux arm64") target=aarch64_linux sha=b1734db7ade49c3f6acc6ae06233b8c2dd90e3e2f00f67000ae1c972aaa64d8c ;;
+    "Linux x86_64") target=x64_linux sha=a535a1df9c6284d9618872984e026ae0352d1f7e9e0605425c0e6114f47351dd ;;
+    *) no_release "Temurin $temurin_version" || return 1 ;;
+    esac
+    install_tree "$dir" "$tree" \
+      "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-${temurin_version/+/%2B}/OpenJDK21U-jre_${target}_hotspot_${temurin_version/+/_}.tar.gz" \
+      "$sha" >&2 || return 1
+  fi
+  echo "$home/bin"
+}
+
+# Quint, from the model's lockfile, with Apalache and the Rust evaluator where
+# Quint looks for them (QUINT_HOME), so that it fetches nothing itself.
+quint() {
+  local lock=docs/specs/model/package-lock.json cache="${XDG_CACHE_HOME:-$HOME/.cache}/linewright"
+  local dir home="$cache/quint-home" target sha bin tmp status
+  dir="$cache/quint-$({ sha256sum "$lock" 2>/dev/null || shasum -a 256 "$lock"; } | cut -c1-16)"
+  if [ ! -x "$dir/node_modules/.bin/quint" ]; then
+    tmp="$(mktemp -d)"
+    cp docs/specs/model/package.json "$lock" "$tmp/"
+    if (cd "$tmp" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error) &&
+      mkdir -p "$cache" && { [ -e "$dir" ] || mv "$tmp" "$dir"; }; then
+      rm -rf "$tmp"
+    else
+      rm -rf "$tmp"
+      return 1
+    fi
+  fi
+  if [ ! -e "$home/apalache-dist-$apalache_version/apalache/lib/apalache.jar" ]; then
+    install_tree "$home/apalache-dist-$apalache_version" apalache \
+      "https://github.com/apalache-mc/apalache/releases/download/v$apalache_version/apalache.tgz" \
+      8ac8488422c30d552735bae11b92a2d014d8e02e8608702acc08f9a2d8a9abb2 || return 1
+  fi
+  if [ ! -x "$home/rust-evaluator-$quint_evaluator_version/quint_evaluator" ]; then
+    case "$(uname -sm)" in
+    "Darwin arm64") target=aarch64-apple-darwin sha=62a7b5226bbc73c738cce94a265b1f87d062e3d1b30a16f7210132f00d8b95b2 ;;
+    "Darwin x86_64") target=x86_64-apple-darwin sha=b4c2a706cad360151d08b5ce1577e23859a47b4e16ad11e53dbe8de7e5c450ca ;;
+    "Linux aarch64" | "Linux arm64") target=aarch64-unknown-linux-gnu sha=706819d56eb2153a12b7d3c07b5060917cf5f4431bf5069f998f9ff1e97c4388 ;;
+    "Linux x86_64") target=x86_64-unknown-linux-gnu sha=ce0502bdef65dc26c242a9e56379a9bb26de6f3db38f0e3989339d46a542f5eb ;;
+    *) no_release "Quint's evaluator $quint_evaluator_version" || return 1 ;;
+    esac
+    install_tool "$home/rust-evaluator-$quint_evaluator_version" quint_evaluator \
+      "https://github.com/quint-co/quint/releases/download/evaluator/$quint_evaluator_version/quint_evaluator-$target.tar.gz" \
+      "$sha" quint_evaluator || return 1
+  fi
+  bin="$(java21)" || return 1
+  # Apalache writes its output under the directory it runs in, so Quint runs
+  # in a scratch one, and is given absolute paths.
+  tmp="$(mktemp -d)"
+  (cd "$tmp" && QUINT_HOME="$home" PATH="$bin:$PATH" "$dir/node_modules/.bin/quint" "$@")
+  status=$?
+  rm -rf "$tmp"
+  return "$status"
 }
 
 check_fmt() {
@@ -218,11 +315,29 @@ check_test() {
 }
 check_doc() { cargo doc --no-deps --locked --quiet; }
 
+# The model of the spec, as docs/specs/model/README.md says: each model's
+# scenarios, then TLC over its invariants, S6's flaps from the start that
+# keeps their ghost, and its temporal properties.
+check_model() {
+  local model file status=0
+  for model in pipeline cut spec_change; do
+    file="$PWD/docs/specs/model/$model.qnt"
+    quint test --max-samples 100 "$file" || status=1
+    quint verify --backend=tlc --invariant=invariants "$file" || status=1
+    quint verify --backend=tlc --init=initFlaps --invariant=S6_noFlap "$file" || status=1
+    quint verify --backend=tlc --temporal=S5_crashSafety,S6_progress "$file" || status=1
+  done
+  return "$status"
+}
+
 stages=("fmt markdown compose css" "clippy" "test doc")
+# Run only when named, not by CI: the model takes about two hours.
+named_only="model"
 
 usage() {
   echo "usage: scripts/check [NAME...]"
-  echo "Runs every check CI runs, or only the named ones: ${stages[*]}."
+  echo "Runs every check CI runs, or only the named ones: ${stages[*]} $named_only."
+  echo "Without names it leaves out: $named_only."
   echo "Outside CI it first fixes what it can: formatting, Markdown and clippy's"
   echo "machine-applicable suggestions, and it rebuilds the web UI's stylesheet."
 }
