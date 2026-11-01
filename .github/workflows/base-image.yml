@@ -7,7 +7,7 @@ jobs:
   build:
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
