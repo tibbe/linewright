@@ -3592,6 +3592,17 @@ impl Store for GitHub {
         .await
     }
 
+    /// <https://docs.github.com/en/rest/issues/sub-issues#remove-sub-issue>
+    async fn remove_sub_issue(&self, parent: Number, child: Number) -> Result<()> {
+        let id = self.issue_id(child).await?;
+        self.rest_ok(
+            Method::DELETE,
+            &self.repo_path(&format!("/issues/{}/sub_issue", parent.0)),
+            Some(json!({"sub_issue_id": id})),
+        )
+        .await
+    }
+
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()> {
         let id = self.issue_id(blocker).await?;
         self.rest_ok(

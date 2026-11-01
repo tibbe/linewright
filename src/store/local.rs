@@ -2288,6 +2288,19 @@ impl Store for LocalStore {
         state.add_sub_issue(parent, child, linewright, now)
     }
 
+    async fn remove_sub_issue(&self, parent: Number, child: Number) -> Result<()> {
+        let now = self.now();
+        let mut state = self.state();
+        let record = state.issue_written(parent, now)?;
+        let before = record.sub_issues.len();
+        record.sub_issues.retain(|added| added.number != child);
+        if record.sub_issues.len() == before {
+            bail!("#{child} is not a sub-issue of #{parent}");
+        }
+        state.issue_written(child, now)?;
+        Ok(())
+    }
+
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()> {
         let now = self.now();
         let mut state = self.state();

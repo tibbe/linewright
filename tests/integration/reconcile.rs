@@ -899,9 +899,8 @@ fn a_cut_stopped_part_way_is_discarded_also_when_linewright_was_unassigned_from_
                 pr: Number(5),
                 tracking: Number(9),
             },
-            peoples_pulls: vec![],
-            tickets: vec![Number(10)],
             pulls: vec![],
+            tickets: linked(&[(10, true)]),
         })]
     );
 }
@@ -997,9 +996,8 @@ fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
                 pr: Number(5),
                 tracking: Number(9),
             },
-            peoples_pulls: vec![],
-            tickets: vec![Number(10)],
             pulls: vec![],
+            tickets: linked(&[(10, true)]),
         })]
     );
     assert_eq!(
@@ -1039,9 +1037,8 @@ fn a_spec_change_cut_stopped_before_its_tickets_are_readied_is_discarded_with_th
                 pr: Number(5),
                 tracking: Number(9),
             },
-            peoples_pulls: vec![],
-            tickets: vec![Number(10), Number(11)],
             pulls: vec![],
+            tickets: linked(&[(10, true), (11, true)]),
         })]
     );
 }
@@ -1060,9 +1057,8 @@ fn an_issue_cut_stopped_before_its_tickets_are_readied_is_discarded_with_them() 
         decide(&world),
         vec![Action::DiscardCut(Discard {
             item: CutItem::Issue(Number(9)),
-            peoples_pulls: vec![],
-            tickets: vec![Number(10), Number(11)],
             pulls: vec![],
+            tickets: linked(&[(10, true), (11, true)]),
         })]
     );
 }
@@ -3207,7 +3203,7 @@ fn an_issue_being_cut_waits_for_its_design_and_neither_closes_nor_discards() {
 }
 
 #[test]
-fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_designs_it_once_they_close()
+fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_tickets_and_designs_it_once_they_are_removed()
  {
     let mut stopped = claimed(readied(9));
     stopped.sub_issues = vec![
@@ -3216,7 +3212,7 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_desi
         sub_issue(12, true, "maintainer"),
     ];
     let mut discarded = stopped.clone();
-    discarded.sub_issues[0].state = SubIssueState::Closed { at: None };
+    discarded.sub_issues = vec![sub_issue(12, true, "maintainer")];
 
     let decided = decisions(
         &snapshot(vec![stopped]),
@@ -3232,9 +3228,8 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_open_tickets_and_desi
         decided.actions,
         [Action::DiscardCut(Discard {
             item: CutItem::Issue(Number(9)),
-            peoples_pulls: vec![],
-            tickets: vec![Number(10)],
             pulls: vec![],
+            tickets: linked(&[(10, true), (11, false)]),
         })]
     );
     assert_eq!(decided.waits.get(&Number(9)), None);
@@ -3254,9 +3249,8 @@ fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_added_as_
         decide(&snapshot(vec![undesigned])),
         vec![Action::DiscardCut(Discard {
             item: CutItem::Issue(Number(9)),
-            peoples_pulls: vec![],
-            tickets: vec![Number(10)],
             pulls: vec![],
+            tickets: linked(&[(10, true)]),
         })]
     );
 }
@@ -3281,9 +3275,8 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_discarded() {
         decide(&snapshot(vec![undesigned])),
         vec![Action::DiscardCut(Discard {
             item: CutItem::Issue(Number(9)),
-            peoples_pulls: vec![],
-            tickets: vec![Number(10)],
             pulls: vec![],
+            tickets: linked(&[(10, true)]),
         })]
     );
 }
@@ -3304,15 +3297,14 @@ fn a_discarded_spec_change_closes_linewrights_tickets_and_their_pull_requests_an
                 pr: Number(5),
                 tracking: Number(9),
             },
-            peoples_pulls: vec![],
-            tickets: vec![Number(10)],
             pulls: vec![Number(20), Number(21)],
+            tickets: linked(&[(10, true), (11, false)]),
         })]
     );
 }
 
 #[test]
-fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_and_their_pull_requests_discarded_and_nothing_else_done_to_them()
+fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_and_linewrights_pull_requests_discarded_and_nothing_else_done_to_them()
  {
     let mut undesigned = cut_issue(9, &[(10, true), (11, true)]);
     undesigned.labels.clear();
@@ -3329,33 +3321,48 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_and_their_pull_req
         at(&world, 10),
         vec![Action::DiscardCut(Discard {
             item: CutItem::Issue(Number(9)),
-            peoples_pulls: vec![Number(22)],
-            tickets: vec![Number(10), Number(11)],
             pulls: vec![Number(21)],
+            tickets: linked(&[(10, true), (11, true)]),
         })]
     );
 }
 
 #[test]
-fn a_discard_stopped_after_closing_its_tickets_closes_their_pull_requests_before_the_issue_is_designed_again()
+fn a_discard_stopped_after_closing_its_pull_requests_closes_its_tickets_and_neither_hands_them_back()
  {
     let mut stopped = claimed(readied(9));
-    stopped.sub_issues = linewrights(&[(10, false)]);
-    let mut world = snapshot(vec![stopped]);
-    world.pulls = vec![ready(pull(20, 10))];
+    stopped.sub_issues = linewrights(&[(10, true)]);
+    let mut world = snapshot(vec![stopped, claimed(ticket(10))]);
+    let mut closed = ready(pull(20, 10));
+    closed.state = PullState::Closed { at: t(10) };
+    world.pulls = vec![closed];
 
     assert_eq!(
-        auto_merging(&world, 10),
+        decide(&world),
         vec![Action::DiscardCut(Discard {
             item: CutItem::Issue(Number(9)),
-            peoples_pulls: vec![],
-            tickets: vec![],
-            pulls: vec![Number(20)],
+            pulls: vec![],
+            tickets: linked(&[(10, true)]),
+        })]
+    );
+}
+
+#[test]
+fn a_discard_stopped_after_closing_its_tickets_removes_them_before_the_issue_is_designed_again() {
+    let mut stopped = claimed(readied(9));
+    stopped.sub_issues = linewrights(&[(10, false), (11, false)]);
+
+    assert_eq!(
+        decide(&snapshot(vec![stopped.clone()])),
+        vec![Action::DiscardCut(Discard {
+            item: CutItem::Issue(Number(9)),
+            pulls: vec![],
+            tickets: linked(&[(10, false), (11, false)]),
         })]
     );
 
-    world.pulls[0].state = PullState::Closed { at: t(10) };
-    assert_eq!(decide(&world), vec![design(9)]);
+    stopped.sub_issues.clear();
+    assert_eq!(decide(&snapshot(vec![stopped])), vec![design(9)]);
 }
 
 #[test]
@@ -4773,9 +4780,8 @@ fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_no
                 pr: Number(5),
                 tracking: Number(10),
             },
-            peoples_pulls: vec![],
-            tickets: vec![Number(11)],
             pulls: vec![],
+            tickets: linked(&[(11, true)]),
         })]
     );
     assert_eq!(decided.waits.get(&Number(10)), None);
@@ -5138,9 +5144,8 @@ fn discarding_a_cut_touches_its_tickets_its_tracking_issue_and_its_pull_requests
             pr: Number(10),
             tracking: Number(11),
         },
-        peoples_pulls: vec![Number(30)],
-        tickets: vec![Number(12), Number(13)],
         pulls: vec![Number(31)],
+        tickets: linked(&[(12, true), (13, true), (14, false)]),
     });
 
     assert_eq!(
@@ -5148,8 +5153,8 @@ fn discarding_a_cut_touches_its_tickets_its_tracking_issue_and_its_pull_requests
         vec![
             Item::Issue(Number(12)),
             Item::Issue(Number(13)),
+            Item::Issue(Number(14)),
             Item::Issue(Number(11)),
-            Item::Pull(Number(30)),
             Item::Pull(Number(31)),
         ]
     );
@@ -5198,68 +5203,88 @@ fn numbers(numbers: &[u64]) -> Vec<Number> {
     numbers.iter().copied().map(Number).collect()
 }
 
+fn linked(tickets: &[(u64, bool)]) -> Vec<Linked> {
+    tickets
+        .iter()
+        .map(|&(number, open)| Linked {
+            number: Number(number),
+            open,
+        })
+        .collect()
+}
+
+fn note(issue: u64, note: &str) -> ParentNote {
+    ParentNote {
+        issue: Number(issue),
+        note: note.into(),
+    }
+}
+
 #[rstest::rstest]
-#[case::of_a_spec_change_the_tracking_issue_says_its_tickets_are_discarded(
+#[case::of_a_spec_change_it_closes_the_tracking_issue_saying_its_tickets_are_discarded(
     CutItem::SpecChange { pr: Number(5), tracking: Number(9) },
-    &[],
-    &[10, 11],
+    &[(10, true), (11, true)],
     &[20],
-    ParentNote::Tracking {
-        tracking: Number(9),
-        note: "#5 is being designed again, so this tracking issue and its tickets are discarded."
-            .into()
-    }
+    None,
+    Some(note(9, "#5 is being designed again, so this tracking issue and its tickets are discarded."))
 )]
-#[case::of_an_issue_with_one_ticket_it_names_it(
+#[case::of_an_issue_with_one_ticket_open_it_names_it(
     CutItem::Issue(Number(4)),
+    &[(10, true), (11, false)],
     &[],
-    &[10],
-    &[],
-    ParentNote::Issue {
-        issue: Number(4),
-        note: "This issue is being designed again, so the ticket #10 of its earlier cut is discarded."
-            .into()
-    }
+    Some(note(
+        4,
+        "This issue is being designed again, so the ticket #10 of its earlier cut is discarded."
+    )),
+    None
 )]
-#[case::of_an_issue_with_only_a_pull_request_it_names_it(
+#[case::of_an_issue_with_only_a_pull_request_open_it_names_it(
     CutItem::Issue(Number(4)),
-    &[],
-    &[],
+    &[(10, false)],
     &[20],
-    ParentNote::Issue {
-        issue: Number(4),
-        note: "This issue is being designed again, so the pull request #20 of its earlier cut is \
+    Some(note(
+        4,
+        "This issue is being designed again, so the pull request #20 of its earlier cut is \
          discarded."
-            .into()
-    }
+    )),
+    None
 )]
 #[case::of_an_issue_it_lists_the_tickets_then_every_pull_request_in_order(
     CutItem::Issue(Number(4)),
-    &[31],
-    &[10, 11, 12],
+    &[(10, true), (11, true), (12, true)],
     &[22, 20],
-    ParentNote::Issue {
-        issue: Number(4),
-        note: "This issue is being designed again, so the tickets #10, #11 and #12 and pull \
-         requests #20, #22 and #31 of its earlier cut are discarded."
-            .into()
-    }
+    Some(note(
+        4,
+        "This issue is being designed again, so the tickets #10, #11 and #12 and pull \
+         requests #20 and #22 of its earlier cut are discarded."
+    )),
+    None
 )]
-fn a_discarded_cut_says_on_its_parent_what_it_discarded(
+#[case::of_an_issue_with_nothing_left_to_close_it_says_nothing(
+    CutItem::Issue(Number(4)),
+    &[(10, false)],
+    &[],
+    None,
+    None
+)]
+fn a_discarded_cut_says_on_its_parent_what_it_closes(
     #[case] item: CutItem,
-    #[case] peoples_pulls: &[u64],
-    #[case] tickets: &[u64],
+    #[case] tickets: &[(u64, bool)],
     #[case] pulls: &[u64],
-    #[case] on_parent: ParentNote,
+    #[case] on_issue: Option<ParentNote>,
+    #[case] closing_tracking: Option<ParentNote>,
 ) {
     let discard = Discard {
         item,
-        peoples_pulls: numbers(peoples_pulls),
-        tickets: numbers(tickets),
         pulls: numbers(pulls),
+        tickets: linked(tickets),
     };
 
-    assert_eq!(discard.notes().on_parent, on_parent);
+    let notes = discard.notes();
+    assert_eq!(
+        (notes.on_issue, notes.closing_tracking),
+        (on_issue, closing_tracking)
+    );
 }
 
 #[rstest::rstest]
@@ -5282,9 +5307,8 @@ fn a_discarded_cut_says_on_each_pull_request_and_ticket_it_closes_what_is_design
 ) {
     let discard = Discard {
         item,
-        peoples_pulls: vec![Number(31)],
-        tickets: vec![Number(10)],
         pulls: vec![Number(20)],
+        tickets: linked(&[(10, true)]),
     };
 
     let notes = discard.notes();

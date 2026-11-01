@@ -498,10 +498,10 @@ impl Action {
             Action::DiscardCut(discard) => discard
                 .tickets
                 .iter()
-                .copied()
+                .map(|ticket| ticket.number)
                 .chain([discard.item.parent()])
                 .map(Item::Issue)
-                .chain(discard.all_pulls().map(Item::Pull))
+                .chain(discard.pulls.iter().copied().map(Item::Pull))
                 .collect(),
             Action::Merge { pr, .. } => snapshot
                 .pull(*pr)
@@ -523,53 +523,58 @@ impl Action {
     }
 }
 
-/// Close `peoples_pulls`, then `tickets`, of a cut of `item` without the
-/// designed label, as not planned, then `pulls`, leaving the item to be
-/// designed again (docs/specs/design.md, "Discarding a cut").
+/// Close `pulls`, then the open `tickets` as not planned, then remove
+/// `tickets` from the sub-issues of the issue they were cut from, leaving
+/// `item` to be designed again (docs/specs/design.md, "Discarding a cut"). A
+/// person's pull request closing a ticket, and a sub-issue a person added,
+/// are left as they are.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Discard {
     pub item: CutItem,
-    /// The open pull requests of people closing an open ticket of the cut.
-    /// The snapshot holds them only through the ticket, so they are closed
-    /// while it is open, to be found again should the discard stop.
-    pub peoples_pulls: Vec<Number>,
-    /// The open tickets Linewright cut.
-    pub tickets: Vec<Number>,
-    /// Linewright's open pull requests closing a ticket of the cut, open or
-    /// closed, so that a discard stopped after closing its tickets closes
-    /// them on the next poll.
+    /// Linewright's open pull requests that close a ticket of the cut, the
+    /// ticket open or closed.
     pub pulls: Vec<Number>,
+    /// The tickets of the cut still among the sub-issues, open or closed:
+    /// removed last, so that a discard stopped part way is found again.
+    pub tickets: Vec<Linked>,
 }
 
 impl Discard {
-    /// Every pull request it closes.
-    pub fn all_pulls(&self) -> impl Iterator<Item = Number> + '_ {
-        self.peoples_pulls.iter().chain(&self.pulls).copied()
+    /// The tickets it closes.
+    pub fn open_tickets(&self) -> Vec<Number> {
+        open_numbers(self.tickets.iter().copied())
     }
 
-    /// What it posts on each item it closes, and on the item designed again
-    /// when that is an issue.
+    /// What it posts on each item it closes, and on the issue its tickets are
+    /// under.
     pub fn notes(&self) -> DiscardNotes {
         let designed = self.item.designed();
         let discarded =
             |what: &str| format!("{designed} is being designed again, so this {what} discarded.");
+        let (on_issue, closing_tracking) = match self.item {
+            CutItem::SpecChange { tracking, .. } => (
+                None,
+                Some(ParentNote {
+                    issue: tracking,
+                    note: discarded("tracking issue and its tickets are"),
+                }),
+            ),
+            CutItem::Issue(issue) => {
+                let tickets = self.open_tickets();
+                let mut pulls = self.pulls.clone();
+                pulls.sort_unstable();
+                let note = (!tickets.is_empty() || !pulls.is_empty()).then(|| ParentNote {
+                    issue,
+                    note: discarded_from_issue(&tickets, &pulls),
+                });
+                (note, None)
+            }
+        };
         DiscardNotes {
             on_pull: discarded("pull request for a ticket of its earlier cut is"),
             on_ticket: discarded("ticket from its earlier cut is"),
-            on_parent: match self.item {
-                CutItem::SpecChange { tracking, .. } => ParentNote::Tracking {
-                    tracking,
-                    note: discarded("tracking issue and its tickets are"),
-                },
-                CutItem::Issue(issue) => {
-                    let mut pulls: Vec<Number> = self.all_pulls().collect();
-                    pulls.sort_unstable();
-                    ParentNote::Issue {
-                        issue,
-                        note: discarded_from_issue(&self.tickets, &pulls),
-                    }
-                }
-            },
+            on_issue,
+            closing_tracking,
         }
     }
 }
@@ -581,16 +586,18 @@ pub struct DiscardNotes {
     pub on_pull: String,
     /// On each ticket it closes.
     pub on_ticket: String,
-    pub on_parent: ParentNote,
+    /// On the issue designed again, which stays open, before its tickets
+    /// leave its sub-issues: where the discard closes anything.
+    pub on_issue: Option<ParentNote>,
+    /// On a spec change's tracking issue, closed once its tickets left it.
+    pub closing_tracking: Option<ParentNote>,
 }
 
-/// What a discarded cut posts on the issue its tickets are under.
+/// What a discarded cut posts on `issue`, the issue its tickets are under.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ParentNote {
-    /// On a spec change's `tracking` issue, which it closes.
-    Tracking { tracking: Number, note: String },
-    /// On the `issue` designed again, which stays open.
-    Issue { issue: Number, note: String },
+pub struct ParentNote {
+    pub issue: Number,
+    pub note: String,
 }
 
 /// What an issue says of the `tickets` and `pulls` of its earlier cut that
@@ -825,8 +832,8 @@ pub fn decisions(
             CutItem::Issue(_) => None,
         })
         .collect();
-    let discarded_tickets: Vec<Number> = discards.iter().flat_map(|d| d.tickets.clone()).collect();
-    let discarded_pulls: Vec<Number> = discards.iter().flat_map(Discard::all_pulls).collect();
+    let discarded_tickets: Vec<Number> = discards.iter().flat_map(Discard::open_tickets).collect();
+    let discarded_pulls: Vec<Number> = discards.iter().flat_map(|d| d.pulls.clone()).collect();
     // An issue's own cut is discarded by its row of the Working an item
     // table, below.
     for discard in discards
@@ -1723,35 +1730,27 @@ fn discards(
                 && !i.spec_change().is_some_and(spec_changes_cut)
         })
         .map(|i| cut_to_discard(snapshot, CutItem::Issue(i.number), i, policy))
-        .filter(|d| !d.tickets.is_empty() || d.all_pulls().next().is_some());
+        .filter(|d| !d.tickets.is_empty());
     spec_changes.chain(issues).collect()
 }
 
 /// The discard of `item`'s cut, whose tickets are under `parent`.
 fn cut_to_discard(snapshot: &Snapshot, item: CutItem, parent: &Issue, policy: &Policy) -> Discard {
-    let cut: Vec<Linked> = parent
+    let tickets: Vec<Linked> = parent
         .tickets_cut(&policy.linewright)
         .map(SubIssue::linked)
         .collect();
-    let tickets = open_numbers(cut.iter().copied());
     let pulls = snapshot
         .pulls
         .iter()
-        .filter(|p| p.is_open() && cut.iter().any(|t| p.closes.contains(&t.number)))
-        .map(|p| p.number)
-        .collect();
-    let peoples_pulls: BTreeSet<Number> = tickets
-        .iter()
-        .filter_map(|&t| snapshot.issue(t))
-        .flat_map(|t| &t.closed_by)
-        .filter(|p| p.is_open() && p.author != policy.linewright)
+        .filter(|p| p.is_open() && p.author == policy.linewright)
+        .filter(|p| tickets.iter().any(|t| p.closes.contains(&t.number)))
         .map(|p| p.number)
         .collect();
     Discard {
         item,
-        peoples_pulls: peoples_pulls.into_iter().collect(),
-        tickets,
         pulls,
+        tickets,
     }
 }
 
