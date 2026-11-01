@@ -54,8 +54,8 @@ module pull_request {
     held: bool,
     // whether GitHub allows the merge: "allows", "blocks" or "unknown"
     github: str,
-    // this round: Linewright has commented on it; fix-ci runs ended; merges
-    // failed
+    // this round: Linewright has commented on it naming what GitHub requires;
+    // fix-ci runs ended; merges failed
     commented: bool,
     fixes: int,
     mergeFails: int,
@@ -96,7 +96,8 @@ module pull_request {
     // GitHub's reason"
     (x.mergeFails >= MERGE_TRIES, "hand back"),
     // ready for review | "GitHub blocks the merge, and Linewright has not
-    // commented on it this round" | "comments naming what GitHub requires"
+    // commented on it this round naming what GitHub requires" | "comments
+    // naming what GitHub requires"
     (x.github == "blocks" and not(x.commented), "comment on block"),
     // "GitHub blocks the merge, or has not reported whether it allows it" |
     // "waits for what GitHub requires"
