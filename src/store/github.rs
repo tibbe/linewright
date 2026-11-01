@@ -1595,7 +1595,7 @@ fn tracking_issues_among(
             ReferenceSource::Issue(issue) => Some(issue.number_and_filed(linewright)),
             ReferenceSource::PullRequest => None,
         })
-        .filter(|(_, filed)| *filed == Some(Filed::Tracking { spec_change }))
+        .filter(|(_, filed)| filed.and_then(Filed::spec_change) == Some(spec_change))
         .map(|(number, _)| number)
         .collect()
 }

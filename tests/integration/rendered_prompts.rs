@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use crate::common;
 use linewright::domain::*;
 use linewright::git::{BranchStart, Conflict, UnfinishedCommits};
-use linewright::prompts::{self, PullTask, Repo, Ticket};
+use linewright::prompts::{self, PullTask, Repo, SpecChangeAndDiff, Ticket};
 use linewright::reconcile::Feedback;
 
 fn created() -> Timestamp {
@@ -145,6 +145,7 @@ fn design_of_an_issue_is_filled_as_before() {
         &common::placeholders_only().prompts,
         &repo(&name),
         &issue(7, "Count the widgets", "They are not counted."),
+        None,
         &[],
         std::path::Path::new(ATTACHMENTS),
     );
@@ -153,11 +154,60 @@ fn design_of_an_issue_is_filled_as_before() {
 }
 
 #[test]
+fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
+    let name = repo_name();
+    let spec_change = MergedPull {
+        number: Number(5),
+        title: "Spec the widget count".into(),
+        body: "Widgets are counted.".into(),
+        author: Login::new("maintainer"),
+        merged_at: created(),
+        updated_at: created(),
+        base_ref: "main".into(),
+        labels: vec![],
+        closes: vec![],
+        files: vec!["docs/specs/widgets.md".into()],
+        assignees: vec![],
+        events: vec![],
+    };
+    let its_issue = Issue {
+        author: Login::new("factory"),
+        labels: vec!["ready-for-agent".into()],
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(5),
+        }),
+        ..issue(
+            7,
+            "Spec change: Spec the widget count",
+            "Opened for the spec change in #5.",
+        )
+    };
+    let gap = issue(9, "Which widgets count?", "Say which.");
+    let prompt = prompts::design_issue(
+        &common::placeholders_only().prompts,
+        &repo(&name),
+        &its_issue,
+        Some(&SpecChangeAndDiff {
+            spec_change,
+            diff: "+Widgets are counted.\n".into(),
+        }),
+        &[&gap],
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_eq!(prompt, expected("design-spec-change-issue.txt"));
+}
+
+#[test]
 fn implement_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
     let parent = issue(4, "Widgets", "The design.");
-    let ticket = Ticket::new(&ticket_issue, Some(Cow::Borrowed(&parent)), vec![], None);
+    let ticket = common::ready(Ticket::read(
+        &ticket_issue,
+        Some(Cow::Borrowed(&parent)),
+        vec![],
+    ));
     let prompt = prompts::implement(
         &common::placeholders_only().prompts,
         &repo(&name),
@@ -176,7 +226,7 @@ fn implement_is_filled_as_before() {
 fn rework_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
-    let ticket = Ticket::new(&ticket_issue, None, vec![], None);
+    let ticket = common::ready(Ticket::read(&ticket_issue, None, vec![]));
     let pr = pull();
     let comment = Comment {
         author: Login::new("maintainer"),
@@ -211,7 +261,7 @@ fn rework_is_filled_as_before() {
 fn fix_ci_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
-    let ticket = Ticket::new(&ticket_issue, None, vec![], None);
+    let ticket = common::ready(Ticket::read(&ticket_issue, None, vec![]));
     let failures = [CheckFailure {
         name: "test".into(),
         summary: "1 test failed".into(),
@@ -237,7 +287,7 @@ fn fix_ci_is_filled_as_before() {
 fn update_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
-    let ticket = Ticket::new(&ticket_issue, None, vec![], None);
+    let ticket = common::ready(Ticket::read(&ticket_issue, None, vec![]));
     let conflict = Conflict {
         method: UpdateMethod::Merge,
         files: vec!["src/count.rs".into(), "Cargo.lock".into()],
@@ -274,20 +324,22 @@ fn automation_is_filled_as_before() {
 }
 
 #[test]
-fn implement_of_a_ticket_of_a_spec_changes_tracking_issue_is_filled_as_before() {
+fn implement_of_a_ticket_cut_from_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
     let tracking = Issue {
-        filed: Some(Filed::Tracking {
+        filed: Some(Filed::SpecChange {
             spec_change: Number(5),
         }),
-        ..issue(4, "Spec change: Count widgets", "The tickets.")
+        ..issue(
+            4,
+            "Spec change: Count widgets",
+            "Opened for the spec change in #5.",
+        )
     };
-    let ticket = Ticket::new(
-        &ticket_issue,
-        Some(Cow::Borrowed(&tracking)),
-        vec![],
-        Some("+Widgets are counted.\n".into()),
+    let ticket = common::with_spec_diff(
+        Ticket::read(&ticket_issue, Some(Cow::Borrowed(&tracking)), vec![]),
+        "+Widgets are counted.\n",
     );
     let prompt = prompts::implement(
         &common::placeholders_only().prompts,
@@ -302,6 +354,35 @@ fn implement_of_a_ticket_of_a_spec_changes_tracking_issue_is_filled_as_before() 
 }
 
 #[test]
+fn implement_of_a_spec_changes_issue_built_as_it_is_reads_the_spec_change_and_its_diff() {
+    let name = repo_name();
+    let its_issue = Issue {
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(5),
+        }),
+        ..issue(
+            7,
+            "Spec change: Count widgets",
+            "Opened for the spec change in #5.",
+        )
+    };
+    let ticket = common::with_spec_diff(
+        Ticket::read(&its_issue, None, vec![]),
+        "+Widgets are counted.\n",
+    );
+    let prompt = prompts::implement(
+        &common::placeholders_only().prompts,
+        &repo(&name),
+        &ticket,
+        "7-spec-change-count-widgets",
+        &BranchStart::New,
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_eq!(prompt, expected("implement-spec-change-issue.txt"));
+}
+
+#[test]
 fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
@@ -313,7 +394,11 @@ fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
         }],
         ..issue(4, "Widgets", "All of them.")
     };
-    let ticket = Ticket::new(&ticket_issue, Some(Cow::Borrowed(&parent)), vec![], None);
+    let ticket = common::ready(Ticket::read(
+        &ticket_issue,
+        Some(Cow::Borrowed(&parent)),
+        vec![],
+    ));
     let comment = Comment {
         author: Login::new("maintainer"),
         body: "Name it `count`.".into(),

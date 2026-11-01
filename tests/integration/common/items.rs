@@ -5,6 +5,7 @@ use chrono::TimeDelta;
 use linewright::automation::{AutomationFiles, LastScheduledRuns};
 use linewright::domain::*;
 use linewright::harness::UsageLimit;
+use linewright::prompts::{Ticket, TicketRead};
 use linewright::reconcile::{Drain, LiveRun, Memory, Policy, Subject, WorkKind};
 use linewright::runs::InFlight;
 use linewright::spec_glob::SpecGlob;
@@ -274,5 +275,26 @@ pub fn merged_pull(number: u64, author: &str, closes: &[u64]) -> MergedPull {
         files: vec!["src/lib.rs".into()],
         assignees: vec![],
         events: vec![],
+    }
+}
+
+/// The ticket `read` is, needing no spec diff.
+pub fn ready(read: TicketRead<'_>) -> Ticket<'_> {
+    match read {
+        TicketRead::Ready(ticket) => ticket,
+        TicketRead::WantsSpecDiff(wants) => {
+            panic!(
+                "the ticket wants spec change {}'s diff",
+                wants.spec_change()
+            )
+        }
+    }
+}
+
+/// The ticket `read` is, given the spec diff it wants.
+pub fn with_spec_diff<'a>(read: TicketRead<'a>, spec_diff: &str) -> Ticket<'a> {
+    match read {
+        TicketRead::Ready(_) => panic!("the ticket wants no spec diff"),
+        TicketRead::WantsSpecDiff(wants) => wants.with(spec_diff.into()),
     }
 }

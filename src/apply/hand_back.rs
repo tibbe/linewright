@@ -400,16 +400,33 @@ pub fn gave_up(
     }
 }
 
-/// The hand-back of an issue's design that found nothing to build, for
-/// `reason`.
-pub fn nothing_to_build(reason: &str) -> HandBack {
-    HandBack {
+/// What a design that found nothing to build in an issue does
+/// (docs/specs/repository.md, "Working an item").
+#[derive(Debug, PartialEq, Eq)]
+pub enum NothingToBuild {
+    /// It closes the issue as completed, after `comment`.
+    Close {
+        comment: String,
+    },
+    HandBack(HandBack),
+}
+
+/// What a design that found nothing to build, for `reason`, does in an
+/// issue `author` opened: an issue `linewright` opened asks only for what
+/// it builds, so it is done; any other is handed back.
+pub fn nothing_to_build(author: &Login, linewright: &Login, reason: &str) -> NothingToBuild {
+    if author == linewright {
+        return NothingToBuild::Close {
+            comment: reason.into(),
+        };
+    }
+    NothingToBuild::HandBack(HandBack {
         kind: HandBackKind::Decision,
         reason: format!(
             "There is nothing to build: the code already does what this issue asks.\n\n{reason}"
         ),
         log_tail: None,
-    }
+    })
 }
 
 /// The hand-back of a session that timed out, which `timeout_setting`

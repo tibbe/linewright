@@ -617,15 +617,28 @@ impl From<&Pull> for ClosingPull {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Filed {
-    Tracking { spec_change: Number },
-    SpecGap { ticket: Number },
+    /// A spec change's issue (`docs/specs/sources_of_work.md`, "Spec
+    /// changes").
+    SpecChange {
+        spec_change: Number,
+    },
+    /// The tracking issue Linewright filed for a spec change's tickets,
+    /// before a spec change had an issue of its own.
+    Tracking {
+        spec_change: Number,
+    },
+    SpecGap {
+        ticket: Number,
+    },
 }
 
 impl Filed {
-    /// The spec change it was filed as the tracking issue of.
+    /// The spec change it was filed for.
     pub fn spec_change(self) -> Option<Number> {
         match self {
-            Filed::Tracking { spec_change } => Some(spec_change),
+            Filed::SpecChange { spec_change } | Filed::Tracking { spec_change } => {
+                Some(spec_change)
+            }
             Filed::SpecGap { .. } => None,
         }
     }
@@ -634,10 +647,8 @@ impl Filed {
         if author != linewright {
             return None;
         }
-        if let Some(spec_change) = crate::tracking::spec_change_of(title, body) {
-            return Some(Filed::Tracking { spec_change });
-        }
-        crate::spec_gap::ticket_of(body).map(|ticket| Filed::SpecGap { ticket })
+        crate::tracking::filed_of(title, body)
+            .or_else(|| crate::spec_gap::ticket_of(body).map(|ticket| Filed::SpecGap { ticket }))
     }
 }
 
@@ -2298,15 +2309,17 @@ impl Snapshot {
     }
 
     /// The open issues `linewright` filed as a spec change's tracking issue,
-    /// with tickets cut from them, that lack `linewright:designed`: those
-    /// it filed before a tracking issue carried the label, which Linewright
-    /// labels at startup so that their cuts are not discarded.
+    /// before a spec change had an issue of its own, with tickets cut from
+    /// them, that lack `linewright:designed`: those it filed before a
+    /// tracking issue carried the label, which Linewright labels at startup
+    /// so that their cuts are not discarded. A spec change's issue without
+    /// the label is a cut to discard, as any issue's is.
     pub fn unlabeled_tracking_issues(&self, linewright: &Login) -> Vec<Number> {
         self.issues
             .iter()
             .filter(|issue| {
                 issue.open
-                    && issue.spec_change().is_some()
+                    && matches!(issue.filed, Some(Filed::Tracking { .. }))
                     && !issue.has_label(label::DESIGNED)
                     && issue.tickets_cut(linewright).next().is_some()
             })

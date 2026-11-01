@@ -1208,6 +1208,98 @@ async fn a_design_files_its_spec_gaps_and_its_tickets() {
     );
 }
 
+/// Merges a spec change, "Gadgets", and opens its issue, ready for an agent.
+/// The spec change carries `linewright:designed`, so that only its issue is
+/// designed.
+async fn spec_change_issue(world: &World) -> Number {
+    let spec_change = merge_spec_change(world).await;
+    world
+        .store
+        .label_as("maintainer", spec_change, "linewright:designed")
+        .unwrap();
+    world.store.open_issue(
+        LINEWRIGHT,
+        "Spec change: Gadgets",
+        &format!("Opened for the spec change in {spec_change}."),
+        &["ready-for-agent"],
+    )
+}
+
+#[tokio::test]
+async fn a_spec_changes_issue_is_designed_from_the_spec_change_and_its_diff_and_becomes_its_tickets_tracking_issue()
+ {
+    let mut world = World::new().await;
+    tickets_script(&world);
+    let issue = spec_change_issue(&world).await;
+
+    world.poll().await;
+
+    let designs = world.harness.prompts(WorkKind::Design);
+    let [design] = &designs[..] else {
+        panic!("expected one design, got {designs:#?}");
+    };
+    assert!(design.contains("Adds gadgets."), "{design}");
+    assert!(design.contains("+Gadgets exist."), "{design}");
+    let tracking = world.issue(issue);
+    assert_eq!(labels(&tracking), ["linewright:designed"]);
+    assert!(last_comment(&tracking).starts_with(CUT_DESIGN));
+    let tickets: Vec<Number> = tracking.sub_issues.iter().map(|t| t.number).collect();
+    let issues: Vec<Number> = world.store.issues().iter().map(|i| i.number).collect();
+    assert_eq!(issues, [&[issue][..], &tickets].concat());
+    assert_eq!(tickets.len(), 2);
+}
+
+#[tokio::test]
+async fn a_spec_changes_issue_built_as_it_is_is_implemented_from_the_spec_change_and_its_diff() {
+    let mut world = World::new().await;
+    design_answering(
+        &world,
+        json!({"outcome": "designed", "design": "A gadget store."}),
+    );
+    implement(&world);
+    let issue = spec_change_issue(&world).await;
+
+    world.poll().await;
+    world.poll().await;
+
+    let implementations = world.harness.prompts(WorkKind::Implement);
+    let [implementation] = &implementations[..] else {
+        panic!("expected one implementation, got {implementations:#?}");
+    };
+    let spec_change = world.store.pulls()[0];
+    assert!(
+        implementation.contains(&format!(
+            "This issue was opened for the spec change {spec_change}."
+        )),
+        "{implementation}"
+    );
+    assert!(
+        implementation.contains("+Gadgets exist."),
+        "{implementation}"
+    );
+    assert!(world.issue(issue).open);
+}
+
+#[tokio::test]
+async fn a_design_with_nothing_to_build_closes_a_spec_changes_issue_as_completed_saying_why() {
+    let mut world = World::new().await;
+    design_answering(
+        &world,
+        json!({"outcome": "nothing-to-build", "reason": "Gadgets exist already."}),
+    );
+    let issue = spec_change_issue(&world).await;
+
+    world.poll().await;
+
+    let closed = world.issue(issue);
+    assert!(!closed.open);
+    assert_eq!(last_comment(&closed), "Gadgets exist already.");
+    assert_eq!(
+        close_reason(&world, issue).await,
+        Some(IssueCloseReason::Completed)
+    );
+}
+
 fn design_answering(world: &World, result: Value) {
     world
         .harness

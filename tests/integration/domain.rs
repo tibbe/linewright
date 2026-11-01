@@ -386,6 +386,58 @@ fn an_issue_is_a_tracking_issue_while_it_carries_designed_and_has_tickets_linewr
 }
 
 #[test]
+fn an_issue_linewright_opened_titled_spec_change_and_linking_one_is_that_spec_changes_issue() {
+    let cases = [
+        (
+            "the spec change's issue",
+            LINEWRIGHT,
+            "Spec change: Gadgets",
+            "Opened for the spec change in #70.",
+            Some(Filed::SpecChange {
+                spec_change: Number(70),
+            }),
+        ),
+        (
+            "the tracking issue of a spec change's tickets, before it had an issue",
+            LINEWRIGHT,
+            "Spec change: Gadgets",
+            "Tickets for the spec change in #70.\n\n- #71 Store gadgets\n",
+            Some(Filed::Tracking {
+                spec_change: Number(70),
+            }),
+        ),
+        (
+            "a person's",
+            "maintainer",
+            "Spec change: Gadgets",
+            "Opened for the spec change in #70.",
+            None,
+        ),
+        (
+            "titled otherwise",
+            LINEWRIGHT,
+            "Gadgets",
+            "Opened for the spec change in #70.",
+            None,
+        ),
+        (
+            "linking none",
+            LINEWRIGHT,
+            "Spec change: Gadgets",
+            "Gadgets exist.",
+            None,
+        ),
+    ];
+    for (case, author, title, body, filed) in cases {
+        assert_eq!(
+            Filed::read(&Login::new(author), title, body, &linewright()),
+            filed,
+            "{case}"
+        );
+    }
+}
+
+#[test]
 fn the_tracking_issues_to_label_at_startup_are_the_open_spec_change_ones_with_tickets_and_without_designed()
  {
     let unlabeled = |issue: Issue| Issue {
@@ -395,6 +447,14 @@ fn the_tracking_issues_to_label_at_startup_are_the_open_spec_change_ones_with_ti
     let snapshot = snapshot(
         vec![
             unlabeled(tracking(1, &[(10, true)])),
+            // A spec change's issue whose cut stopped before its label is
+            // a cut to discard.
+            unlabeled(Issue {
+                filed: Some(Filed::SpecChange {
+                    spec_change: Number(70),
+                }),
+                ..tracking(8, &[(80, true)])
+            }),
             tracking(2, &[(20, true)]),
             unlabeled(Issue {
                 open: false,
