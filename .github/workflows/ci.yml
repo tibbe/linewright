@@ -39,10 +39,16 @@ jobs:
       - uses: actions/checkout@v7
       - run: scripts/check css
 
+  # On macOS too, so the code only macOS builds, under
+  # `cfg(not(target_os = "linux"))`, is linted.
   clippy:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
-    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-26.04, macos-26]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7

@@ -144,6 +144,10 @@ fn become_subreaper(me: Pid) -> rustix::io::Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as Linux's, which can fail"
+)]
 fn become_subreaper(_: Pid) -> rustix::io::Result<()> {
     Ok(())
 }
