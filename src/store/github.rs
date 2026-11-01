@@ -91,7 +91,8 @@ macro_rules! comment_fields {
 
 /// Who added each sub-issue, which tells the tickets Linewright cut
 /// ([`SubIssue::added_by`]), read as [`GqlSubIssueAdded`]s: in a timeline of
-/// their own, so that no other event crowds them out.
+/// their own, so that no other event crowds them out. GitHub writes an add
+/// there a moment after the sub-issue, so a read in between has no adder.
 macro_rules! sub_issue_adds {
     () => {
         "subIssueAdds: timelineItems(last: 100, itemTypes: [SUB_ISSUE_ADDED_EVENT]) { nodes { ... on SubIssueAddedEvent { actor { __typename login } subIssue { number } } } }"

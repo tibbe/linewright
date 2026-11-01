@@ -427,14 +427,29 @@ async fn a_sub_issue_and_its_parent_name_each_other_with_who_added_it(
     let expected = SubIssue {
         number: child,
         author: linewright.clone(),
-        added_by: Some(linewright),
+        added_by: Some(linewright.clone()),
         state: SubIssueState::Open,
     };
-    equal(
-        "the sub-issues",
-        &held(&sandbox, parent).await?.sub_issues,
-        &vec![expected],
-    )?;
+    // GitHub writes the add to the parent's timeline after the sub-issue, so
+    // until then who added it is not yet known.
+    let sub_issues = held(&sandbox, parent).await?.sub_issues;
+    let unknown = SubIssue {
+        added_by: None,
+        ..expected.clone()
+    };
+    ensure!(
+        sub_issues == [expected.clone()] || sub_issues == [unknown.clone()],
+        "the sub-issues is {sub_issues:?}, not [{expected:?}] or [{unknown:?}]"
+    );
+    sandbox
+        .eventually(async || {
+            equal(
+                "the sub-issues",
+                &held(&sandbox, parent).await?.sub_issues,
+                &vec![expected.clone()],
+            )
+        })
+        .await?;
     let read = held(&sandbox, child).await?.parent;
     equal("the parent", &read.map(|p| p.number), &Some(parent))
 }
