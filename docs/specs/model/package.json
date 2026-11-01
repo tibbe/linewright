@@ -1,0 +1,8 @@
+{
+  "name": "linewright-spec-model",
+  "private": true,
+  "description": "Pins Quint for scripts/check model.",
+  "dependencies": {
+    "@informalsystems/quint": "0.33.1"
+  }
+}
