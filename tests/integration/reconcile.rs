@@ -2252,78 +2252,72 @@ fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_and_not_me
     );
     assert_eq!(
         deciding(&in_review(rebaseable), &Memory::default(), &by_rebase),
-        vec![merge_by(20, false, MergeMethod::Rebase)]
+        vec![merge_by(20, MergeMethod::Rebase)]
     );
 }
 
 #[test_log::test]
-fn with_auto_merge_by_rebase_a_pull_request_still_not_rebaseable_after_a_rebase_is_handed_back() {
+fn with_auto_merge_a_pull_request_still_not_rebaseable_after_a_rebase_is_merged_by_any_method_until_two_merges_fail()
+ {
     let world = in_review(not_rebaseable());
+    let mut failed_twice = updated_at(5);
+    for minute in [6, 7] {
+        failed_twice.pulls.merge_failed(
+            Number(20),
+            "Pull Request is not mergeable".into(),
+            t(minute),
+        );
+    }
 
-    assert_eq!(
-        deciding(&world, &updated_at(5), &merging_by(MergeMethod::Rebase)),
-        vec![Action::HandBack {
-            item: Item::Pull(Number(20)),
-            kind: HandBackKind::Stall,
-            reason: "GitHub reports #20 not rebaseable though Linewright rebased it onto the \
-                     default branch, so it cannot be merged by rebase."
-                .into(),
-        }]
-    );
-}
-
-#[test_log::test]
-fn with_auto_merge_by_another_method_a_pull_request_still_not_rebaseable_after_a_rebase_is_merged()
-{
-    let world = in_review(not_rebaseable());
-
-    assert_eq!(
-        deciding(&world, &updated_at(5), &merging_by(MergeMethod::Squash)),
-        vec![merge_by(20, false, MergeMethod::Squash)]
-    );
+    for method in [MergeMethod::Rebase, MergeMethod::Squash] {
+        assert_eq!(
+            deciding(&world, &updated_at(5), &merging_by(method)),
+            vec![merge_by(20, method)]
+        );
+        assert_eq!(
+            deciding(&world, &failed_twice, &merging_by(method)),
+            vec![Action::HandBack {
+                item: Item::Pull(Number(20)),
+                kind: HandBackKind::Stall,
+                reason: "Merging #20 failed twice. GitHub's reason: Pull Request is not mergeable"
+                    .into(),
+            }]
+        );
+    }
 }
 
 fn auto_merging(world: &Snapshot, minute: i64) -> Vec<Action> {
     auto_merging_after(world, &[], minute)
 }
 
-fn merge(pr: u64, draft: bool) -> Action {
-    merge_by(pr, draft, MergeMethod::Merge)
+fn merge(pr: u64) -> Action {
+    merge_by(pr, MergeMethod::Merge)
 }
 
-fn merge_by(pr: u64, draft: bool, method: MergeMethod) -> Action {
+fn merge_by(pr: u64, method: MergeMethod) -> Action {
     Action::Merge {
         pr: Number(pr),
         head: "abc123".into(),
-        draft,
         method,
     }
 }
 
 #[test_log::test]
-fn with_auto_merge_a_green_draft_is_merged_instead_of_marked_ready() {
-    let mut pr = pull(20, 2);
-    pr.checks = vec![check("test", CheckState::Passed)];
-
-    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, true)]);
-}
-
-#[test_log::test]
-fn with_auto_merge_a_draft_with_no_ci_by_the_end_of_the_grace_period_is_merged() {
+fn with_auto_merge_a_draft_with_no_ci_by_the_end_of_the_grace_period_is_marked_ready() {
     let world = in_review(pull(20, 2));
 
     assert_eq!(auto_merging(&world, 5), vec![]);
-    assert!(matches!(
-        auto_merging(&world, 7).as_slice(),
-        [Action::Merge { draft: true, .. }]
-    ));
+    assert_eq!(
+        auto_merging(&world, 7),
+        vec![Action::MarkReady { pr: Number(20) }]
+    );
 }
 
 #[test_log::test]
 fn with_auto_merge_a_green_pull_request_already_ready_for_review_is_merged() {
     let pr = ready(pull(20, 2));
 
-    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2370,26 +2364,16 @@ fn code_owner_review() -> Vec<Requirement> {
     }]
 }
 
-#[test_log::test]
-fn with_auto_merge_a_green_pull_request_github_blocks_is_held_for_review_and_not_merged() {
-    let mut pr = pull(20, 2);
-    pr.checks = vec![check("test", CheckState::Passed)];
-    pr.mergeability = Mergeability::Blocked {
-        requires: code_owner_review(),
-    };
-
-    assert_eq!(
-        auto_merging(&in_review(pr), 10),
-        vec![Action::HoldForReview {
-            pr: Number(20),
-            draft: true,
-            requires: code_owner_review(),
-        }]
-    );
+fn comment_requirements(pr: u64, requires: Vec<Requirement>) -> Action {
+    Action::CommentRequirements {
+        pr: Number(pr),
+        requires,
+    }
 }
 
 #[test_log::test]
-fn a_pull_request_github_blocks_is_held_for_review_after_it_is_marked_ready() {
+fn with_auto_merge_a_pull_request_ready_for_review_github_blocks_is_commented_on_naming_what_github_requires()
+ {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Blocked {
         requires: code_owner_review(),
@@ -2397,17 +2381,15 @@ fn a_pull_request_github_blocks_is_held_for_review_after_it_is_marked_ready() {
 
     assert_eq!(
         auto_merging(&in_review(pr), 10),
-        vec![Action::HoldForReview {
-            pr: Number(20),
-            draft: false,
-            requires: code_owner_review(),
-        }]
+        vec![comment_requirements(20, code_owner_review())]
     );
 }
 
-fn held_for_a_code_owner() -> Memory {
+/// Linewright commented on #20 naming what GitHub requires at `minute`;
+/// the pull request opened at minute 1.
+fn commented_at(minute: i64) -> Memory {
     let mut memory = Memory::default();
-    memory.held.hold(Number(20), &code_owner_review());
+    memory.pulls.commented(Number(20), t(minute));
     memory
 }
 
@@ -2429,11 +2411,11 @@ fn a_pull_request_github_blocks_and_already_held_for_review_waits_also_after_a_p
     let updated_since = in_review(pr);
 
     assert_eq!(
-        auto_merging_remembering(&held, &held_for_a_code_owner(), 10),
+        auto_merging_remembering(&held, &commented_at(2), 10),
         vec![]
     );
     assert_eq!(
-        auto_merging_remembering(&updated_since, &held_for_a_code_owner(), 10),
+        auto_merging_remembering(&updated_since, &commented_at(2), 10),
         vec![]
     );
 }
@@ -2443,33 +2425,51 @@ fn a_pull_request_held_for_review_is_merged_once_github_no_longer_blocks_it() {
     let world = in_review(ready(pull(20, 2)));
 
     assert_eq!(
-        auto_merging_remembering(&world, &held_for_a_code_owner(), 10),
-        vec![merge(20, false)]
+        auto_merging_remembering(&world, &commented_at(2), 10),
+        vec![merge(20)]
     );
 }
 
 #[test_log::test]
-fn a_pull_request_is_held_again_when_what_github_requires_changes() {
+fn a_pull_request_commented_on_this_round_is_not_commented_on_again_when_what_github_requires_changes()
+ {
     let mut pr = ready(pull(20, 2));
     let requires = vec![Requirement::Check {
         name: "deploy".into(),
     }];
-    pr.mergeability = Mergeability::Blocked {
-        requires: requires.clone(),
-    };
+    pr.mergeability = Mergeability::Blocked { requires };
 
     assert_eq!(
-        auto_merging_remembering(&in_review(pr), &held_for_a_code_owner(), 10),
-        vec![Action::HoldForReview {
-            pr: Number(20),
-            draft: false,
-            requires,
-        }]
+        auto_merging_remembering(&in_review(pr), &commented_at(2), 10),
+        vec![]
     );
 }
 
 #[test_log::test]
-fn a_pull_request_is_held_whatever_linewrights_comments_on_it_say() {
+fn a_pull_request_github_blocks_is_commented_on_again_in_the_next_round_though_what_it_requires_is_the_same()
+ {
+    let mut pr = ready(pull(20, 2));
+    pr.mergeability = Mergeability::Blocked {
+        requires: code_owner_review(),
+    };
+    let reassigned = in_review(unassigned_at(pr.clone(), "maintainer", 3, Some(4)));
+    let mut reworked = commented_at(2);
+    reworked
+        .ended_runs
+        .push(ended(20, WorkKind::Rework, Ending::HandedBack, 3));
+
+    assert_eq!(
+        auto_merging_remembering(&reassigned, &commented_at(2), 10),
+        vec![comment_requirements(20, code_owner_review())]
+    );
+    assert_eq!(
+        auto_merging_remembering(&in_review(pr), &reworked, 10),
+        vec![comment_requirements(20, code_owner_review())]
+    );
+}
+
+#[test_log::test]
+fn a_pull_request_github_blocks_is_commented_on_whatever_linewrights_comments_on_it_say() {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Blocked {
         requires: code_owner_review(),
@@ -2477,25 +2477,13 @@ fn a_pull_request_is_held_whatever_linewrights_comments_on_it_say() {
     pr.comments = vec![comment(
         LINEWRIGHT,
         7,
-        "> *Linewright, review*\n\nReady for review: GitHub requires a code owner's review \
-         (@alice) before merging. Linewright merges it once GitHub allows it.",
+        "> *Linewright, review*\n\nGitHub requires a code owner's review (@alice) before \
+         merging. Linewright merges it once GitHub allows it.",
     )];
-
-    assert!(matches!(
-        auto_merging(&in_review(pr), 10).as_slice(),
-        [Action::HoldForReview { draft: false, .. }]
-    ));
-}
-
-#[test_log::test]
-fn with_auto_merge_a_green_draft_whose_merge_state_is_unknown_is_marked_ready_first() {
-    let mut pr = pull(20, 2);
-    pr.checks = vec![check("test", CheckState::Passed)];
-    pr.mergeability = Mergeability::Unknown;
 
     assert_eq!(
         auto_merging(&in_review(pr), 10),
-        vec![Action::MarkReadyForMergeState { pr: Number(20) }]
+        vec![comment_requirements(20, code_owner_review())]
     );
 }
 
@@ -2560,10 +2548,7 @@ fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_approve
     }];
     pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 6)];
 
-    assert_eq!(
-        auto_merging_reworked(&in_review(pr), 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_reworked(&in_review(pr), 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2604,10 +2589,7 @@ fn with_auto_merge_a_person_who_comments_after_approving_holds_the_merge_until_t
         auto_merging_reworked(&commented, 10),
         vec![Action::MarkReady { pr: Number(20) }]
     );
-    assert_eq!(
-        auto_merging_reworked(&approved_again, 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_reworked(&approved_again, 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2632,10 +2614,7 @@ fn with_auto_merge_a_person_who_replies_in_a_thread_after_approving_holds_the_me
     let approved_again = in_review(pr);
 
     assert_eq!(auto_merging_reworked(&replied, 10), vec![]);
-    assert_eq!(
-        auto_merging_reworked(&approved_again, 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_reworked(&approved_again, 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2649,10 +2628,7 @@ fn with_auto_merge_an_approval_with_inline_comments_does_not_hold_the_merge() {
     }];
     pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 3)];
 
-    assert_eq!(
-        auto_merging_reworked(&in_review(pr), 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_reworked(&in_review(pr), 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2675,10 +2651,7 @@ fn with_auto_merge_a_pull_request_merges_once_each_persons_newest_comment_or_rev
 
     assert_eq!(auto_merging_reworked(&one_commented, 10), vec![]);
     assert_eq!(auto_merging_reworked(&other_commented, 10), vec![]);
-    assert_eq!(
-        auto_merging_reworked(&both_approved, 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_reworked(&both_approved, 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2687,10 +2660,7 @@ fn with_auto_merge_comments_from_linewright_after_an_approval_do_not_hold_the_me
     pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 2)];
     pr.comments = vec![comment(LINEWRIGHT, 3, "Renamed `foo`.")];
 
-    assert_eq!(
-        auto_merging_reworked(&in_review(pr), 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_reworked(&in_review(pr), 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2707,10 +2677,7 @@ fn with_auto_merge_a_pull_request_two_people_commented_on_merges_once_both_appro
     let both_approved = in_review(pr);
 
     assert_eq!(auto_merging_reworked(&one_approved, 10), vec![]);
-    assert_eq!(
-        auto_merging_reworked(&both_approved, 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_reworked(&both_approved, 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2724,41 +2691,31 @@ fn with_auto_merge_comments_and_reviews_from_bots_do_not_hold_the_merge() {
         3,
     )];
 
-    assert_eq!(
-        auto_merging_reworked(&in_review(pr), 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_reworked(&in_review(pr), 10), vec![merge(20)]);
 }
 
-fn failed_merge(pr: u64, reason: &str) -> FailedMerge {
-    failed_merge_at(pr, reason, 9)
+/// [`auto_merging`], with the merges of `failed` failed: each the pull
+/// request, GitHub's reason and the minute.
+fn auto_merging_after(world: &Snapshot, failed: &[(u64, &str, i64)], minute: i64) -> Vec<Action> {
+    auto_merging_remembering(world, &failed_merges(failed), minute)
 }
 
-fn failed_merge_at(pr: u64, reason: &str, minute: i64) -> FailedMerge {
-    FailedMerge {
-        pr: Number(pr),
-        reason: reason.into(),
-        at: t(minute),
+fn failed_merges(failed: &[(u64, &str, i64)]) -> Memory {
+    let mut memory = Memory::default();
+    for &(pr, reason, minute) in failed {
+        memory
+            .pulls
+            .merge_failed(Number(pr), reason.into(), t(minute));
     }
-}
-
-fn auto_merging_after(world: &Snapshot, failed: &[FailedMerge], minute: i64) -> Vec<Action> {
-    let memory = Memory {
-        failed_merges: failed.to_vec(),
-        ..Memory::default()
-    };
-    auto_merging_remembering(world, &memory, minute)
+    memory
 }
 
 #[test_log::test]
 fn with_auto_merge_a_green_pull_request_whose_merge_failed_once_is_merged_again() {
     let world = in_review(ready(pull(20, 2)));
-    let failed = [failed_merge(20, "Head branch was modified.")];
+    let failed = [(20, "Head branch was modified.", 9)];
 
-    assert_eq!(
-        auto_merging_after(&world, &failed, 10),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_after(&world, &failed, 10), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -2766,8 +2723,8 @@ fn with_auto_merge_a_green_pull_request_whose_merge_failed_twice_is_handed_back_
  {
     let world = in_review(ready(pull(20, 2)));
     let failed = [
-        failed_merge(20, "Head branch was modified."),
-        failed_merge(20, "Pull Request is not mergeable"),
+        (20, "Head branch was modified.", 9),
+        (20, "Pull Request is not mergeable", 9),
     ];
 
     assert_eq!(
@@ -2785,14 +2742,11 @@ fn with_auto_merge_a_green_pull_request_whose_merge_failed_twice_is_handed_back_
 fn with_auto_merge_failed_merges_of_another_pull_request_do_not_count() {
     let world = in_review(ready(pull(20, 2)));
     let failed = [
-        failed_merge(21, "Pull Request is not mergeable"),
-        failed_merge(21, "Pull Request is not mergeable"),
+        (21, "Pull Request is not mergeable", 9),
+        (21, "Pull Request is not mergeable", 9),
     ];
 
-    assert_eq!(
-        auto_merging_after(&world, &failed, 11),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_after(&world, &failed, 11), vec![merge(20)]);
 }
 
 /// `pr` with Linewright unassigned by `actor` at `unassigned`, and assigned
@@ -2822,19 +2776,34 @@ fn labeled_pull(mut pr: Pull, label: &str) -> Pull {
 }
 
 #[test_log::test]
+fn with_auto_merge_merges_that_failed_before_a_rework_run_ended_do_not_count_this_round() {
+    let world = in_review(ready(pull(20, 2)));
+    let mut memory = failed_merges(&[
+        (20, "Pull Request is not mergeable", 3),
+        (20, "Pull Request is not mergeable", 4),
+        (20, "Head branch was modified.", 7),
+    ]);
+    memory
+        .ended_runs
+        .push(ended(20, WorkKind::Rework, Ending::Failed, 5));
+
+    assert_eq!(
+        auto_merging_remembering(&world, &memory, 10),
+        vec![merge(20)]
+    );
+}
+
+#[test_log::test]
 fn with_auto_merge_reassigning_linewright_to_a_pull_request_handed_back_for_failed_merges_tries_the_merge_again()
  {
     let world = in_review(unassigned_at(ready(pull(20, 2)), LINEWRIGHT, 12, Some(15)));
     let failed = [
-        failed_merge_at(20, "Pull Request is not mergeable", 8),
-        failed_merge_at(20, "Pull Request is not mergeable", 11),
-        failed_merge_at(20, "Head branch was modified.", 17),
+        (20, "Pull Request is not mergeable", 8),
+        (20, "Pull Request is not mergeable", 11),
+        (20, "Head branch was modified.", 17),
     ];
 
-    assert_eq!(
-        auto_merging_after(&world, &failed, 20),
-        vec![merge(20, false)]
-    );
+    assert_eq!(auto_merging_after(&world, &failed, 20), vec![merge(20)]);
 }
 
 #[test_log::test]
@@ -3519,7 +3488,7 @@ fn with_a_required_label_work_already_started_carries_on_unlabeled() {
     assert_eq!(
         deciding(&world, &Memory::default(), &policy),
         vec![
-            merge_by(22, false, MergeMethod::Merge),
+            merge_by(22, MergeMethod::Merge),
             Action::Start(Work::FixCi {
                 issue: Number(2),
                 pr: Number(20),
@@ -3718,8 +3687,7 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
 
 #[test_log::test]
 fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
-    let mut pr = pull(20, 2);
-    pr.checks = vec![check("test", CheckState::Passed)];
+    let pr = ready(pull(20, 2));
 
     assert_eq!(
         reconcile(
@@ -3731,7 +3699,7 @@ fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
             &merging_by(MergeMethod::Merge),
             &[],
         ),
-        vec![merge(20, true)]
+        vec![merge(20)]
     );
 }
 
@@ -3849,8 +3817,7 @@ fn a_drain_begun_part_way_through_a_plan_leaves_the_last_scheduled_runs_as_they_
 
 #[test_log::test]
 fn while_draining_a_green_pull_request_is_merged_still() {
-    let mut pr = pull(20, 2);
-    pr.checks = vec![check("test", CheckState::Passed)];
+    let pr = ready(pull(20, 2));
 
     assert_eq!(
         reconcile(
@@ -3862,7 +3829,7 @@ fn while_draining_a_green_pull_request_is_merged_still() {
             &merging_by(MergeMethod::Merge),
             &[],
         ),
-        vec![merge(20, true)]
+        vec![merge(20)]
     );
 }
 
@@ -4351,7 +4318,7 @@ fn with_auto_merge_a_pull_request_held_for_what_github_requires_waits_for_it() {
         waits(
             &in_review(pr),
             &[],
-            &held_for_a_code_owner(),
+            &commented_at(2),
             10,
             &merging_by(MergeMethod::Merge)
         )
@@ -4849,7 +4816,7 @@ fn merging_a_pull_request_touches_it_and_the_issues_it_closes() {
     let world = in_review(pull(20, 2));
 
     assert_eq!(
-        merge(20, false).items(&world),
+        merge(20).items(&world),
         vec![Item::Issue(Number(2)), Item::Pull(Number(20))]
     );
 }

@@ -2449,6 +2449,7 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
 
     world.clock.advance(chrono::TimeDelta::minutes(6));
     world.poll().await;
+    world.poll().await;
 
     let view = world.store.snapshot_pull(pr).await;
     assert!(matches!(view.state, PullState::Merged { .. }));
@@ -2459,7 +2460,7 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     );
     assert!(!world.issue(first).open);
     assert_eq!(world.store.requested_reviewers(pr), []);
-    assert_eq!(view.comments, []);
+    assert_eq!(comment_bodies(&view), ["No CI reported: ready for review."]);
 
     world.poll().await;
 
@@ -2468,6 +2469,13 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     assert_ne!(next, pr);
     assert_eq!(world.store.snapshot_pull(next).await.closes, [second]);
 }
+
+fn comment_bodies(pull: &linewright::domain::Pull) -> Vec<&str> {
+    pull.comments.iter().map(|c| c.body.as_str()).collect()
+}
+
+const CODE_OWNER_NOTE: &str = "GitHub requires a code owner's review (@alice) before merging. \
+                               Linewright merges it once GitHub allows it.";
 
 #[test_log::test(tokio::test)]
 async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_across_a_restart_then_merges()
@@ -2485,6 +2493,16 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_ac
 
     world.clock.advance(chrono::TimeDelta::minutes(6));
     world.poll().await;
+
+    let marked = world.store.snapshot_pull(pr).await;
+    assert_eq!(marked.state, PullState::Open { draft: false });
+    assert_eq!(
+        comment_bodies(&marked),
+        ["No CI reported: ready for review."],
+        "marked ready with its note, and not commented on yet"
+    );
+
+    world.poll().await;
     world.poll().await;
     world.restart(|config| config.auto_merge = AUTO_MERGE).await;
     world.poll().await;
@@ -2492,11 +2510,9 @@ async fn with_auto_merge_a_pull_request_github_blocks_waits_for_a_person_also_ac
     let view = world.store.snapshot_pull(pr).await;
     assert_eq!(view.state, PullState::Open { draft: false });
     assert_eq!(world.store.requested_reviewers(pr), []);
-    let comments: Vec<&str> = view.comments.iter().map(|c| c.body.as_str()).collect();
     assert_eq!(
-        comments,
-        ["Ready for review: GitHub requires a code owner's review \
-             (@alice) before merging. Linewright merges it once GitHub allows it."]
+        comment_bodies(&view),
+        ["No CI reported: ready for review.", CODE_OWNER_NOTE]
     );
 
     world.store.allow_merge(pr);
@@ -2519,7 +2535,7 @@ async fn with_auto_merge_a_pull_request_held_before_linewright_recorded_its_hold
     world.store.work_out_merge_state(pr);
     world.poll().await;
 
-    assert_eq!(world.store.snapshot_pull(pr).await.comments.len(), 1);
+    assert_eq!(world.store.snapshot_pull(pr).await.comments.len(), 2);
 }
 
 #[test_log::test(tokio::test)]
@@ -2536,6 +2552,7 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
     );
 
     world.clock.advance(chrono::TimeDelta::minutes(6));
+    world.poll().await;
     world.poll().await;
 
     let failed: Vec<String> = log
@@ -2585,6 +2602,29 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
         PullState::Merged { .. }
     ));
     assert!(!world.issue(ticket).open);
+}
+
+#[test_log::test(tokio::test)]
+async fn with_auto_merge_two_merges_failed_before_a_restart_hand_the_pull_request_back_after_it() {
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .refuse_merges(pr, "Pull Request is not mergeable");
+    world.ready_for_review(pr).await;
+    world.poll().await;
+    world.poll().await;
+
+    world.restart(|config| config.auto_merge = AUTO_MERGE).await;
+    world.poll().await;
+
+    assert_stalled(
+        &world,
+        ticket,
+        pr,
+        &format!("Merging {pr} failed twice. GitHub's reason: Pull Request is not mergeable"),
+    )
+    .await;
 }
 
 fn assert_run_ended_keeping_its_claim(

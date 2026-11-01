@@ -217,6 +217,7 @@ async fn a_pull_request_held_for_a_code_owners_review_is_what_auto_merge_leaves(
     );
     front.clock.advance(chrono::TimeDelta::minutes(6));
     front.poll().await;
+    front.poll().await;
     let mut back = World::with(|config| config.auto_merge = AUTO_MERGE).await;
     let (_, pr) = back.ticket_in_review().await;
 
