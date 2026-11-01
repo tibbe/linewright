@@ -81,8 +81,8 @@
 //!     back.
 //!   - `ready_for_review`, `ready_for_review_on_green_checks`,
 //!     `held_for_a_code_owners_review`: a pull request marked ready once CI's
-//!     grace has passed or on green checks, or held by auto-merge for a code
-//!     owner's review.
+//!     grace has passed or on green checks, then, for the last, commented on
+//!     by auto-merge naming the code owner's review GitHub requires.
 //!   - `reworked`: a pull request the maintainer asked to rework, reworked.
 //!   - `rework_timed_out_with_edits`: a ticket in review whose rework timed
 //!     out.

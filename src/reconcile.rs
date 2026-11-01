@@ -11,13 +11,13 @@ use crate::domain::{
     UpdateRule, Windows, label,
 };
 use crate::harness::UsageLimit;
-use crate::holds::Holds;
 use crate::lifecycle::{
     Cancel, IssueFacts, IssueStage, MergedRow, NotClaimed, Opener, PullClaim, PullFacts, PullRow,
     PullWorking, Row, State, cancels, done_by_merge, issue_state, may_claim, merged_row, pull_row,
     pull_state, row,
 };
 use crate::phrase::Phrase;
+use crate::pull_records::PullRecords;
 use crate::repo_files::{FileError, Unusable, holding};
 use crate::runs::Ending;
 use crate::spec_glob::SpecGlob;
@@ -239,10 +239,8 @@ pub struct LiveRun {
 
 #[derive(Clone, Debug, Default)]
 pub struct Memory {
-    /// Oldest first.
-    pub failed_merges: Vec<FailedMerge>,
     pub ended_runs: Vec<EndedRun>,
-    pub held: Holds,
+    pub pulls: PullRecords,
     pub usage_limit: Option<UsageLimit>,
     /// Set from when a drain of `serve` begins until it exits.
     pub drain: Option<Drain>,
@@ -251,9 +249,8 @@ pub struct Memory {
 impl Memory {
     pub fn retain_open(&mut self, snapshot: &Snapshot) {
         let open = |pr| snapshot.pull(pr).is_some_and(Pull::is_open);
-        self.failed_merges.retain(|f| open(f.pr));
         self.ended_runs.retain(|r| open(r.pr));
-        self.held.retain(open);
+        self.pulls.retain(open);
     }
 
     /// When the last rework run on `pr` that ended done last read the
@@ -363,13 +360,6 @@ pub enum NotWorked {
     Superseded { ticket: Number, by: Number },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FailedMerge {
-    pub pr: Number,
-    pub reason: String,
-    pub at: Timestamp,
-}
-
 /// A run that ended on a pull request, as its record keeps it. An
 /// interrupted run has no end, so it is none.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -451,17 +441,11 @@ pub enum Action {
     Merge {
         pr: Number,
         head: String,
-        draft: bool,
         method: MergeMethod,
     },
-    /// Mark the draft ready for review, so that the store reports its merge
-    /// state.
-    MarkReadyForMergeState {
+    /// Comment naming what GitHub requires to merge it.
+    CommentRequirements {
         pr: Number,
-    },
-    HoldForReview {
-        pr: Number,
-        draft: bool,
         requires: Vec<Requirement>,
     },
     CloseTracking {
@@ -503,8 +487,7 @@ impl Action {
             Action::MarkReady { pr }
             | Action::UnassignFromPull { pr, .. }
             | Action::OpenSpecChangeIssue { pr, .. }
-            | Action::MarkReadyForMergeState { pr }
-            | Action::HoldForReview { pr, .. } => vec![Item::Pull(*pr)],
+            | Action::CommentRequirements { pr, .. } => vec![Item::Pull(*pr)],
             Action::HandBack { item, .. } | Action::ClearStall { item } => vec![*item],
             Action::DeleteBranch { branch } => vec![Item::Issue(branch.issue())],
             Action::Cancel { .. }
@@ -962,8 +945,7 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             | Action::HandBack { .. }
             | Action::MarkReady { .. }
             | Action::Merge { .. }
-            | Action::MarkReadyForMergeState { .. }
-            | Action::HoldForReview { .. }
+            | Action::CommentRequirements { .. }
             | Action::CloseTracking { .. }
             | Action::DiscardCut(_)
             | Action::DeleteBranch { .. } => Some(action),
@@ -1604,14 +1586,9 @@ fn pull_work(
         WorkingRow::HandBackMergeFailed { reason } => hand_back(format!(
             "Merging {pr_number} failed twice. GitHub's reason: {reason}"
         )),
-        WorkingRow::HandBackNotRebaseable => hand_back(format!(
-            "GitHub reports {pr_number} not rebaseable though Linewright rebased it \
-             onto the default branch, so it cannot be merged by rebase."
-        )),
-        WorkingRow::CommentRequirements { requires, draft } => {
-            PullWork::Act(Action::HoldForReview {
+        WorkingRow::CommentRequirements { requires } => {
+            PullWork::Act(Action::CommentRequirements {
                 pr: pr_number,
-                draft,
                 requires,
             })
         }
@@ -1619,14 +1596,10 @@ fn pull_work(
             pull_request: pr_number,
             requires,
         }),
-        WorkingRow::MarkReadyForMergeState => {
-            PullWork::Act(Action::MarkReadyForMergeState { pr: pr_number })
-        }
         WorkingRow::WaitForMergeState => PullWork::Wait(merge_state),
-        WorkingRow::Merge { method, draft } => PullWork::Act(Action::Merge {
+        WorkingRow::Merge { method } => PullWork::Act(Action::Merge {
             pr: pr_number,
             head: pr.head_sha.clone(),
-            draft,
             method,
         }),
     }
@@ -1657,7 +1630,7 @@ pub fn rebases_to_repair(pr: &Pull, policy: &Policy) -> bool {
     pr.rebaseability == Rebaseability::NotRebaseable && policy.rebases_unrebaseable()
 }
 
-pub fn hold_note(requires: &[Requirement]) -> String {
+pub fn requirements_note(requires: &[Requirement]) -> String {
     let required = if requires.is_empty() {
         "GitHub blocks the merge for a reason Linewright cannot read: the default branch's \
          rules say what it needs"
@@ -1666,7 +1639,7 @@ pub fn hold_note(requires: &[Requirement]) -> String {
         let names = Phrase::list(requires.iter().map(Requirement::describe), "and");
         format!("GitHub requires {names} before merging")
     };
-    format!("Ready for review: {required}. Linewright merges it once GitHub allows it.")
+    format!("{required}. Linewright merges it once GitHub allows it.")
 }
 
 fn code_list(names: &[String]) -> String {

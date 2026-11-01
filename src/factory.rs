@@ -22,10 +22,10 @@ use crate::domain::{
 };
 use crate::ending::Ends;
 use crate::harness::{Harness, UsageLimit};
-use crate::holds::Holds;
+use crate::pull_records::PullRecords;
 use crate::reconcile::{
-    Action, Automations, Discard, Drain, EndedRun, FailedMerge, LiveRun, Memory, ParentNote,
-    Policy, Subject, Work, held_back_by_drain, hold_note, reconcile,
+    Action, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote, Policy, Subject,
+    Work, held_back_by_drain, reconcile, requirements_note,
 };
 use crate::repo_files::{RepoLayer, Unusable, holding};
 use crate::run::{self, AutomationEnd, Cancellation, Shell};
@@ -155,7 +155,7 @@ pub struct Factory {
     last_scheduled_runs: LastScheduledRuns,
     automation_files: AutomationFiles,
     memory: Memory,
-    holds_record: HoldsRecord,
+    pull_records_file: PullRecordsFile,
     kept: Option<Kept>,
     /// The items Linewright's actions and runs changed since the kept
     /// snapshot last read them.
@@ -165,17 +165,17 @@ pub struct Factory {
     labeled_old_tracking_issues: bool,
 }
 
-enum HoldsRecord {
-    /// There is no record yet: the next poll takes the holds from what its
-    /// snapshot shows, so that a Linewright that kept none does not hold
-    /// pull requests again.
+enum PullRecordsFile {
+    /// There is no record yet: the next poll takes the comments naming what
+    /// GitHub requires from what its snapshot shows, so that a Linewright
+    /// that kept none does not post them again.
     Missing,
     /// `saved` is `None` until first written, and a save that failed leaves
-    /// it behind the holds remembered. The pull requests in `settling` were
+    /// it behind the records remembered. The pull requests in `settling` were
     /// ready when the record began, before GitHub had worked out their merge
     /// state: they are taken from the snapshot too, once it has.
     Kept {
-        saved: Option<Holds>,
+        saved: Option<PullRecords>,
         settling: BTreeSet<Number>,
     },
 }
@@ -250,13 +250,13 @@ impl Factory {
         };
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
         let runs = Runs::new(&config.work_dir);
-        let held = Holds::load(&config.work_dir);
-        let holds_record = match &held {
-            Some(saved) => HoldsRecord::Kept {
+        let pulls = PullRecords::load(&config.work_dir);
+        let pull_records_file = match &pulls {
+            Some(saved) => PullRecordsFile::Kept {
                 saved: Some(saved.clone()),
                 settling: BTreeSet::new(),
             },
-            None => HoldsRecord::Missing,
+            None => PullRecordsFile::Missing,
         };
         let shell = Shell {
             policy: Policy {
@@ -300,10 +300,10 @@ impl Factory {
             automation_files: AutomationFiles::default(),
             memory: Memory {
                 ended_runs: ended_runs(&runs),
-                held: held.unwrap_or_default(),
+                pulls: pulls.unwrap_or_default(),
                 ..Memory::default()
             },
-            holds_record,
+            pull_records_file,
             kept: None,
             written: BTreeSet::new(),
             labeled_old_tracking_issues: false,
@@ -562,9 +562,9 @@ impl Factory {
             last_scheduled_runs: self.last_scheduled_runs.clone(),
             in_flight: self.automations_in_flight(),
         };
-        self.take_shown_holds(snapshot);
+        self.take_shown_comments(snapshot, now);
         self.memory.retain_open(snapshot);
-        self.record_holds();
+        self.record_pulls();
         let mut actions = reconcile(
             snapshot,
             &live,
@@ -718,35 +718,36 @@ impl Factory {
         }
     }
 
-    fn take_shown_holds(&mut self, snapshot: &Snapshot) {
+    fn take_shown_comments(&mut self, snapshot: &Snapshot, now: Timestamp) {
         let linewright = &self.shell.policy.linewright;
-        let held = &mut self.memory.held;
-        match &mut self.holds_record {
-            HoldsRecord::Missing => {
-                self.holds_record = HoldsRecord::Kept {
+        let pulls = &mut self.memory.pulls;
+        match &mut self.pull_records_file {
+            PullRecordsFile::Missing => {
+                self.pull_records_file = PullRecordsFile::Kept {
                     saved: None,
-                    settling: held.take_shown(snapshot, linewright, |_| true),
+                    settling: pulls.take_shown(snapshot, linewright, now, |_| true),
                 };
             }
-            HoldsRecord::Kept { settling, .. } if !settling.is_empty() => {
-                *settling = held.take_shown(snapshot, linewright, |pr| settling.contains(&pr));
+            PullRecordsFile::Kept { settling, .. } if !settling.is_empty() => {
+                *settling =
+                    pulls.take_shown(snapshot, linewright, now, |pr| settling.contains(&pr));
             }
-            HoldsRecord::Kept { .. } => {}
+            PullRecordsFile::Kept { .. } => {}
         }
     }
 
-    fn record_holds(&mut self) {
-        let HoldsRecord::Kept { saved, .. } = &mut self.holds_record else {
+    fn record_pulls(&mut self) {
+        let PullRecordsFile::Kept { saved, .. } = &mut self.pull_records_file else {
             return;
         };
-        if saved.as_ref() == Some(&self.memory.held) {
+        if saved.as_ref() == Some(&self.memory.pulls) {
             return;
         }
-        match self.memory.held.save(&self.shell.work_dir) {
-            Ok(()) => *saved = Some(self.memory.held.clone()),
+        match self.memory.pulls.save(&self.shell.work_dir) {
+            Ok(()) => *saved = Some(self.memory.pulls.clone()),
             Err(e) => warn!(
                 error = format!("{e:#}"),
-                "recording the holds for review failed"
+                "recording Linewright's pull requests failed"
             ),
         }
     }
@@ -938,45 +939,29 @@ impl Factory {
                 } else {
                     "No CI reported: ready for review."
                 };
-                ready_for_review(store.as_ref(), *pr, true, note).await?;
+                store.mark_ready(*pr).await?;
+                store.comment(*pr, note).await?;
             }
-            Action::Merge {
-                pr,
-                head,
-                draft,
-                method,
-            } => {
+            Action::Merge { pr, head, method } => {
                 info!(pr = pr.0, method = ?method, "merging");
-                if *draft {
-                    store.mark_ready(*pr).await?;
-                }
                 if let Err(e) = store.merge(*pr, head, *method).await {
                     let reason = format!("{e:#}");
                     warn!(pr = pr.0, reason, "merge failed");
-                    self.memory.failed_merges.push(FailedMerge {
-                        pr: *pr,
-                        reason,
-                        at: self.shell.clock.now(),
-                    });
+                    let at = self.shell.clock.now();
+                    self.memory.pulls.merge_failed(*pr, reason, at);
+                    self.record_pulls();
                 }
             }
-            Action::MarkReadyForMergeState { pr } => {
-                info!(pr = pr.0, "marking ready for its merge state");
-                store.mark_ready(*pr).await?;
-            }
-            Action::HoldForReview {
-                pr,
-                draft,
-                requires,
-            } => {
+            Action::CommentRequirements { pr, requires } => {
                 info!(
                     pr = pr.0,
                     ?requires,
-                    "holding for review: GitHub blocks the merge"
+                    "commenting on what GitHub requires to merge"
                 );
-                ready_for_review(store.as_ref(), *pr, *draft, &hold_note(requires)).await?;
-                self.memory.held.hold(*pr, requires);
-                self.record_holds();
+                store.comment(*pr, &requirements_note(requires)).await?;
+                let at = self.shell.clock.now();
+                self.memory.pulls.commented(*pr, at);
+                self.record_pulls();
             }
             Action::CloseTracking { issue } => {
                 info!(issue = issue.0, "closing tracking issue");
@@ -1121,13 +1106,6 @@ async fn run_and_log(
 async fn discard(store: &dyn Store, issue: Number, note: &str) -> Result<()> {
     store.comment(issue, note).await?;
     store.close_issue(issue, IssueCloseReason::NotPlanned).await
-}
-
-async fn ready_for_review(store: &dyn Store, pr: Number, draft: bool, note: &str) -> Result<()> {
-    if draft {
-        store.mark_ready(pr).await?;
-    }
-    store.comment(pr, note).await
 }
 
 /// Labels `linewright:designed` the open spec changes' tracking issues

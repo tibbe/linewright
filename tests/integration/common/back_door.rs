@@ -603,8 +603,9 @@ impl World {
     }
 
     /// `pr`, Linewright's draft with no CI reported, which GitHub blocks from
-    /// merging until a code owner reviews it, held for that review by auto-merge
-    /// once CI's grace has passed.
+    /// merging until a code owner reviews it, marked ready for review once
+    /// CI's grace has passed, then commented on by auto-merge naming that
+    /// review.
     pub async fn held_for_a_code_owners_review(&self, pr: Number) {
         self.store.block_merge(
             pr,
@@ -612,13 +613,15 @@ impl World {
                 owners: vec!["alice".into()],
             }],
         );
-        self.clock.advance(TimeDelta::minutes(6));
-        self.marked_ready(
-            pr,
-            "Ready for review: GitHub requires a code owner's review (@alice) before \
-             merging. Linewright merges it once GitHub allows it.",
-        )
-        .await;
+        self.ready_for_review(pr).await;
+        self.store
+            .comment(
+                pr,
+                "GitHub requires a code owner's review (@alice) before merging. Linewright \
+                 merges it once GitHub allows it.",
+            )
+            .await
+            .unwrap();
     }
 
     /// `pr`, Linewright's draft, whose check `test` passed, marked ready for

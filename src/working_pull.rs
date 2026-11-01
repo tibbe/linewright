@@ -1,9 +1,6 @@
 //! The Working a pull request table (`docs/specs/pull_requests.md`): the
 //! facts its rows read about a pull request Linewright opened ([`facts`]),
 //! and the first row that holds ([`row`]).
-//!
-//! The rows from marking it ready on keep the order and outcomes Linewright
-//! gave them before the table, where those differ from the table's.
 
 use crate::domain::{
     Assignment, CheckState, Comment, Login, MergeMethod, Mergeability, Pull, PullState,
@@ -26,8 +23,8 @@ pub struct Facts {
     pub auto_merge: Option<MergeMethod>,
     /// A person holds its merge.
     pub held: bool,
-    /// GitHub's reasons for the merges that failed since Linewright was last
-    /// assigned to it again, oldest first.
+    /// GitHub's reasons for the merges of it that failed this round, oldest
+    /// first.
     pub failed_merges: Vec<String>,
     pub verdict: Verdict,
 }
@@ -68,15 +65,14 @@ pub enum Checks {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
     Allows,
-    /// GitHub allows a merge, but reports it not rebaseable, and the method
-    /// is rebase.
-    NotRebaseable,
     Blocks {
         requires: Vec<Requirement>,
-        /// Linewright has commented on what GitHub requires, for the same
-        /// requirements.
+        /// Linewright has commented on it this round naming what GitHub
+        /// requires.
         commented: bool,
     },
+    /// Also a merge by rebase while GitHub has not reported whether it is
+    /// rebaseable.
     NotReported,
 }
 
@@ -128,15 +124,20 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
     };
     let auto_merge = policy.auto_merge;
     let verdict = match (&pr.mergeability, auto_merge) {
-        (Mergeability::Clean, Some(MergeMethod::Rebase)) => match pr.rebaseability {
-            Rebaseability::Rebaseable => Verdict::Allows,
-            Rebaseability::NotRebaseable => Verdict::NotRebaseable,
-            Rebaseability::Unknown => Verdict::NotReported,
-        },
+        (Mergeability::Clean, Some(MergeMethod::Rebase))
+            if pr.rebaseability == Rebaseability::Unknown =>
+        {
+            Verdict::NotReported
+        }
+        // Not rebaseable, a merge by rebase is tried and fails: the update
+        // row comes first, and failed merges hand it back.
         (Mergeability::Clean, _) => Verdict::Allows,
         (Mergeability::Blocked { requires }, _) => Verdict::Blocks {
             requires: requires.clone(),
-            commented: memory.held.is_held_for(pr.number, requires),
+            commented: memory
+                .pulls
+                .last_commented(pr.number)
+                .is_some_and(|at| at > round_start),
         },
         // Behind and conflicting have a fact of their own, read first.
         (Mergeability::Unknown | Mergeability::Behind | Mergeability::Conflicting, _) => {
@@ -156,9 +157,10 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
         auto_merge,
         held: is_held(pr, linewright),
         failed_merges: memory
-            .failed_merges
+            .pulls
+            .failed_merges(pr.number)
             .iter()
-            .filter(|f| f.pr == pr.number && restarted.is_none_or(|r| f.at > r))
+            .filter(|f| f.at > round_start)
             .map(|f| f.reason.clone())
             .collect(),
         verdict,
@@ -188,26 +190,16 @@ pub enum Row {
     HandBackMergeFailed {
         reason: String,
     },
-    /// Hands it back as GitHub reports it not rebaseable, though it was
-    /// rebased: a row of its own, outside the table.
-    HandBackNotRebaseable,
-    /// Comments naming what GitHub requires, marking a `draft` ready for
-    /// review first.
     CommentRequirements {
         requires: Vec<Requirement>,
-        draft: bool,
     },
     WaitForRequirements {
         requires: Vec<Requirement>,
     },
-    /// Marks the draft ready for review, so that GitHub reports whether it
-    /// allows the merge.
-    MarkReadyForMergeState,
+    /// Waits for GitHub to report whether it allows the merge.
     WaitForMergeState,
-    /// Merges it with `method`, marking a `draft` ready for review first.
     Merge {
         method: MergeMethod,
-        draft: bool,
     },
 }
 
@@ -253,34 +245,32 @@ pub fn row(facts: &Facts) -> Row {
         }
         | Checks::Green => {}
     }
+    if facts.draft {
+        return Row::MarkReady;
+    }
     let Some(method) = facts.auto_merge.filter(|_| !facts.held) else {
-        return if facts.draft {
-            Row::MarkReady
-        } else {
-            Row::WaitForReview
-        };
+        return Row::WaitForReview;
     };
-    let draft = facts.draft;
+    if let [.., _, last] = facts.failed_merges.as_slice() {
+        return Row::HandBackMergeFailed {
+            reason: last.clone(),
+        };
+    }
     match &facts.verdict {
-        Verdict::Allows => match facts.failed_merges.as_slice() {
-            [.., _, last] => Row::HandBackMergeFailed {
-                reason: last.clone(),
-            },
-            _ => Row::Merge { method, draft },
-        },
-        Verdict::NotRebaseable => Row::HandBackNotRebaseable,
         Verdict::Blocks {
             requires,
-            commented,
-        } if draft || !commented => Row::CommentRequirements {
-            requires: requires.clone(),
-            draft,
-        },
-        Verdict::Blocks { requires, .. } => Row::WaitForRequirements {
+            commented: false,
+        } => Row::CommentRequirements {
             requires: requires.clone(),
         },
-        Verdict::NotReported if draft => Row::MarkReadyForMergeState,
+        Verdict::Blocks {
+            requires,
+            commented: true,
+        } => Row::WaitForRequirements {
+            requires: requires.clone(),
+        },
         Verdict::NotReported => Row::WaitForMergeState,
+        Verdict::Allows => Row::Merge { method },
     }
 }
 
