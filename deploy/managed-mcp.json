@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "/usr/local/bin/playwright-mcp"
+    }
+  }
+}

@@ -1,10 +1,42 @@
 # syntax=docker/dockerfile:1
 
+# Playwright MCP and Playwright, as the lockfile pins them. npm, with the
+# hundreds of packages Debian splits it into, stays in this stage.
+FROM runtime AS playwright
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/playwright
+COPY deploy/playwright/package.json deploy/playwright/package-lock.json ./
+# Fails the build unless the one playwright installed is the version
+# @playwright/mcp uses, so the browser installed below is the one it drives.
+RUN npm ci --no-audit --no-fund \
+    && test ! -e node_modules/@playwright/mcp/node_modules \
+    && node -e ' \
+        const want = require("@playwright/mcp/package.json").dependencies.playwright; \
+        const got = require("playwright/package.json").version; \
+        if (got !== want) throw new Error(`playwright ${got}, @playwright/mcp wants ${want}`);'
+
 FROM runtime
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libc6-dev curl procps \
+    && apt-get install -y --no-install-recommends gcc libc6-dev curl procps nodejs \
     && rm -rf /var/lib/apt/lists/*
+# A headless Chromium that sessions drive through Playwright MCP, to see the
+# pages they serve on localhost. The browser is the revision the pinned
+# Playwright expects, read-only to the agents.
+COPY --link --from=playwright /opt/playwright /opt/playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    NODE_PATH=/opt/playwright/node_modules
+RUN ln -s "$NODE_PATH/playwright/cli.js" /usr/local/bin/playwright \
+    && playwright install --with-deps --no-shell chromium \
+    && rm -rf /var/lib/apt/lists/*
+COPY --chmod=755 deploy/playwright-mcp /usr/local/bin/playwright-mcp
+# Takes exclusive control of MCP: in this image, a repository's .mcp.json,
+# plugins' servers and --mcp-config don't load.
+# https://code.claude.com/docs/en/mcp#managed-mcp-configuration
+COPY deploy/managed-mcp.json /etc/claude-code/managed-mcp.json
 # sccache, so each session's fresh clone compiles the dependencies from the
 # cache that earlier sessions filled, not from scratch.
 ARG SCCACHE_VERSION=0.18.0 TARGETARCH
@@ -27,7 +59,7 @@ COPY --chmod=755 deploy/sccache /usr/local/bin/sccache
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
     RUSTC_WRAPPER=sccache SCCACHE_DIR=/var/cache/sccache
-ENV LINEWRIGHT_SESSION_PASS_ENV=RUSTUP_HOME,CARGO_HOME,RUSTC_WRAPPER,SCCACHE_DIR
+ENV LINEWRIGHT_SESSION_PASS_ENV=RUSTUP_HOME,CARGO_HOME,RUSTC_WRAPPER,SCCACHE_DIR,PLAYWRIGHT_BROWSERS_PATH,NODE_PATH
 RUN install -d -o linewright -g "$(id -g linewright)" \
     "$RUSTUP_HOME" "$CARGO_HOME" "$CARGO_HOME/registry" "$SCCACHE_DIR" /data
 USER linewright
