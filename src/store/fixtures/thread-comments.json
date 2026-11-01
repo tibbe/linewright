@@ -1,0 +1,26 @@
+{
+  "data": {
+    "node": {
+      "comments": {
+        "nodes": [
+          {
+            "author": {
+              "__typename": "User",
+              "login": "tibbe"
+            },
+            "body": "Don't narrate code or config.",
+            "createdAt": "2026-10-30T20:47:02Z"
+          },
+          {
+            "author": {
+              "__typename": "User",
+              "login": "tibbe-bot"
+            },
+            "body": "Removed the comment from the test step.",
+            "createdAt": "2026-10-30T20:51:17Z"
+          }
+        ]
+      }
+    }
+  }
+}

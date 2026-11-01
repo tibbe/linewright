@@ -395,6 +395,15 @@ pub struct NewPull {
     pub body: String,
 }
 
+/// Where the repository is kept, such as GitHub.
+///
+/// Each method but `clone_repo`, `push`, `attach` and `merge` makes each of
+/// its requests once more when it fails as a retry could end differently,
+/// such as an answer lost to a closed connection (runs.md, Ending,
+/// **Retries**). `create_issue`, `comment`, `open_pull`, `reply_in_thread`,
+/// `add_sub_issue` and `add_blocked_by` make what they make at most once,
+/// even when an answer is lost: what the lost answer's request made stands in
+/// for the retry.
 #[async_trait]
 pub trait Store: Send + Sync {
     /// Who Linewright acts as; fails when it cannot push to the repository.
