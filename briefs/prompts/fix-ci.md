@@ -25,9 +25,11 @@ These checks fail on the pull request's head.
 
 Read what each check reports, and its full log where the excerpt doesn't show the cause. Reproduce the failure where you can: run the check's command, or the repository's full checks (tests, linters, formatters, whatever its CI or docs say it runs).
 
+A failure you can't reproduce, or that also fails on the default branch, still has a cause to find: the checks run again only on a commit. Find it in the code the failing test runs. Where the log doesn't show enough, run the test as the check does: with its logs, under load, many copies at once.
+
 ### 2. Fix it
 
-Fix the cause. Keep to the pull request's work: a fix adds nothing the ticket doesn't ask for. Then run the repository's full checks and fix what fails.
+Fix the cause, in the test if the test is wrong. Keep to the pull request's work: a fix adds nothing the ticket doesn't ask for, but a failing test is the pull request's to fix, whoever wrote it. Then run the repository's full checks and fix what fails.
 
 ### 3. Commit
 
