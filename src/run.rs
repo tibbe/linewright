@@ -1525,6 +1525,13 @@ async fn file_cut(
     if let Some(Comment { on, body }) = &published.spec_change_comment {
         store.comment(*on, body).await?;
     }
+    // A new tracking issue is one once it carries the label
+    // (docs/specs/design.md, "Cutting"), which goes on last but for the spec
+    // change's: a stop between the two leaves a cut the spec change's
+    // discard closes.
+    if spec_change.is_some() {
+        store.add_label(tracking_issue, label::DESIGNED).await?;
+    }
     Ok(())
 }
 

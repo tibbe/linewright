@@ -23,7 +23,7 @@ fn varied_items() -> Vec<AnyItem> {
     };
     let tracking = |number, tickets: &[(u64, bool)]| Issue {
         author: Login::new(LINEWRIGHT),
-        labels: vec![],
+        labels: vec![label::DESIGNED.into()],
         filed: Some(Filed::Tracking {
             spec_change: Number(number + 70),
         }),
@@ -171,7 +171,7 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
         (70, Shown::Card(Column::Done)),
         (71, Shown::LeftAlone),
         (72, Shown::Card(Column::Ready)),
-        (73, Shown::Card(Column::Done)),
+        (73, Shown::LeftAlone),
     ];
     assert_eq!(
         items.iter().map(|read| read.number().0).collect::<Vec<_>>(),

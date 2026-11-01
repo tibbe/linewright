@@ -1278,6 +1278,36 @@ async fn an_issue_cut_into_tickets_is_closed_once_all_of_them_are() {
 }
 
 #[tokio::test]
+async fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_added_as_a_sub_issue()
+{
+    let mut world = World::new().await;
+    let issue = open_undesigned_gadgets(&world);
+    world
+        .store
+        .assign_as(LINEWRIGHT, issue, LINEWRIGHT)
+        .unwrap();
+    let ticket = world
+        .store
+        .open_issue(LINEWRIGHT, "Store gadgets", "Gadgets persist.", &[]);
+    world.store.add_sub_issue(issue, ticket).await.unwrap();
+    let gap = world.store.open_issue(
+        LINEWRIGHT,
+        "The spec does not say who owns a gadget",
+        "Found while designing it.",
+        &["ready-for-human"],
+    );
+    world
+        .store
+        .add_sub_issue_as("maintainer", issue, gap)
+        .unwrap();
+
+    world.poll().await;
+
+    assert!(!world.issue(ticket).open);
+    assert!(world.issue(gap).open);
+}
+
+#[tokio::test]
 async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_their_pull_requests() {
     let mut world = World::new().await;
     let issue = open_undesigned_gadgets(&world);

@@ -733,7 +733,7 @@ fn with_merged(mut view: View, merged: Vec<MergedPull>) -> View {
 fn tracking_issue(number: u64, spec_change: u64, tickets: &[(u64, bool)]) -> Issue {
     Issue {
         author: Login::new("factory"),
-        labels: vec![],
+        labels: vec![label::DESIGNED.into()],
         filed: Some(Filed::Tracking {
             spec_change: Number(spec_change),
         }),
@@ -2137,7 +2137,8 @@ fn with_a_required_label_a_closed_issue_without_it_assigned_to_linewright_by_han
 }
 
 #[test]
-fn with_a_required_label_a_closed_issue_without_it_linewright_only_commented_on_is_in_done() {
+fn with_a_required_label_a_closed_issue_without_it_linewright_only_commented_on_is_not_on_the_board()
+ {
     let commented = WorkFacts {
         events: vec![IssueEvent::Commented {
             by: Login::new("factory"),
@@ -2146,7 +2147,7 @@ fn with_a_required_label_a_closed_issue_without_it_linewright_only_commented_on_
         ..WorkFacts::default()
     };
 
-    assert_eq!(placed_requiring_label(commented), [(1, Column::Done, 1)]);
+    assert_eq!(placed_requiring_label(commented), []);
 }
 
 #[test]
@@ -2359,18 +2360,18 @@ fn persons_pull(number: u64, closes: &[u64]) -> Pull {
 #[test]
 fn a_persons_pull_request_linewright_is_assigned_to_or_worked_is_its_own_card_unless_it_closes_an_issue_with_one()
  {
-    let commented = Pull {
+    let labeled = Pull {
         assignees: vec![],
-        comments: vec![Comment {
-            author: Login::new("factory"),
-            body: "Looks good.".into(),
-            created_at: at("2026-10-01T11:00:00Z"),
+        labelings: vec![Labeling {
+            label: "enhancement".into(),
+            by: Some(Login::new("factory")),
+            at: at("2026-10-01T11:00:00Z"),
         }],
         ..persons_pull(21, &[])
     };
     let view = with_peoples_pulls(
         view(vec![ticket(1, "Ready")], vec![]),
-        vec![persons_pull(20, &[1]), commented, persons_pull(22, &[9])],
+        vec![persons_pull(20, &[1]), labeled, persons_pull(22, &[9])],
     );
 
     let board = board(&view, &[], at(NOW));
@@ -2405,9 +2406,10 @@ fn a_pull_request_linewright_worked_that_merged_or_closed_unmerged_is_in_done_wh
         closes: vec![],
         author: Some(Login::new("alice")),
     };
-    let commented = MergedPull {
-        events: vec![IssueEvent::Commented {
-            by: Login::new("factory"),
+    let labeled = MergedPull {
+        events: vec![IssueEvent::Labeled {
+            label: "enhancement".into(),
+            by: Some(Login::new("factory")),
             at: at("2026-09-30T10:00:00Z"),
         }],
         ..merged(30, &[], "alice", "2026-09-30T11:00:00Z")
@@ -2415,7 +2417,7 @@ fn a_pull_request_linewright_worked_that_merged_or_closed_unmerged_is_in_done_wh
     let untouched = merged(32, &[], "alice", "2026-09-30T11:00:00Z");
     let view = with_merged(
         with_closed(view(vec![], vec![]), vec![closed]),
-        vec![commented, untouched],
+        vec![labeled, untouched],
     );
 
     let board = board(&view, &[], at(NOW));

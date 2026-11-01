@@ -456,11 +456,11 @@ async fn the_item_page_names_a_blocker_the_snapshot_does_not_hold_by_its_number_
 fn a_lane() -> linewright::status::View {
     view(
         vec![
-            Issue {
+            labeled_by_linewright(Issue {
                 labels: vec![label::DESIGNED.into()],
                 sub_issues: vec![sub_issue(3, true, LINEWRIGHT)],
                 ..ticket(2, "Big thing")
-            },
+            }),
             Issue {
                 author: linewright::domain::Login::new(LINEWRIGHT),
                 parent: Some(Parent {

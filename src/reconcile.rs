@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    Asked, Asks, Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel, Filed,
+    Asked, Asks, Assignment, BranchIssue, CheckState, ClosingPull, Comment, DesignedLabel,
     HandBackKind, Issue, Item, Linked, Login, Marking, MergeMethod, MergeMethods, Mergeability,
     MergedPull, Number, Pull, PullState, Rebaseability, Requirement, Review, ReviewState, Snapshot,
     StatusLabel, SubIssue, Thread, TicketBranchName, Timestamp, Tracks, UpdateMethod, UpdateRule,
@@ -867,17 +867,18 @@ pub fn decisions(
     {
         let subject = Subject::Issue(issue.number);
         let tracks = issue.tracks(&policy.linewright);
-        let cut = match tracks {
-            Some(Tracks::SpecChange(spec_change)) => running(Subject::SpecChange(spec_change)),
-            Some(Tracks::Cut) => running(subject),
-            None => None,
+        // A spec change's tracking issue gets its label as its cut ends.
+        let spec_change = issue.spec_change();
+        let cut = match (spec_change, tracks) {
+            (Some(spec_change), _) => running(Subject::SpecChange(spec_change)),
+            (None, Some(_)) => running(subject),
+            (None, None) => None,
         };
         if let Some(stage) = cut {
             plan.wait(issue.number, Wait::Run { stage });
         }
         let cutting = cut.is_some()
-            || matches!(tracks, Some(Tracks::SpecChange(sc))
-                if pending.contains(&sc) || discarded.contains(&sc));
+            || spec_change.is_some_and(|sc| pending.contains(&sc) || discarded.contains(&sc));
         if tracks.is_some() && !cutting && !issue.sub_issues.is_empty() {
             let open = open_numbers(issue.sub_issues.iter().map(SubIssue::linked));
             if open.is_empty() {
@@ -963,7 +964,7 @@ pub fn decisions(
             if !linewrights && issue.holds(StatusLabel::ReadyForAgent) {
                 wait_for_blockers(issue, &mut plan);
             }
-        } else if tracks.is_some() || discarding {
+        } else if tracks.is_some() || cutting || discarding {
             // A tracking issue is worked through its tickets, and an issue
             // whose cut is discarded is designed again once its tickets are
             // closed.
@@ -1234,7 +1235,7 @@ fn held_by_runs(
                 for tracking in snapshot
                     .issues
                     .iter()
-                    .filter(|i| i.open && i.tracks(linewright) == Some(Tracks::SpecChange(pr)))
+                    .filter(|i| i.open && i.spec_change() == Some(pr))
                 {
                     held.insert(Item::Issue(tracking.number), stage);
                 }
@@ -1556,21 +1557,27 @@ fn discards(
     running: &impl Fn(Subject) -> Option<WorkKind>,
     policy: &Policy,
 ) -> Vec<Discard> {
-    let spec_changes = snapshot
+    let undesigned: BTreeSet<Number> = snapshot
         .merged
         .iter()
         .filter(|pr| pr.designed_label().is_none())
-        .filter(|pr| running(Subject::SpecChange(pr.number)).is_none())
-        .filter_map(|pr| {
-            let tracking = snapshot.issues.iter().find(|i| {
-                i.open
-                    && i.filed
-                        == Some(Filed::Tracking {
-                            spec_change: pr.number,
-                        })
-            })?;
+        .map(|pr| pr.number)
+        .collect();
+    // A spec change's cut, in flight or discarded with the spec change, is
+    // the spec change's, its tracking issue's label or not.
+    let spec_changes_cut = |spec_change: Number| {
+        undesigned.contains(&spec_change) || running(Subject::SpecChange(spec_change)).is_some()
+    };
+    let spec_changes = undesigned
+        .iter()
+        .filter(|&&pr| running(Subject::SpecChange(pr)).is_none())
+        .filter_map(|&pr| {
+            let tracking = snapshot
+                .issues
+                .iter()
+                .find(|i| i.open && i.spec_change() == Some(pr))?;
             let item = CutItem::SpecChange {
-                pr: pr.number,
+                pr,
                 tracking: tracking.number,
             };
             Some(cut_to_discard(snapshot, item, tracking, policy))
@@ -1580,9 +1587,9 @@ fn discards(
         .iter()
         .filter(|i| {
             i.open
-                && i.tracks(&policy.linewright).is_none()
                 && !i.has_label(label::DESIGNED)
                 && running(Subject::Issue(i.number)).is_none()
+                && !i.spec_change().is_some_and(spec_changes_cut)
         })
         .map(|i| cut_to_discard(snapshot, CutItem::Issue(i.number), i, policy))
         .filter(|d| !d.tickets.is_empty() || d.all_pulls().next().is_some());

@@ -42,6 +42,7 @@ pub fn sub_issue(number: u64, open: bool, author: &str) -> SubIssue {
     SubIssue {
         number: Number(number),
         author: Login::new(author),
+        added_by: None,
         state: SubIssueState::open(open),
     }
 }

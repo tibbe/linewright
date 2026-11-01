@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::{
     Asks, CheckState, ClosedItem, ClosedKind, ClosingPull, Issue, IssueCloseReason, IssueClosing,
     Login, Marking, Merge, MergedPull, Number, Pull, PullState, Snapshot, StatusLabel, SubIssue,
-    Timestamp, Tracks, label, last_labeling,
+    Timestamp, Tracks, label, last_labeling, tickets_cut,
 };
 use crate::phrase::Phrase;
 use crate::reconcile::{
@@ -256,17 +256,12 @@ pub enum LeftAlonePull {
 pub enum IssueExclusion {
     /// It would wait on Linewright were it marked for Linewright, and
     /// Linewright has not worked it.
-    NotMarked {
-        label: String,
-    },
+    NotMarked { label: String },
     /// It holds `label`, which asks for a person's work, and Linewright has
     /// not worked it.
-    WaitsOnAPerson {
-        label: StatusLabel,
-    },
+    WaitsOnAPerson { label: StatusLabel },
     /// It holds no status label, and nothing else makes it managed.
     NoPipelineLabel,
-    NoTickets,
     /// A tracking issue with no status label and none of its tickets open.
     NoOpenTickets,
 }
@@ -284,9 +279,6 @@ impl IssueExclusion {
                 StatusLabel::ALL.map(|status| Phrase::default().code(status.label())),
                 "or",
             )),
-            IssueExclusion::NoTickets => {
-                "a tracking issue with no tickets, and none are being cut".into()
-            }
             IssueExclusion::NoOpenTickets => "a tracking issue with no open ticket".into(),
         }
     }
@@ -373,7 +365,7 @@ fn judge(
     };
     match held {
         Held::Issue(issue) if !issue.open => Err(LeftAloneItem::Issue(LeftAloneIssue::Closed)),
-        Held::Issue(issue) => match standing(issue, view, &waiting_for) {
+        Held::Issue(issue) => match standing(issue, view) {
             Ok(state) => Ok(managed(&issue.title, &[], state, waiting_for)),
             Err(left_alone) => Err(LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone })),
         },
@@ -433,7 +425,7 @@ fn judge(
 /// worked or that ask for its work ([`Issue::candidate`]), it leaves alone
 /// one with no status label, no run in flight, no open pull request closing
 /// it and no open ticket it tracks, whatever it did on it before.
-fn standing(issue: &Issue, view: &View, waiting_for: &[Wait]) -> Result<ItemState, IssueExclusion> {
+fn standing(issue: &Issue, view: &View) -> Result<ItemState, IssueExclusion> {
     let snapshot = &view.snapshot;
     let policy = &view.policy;
     let linewright = &policy.linewright;
@@ -452,7 +444,7 @@ fn standing(issue: &Issue, view: &View, waiting_for: &[Wait]) -> Result<ItemStat
     }
     let tracks = issue.tracks(linewright);
     let tickets: Vec<&SubIssue> = tracks
-        .map(|tracks| tracks.tickets(&issue.sub_issues, linewright).collect())
+        .map(|_| tickets_cut(&issue.sub_issues, linewright).collect())
         .unwrap_or_default();
     if issue.status_label().is_none()
         && !view.has_live_run(issue.number)
@@ -460,7 +452,6 @@ fn standing(issue: &Issue, view: &View, waiting_for: &[Wait]) -> Result<ItemStat
         && !tickets.iter().any(|ticket| ticket.is_open())
     {
         return Err(match tracks {
-            Some(_) if tickets.is_empty() => IssueExclusion::NoTickets,
             Some(_) => IssueExclusion::NoOpenTickets,
             None => IssueExclusion::NoPipelineLabel,
         });
@@ -485,9 +476,6 @@ fn standing(issue: &Issue, view: &View, waiting_for: &[Wait]) -> Result<ItemStat
                 labeled: Box::new(state),
             }
         });
-    }
-    if matches!(state, ItemState::Tracking { tickets: 0, .. }) && waiting_for.is_empty() {
-        return Err(IssueExclusion::NoTickets);
     }
     Ok(state)
 }

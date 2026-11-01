@@ -1,0 +1,174 @@
+{
+  "assignees": {
+    "nodes": []
+  },
+  "author": {
+    "__typename": "User",
+    "login": "tibbe-bot"
+  },
+  "blockedBy": {
+    "nodes": []
+  },
+  "body": "Tickets for the spec change in #899.\n\n- #901 Read the tracking and worked facts as the spec defines them\n- #902 Derive an item's state in one place and show it\n- #903 Work an item by the first row of the Working an item table\n- #904 Card lines by the new Cards table\n- #905 Discard a cut without touching people's work\n- #906 Design a spec change's issue with its spec diff\n- #907 Take up a spec change by opening its issue\n",
+  "closedByPullRequestsReferences": {
+    "nodes": []
+  },
+  "comments": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "body": "## Prior art\n\n### Where does an item's state come from, for the decisions and the views alike?\n\n#### Context and Problem Statement\n\nThe spec now defines an item's state as the first row of a facts → state table, and both what Linewright does and what the board and `explain` show are keyed on it. Today the reconcile decides from its own reading of labels and assignees, and `managed` derives a separate, view-only `ItemState`.\n\n#### Considered Options\n\n* Derive the state once, in one pure function both use\n* Keep a view-side state and the reconcile's own reading\n* Store the state\n\n#### Decision Outcome\n\nChosen option: \"Derive the state once, in one pure function both use\", because a single derivation from observed facts is the only one that keeps what Linewright does and what it shows from drifting apart. Follows the consensus.\n\n#### Pros and Cons of the Options\n\n##### Derive the state once, in one pure function both use\n\nA pure function from what GitHub shows (and a run in flight) to the state, called by the reconcile and every view. Taken by the Kubernetes API conventions (status as observations), controller-runtime and kube.rs (level-triggered reconcile that re-reads the world), and Prow's Tide (label queries re-evaluated each sync).\n\n* Good, because a derived state survives missed events and restarts, and there is nothing to keep in sync.\n* Bad, because Kubernetes moved away from one `phase` enum: a single state hides the facts behind it, so the views still need the facts (CI, how it ended) beside it.\n\n##### Keep a view-side state and the reconcile's own reading\n\nTwo derivations, one for acting and one for showing. Taken by none of the sources.\n\n* Good, because each side can be shaped for its use.\n* Bad, because the two can disagree; the model found exactly this kind of defect (a card in a column for a state the reconcile does not act on).\n* ~~Bad, because it's what the code does now~~ (struck: leans on what the code already does)\n\n##### Store the state\n\nA Status field set on events, as GitHub Projects' built-in workflows do.\n\n* Good, because it is simple to read and shown by the platform.\n* Bad, because it is edge-triggered: a missed event leaves it wrong. The architecture also requires the machine state to be in the store.\n\n### How do the decisions follow the Working an item table?\n\n#### Context and Problem Statement\n\nFor each item, at each poll, Linewright takes the first row of the Working an item table that holds. The table is checked by a Quint model row by row, so the code should be easy to compare with it row by row.\n\n#### Considered Options\n\n* An ordered match that returns the row\n* A list of (guard, action) rules\n* An event-driven state-machine crate\n* Typestate\n\n#### Decision Outcome\n\nChosen option: \"An ordered match that returns the row\", because Rust's exhaustive enum and ordered arms give first-match semantics, with the rows as data the reconcile then turns into writes. Follows the consensus.\n\n#### Pros and Cons of the Options\n\n##### An ordered match that returns the row\n\nA pure function returns an enum with a variant per table row, chosen by guards in table order. Taken by the Rust state-machine guides (\"runtime data suggests an enum\") and, in spirit, by Tide (one action per pool per sync).\n\n* Good, because the compiler checks that every variant is handled, and first match is the order of the arms.\n* Bad, because the guards are code, not data, so the table can't be printed from it.\n\n##### A list of (guard, action) rules\n\nA `Vec` of rule objects evaluated in order. Mergify's rules are like this, except that every matching rule fires.\n\n* Good, because the rules are data that can be listed and configured.\n* Bad, because it loses exhaustiveness and needs closures over the facts. No source uses it for a fixed table.\n\n##### An event-driven state-machine crate\n\n`statig` (4.7M downloads), `rust-fsm` (1.5M) and others.\n\n* Good, because they give entry and exit actions and a transition DSL.\n* Bad, because they assume a stored state and incoming events, while here the state is derived from a snapshot each poll.\n\n##### Typestate\n\nEach state is a type, and a transition consumes `self`.\n\n* Good, because an illegal transition fails to compile.\n* Bad, because the state is recomputed from a fresh snapshot, so no value goes through a fixed sequence of types.\n\n### How does Linewright find a spec change's issue again?\n\n#### Context and Problem Statement\n\nA spec change is taken up once an issue Linewright created, titled \"Spec change: …\", links it. That issue has to be found every poll, open or closed, or the spec change is taken up twice.\n\n#### Considered Options\n\n* By author, title prefix and a link in the body\n* By a hidden marker in the body\n* By a label on the pull request\n\n#### Decision Outcome\n\nChosen option: \"By author, title prefix and a link in the body\", because it is what the spec defines and what Renovate does, made safe against renames and look-alikes by the author and the body link. Follows the consensus.\n\n#### Pros and Cons of the Options\n\n##### By author, title prefix and a link in the body\n\nTaken by Renovate (dependency dashboard, found by title) and recommended with a body marker.\n\n* Good, because people can see what it is matched on.\n* Bad, because a renamed title loses the issue; the spec accepts this.\n\n##### By a hidden marker in the body\n\nTaken by `probot/metadata`, which calls it \"a hack\".\n\n* Good, because it survives a rename.\n* Bad, because it is invisible and people can edit it by hand.\n\n##### By a label on the pull request\n\nTaken by release-please (`autorelease: pending`).\n\n* Good, because it is cheap to query.\n* Bad, because a label left behind by a stop blocks or duplicates work, and the spec no longer has Linewright label the spec change.\n\n## Design\n\n### Today\n\n- **Two derivations of an item's state.** `reconcile::decisions` decides what to do from its own reading of an item's labels, assignees and pull requests: one long loop with special cases for tracking issues, discards, spec changes and pull requests. `managed::ItemState` is a separate, view-only state (`WaitingForDesign`, `ReadyToClaim`, `Claimed`, `Unlabeled`, `MergedInto`, …), mapped to board columns by `board::placement` (\"the rightmost column whose facts hold\"). Nothing ties the two together, and neither follows the spec's new State table:\n  - \"done\" is checked since last opened only, not \"or given a status label\";\n  - an issue labeled `needs-triage` and assigned is shown being triaged even with an open pull request;\n  - an issue without a state but with a run in flight is `Unlabeled`.\n- **Spec changes are designed on their pull request.** There is `Subject::SpecChange`, `Work::DesignSpecChange` and the `design-spec-change` result. The design labels the PR `linewright:designed`, and a \"Spec change:\" tracking issue (`Filed::Tracking`) is created only when the design cuts.\n- **Tracking issues by title.** `Tracks::SpecChange` makes any such issue a tracking issue, whatever its labels.\n- **Spec changes, other gaps.**\n  - A spec change whose design finds nothing to build is labeled and left; it is never closed.\n  - The spec change is found again only through open issues in the snapshot, so a closed issue from before the Done window would be missed.\n- **Discarding a cut.**\n  - It closes the people's pull requests on tickets too (S7).\n  - It closes the spec change's tracking issue.\n  - It never removes the tickets from the sub-issues.\n  - It treats every sub-issue Linewright authored as a ticket, including a spec gap issue a person added.\n- **Worked.** Worked counts Linewright's comments. Managed items have their own exclusion list (`IssueExclusion`) rather than \"has a state\".\n- **Hand-backs and claims.**\n  - A pull request Linewright opened, closed by a person, hands the issue back if it closed \"since claimed\", not \"since last opened or given a status label\".\n  - Claiming refuses an issue an open pull request closes. The new tables put that in the in review state instead.\n- **Linewright assigned to other pull requests.** Linewright assigned to a pull request it did not open is not let go of.\n\n### Decisions\n\n#### Where does the change attach to the code: the seam?\n\nChosen option: \"A new functional-core module, `lifecycle`, that derives an item's `State` and picks its Working an item row, called by `reconcile` for the decisions and by `managed`, `board` and `explain` for the views\", because the State table is the one fact everything else is keyed on, and one pure function for it removes the drift between acting and showing at its root.\n\n* Derive the state inside `reconcile`, and have the views read it from `Decisions`: the views then depend on a full decision pass to show an item (`explain` of a freshly read item would run the whole reconcile), and the derivation stays mixed with planning.\n* Keep `managed::ItemState` and map it to the spec's states: it carries display detail and states the spec no longer has (`MergedInto`, `Unlabeled`, `WaitingForDesign`), so the mapping would be a second derivation.\n\n#### How is the state represented?\n\nChosen option: \"A plain `State` enum with exactly the spec's thirteen states (ten of an issue, three of a pull request), `Option<State>` for an item with no state, serialized kebab-case (`being-implemented`), with display detail kept apart\", because it makes an unlisted state unrepresentable and gives `explain --json` its `state` field directly ([Monitoring](monitoring.md), \"State in JSON\").\n\n* One enum carrying its detail (CI state, how it ended, ticket counts), as `ItemState` does now: the state then differs between two items in the same spec state, and every match on it has to look past the detail. The detail goes on `Managed` beside the state: an in review's pull request and CI, a done's ending, a tracking issue's tickets.\n* Separate `IssueState` and `PullState` enums: the board and the item page treat both kinds alike by column and words, so one enum with a `Column` mapping is simpler. The derivation still takes an issue or a pull request, so an issue never gets a pull request's state.\n\n#### How do the decisions follow the Working an item and Steering tables?\n\nChosen option: \"`lifecycle::row(&facts, state) -> Option<Row>`, an enum with a variant per Working an item row and guards in table order. `reconcile` turns a row into `Action`s and `Wait`s. Cancelling follows Steering through `lifecycle::cancels(stage, state)`: a run is cancelled when the item's state, derived without the run-in-flight row, is no longer one its stage runs in\", because this gives the reconcile the same first-match shape as the spec and the Quint model, row by row.\n\n* Keep the imperative loop and patch each behavior change into it: every row the spec added (unassign people asked, tracking clean-up, PRs not Linewright's) would be one more special case in an order the table does not state.\n* Make the rows data (a `Vec` of guard closures): this loses exhaustiveness, with no gain for a table the spec fixes.\n\nA run in flight restricts the rows to those for how it ends, as the spec says. The run's own result is applied by `run.rs`, not through `row`, so `row` returns no row for an item with a run in flight, other than the waits that show it. Holds (the usage limit, the drain, `max-runs`) and blockers stay in `reconcile::Plan`, which turns a start row into a start or a wait as today.\n\n#### How is a spec change's issue found, and who opens it?\n\nChosen option: \"The snapshot reads Linewright's issues titled 'Spec change: …', open or closed, created since the lookback window opened, each with the spec change its body links (`Snapshot::spec_change_issues`). Taking up is an `Action::OpenSpecChangeIssue { pr }` that the factory makes with no run. `Subject::SpecChange`, `Work::DesignSpecChange` and the `design-spec-change` result go\", because a spec change can only be taken up within the lookback window, and its issue is created after its merge. So this read holds every issue that could be a spec change's issue, closed or not, and a closed one from before the Done window no longer leads to a second issue.\n\n* Find it among the snapshot's open issues and closed items, as today: a spec change's issue closed before the Done window opened, inside a longer lookback window, would be missed, and the spec change taken up again.\n* Label the spec change `linewright:designed` when its issue is opened: the spec's row is \"opens its issue\", and a stop between the two writes is the double-take-up the read already prevents.\n\n`Filed::Tracking` becomes `Filed::SpecChange { spec_change }`, read from the title and the body's link. The parser accepts the old \"Tickets for the spec change in #N\" body as well, so issues opened before this change are found too. A ticket's or a gap issue's spec change comes from its parent's `Filed`, as now.\n\n#### How are the old spec changes' tracking issues kept from being discarded?\n\nChosen option: \"At startup, Linewright labels each open issue it filed as a spec change's tracking issue (`Filed::SpecChange`, Linewright's tickets among its sub-issues) and that is without `linewright:designed`, `linewright:designed`\", because under the new tables such an issue is a cut without the label, and its first row would discard the work in flight.\n\n* Have the reader treat an old-format tracking issue as carrying the label: it hides a fact from every view and has to stay for good.\n* Do nothing: every spec change being built when the operator upgrades has its tickets and pull requests closed.\n\nThis is listed as a spec gap.\n\n#### Who added a sub-issue?\n\nChosen option: \"`SubIssue` gains `added_by: Option<Login>`, read from the parent's timeline. A ticket cut from an issue is a sub-issue Linewright both opened and added\", because the spec's tracking issue counts \"those Linewright created and added to it\". Without the adder, a spec gap issue Linewright filed that a person adds as a sub-issue would be taken for a ticket, and closed by a discard (the model's S7).\n\n* Keep \"authored by Linewright\": this is the S7 defect above.\n* Mark tickets by a body marker: invisible, editable, and not what the spec says.\n\n`None`, in a snapshot written before this, counts as added by Linewright, as before.\n\n### Structure\n\n**Changed.** The state is derived in one place, and the decisions are a first-match table over it. Today two independent readings of the same facts make a mismatch between what Linewright does and what it shows likely, and every row the spec adds would be one more special case in `reconcile::decisions`. That is the kind of defect the Quint model found. Judged against the whole spec:\n\n- `managed` keeps deciding which items are managed. That is now \"worked or asks for its work, and has a state\", which replaces `IssueExclusion`'s list with what keeps an item out.\n- `board` maps a state to a column by the spec's table, instead of \"the rightmost column\".\n- `explain` and the item page show the state in the States words (`design_system.md`, States).\n\nKept:\n\n- the functional core and imperative shell split;\n- `apply::Asks`, which already orders `linewright:designed`, the status label, then the assignment;\n- `Plan` with its holds;\n- `run.rs` applying a run's result.\n\n### Modules\n\n#### `lifecycle` (new)\n\nWhat an item's state is ([State](repository.md#state)), and which Working an item row holds for it. Pure.\n\nInterface:\n- `enum State { Done, InReview, Tracking, BeingTriaged, BeingDesigned, BeingImplemented, NeedsTriage, NeedsInfo, ReadyForHuman, ReadyForAgent, Open, Merged, Closed }`, serialized kebab-case. `State::column() -> Column` follows the board's table, and `State::shown() -> &'static str` gives the States words.\n- `fn issue_state(issue, closing: &[ClosingPull], run: Option<RunStage>, linewright) -> Option<State>`.\n- `fn pull_state(&PullState) -> State`.\n- `fn row(facts: &ItemFacts, state: Option<State>, policy) -> Option<Row>`. `Row` has one variant per Working an item row, carrying what the row writes: `DiscardCut`, `HandBackClosedPull { pull }`, `LetGo { comment }`, `UnassignAsked { people }`, `CleanUpTracking`, `CloseTracking`, `Relabel(NeedsTriage)`, `Claim`, `Start(stage)`, `TakeUpSpecChange`, `ClaimPull`, `PullWork`, `RemoveStaleStatusLabels`, `ClearStall`, `UnassignFromPull { comment }`.\n- `fn cancels(stage: WorkKind, state: Option<State>) -> bool`, the Steering table's cancels.\n- Its helpers: \"since last opened or given a status label\", \"tickets cut from it\" (opened and added by Linewright), \"Linewright may claim it\".\n\n#### `domain`\n\nFacts as GitHub records them.\n\nInterface:\n- `SubIssue.added_by`.\n- `Filed::SpecChange { spec_change }`, in place of `Filed::Tracking`.\n- `Issue::tracks` loses its `Tracks::SpecChange` path: a tracking issue is one carrying `linewright:designed` with tickets cut from it. `Tracks` becomes a bool-like predicate, or goes.\n- `Snapshot.spec_change_issues: Vec<SpecChangeIssue { number, spec_change, open }>`.\n- `WorkSigns::worked_by` no longer counts comments.\n\n#### `store` (`github`, `local`)\n\nReads and writes GitHub, and fakes it.\n\nInterface:\n- The snapshot fills `added_by` and `spec_change_issues`.\n- New writes: `remove_sub_issue(parent, child)`, and closing an issue with a reason (`completed` or `not planned`), if not already there.\n- The local store passes the same tests.\n\n#### `reconcile`\n\nTurns each item's `lifecycle::row` into actions and waits, with the holds, the blockers and `max-runs`.\n\nInterface:\n- `decisions` and `reconcile` keep their signatures.\n- `Action` gains `OpenSpecChangeIssue { pr }`, `UnassignFromPull { pr, comment }` and `CloseDone { issue }` (nothing to build).\n- `Subject::SpecChange` and `Work::DesignSpecChange` go.\n- `Wait` gains what the new card lines need, such as `NotMarked`.\n- `Discard` closes only Linewright's pull requests and lists the tickets to remove from the sub-issues.\n\n#### `managed`\n\nWhich items are managed, and, for each, its `State` and the detail its card and `explain` show.\n\nInterface:\n- `Managed { number, title, closes, state: State, detail: Detail, waiting_for }`. `Detail` holds an in review's pull request and CI, a done's `Ended`, and a tracking issue's tickets.\n- `LeftAlone` gives the item's `Option<State>` and why it is left alone.\n- `Ended::NothingToBuild` goes.\n\n#### `board`, `item_facts`, `web`\n\nThe board, cards and item page by state ([The board](design_system.md#the-board), [Cards](design_system.md#cards), [The item page](design_system.md#the-item-page)).\n\nInterface:\n- `placement` becomes `State::column()`. A tracking issue has no card.\n- The card lines follow the new Cards table: Triage as Ready; Ready \"not marked for Linewright\"; Working \"blocked by\"; a pull request's \"handed back\" and \"unassigned\".\n- The item page's State fact begins with the state's words.\n- The Spec change fact names the spec change of a spec change's issue.\n\n#### `explain`\n\n`explain` and `explain --json` ([Monitoring](monitoring.md)).\n\nInterface:\n- The state is shown in the States words.\n- The JSON `state` field is the kebab-case name, or `null`.\n- An item that is not managed gets its state where it has one, then why it is left alone.\n\n#### `run`, `apply`, `prompts`, `results`\n\nApplying a design and an implement run.\n\nInterface:\n- One design path, `design_issue`. For a spec change's issue, it fills `{{kind}}` with `spec change` and `{{item}}` with the issue and its comments plus the spec change and its spec diff.\n- Nothing to build in an issue Linewright created comments the reason and closes the issue as completed; in any other issue, it hands the issue back.\n- `{{ticket}}` carries the spec change and diff for a spec change's issue or a ticket cut from one.\n- The `design-spec-change` result and prompt template go.\n- `apply::filing::Cut` loses its `TrackingIssue`, since the issue is always the tracking issue.\n- `tracking` writes and parses the spec change's issue's title and body.\n\n#### `factory`, `case`, `webhook`, `setup`\n\nThe shell that makes actions and maps deliveries.\n\nInterface:\n- `OpenSpecChangeIssue` creates \"Spec change: <PR title>\", linking the pull request and labeled `ready-for-agent` (and the required label). Where Linewright was assigned to the pull request, it then unassigns itself.\n- `memory.ended_cuts` goes.\n- A delivery for a merged pull request reconciles it as an item, not a `Subject::SpecChange`.\n- `setup` runs the startup migration of old tracking issues.\n\n## Tickets\n\n1. #901 Read the tracking and worked facts as the spec defines them\n2. #902 Derive an item's state in one place and show it\n3. #903 Work an item by the first row of the Working an item table\n4. #904 Card lines by the new Cards table\n5. #905 Discard a cut without touching people's work\n6. #906 Design a spec change's issue with its spec diff\n7. #907 Take up a spec change by opening its issue\n\nThe design changes the code's structure first: one derivation of an item's state, which the views and then the decisions are moved onto. The behavior changes come after it, each blocked by what it builds on.\n\n1. **Read the tracking and worked facts as the spec defines them** goes first. Everything else rests on these facts, and its startup migration has to be in place before any ticket that discards a cut.\n2. **Derive an item's state in one place and show it.** The structure change: the `lifecycle` module and the views moved onto it.\n3. **Work an item by the first row of the Working an item table** moves the reconcile onto the same state.\n4. **Card lines by the new Cards table** changes only the board's lines. It runs alongside 3 and 5, on different files.\n5. **Discard a cut without touching people's work** changes the discard writes that ticket 3's first row triggers.\n6. **Design a spec change's issue with its spec diff** comes before 7, so that the moment spec changes are opened as issues, their design already reads the diff.\n7. **Take up a spec change by opening its issue** switches the source of work over and removes the old path last.",
+        "createdAt": "2026-11-01T02:00:56Z"
+      }
+    ]
+  },
+  "createdAt": "2026-11-01T02:00:39Z",
+  "labels": {
+    "nodes": []
+  },
+  "number": 900,
+  "parent": null,
+  "state": "OPEN",
+  "subIssueAdds": {
+    "nodes": [
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "subIssue": {
+          "number": 901
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "subIssue": {
+          "number": 902
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "subIssue": {
+          "number": 903
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "subIssue": {
+          "number": 904
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "subIssue": {
+          "number": 905
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "subIssue": {
+          "number": 906
+        }
+      },
+      {
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "subIssue": {
+          "number": 907
+        }
+      }
+    ]
+  },
+  "subIssues": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "closedAt": null,
+        "number": 901,
+        "state": "OPEN"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "closedAt": null,
+        "number": 902,
+        "state": "OPEN"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "closedAt": null,
+        "number": 903,
+        "state": "OPEN"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "closedAt": null,
+        "number": 904,
+        "state": "OPEN"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "closedAt": null,
+        "number": 905,
+        "state": "OPEN"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "closedAt": null,
+        "number": 906,
+        "state": "OPEN"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "closedAt": null,
+        "number": 907,
+        "state": "OPEN"
+      }
+    ]
+  },
+  "timelineItems": {
+    "nodes": []
+  },
+  "title": "Spec change: Write the item lifecycle as tables, checked by a model",
+  "updatedAt": "2026-11-01T02:00:56Z"
+}

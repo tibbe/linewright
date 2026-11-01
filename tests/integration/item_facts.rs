@@ -33,7 +33,7 @@ fn facts_read(view: &View, read: &AnyItem) -> ItemFacts {
 fn tracking_issue(number: u64, spec_change: u64, tickets: &[(u64, bool)]) -> Issue {
     Issue {
         author: Login::new("factory"),
-        labels: vec![],
+        labels: vec![label::DESIGNED.into()],
         filed: Some(Filed::Tracking {
             spec_change: Number(spec_change),
         }),
