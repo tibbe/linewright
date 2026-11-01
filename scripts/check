@@ -333,48 +333,178 @@ check_test() {
 }
 check_doc() { cargo doc --no-deps --locked --quiet; }
 
-# The model of the spec, as docs/model/README.md says: each model's
-# scenarios, then TLC over its invariants, S6's flaps from the start that
-# keeps their ghost, and its temporal properties.
-check_model() {
-  local model file status=0
-  for model in pipeline cut spec_change; do
-    file="$PWD/docs/model/$model.qnt"
-    quint test --max-samples 100 "$file" || status=1
-    quint verify --backend=tlc --invariant=invariants "$file" || status=1
-    quint verify --backend=tlc --init=initFlaps --invariant=S6_noFlap "$file" || status=1
-    quint verify --backend=tlc --temporal=S5_crashSafety,S6_progress "$file" || status=1
-  done
-  # Working a pull request: its invariants and temporal properties, and a
-  # witness for each row, the state TLC finds where the row is the first that
-  # holds.
-  file="$PWD/docs/model/pull_request.qnt"
-  quint verify --backend=tlc --invariant=invariants "$file" || status=1
-  quint verify --backend=tlc --temporal=crashSafety,progress "$file" || status=1
-  for row in $(seq 0 13); do
-    if ! quint verify --backend=tlc --invariant="row${row}Unreached" "$file" | grep -q '^\[violation\]'; then
-      echo "pull_request.qnt: no state where row $row is the first that holds"
-      status=1
+# The models of the spec in docs/model, and what `scripts/check model MODEL
+# [NAME...]` was given.
+models="pipeline cut spec_change pull_request"
+model_args=()
+
+# Checks the definition `name` of the model in `file`, by its kind: a
+# scenario (`run`) with `quint test`, a `temporal` property with TLC, and any
+# other definition as an invariant with TLC. A row's witness
+# (`rowNUnreached`) holds when TLC finds a state that violates it, where the
+# row is the first that holds. S6_noFlap reads a ghost only `initFlaps`
+# keeps, so it is checked from there.
+check_property() {
+  local file=$1 name=$2 args output
+  if grep -qE "^\s*run $name\b" "$file"; then
+    quint test --max-samples 100 --match "^$name\$" "$file"
+    return
+  elif grep -qE "^\s*temporal $name\b" docs/model/*.qnt; then
+    args=(--temporal="$name")
+  elif grep -qE "^\s*(pure )?val $name\b" docs/model/*.qnt; then
+    args=(--invariant="$name")
+  else
+    echo "$(basename "$file"): no scenario, temporal property or invariant $name"
+    return 1
+  fi
+  if [ "$name" = S6_noFlap ]; then
+    args+=(--init=initFlaps)
+  fi
+  if [[ $name =~ ^row([0-9]+)Unreached$ ]]; then
+    output="$(quint verify --backend=tlc "${args[@]}" "$file" 2>&1)"
+    if ! grep -q '^\[violation\]' <<<"$output"; then
+      echo "$output"
+      echo "$(basename "$file"): no state where row ${BASH_REMATCH[1]} is the first that holds"
+      return 1
     fi
+    return
+  fi
+  quint verify --backend=tlc "${args[@]}" "$file"
+}
+
+# Every check of the model in `file`: its scenarios, then TLC over its
+# invariants, S6's flaps and its temporal properties; for Working a pull
+# request, a witness for each row instead of scenarios.
+check_one_model() {
+  local file=$1 status=0 row
+  if [ "$(basename "$file")" = pull_request.qnt ]; then
+    check_property "$file" invariants || status=1
+    quint verify --backend=tlc --temporal=crashSafety,progress "$file" || status=1
+    for row in $(seq 0 13); do
+      check_property "$file" "row${row}Unreached" || status=1
+    done
+  else
+    quint test --max-samples 100 "$file" || status=1
+    check_property "$file" invariants || status=1
+    check_property "$file" S6_noFlap || status=1
+    quint verify --backend=tlc --temporal=S5_crashSafety,S6_progress "$file" || status=1
+  fi
+  return "$status"
+}
+
+# The checks of every model that take minutes, not hours: its scenarios, its
+# invariants and, for Working a pull request, each row's witness. It leaves
+# out S6's flaps and the temporal properties, most of the full run.
+check_model-quick() {
+  local name file status=0 row
+  for name in $models; do
+    file="$PWD/docs/model/$name.qnt"
+    if [ "$name" = pull_request ]; then
+      for row in $(seq 0 13); do
+        check_property "$file" "row${row}Unreached" || status=1
+      done
+    else
+      quint test --max-samples 100 "$file" || status=1
+    fi
+    check_property "$file" invariants || status=1
+  done
+  return "$status"
+}
+
+# Each clause the model's comments quote is still in the spec, so that a
+# changed clause shows where the model is to change with it. A quote may
+# elide with "...", and leave out the spec's parenthetical links and code.
+# Whitespace and Markdown's emphasis, code and links are not compared.
+check_model-quotes() {
+  python3 -I - docs/model/*.qnt <<'EOF'
+import glob, re, sys
+
+def plain(s):
+    s = re.sub(r" \((?:\[[^\]]*\]\([^)]*\)|`[^`]*`)[^()]*\)", "", s)
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
+    return re.sub(r"\s+", " ", s.replace("`", "").replace("**", "").replace("_", " "))
+
+spec_files = glob.glob("docs/specs/**/*.md", recursive=True) + ["GLOSSARY.md"]
+spec = plain(" ".join(open(f).read() for f in spec_files))
+comment = re.compile(r"\s*(?:///?|/\*\*|\*(?!/))\s?(.*)")
+status = 0
+for path in sys.argv[1:]:
+    # Each run of comment lines is one text, so a quote may wrap.
+    runs, run = [], []
+    for number, line in enumerate(open(path), 1):
+        m = comment.match(line)
+        if m:
+            run.append((number, m.group(1)))
+        elif run:
+            runs.append(run)
+            run = []
+    runs += [run] if run else []
+    for run in runs:
+        text, starts = "", []
+        for number, line in run:
+            starts.append((len(text), number))
+            text += line + " "
+        for m in re.finditer(r'"([^"]+)"', text):
+            parts = [plain(p).strip() for p in re.split(r"\.\.\.|…", m.group(1))]
+            if all(p in spec for p in parts if p):
+                continue
+            number = max(n for at, n in starts if at <= m.start())
+            print(f'{path}:{number}: "{re.sub(r"\s+", " ", m.group(1))}" is not in the spec')
+            status = 1
+sys.exit(status)
+EOF
+}
+
+# Every model, or only the model and definitions named after `model`.
+check_model() {
+  local name status=0 file
+  if [ ${#model_args[@]} -eq 0 ]; then
+    for name in $models; do
+      check_one_model "$PWD/docs/model/$name.qnt" || status=1
+    done
+    return "$status"
+  fi
+  file="$PWD/docs/model/${model_args[0]}.qnt"
+  if [ ${#model_args[@]} -eq 1 ]; then
+    check_one_model "$file"
+    return
+  fi
+  for name in "${model_args[@]:1}"; do
+    check_property "$file" "$name" || status=1
   done
   return "$status"
 }
 
 stages=("fmt markdown compose css" "clippy" "test doc")
-# Run only when named, not by CI: the model takes about two hours.
-named_only="model"
+# Run only when named, not by CI: the model takes about two hours, and its
+# quick checks about eight minutes. The model's quotes are to join the first
+# stage once the model quotes the spec as it now reads.
+named_only="model-quotes model-quick model"
 
 usage() {
   echo "usage: scripts/check [NAME...]"
+  echo "       scripts/check model MODEL [DEFINITION...]"
   echo "Runs every check CI runs, or only the named ones: ${stages[*]} $named_only."
   echo "Without names it leaves out: $named_only."
   echo "Outside CI it first fixes what it can: formatting, Markdown and clippy's"
   echo "machine-applicable suggestions, and it rebuilds the web UI's stylesheet."
+  echo "With a model ($models),"
+  echo "it checks only that model, or only its named scenarios, invariants and"
+  echo "temporal properties."
 }
 
 if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
   usage
   exit 0
+fi
+if [ "${1:-}" = model ] && [ $# -gt 1 ]; then
+  if [[ " $models " != *" $2 "* ]]; then
+    echo "scripts/check model: no model $2; the models are: $models" >&2
+    exit 2
+  fi
+  shift
+  model_args=("$@")
+  set -- model
 fi
 if [ $# -gt 0 ]; then
   for name in "$@"; do
