@@ -8,6 +8,7 @@ use linewright::board::{CardLine, CardStatus, Column, Ended, LaneHead, Stop, boa
 use linewright::domain::*;
 use linewright::explain::{explain, explain_fresh, fresh_view};
 use linewright::item_facts::{ItemFacts, Related, StateFact, item_facts};
+use linewright::lifecycle::State;
 use linewright::managed::{LeftAloneIssue, LeftAloneItem};
 use linewright::reconcile::Wait;
 use linewright::status::View;
@@ -75,7 +76,7 @@ fn lane_head(related: Option<&Related>) -> &LaneHead {
 
 /// Its column and its card's line.
 fn card_state(facts: &ItemFacts) -> (Column, Option<CardLine>) {
-    let StateFact::Card { column, card } = &facts.state else {
+    let StateFact::Card { column, card, .. } = &facts.state else {
         panic!("no card: {:?}", facts.state);
     };
     (*column, card.line.clone())
@@ -112,7 +113,7 @@ fn a_ticket_in_ready_blocked_by_another_is_in_ready_saying_so_under_its_tracking
             title: "Tracking 20".into(),
             tickets_closed: 0,
             tickets: 2,
-            closed: None,
+            done: None,
         }
     );
     assert_eq!(facts.tickets, None);
@@ -285,12 +286,18 @@ fn tracking_five() -> View {
 }
 
 /// `docs/specs/design_system.md`, The item page: an unfinished tracking
-/// issue's State is "Tracking" alone.
+/// issue's State is its state alone.
 #[test]
 fn a_tracking_issue_is_tracking_and_has_its_tickets_closed_of_total() {
     let facts = facts_of(&tracking_five(), 20);
 
-    assert_eq!(facts.state, StateFact::Tracking { finished: None });
+    assert_eq!(
+        facts.state,
+        StateFact::Tracking {
+            state: Some(State::Tracking),
+            finished: None
+        }
+    );
     let tickets = facts.tickets.expect("tickets");
     assert_eq!(tickets.closed, 3);
     assert_eq!(
@@ -332,7 +339,7 @@ fn a_merged_spec_change_names_the_tracking_issue_cut_from_it() {
             title: "Tracking 20".into(),
             tickets_closed: 3,
             tickets: 5,
-            closed: None,
+            done: None,
         }
     );
     assert!(facts.pull_request);
@@ -363,6 +370,7 @@ fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_
     assert_eq!(
         facts.state,
         StateFact::Tracking {
+            state: Some(State::Done),
             finished: Some(at("2026-09-30T12:00:00Z"))
         }
     );
@@ -383,9 +391,11 @@ fn a_tracking_issue_closed_after_its_last_ticket_finished_when_it_closed() {
         [on_board.state, off_board.state],
         [
             StateFact::Tracking {
+                state: Some(State::Done),
                 finished: Some(at("2026-09-30T18:00:00Z"))
             },
             StateFact::Tracking {
+                state: Some(State::Done),
                 finished: Some(at("2026-09-24T12:00:00Z"))
             },
         ]
@@ -420,11 +430,10 @@ fn tracking_finished_before_the_window(open: bool) -> (View, Issue) {
     (view, tracking)
 }
 
-/// `docs/specs/repository.md`, Managed items: a tracking issue carries no
-/// status label, so with none of its tickets open it is managed no more; but
-/// it still heads its lane, unfinished while it is open
-/// (`docs/specs/design_system.md`, The board, Finished lanes), so its State
-/// is "Tracking" alone.
+/// `docs/specs/repository.md`, State and Managed items: an open tracking
+/// issue with none of its tickets open is tracking, so managed, and heads
+/// its lane, unfinished until it is done (`docs/specs/design_system.md`, The
+/// board, Finished lanes).
 #[test]
 fn an_open_tracking_issue_with_none_of_its_tickets_open_is_tracking_and_unfinished() {
     let (view, tracking) = tracking_finished_before_the_window(true);
@@ -434,9 +443,15 @@ fn an_open_tracking_issue_with_none_of_its_tickets_open_is_tracking_and_unfinish
 
     assert!(matches!(
         explain_fresh(&fresh_view(&view, &read, at(NOW)), &[], &read, at(NOW)),
-        linewright::explain::Answer::LeftAlone(_)
+        linewright::explain::Answer::Managed(_)
     ));
-    assert_eq!(facts.state, StateFact::Tracking { finished: None });
+    assert_eq!(
+        facts.state,
+        StateFact::Tracking {
+            state: Some(State::Tracking),
+            finished: None
+        }
+    );
 }
 
 /// `docs/specs/design_system.md`, The item page, State: a tracking issue
@@ -450,6 +465,7 @@ fn a_closed_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_its_la
     assert_eq!(
         facts.state,
         StateFact::Tracking {
+            state: Some(State::Done),
             finished: Some(at("2026-09-22T12:00:00Z"))
         }
     );
@@ -476,7 +492,13 @@ fn a_closed_tracking_issue_with_a_ticket_open_is_tracking() {
         &read_closed(tracking, "2026-09-25T12:00:00Z"),
     );
 
-    assert_eq!(facts.state, StateFact::Tracking { finished: None });
+    assert_eq!(
+        facts.state,
+        StateFact::Tracking {
+            state: Some(State::Done),
+            finished: None
+        }
+    );
 }
 
 /// A snapshot written before sub-issues held when they closed knows of no
@@ -505,7 +527,13 @@ fn a_closed_tracking_issue_with_a_ticket_closed_at_an_unknown_time_is_tracking()
         &read_closed(tracking, "2026-09-25T12:00:00Z"),
     );
 
-    assert_eq!(facts.state, StateFact::Tracking { finished: None });
+    assert_eq!(
+        facts.state,
+        StateFact::Tracking {
+            state: Some(State::Done),
+            finished: None
+        }
+    );
 }
 
 /// `docs/specs/design_system.md`, The item page, Related items: a tracking
@@ -536,7 +564,10 @@ fn a_closed_issue_linewright_has_not_worked_is_left_alone_as_closed() {
 
     assert_eq!(
         facts.state,
-        StateFact::LeftAlone(LeftAloneItem::Issue(LeftAloneIssue::Closed))
+        StateFact::LeftAlone {
+            state: Some(State::Done),
+            why: LeftAloneItem::Issue(LeftAloneIssue::Closed)
+        }
     );
     assert_eq!(facts.last_read, at(NOW));
 }
@@ -561,7 +592,10 @@ fn with_a_required_label_a_closed_issue_linewright_has_not_worked_is_left_alone_
 
         assert_eq!(
             facts_read(&required, &read).state,
-            StateFact::LeftAlone(LeftAloneItem::Issue(LeftAloneIssue::Closed)),
+            StateFact::LeftAlone {
+                state: Some(State::Done),
+                why: LeftAloneItem::Issue(LeftAloneIssue::Closed)
+            },
             "{labels:?}"
         );
     }

@@ -19,6 +19,7 @@ use crate::board;
 use crate::domain::{Number, Snapshot};
 use crate::explain;
 use crate::item_facts::{self, ItemFacts, Related, StateFact};
+use crate::lifecycle;
 use crate::managed::{LeftAloneIssue, LeftAloneItem, LeftAlonePull, PullExclusion};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::NotSpecChange;
@@ -91,14 +92,19 @@ fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
     .collect()
 }
 
-/// The State fact's line: the column and the card's line with its card
-/// status; for a tracking issue, "Tracking", then when its lane finished, if
-/// it did; or why Linewright leaves the item.
+/// The State fact's line: the item's state in the States words
+/// (`docs/specs/design_system.md`, States), then the card's line with its
+/// card status; for a tracking issue, its state, then when its lane
+/// finished, if it did; for an item Linewright leaves, its state, where it
+/// has one, then "Left alone" and why.
 fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
-    let then = |first: &str, line: Option<(Html, Option<Tone>)>| {
-        let mut pieces = vec![Piece::Text(html::escape(first))];
-        if let Some((line, tone)) = line {
-            pieces.push(Piece::Text(html::escape(" · ")));
+    let then = |first: Option<lifecycle::State>, lines: Vec<(Html, Option<Tone>)>| {
+        let first = first.map(|item_state| (html::escape(item_state.shown()), None));
+        let mut pieces = vec![];
+        for (line, tone) in first.into_iter().chain(lines) {
+            if !pieces.is_empty() {
+                pieces.push(Piece::Text(html::escape(" · ")));
+            }
             pieces.push(match tone {
                 Some(tone) => Piece::Status { tone, words: line },
                 None => Piece::Text(line),
@@ -107,22 +113,31 @@ fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
         pieces
     };
     match state {
-        StateFact::Card { column, card } => then(
-            column.name(),
-            card_line(card).map(|line| (line.html(names), card.status().map(tone))),
+        StateFact::Card { state, card, .. } => then(
+            Some(*state),
+            card_line(card)
+                .map(|line| (line.html(names), card.status().map(tone)))
+                .into_iter()
+                .collect(),
         ),
-        StateFact::Tracking { finished } => then(
-            "Tracking",
-            finished.map(|at| {
-                (
-                    html::phrase(&Phrase::from("finished ").time(at), names),
-                    None,
-                )
-            }),
+        StateFact::Tracking { state, finished } => then(
+            *state,
+            finished
+                .map(|at| {
+                    (
+                        html::phrase(&Phrase::from("finished ").time(at), names),
+                        None,
+                    )
+                })
+                .into_iter()
+                .collect(),
         ),
-        StateFact::LeftAlone(item) => then(
-            "Left alone",
-            Some((html::phrase(&left_alone_worded(item), names), None)),
+        StateFact::LeftAlone { state, why } => then(
+            *state,
+            vec![
+                (html::escape("Left alone"), None),
+                (html::phrase(&left_alone_worded(why), names), None),
+            ],
         ),
     }
 }

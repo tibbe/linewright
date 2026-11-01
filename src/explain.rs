@@ -7,14 +7,15 @@ use crate::domain::{
     self, ClosedItem, ClosedKind, ClosingPull, Issue, Item, Login, ManagedFacts, MergedPull,
     Number, Snapshot, SubIssue, Timestamp, Tracks,
 };
+use crate::lifecycle::State;
 use crate::managed::{
-    self, Held, InReview, IssueExclusion, ItemState, LeftAloneIssue, LeftAloneItem, LeftAlonePull,
-    Managed, PullExclusion, classify,
+    self, Detail, Held, IssueExclusion, LeftAloneIssue, LeftAloneItem, LeftAlonePull, Managed,
+    PullExclusion, Tickets, Unmanaged, classify,
 };
 use crate::phrase::Phrase;
 use crate::reconcile::{NotSpecChange, Wait};
-use crate::runs::{self, Recorded, Run, RunInFlight, State};
-use crate::status::{Paint, View, describe, describe_wait, shown};
+use crate::runs::{self, Recorded, Run, RunInFlight};
+use crate::status::{Paint, View, describe, describe_wait};
 use crate::store::AnyItem;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,8 +32,14 @@ pub struct Explanation {
     pub title: String,
     #[serde(flatten)]
     pub family: Family,
+    /// Its state (`docs/specs/repository.md`, State).
+    pub state: State,
+    /// What it shows beyond its state.
     #[serde(flatten)]
-    pub standing: Standing,
+    pub detail: Option<Detail>,
+    /// Its tickets, if it is a tracking issue.
+    #[serde(flatten)]
+    pub tickets: Option<Tickets>,
     /// Whether it was handed back in a stall (`GLOSSARY.md`, **Stall**).
     #[serde(default)]
     pub stalled: bool,
@@ -107,7 +114,7 @@ impl ItemRuns {
         let in_flight = run_in_flight.as_ref().map(|run| &run.id);
         let mut past: Vec<Recorded> = of_item
             .into_iter()
-            .filter(|run| run.state != State::InFlight && Some(&run.id) != in_flight)
+            .filter(|run| run.state != runs::State::InFlight && Some(&run.id) != in_flight)
             .collect();
         runs::sort_newest_first(&mut past);
         let past_runs_left_out = past.len().saturating_sub(PAST_RUNS_SHOWN);
@@ -353,36 +360,6 @@ impl ChildRole {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Standing {
-    // First, so that only an answer naming its state reads as one.
-    Item(ItemState),
-    PullRequest {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pull_request_for: Option<Number>,
-        #[serde(flatten)]
-        review: InReview,
-    },
-}
-
-impl Standing {
-    fn of(state: ItemState) -> Standing {
-        if let ItemState::PullRequest {
-            pull_request_for,
-            review,
-        } = state
-        {
-            Standing::PullRequest {
-                pull_request_for,
-                review,
-            }
-        } else {
-            Standing::Item(shown(state))
-        }
-    }
-}
-
 /// `None` unless #`number` is a managed item the view holds.
 pub fn explain(
     view: &View,
@@ -435,7 +412,9 @@ fn explanation(
         number: managed.number,
         title: managed.title,
         family: Family::default(),
-        standing: Standing::of(managed.state),
+        state: managed.state,
+        detail: managed.detail,
+        tickets: managed.tickets,
         stalled: false,
         last_read: now,
         waiting_for: managed.waiting_for,
@@ -476,6 +455,8 @@ pub struct LeftAlone {
     pub title: String,
     #[serde(flatten)]
     pub family: Family,
+    /// Its state, where it has one (`docs/specs/repository.md`, State).
+    pub state: Option<State>,
     #[serde(flatten)]
     pub item: LeftAloneItem,
     /// As [`Explanation::stalled`].
@@ -567,10 +548,12 @@ pub fn explain_fresh(
             Err(left_alone) => (&pull.title, left_alone),
         },
     };
+    let Unmanaged { state, why: item } = item;
     Answer::LeftAlone(LeftAlone {
         number,
         title: title.clone(),
         family,
+        state,
         item,
         stalled,
         last_read: now,
@@ -662,13 +645,18 @@ impl Answer {
         }
     }
 
-    /// Whether the item is a pull request: one in review, or one Linewright
-    /// leaves. A spec change's pull request is managed as an item.
+    /// Its state, where it has one.
+    pub(crate) fn state(&self) -> Option<State> {
+        match self {
+            Answer::Managed(explanation) => Some(explanation.state),
+            Answer::LeftAlone(left_alone) => left_alone.state,
+        }
+    }
+
+    /// Whether the item is a pull request.
     pub(crate) fn is_pull_request(&self) -> bool {
         match self {
-            Answer::Managed(explanation) => {
-                matches!(explanation.standing, Standing::PullRequest { .. })
-            }
+            Answer::Managed(explanation) => explanation.state.of_pull_request(),
             Answer::LeftAlone(left_alone) => {
                 matches!(left_alone.item, LeftAloneItem::PullRequest(_))
             }
@@ -705,27 +693,34 @@ impl Answer {
     }
 }
 
+/// An item Linewright leaves alone: its state, where it has one, and why
+/// it leaves it.
 fn left_alone_lines(left_alone: &LeftAlone) -> Vec<ItemLine<'_>> {
     let closed = || Phrase::from("it is closed");
-    let (state, why) = match &left_alone.item {
-        LeftAloneItem::Issue(LeftAloneIssue::Closed) => ("closed issue", closed()),
+    let why = match &left_alone.item {
+        LeftAloneItem::Issue(LeftAloneIssue::Closed)
+        | LeftAloneItem::PullRequest(LeftAlonePull::Closed) => closed(),
         LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }) => {
-            ("open issue", describe_issue_exclusion(left_alone))
+            describe_issue_exclusion(left_alone)
         }
-        LeftAloneItem::PullRequest(LeftAlonePull::Closed) => ("closed pull request", closed()),
         LeftAloneItem::PullRequest(LeftAlonePull::Open { left_alone }) => {
-            ("open pull request", describe_pull_exclusion(left_alone))
+            describe_pull_exclusion(left_alone)
         }
-        LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }) => (
-            "merged pull request",
-            Phrase::from("it is no spec change: ").then(describe_not_spec_change(left_alone)),
-        ),
+        LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }) => {
+            Phrase::from("it is no spec change: ").then(describe_not_spec_change(left_alone))
+        }
     };
+    let state = left_alone.state.map(|state| {
+        ItemLine::fact(
+            "state",
+            with_stall(state.shown().into(), left_alone.stalled),
+        )
+    });
     left_alone
         .family
         .lines()
+        .chain(state)
         .chain([
-            ItemLine::fact("state", with_stall(state.into(), left_alone.stalled)),
             ItemLine::fact("last read", Phrase::default().time(left_alone.last_read)),
             ItemLine::fact("left alone", why),
         ])
@@ -745,17 +740,13 @@ fn with_stall(state: Phrase, stalled: bool) -> Phrase {
 pub(crate) const NOTHING_WAITED_FOR: &str = "nothing: Linewright acts on it at its next poll";
 
 fn explanation_lines(explanation: &Explanation) -> Vec<ItemLine<'_>> {
-    let state = match &explanation.standing {
-        Standing::PullRequest { review, .. } | Standing::Item(ItemState::InReview(review)) => {
-            review.describe()
-        }
-        Standing::Item(state) => describe(state),
-    };
-    // Linewright acts no more on an item that has ended.
-    let ended = matches!(
-        explanation.standing,
-        Standing::Item(ItemState::Ended { .. })
+    let state = describe(
+        explanation.state,
+        explanation.detail.as_ref(),
+        explanation.tickets.as_ref(),
     );
+    // Linewright acts no more on an item that has ended.
+    let ended = matches!(explanation.detail, Some(Detail::Ended { .. }));
     let nothing = (explanation.waiting_for.is_empty() && !ended)
         .then(|| ItemLine::fact("waiting for", NOTHING_WAITED_FOR.into()));
     explanation
@@ -784,9 +775,7 @@ pub fn render_answer(answer: &Answer, colour: bool) -> String {
 fn describe_issue_exclusion(exclusion: &IssueExclusion) -> Phrase {
     let subject = match exclusion {
         IssueExclusion::WaitsOnAPerson { .. } => "it ",
-        IssueExclusion::NotMarked { .. }
-        | IssueExclusion::NoPipelineLabel
-        | IssueExclusion::NoOpenTickets => "it is ",
+        IssueExclusion::NotMarked { .. } | IssueExclusion::NoPipelineLabel => "it is ",
     };
     Phrase::from(subject).then(exclusion.worded())
 }

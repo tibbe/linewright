@@ -343,7 +343,9 @@ fn while_draining_an_item_waits_for_the_drain() {
 
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
-        ["#7: ready to claim — waiting for the drain, until `serve` restarts — Do the thing"]
+        [
+            "#7: Waiting for Linewright — waiting for the drain, until `serve` restarts — Do the thing"
+        ]
     );
 }
 
@@ -421,7 +423,7 @@ fn each_run_in_flight_follows_the_linewright_section_with_how_long_it_has_run() 
             "weekly/3: automation weekly, running for 5m",
             "43/triage-1: #43 triage, running for 0s",
             "",
-            "#7: ready to claim — Do the thing",
+            "#7: Waiting for Linewright — Do the thing",
         ]
     );
 }
@@ -445,7 +447,7 @@ fn an_item_with_a_run_in_flight_shows_as_its_run_not_among_the_other_items() {
         [
             "9/implement-1: #9 implement, running for 30s",
             "",
-            "#7: ready to claim — Do the thing",
+            "#7: Waiting for Linewright — Do the thing",
         ]
     );
 }
@@ -456,7 +458,7 @@ fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_and_waits_for_it
 
     assert_eq!(
         after_linewright(&view(vec![closed]), "2026-10-01T12:00:30Z"),
-        ["#7: in review: #43, opened by alice — waiting for #43, which closes it — Do the thing"]
+        ["#7: In review · #43, opened by alice — waiting for #43, which closes it — Do the thing"]
     );
 }
 
@@ -469,7 +471,7 @@ fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
 
     assert_eq!(
         after_linewright(&view(vec![assigned]), "2026-10-01T12:00:30Z"),
-        ["#7: ready to claim — waiting for alice, who is assigned to it — Do the thing"]
+        ["#7: Waiting for Linewright — waiting for alice, who is assigned to it — Do the thing"]
     );
 }
 
@@ -491,7 +493,7 @@ fn a_blocked_ticket_linewright_is_assigned_to_by_hand_shows_as_held_by_its_block
 
     assert_eq!(
         after_linewright(&view(vec![held]), "2026-10-01T12:00:30Z"),
-        ["#7: claimed: being implemented — waiting for #5, which blocks it — Do the thing"]
+        ["#7: Being implemented — waiting for #5, which blocks it — Do the thing"]
     );
 }
 
@@ -530,11 +532,11 @@ fn the_managed_items_follow_the_linewright_section_each_as_its_number_and_where_
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
-            "#7: ready to claim — Do the thing",
-            "#8: ready to claim — waiting for #7, which blocks it — Do the next thing",
-            "#9: claimed: being implemented — Do another thing",
-            "#10: waiting for triage — It broke",
-            "#11: claimed: being triaged — It broke again",
+            "#7: Waiting for Linewright — Do the thing",
+            "#8: Waiting for Linewright — waiting for #7, which blocks it — Do the next thing",
+            "#9: Being implemented — Do another thing",
+            "#10: Waiting for triage — It broke",
+            "#11: Being triaged — It broke again",
         ]
     );
 }
@@ -555,9 +557,26 @@ fn cut_issue() -> Issue {
 fn an_issue_cut_into_tickets_shows_as_their_tracking_issue_with_its_closed_tickets() {
     assert_eq!(
         after_linewright(&view(vec![cut_issue()]), "2026-10-01T12:00:30Z"),
-        [
-            "#7: tracking issue, 1/2 tickets closed — waiting for its tickets: #9 open — Do the thing"
-        ]
+        ["#7: Tracking · 1 of 2 tickets closed — waiting for its tickets: #9 open — Do the thing"]
+    );
+}
+
+/// `docs/specs/monitoring.md`, status: only the open managed items; a
+/// closed tracking issue is done.
+#[test]
+fn a_closed_tracking_issue_is_not_among_the_items() {
+    let closed = Issue {
+        number: Number(6),
+        sub_issues: vec![sub_issue(8, false, "factory")],
+        ..cut_issue()
+    };
+    let mut view = view(vec![ready_issue()]);
+    std::sync::Arc::make_mut(&mut view.snapshot).closed =
+        vec![common::closed_item(&closed, "2026-10-01T11:00:00Z")];
+
+    assert_eq!(
+        after_linewright(&view, "2026-10-01T12:00:30Z"),
+        ["#7: Waiting for Linewright — Do the thing"]
     );
 }
 
@@ -578,8 +597,8 @@ fn an_issue_not_designed_yet_shows_as_waiting_for_or_in_its_design() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
-            "#7: ready to claim, waiting for its design — Do the thing",
-            "#9: claimed: being designed — Do another thing",
+            "#7: Waiting for Linewright — Do the thing",
+            "#9: Being designed — Do another thing",
         ]
     );
 }
@@ -599,8 +618,8 @@ fn an_issue_carrying_two_status_labels_shows_by_the_newer() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
-            "#7: waiting for triage — Do the thing",
-            "#8: with the maintainer — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — It broke",
+            "#7: Waiting for triage — Do the thing",
+            "#8: Waiting for a decision — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — It broke",
         ]
     );
 }
@@ -648,10 +667,10 @@ fn each_managed_item_says_in_one_line_what_linewright_waits_for_on_it() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
-            "#7: ready to claim — waiting for the usage limit, until 2026-10-01 14:30:00 UTC — Do the thing",
-            "#8: ready to claim — waiting for #5, which blocks it; #6, which blocks it — Do the next thing",
-            "#9: claimed: being implemented — waiting for its implement run, in flight — Do another thing",
-            "#10: with the maintainer — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — It broke",
+            "#7: Waiting for Linewright — waiting for the usage limit, until 2026-10-01 14:30:00 UTC — Do the thing",
+            "#8: Waiting for Linewright — waiting for #5, which blocks it; #6, which blocks it — Do the next thing",
+            "#9: Being implemented — waiting for its implement run, in flight — Do another thing",
+            "#10: Waiting for a decision — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — It broke",
         ]
     );
 }
@@ -812,7 +831,7 @@ fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_pars
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
         [
-            "#7: ready to claim — Do the thing",
+            "#7: Waiting for Linewright — Do the thing",
             "",
             "automation hourly last run: none yet",
             "automation hourly next run: 2026-10-01 13:00:00 UTC",
@@ -949,7 +968,7 @@ fn the_json_names_each_fact() {
                 {
                     "number": 7,
                     "title": "Do the thing",
-                    "state": "ready-to-claim",
+                    "state": "ready-for-agent",
                     "waiting_for": [],
                 },
             ],
@@ -1078,9 +1097,9 @@ fn linewrights_pull_request_is_managed_with_its_own_waits_and_its_ticket_waits_f
             "2026-10-01T12:00:30Z"
         ),
         [
-            "#7: in review: #43 (draft, CI failing) — waiting for #43, its pull request, until it \
+            "#7: In review · #43 (draft, CI failing) — waiting for #43, its pull request, until it \
              is merged or closed — Do the thing",
-            "#43: in review: #43 (draft, CI failing) — waiting for the maintainer: Linewright \
+            "#43: Open · draft, CI failing — waiting for the maintainer: Linewright \
              is unassigned, until they assign it again — Do #7",
         ]
     );

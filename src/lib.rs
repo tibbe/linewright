@@ -33,6 +33,7 @@ pub mod holds;
 pub mod host;
 pub mod item_facts;
 pub mod layer;
+pub mod lifecycle;
 pub mod listening;
 pub mod logs;
 pub mod managed;

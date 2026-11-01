@@ -564,7 +564,7 @@ async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewr
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 4, "{}", output.stdout);
     assert_eq!(lines[0], "#1: Do the thing");
-    assert_eq!(lines[1], "state: with the maintainer");
+    assert_eq!(lines[1], "state: Waiting for a decision");
     assert!(
         lines[2]
             .strip_prefix("last read: 2026-10-01 ")
@@ -597,7 +597,7 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
     let lines: Vec<&str> = output.stdout.lines().collect();
     assert_eq!(lines.len(), 4, "{}", output.stdout);
     assert_eq!(lines[0], format!("{closed}: Old idea"));
-    assert_eq!(lines[1], "state: closed issue");
+    assert_eq!(lines[1], "state: Done");
     assert_eq!(lines[3], "left alone: it is closed");
     answering.stop().await;
 }

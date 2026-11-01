@@ -1,10 +1,11 @@
 use crate::common;
 
 use common::*;
-use linewright::board::{Column, Placement, board, placement};
+use linewright::board::{Column, board};
 use linewright::domain::*;
 use linewright::explain::{explain_fresh, fresh_view};
 use linewright::item_facts::{StateFact, item_facts};
+use linewright::lifecycle::State;
 use linewright::managed::{Held, classify, held};
 use linewright::store::AnyItem;
 
@@ -116,12 +117,8 @@ enum Shown {
     Card(Column),
     /// On the card of the issue it closes, its own card in the column.
     OnCardOf(u64, Column),
-    /// At the head of its lane.
+    /// At the head of its lane, unfinished, with no card.
     HeadsLane,
-    /// Left alone, but at the head of its lane, unfinished until it closes,
-    /// and "Tracking" on its page: an open tracking issue with no open
-    /// ticket.
-    HeadsUnfinishedLane,
     LeftAlone,
 }
 
@@ -158,7 +155,7 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
         (7, Shown::Card(Column::NeedsAPerson)),
         (8, Shown::HeadsLane),
         (9, Shown::Card(Column::Ready)),
-        (10, Shown::HeadsUnfinishedLane),
+        (10, Shown::HeadsLane),
         (11, Shown::Card(Column::Done)),
         (20, Shown::Card(Column::Done)),
         (21, Shown::LeftAlone),
@@ -201,52 +198,51 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
             Shown::OnCardOf(issue, _) => {
                 board.card(number).is_none() && board.card(Number(issue)).is_some()
             }
-            Shown::HeadsLane => board.lane_headed_by(number).is_some(),
-            Shown::HeadsUnfinishedLane => board
-                .lane_headed_by(number)
-                .is_some_and(|lane| lane.finished().is_none()),
+            Shown::HeadsLane => {
+                board.card(number).is_none()
+                    && board
+                        .lane_headed_by(number)
+                        .is_some_and(|lane| lane.finished().is_none())
+            }
             Shown::LeftAlone => {
                 board.card(number).is_none() && board.lane_headed_by(number).is_none()
             }
         };
-        let in_flight = view
-            .in_flight
-            .iter()
-            .any(|run| run.id.of.item() == Some(number));
         let placed = managed
             .as_ref()
             .ok()
-            .map(|managed| placement(&managed.state, in_flight));
+            .map(linewright::managed::Managed::column);
         let answer = explain_fresh(&view, &[], read, now);
         let page = item_facts(&answer, &view, &board, &[], now).state;
 
         assert!(on_the_board, "#{number}: {shown:?} on {board:?}");
         assert_eq!(
             managed.is_ok(),
-            !matches!(shown, Shown::LeftAlone | Shown::HeadsUnfinishedLane),
+            !matches!(shown, Shown::LeftAlone),
             "#{number}: {managed:?}"
         );
         match shown {
             Shown::Card(column) | Shown::OnCardOf(_, column) => {
-                assert_eq!(placed, Some(Placement::Column(column)), "#{number}");
+                assert_eq!(placed, Some(Some(column)), "#{number}");
                 assert!(
                     matches!(page, StateFact::Card { column: on, .. } if on == column),
                     "#{number}: {page:?}"
                 );
             }
             Shown::HeadsLane => {
-                assert_eq!(placed, Some(Placement::HeadsLane), "#{number}");
-                assert!(
-                    matches!(page, StateFact::Tracking { .. }),
-                    "#{number}: {page:?}"
+                assert_eq!(placed, Some(None), "#{number}");
+                assert_eq!(
+                    page,
+                    StateFact::Tracking {
+                        state: Some(State::Tracking),
+                        finished: None
+                    },
+                    "#{number}"
                 );
-            }
-            Shown::HeadsUnfinishedLane => {
-                assert_eq!(page, StateFact::Tracking { finished: None }, "#{number}");
             }
             Shown::LeftAlone => {
                 assert!(
-                    matches!(page, StateFact::LeftAlone(_)),
+                    matches!(page, StateFact::LeftAlone { .. }),
                     "#{number}: {page:?}"
                 );
             }

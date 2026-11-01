@@ -6,13 +6,13 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationFiles, AutomationName, LastScheduledRuns};
-use crate::board;
 use crate::domain::{Item, Number, Requirement, Snapshot, Timestamp, label};
-use crate::managed::{self, ItemState, Managed};
+use crate::lifecycle::State;
+use crate::managed::{self, Detail, Ended, Managed, Tickets};
 use crate::phrase::Phrase;
 use crate::reconcile::{
-    Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, decisions,
-    next_run,
+    Automations, Decisions, Drain, LiveRun, Memory, NextRun, Policy, Relabel, Wait, WorkKind,
+    decisions, next_run,
 };
 use crate::repo_files::{FileError, Unusable};
 use crate::runs::{
@@ -82,10 +82,20 @@ impl View {
             .any(|run| run.id.of.item() == Some(number))
     }
 
-    /// Whether a run is in flight on #`number`, or counts as one for what
-    /// starts, as a cut that ended since the snapshot was taken does.
-    pub(crate) fn has_live_run(&self, number: Number) -> bool {
-        self.has_run_in_flight(number) || self.live.iter().any(|run| run.subject.number() == number)
+    /// The stage of the run in flight on #`number`, or of one that counts
+    /// as in flight for what starts, as a cut that ended since the snapshot
+    /// was taken does.
+    pub(crate) fn run_stage(&self, number: Number) -> Option<WorkKind> {
+        let in_flight = self.in_flight.iter().find_map(|run| match run.id.of {
+            RunOf::Work { item, stage } if item == number => Some(stage),
+            RunOf::Work { .. } | RunOf::Automation { .. } => None,
+        });
+        in_flight.or_else(|| {
+            self.live
+                .iter()
+                .find(|run| run.subject.number() == number)
+                .map(|run| run.kind)
+        })
     }
 }
 
@@ -202,43 +212,24 @@ impl FailedPolls {
 pub struct Listed {
     pub number: Number,
     pub title: String,
+    pub state: State,
     #[serde(flatten)]
-    pub state: ItemState,
+    pub detail: Option<Detail>,
+    #[serde(flatten)]
+    pub tickets: Option<Tickets>,
     pub waiting_for: Vec<Wait>,
 }
 
 impl Listed {
     fn of(managed: Managed) -> Listed {
-        let state = shown(managed.state);
         Listed {
             number: managed.number,
             title: managed.title,
-            state,
+            state: managed.state,
+            detail: managed.detail,
+            tickets: managed.tickets,
             waiting_for: managed.waiting_for,
         }
-    }
-}
-
-/// `state` as `status` shows it: a pull request as the issue it is for
-/// shows it, and an open issue merged into as its labels say.
-pub(crate) fn shown(state: ItemState) -> ItemState {
-    match state {
-        ItemState::PullRequest { review, .. } => ItemState::InReview(review),
-        ItemState::MergedInto { labeled, .. } => shown(*labeled),
-        ItemState::WaitingForDesign
-        | ItemState::Tracking { .. }
-        | ItemState::WaitingForTriage
-        | ItemState::BeingTriaged
-        | ItemState::WaitingOnThePeopleAsked
-        | ItemState::WithTheMaintainer
-        | ItemState::InReview(_)
-        | ItemState::InReviewElsewhere { .. }
-        | ItemState::BeingDesigned
-        | ItemState::ReadyToDesign
-        | ItemState::Claimed
-        | ItemState::ReadyToClaim
-        | ItemState::Unlabeled
-        | ItemState::Ended { .. } => state,
     }
 }
 
@@ -379,9 +370,7 @@ pub fn status(
         runs,
         items: managed::managed(view, now)
             .into_iter()
-            .filter(|item| {
-                !item.closed && !board::in_done(&item.state) && !view.has_run_in_flight(item.number)
-            })
+            .filter(|item| !item.has_ended() && !view.has_run_in_flight(item.number))
             .map(Listed::of)
             .collect(),
         automations,
@@ -428,7 +417,7 @@ pub fn render(status: &Status, colour: bool) -> String {
             .items
             .iter()
             .map(|item| {
-                let mut line = describe(&item.state);
+                let mut line = describe(item.state, item.detail.as_ref(), item.tickets.as_ref());
                 if !item.waiting_for.is_empty() {
                     let waits = item.waiting_for.iter().map(describe_wait);
                     line = line.text(" — waiting for ").then(Phrase::join(waits, "; "));
@@ -670,33 +659,44 @@ pub(crate) fn describe_next_run(schedule: Schedule) -> Phrase {
     }
 }
 
-pub(crate) fn describe(state: &ItemState) -> Phrase {
-    match state {
-        ItemState::WaitingForDesign => "spec change waiting for its design".into(),
-        ItemState::Tracking {
-            tickets_closed,
-            tickets,
-        } => format!("tracking issue, {tickets_closed}/{tickets} tickets closed").into(),
-        ItemState::WaitingForTriage => "waiting for triage".into(),
-        ItemState::BeingTriaged => "claimed: being triaged".into(),
-        ItemState::WaitingOnThePeopleAsked => "waiting on the people asked".into(),
-        ItemState::WithTheMaintainer => "with the maintainer".into(),
-        ItemState::InReview(review) => review.describe(),
-        ItemState::InReviewElsewhere {
+/// An item's state in the States words (`docs/specs/design_system.md`,
+/// States), then what `detail` and `tickets` say beyond it.
+pub(crate) fn describe(state: State, detail: Option<&Detail>, tickets: Option<&Tickets>) -> Phrase {
+    let beyond = match detail {
+        Some(Detail::InReview(review)) => {
+            Some(Phrase::from(review.pull_request).text(format!(" ({})", review.describe())))
+        }
+        Some(Detail::InReviewElsewhere {
             pull_request,
             author,
-        } => Phrase::from("in review: ")
-            .item(*pull_request)
-            .text(format!(", opened by {author}")),
-        ItemState::BeingDesigned => "claimed: being designed".into(),
-        ItemState::ReadyToDesign => "ready to claim, waiting for its design".into(),
-        ItemState::Claimed => "claimed: being implemented".into(),
-        ItemState::ReadyToClaim => "ready to claim".into(),
-        ItemState::Unlabeled => "labeled none of the status labels, its run in flight".into(),
-        ItemState::PullRequest { review, .. } => review.describe(),
-        ItemState::Ended { ended, .. } => ended.worded(),
-        ItemState::MergedInto { labeled, .. } => describe(labeled),
-    }
+        }) => Some(Phrase::from(*pull_request).text(format!(", opened by {author}"))),
+        Some(Detail::PullRequest { review, .. }) => Some(review.describe().into()),
+        // A pull request's state says how it ended.
+        Some(Detail::Ended {
+            ended: Ended::Merged | Ended::ClosedUnmerged,
+            ..
+        }) => None,
+        Some(Detail::Ended {
+            ended: Ended::NothingToBuild,
+            ..
+        }) => Some("nothing to build".into()),
+        Some(Detail::Ended { ended, .. }) => Some(ended.worded()),
+        Some(Detail::WaitingForDesign) => Some("spec change waiting for its design".into()),
+        Some(Detail::SpecChangeBeingDesigned) => Some("spec change being designed".into()),
+        None => None,
+    };
+    let tickets = tickets.map(|tickets| {
+        Phrase::from(format!(
+            "{} of {} tickets closed",
+            tickets.tickets_closed, tickets.tickets
+        ))
+    });
+    [beyond, tickets]
+        .into_iter()
+        .flatten()
+        .fold(Phrase::from(state.shown()), |phrase, beyond| {
+            phrase.text(" · ").then(beyond)
+        })
 }
 
 /// What Linewright waits for, as a phrase after "waiting for".
