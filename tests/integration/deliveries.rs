@@ -78,9 +78,14 @@ fn claimed(store: &LocalStore, issue: Number) -> bool {
 async fn an_issue_labeled_ready_for_agent_is_claimed_on_the_delivery() {
     let world = World::new().await;
     implement(&world);
-    let issue = world
-        .store
-        .open_issue("maintainer", "Do the thing", "Please.", &[]);
+    // Designed, so that its run is the implement scripted above and leaves
+    // Linewright assigned: a design would hand it back at once.
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["linewright:designed"],
+    );
     let served = serve(world, NEVER).await;
 
     served
@@ -156,9 +161,14 @@ async fn a_failed_read_for_a_delivery_is_logged_and_the_next_poll_catches_up() {
     let (log, _guard) = Log::capture();
     let world = World::new().await;
     implement(&world);
-    let issue = world
-        .store
-        .open_issue("maintainer", "Do the thing", "Please.", &[]);
+    // Designed, so that its run is the implement scripted above and leaves
+    // Linewright assigned: a design would hand it back at once.
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["linewright:designed"],
+    );
     let served = serve(world, Duration::from_millis(200)).await;
 
     // Polls read no single item, so only the delivery's read fails.
