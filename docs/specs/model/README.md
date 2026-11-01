@@ -6,8 +6,9 @@ what Linewright does in each state (the Working an item table, first row that
 holds), how people steer it, and what the board shows: `repository.md` (Labels,
 Assignment, State, Working an item, Steering, Managed items, Writes),
 `design.md` (Designing, Cutting), `sources_of_work.md` (Spec changes),
-`triage.md` (Outcomes, Answers), `pull_requests.md` (The pull request),
-`runs.md` (Ending) and `design_system.md` (States, The board, Cards).
+`triage.md` (Outcomes, Answers), `pull_requests.md` (The pull request,
+Working a pull request, CI, Rework, Keeping up to date, Merging), `runs.md`
+(Ending) and `design_system.md` (States, The board, Cards).
 
 Re-run it on every change to those files, and change it in the same commit.
 
@@ -18,6 +19,8 @@ Re-run it on every change to those files, and change it in the same commit.
   term and quoting the clause it encodes; the properties.
 - `pipeline.qnt`, `cut.qnt`, `spec_change.qnt`: the three models, each a set
   of items, bounds and starts, with its scenarios.
+- `pull_request.qnt`: a model of its own of one pull request worked by the
+  Working a pull request table, with its properties.
 - `package.json`, `package-lock.json`: the pinned Quint.
 
 ## How it runs
@@ -51,7 +54,18 @@ A cut takes the ticket slots still free, so a cut after a discard is smaller.
 An issue is built as it is only where it has a pull request slot; the
 second ticket in `cut` has none, so its implement run can only hand it back.
 Holds (the usage limit, the drain, `max-runs`), CI, reviews and automations
-are not modelled.
+are not modelled in these three; `pull_request` models CI and reviews.
+
+`pull_request` is one open pull request Linewright opened and is assigned
+to, a draft with no checks yet, `--auto-merge` on or off, mergeable by the
+repository's methods or not. CI and GitHub act on their own: checks appear
+within the grace period or it passes, they finish green or failed or time
+out, and GitHub decides whether it allows the merge. Checks may appear once
+after the grace period too. A run ends with a push, without one, or unable to
+finish, and every run brings the branch up to date. A merge GitHub allowed
+may still fail. People act twice a trace: they comment, approve, push, move
+the default branch, block or unblock the merge, unassign and assign
+Linewright, mark it a draft, and close or merge it. Linewright stops once.
 
 ## Assumptions
 
@@ -125,20 +139,28 @@ Readings the spec leaves open, each named where the model uses it.
   flaps: "never repeats a write it has undone" counts from the last person's
   action or run result on the way; its ghost makes a run four times as
   large, so `S6_noFlap` is checked from `initFlaps`.
+- **In `pull_request`.** S1 is a witness for each row, the state where it is
+  the first that holds (`row0Unreached` to `row13Unreached`, each violated);
+  S5 is `crashSafety`; S6 is `progress`, `restsWhereQuiet` (merged or closed;
+  handed back or unassigned; or ready for review and waiting on the
+  maintainer, a person who holds its merge or what GitHub requires) and
+  `noFlap` (with people, CI and GitHub idle, Linewright starts no run twice).
+  `attemptsBounded` holds fix-ci runs to `ci-attempts` and failed merges to
+  two a round.
 
 ## Running it
 
 `scripts/check model` installs the pinned tools into
 `${XDG_CACHE_HOME:-$HOME/.cache}/linewright` and runs, for each model, its
-scenarios and three TLC runs: `invariants` (S1 to S4, S6's resting places
-and S7), `S6_noFlap` from `initFlaps`, and `S5_crashSafety` with
-`S6_progress`. It takes about two hours, most of it the flap and liveness
-runs of `cut` and `spec_change` (4 to 33 million states each), so it is not
-among the checks `scripts/check` runs without names, nor in CI. To check one
-property by hand, with
-the tools it installed (`QUINT_HOME` at `quint-home` there, its Java 21 first
-on the `PATH`), run Quint from a scratch directory, since Apalache writes its
-output where it runs:
+scenarios and three TLC runs: `invariants` (S1 to S4, S6's resting places and
+S7), `S6_noFlap` from `initFlaps`, and `S5_crashSafety` with `S6_progress`; and
+for `pull_request`, its invariants, its temporal properties and a witness for
+each row. It takes about two hours, most of it the flap and liveness runs of
+`cut` and `spec_change` (4 to 33 million states each), so it is not among the
+checks `scripts/check` runs without names, nor in CI. To check one property by
+hand, with the tools it installed (`QUINT_HOME` at `quint-home` there, its Java
+21 first on the `PATH`), run Quint from a scratch directory, since Apalache
+writes its output where it runs:
 
 ```sh
 model="$PWD/docs/specs/model"

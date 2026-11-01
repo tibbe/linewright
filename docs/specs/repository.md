@@ -177,7 +177,7 @@ item. Its writes are made in their order ([Writes](#writes)).
 | being triaged, being designed, being implemented | its run cannot finish ([Ending](runs.md#ending)) | hands it back | `ready-for-human` |
 | merged | a spec change Linewright may take up ([Spec changes](sources_of_work.md#spec-changes)) | opens its issue | merged |
 | open | a pull request Linewright opened, that it may claim | assigns itself | open |
-| open | a pull request Linewright opened and is assigned to, for which [Pull requests](pull_requests.md) asks for a fix-ci, rework or update run or a merge | starts that run, or merges it | open, or merged |
+| open | a pull request Linewright opened and is assigned to, whose first row of [Working a pull request](pull_requests.md#working-a-pull-request) that holds does more than wait | does what that row gives | open, or merged |
 | open | a run on it cannot finish ([Ending](runs.md#ending)) | hands it back | open |
 | any | the issue carries more than one status label | removes all but the newest | unchanged |
 | any | it carries `linewright:stalled` and Linewright is assigned to it | removes `linewright:stalled` | unchanged |

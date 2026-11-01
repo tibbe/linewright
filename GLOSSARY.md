@@ -113,6 +113,16 @@ rather than by its own judgement.
 _Avoid_: blocked, broken, stuck, failed, errored, error, action required,
 needs attention
 
+**Feedback**:
+A comment or review on a pull request Linewright opened, from anyone else,
+that a rework run is to address.
+_Avoid_: review comments, change requests
+
+**Round**:
+Of a pull request Linewright works: the stretch of its work over which
+Linewright counts its fix attempts and failed merges.
+_Avoid_: cycle, attempt
+
 **State**:
 Of an item: where it stands in the pipeline, such as `needs-info`, in review
 or tracking.

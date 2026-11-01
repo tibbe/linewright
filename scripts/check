@@ -345,6 +345,18 @@ check_model() {
     quint verify --backend=tlc --init=initFlaps --invariant=S6_noFlap "$file" || status=1
     quint verify --backend=tlc --temporal=S5_crashSafety,S6_progress "$file" || status=1
   done
+  # Working a pull request: its invariants and temporal properties, and a
+  # witness for each row, the state TLC finds where the row is the first that
+  # holds.
+  file="$PWD/docs/specs/model/pull_request.qnt"
+  quint verify --backend=tlc --invariant=invariants "$file" || status=1
+  quint verify --backend=tlc --temporal=crashSafety,progress "$file" || status=1
+  for row in $(seq 0 13); do
+    if ! quint verify --backend=tlc --invariant="row${row}Unreached" "$file" | grep -q '^\[violation\]'; then
+      echo "pull_request.qnt: no state where row $row is the first that holds"
+      status=1
+    fi
+  done
   return "$status"
 }
 
