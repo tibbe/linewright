@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Stands in for sccache, which builds here run as their RUSTC_WRAPPER, so that
 # its server always has a temporary directory that lasts.
 #
@@ -7,5 +7,9 @@
 # that first command's TMPDIR. Linewright gives each agent session its own
 # TMPDIR and deletes it when the session ends, so a server started from a
 # session fails every compile after that.
+#
+# It must not run under /bin/sh: dash, the image's /bin/sh, drops variables
+# whose names are not shell identifiers, such as cargo's
+# CARGO_BIN_EXE_fake-claude, and the build then fails.
 mkdir -p "$SCCACHE_DIR/tmp"
 TMPDIR=$SCCACHE_DIR/tmp exec /usr/local/libexec/sccache "$@"
