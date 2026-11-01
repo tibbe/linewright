@@ -103,8 +103,6 @@ people there keep it, except that at every startup it sets each
 Assignees say who is working on an item: Linewright claims an item by
 assigning itself and lets go of it by unassigning itself.
 
-- **Closed items.** Linewright leaves a closed item's labels and assignees
-  as they are.
 - **Handing back.** Handing an item back is how Linewright lets go of an item
   it cannot finish: it labels an issue `ready-for-human`, unassigns itself
   from the item, removes `linewright:designed` where the design is the item's
@@ -179,8 +177,8 @@ item. Its writes are made in their order ([Writes](#writes)).
 | open | a pull request Linewright opened, that it may claim | assigns itself | open |
 | open | a pull request Linewright opened and is assigned to, whose first row of [Working a pull request](pull_requests.md#working-a-pull-request) that holds does more than wait | does what that row gives | open, or merged |
 | open | a run on it cannot finish ([Ending](runs.md#ending)) | hands it back | open |
-| any | the issue carries more than one status label | removes all but the newest | unchanged |
-| any | it carries `linewright:stalled` and Linewright is assigned to it | removes `linewright:stalled` | unchanged |
+| any but done | the issue carries more than one status label | removes all but the newest | unchanged |
+| any but done, merged and closed | it carries `linewright:stalled` and Linewright is assigned to it | removes `linewright:stalled` | unchanged |
 
 - **Claiming.** On its own, Linewright claims an issue that is unassigned,
   marked for it and that it can start: no open issue blocks it. It claims a
@@ -206,7 +204,7 @@ A person steers an item through GitHub, and Linewright follows.
 | open | merges or closes a pull request | cancels a run on it | merged, or closed |
 | open | assigns Linewright to a pull request Linewright opened | goes on with it, addressing what came in meanwhile | open |
 | merged | assigns Linewright to a spec change not yet taken up ([Spec changes](sources_of_work.md#spec-changes)) | opens its issue, then unassigns itself | merged |
-| open, merged, closed | assigns Linewright to any other pull request it did not open | unassigns itself with a comment | unchanged |
+| open | assigns Linewright to any other pull request it did not open | unassigns itself with a comment | open |
 
 - **Cancelling.** When a cancel takes effect is under [Runs](runs.md).
 

@@ -349,9 +349,8 @@ module linewright {
   /// R ## Working an item: "Linewright changes an item's labels and
   /// assignees, and starts work on it, only as this table gives: at each poll,
   /// the first row that holds for the item." The rows for an issue, in the
-  /// spec's order, as (when, what Linewright does). The last two, "any" in
-  /// the table, hold only while the issue is open: "Linewright leaves a closed
-  /// item's labels and assignees as they are" (A8).
+  /// spec's order, as (when, what Linewright does). The last two are "any but
+  /// done" in the table: they hold only while the issue is open (A8).
   pure def issueRows(w: World, i: int): List[(bool, Option)] = {
     val x = it(w, i)
     val st = issueState(w, i)
@@ -426,9 +425,9 @@ module linewright {
       // merges each green PR it opened."
       (x.byLw and x.open and x.lw and x.feedback, opt("start run", p, "pr")),
       (x.byLw and x.open and x.lw and w.autoMerge, opt("merge", p, "")),
-      // R ## Steering, open, merged, closed | "assigns Linewright to any other
-      // pull request it did not open" | "unassigns itself with a comment".
-      (not(x.byLw) and x.lw, opt("let go", p, "")),
+      // R ## Steering, open | "assigns Linewright to any other pull request it
+      // did not open" | "unassigns itself with a comment".
+      (not(x.byLw) and x.open and x.lw, opt("let go", p, "")),
       // any | "it carries linewright:stalled and Linewright is assigned to
       // it" | "removes linewright:stalled".
       (x.byLw and x.open and x.stalled and x.lw, opt("clear stalled", p, "")),
