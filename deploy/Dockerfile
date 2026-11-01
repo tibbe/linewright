@@ -27,9 +27,7 @@ COPY --chmod=755 deploy/sccache /usr/local/bin/sccache
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
     RUSTC_WRAPPER=sccache SCCACHE_DIR=/var/cache/sccache
-# Agent sessions are given only the variables `session-env` names besides
-# the basic ones, and their builds need these.
-ENV LINEWRIGHT_SESSION_ENV=RUSTUP_HOME,CARGO_HOME,RUSTC_WRAPPER,SCCACHE_DIR
+ENV LINEWRIGHT_SESSION_PASS_ENV=RUSTUP_HOME,CARGO_HOME,RUSTC_WRAPPER,SCCACHE_DIR
 RUN install -d -o linewright -g "$(id -g linewright)" \
     "$RUSTUP_HOME" "$CARGO_HOME" "$CARGO_HOME/registry" "$SCCACHE_DIR" /data
 USER linewright
