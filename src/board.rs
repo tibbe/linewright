@@ -5,13 +5,13 @@
 use std::cmp::Reverse;
 
 use crate::domain::{
-    CheckState, ClosedKind, Issue, Login, Mergeability, Number, Pull, PullState, ReviewDecision,
-    StatusLabel, SubIssue, Timestamp, last_labeling, last_unassigned, tickets_cut,
+    CheckState, ClosedKind, Issue, Login, Marking, Mergeability, Number, Pull, PullState,
+    ReviewDecision, StatusLabel, SubIssue, Timestamp, last_labeling, last_unassigned, tickets_cut,
 };
 use crate::lifecycle::{self, done_at, done_by_merge};
 pub use crate::managed::Ended;
 use crate::managed::{self, Detail, Managed, Tickets};
-use crate::reconcile::{Wait, WorkKind};
+use crate::reconcile::{Policy, Wait, WorkKind};
 use crate::runs::{Ending, Recorded, RunOf, State};
 use crate::status::View;
 
@@ -236,11 +236,14 @@ pub enum CardLine {
     Asked(Vec<Login>),
     HandedBack,
     DecisionNeeded,
-    // Ready, and Working with no run in flight.
+    // Ready, as Triage, and Working with no run in flight.
     BlockedBy(Number),
     AssignedTo(Login),
     /// Linewright was unassigned from it.
     Unassigned,
+    /// It is not marked for Linewright (`GLOSSARY.md`, **Marked for
+    /// Linewright**).
+    NotMarked,
     Paused(Hold),
     Queued,
     // Working.
@@ -280,6 +283,7 @@ impl CardLine {
             CardLine::BlockedBy(_)
             | CardLine::AssignedTo(_)
             | CardLine::Unassigned
+            | CardLine::NotMarked
             | CardLine::Ended { .. } => None,
         }
     }
@@ -332,6 +336,11 @@ impl Elapsed {
 pub enum Stop {
     /// Handed back in a stall (`GLOSSARY.md`, **Stall**).
     Stalled,
+    /// Linewright opened it and is not assigned to it, and its last act on it
+    /// was letting go of it.
+    HandedBack,
+    /// Linewright opened it and is not assigned to it otherwise.
+    Unassigned,
     Running(Running),
     ChecksFailed,
     ChecksRunning,
@@ -356,8 +365,10 @@ impl Stop {
         match self {
             Stop::Stalled | Stop::ChecksFailed | Stop::Conflicts => Some(CardStatus::Failed),
             Stop::Running(_) | Stop::ChecksRunning => Some(CardStatus::InFlight),
-            Stop::ChangesRequested | Stop::ReviewRequired => Some(CardStatus::WaitingForAPerson),
-            Stop::Behind { .. } | Stop::Draft | Stop::Approved => None,
+            Stop::HandedBack | Stop::ChangesRequested | Stop::ReviewRequired => {
+                Some(CardStatus::WaitingForAPerson)
+            }
+            Stop::Unassigned | Stop::Behind { .. } | Stop::Draft | Stop::Approved => None,
         }
     }
 }
@@ -372,7 +383,20 @@ pub fn card(
     recorded: &[Recorded],
     now: Timestamp,
 ) -> Option<(Column, Card)> {
-    card_among(managed, &managed::managed(view, now), view, recorded, now)
+    let seen = Seen {
+        view,
+        recorded,
+        now,
+    };
+    card_among(managed, &managed::managed(view, now), &seen)
+}
+
+/// What the board is built from: `serve`'s view, every run's record, which
+/// tells whether a run handed an item back, and the time.
+struct Seen<'a> {
+    view: &'a View,
+    recorded: &'a [Recorded],
+    now: Timestamp,
 }
 
 /// Whether `managed` is a spec change cut into tickets, whose card on the
@@ -391,15 +415,9 @@ fn cut_into_tickets(managed: &Managed, view: &View) -> bool {
 
 /// [`card`], with `all` the managed items, which hold the pull requests shown
 /// on its card.
-fn card_among(
-    managed: &Managed,
-    all: &[Managed],
-    view: &View,
-    recorded: &[Recorded],
-    now: Timestamp,
-) -> Option<(Column, Card)> {
+fn card_among(managed: &Managed, all: &[Managed], seen: &Seen) -> Option<(Column, Card)> {
+    let view = seen.view;
     let snapshot = &view.snapshot;
-    let linewright = &view.policy.linewright;
     let column = managed.column()?;
     // A pull request, or an item in Done, shows no other.
     let folded: Vec<&Managed> = if managed.is_pull_request() || column == Column::Done {
@@ -414,7 +432,7 @@ fn card_among(
     };
     let mut on: Vec<Number> = vec![managed.number];
     on.extend(folded.iter().map(|pull| pull.number));
-    let run = run_on(view, &on, now);
+    let run = run_on(view, &on, seen.now);
     let waits: Vec<Wait> = managed
         .waiting_for
         .iter()
@@ -423,17 +441,15 @@ fn card_among(
         .collect();
     let issue = snapshot.issue(managed.number);
     let line = match column {
-        Column::Triage => None,
+        Column::Triage | Column::Ready => ready_line(issue, &view.policy, &waits),
         Column::NeedsAPerson => needs_a_person_line(
             managed.state,
             snapshot.is_stalled(managed.number),
             issue,
-            recorded,
-            linewright,
+            seen,
         ),
-        Column::Ready => ready_line(issue, &waits),
-        Column::Working => working_line(run, &waits),
-        Column::InReview => review_line(managed, issue, run, view),
+        Column::Working => working_line(issue, run, &waits),
+        Column::InReview => review_line(managed, issue, run, seen),
         Column::Done => done_line(managed.detail.as_ref()),
     };
     let card = Card {
@@ -442,7 +458,7 @@ fn card_among(
         pull_request: managed.is_pull_request(),
         line,
         entered: entered(column, managed.number, view),
-        changed: last_change(view, recorded, &on, now),
+        changed: last_change(seen, &on),
     };
     Some((column, card))
 }
@@ -451,6 +467,11 @@ fn card_among(
 /// issue back.
 pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     let all = managed::managed(view, now);
+    let seen = Seen {
+        view,
+        recorded,
+        now,
+    };
     let mut cards: Vec<(Column, Card)> = vec![];
     // A pull request shows on the card of each issue it closes that has a
     // card, and has a card of its own otherwise.
@@ -459,7 +480,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         .iter()
         .filter(|managed| !cut_into_tickets(managed, view))
     {
-        let Some(card) = card_among(managed, &all, view, recorded, now) else {
+        let Some(card) = card_among(managed, &all, &seen) else {
             continue;
         };
         match folds_onto(managed) {
@@ -561,16 +582,16 @@ fn needs_a_person_line(
     state: lifecycle::State,
     stalled: bool,
     issue: Option<&Issue>,
-    recorded: &[Recorded],
-    linewright: &Login,
+    seen: &Seen,
 ) -> Option<CardLine> {
-    let let_go = issue.is_some_and(|issue| let_go_of(issue, recorded, linewright));
+    let linewright = &seen.view.policy.linewright;
+    let let_go = issue.is_some_and(|issue| let_go_of(issue, seen.recorded, linewright));
     let asked = || CardLine::Asked(issue.map_or(vec![], |issue| issue.assignees_but(linewright)));
     first([
         stalled.then_some(CardLine::Stalled),
         (state == lifecycle::State::NeedsInfo).then(asked),
-        (state == lifecycle::State::ReadyForHuman && let_go).then_some(CardLine::HandedBack),
-        (state == lifecycle::State::ReadyForHuman).then_some(CardLine::DecisionNeeded),
+        let_go.then_some(CardLine::HandedBack),
+        Some(CardLine::DecisionNeeded),
     ])
 }
 
@@ -579,13 +600,6 @@ fn needs_a_person_line(
 /// issue that were closed unmerged, the latest is a run that handed it back
 /// or such a closing.
 fn let_go_of(issue: &Issue, recorded: &[Recorded], linewright: &Login) -> bool {
-    let runs = recorded
-        .iter()
-        .filter(|run| run.id.of.item() == Some(issue.number))
-        .filter_map(|run| match run.state {
-            State::Ended { at, ending } => Some((at, ending == Ending::HandedBack)),
-            State::InFlight | State::Interrupted => None,
-        });
     let closings = issue
         .closed_by
         .iter()
@@ -594,17 +608,38 @@ fn let_go_of(issue: &Issue, recorded: &[Recorded], linewright: &Login) -> bool {
             PullState::Closed { at } => Some((at, true)),
             PullState::Open { .. } | PullState::Merged { .. } => None,
         });
-    runs.chain(closings)
-        .max_by_key(|(at, _)| *at)
+    last_lets_go(runs_ended(issue.number, recorded).chain(closings))
+}
+
+/// Linewright's runs on item #`number` that ended, each by when it ended
+/// and whether it handed the item back.
+fn runs_ended(
+    number: Number,
+    recorded: &[Recorded],
+) -> impl Iterator<Item = (Timestamp, bool)> + '_ {
+    recorded
+        .iter()
+        .filter(move |run| run.id.of.item() == Some(number))
+        .filter_map(|run| match run.state {
+            State::Ended { at, ending } => Some((at, ending == Ending::HandedBack)),
+            State::InFlight | State::Interrupted => None,
+        })
+}
+
+/// Whether the latest of Linewright's `acts` on an item, each by when it
+/// happened and whether it let go of the item, let go of it.
+fn last_lets_go(acts: impl Iterator<Item = (Timestamp, bool)>) -> bool {
+    acts.max_by_key(|(at, _)| *at)
         .is_some_and(|(_, let_go)| let_go)
 }
 
-/// The line in Ready, from its issue's open blockers, if it is an issue,
+/// The line in Ready, and as in Ready in Triage, from its issue's open
+/// blockers and whether `policy` marks it for Linewright, if it is an issue,
 /// and what it waits for. An issue waiting for someone else or for its
 /// label again waits for nothing past that, so its blockers come from the
 /// issue itself.
-fn ready_line(issue: Option<&Issue>, waits: &[Wait]) -> Option<CardLine> {
-    let blocker = issue.and_then(|issue| issue.open_blockers().into_iter().min());
+fn ready_line(issue: Option<&Issue>, policy: &Policy, waits: &[Wait]) -> Option<CardLine> {
+    let marking = issue.map(|issue| policy.marking(&issue.labels));
     let assignee = waits.iter().find_map(|wait| {
         let Wait::Assignee { assignee } = wait else {
             return None;
@@ -613,17 +648,29 @@ fn ready_line(issue: Option<&Issue>, waits: &[Wait]) -> Option<CardLine> {
     });
     let unassigned = waits.iter().any(Wait::is_unassigned);
     first([
-        blocker.map(CardLine::BlockedBy),
+        lowest_blocker(issue),
         assignee.map(CardLine::AssignedTo),
         unassigned.then_some(CardLine::Unassigned),
+        (marking == Some(Marking::Unmarked)).then_some(CardLine::NotMarked),
         held(waits),
     ])
 }
 
-/// The line in Working: its run in flight, or else as in Ready, what holds
-/// back the run that would start.
-fn working_line(run: Option<Running>, waits: &[Wait]) -> Option<CardLine> {
-    first([run.map(CardLine::Running), held(waits)])
+/// The line in Working: its run in flight, or else its issue's lowest open
+/// blocker, if it is an issue, or else as in Ready, what holds back the run
+/// that would start.
+fn working_line(issue: Option<&Issue>, run: Option<Running>, waits: &[Wait]) -> Option<CardLine> {
+    first([
+        run.map(CardLine::Running),
+        lowest_blocker(issue),
+        held(waits),
+    ])
+}
+
+/// The lowest of `issue`'s open blockers, if it is an issue.
+fn lowest_blocker(issue: Option<&Issue>) -> Option<CardLine> {
+    let blocker = issue?.open_blockers().into_iter().min()?;
+    Some(CardLine::BlockedBy(blocker))
 }
 
 /// A hold, or the runs in flight at `max-runs`, holding back the run that
@@ -645,11 +692,11 @@ fn review_line(
     managed: &Managed,
     issue: Option<&Issue>,
     run: Option<Running>,
-    view: &View,
+    seen: &Seen,
 ) -> Option<CardLine> {
     let (pull_request, author) = match managed.detail.as_ref()? {
         Detail::PullRequest { .. } => {
-            return merge_stop(managed.number, None, run, view).map(CardLine::MergeStop);
+            return merge_stop(managed.number, None, run, seen).map(CardLine::MergeStop);
         }
         Detail::InReview(review) => (review.pull_request, None),
         Detail::InReviewElsewhere {
@@ -657,7 +704,7 @@ fn review_line(
             author,
         } => (
             *pull_request,
-            Some(author.clone()).filter(|author| author != &view.policy.linewright),
+            Some(author.clone()).filter(|author| author != &seen.view.policy.linewright),
         ),
         Detail::Ended { .. } | Detail::WaitingForDesign | Detail::SpecChangeBeingDesigned => {
             return None;
@@ -666,7 +713,7 @@ fn review_line(
     Some(CardLine::Review {
         pull_request,
         author,
-        stops: merge_stop(pull_request, issue, run, view),
+        stops: merge_stop(pull_request, issue, run, seen),
     })
 }
 
@@ -677,10 +724,15 @@ fn merge_stop(
     pull_request: Number,
     issue: Option<&Issue>,
     run: Option<Running>,
-    view: &View,
+    seen: &Seen,
 ) -> Option<Stop> {
+    let view = seen.view;
     let snapshot = &view.snapshot;
+    let linewright = &view.policy.linewright;
     let pull = snapshot.any_pull(pull_request);
+    let unassigned =
+        pull.filter(|pull| &pull.author == linewright && !pull.is_assigned(linewright));
+    let let_go = || last_lets_go(runs_ended(pull_request, seen.recorded));
     let pull_state = pull.map(|pull| pull.state).or_else(|| {
         issue?
             .closed_by
@@ -694,6 +746,13 @@ fn merge_stop(
     let mergeability = pull.map(|pull| &pull.mergeability);
     let stops = [
         pull.is_some_and(Pull::is_stalled).then_some(Stop::Stalled),
+        unassigned.map(|_| {
+            if let_go() {
+                Stop::HandedBack
+            } else {
+                Stop::Unassigned
+            }
+        }),
         run.map(Stop::Running),
         checks(CheckState::Failed).then_some(Stop::ChecksFailed),
         checks(CheckState::Pending).then_some(Stop::ChecksRunning),
@@ -795,7 +854,12 @@ impl Tracker {
 /// change): on GitHub, as it last updated them and every pull request
 /// closing them, and as those merged or closed, and in Linewright, as its
 /// runs on them started and ended. A run in flight is happening `now`.
-fn last_change(view: &View, recorded: &[Recorded], items: &[Number], now: Timestamp) -> Timestamp {
+fn last_change(seen: &Seen, items: &[Number]) -> Timestamp {
+    let Seen {
+        view,
+        recorded,
+        now,
+    } = *seen;
     let snapshot = &view.snapshot;
     let on_github = items.iter().filter_map(|&item| snapshot.updated_at(item));
     let closings = items

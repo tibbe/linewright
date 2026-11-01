@@ -85,6 +85,7 @@ fn worded(line: &CardLine) -> Phrase {
         CardLine::BlockedBy(issue) => Phrase::from("blocked by ").item(*issue),
         CardLine::AssignedTo(assignee) => format!("assigned to {assignee}").into(),
         CardLine::Unassigned => "unassigned".into(),
+        CardLine::NotMarked => "not marked for Linewright".into(),
         CardLine::Paused(Hold::UsageLimit) => "paused for the usage limit".into(),
         CardLine::Paused(Hold::Drain) => "paused for the drain".into(),
         CardLine::Queued => "queued".into(),
@@ -130,6 +131,8 @@ fn ticking(elapsed: Elapsed) -> Phrase {
 fn stop_worded(stop: &Stop) -> Phrase {
     match stop {
         Stop::Stalled => "stalled".into(),
+        Stop::HandedBack => "handed back".into(),
+        Stop::Unassigned => "unassigned".into(),
         Stop::Running(running) => running_worded(*running),
         Stop::ChecksFailed => "checks failed".into(),
         Stop::ChecksRunning => "checks running".into(),
