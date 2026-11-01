@@ -1,5 +1,5 @@
 //! The item page's facts about #N (`docs/specs/design_system.md`, The item
-//! page): where it stands in the board's terms, what Linewright waits for
+//! page): its state and its card, what Linewright waits for
 //! and the items it relates to, from what `explain` answers of it, the view
 //! it answered from and that view's board.
 
@@ -9,6 +9,7 @@ use crate::domain::{
     tickets_finished,
 };
 use crate::explain::{Answer, ChildRole, ParentRole};
+use crate::lifecycle::State;
 use crate::managed::{self, LeftAloneItem};
 use crate::reconcile::Wait;
 use crate::runs::Recorded;
@@ -32,16 +33,27 @@ pub struct ItemFacts {
     pub closes: Vec<Related>,
 }
 
-/// The State fact.
+/// The State fact (`docs/specs/design_system.md`, The item page).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StateFact {
-    /// Its card and its column, on the board or off it.
-    Card { column: Column, card: Card },
-    /// A tracking issue, and when its lane finished, if it finished, on the
-    /// board or off it.
-    Tracking { finished: Option<Timestamp> },
-    /// Linewright leaves it, and why.
-    LeftAlone(LeftAloneItem),
+    /// Its state, and its card and the card's column, on the board or off
+    /// it.
+    Card {
+        state: State,
+        column: Column,
+        card: Card,
+    },
+    /// A tracking issue: its state, and when its lane finished, if it
+    /// finished, on the board or off it.
+    Tracking {
+        state: Option<State>,
+        finished: Option<Timestamp>,
+    },
+    /// Linewright leaves it: its state, where it has one, and why.
+    LeftAlone {
+        state: Option<State>,
+        why: LeftAloneItem,
+    },
 }
 
 /// An item a fact lists (`docs/specs/design_system.md`, The item page,
@@ -151,20 +163,22 @@ pub fn item_facts(
     let card = card_of(number);
     let lane = board.lane_headed_by(number);
     let state = match (answer, &card) {
-        // An open tracking issue with no open ticket is not managed, but
-        // still heads its lane, unfinished until it closes.
-        (Answer::LeftAlone(_), _) if lane.is_some() => StateFact::Tracking {
-            finished: lane.and_then(Lane::finished),
+        (Answer::LeftAlone(left_alone), _) if all_tickets.is_none() => StateFact::LeftAlone {
+            state: left_alone.state,
+            why: left_alone.item.clone(),
         },
-        (Answer::LeftAlone(left_alone), _) => StateFact::LeftAlone(left_alone.item.clone()),
-        (Answer::Managed(_), Some((column, card))) => StateFact::Card {
-            column: *column,
-            card: card.clone(),
-        },
-        // Of the items Linewright manages, only a tracking issue has no
-        // card: its lane's finish time while it is on the board; off it,
-        // once it is closed, the later of its tickets' and its own.
-        (Answer::Managed(_), None) => StateFact::Tracking {
+        (Answer::Managed(explanation), Some((column, card))) if all_tickets.is_none() => {
+            StateFact::Card {
+                state: explanation.state,
+                column: *column,
+                card: card.clone(),
+            }
+        }
+        // A tracking issue has no card: its lane's finish time while it is
+        // on the board; off it, once it is closed, the later of its
+        // tickets' and its own.
+        (Answer::LeftAlone(_) | Answer::Managed(_), _) => StateFact::Tracking {
+            state: answer.state(),
             finished: lane.and_then(Lane::finished).or_else(|| {
                 let closed = view.snapshot.closed_item(number)?.closed_at;
                 let last_ticket = tickets_finished(all_tickets.as_deref()?)?;

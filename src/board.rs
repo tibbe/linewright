@@ -8,8 +8,9 @@ use crate::domain::{
     CheckState, ClosedKind, Issue, Login, Mergeability, Number, Pull, PullState, ReviewDecision,
     StatusLabel, SubIssue, Timestamp, last_labeling, last_unassigned, tickets_cut,
 };
+use crate::lifecycle::{self, done_at, done_by_merge};
 pub use crate::managed::Ended;
-use crate::managed::{self, ItemState, Managed};
+use crate::managed::{self, Detail, Managed, Tickets};
 use crate::reconcile::{Wait, WorkKind};
 use crate::runs::{Ending, Recorded, RunOf, State};
 use crate::status::View;
@@ -100,8 +101,8 @@ impl Lane {
     }
 
     /// When it finished, once every card is in Done and its tracking issue,
-    /// if it has one, is closed: when the last of its cards entered Done or
-    /// its tracking issue closed, whichever is later
+    /// if it has one, is done: when the last of its cards entered Done or
+    /// its tracking issue became done, whichever is later
     /// (`docs/specs/design_system.md`, The board, Finished lanes).
     pub fn finished(&self) -> Option<Timestamp> {
         let open = Column::ALL
@@ -111,10 +112,10 @@ impl Lane {
         if open {
             return None;
         }
-        let closed = match self.head {
-            // Unfinished while its tracking issue is open.
-            LaneHead::Tracking { closed: None, .. } => return None,
-            LaneHead::Tracking { closed, .. } => closed,
+        let done = match self.head {
+            // Unfinished until its tracking issue is done.
+            LaneHead::Tracking { done: None, .. } => return None,
+            LaneHead::Tracking { done, .. } => done,
             LaneHead::Item { .. } => None,
         };
         self.cards(Column::Done)
@@ -123,7 +124,7 @@ impl Lane {
                 Some(CardLine::Ended { at, .. }) => Some(at),
                 _ => None,
             })
-            .chain(closed)
+            .chain(done)
             .max()
     }
 
@@ -173,8 +174,8 @@ pub enum LaneHead {
         title: String,
         tickets_closed: usize,
         tickets: usize,
-        /// When the tracking issue closed, if it is closed.
-        closed: Option<Timestamp>,
+        /// When the tracking issue became done, if it is done.
+        done: Option<Timestamp>,
     },
     /// An item worked as one, the lane's one card: an issue, a spec change's
     /// pull request, or a pull request that closes no issue with a card.
@@ -361,42 +362,6 @@ impl Stop {
     }
 }
 
-/// Where a managed item goes on the board (`docs/specs/design_system.md`,
-/// The board).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Placement {
-    Column(Column),
-    /// A tracking issue, which heads its lane.
-    HeadsLane,
-}
-
-/// Where an item in `state` goes, with a run in flight on it or not: the
-/// rightmost column whose facts hold of it.
-pub fn placement(state: &ItemState, run_in_flight: bool) -> Placement {
-    use ItemState as S;
-    let column = match state {
-        S::Tracking { .. } => return Placement::HeadsLane,
-        S::Ended { .. } | S::MergedInto { .. } => Column::Done,
-        S::InReview(_) | S::InReviewElsewhere { .. } | S::PullRequest { .. } => Column::InReview,
-        S::Claimed | S::BeingDesigned | S::Unlabeled => Column::Working,
-        S::ReadyToClaim | S::ReadyToDesign | S::WaitingForDesign => Column::Ready,
-        S::WaitingOnThePeopleAsked | S::WithTheMaintainer => Column::NeedsAPerson,
-        S::WaitingForTriage | S::BeingTriaged => Column::Triage,
-    };
-    // A run in flight holds it in Working, unless a column further right
-    // does.
-    Placement::Column(if run_in_flight {
-        column.max(Column::Working)
-    } else {
-        column
-    })
-}
-
-/// Whether an item in `state` is in Done, run in flight or not.
-pub fn in_done(state: &ItemState) -> bool {
-    placement(state, false) == Placement::Column(Column::Done)
-}
-
 /// The column and card of `managed`, the card it would have on its own,
 /// on the board or off it: `None` for a tracking issue, which heads its
 /// lane. `recorded` is every run's record, which tells whether a run handed
@@ -415,11 +380,11 @@ pub fn card(
 fn cut_into_tickets(managed: &Managed, view: &View) -> bool {
     let snapshot = &view.snapshot;
     matches!(
-        managed.state,
-        ItemState::Ended {
+        managed.detail,
+        Some(Detail::Ended {
             ended: Ended::Merged,
             ..
-        }
+        })
     ) && snapshot.merged_pull(managed.number).is_some()
         && managed::is_cut(snapshot, managed.number, &view.policy.linewright)
 }
@@ -435,13 +400,14 @@ fn card_among(
 ) -> Option<(Column, Card)> {
     let snapshot = &view.snapshot;
     let linewright = &view.policy.linewright;
+    let column = managed.column()?;
     // A pull request, or an item in Done, shows no other.
-    let folded: Vec<&Managed> = if managed.is_pull_request() || in_done(&managed.state) {
+    let folded: Vec<&Managed> = if managed.is_pull_request() || column == Column::Done {
         vec![]
     } else {
         all.iter()
             .filter(|pull| {
-                matches!(pull.state, ItemState::PullRequest { .. })
+                matches!(pull.detail, Some(Detail::PullRequest { .. }))
                     && pull.closes.contains(&managed.number)
             })
             .collect()
@@ -449,9 +415,6 @@ fn card_among(
     let mut on: Vec<Number> = vec![managed.number];
     on.extend(folded.iter().map(|pull| pull.number));
     let run = run_on(view, &on, now);
-    let Placement::Column(column) = placement(&managed.state, run.is_some()) else {
-        return None;
-    };
     let waits: Vec<Wait> = managed
         .waiting_for
         .iter()
@@ -462,7 +425,7 @@ fn card_among(
     let line = match column {
         Column::Triage => None,
         Column::NeedsAPerson => needs_a_person_line(
-            &managed.state,
+            managed.state,
             snapshot.is_stalled(managed.number),
             issue,
             recorded,
@@ -471,7 +434,7 @@ fn card_among(
         Column::Ready => ready_line(issue, &waits),
         Column::Working => working_line(run, &waits),
         Column::InReview => review_line(managed, issue, run, view),
-        Column::Done => done_line(&managed.state),
+        Column::Done => done_line(managed.detail.as_ref()),
     };
     let card = Card {
         number: managed.number,
@@ -512,8 +475,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             .map(|(_, card)| card),
     );
 
-    // A tracking issue heads its lane whether or not it is managed: an open
-    // one with no open ticket is not, and its lane waits for it to close.
+    // A tracking issue heads its lane whether or not it is managed.
     let open_trackers = view
         .snapshot
         .issues
@@ -522,7 +484,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         .map(|issue| issue.number);
     let mut trackers: Vec<Tracker> = all
         .iter()
-        .filter(|managed| placement(&managed.state, false) == Placement::HeadsLane)
+        .filter(|managed| managed.tickets.is_some())
         .map(|managed| managed.number)
         .chain(open_trackers)
         .filter_map(|number| Tracker::of(number, view))
@@ -573,48 +535,19 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
 /// The issues `managed` closes, if it is a pull request, which shows on
 /// their cards; a spec change is its own card.
 fn folds_onto(managed: &Managed) -> Option<&[Number]> {
-    use ItemState as S;
-    match managed.state {
-        S::PullRequest { .. }
-        | S::Ended {
-            ended: Ended::Merged | Ended::ClosedUnmerged,
-            ..
-        } => Some(&managed.closes),
-        S::Ended {
-            ended: Ended::ClosedIn(_) | Ended::Closed(_) | Ended::NothingToBuild,
-            ..
-        }
-        | S::MergedInto { .. }
-        | S::WaitingForDesign
-        | S::Tracking { .. }
-        | S::WaitingForTriage
-        | S::BeingTriaged
-        | S::WaitingOnThePeopleAsked
-        | S::WithTheMaintainer
-        | S::InReview(_)
-        | S::InReviewElsewhere { .. }
-        | S::BeingDesigned
-        | S::ReadyToDesign
-        | S::Claimed
-        | S::ReadyToClaim
-        | S::Unlabeled => None,
-    }
+    let spec_change = managed.detail.as_ref().is_some_and(Detail::is_spec_change);
+    (managed.is_pull_request() && !spec_change).then_some(&managed.closes[..])
 }
 
 /// The line in Done: how the item ended.
-fn done_line(state: &ItemState) -> Option<CardLine> {
-    if let ItemState::Ended { ended, at } = *state {
-        Some(CardLine::Ended { ended, at })
-    } else if let ItemState::MergedInto {
-        pull_request, at, ..
-    } = *state
-    {
-        Some(CardLine::Ended {
-            ended: Ended::ClosedIn(pull_request),
-            at,
-        })
-    } else {
-        None
+fn done_line(detail: Option<&Detail>) -> Option<CardLine> {
+    match *detail? {
+        Detail::Ended { ended, at } => Some(CardLine::Ended { ended, at }),
+        Detail::InReview(_)
+        | Detail::InReviewElsewhere { .. }
+        | Detail::PullRequest { .. }
+        | Detail::WaitingForDesign
+        | Detail::SpecChangeBeingDesigned => None,
     }
 }
 
@@ -625,7 +558,7 @@ fn first<T>(rules: impl IntoIterator<Item = Option<T>>) -> Option<T> {
 
 /// The line in Needs a person, of an item `stalled` or not.
 fn needs_a_person_line(
-    state: &ItemState,
+    state: lifecycle::State,
     stalled: bool,
     issue: Option<&Issue>,
     recorded: &[Recorded],
@@ -635,9 +568,9 @@ fn needs_a_person_line(
     let asked = || CardLine::Asked(issue.map_or(vec![], |issue| issue.assignees_but(linewright)));
     first([
         stalled.then_some(CardLine::Stalled),
-        matches!(state, ItemState::WaitingOnThePeopleAsked).then(asked),
-        (matches!(state, ItemState::WithTheMaintainer) && let_go).then_some(CardLine::HandedBack),
-        matches!(state, ItemState::WithTheMaintainer).then_some(CardLine::DecisionNeeded),
+        (state == lifecycle::State::NeedsInfo).then(asked),
+        (state == lifecycle::State::ReadyForHuman && let_go).then_some(CardLine::HandedBack),
+        (state == lifecycle::State::ReadyForHuman).then_some(CardLine::DecisionNeeded),
     ])
 }
 
@@ -714,23 +647,21 @@ fn review_line(
     run: Option<Running>,
     view: &View,
 ) -> Option<CardLine> {
-    let state = &managed.state;
-    if let ItemState::PullRequest { .. } = state {
-        return merge_stop(managed.number, None, run, view).map(CardLine::MergeStop);
-    }
-    let (pull_request, author) = if let ItemState::InReview(review) = state {
-        (review.pull_request, None)
-    } else if let ItemState::InReviewElsewhere {
-        pull_request,
-        author,
-    } = state
-    {
-        (
+    let (pull_request, author) = match managed.detail.as_ref()? {
+        Detail::PullRequest { .. } => {
+            return merge_stop(managed.number, None, run, view).map(CardLine::MergeStop);
+        }
+        Detail::InReview(review) => (review.pull_request, None),
+        Detail::InReviewElsewhere {
+            pull_request,
+            author,
+        } => (
             *pull_request,
             Some(author.clone()).filter(|author| author != &view.policy.linewright),
-        )
-    } else {
-        return None;
+        ),
+        Detail::Ended { .. } | Detail::WaitingForDesign | Detail::SpecChangeBeingDesigned => {
+            return None;
+        }
     };
     Some(CardLine::Review {
         pull_request,
@@ -787,24 +718,31 @@ struct Tracker {
     title: String,
     /// Its tickets, the cards of its lane.
     tickets: Vec<Number>,
-    tickets_closed: usize,
-    /// When it closed, if it is closed.
-    closed: Option<Timestamp>,
+    counted: Tickets,
+    /// When it became done, if it is done.
+    done: Option<Timestamp>,
 }
 
 impl Tracker {
     /// The tracking issue #`number`, open or closed, as the snapshot holds
-    /// it.
+    /// it. It became done when it closed, or when a pull request closing it
+    /// merged, if that was earlier (`docs/specs/repository.md`, State).
     fn of(number: Number, view: &View) -> Option<Tracker> {
         let snapshot = &view.snapshot;
         let linewright = &view.policy.linewright;
+        let default_branch = &snapshot.default_branch;
         if let Some(issue) = snapshot.issue(number).filter(|issue| issue.open) {
             issue.tracks(linewright)?;
+            let merge = done_by_merge(
+                &issue.events,
+                &snapshot.pulls_closing(issue),
+                default_branch,
+            );
             return Some(Tracker::new(
                 number,
                 &issue.title,
                 &issue.sub_issues,
-                None,
+                done_at(merge, None),
                 linewright,
             ));
         }
@@ -813,11 +751,12 @@ impl Tracker {
         let ClosedKind::Issue { facts, .. } = &item.kind else {
             return None;
         };
+        let merge = done_by_merge(&facts.work.events, &facts.work.closed_by, default_branch);
         Some(Tracker::new(
             number,
             &item.title,
             &facts.sub_issues,
-            Some(item.closed_at),
+            done_at(merge, Some(item.closed_at)),
             linewright,
         ))
     }
@@ -826,16 +765,17 @@ impl Tracker {
         number: Number,
         title: &str,
         sub_issues: &[SubIssue],
-        closed: Option<Timestamp>,
+        done: Option<Timestamp>,
         linewright: &Login,
     ) -> Tracker {
-        let tickets: Vec<&SubIssue> = tickets_cut(sub_issues, linewright).collect();
         Tracker {
             number,
             title: title.to_string(),
-            tickets: tickets.iter().map(|s| s.number).collect(),
-            tickets_closed: tickets.iter().filter(|s| !s.is_open()).count(),
-            closed,
+            tickets: tickets_cut(sub_issues, linewright)
+                .map(|ticket| ticket.number)
+                .collect(),
+            counted: Tickets::of(sub_issues, linewright),
+            done,
         }
     }
 
@@ -843,9 +783,9 @@ impl Tracker {
         LaneHead::Tracking {
             number: self.number,
             title: self.title.clone(),
-            tickets_closed: self.tickets_closed,
-            tickets: self.tickets.len(),
-            closed: self.closed,
+            tickets_closed: self.counted.tickets_closed,
+            tickets: self.counted.tickets,
+            done: self.done,
         }
     }
 }

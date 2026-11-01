@@ -80,7 +80,7 @@ fn explain_shows_where_the_item_is_when_serve_last_read_it_and_each_wait() {
         text(&view(vec![blocked], vec![]), 42),
         [
             "#42: Add invoices",
-            "state: ready to claim",
+            "state: Waiting for Linewright",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: #40, which blocks it",
             "waiting for: #41, which blocks it",
@@ -98,7 +98,7 @@ fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_names_it_as_a_ch
         [
             "#42: Add invoices",
             "child: #43, a pull request that closes it",
-            "state: in review: #43, opened by alice",
+            "state: In review · #43, opened by alice",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: #43, which closes it",
         ]
@@ -212,7 +212,7 @@ fn an_item_in_review_waits_for_its_pull_request() {
         text(&view, 42)[1..],
         [
             "child: #43, a pull request that closes it",
-            "state: in review: #43 (draft, CI running)",
+            "state: In review · #43 (draft, CI running)",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: #43, its pull request, until it is merged or closed",
         ]
@@ -232,7 +232,7 @@ fn an_item_in_review_whose_checks_all_passed_says_ci_is_green() {
 
     assert_eq!(
         text(&view, 42)[2],
-        "state: in review: #43 (draft, CI green)"
+        "state: In review · #43 (draft, CI green)"
     );
 }
 
@@ -246,7 +246,7 @@ fn an_item_with_the_maintainer_waits_for_their_label() {
     assert_eq!(
         text(&view(vec![handed_back], vec![]), 42)[1..],
         [
-            "state: with the maintainer",
+            "state: Waiting for a decision",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`",
         ]
@@ -264,7 +264,7 @@ fn an_item_carrying_two_status_labels_is_explained_by_the_newer() {
     assert_eq!(
         text(&view(vec![triaged], vec![]), 42)[1..],
         [
-            "state: ready to claim, waiting for its design",
+            "state: Waiting for Linewright",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: nothing: Linewright acts on it at its next poll",
         ]
@@ -294,7 +294,7 @@ fn linewrights_pull_request_is_explained_as_the_issue_in_review_with_it() {
         [
             "#43: Do #42",
             "parent: #42, an issue it closes",
-            "state: in review: #43 (draft, CI running)",
+            "state: Open · draft, CI running",
             "last read: 2026-10-01 12:00:20 UTC",
             "waiting for: CI on #43",
         ]
@@ -846,7 +846,7 @@ fn the_json_names_each_fact() {
             "parent": null,
             "parents": [],
             "children": [],
-            "state": "claimed",
+            "state": "being-implemented",
             "last_read": "2026-10-01T12:00:00Z",
             "stalled": false,
             "waiting_for": [{"wait": "blocker", "issue": 40}],
@@ -880,6 +880,8 @@ fn the_json_of_linewrights_pull_request_in_review_names_the_issue_it_closes_and_
             "parent": {"number": 42, "role": "issue-it-closes"},
             "parents": [{"number": 42, "role": "issue-it-closes"}],
             "children": [],
+            "state": "open",
+            "detail": "pull-request",
             "pull_request_for": 42,
             "pull_request": 43,
             "draft": true,
@@ -931,7 +933,7 @@ fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
     assert_eq!(
         text(&view(vec![assigned], vec![]), 42)[1..],
         [
-            "state: ready to claim",
+            "state: Waiting for Linewright",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: alice, who is assigned to it",
         ]
@@ -969,7 +971,7 @@ fn an_issue_linewright_filed_labeled_needs_triage_is_managed_for_triage() {
 
     assert_eq!(
         text(&view(vec![filed], vec![]), 42)[1],
-        "state: waiting for triage"
+        "state: Waiting for triage"
     );
 }
 
@@ -988,7 +990,7 @@ fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_the_label_again
     assert_eq!(
         text(&view(vec![stopped], vec![]), 42)[1..],
         [
-            "state: waiting for triage",
+            "state: Waiting for triage",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: the maintainer: to label it `needs-triage` again, since Linewright was \
              unassigned",
@@ -1035,7 +1037,7 @@ fn a_closed_issue_is_left_alone_as_closed() {
         ),
         [
             "#42: Add invoices",
-            "state: closed issue",
+            "state: Done",
             "last read: 2026-10-01 12:00:30 UTC",
             "left alone: it is closed",
         ]
@@ -1044,13 +1046,15 @@ fn a_closed_issue_is_left_alone_as_closed() {
 
 #[test]
 fn an_open_issue_linewright_has_not_worked_that_waits_on_a_person_is_left_alone_as_such() {
-    for (label, left_alone) in [
+    for (label, state, left_alone) in [
         (
             "needs-info",
+            "state: Waiting for an answer",
             "left alone: it holds `needs-info`, and Linewright has not worked it",
         ),
         (
             "ready-for-human",
+            "state: Waiting for a decision",
             "left alone: it holds `ready-for-human`, and Linewright has not worked it",
         ),
     ] {
@@ -1065,11 +1069,7 @@ fn an_open_issue_linewright_has_not_worked_that_waits_on_a_person_is_left_alone_
         ] {
             assert_eq!(
                 read_text(&view(vec![waiting.clone()], vec![]), &read)[1..],
-                [
-                    "state: open issue",
-                    "last read: 2026-10-01 12:00:30 UTC",
-                    left_alone,
-                ],
+                [state, "last read: 2026-10-01 12:00:30 UTC", left_alone],
                 "{label}"
             );
         }
@@ -1103,7 +1103,7 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
         read_text(
             &view(vec![unlabeled.clone()], vec![]),
             &AnyItem::HeldIssue(Box::new(unlabeled))
-        )[3],
+        )[2],
         "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
          `ready-for-human`"
     );
@@ -1132,9 +1132,12 @@ fn an_issue_linewright_worked_whose_status_label_a_person_removed_is_left_alone(
 
     assert_eq!(explain(&view, &[], Number(42), at(NOW)), None);
     assert_eq!(
-        read_text(&view, &AnyItem::HeldIssue(Box::new(taken_back)))[3],
-        "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
-         `ready-for-human`"
+        read_text(&view, &AnyItem::HeldIssue(Box::new(taken_back)))[1..],
+        [
+            "last read: 2026-10-01 12:00:30 UTC",
+            "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
+             `ready-for-human`",
+        ]
     );
 }
 
@@ -1148,10 +1151,7 @@ fn an_issue_with_no_status_label_is_explained_while_its_run_is_in_flight() {
     let mut view = view(vec![unlabeled], vec![]);
     view.in_flight = vec![in_flight("42/implement-1", "2026-10-01T11:50:00Z")];
 
-    assert_eq!(
-        text(&view, 42)[1],
-        "state: labeled none of the status labels, its run in flight"
-    );
+    assert_eq!(text(&view, 42)[1], "state: Being implemented");
 }
 
 #[test]
@@ -1201,7 +1201,7 @@ fn with_a_required_label_an_issue_without_it_that_linewright_handed_back_is_mana
 
     assert_eq!(
         text(&view, 42)[1],
-        "state: ready to claim, waiting for its design · stalled"
+        "state: Waiting for Linewright · stalled"
     );
 }
 
@@ -1222,7 +1222,6 @@ fn a_spec_changes_issue_with_no_tickets_is_no_tracking_issue_and_left_alone_unla
             &AnyItem::HeldIssue(Box::new(tracking))
         )[1..],
         [
-            "state: open issue",
             "last read: 2026-10-01 12:00:30 UTC",
             "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
              `ready-for-human`",
@@ -1245,7 +1244,7 @@ fn an_issue_the_read_places_in_the_pipeline_is_explained_as_read_then() {
         ),
         [
             "#42: Add invoices",
-            "state: ready to claim",
+            "state: Waiting for Linewright",
             "last read: 2026-10-01 12:00:30 UTC",
             "waiting for: nothing: Linewright acts on it at its next poll",
         ]
@@ -1278,7 +1277,7 @@ fn a_closed_pull_request_linewright_has_not_worked_is_left_alone_as_closed() {
         read_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(closed)))[1..],
         [
             "parent: #42, an issue it closes",
-            "state: closed pull request",
+            "state: Closed",
             "last read: 2026-10-01 12:00:30 UTC",
             "left alone: it is closed",
         ]
@@ -1294,7 +1293,7 @@ fn a_pull_request_linewright_did_not_open_names_who_did() {
         ),
         [
             "#43: Tidy up",
-            "state: open pull request",
+            "state: Open",
             "last read: 2026-10-01 12:00:30 UTC",
             "left alone: maintainer opened it, and Linewright has not worked it and is not \
              assigned to it",
@@ -1323,8 +1322,8 @@ fn a_persons_pull_request_linewright_is_assigned_to_or_labeled_is_in_review() {
     assert_eq!(
         [state(assigned), state(labeled)],
         [
-            "state: in review: #43 (draft, no checks)",
-            "state: in review: #44 (draft, no checks)",
+            "state: Open · draft, no checks",
+            "state: Open · draft, no checks",
         ]
     );
 }
@@ -1338,7 +1337,7 @@ fn linewrights_pull_request_closing_no_issue_is_in_review() {
 
     assert_eq!(
         read_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(for_nothing)))[1],
-        "state: in review: #43 (draft, no checks)"
+        "state: Open · draft, no checks"
     );
 }
 
@@ -1353,7 +1352,7 @@ fn linewrights_older_pull_request_for_an_issue_is_in_review_too() {
 
     assert_eq!(
         read_text(&view, &AnyItem::Pull(Box::new(older)))[2],
-        "state: in review: #43 (draft, no checks)"
+        "state: Open · draft, no checks"
     );
 }
 
@@ -1382,7 +1381,7 @@ fn merged_text(view: &View, pull: MergedPull) -> String {
             tracking_issues: vec![],
         },
     );
-    assert_eq!(lines[1], "state: merged pull request");
+    assert_eq!(lines[1], "state: Merged");
     lines[3].clone()
 }
 
@@ -1486,7 +1485,7 @@ fn a_merged_pull_request_linewright_was_unassigned_from_waits_for_its_design_and
     assert_eq!(
         read_merged_text(&view(vec![], vec![]), unassigned_at("30"))[1..],
         [
-            "state: spec change waiting for its design",
+            "state: Merged · spec change waiting for its design",
             "last read: 2026-10-01 12:00:30 UTC",
             "waiting for: the maintainer: Linewright is unassigned, until they assign it again",
         ]
@@ -1501,7 +1500,7 @@ fn with_a_required_label_a_merged_pull_request_linewright_was_unassigned_from_is
     assert_eq!(
         read_merged_text(&view, unassigned_at("30"))[1..],
         [
-            "state: spec change waiting for its design",
+            "state: Merged · spec change waiting for its design",
             "last read: 2026-10-01 12:00:30 UTC",
             "waiting for: the maintainer: Linewright is unassigned, until they assign it again or \
              label it `linewright`, the required label",
@@ -1523,7 +1522,7 @@ fn a_ready_for_human_label_on_a_merged_pull_request_does_not_keep_it_from_being_
 
     assert_eq!(
         render_answer(&answer, false).lines().nth(1),
-        Some("state: spec change waiting for its design")
+        Some("state: Merged · spec change waiting for its design")
     );
 }
 
@@ -1545,7 +1544,7 @@ fn a_spec_change_the_read_finds_is_explained_as_waiting_for_its_design() {
     );
     assert_eq!(
         render_answer(&answer, false).lines().nth(1),
-        Some("state: spec change waiting for its design")
+        Some("state: Merged · spec change waiting for its design")
     );
 }
 
@@ -1574,6 +1573,7 @@ fn the_json_of_an_item_left_alone_names_why() {
             "children": [],
             "item": "pull-request",
             "state": "merged",
+            "held": "merged",
             "last_read": "2026-10-01T12:00:30Z",
             "stalled": false,
             "left_alone": {
@@ -1626,7 +1626,7 @@ fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issue(
         [
             "#43: Do #42",
             "parent: #42, an issue it closes",
-            "state: in review: #43 (draft, CI running)",
+            "state: Open · draft, CI running",
             "last read: 2026-10-01 12:00:30 UTC",
             "waiting for: CI on #43",
         ]
@@ -1654,7 +1654,7 @@ fn linewrights_pull_request_is_worked_whatever_the_labels_of_the_issue_it_is_for
             [
                 "#43: Do #42",
                 "parent: #42, an issue it closes",
-                "state: in review: #43 (draft, CI running)",
+                "state: Open · draft, CI running",
                 "last read: 2026-10-01 12:00:30 UTC",
                 "waiting for: CI on #43",
             ]
@@ -1722,7 +1722,8 @@ fn the_json_of_an_open_issue_left_alone_names_why() {
                 "parents": [],
                 "children": [],
                 "item": "issue",
-                "state": "open",
+                "state": null,
+                "held": "open",
                 "last_read": "2026-10-01T12:00:30Z",
                 "stalled": false,
                 "left_alone": {"reason": "no-pipeline-label"},
@@ -1787,7 +1788,7 @@ fn linewrights_merged_pull_request_names_the_issue_it_closes() {
         [
             "#43: Do #42",
             "parent: #42, an issue it closes",
-            "state: merged",
+            "state: Merged",
             "last read: 2026-10-01 12:00:30 UTC",
         ]
     );
@@ -1813,11 +1814,11 @@ fn a_persons_merged_pull_request_linewright_labeled_is_merged_and_one_it_only_co
 
     assert_eq!(
         read_merged_text(&view(vec![], vec![]), labeled)[1],
-        "state: merged"
+        "state: Merged"
     );
     assert_eq!(
         read_merged_text(&view(vec![], vec![]), commented)[1],
-        "state: merged pull request"
+        "state: Merged"
     );
 }
 
@@ -1834,7 +1835,7 @@ fn linewrights_pull_request_closed_unmerged_is_closed_without_merging() {
         read_text(&view(vec![], vec![]), &AnyItem::Pull(Box::new(closed)))[1..],
         [
             "parent: #42, an issue it closes",
-            "state: closed without merging",
+            "state: Closed",
             "last read: 2026-10-01 12:00:30 UTC",
         ]
     );
@@ -1903,6 +1904,7 @@ fn the_json_of_a_closed_pull_request_names_the_issue_it_closes() {
             "children": [],
             "item": "pull-request",
             "state": "closed",
+            "held": "closed",
             "stalled": false,
             "last_read": "2026-10-01T12:00:30Z",
             "runs_of": 43,
@@ -2054,7 +2056,7 @@ fn an_issue_cut_into_tickets_is_their_tracking_issue_and_names_each_sub_issue() 
             "child: #41, one of its tickets",
             "child: #42, one of its tickets",
             "child: #43, one of its tickets",
-            "state: tracking issue, 1/3 tickets closed",
+            "state: Tracking · 1 of 2 tickets closed",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: its tickets: #42, #43 open",
         ]
@@ -2118,7 +2120,7 @@ fn a_spec_change_cut_into_tickets_names_its_tracking_issue() {
         [
             "#5: Add invoices to the spec",
             "child: #40, its tracking issue",
-            "state: merged pull request",
+            "state: Merged",
         ]
     );
 }
@@ -2338,7 +2340,7 @@ fn linewrights_pull_request_is_explained_for_the_first_issue_it_closes_whatever_
         [
             "parent: #12, an issue it closes",
             "parent: #42, an issue it closes",
-            "state: in review: #43 (draft, CI running)",
+            "state: Open · draft, CI running",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: CI on #43",
         ]
@@ -2476,7 +2478,10 @@ fn a_stalled_item_says_so_on_its_state_line_and_in_its_json() {
     });
     let view = view(vec![stalled], vec![]);
 
-    assert_eq!(text(&view, 42)[1], "state: with the maintainer · stalled");
+    assert_eq!(
+        text(&view, 42)[1],
+        "state: Waiting for a decision · stalled"
+    );
     let answer = explain(&view, &[], Number(42), at(NOW)).unwrap();
     assert_eq!(
         serde_json::to_value(&answer).unwrap()["stalled"],
@@ -2498,7 +2503,7 @@ fn linewrights_stalled_pull_request_says_so_on_its_state_line() {
 
     assert_eq!(
         text(&view, 43)[2],
-        "state: in review: #43 (draft, CI failing) · stalled"
+        "state: Open · draft, CI failing · stalled"
     );
 }
 
@@ -2521,7 +2526,7 @@ fn a_stalled_spec_change_left_alone_says_so_on_its_state_line_and_in_its_json() 
 
     assert_eq!(
         render_answer(&answer, false).lines().nth(1),
-        Some("state: merged pull request · stalled")
+        Some("state: Merged · stalled")
     );
     assert_eq!(
         serde_json::to_value(&answer).unwrap()["stalled"],

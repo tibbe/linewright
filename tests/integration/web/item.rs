@@ -46,7 +46,7 @@ async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_s
         [
             (
                 "State".to_string(),
-                "Needs a person · decision needed · 2026-09-30 09:00:00 UTC".to_string()
+                "Waiting for a decision · decision needed · 2026-09-30 09:00:00 UTC".to_string()
             ),
             (
                 "Waiting for".to_string(),
@@ -432,7 +432,7 @@ async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
     // A card's line names it by its number alone.
     assert_eq!(
         fact(&item_facts(&html), "State"),
-        "Ready · blocked by #2 · 2026-09-30 09:00:00 UTC"
+        "Waiting for Linewright · blocked by #2 · 2026-09-30 09:00:00 UTC"
     );
 }
 

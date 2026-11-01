@@ -589,31 +589,6 @@ pub struct Merge {
     pub at: Timestamp,
 }
 
-/// Of `closing`, the pull requests that close an issue with `events`, the
-/// first to merge into `default_branch` since the issue was last opened
-/// (`docs/specs/design_system.md`, The board), by number where two merged
-/// at once. A pull request whose base is not known merged into no branch it
-/// can tell.
-fn merged_since_opened(
-    closing: &[ClosingPull],
-    events: &[IssueEvent],
-    default_branch: &str,
-) -> Option<Merge> {
-    let reopened = last_reopened(events);
-    closing
-        .iter()
-        .filter(|pull| !pull.base_ref.is_empty() && pull.base_ref == default_branch)
-        .filter_map(|pull| match pull.state {
-            PullState::Merged { at } => Some(Merge {
-                pull_request: pull.number,
-                at,
-            }),
-            PullState::Open { .. } | PullState::Closed { .. } => None,
-        })
-        .filter(|merge| reopened.is_none_or(|reopened| merge.at > reopened))
-        .min_by_key(|merge| (merge.at, merge.pull_request))
-}
-
 fn last_reopened(events: &[IssueEvent]) -> Option<Timestamp> {
     events
         .iter()
@@ -944,17 +919,6 @@ impl Issue {
 
     pub fn last_reopened(&self) -> Option<Timestamp> {
         last_reopened(&self.events)
-    }
-
-    /// Of `closing`, the pull requests that close it, such as
-    /// [`Snapshot::pulls_closing`] gives, the first to merge into
-    /// `default_branch` since it was last opened.
-    pub fn merged_since_opened(
-        &self,
-        closing: &[ClosingPull],
-        default_branch: &str,
-    ) -> Option<Merge> {
-        merged_since_opened(closing, &self.events, default_branch)
     }
 
     /// The people a `needs-info` question asks: those `named`, or the
@@ -1919,13 +1883,6 @@ pub struct WorkFacts {
     pub assignees: Vec<Login>,
     pub events: Vec<IssueEvent>,
     pub closed_by: Vec<ClosingPull>,
-}
-
-impl WorkFacts {
-    /// As [`Issue::merged_since_opened`], of the pull requests closing it.
-    pub fn merged_since_opened(&self, default_branch: &str) -> Option<Merge> {
-        merged_since_opened(&self.closed_by, &self.events, default_branch)
-    }
 }
 
 /// Why an issue was closed, as GitHub records it

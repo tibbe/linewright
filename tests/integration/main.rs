@@ -22,6 +22,7 @@ mod harness;
 mod holds;
 mod host;
 mod item_facts;
+mod lifecycle;
 mod live_runs;
 mod local_api;
 mod local_store;

@@ -1070,7 +1070,7 @@ async fn with_the_spec_lookback_shorter_than_the_done_window_what_finished_betwe
         .find(|(label, _)| label == "State")
         .unwrap();
     assert!(
-        state.starts_with("Left alone · merged 2026-")
+        state.starts_with("Merged · Left alone · merged 2026-")
             && state.contains(", before the spec-lookback window opened 2026-"),
         "{state}"
     );

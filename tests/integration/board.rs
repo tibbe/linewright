@@ -194,8 +194,8 @@ fn a_claimed_ticket_and_one_with_a_triage_or_design_run_in_flight_are_in_working
         view(
             vec![
                 assigned(ticket(1, "Claimed")),
-                labeled(2, &["needs-triage"]),
-                labeled(3, &["ready-for-agent"]),
+                assigned(labeled(2, &["needs-triage"])),
+                assigned(labeled(3, &["ready-for-agent"])),
             ],
             vec![],
         ),
@@ -253,11 +253,17 @@ fn the_done_window_not_the_spec_lookback_says_how_long_a_closed_ticket_stays_in_
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Done, 2)]);
 }
 
+/// `docs/specs/design_system.md`, The board: a card is in the column of its
+/// item's state, whatever run is in flight on it; here a person labeled #2
+/// `needs-info` while its triage run is in flight.
 #[test]
-fn an_item_fitting_two_columns_is_in_the_one_further_right() {
+fn a_card_is_in_the_column_of_its_state_whatever_run_is_in_flight() {
     let view = with_runs(
         view(
-            vec![assigned(ticket(1, "Reworked")), labeled(2, &["needs-info"])],
+            vec![
+                assigned(ticket(1, "Reworked")),
+                assigned(labeled(2, &["needs-info"])),
+            ],
             vec![pull(10, &[1], &[])],
         ),
         &["10/rework-1", "2/triage-1"],
@@ -267,9 +273,9 @@ fn an_item_fitting_two_columns_is_in_the_one_further_right() {
 
     assert_eq!(
         placed(&board),
-        [(1, Column::InReview, 1), (2, Column::Working, 2)]
+        [(1, Column::InReview, 1), (2, Column::NeedsAPerson, 2)]
     );
-    assert_eq!(board.needing_a_person, 0);
+    assert_eq!(board.needing_a_person, 1);
 }
 
 fn card(board: &Board, number: u64) -> &Card {
@@ -551,14 +557,14 @@ fn reopened(when: &str) -> IssueEvent {
 }
 
 #[test]
-fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since_it_was_last_opened_is_in_done()
+fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since_it_was_last_opened_or_labeled_is_in_done()
  {
     let ready = || labeled(1, &["ready-for-agent", label::DESIGNED]);
     let merged_into_main = Issue {
         closed_by: vec![merged_into(11, "main", "2026-09-30T10:00:00Z")],
         ..ready()
     };
-    // Its status label removed, Linewright leaves it alone.
+    // Its status label removed, it is done all the same.
     let unlabeled = Issue {
         number: Number(2),
         labels: vec![],
@@ -607,6 +613,7 @@ fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since
         placed,
         [
             (1, Column::Done, 1),
+            (2, Column::Done, 2),
             (3, Column::Ready, 3),
             (4, Column::Ready, 4),
             (5, Column::Done, 5),
@@ -619,6 +626,7 @@ fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since
         })
     };
     assert_eq!(card(&board, 1).line, ended(11, "2026-09-30T10:00:00Z"));
+    assert_eq!(card(&board, 2).line, ended(12, "2026-09-30T10:02:00Z"));
     assert_eq!(card(&board, 5).line, ended(17, "2026-09-30T10:05:00Z"));
 }
 
@@ -858,14 +866,14 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
                 title: "Tracking 10".into(),
                 tickets_closed: 1,
                 tickets: 2,
-                closed: None
+                done: None
             },
             LaneHead::Tracking {
                 number: Number(20),
                 title: "Tracking 20".into(),
                 tickets_closed: 1,
                 tickets: 3,
-                closed: None
+                done: None
             },
         ]
     );
@@ -918,7 +926,7 @@ fn an_issue_cut_into_tickets_heads_a_lane_counting_only_its_tickets() {
             title: "Cut".into(),
             tickets_closed: 1,
             tickets: 2,
-            closed: None
+            done: None
         }
     );
     assert_eq!(
@@ -1533,7 +1541,7 @@ fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
     let working = view(
         vec![
             assigned(ticket(1, "Implemented")),
-            labeled(2, &["needs-triage"]),
+            assigned(labeled(2, &["needs-triage"])),
             labeled(3, &["ready-for-agent"]),
         ],
         vec![],
@@ -1739,7 +1747,7 @@ fn working_in_review_and_done_cards_have_no_time_in_their_column() {
         with_runs(
             view(
                 vec![
-                    labeled(1, &["needs-triage"]),
+                    assigned(labeled(1, &["needs-triage"])),
                     assigned(ticket(2, "Reviewed")),
                 ],
                 vec![pull(10, &[2], &[CheckState::Passed])],
@@ -2512,7 +2520,7 @@ fn a_lane_finished_when_its_last_card_entered_done_or_its_tracking_issue_closed_
             title: "Tracking 10".into(),
             tickets_closed: 1,
             tickets: 1,
-            closed: Some(at("2026-09-30T15:00:00Z")),
+            done: Some(at("2026-09-30T15:00:00Z")),
         }
     );
 }
@@ -2540,7 +2548,7 @@ fn a_ticket_that_is_not_managed_has_no_card_in_its_lane_and_its_head_still_count
             title: "Tracking 10".into(),
             tickets_closed: 0,
             tickets: 2,
-            closed: None,
+            done: None,
         }]
     );
 }
