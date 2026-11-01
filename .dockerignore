@@ -10,3 +10,7 @@
 !rust-toolchain.toml
 !linewright.toml
 !deploy/sccache
+!deploy/playwright/package.json
+!deploy/playwright/package-lock.json
+!deploy/playwright-mcp
+!deploy/managed-mcp.json
