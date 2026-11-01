@@ -45,6 +45,7 @@ two themes of its own.
 ## Layout
 
 - **Text cut to fit** is shown whole in a daisyUI `tooltip`.
+- **A name cut to fit** has its link to GitHub at the end of its last line.
 - **On a lane or a card**, no daisyUI component that draws in `base-100`,
   `base-200` or `base-300`, such as a button, an input or an alert.
 

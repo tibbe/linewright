@@ -120,6 +120,8 @@ An item's state ([State](repository.md#state)) is shown in these words.
 - What a page shows on hover it also shows on keyboard focus, over the
   page, until the pointer leaves it or focus moves. Text cut to fit is shown
   whole this way.
+- Only a name's title is cut to fit; its number and its link to GitHub
+  always show.
 
 ## Type
 
