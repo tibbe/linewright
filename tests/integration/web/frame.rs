@@ -51,7 +51,7 @@ fn horizontal(element: ElementRef<'_>, property: char) -> Vec<&str> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_with_their_icons() {
     let pages = Pages::of(a_ticket()).await;
 
@@ -100,7 +100,7 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_page_has_one_tooltip_outside_every_region_for_its_script_to_show() {
     let pages = Pages::of(a_ticket()).await;
 
@@ -157,7 +157,7 @@ fn hidden_at_some_width(element: ElementRef<'_>, within: ElementRef<'_>) -> bool
     })
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the_avatar_with_its_name_as_a_tip_while_cut_and_hidden_text()
  {
     let pages = Pages::of(a_ticket()).await;
@@ -203,7 +203,7 @@ async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_page() {
     let pages = Pages::of(View {
         memory: limited_until("2026-10-13T07:50:00Z"),
@@ -266,7 +266,7 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
     assert_no_status_by_colour_alone(&server);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
     let pages = Pages::of(View {
         memory: draining_since("2026-10-01T12:00:20Z"),
@@ -300,7 +300,7 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_refused_delivery_is_a_hold_linking_to_the_server_page() {
     let pages = Pages::with_deliveries(a_ticket()).await;
     let unsigned = Request {
@@ -325,7 +325,7 @@ async fn a_refused_delivery_is_a_hold_linking_to_the_server_page() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_hold_comes_and_goes_through_the_stream() {
     let pages = Pages::with_deliveries(a_ticket()).await;
     let mut events = stream(&pages, "/events/runs").await;
@@ -366,7 +366,7 @@ async fn next_holds(events: &mut tokio::sync::mpsc::UnboundedReceiver<String>) -
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
     let world = with_ticket().await;
     world.store.fail_reads("GitHub is down");
@@ -411,7 +411,7 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
     web.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to_the_server_page() {
     let error = "the setting `max-runs` is the operator's";
     let pages = Pages::of(View {
@@ -495,7 +495,7 @@ fn labelled(facts: &[ServerFact]) -> Vec<(&str, &str)> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label() {
     let pages = Pages::with_deliveries(View {
         snapshot: a_ticket().snapshot,
@@ -549,7 +549,7 @@ async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label()
     assert_eq!(events_path(&html), Some("/events/server"));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed() {
     let pages = Pages::with_deliveries(a_ticket()).await;
     let mut events = stream(&pages, "/events/server").await;
@@ -585,7 +585,7 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_pages_heading_takes_its_look_from_the_stylesheet_alone() {
     let pages = super::run::implemented_as_recorded().await;
 
@@ -603,7 +603,7 @@ async fn every_pages_heading_takes_its_look_from_the_stylesheet_alone() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_pages_content_is_inset_by_the_same_gutter_as_the_alerts_above_it() {
     let pages = super::run::implemented_as_recorded().await;
 

@@ -33,7 +33,7 @@ async fn with_automation(name: &str, text: &str) -> World {
     world
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
     let world = with_automation(
         "weekly",
@@ -125,7 +125,7 @@ fn three_issues() -> String {
     .to_string()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_files_only_the_first_max_issues_issues() {
     let world = with_automation("weekly", CAPPED).await;
     world.harness.on_automation(|_| Ok(three_issues()));
@@ -140,7 +140,7 @@ async fn a_run_files_only_the_first_max_issues_issues() {
     assert_eq!(titles, ["First", "Second"]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
     let world = with_automation("weekly", CAPPED).await;
     world.harness.on_automation(|_| Ok(three_issues()));
@@ -161,7 +161,7 @@ async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
     assert!(dropped[0].contains("Third"), "{}", dropped[0]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_unknown_automation_fails_naming_its_file() {
     let world = with_automation("weekly", WEEKLY).await;
 
@@ -182,7 +182,7 @@ async fn an_unknown_automation_fails_naming_its_file() {
     assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_out() {
     let world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|_| {
@@ -210,7 +210,7 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
     assert_eq!(world.harness.automation_prompts().len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_that_fails_fails_the_run() {
     let world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|_| {
@@ -232,7 +232,7 @@ async fn a_session_that_fails_fails_the_run() {
     assert!(error.contains("it crashed"), "{error}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
     let world = with_automation("weekly", WEEKLY).await;
     world
@@ -249,21 +249,21 @@ async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
     assert_eq!(world.harness.automation_prompts().len(), 2);
 }
 
-#[test]
+#[test_log::test]
 fn the_help_says_how_to_run_one_now() {
     let help = Cli::command().render_long_help().to_string();
 
     assert!(help.contains("`automation run NAME`"), "{help}");
 }
 
-#[test]
+#[test_log::test]
 fn the_command_that_runs_one_now_is_named_after_automations() {
     assert!(Cli::try_parse_from(["lw", "automation", "run", "weekly"]).is_ok());
     // The command's old name, which the spec gives no alias.
     assert!(Cli::try_parse_from(["lw", "workflow", "run", "weekly"]).is_err());
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
     let world = with_automation("weekly", WEEKLY).await;
     world

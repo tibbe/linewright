@@ -207,7 +207,7 @@ fn toned(html: &Html, tone: &str) -> Vec<String> {
     toned
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line() {
     let pages = Pages::of(a_board()).await;
 
@@ -260,7 +260,7 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
     assert_no_status_by_colour_alone(&html);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_card_waiting_on_the_people_asked_names_them_as_a_list_or_says_people_asked() {
     let asking =
         |number, title, people: &[&str]| assigned(labeled(number, title, &["needs-info"]), people);
@@ -289,7 +289,7 @@ async fn a_card_waiting_on_the_people_asked_names_them_as_a_list_or_says_people_
 }
 
 // Paused, so that the stream samples the view at once.
-#[tokio::test(start_paused = true)]
+#[test_log::test(tokio::test(start_paused = true))]
 async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_those_a_new_view_changes()
  {
     let pages = Pages::of(a_board()).await;
@@ -331,7 +331,7 @@ async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_thos
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_boards_stream_sends_the_board_after_a_delivery_moves_a_card() {
     let web = Web::start(with_ticket().await).await;
     let mut events = stream(&web, "/events/").await;
@@ -367,7 +367,7 @@ async fn the_boards_stream_sends_the_board_after_a_delivery_moves_a_card() {
     web.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
 
@@ -419,7 +419,7 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
     assert_eq!(finished, ["2026-10-01T09:40:00Z"]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_lane_head_and_a_card_title_cut_to_fit_are_whole_in_the_pages_tooltip_not_in_place() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
 
@@ -448,7 +448,7 @@ async fn a_lane_head_and_a_card_title_cut_to_fit_are_whole_in_the_pages_tooltip_
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_title() {
     let pages = Pages::of(a_board()).await;
 
@@ -475,7 +475,7 @@ async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_titl
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn each_lane_is_a_surface_sunk_into_the_page_with_its_cards_raised_on_it() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
 
@@ -531,7 +531,7 @@ const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
 /// number and title, with its tickets closed of total and when it finished,
 /// and no status of its own (Out of scope); `docs/specs/web/design_system.md`,
 /// Board: a bar in the Lane colour.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_lane_head_shows_no_status_of_its_own() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
 
@@ -556,7 +556,7 @@ async fn a_lane_head_shows_no_status_of_its_own() {
 /// text.
 const PAUSED_OR_QUEUED: &str = "[--tone:var(--color-muted)]";
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_card_paused_for_the_usage_limit_shows_it_in_muted_text() {
     let claimed = assigned(ticket(1, "Do the thing"), &[LINEWRIGHT]);
     let pages = Pages::of(View {
@@ -588,7 +588,7 @@ async fn a_card_paused_for_the_usage_limit_shows_it_in_muted_text() {
 
 /// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
 /// Muted text.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_cards_line_under_its_title_is_in_muted_text() {
     let pages = Pages::of(a_board()).await;
 
@@ -597,7 +597,7 @@ async fn a_cards_line_under_its_title_is_in_muted_text() {
     assert_in_muted_text(&html, "#board .card .line");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_card_with_a_card_status_shows_it_and_a_card_in_done_is_faded() {
     let mut view = a_board_with_a_finished_lane();
     std::sync::Arc::make_mut(&mut view.snapshot)
@@ -638,7 +638,7 @@ async fn a_card_with_a_card_status_shows_it_and_a_card_in_done_is_faded() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_closed_fold() {
     let done = labeled(1, "Do the thing", &["ready-for-human"]);
     let pages = Pages::of(with_closed(
@@ -686,7 +686,7 @@ fn closed_by_linewrights(issue: Issue, number: u64, state: PullState, updated_at
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_that_it_was_handed_back()
  {
     let pages = Pages::of(view(
@@ -737,7 +737,7 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_stalled_card_says_stalled_in_needs_a_person_and_after_its_pull_request_in_review() {
     let pages = Pages::of(view(
         vec![
@@ -762,7 +762,7 @@ async fn a_stalled_card_says_stalled_in_needs_a_person_and_after_its_pull_reques
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request_card_in_done() {
     let pages = Pages::of(with_merged(
         view(vec![], vec![]),
@@ -781,7 +781,7 @@ async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_whose_pull_request_merged_is_in_done_before_github_closes_it() {
     let merged = closed_by_linewrights(
         labeled(1, "Do the thing", &["ready-for-agent", label::DESIGNED]),
@@ -804,7 +804,7 @@ async fn an_issue_whose_pull_request_merged_is_in_done_before_github_closes_it()
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_closed_without_a_merge_shows_githubs_reason_for_closing_it() {
     use IssueCloseReason::{Completed, Duplicate, NotPlanned};
     let closing = |number, title, reason| {
@@ -842,7 +842,7 @@ async fn an_issue_closed_without_a_merge_shows_githubs_reason_for_closing_it() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with_its_review_decision()
  {
     let decided = |number, review_decision| Pull {
@@ -876,7 +876,7 @@ async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_says_review_required()
  {
     let blocked = |number, closes| Pull {
@@ -919,7 +919,7 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_card_waiting_in_its_column_ends_its_line_with_when_it_entered_its_column() {
     let opened_at = |issue: Issue, when| {
         labeled_by_linewright(Issue {
@@ -988,7 +988,7 @@ async fn a_card_waiting_in_its_column_ends_its_line_with_when_it_entered_its_col
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_leaves_off_its_number()
  {
     let let_go = Issue {
@@ -1016,7 +1016,7 @@ async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_the_spec_lookback_shorter_than_the_done_window_what_finished_between_them_is_in_done_and_a_spec_change_merged_then_is_left_alone()
  {
     let mut world = World::with(|c| {
@@ -1077,7 +1077,7 @@ async fn with_the_spec_lookback_shorter_than_the_done_window_what_finished_betwe
     web.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn cards_say_not_marked_for_linewright_blocked_by_and_unassigned_in_the_cards_words() {
     let mut board = view(
         vec![

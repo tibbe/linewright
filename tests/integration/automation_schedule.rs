@@ -28,7 +28,7 @@ async fn restart(world: &mut World) {
     .unwrap();
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
@@ -43,7 +43,7 @@ async fn an_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
     assert!(prompts[0].contains("Look around."), "{}", prompts[0]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_starts() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;
@@ -60,7 +60,7 @@ async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_star
     assert_eq!(world.harness.automation_prompts().len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
     let mut world = World::new().await;
     add_automation(&world, "hourly", HOURLY).await;

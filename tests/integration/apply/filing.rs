@@ -89,7 +89,7 @@ fn a_designed_issue_asks(#[case] cut: IssueWork, #[case] expected: Asks) {
     assert_eq!(designed_asks(&cut), expected);
 }
 
-#[test]
+#[test_log::test]
 fn a_designed_spec_change_is_labeled_designed_and_let_go_of() {
     assert_eq!(
         spec_change_designed(),
@@ -182,7 +182,7 @@ fn a_cut_files_each_ticket_with_its_blockers(
     assert_eq!(cut.tickets, expected);
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_changes_cut_files_the_same_tickets_as_an_issues() {
     let pr = merged_pull(5, "maintainer", &[]);
     let drafts = tickets(&[("store", vec![]), ("listing", vec![0])]);
@@ -353,7 +353,7 @@ fn a_spec_gap_already_filed_is_not_filed_again(
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_result_without_spec_gaps_drops_none() {
     let issue = ticket(20, "Empty widgets");
     let issues = [&issue];

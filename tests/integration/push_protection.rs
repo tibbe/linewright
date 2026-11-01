@@ -43,7 +43,7 @@ fn take_token_out(dir: &Path) {
 
 const FIXED: &str = "const TOKEN: &str = env!(\"TOKEN\");\n";
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_whose_push_github_refuses_over_a_secret_is_sent_back_and_opens_its_pull_request_once_it_is_taken_out()
  {
     let mut world = World::new().await;
@@ -85,7 +85,7 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_is_sent_back_a
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_hands_its_ticket_back_with_the_reason()
  {
     let mut world = World::new().await;
@@ -128,7 +128,7 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
     assert_eq!(world.store.pulls(), []);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_handed_back_as_github_still_refuses_its_push_says_once_that_the_work_was_not_kept()
  {
     let mut world = World::new().await;
@@ -161,7 +161,7 @@ async fn a_ticket_handed_back_as_github_still_refuses_its_push_says_once_that_th
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_whose_push_github_refuses_over_a_secret_is_sent_back_and_pushes_once_it_is_taken_out()
  {
     let mut world = World::new().await;
@@ -192,7 +192,7 @@ async fn a_rework_whose_push_github_refuses_over_a_secret_is_sent_back_and_pushe
     assert_eq!(last_pull_comment(&world, pr).await, "Configured.");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_fix_ci_run_whose_push_github_still_refuses_after_its_follow_ups_hands_its_pull_request_back_with_the_reason()
  {
     let mut world = World::new().await;
@@ -226,7 +226,7 @@ async fn a_fix_ci_run_whose_push_github_still_refuses_after_its_follow_ups_hands
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_blocked_run_whose_work_github_refuses_over_a_secret_says_the_work_was_not_kept_for_it() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Implement, |call| {
@@ -255,7 +255,7 @@ async fn a_blocked_run_whose_work_github_refuses_over_a_secret_says_the_work_was
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn what_github_reports_of_a_secret_is_redacted() {
     let mut world = World::with(|config| {
         config.secrets = secrets_of(&[("DEPLOY_KEY", "push_protection")]);
@@ -296,7 +296,7 @@ async fn what_github_reports_of_a_secret_is_redacted() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_github_refuses_its_push()
  {
     let mut world = World::new().await;
@@ -333,7 +333,7 @@ async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_
     assert_eq!(world.store.pulls(), []);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn an_implement_run_whose_push_github_refuses_over_a_secret_can_be_cancelled_while_its_session_runs_again()
  {
     let mut world = World::new().await;
@@ -376,7 +376,7 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_can_be_cancell
     assert_eq!(ended_runs(&world), [Ending::Cancelled]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_cancel_during_a_push_github_then_refuses_over_a_secret_ends_the_run_without_resuming_its_session()
  {
     let mut world = World::new().await;

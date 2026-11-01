@@ -42,7 +42,7 @@ mod tests {
             .collect()
     }
 
-    #[test]
+    #[test_log::test]
     fn the_failed_step_runs_from_its_run_group_to_its_last_error() {
         let log = job_log(&[
             "Current runner version: '2.329.0'",
@@ -82,7 +82,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn a_long_step_shows_only_its_last_50_lines() {
         let output: Vec<String> = (1..=60)
             .map(|n| format!("test case {n} ... FAILED"))
@@ -100,7 +100,7 @@ mod tests {
         assert_eq!(shown[49], "##[error]Process completed with exit code 101.");
     }
 
-    #[test]
+    #[test_log::test]
     fn without_an_error_the_end_of_the_whole_log_stands_in() {
         let output: Vec<String> = (1..=60).map(|n| format!("line {n}")).collect();
         let mut lines = vec!["##[group]Run ./build.sh", "##[endgroup]"];
@@ -116,12 +116,12 @@ mod tests {
         assert_eq!(shown[49], "Cleaning up orphan processes");
     }
 
-    #[test]
+    #[test_log::test]
     fn an_empty_log_shows_nothing() {
         assert_eq!(failed_step_output(""), "");
     }
 
-    #[test]
+    #[test_log::test]
     fn a_failing_composite_action_shows_its_failing_sub_step() {
         let log = job_log(&[
             "##[group]Run actions/checkout@v5",
@@ -149,7 +149,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn the_logs_byte_order_mark_goes_with_its_first_timestamp() {
         let log = format!(
             "\u{feff}{}",

@@ -101,7 +101,7 @@ fn reason(commit: &str) -> String {
     format!("the commit `{commit}` adds the value of `NPM_TOKEN`, a secret, to `.npmrc`")
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_whose_commits_hold_a_secret_is_sent_back_before_it_pushes_and_opens_its_pull_request_once_they_do_not()
  {
     let mut world = world_with_secret().await;
@@ -156,7 +156,7 @@ async fn an_implement_run_whose_commits_hold_a_secret_is_sent_back_before_it_pus
     assert_secret_kept_out(&world).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_whose_commits_still_hold_a_secret_after_its_follow_ups_hands_its_ticket_back_and_pushes_nothing()
  {
     let (log, _guard) = Log::capture();
@@ -203,7 +203,7 @@ async fn an_implement_run_whose_commits_still_hold_a_secret_after_its_follow_ups
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_whose_commits_hold_a_secret_pushes_nothing_to_its_pull_request_and_is_sent_back_then_handed_back()
  {
     let mut world = world_with_secret().await;
@@ -240,7 +240,7 @@ async fn a_rework_whose_commits_hold_a_secret_pushes_nothing_to_its_pull_request
     assert_secret_kept_out(&world).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_that_takes_a_secret_out_of_its_commits_when_sent_back_pushes_them() {
     let mut world = world_with_secret().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -275,7 +275,7 @@ async fn a_rework_that_takes_a_secret_out_of_its_commits_when_sent_back_pushes_t
     assert_secret_kept_out(&world).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_secret_of_1_to_5_characters_in_a_commit_is_pushed() {
     let pin = "12345";
     let mut world = World::with(|config| {
@@ -309,7 +309,7 @@ async fn a_secret_of_1_to_5_characters_in_a_commit_is_pushed() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_commit_holding_a_harness_credential_no_one_named_is_sent_back_naming_its_variable() {
     let token = "sk-ant-oat01-s3cr3t";
     let mut world = World::with(|config| {
@@ -364,7 +364,7 @@ fn assert_says_not_kept(comment: &str, commit: Option<&str>) {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_that_stops_with_a_secret_in_its_commits_keeps_nothing_and_says_why() {
     let mut world = world_with_secret().await;
     let committed = Arc::new(Mutex::new(String::new()));
@@ -394,7 +394,7 @@ async fn an_implement_run_that_stops_with_a_secret_in_its_commits_keeps_nothing_
     assert_secret_kept_out(&world).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_that_blocks_with_a_secret_left_uncommitted_keeps_nothing_and_says_why() {
     let mut world = world_with_secret().await;
     world.harness.on(WorkKind::Implement, |call| {
@@ -420,7 +420,7 @@ async fn an_implement_run_that_blocks_with_a_secret_left_uncommitted_keeps_nothi
     assert_secret_kept_out(&world).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_that_gives_up_with_a_secret_in_its_work_pushes_nothing_to_its_pull_request_and_says_why()
  {
     let mut world = world_with_secret().await;
@@ -444,7 +444,7 @@ async fn a_rework_that_gives_up_with_a_secret_in_its_work_pushes_nothing_to_its_
     assert_secret_kept_out(&world).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_that_stops_with_work_that_holds_no_secret_still_keeps_it() {
     let mut world = world_with_secret().await;
     world.harness.on(WorkKind::Implement, |call| {

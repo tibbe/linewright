@@ -32,7 +32,7 @@ fn linewright_assigned(world: &World, issue: Number) -> bool {
 /// How a hand-back for a timed-out session begins.
 const TIMED_OUT_OPENING: &str = "The session ended unexpectedly: it timed out.";
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_triage_run_readying_an_issue_adds_its_label_after_the_comment_and_category_and_before_removing_needs_triage()
  {
     let mut world = World::new().await;
@@ -57,7 +57,7 @@ async fn a_triage_run_readying_an_issue_adds_its_label_after_the_comment_and_cat
     assert_eq!(labels(&world.issue(issue)), ["bug", "ready-for-agent"]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_triage_run_handing_an_issue_to_a_person_unassigns_linewright_last() {
     let mut world = World::new().await;
     triaged_to(&world, "ready-for-human");
@@ -79,7 +79,7 @@ async fn a_triage_run_handing_an_issue_to_a_person_unassigns_linewright_last() {
     assert!(!linewright_assigned(&world, issue));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_stalled_and_handed_back_is_labeled_stalled_and_undesigned_before_ready_for_human_and_unassigned_after()
  {
     let mut world = World::new().await;
@@ -105,7 +105,7 @@ async fn an_issue_stalled_and_handed_back_is_labeled_stalled_and_undesigned_befo
     assert!(!linewright_assigned(&world, ticket));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_stalled_and_handed_back_is_labeled_stalled_before_linewright_unassigns() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -123,7 +123,7 @@ async fn a_pull_request_stalled_and_handed_back_is_labeled_stalled_before_linewr
     assert_eq!(world.store.pull_labels(pr), ["linewright:stalled"]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_reply_to_needs_info_adds_needs_triage_before_removing_needs_info() {
     let mut world = World::new().await;
     let issue = world.issue_asking_its_reporter().await;
@@ -148,7 +148,7 @@ async fn a_reply_to_needs_info_adds_needs_triage_before_removing_needs_info() {
     assert_eq!(labels(&world.issue(issue)), ["bug", "needs-triage"]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_cut_labels_its_issue_designed_before_removing_its_status_label_and_letting_go() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |_| {
@@ -182,7 +182,7 @@ async fn a_cut_labels_its_issue_designed_before_removing_its_status_label_and_le
     assert!(!linewright_assigned(&world, issue));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_issue_handed_back_is_commented_on_before_its_labels_change_and_linewright_unassigns() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Implement, |_| timed_out());
@@ -214,7 +214,7 @@ async fn an_issue_handed_back_is_commented_on_before_its_labels_change_and_linew
     assert!(last_comment(&handed_back).starts_with(TIMED_OUT_OPENING));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_pull_request_handed_back_is_commented_on_before_it_is_stalled_and_linewright_unassigns()
 {
     let mut world = World::new().await;
@@ -239,7 +239,7 @@ async fn a_pull_request_handed_back_is_commented_on_before_it_is_stalled_and_lin
     assert_eq!(world.store.pull_labels(pr), ["linewright:stalled"]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_spec_change_handed_back_is_commented_on_before_it_is_stalled_and_linewright_unassigns() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Design, |_| timed_out());
@@ -274,7 +274,7 @@ async fn a_spec_change_handed_back_is_commented_on_before_it_is_stalled_and_line
     assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_run_files_its_spec_gaps_before_opening_its_pull_request() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Implement, |call| {
@@ -317,7 +317,7 @@ async fn an_implement_run_files_its_spec_gaps_before_opening_its_pull_request() 
     assert_eq!(world.store.snapshot_pull(pr).await.closes, [ticket]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn linewright_assigned_to_a_pull_request_it_did_not_open_comments_before_unassigning_itself()
 {
     let mut world = World::new().await;

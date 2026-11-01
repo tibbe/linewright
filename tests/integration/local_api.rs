@@ -265,7 +265,7 @@ async fn with_ticket_and_automation() -> World {
     world
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
 
@@ -316,7 +316,7 @@ async fn polls_failed(answering: &Answering, count: u64) {
     .unwrap();
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn status_shows_the_polls_failed_since_the_last_that_succeeded_with_the_last_error_redacted()
 {
     let world = World::with(|config| {
@@ -353,7 +353,7 @@ async fn status_shows_the_polls_failed_since_the_last_that_succeeded_with_the_la
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn status_json_prints_the_api_answer_as_it_is() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
     let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/api/status").await;
@@ -366,7 +366,7 @@ async fn status_json_prints_the_api_answer_as_it_is() {
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
     let world = with_ticket_and_automation().await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
@@ -391,7 +391,7 @@ async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_webhooks_on_status_shows_the_last_accepted_delivery_and_those_refused() {
     let answering = Answering::start(World::new().await, true).await;
     let listener = answering.listener.as_ref().unwrap();
@@ -421,7 +421,7 @@ async fn with_webhooks_on_status_shows_the_last_accepted_delivery_and_those_refu
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_second_serve_for_the_repository_exits_saying_one_already_runs() {
     let answering = Answering::start(World::new().await, false).await;
 
@@ -439,7 +439,7 @@ async fn a_second_serve_for_the_repository_exits_saying_one_already_runs() {
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn status_without_serve_running_exits_3_saying_so() {
     let runtime_dir = tempfile::tempdir().unwrap();
 
@@ -451,7 +451,7 @@ async fn status_without_serve_running_exits_3_saying_so() {
     assert!(output.stderr.contains(REPO), "{}", output.stderr);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_wrong_command_line_exits_2() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let wrong = [
@@ -469,7 +469,7 @@ async fn a_wrong_command_line_exits_2() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_wrong_setting_outside_the_command_line_exits_1() {
     let runtime_dir = tempfile::tempdir().unwrap();
 
@@ -484,7 +484,7 @@ async fn a_wrong_setting_outside_the_command_line_exits_1() {
     assert!(output.stderr.contains("poll-interval"), "{}", output.stderr);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn runs_gives_the_same_answer_with_serve_running_and_without() {
     let answering = Answering::start(with_issue_for_triage().await, false).await;
     let work_dir = answering._dir.path().join("work");
@@ -524,7 +524,7 @@ async fn runs_gives_the_same_answer_with_serve_running_and_without() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_whose_serve_died_is_listed_as_interrupted() {
     let world = with_issue_for_triage().await;
     world.harness.takes(Duration::from_mins(1));
@@ -554,7 +554,7 @@ async fn a_run_whose_serve_died_is_listed_as_interrupted() {
     assert!(line.ends_with(" UTC"), "no duration: {line}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewright_waits_for() {
     let answering = Answering::start(with_ticket_and_automation().await, false).await;
 
@@ -579,7 +579,7 @@ async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewr
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_now() {
     let world = with_ticket_and_automation().await;
     let closed = world.store.open_issue(
@@ -602,7 +602,7 @@ async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_n
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
     let answering = Answering::start(World::new().await, false).await;
 
@@ -614,7 +614,7 @@ async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn logs_gives_the_same_answer_with_serve_running_and_without() {
     let world = with_issue_for_triage().await;
     world
@@ -695,7 +695,7 @@ fn runs_in_flight(answer: &str) -> usize {
     answer["runs"].as_array().map_or(0, Vec::len)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn status_and_explain_show_the_run_in_flight_until_it_ends() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
@@ -813,7 +813,7 @@ pub(crate) fn turn_1() -> Vec<String> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_produces_it() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
@@ -954,7 +954,7 @@ fn event(id: Option<&str>, event: &str, data: &str) -> api::ServerEvent {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_id() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
@@ -1006,7 +1006,7 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn logs_reads_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
     let (agent, answering, runtime_dir) = triage_under_way().await;
     let served = answering.lw(&["logs", "1"]).await.stdout;
@@ -1030,7 +1030,7 @@ async fn logs_reads_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
     let (agent, answering, runtime_dir) = triage_under_way().await;
     // Asked for the transcript so far, then to follow it.
@@ -1049,7 +1049,7 @@ async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_unanswered_
     answering.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_part_way_as_it_stops() {
     let (agent, answering, runtime_dir) = triage_under_way().await;
     let stopping = CancellationToken::new();
@@ -1166,7 +1166,7 @@ fn stops_as_asked(
     })
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
@@ -1220,7 +1220,7 @@ fn drain_line(status: &str) -> Option<&str> {
     status.lines().find(|line| line.starts_with("drain: "))
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn drain_names_the_run_in_flight_and_again_as_it_ends_and_returns_once_serve_has_exited() {
     let (agent, answering) = triage_held().await;
     let runtime_dir = answering.runtime_dir.path().to_path_buf();
@@ -1244,7 +1244,7 @@ async fn drain_names_the_run_in_flight_and_again_as_it_ends_and_returns_once_ser
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn drain_no_wait_returns_once_serve_has_taken_it_and_serve_goes_on_draining() {
     let (agent, answering) = triage_held().await;
 
@@ -1267,7 +1267,7 @@ async fn drain_no_wait_returns_once_serve_has_taken_it_and_serve_goes_on_drainin
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn killing_a_waiting_drain_leaves_serve_draining() {
     let (agent, answering) = triage_held().await;
     let mut drain = Watching::start(answering.runtime_dir.path(), &["drain"]);
@@ -1286,7 +1286,7 @@ async fn killing_a_waiting_drain_leaves_serve_draining() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn drain_of_serve_draining_after_an_earlier_drain_says_so_and_waits_for_it_to_exit() {
     let (agent, answering) = triage_held().await;
     let earlier = answering.lw(&["drain", "--no-wait"]).await;
@@ -1311,7 +1311,7 @@ async fn drain_of_serve_draining_after_an_earlier_drain_says_so_and_waits_for_it
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn drain_of_serve_stopping_says_so_and_waits_for_it_to_exit() {
     let (agent, answering) = triage_held().await;
     let Answering {
@@ -1339,7 +1339,7 @@ async fn drain_of_serve_stopping_says_so_and_waits_for_it_to_exit() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn drain_returns_once_serve_has_exited_though_another_has_started_since() {
     let (agent, answering) = triage_held().await;
     let restarted = World::new().await;
@@ -1378,7 +1378,7 @@ async fn drain_returns_once_serve_has_exited_though_another_has_started_since() 
     restarted.stop().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_drain_whose_run_outlasts_its_timeout_becomes_a_stop_at_the_deadline() {
     let (_agent, answering) = triage_held().await;
     let work_dir = answering._dir.path().join("work");
@@ -1417,7 +1417,7 @@ async fn a_drain_whose_run_outlasts_its_timeout_becomes_a_stop_at_the_deadline()
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing() {
     use tokio::io::AsyncWriteExt;
     let answering = Answering::start(World::new().await, false).await;
@@ -1471,7 +1471,7 @@ async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing(
     within(STOPPING, "the API stops", stopped).await.unwrap();
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn status_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights() {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     world

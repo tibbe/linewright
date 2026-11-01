@@ -66,7 +66,22 @@ checks through the front door.
   installed on the machine. It tells a fake what to do with data, such as a
   scenario file.
 
+### Failing
+
+A failing test says where it failed and what led there.
+
+- **Its log.** Every test is `#[test_log::test]`, around `#[tokio::test]`
+  where it is async. `scripts/check test` enforces it.
+- **Its line.** A helper that can fail a test is `#[track_caller]`. An async
+  helper is a sync function that takes `Location::caller()` and returns the
+  future.
+
 ### Anti-patterns
+
+- **Racing a passing state**: the test waits for a state the system passes
+  through, such as an assignment a run then undoes, so it passes only when a
+  check lands in that window. Wait for the state the system comes to rest in,
+  or script what follows so the state lasts.
 
 - **Tautological**: the assertion recomputes the expected value the way the
   code does (`expect(add(a, b)).toBe(a + b)`, a snapshot derived by hand the

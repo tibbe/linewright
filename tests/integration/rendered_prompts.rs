@@ -94,7 +94,7 @@ fn unfinished() -> UnfinishedCommits {
     }
 }
 
-#[test]
+#[test_log::test]
 fn triage_is_filled_as_before() {
     let name = repo_name();
     let prompt = prompts::triage(
@@ -108,7 +108,7 @@ fn triage_is_filled_as_before() {
     assert_eq!(prompt, expected("triage.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn design_of_a_spec_change_is_filled_as_before() {
     let name = repo_name();
     let pr = MergedPull {
@@ -138,7 +138,7 @@ fn design_of_a_spec_change_is_filled_as_before() {
     assert_eq!(prompt, expected("design-spec-change.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn design_of_an_issue_is_filled_as_before() {
     let name = repo_name();
     let prompt = prompts::design_issue(
@@ -153,7 +153,7 @@ fn design_of_an_issue_is_filled_as_before() {
     assert_eq!(prompt, expected("design-issue.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
     let name = repo_name();
     let spec_change = MergedPull {
@@ -198,7 +198,7 @@ fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
     assert_eq!(prompt, expected("design-spec-change-issue.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn implement_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
@@ -222,7 +222,7 @@ fn implement_is_filled_as_before() {
     assert_eq!(prompt, expected("implement.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn rework_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
@@ -257,7 +257,7 @@ fn rework_is_filled_as_before() {
     assert_eq!(prompt, expected("rework.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn fix_ci_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
@@ -283,7 +283,7 @@ fn fix_ci_is_filled_as_before() {
     assert_eq!(prompt, expected("fix-ci.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn update_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
@@ -305,7 +305,7 @@ fn update_is_filled_as_before() {
     assert_eq!(prompt, expected("update.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn automation_is_filled_as_before() {
     let name = repo_name();
     let automation = linewright::automation::parse(
@@ -323,7 +323,7 @@ fn automation_is_filled_as_before() {
     assert_eq!(prompt, expected("automation.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn implement_of_a_ticket_cut_from_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");
@@ -353,7 +353,7 @@ fn implement_of_a_ticket_cut_from_a_spec_changes_issue_reads_the_spec_change_and
     assert_eq!(prompt, expected("implement-spec-change-ticket.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn implement_of_a_spec_changes_issue_built_as_it_is_reads_the_spec_change_and_its_diff() {
     let name = repo_name();
     let its_issue = Issue {
@@ -382,7 +382,7 @@ fn implement_of_a_spec_changes_issue_built_as_it_is_reads_the_spec_change_and_it
     assert_eq!(prompt, expected("implement-spec-change-issue.txt"));
 }
 
-#[test]
+#[test_log::test]
 fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
     let name = repo_name();
     let ticket_issue = issue(7, "Count the widgets", "Count them.");

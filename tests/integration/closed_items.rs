@@ -4,7 +4,7 @@ use chrono::TimeDelta;
 use common::*;
 use linewright::domain::Number;
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_ticket_closed_before_the_done_window_is_held_closed_while_its_tracking_issue_is_held() {
     let world = World::new().await;
     let closed = world.tracking_with_a_closed_ticket().await;

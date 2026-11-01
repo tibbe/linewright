@@ -1277,7 +1277,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[test_log::test]
     fn a_run_is_numbered_on_from_the_recorded_runs_of_its_stage_on_its_item() {
         let work_dir = tempfile::tempdir().unwrap();
         for (path, item, stage, n) in [
@@ -1336,7 +1336,7 @@ mod tests {
         })
     }
 
-    #[test]
+    #[test_log::test]
     fn a_run_is_numbered_on_from_its_runs_where_this_version_keeps_them_and_where_the_previous_did()
     {
         let work_dir = tempfile::tempdir().unwrap();
@@ -1365,7 +1365,7 @@ mod tests {
         assert_eq!(ids, ["weekly/3", "daily/5", "4/design-3"]);
     }
 
-    #[test]
+    #[test_log::test]
     fn what_a_runs_sessions_ran_with_reads_back_from_its_record() {
         let work_dir = tempfile::tempdir().unwrap();
         let settings = WorkSettings {

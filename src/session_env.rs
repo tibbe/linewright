@@ -376,14 +376,14 @@ impl SessionEnv {
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn the_table_passes_every_variable_the_harness_reads_a_credential_from() {
         for name in CREDENTIAL_VARIABLES {
             assert!(in_table(name), "{name}");
         }
     }
 
-    #[test]
+    #[test_log::test]
     fn the_table_passes_every_variable_the_harness_reads_request_headers_from() {
         for name in HEADER_VARIABLES {
             assert!(in_table(name), "{name}");

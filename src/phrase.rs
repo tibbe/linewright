@@ -223,7 +223,7 @@ mod tests {
 
     /// `docs/specs/web/design_system.md`, Status: paused or queued is Muted
     /// text, cancelled `neutral`.
-    #[test]
+    #[test_log::test]
     fn each_tone_has_the_colour_of_the_states_it_shows() {
         let tones = [
             Tone::Success,

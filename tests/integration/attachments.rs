@@ -77,7 +77,7 @@ fn url(name: &str) -> String {
     format!("https://github.com/user-attachments/assets/{name}")
 }
 
-#[test]
+#[test_log::test]
 fn an_image_s_path_becomes_its_url() {
     let record = Record::new();
     record.put("before.png", b"png");
@@ -90,7 +90,7 @@ fn an_image_s_path_becomes_its_url() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_link_s_path_becomes_its_url() {
     let record = Record::new();
     record.put("logs/run.txt", b"log");
@@ -101,7 +101,7 @@ fn a_link_s_path_becomes_its_url() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_reference_definition_s_path_becomes_its_url() {
     let record = Record::new();
     record.put("after.png", b"png");
@@ -114,7 +114,7 @@ fn a_reference_definition_s_path_becomes_its_url() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_html_img_s_src_becomes_its_url() {
     let record = Record::new();
     record.put("wide.png", b"png");
@@ -130,7 +130,7 @@ fn an_html_img_s_src_becomes_its_url() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_bracketed_path_with_a_space_becomes_its_url() {
     let record = Record::spaced();
     let shot = record.put("home_before.png", b"png");
@@ -158,7 +158,7 @@ fn a_bracketed_path_with_a_space_becomes_its_url() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_bracketed_video_with_a_space_in_its_path_alone_in_its_paragraph_becomes_its_bare_url() {
     let record = Record::spaced();
     record.put("demo.mp4", b"mp4");
@@ -169,7 +169,7 @@ fn a_bracketed_video_with_a_space_in_its_path_alone_in_its_paragraph_becomes_its
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_path_in_code_or_plain_text_is_left_as_written() {
     let record = Record::new();
     record.put("shot.png", b"png");
@@ -184,7 +184,7 @@ fn a_path_in_code_or_plain_text_is_left_as_written() {
     assert_eq!(record.resolve(&markdown).unwrap().files(), []);
 }
 
-#[test]
+#[test_log::test]
 fn markdown_with_no_references_comes_back_byte_identical() {
     let record = Record::new();
     let markdown = "# Done\r\n\r\n* one  \n* [GitHub](https://github.com) and [#3](/owner/repo/issues/3)\n\
@@ -193,7 +193,7 @@ fn markdown_with_no_references_comes_back_byte_identical() {
     assert_eq!(record.rewritten(markdown), markdown);
 }
 
-#[test]
+#[test_log::test]
 fn two_references_to_one_file_list_it_once() {
     let record = Record::new();
     let shot = record.put("shot.png", b"png");
@@ -226,7 +226,7 @@ fn two_references_to_one_file_list_it_once() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn each_text_is_rewritten_with_its_own_references() {
     let record = Record::new();
     record.put("shot.png", b"png");
@@ -248,7 +248,7 @@ fn each_text_is_rewritten_with_its_own_references() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_video_alone_in_its_paragraph_becomes_its_bare_url() {
     let record = Record::new();
     record.put("demo.mp4", b"mp4");
@@ -267,7 +267,7 @@ fn a_video_alone_in_its_paragraph_becomes_its_bare_url() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_link_to_a_video_alone_in_its_paragraph_stays_a_link() {
     let record = Record::new();
     record.put("demo.mp4", b"mp4");
@@ -278,7 +278,7 @@ fn a_link_to_a_video_alone_in_its_paragraph_stays_a_link() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_video_beside_other_text_in_a_list_item_becomes_a_link() {
     let record = Record::new();
     record.put("demo.mp4", b"mp4");
@@ -292,7 +292,7 @@ fn a_video_beside_other_text_in_a_list_item_becomes_a_link() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_video_inside_a_sentence_becomes_a_link() {
     let record = Record::new();
     record.put("demo.mov", b"mov");
@@ -309,7 +309,7 @@ fn a_video_inside_a_sentence_becomes_a_link() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_reference_style_video_inside_a_sentence_becomes_a_link() {
     let record = Record::new();
     record.put("demo.mp4", b"mp4");
@@ -322,7 +322,7 @@ fn a_reference_style_video_inside_a_sentence_becomes_a_link() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_missing_file_is_refused() {
     let record = Record::new();
     let dir = record.path();
@@ -344,7 +344,7 @@ fn a_missing_file_is_refused() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_symlink_is_refused() {
     let record = Record::new();
     let target = record.put("real.png", b"png");
@@ -360,7 +360,7 @@ fn a_symlink_is_refused() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_file_behind_a_symlinked_directory_is_refused() {
     let record = Record::new();
     record.put("real/shot.png", b"png");
@@ -380,7 +380,7 @@ fn a_file_behind_a_symlinked_directory_is_refused() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_dot_dot_escape_from_the_directory_is_refused() {
     let record = Record::new();
     let dir = record.path();
@@ -404,7 +404,7 @@ fn a_dot_dot_escape_from_the_directory_is_refused() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_file_outside_the_directory_is_refused() {
     let record = Record::new();
     let elsewhere = tempfile::tempdir().unwrap();
@@ -418,7 +418,7 @@ fn a_file_outside_the_directory_is_refused() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_absolute_path_outside_the_directory_naming_no_file_is_left_as_written() {
     let record = Record::new();
     let elsewhere = tempfile::tempdir().unwrap();
@@ -430,7 +430,7 @@ fn an_absolute_path_outside_the_directory_naming_no_file_is_left_as_written() {
     assert_eq!(record.rewritten(&markdown), markdown);
 }
 
-#[test]
+#[test_log::test]
 fn a_secret_in_a_binary_file_is_refused() {
     let record = Record::new();
     let mut bytes = vec![0x89, b'P', b'N', b'G', 0x00, 0xff];
@@ -456,7 +456,7 @@ fn a_secret_in_a_binary_file_is_refused() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_file() {
     let briefs = linewright::briefs::OperatorPrompts::read(None)
         .unwrap()
@@ -477,7 +477,7 @@ fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_f
     );
 }
 
-#[test]
+#[test_log::test]
 fn dir_create_makes_the_attachments_directory_in_the_record() {
     let record = tempfile::tempdir().unwrap();
     let dir = Dir::create(record.path()).unwrap();

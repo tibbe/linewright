@@ -102,7 +102,7 @@ async fn refused() -> (World, Number) {
     (world, ticket)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn before_the_reset_a_poll_starts_no_run_and_claims_no_issue() {
     let (mut world, ticket) = refused().await;
     triage(&world);
@@ -119,7 +119,7 @@ async fn before_the_reset_a_poll_starts_no_run_and_claims_no_issue() {
     assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
     let (mut world, _) = refused().await;
 
@@ -140,7 +140,7 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
     assert_eq!(world.store.pulls().len(), 1);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_refused_part_way_resumes_after_the_reset_in_the_same_clone() {
     let (log, _guard) = Log::capture();
     let mut world = World::serving().await;
@@ -181,7 +181,7 @@ async fn a_session_refused_part_way_resumes_after_the_reset_in_the_same_clone() 
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_branch() {
     let (log, _guard) = Log::capture();
     let mut world = World::serving().await;
@@ -212,7 +212,7 @@ async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_bran
     assert_eq!(cancelled.len(), 1, "{cancelled:?}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_stop_during_the_wait_drops_the_run() {
     let mut world = World::serving().await;
     implement_turns(&world, vec![refused_part_way]);
@@ -229,7 +229,7 @@ async fn a_stop_during_the_wait_drops_the_run() {
     assert_eq!(store.pulls(), []);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn once_ends_the_refused_run_without_waiting() {
     let mut world = World::new().await;
     implement_turns(&world, vec![refused_part_way]);
@@ -286,7 +286,7 @@ fn the_usage_limit() -> UsageLimit {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
     let world = World::new().await;
     world

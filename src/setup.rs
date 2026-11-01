@@ -348,7 +348,7 @@ mod tests {
             .expect("bash on the PATH")
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn a_secret_in_the_command_or_its_output_is_redacted_where_it_is_kept() {
         let secret = "sk-setup-0123456789";
         let secrets = Secrets::of(

@@ -130,7 +130,7 @@ fn cut(shown: &[String], chars: usize) -> Vec<String> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_settings_and_prompts_came_from()
  {
     let pages = implemented_as_recorded().await;
@@ -165,7 +165,7 @@ async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_se
 
 /// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
 /// Muted text.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_page_shows_a_sessions_ran_with_line_its_layers_and_each_entrys_time_in_muted_text()
 {
     let pages = implemented_as_recorded().await;
@@ -177,7 +177,7 @@ async fn the_run_page_shows_a_sessions_ran_with_line_its_layers_and_each_entrys_
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_line() {
     let pages = implemented_as_recorded().await;
 
@@ -246,7 +246,7 @@ async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_li
     assert_no_status_by_colour_alone(&html);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_pages_entry_stamp_shows_when_the_entry_happened_in_the_pages_tooltip() {
     let pages = implemented_as_recorded().await;
 
@@ -261,7 +261,7 @@ async fn the_run_pages_entry_stamp_shows_when_the_entry_happened_in_the_pages_to
     assert_eq!(select(&html, "[title]").len(), 0);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everything_open() {
     let pages = implemented_as_recorded().await;
     let html = pages.page("/runs/1/implement-1").await;
@@ -425,7 +425,7 @@ fn entry_lines_in(element: ElementRef) -> Vec<(String, String)> {
         .collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resumes_by_event_id() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
@@ -580,7 +580,7 @@ fn heading_links(html: &Html) -> Vec<String> {
     hrefs(select(html, "#transcript h1 a"))
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_under_it_as_the_runs_page_does()
  {
     let pages = implemented_as_recorded().await;
@@ -608,7 +608,7 @@ async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_un
     assert_eq!(item_line(&html), ("#1: Ship gh".to_string(), links));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_pages_stream_swaps_in_the_whole_heading_when_the_runs_header_comes() {
     let pages = implemented_as_recorded().await;
     let mut events = stream_with_ids(&pages, "/events/runs/1/implement-1?follow=start", None).await;
@@ -627,7 +627,7 @@ async fn the_run_pages_stream_swaps_in_the_whole_heading_when_the_runs_header_co
     assert_eq!(text(select(heading, "hgroup#run > p")[0]), "#1: Ship gh");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
     let pages = Pages::of(view(vec![], vec![])).await;
     let session = "sessions/automation-weekly/20261014T120005Z-automation";
@@ -679,7 +679,7 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_page_of_an_automations_run_by_hand_says_so_in_its_heading_and_of_a_scheduled_one_not()
 {
     let pages = Pages::of(view(vec![], vec![])).await;
@@ -705,7 +705,7 @@ async fn the_page_of_an_automations_run_by_hand_says_so_in_its_heading_and_of_a_
     assert_eq!(heading(&scheduled)[0], "hourly/1 (it started no session)");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_page_of_a_run_that_started_no_session_says_so() {
     let pages = Pages::of(view(
         vec![ticket(1, "Ship gh")],
@@ -733,7 +733,7 @@ async fn the_page_of_a_run_that_started_no_session_says_so() {
     assert_eq!(events_path(&html), Some("/events/runs/2/update-1"));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_page_of_no_run_says_there_is_none() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
 
@@ -754,7 +754,7 @@ async fn the_page_of_no_run_says_there_is_none() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
     let pages = implemented_as_recorded().await;
 
@@ -785,7 +785,7 @@ fn setups_shown(html: &Html) -> Vec<(String, String, bool)> {
 
 /// `docs/specs/design_system.md`, Transcripts, Times and Setup; The run
 /// page, Folding and Verbose.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_page_shows_a_setup_command_as_its_sessions_first_entry_folded_to_its_line() {
     let pages = implemented_after(
         &setting_up(
@@ -815,7 +815,7 @@ async fn the_run_page_shows_a_setup_command_as_its_sessions_first_entry_folded_t
     assert!(entries[0].value().classes().any(|class| class == "setup"));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_page_of_a_run_whose_setup_command_failed_shows_it_open_under_each_session() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
     let sessions = [
@@ -870,7 +870,7 @@ async fn the_page_of_a_run_whose_setup_command_failed_shows_it_open_under_each_s
 
 /// `docs/specs/design_system.md`, Transcripts, Running; The run page,
 /// Following.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_run_page_shows_a_setup_command_running_and_patches_its_line_once_it_ends() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
     let dir = "sessions/issue-1/20261014T120000Z-triage";

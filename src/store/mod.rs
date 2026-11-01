@@ -505,7 +505,7 @@ pub trait Store: Send + Sync {
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn a_push_githubs_push_protection_refuses_names_each_secret_by_its_type_commit_and_path() {
         let output = include_str!("fixtures/push-protection.txt");
         let error = PushError::from_git(anyhow::anyhow!(

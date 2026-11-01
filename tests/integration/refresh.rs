@@ -6,7 +6,7 @@ use linewright::factory::Factory;
 use linewright::reconcile::{Action, Subject, Work, WorkKind};
 use linewright::webhook;
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn refreshing_an_issue_closed_since_the_poll_cancels_its_run() {
     let mut world = World::new().await;
     let gate = gated(&world, WorkKind::Implement);
@@ -32,7 +32,7 @@ async fn refreshing_an_issue_closed_since_the_poll_cancels_its_run() {
     world.factory.settle().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_review_on_linewrights_pull_request_refreshed_after_its_run_is_addressed() {
     let mut world = World::new().await;
     let (issue, pr) = world.ticket_in_review().await;
@@ -52,7 +52,7 @@ async fn a_review_on_linewrights_pull_request_refreshed_after_its_run_is_address
     assert_eq!(actions, [Action::Start(Work::Rework { issue, pr })]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_does() {
     let mut world = World::new().await;
     let issue = world
@@ -103,7 +103,7 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
     assert_eq!(refreshed, polled);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_refresh_before_the_first_poll_polls() {
     let mut world = World::new().await;
     implement(&world);
@@ -139,7 +139,7 @@ async fn a_refresh_before_the_first_poll_polls() {
     world.factory.settle().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rework_started_by_a_refresh_takes_the_feedback_it_read_as_already_shown() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -184,7 +184,7 @@ async fn spec_change(world: &World) -> Number {
         .unwrap()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_commit_names_the_open_pull_request_a_run_opened_since_the_poll_whose_head_it_is() {
     let mut world = World::new().await;
     // The poll that started the run that opened it took its snapshot first.

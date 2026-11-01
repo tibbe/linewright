@@ -40,7 +40,7 @@ fn all_labels(world: &World) -> Vec<Vec<String>> {
     world.store.issues().into_iter().map(|i| i.labels).collect()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_tracking_issue_and_every_ticket_of_a_spec_change_carry_the_required_label() {
     let mut world = world(Some(REQUIRED), true).await;
     merged_spec_change(&world).await;
@@ -65,7 +65,7 @@ async fn the_tracking_issue_and_every_ticket_of_a_spec_change_carry_the_required
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn tickets_get_ready_for_agent_only_after_every_blocker_edge_exists() {
     let mut world = world(Some(REQUIRED), true).await;
     merged_spec_change(&world).await;
@@ -88,7 +88,7 @@ async fn tickets_get_ready_for_agent_only_after_every_blocker_edge_exists() {
     assert!(required < ready, "{:?}", ticket.events);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
     let mut world = world(None, true).await;
     let pr = world
@@ -124,7 +124,7 @@ async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_missing_required_label_is_not_created_and_the_filing_completes() {
     let mut world = world(Some(REQUIRED), false).await;
     merged_spec_change(&world).await;
@@ -161,7 +161,7 @@ fn implement_with_gap(world: &World) {
     });
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_draft_pull_request_and_a_spec_gap_issue_carry_the_required_label() {
     let mut world = world(Some(REQUIRED), true).await;
     implement_with_gap(&world);
@@ -191,7 +191,7 @@ async fn a_draft_pull_request_and_a_spec_gap_issue_carry_the_required_label() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_missing_required_label_leaves_the_draft_pull_request_and_spec_gap_without_it() {
     let mut world = world(Some(REQUIRED), false).await;
     implement_with_gap(&world);
@@ -266,7 +266,7 @@ async fn filing_automation(
     (world, all)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn automation_filed_issues_carry_the_required_label() {
     let (_, all) = filing_automation(Some(REQUIRED), true).await;
     assert_eq!(
@@ -278,7 +278,7 @@ async fn automation_filed_issues_carry_the_required_label() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn automation_filed_issues_are_filed_without_a_missing_required_label() {
     let (world, all) = filing_automation(Some(REQUIRED), false).await;
     assert_eq!(
@@ -291,7 +291,7 @@ async fn automation_filed_issues_are_filed_without_a_missing_required_label() {
     assert!(!world.store.has_label(REQUIRED));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn unset_automation_filed_issues_carry_only_their_state_label() {
     let (_, all) = filing_automation(None, true).await;
     assert_eq!(

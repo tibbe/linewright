@@ -26,7 +26,7 @@ fn triage_ready(world: &World) {
     });
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_triage_run_is_listed_under_its_run_id_with_its_outcome() {
     let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
@@ -82,7 +82,7 @@ async fn triage_on_opus() -> (World, tempfile::TempDir) {
     (world, work_dir)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_items_runs_show_each_sessions_model_and_effort() {
     let (_world, work_dir) = triage_on_opus().await;
 
@@ -115,7 +115,7 @@ async fn triage_reporting_opus() -> (World, tempfile::TempDir) {
     (world, work_dir)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_with_no_model_set_records_the_model_the_harness_reported_and_the_harness_as_its_source()
  {
     let (_world, work_dir) = triage_reporting_opus().await;
@@ -130,7 +130,7 @@ async fn a_session_with_no_model_set_records_the_model_the_harness_reported_and_
     assert_eq!(session["layers"]["settings"]["model"], "harness");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     let (mut world, work_dir) = world_in_work_dir().await;
     world.implement_a_ticket().await;
@@ -165,7 +165,7 @@ async fn hourly_by_schedule_then_by_hand() -> (World, tempfile::TempDir) {
     (world, work_dir)
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_automations_run_by_hand_is_marked_as_one_and_a_scheduled_one_is_not() {
     let (_world, work_dir) = hourly_by_schedule_then_by_hand().await;
 
@@ -185,7 +185,7 @@ async fn an_automations_run_by_hand_is_marked_as_one_and_a_scheduled_one_is_not(
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_handed_back_says_so() {
     let (mut world, work_dir) = world_in_work_dir().await;
     world.harness.on(WorkKind::Implement, |_| {
@@ -210,7 +210,7 @@ async fn a_run_handed_back_says_so() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
     let (mut world, work_dir) = world_in_work_dir().await;
     implement(&world);
@@ -237,7 +237,7 @@ async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn runs_of_an_item_with_none_exits_4_saying_so() {
     let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
@@ -257,7 +257,7 @@ async fn runs_of_an_item_with_none_exits_4_saying_so() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn runs_json_prints_the_answer_as_json() {
     let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
@@ -316,7 +316,7 @@ fn ids(listing: &Listing) -> Vec<String> {
     listing.runs.iter().map(|run| run.id.to_string()).collect()
 }
 
-#[test]
+#[test_log::test]
 fn every_run_is_listed_newest_first() {
     let listing = runs::list(morning(), &Query::default(), at("2026-10-14T13:00:00Z")).unwrap();
 
@@ -334,7 +334,7 @@ fn every_run_is_listed_newest_first() {
     assert_eq!(listing.left_out, 0);
 }
 
-#[test]
+#[test_log::test]
 fn an_items_runs_are_only_its_own() {
     let query = Query {
         item: Some(Number(1)),
@@ -360,7 +360,7 @@ fn ticket_and_pull() -> Vec<Recorded> {
     ]
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_requests_runs_are_its_own() {
     let query = Query {
         item: Some(Number(3)),
@@ -372,7 +372,7 @@ fn a_pull_requests_runs_are_its_own() {
     assert_eq!(ids(&listing), ["3/rework-2", "3/fix-ci-1", "3/rework-1"]);
 }
 
-#[test]
+#[test_log::test]
 fn a_tickets_runs_are_its_own_and_none_of_its_pull_requests() {
     let query = Query {
         item: Some(Number(1)),
@@ -384,7 +384,7 @@ fn a_tickets_runs_are_its_own_and_none_of_its_pull_requests() {
     assert_eq!(ids(&listing), ["1/implement-1", "1/triage-1"]);
 }
 
-#[test]
+#[test_log::test]
 fn an_item_with_no_runs_has_none_to_list() {
     let query = Query {
         item: Some(Number(3)),
@@ -396,7 +396,7 @@ fn an_item_with_no_runs_has_none_to_list() {
     assert_eq!(listed, Err(NoRuns(Number(3))));
 }
 
-#[test]
+#[test_log::test]
 fn stage_lists_only_that_stages_runs() {
     let query = Query {
         stage: Some(WorkKind::Triage),
@@ -408,7 +408,7 @@ fn stage_lists_only_that_stages_runs() {
     assert_eq!(ids(&listing), ["2/triage-1", "1/triage-1"]);
 }
 
-#[test]
+#[test_log::test]
 fn since_lists_only_the_runs_started_then_or_after() {
     let query = Query {
         since: Some(at("2026-10-14T10:30:00Z")),
@@ -420,7 +420,7 @@ fn since_lists_only_the_runs_started_then_or_after() {
     assert_eq!(ids(&listing), ["1/rework-2", "1/rework-1", "2/triage-1"]);
 }
 
-#[test]
+#[test_log::test]
 fn a_list_cut_to_its_limit_ends_saying_how_many_it_left_out_and_how_to_show_them() {
     let query = Query {
         item: Some(Number(1)),
@@ -440,7 +440,7 @@ fn a_list_cut_to_its_limit_ends_saying_how_many_it_left_out_and_how_to_show_them
 }
 
 /// `docs/specs/design_system.md`, Time, Durations.
-#[test]
+#[test_log::test]
 fn a_run_shows_how_long_it_ran_to_its_two_largest_units() {
     let mut run = work(1, WorkKind::Implement, 1, "2026-10-14T09:00:00Z");
     run.state = State::Ended {
@@ -456,7 +456,7 @@ fn a_run_shows_how_long_it_ran_to_its_two_largest_units() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_run_in_flight_has_run_until_now_and_one_interrupted_for_no_known_time() {
     let mut in_flight = work(1, WorkKind::Rework, 2, "2026-10-14T12:00:00Z");
     in_flight.state = State::InFlight;
@@ -477,7 +477,7 @@ fn a_run_in_flight_has_run_until_now_and_one_interrupted_for_no_known_time() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_filters_narrow_the_list_from_the_command_line() {
     let (mut world, work_dir) = world_in_work_dir().await;
     triage_ready(&world);
@@ -527,7 +527,7 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
     assert_eq!(no_stage.code, Some(2), "{}", no_stage.stderr);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_operators_prompt_is_sent_and_recorded_as_the_operators() {
     let work_dir = tempfile::tempdir().unwrap();
     let operators = prompts_with("follow-ups/result-error.md", |text| {
@@ -572,7 +572,7 @@ fn ran(model: Option<&str>, reported_model: Option<&str>, effort: Option<Effort>
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_session_ran_the_model_the_harness_reported_or_else_the_one_set() {
     let sessions = [
         ran(Some("opus"), Some("claude-opus-5-5"), None),
@@ -606,7 +606,7 @@ fn of_item(item: u64) -> Query {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_items_runs_show_what_each_session_ran_with_or_that_it_was_not_recorded() {
     let mut run = work(1, WorkKind::Triage, 1, "2026-10-14T12:00:00Z");
     run.sessions = vec![
@@ -633,7 +633,7 @@ fn an_items_runs_show_what_each_session_ran_with_or_that_it_was_not_recorded() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_and_prompts_came_from()
  {
     let mut run = work(1, WorkKind::Triage, 1, "2026-10-14T12:00:00Z");
@@ -707,7 +707,7 @@ fn weekly_by_hand(n: u32, start: &str, ending: Ending) -> Recorded {
     run
 }
 
-#[test]
+#[test_log::test]
 fn an_automations_run_says_whether_it_was_by_hand_and_how_it_ended() {
     let recorded = vec![
         weekly(1, "2026-10-14T09:00:00Z"),
@@ -723,7 +723,7 @@ fn an_automations_run_says_whether_it_was_by_hand_and_how_it_ended() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_whole_list_as_json_says_how_each_automations_run_started_and_leaves_the_sessions_out() {
     let mut triage = work(1, WorkKind::Triage, 1, "2026-10-14T08:00:00Z");
     triage.sessions = vec![session(1, Some(ran(Some("opus"), None, None)))];
@@ -769,7 +769,7 @@ fn the_whole_list_as_json_says_how_each_automations_run_started_and_leaves_the_s
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_items_runs_narrowed_to_none_are_no_runs_to_list_not_none_at_all() {
     let query = Query {
         stage: Some(WorkKind::FixCi),
@@ -814,14 +814,14 @@ fn rework_of_5(sessions: Vec<SessionEntry>) -> Recorded {
     )
 }
 
-#[test]
+#[test_log::test]
 fn a_record_from_before_runs_kept_their_pull_request_reads_as_its_run() {
     let (_base, recorded) = rework_of_5_read(&json!([]));
 
     assert_eq!(recorded, [rework_of_5(vec![])]);
 }
 
-#[test]
+#[test_log::test]
 fn a_record_from_before_sessions_kept_what_they_ran_with_reads_none_of_it() {
     let (base, recorded) = rework_of_5_read(&json!(["sessions/5/rework-1"]));
 
@@ -847,7 +847,7 @@ fn ran_as_read(sessions: &serde_json::Value) -> Ran {
     ran.clone()
 }
 
-#[test]
+#[test_log::test]
 fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_set_as_the_harnesss()
 {
     let read = ran_as_read(&json!([{
@@ -882,7 +882,7 @@ fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_s
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_record_from_when_skills_came_in_layers_reads_its_layers_as_kept() {
     let ran = ran_as_read(&json!([{
         "dir": "sessions/5/rework-1",
@@ -924,7 +924,7 @@ fn done_at(time: &str) -> State {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_automations_runs_read_from_where_the_previous_version_kept_them_as_scheduled_and_from_where_they_are_kept()
  {
     let old = json!({
@@ -965,7 +965,7 @@ fn an_automations_runs_read_from_where_the_previous_version_kept_them_as_schedul
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_changes_run_the_previous_version_recorded_as_tickets_reads_as_a_design_run() {
     let record = item_run_record(4, "tickets", 1, Some("handed-back"), &json!([]));
 
@@ -984,7 +984,7 @@ fn a_spec_changes_run_the_previous_version_recorded_as_tickets_reads_as_a_design
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stage_the_previous_version_named_tickets_is_none_to_ask_for() {
     assert_eq!(
         "tickets".parse::<WorkKind>(),
@@ -996,7 +996,7 @@ fn a_stage_the_previous_version_named_tickets_is_none_to_ask_for() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_once_it_is_not() {
     let record = item_run_record(1, "triage", 1, None, &json!([]));
     let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);
@@ -1016,7 +1016,7 @@ fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_once_it
     );
 }
 
-#[test]
+#[test_log::test]
 fn runs_whose_records_cannot_be_read_are_none_to_an_answer_that_does_without_them() {
     let (_base, work_dir) = work_dir_holding(&[("runs/items", "not a directory")]);
     let runs = Runs::new(&work_dir.resolve());

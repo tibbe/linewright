@@ -1191,7 +1191,7 @@ fn or_none(text: &str) -> &str {
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn linewrights_own_templates_have_their_values_placeholders() {
         LazyLock::force(&OWN_TEMPLATES);
     }

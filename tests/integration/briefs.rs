@@ -33,7 +33,7 @@ fn not_a_prompt(path: &str) -> Unusable {
     }
 }
 
-#[test]
+#[test_log::test]
 fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     let repository = layer(
         Layer::Repository,
@@ -72,7 +72,7 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     assert!(!layers.contains_key("outputs/implement.md"));
 }
 
-#[test]
+#[test_log::test]
 fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
     let repository = layer(
         Layer::Repository,
@@ -104,7 +104,7 @@ fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_skipped() {
     let (layer, unusable) = PromptLayer::parse(
         Layer::Repository,
@@ -147,7 +147,7 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_prompt_that_cannot_be_read_as_text_is_unusable() {
     let (layer, unusable) = PromptLayer::parse(
         Layer::Operator,
@@ -207,7 +207,7 @@ fn implement_prompt(briefs: &Briefs) -> String {
     )
 }
 
-#[test]
+#[test_log::test]
 fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_linewrights() {
     let dir = prompts_dir(&[("implement.md", IMPLEMENT)]);
 
@@ -244,7 +244,7 @@ fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_l
     assert_eq!(briefs.layers()["triage.md"], Layer::Linewright);
 }
 
-#[test]
+#[test_log::test]
 fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
     let dir = prompts_dir(&[(
         "automation.md",
@@ -279,7 +279,7 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
     assert_eq!(briefs.layers()["automation.md"], Layer::Operator);
 }
 
-#[test]
+#[test_log::test]
 fn an_operators_hidden_files_are_skipped() {
     let dir = prompts_dir(&[
         (".DS_Store", "Finder's."),
@@ -295,7 +295,7 @@ fn an_operators_hidden_files_are_skipped() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_operators_files_that_cannot_be_used_are_refused_each_named() {
     let dir = prompts_dir(&[
         ("implment.md", "A misspelling."),
@@ -320,7 +320,7 @@ fn an_operators_files_that_cannot_be_used_are_refused_each_named() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_operators_part_or_result_contract_is_refused() {
     for path in ["parts/facts.md", "outputs/implement.md"] {
         let dir = prompts_dir(&[(path, "Ours.\n")]);
@@ -338,7 +338,7 @@ fn an_operators_part_or_result_contract_is_refused() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_prompts_a_layer_may_override_are_the_stage_prompts_and_the_follow_ups() {
     assert_eq!(
         prompts::Prompts::paths(),
@@ -367,7 +367,7 @@ fn the_prompts_a_layer_may_override_are_the_stage_prompts_and_the_follow_ups() {
     assert_eq!(prompts::readers("outputs/implement.md"), None);
 }
 
-#[test]
+#[test_log::test]
 fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
     let fix_ci = RunKind::Stage(WorkKind::FixCi);
     let implement = RunKind::Stage(WorkKind::Implement);

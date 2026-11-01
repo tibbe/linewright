@@ -161,7 +161,7 @@ fn init_naming(model: &str) -> Value {
     })
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_reports_the_model_its_init_event_names() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_streaming(dir.path(), &[init_naming("claude-opus-5-5"), done()]);
@@ -179,7 +179,7 @@ async fn a_session_reports_the_model_its_init_event_names() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_that_times_out_has_reported_the_model_it_ran() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_running(
@@ -206,7 +206,7 @@ async fn a_session_that_times_out_has_reported_the_model_it_ran() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_production_session_gets_linewrights_github_token() {
     let dir = tempfile::tempdir().unwrap();
     let program = fake_claude(dir.path(), "Done.");
@@ -234,7 +234,7 @@ fn session_variables(dir: &Path) -> Vec<String> {
     names
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_name() {
     let dir = tempfile::tempdir().unwrap();
     let path = std::env::var("PATH").unwrap();
@@ -302,7 +302,7 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_na
     assert!(env.contains("DISABLE_UPDATES=1\n"), "{env}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_is_given_the_values_session_env_sets_over_passed_ones_and_below_linewrights() {
     let dir = tempfile::tempdir().unwrap();
     let path = std::env::var("PATH").unwrap();
@@ -347,7 +347,7 @@ async fn a_session_is_given_the_values_session_env_sets_over_passed_ones_and_bel
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes() {
     let dir = tempfile::tempdir().unwrap();
     let path = std::env::var("PATH").unwrap();
@@ -414,7 +414,7 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
     assert_eq!(spawned, expected);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_directory() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_without_token(dir.path());
@@ -433,7 +433,7 @@ async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_dire
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_turn_of_a_session_is_given_its_plugin() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_without_token(dir.path());
@@ -455,7 +455,7 @@ async fn every_turn_of_a_session_is_given_its_plugin() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_turn_reads_only_the_repositorys_configuration_and_keeps_no_memory() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_without_token(dir.path());
@@ -505,7 +505,7 @@ fn session_variable<'a>(env: &'a str, name: &str) -> Option<&'a str> {
         .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_settings() {
     let dir = tempfile::tempdir().unwrap();
     let mut session = session_choosing_in_its_environment(dir.path());
@@ -537,7 +537,7 @@ async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_s
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_effort_of_max_is_set_but_not_in_the_settings_which_do_not_take_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut session = triage_session(dir.path());
@@ -558,7 +558,7 @@ async fn an_effort_of_max_is_set_but_not_in_the_settings_which_do_not_take_it() 
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn without_a_model_or_effort_a_session_runs_on_the_harnesss_choice() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -583,7 +583,7 @@ async fn without_a_model_or_effort_a_session_runs_on_the_harnesss_choice() {
     assert_eq!(session_variable(&env, "ANTHROPIC_MODEL"), Some("haiku"));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_turn_leaves_out_what_no_brief_uses() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_without_token(dir.path());
@@ -629,7 +629,7 @@ async fn every_turn_leaves_out_what_no_brief_uses() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn every_turn_leaves_out_the_skills_the_harness_ships() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_without_token(dir.path());
@@ -658,7 +658,7 @@ async fn every_turn_leaves_out_the_skills_the_harness_ships() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn agent_instructions_above_the_clone_do_not_reach_a_session() {
     let dir = tempfile::Builder::new()
         .prefix("work [a]{b}*?")
@@ -691,7 +691,7 @@ async fn agent_instructions_above_the_clone_do_not_reach_a_session() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_clone_under_a_claude_directory_keeps_its_own_agent_instructions() {
     let dir = tempfile::tempdir().unwrap();
     let work = dir.path().join(".claude/work");
@@ -744,7 +744,7 @@ fn rejected() -> Value {
     })
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_streaming(dir.path(), &refused_for_the_usage_limit(&rejected()));
@@ -761,7 +761,7 @@ async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
     assert_eq!(underway, None, "refused before the agent said anything");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_turn_refused_part_way_for_the_usage_limit_names_its_session_to_resume() {
     let dir = tempfile::tempdir().unwrap();
     let mut stream = refused_for_the_usage_limit(&rejected());
@@ -779,7 +779,7 @@ async fn a_turn_refused_part_way_for_the_usage_limit_names_its_session_to_resume
     assert_eq!(underway.as_deref(), Some("c0ffee"));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_refusal_that_does_not_say_when_the_limit_resets_is_an_infrastructure_failure() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_streaming(
@@ -801,7 +801,7 @@ async fn a_refusal_that_does_not_say_when_the_limit_resets_is_an_infrastructure_
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_that_ends_without_a_result_says_the_harness_exited() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_streaming(dir.path(), &[]);
@@ -820,7 +820,7 @@ async fn a_session_that_ends_without_a_result_says_the_harness_exited() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_running(
@@ -837,7 +837,7 @@ async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
     assert_eq!(log_tail, "Still reading.");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_streaming(
@@ -856,7 +856,7 @@ async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
     assert_eq!(turn.message, "Done.");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_streaming(
@@ -905,7 +905,7 @@ async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it
     assert!(session.turns.iter().all(|kept| kept.started_at.is_some()));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
     let dir = tempfile::tempdir().unwrap();
     let go = dir.path().join("go");
@@ -945,7 +945,7 @@ fn harness_printing_a_secret(dir: &Path, last: Option<Value>) -> ClaudeCode {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_secret_a_session_prints_is_kept_and_answered_redacted() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_printing_a_secret(
@@ -968,7 +968,7 @@ async fn a_secret_a_session_prints_is_kept_and_answered_redacted() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_failed_sessions_log_tail_has_its_secrets_redacted() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_printing_a_secret(dir.path(), None);
@@ -984,7 +984,7 @@ async fn a_failed_sessions_log_tail_has_its_secrets_redacted() {
     assert_eq!(log_tail, "GH_TOKEN=[redacted]");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_failed_sessions_reason_has_its_secrets_redacted() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_printing_a_secret(
@@ -1009,7 +1009,7 @@ async fn a_failed_sessions_reason_has_its_secrets_redacted() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_secret_that_holds_another_is_redacted_whole() {
     let dir = tempfile::tempdir().unwrap();
     let mut harness = harness_printing_a_secret(dir.path(), None);
@@ -1028,7 +1028,7 @@ async fn a_secret_that_holds_another_is_redacted_whole() {
 
 /// So the SIGINT a terminal sends `serve`'s process group on Ctrl-C, which
 /// drains, does not also end the sessions in flight.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_session_runs_in_a_process_group_of_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let group = dir.path().join("pgid.log");
@@ -1070,7 +1070,7 @@ fn has_ended(pid: rustix::process::Pid) -> bool {
 /// Without a subreaper, which only Linux has, a process whose parent has
 /// exited is beyond reach.
 #[cfg(target_os = "linux")]
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn what_a_session_started_has_ended_once_it_ends_with_a_result() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_leaving_a_process(dir.path(), vec![Step::Stream(vec![done()])]);
@@ -1081,7 +1081,7 @@ async fn what_a_session_started_has_ended_once_it_ends_with_a_result() {
 }
 
 #[cfg(target_os = "linux")]
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn what_a_session_started_has_ended_once_it_crashes() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_leaving_a_process(dir.path(), vec![Step::Exit(3)]);
@@ -1095,7 +1095,7 @@ async fn what_a_session_started_has_ended_once_it_crashes() {
     assert!(has_ended(left_process(dir.path())));
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn what_a_session_started_has_ended_once_it_times_out() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_leaving_a_process(dir.path(), vec![Step::Hang]);
@@ -1108,7 +1108,7 @@ async fn what_a_session_started_has_ended_once_it_times_out() {
 }
 
 /// As when its run is cancelled.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn what_a_session_started_ends_once_its_turn_is_dropped() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_leaving_a_process(dir.path(), vec![Step::Hang]);
@@ -1122,7 +1122,7 @@ async fn what_a_session_started_ends_once_its_turn_is_dropped() {
     eventually(|| has_ended(left)).await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_harness_that_cannot_be_started_is_an_infrastructure_failure() {
     let dir = tempfile::tempdir().unwrap();
     let program = dir.path().join("missing");
@@ -1148,7 +1148,7 @@ async fn a_harness_that_cannot_be_started_is_an_infrastructure_failure() {
 /// Claude Code's background commands share its standard output, and a turn
 /// reads that output to its end.
 #[cfg(target_os = "linux")]
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_process_a_session_left_holding_its_output_does_not_hold_the_turn() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_running(

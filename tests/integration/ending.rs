@@ -4,7 +4,7 @@ use common::{Log, at};
 use linewright::ending::{Ending, Ends, Event, Signal, Step, StopBy};
 
 /// `docs/specs/operation.md`, "Stopping".
-#[test]
+#[test_log::test]
 fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stopping_and_exited() {
     let quit = Event::Signal(Signal::Quit);
     let interrupt = Event::Signal(Signal::Interrupt);
@@ -81,14 +81,14 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_exit_at_once_has_status_128_plus_the_signals_number() {
     assert_eq!(Signal::Interrupt.exit_status(), 130);
     assert_eq!(Signal::Terminate.exit_status(), 143);
     assert_eq!(Signal::Quit.exit_status(), 131);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn each_way_a_signal_takes_is_logged_with_the_signal_and_what_the_next_signal_does() {
     let (log, _guard) = Log::capture();
     let ends = Ends::new();

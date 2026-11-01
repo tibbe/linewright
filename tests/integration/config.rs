@@ -60,7 +60,7 @@ fn stage_session(config: &Config, stage: WorkKind) -> SessionSettings {
     )
 }
 
-#[test]
+#[test_log::test]
 fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_for_that_stage_only()
  {
     let file = "model = \"sonnet\"\neffort = \"low\"\nsession-timeout = \"10m\"\n\n\
@@ -92,7 +92,7 @@ fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_
     assert_eq!(design.timeout_setting, TimeoutSetting::Pipeline);
 }
 
-#[test]
+#[test_log::test]
 fn a_stages_table_wins_over_the_whole_pipelines_flag() {
     let config = resolve(
         &["--model", "sonnet", "--effort", "high"],
@@ -113,7 +113,7 @@ fn a_stages_table_wins_over_the_whole_pipelines_flag() {
     assert_eq!(fix_ci.session_timeout.value, Duration::from_mins(5));
 }
 
-#[test]
+#[test_log::test]
 fn effort_is_a_flag_a_variable_or_a_key_and_unset_is_the_harnesss_choice() {
     let effort = |args: &[&str], env: &[(&str, &str)], file| {
         session(&resolve(args, env, file).unwrap()).effort
@@ -140,7 +140,7 @@ fn effort_is_a_flag_a_variable_or_a_key_and_unset_is_the_harnesss_choice() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_effort_outside_its_levels_is_an_error_naming_the_setting_and_the_file_that_gave_it() {
     let in_file = resolve(&[], &[], Some("effort = \"huge\"\n")).unwrap_err();
 
@@ -158,7 +158,7 @@ fn an_effort_outside_its_levels_is_an_error_naming_the_setting_and_the_file_that
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_mistake_in_a_stages_table_is_an_error_naming_the_file_and_the_key() {
     for (file, key) in [
         ("[stage.deploy]\nmodel = \"opus\"\n", "deploy"),
@@ -196,7 +196,7 @@ fn repo_session(config: &Config, repo: &str, stage: WorkKind) -> SessionSettings
     )
 }
 
-#[test]
+#[test_log::test]
 fn the_repositorys_file_ranks_below_the_operators_flags_and_variables_and_above_the_operators_file()
 {
     let repo = "model = \"sonnet\"\neffort = \"medium\"\nsession-timeout = \"20m\"\n\n\
@@ -229,7 +229,7 @@ fn the_repositorys_file_ranks_below_the_operators_flags_and_variables_and_above_
     assert_eq!(triage.timeout_setting, TimeoutSetting::Pipeline);
 }
 
-#[test]
+#[test_log::test]
 fn the_repositorys_stage_table_sets_its_stages_session_timeout() {
     let config = resolve(&[], &[], None).unwrap();
 
@@ -253,7 +253,7 @@ fn the_repositorys_stage_table_sets_its_stages_session_timeout() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_key_of_the_operators_in_the_repositorys_file_is_an_error_saying_it_is_the_operators() {
     for (file, key) in [
         ("session-env = { RUST_LOG = \"info\" }\n", "session-env"),
@@ -276,7 +276,7 @@ fn a_key_of_the_operators_in_the_repositorys_file_is_an_error_saying_it_is_the_o
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_mistake_in_the_repositorys_file_is_an_error_naming_the_key() {
     for (file, named) in [
         ("colour = \"blue\"\n", "`colour`"),
@@ -296,7 +296,7 @@ fn a_mistake_in_the_repositorys_file_is_an_error_naming_the_key() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_stage_has_no_flag() {
     assert!(Cli::try_parse_from(["lw", "--stage.implement.model", "opus", "status"]).is_err());
 }
@@ -331,7 +331,7 @@ fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn a_stages_session_pass_env_adds_its_names_to_the_whole_pipelines_for_that_stage_only() {
     let config = resolve(
         &[],
@@ -368,7 +368,7 @@ fn a_stages_session_pass_env_adds_its_names_to_the_whole_pipelines_for_that_stag
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stages_session_env_adds_its_values_to_the_whole_pipelines_for_that_stage_only() {
     let config = resolve(
         &["--session-env", "RUST_LOG=warn"],
@@ -417,7 +417,7 @@ fn a_stages_session_env_adds_its_values_to_the_whole_pipelines_for_that_stage_on
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automations_model_and_effort_come_before_the_whole_pipelines() {
     let config = resolve(&["--model", "sonnet", "--effort", "low"], &[], None).unwrap();
     let automation = automation::parse(
@@ -443,7 +443,7 @@ fn an_automations_model_and_effort_come_before_the_whole_pipelines() {
     assert_eq!(session.timeout_setting, TimeoutSetting::Pipeline);
 }
 
-#[test]
+#[test_log::test]
 fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewright_for_a_default()
 {
     let from_flag = resolve(
@@ -505,7 +505,7 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automations_session_timeout_comes_from_the_repository_before_the_operators_session_timeout() {
     let config = resolve(&["--session-timeout", "10m"], &[], None).unwrap();
     let automation = automation::parse(
@@ -527,7 +527,7 @@ fn an_automations_session_timeout_comes_from_the_repository_before_the_operators
     assert_eq!(session.timeout_setting, TimeoutSetting::Automation);
 }
 
-#[test]
+#[test_log::test]
 fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
     let file = "repo = \"acme/file\"\nmax-runs = 2\npoll-interval = \"5m\"\nci-attempts = 7\n";
     let env = [
@@ -548,7 +548,7 @@ fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
     assert_eq!(config.spec_glob.pattern(), "docs/**/*.md");
 }
 
-#[test]
+#[test_log::test]
 fn the_done_window_is_read_from_the_file_apart_from_the_spec_lookback() {
     let file = "repo = \"acme/widgets\"\ndone-window = \"30d\"\n";
 
@@ -558,7 +558,7 @@ fn the_done_window_is_read_from_the_file_apart_from_the_spec_lookback() {
     assert_eq!(config.spec_lookback, chrono::TimeDelta::days(7));
 }
 
-#[test]
+#[test_log::test]
 fn defaults_follow_the_spec() {
     let config = resolve(&["--repo", "acme/widgets"], &[], None).unwrap();
 
@@ -582,7 +582,7 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.secrets, VariableNames::default());
 }
 
-#[test]
+#[test_log::test]
 fn a_bad_value_or_an_unknown_key_is_an_error_naming_the_setting() {
     assert!(
         resolve(&["--max-runs", "many"], &[], None)
@@ -601,7 +601,7 @@ fn a_bad_value_or_an_unknown_key_is_an_error_naming_the_setting() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_operators_layer_of_prompts_is_the_prompts_setting_from_a_flag_variable_or_the_file() {
     let from_flag = resolve(&["--prompts", "flag/"], &[], None).unwrap();
     let from_env = resolve(&[], &[("LINEWRIGHT_PROMPTS", "env/")], None).unwrap();
@@ -612,7 +612,7 @@ fn the_operators_layer_of_prompts_is_the_prompts_setting_from_a_flag_variable_or
     assert_eq!(from_file.prompts, Some("file/".into()));
 }
 
-#[test]
+#[test_log::test]
 fn the_earlier_briefs_key_is_an_unknown_setting() {
     let error = resolve(&[], &[], Some("briefs = \"mine/\"\n")).unwrap_err();
 
@@ -627,7 +627,7 @@ fn blames_the_command_line(args: &[&str], env: &[(&str, &str)], file: Option<&st
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_wrong_value_is_blamed_on_the_command_line_only_when_a_flag_gave_it() {
     let bad_env = [("LINEWRIGHT_UPDATE_BRANCH", "squash")];
 
@@ -654,7 +654,7 @@ fn a_wrong_value_is_blamed_on_the_command_line_only_when_a_flag_gave_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_config_file_the_command_line_names_that_cannot_be_read_is_blamed_on_it() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.toml");
@@ -665,19 +665,19 @@ fn a_config_file_the_command_line_names_that_cannot_be_read_is_blamed_on_it() {
     assert!(matches!(resolved, Err(ResolveError::CommandLine(_))));
 }
 
-#[test]
+#[test_log::test]
 fn max_workers_is_no_longer_a_flag() {
     assert!(Cli::try_parse_from(["lw", "--max-workers", "2", "status"]).is_err());
 }
 
-#[test]
+#[test_log::test]
 fn a_ci_timeout_no_longer_than_the_grace_period_is_an_error() {
     let error = resolve(&["--ci-grace", "10m", "--ci-timeout", "5m"], &[], None).unwrap_err();
 
     assert!(error.contains("ci-timeout"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn auto_merge_is_off_by_default_and_a_bare_flag_turns_it_on() {
     let on = Some(AutoMerge { merge_method: None });
     let off = resolve(&[], &[], None).unwrap();
@@ -694,7 +694,7 @@ fn auto_merge_is_off_by_default_and_a_bare_flag_turns_it_on() {
     assert_eq!(flag_over_file.auto_merge, None);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_the_merge_method_follows_the_repository_unless_set() {
     let merge_method = |args: &[&str], env: &[(&str, &str)], file| {
         resolve(args, env, file)
@@ -724,7 +724,7 @@ fn with_auto_merge_the_merge_method_follows_the_repository_unless_set() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_merge_method_without_auto_merge_is_an_error_naming_both() {
     let flag = resolve(&["--merge-method", "squash"], &[], None).unwrap_err();
     let env = resolve(&[], &[("LINEWRIGHT_MERGE_METHOD", "squash")], None).unwrap_err();
@@ -745,7 +745,7 @@ fn a_merge_method_without_auto_merge_is_an_error_naming_both() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_merge_method_without_auto_merge_is_blamed_on_the_command_line_only_when_a_flag_turned_it_off()
 {
     let file = Some("merge-method = \"squash\"\n");
@@ -763,7 +763,7 @@ fn a_merge_method_without_auto_merge_is_blamed_on_the_command_line_only_when_a_f
     ));
 }
 
-#[test]
+#[test_log::test]
 fn a_bad_auto_merge_or_merge_method_is_an_error_naming_the_setting() {
     assert!(
         resolve(
@@ -781,7 +781,7 @@ fn a_bad_auto_merge_or_merge_method_is_an_error_naming_the_setting() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn every_issue_is_in_scope_unless_a_label_is_required() {
     let unset = resolve(&[], &[], None).unwrap();
     let flag = resolve(&["--require-label", "linewright"], &[], None).unwrap();
@@ -799,14 +799,14 @@ fn every_issue_is_in_scope_unless_a_label_is_required() {
     assert_eq!(file.require_label.as_deref(), Some("from-file"));
 }
 
-#[test]
+#[test_log::test]
 fn webhooks_are_off_without_the_secret() {
     let config = resolve(&[], &[], None).unwrap();
 
     assert!(config.webhooks.is_none());
 }
 
-#[test]
+#[test_log::test]
 fn the_secret_turns_webhooks_on_at_the_default_address() {
     let config = resolve(&[], &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")], None).unwrap();
 
@@ -814,7 +814,7 @@ fn the_secret_turns_webhooks_on_at_the_default_address() {
     assert_eq!(webhooks.address.to_string(), "0.0.0.0:8080");
 }
 
-#[test]
+#[test_log::test]
 fn the_webhook_address_is_a_flag_the_environment_or_the_file() {
     let secret = ("LINEWRIGHT_WEBHOOK_SECRET", "s3cret");
     let address = |args: &[&str], env: &[(&str, &str)], file| {
@@ -848,7 +848,7 @@ fn the_webhook_address_is_a_flag_the_environment_or_the_file() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_webhook_address_that_is_not_a_host_and_port_is_an_error_naming_the_setting() {
     let secret = [("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")];
     for bad in [
@@ -864,7 +864,7 @@ fn a_webhook_address_that_is_not_a_host_and_port_is_an_error_naming_the_setting(
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_webhook_address_without_the_secret_is_an_error_naming_the_secret() {
     let flag = resolve(&["--webhook-address", "127.0.0.1:9000"], &[], None).unwrap_err();
     let env = resolve(
@@ -882,7 +882,7 @@ fn a_webhook_address_without_the_secret_is_an_error_naming_the_secret() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_webhook_secret_is_not_a_flag_or_a_file_key() {
     let flag = Cli::try_parse_from(["lw", "--webhook-secret", "s3cret", "status"]);
     let file = resolve(&[], &[], Some("webhook-secret = \"s3cret\"\n")).unwrap_err();
@@ -891,7 +891,7 @@ fn the_webhook_secret_is_not_a_flag_or_a_file_key() {
     assert!(file.contains("webhook-secret"), "{file}");
 }
 
-#[test]
+#[test_log::test]
 fn the_webhook_secret_is_not_shown_in_the_config() {
     let config = resolve(&[], &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")], None).unwrap();
 
@@ -911,7 +911,7 @@ fn help_for(flag: &str) -> (String, String) {
     (help, lines)
 }
 
-#[test]
+#[test_log::test]
 fn help_lists_the_webhook_address_with_its_default() {
     let (help, line) = help_for("--webhook-address");
     assert!(
@@ -937,7 +937,7 @@ fn session_env(names: &[&str], values: &[(&str, &str)]) -> SessionEnv {
     SessionEnv::new(pass_env(names), set_env(values))
 }
 
-#[test]
+#[test_log::test]
 fn session_pass_env_joins_the_names_of_the_flag_the_environment_and_the_file() {
     let file = Some("session-pass-env = [\"CARGO_HOME\", \"RUSTUP_HOME\"]\n");
     let env = [("LINEWRIGHT_SESSION_PASS_ENV", "CARGO_*,SCCACHE_DIR")];
@@ -963,7 +963,7 @@ fn session_pass_env_joins_the_names_of_the_flag_the_environment_and_the_file() {
     assert_eq!(given.withheld, ["OTHER"]);
 }
 
-#[test]
+#[test_log::test]
 fn session_env_sets_each_name_from_the_flag_over_the_file() {
     let config = resolve(
         &["--session-env", "A=1"],
@@ -978,7 +978,7 @@ fn session_env_sets_each_name_from_the_flag_over_the_file() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn session_env_takes_its_values_as_written() {
     let config = resolve(
         &["--session-env", "URL=a=b,c", "--session-env", "EMPTY="],
@@ -1001,14 +1001,14 @@ fn session_env_takes_its_values_as_written() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn session_env_has_no_environment_variable() {
     let config = resolve(&[], &[("LINEWRIGHT_SESSION_ENV", "A=1")], None).unwrap();
 
     assert_eq!(config.session_env, SessionEnv::default());
 }
 
-#[test]
+#[test_log::test]
 fn a_mistake_in_session_envs_flag_is_a_command_line_error_naming_the_setting() {
     for (entries, says) in [
         (&["CARGO_HOME"][..], "`session-pass-env`"),
@@ -1030,7 +1030,7 @@ fn a_mistake_in_session_envs_flag_is_a_command_line_error_naming_the_setting() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_mistake_in_session_env_in_the_file_is_an_error_naming_the_file_and_the_setting() {
     for (file, says) in [
         ("session-env = [\"CARGO_HOME\"]\n", "`session-pass-env`"),
@@ -1055,7 +1055,7 @@ fn a_mistake_in_session_env_in_the_file_is_an_error_naming_the_file_and_the_sett
     }
 }
 
-#[test]
+#[test_log::test]
 fn session_env_setting_a_variable_linewright_may_set_itself_is_an_error() {
     for name in [
         "TMPDIR",
@@ -1077,7 +1077,7 @@ fn session_env_setting_a_variable_linewright_may_set_itself_is_an_error() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn session_pass_env_naming_a_credential_of_linewrights_is_an_error_saying_why() {
     for name in [
         "GH_TOKEN",
@@ -1098,7 +1098,7 @@ fn session_pass_env_naming_a_credential_of_linewrights_is_an_error_saying_why() 
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_wrong_name_in_session_pass_env_is_blamed_on_the_layer_that_gave_it() {
     let flag = ["--session-pass-env", "CARGO_HOME"];
     let bad_env = [("LINEWRIGHT_SESSION_PASS_ENV", "GH_TOKEN")];
@@ -1116,14 +1116,14 @@ fn a_wrong_name_in_session_pass_env_is_blamed_on_the_layer_that_gave_it() {
     assert!(error.contains("`GH_TOKEN`"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn a_session_pass_env_pattern_matching_a_credential_of_linewrights_is_no_error() {
     let config = resolve(&["--session-pass-env", "GH_*,LINEWRIGHT_*"], &[], None);
 
     assert!(config.is_ok());
 }
 
-#[test]
+#[test_log::test]
 fn session_pass_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
     for name in ["CARGO_*_HOME", "*CARGO"] {
         let error = resolve(
@@ -1142,7 +1142,7 @@ fn session_pass_env_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn help_lists_session_env_and_session_pass_env_with_their_forms() {
     for (flag, form) in [
         ("--session-env", "--session-env <NAME=VALUE>"),
@@ -1158,7 +1158,7 @@ fn secrets(names: &[&str]) -> VariableNames {
     VariableNames::new("secrets", names.iter().map(ToString::to_string)).unwrap()
 }
 
-#[test]
+#[test_log::test]
 fn secrets_joins_the_names_of_the_flag_the_environment_and_the_file() {
     let file = Some("secrets = [\"AWS_SECRET_ACCESS_KEY\", \"NPM_*\"]\n");
     let env = [("LINEWRIGHT_SECRETS", "SENTRY_*,DATABASE_URL")];
@@ -1184,7 +1184,7 @@ fn secrets_joins_the_names_of_the_flag_the_environment_and_the_file() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_secret_named_at_two_layers_counts_once() {
     let joined = resolve(
         &["--secrets", "A,B"],
@@ -1196,7 +1196,7 @@ fn a_secret_named_at_two_layers_counts_once() {
     assert_eq!(joined.secrets, secrets(&["A", "B", "C"]));
 }
 
-#[test]
+#[test_log::test]
 fn a_secret_that_is_not_a_name_is_an_error_naming_the_layer_that_gave_it() {
     let file = Some("secrets = [\"*TOKEN\"]\n");
 
@@ -1205,14 +1205,14 @@ fn a_secret_that_is_not_a_name_is_an_error_naming_the_layer_that_gave_it() {
     assert!(error.contains("linewright.toml"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn secrets_naming_a_variable_that_is_unset_is_no_error_resolving_the_config() {
     let config = resolve(&["--secrets", "AWS_SECRET_ACCESS_KEY"], &[], None);
 
     assert!(config.is_ok());
 }
 
-#[test]
+#[test_log::test]
 fn secrets_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
     for name in ["NPM_*_TOKEN", "*TOKEN"] {
         let error = resolve(&["--secrets", &format!("NPM_TOKEN,{name}")], &[], None).unwrap_err();
@@ -1226,20 +1226,20 @@ fn secrets_with_a_star_but_at_a_names_end_is_an_error_saying_why() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn help_lists_secrets_with_its_default() {
     let (help, line) = help_for("--secrets");
     assert!(line.contains("[default: none]"), "{help}");
 }
 
-#[test]
+#[test_log::test]
 fn only_the_list_settings_are_lists_in_the_file() {
     let error = resolve(&[], &[], Some("repo = [\"acme/widgets\"]\n")).unwrap_err();
 
     assert!(error.contains("`repo`"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn the_web_ui_is_served_on_127_0_0_1_8081_answering_only_local_names_by_default() {
     let config = resolve(&[], &[], None).unwrap();
 
@@ -1252,7 +1252,7 @@ fn the_web_ui_is_served_on_127_0_0_1_8081_answering_only_local_names_by_default(
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_empty_ui_address_serves_no_web_ui() {
     let from_flag = resolve(&["--ui-address", ""], &[], None).unwrap();
     let from_env = resolve(&[], &[("LINEWRIGHT_UI_ADDRESS", "")], None).unwrap();
@@ -1263,7 +1263,7 @@ fn an_empty_ui_address_serves_no_web_ui() {
     assert!(from_file.ui.is_none());
 }
 
-#[test]
+#[test_log::test]
 fn the_ui_address_is_a_flag_the_environment_or_the_file() {
     let address = |args: &[&str], env: &[(&str, &str)], file| {
         resolve(args, env, file)
@@ -1284,7 +1284,7 @@ fn the_ui_address_is_a_flag_the_environment_or_the_file() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ui_address_that_is_not_a_host_and_port_is_an_error_naming_the_setting() {
     for bad in [
         "8081",
@@ -1306,7 +1306,7 @@ fn answers(config: &Config, host: &str) -> bool {
     config.ui.as_ref().unwrap().hosts.answers(&host)
 }
 
-#[test]
+#[test_log::test]
 fn ui_hosts_is_a_comma_separated_flag_or_variable_or_a_list_or_string_in_the_file() {
     let list = Some("ui-hosts = [\"a.example\", \"B.example.\"]\n");
     let string = Some("ui-hosts = \"c.example\"\n");
@@ -1329,7 +1329,7 @@ fn ui_hosts_is_a_comma_separated_flag_or_variable_or_a_list_or_string_in_the_fil
     assert!(!answers(&from_flag, "d.example"));
 }
 
-#[test]
+#[test_log::test]
 fn ui_hosts_joins_the_hosts_of_the_flag_the_environment_and_the_file() {
     let file = Some("ui-hosts = [\"a.example\", \"b.example\"]\n");
     let env = [("LINEWRIGHT_UI_HOSTS", "b.example,c.example")];
@@ -1346,7 +1346,7 @@ fn ui_hosts_joins_the_hosts_of_the_flag_the_environment_and_the_file() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_layer_that_gave_it() {
     let file = Some("ui-hosts = [\"a.example:8081\"]\n");
 
@@ -1356,7 +1356,7 @@ fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_layer_that_ga
     assert!(error.contains("linewright.toml"), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_setting() {
     for bad in [
         "a.example:8081",
@@ -1377,7 +1377,7 @@ fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_setting() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn ui_hosts_empty_names_no_host() {
     let from_flag = resolve(&["--ui-hosts", ""], &[], None).unwrap();
     let from_file = resolve(&[], &[], Some("ui-hosts = []\n")).unwrap();
@@ -1387,7 +1387,7 @@ fn ui_hosts_empty_names_no_host() {
     assert!(answers(&from_file, "localhost"));
 }
 
-#[test]
+#[test_log::test]
 fn ui_hosts_with_no_web_ui_is_an_error_naming_both() {
     let no_ui = [("LINEWRIGHT_UI_ADDRESS", "")];
     let flag = resolve(&["--ui-address", "", "--ui-hosts", "a.example"], &[], None).unwrap_err();
@@ -1403,7 +1403,7 @@ fn ui_hosts_with_no_web_ui_is_an_error_naming_both() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn ui_hosts_in_the_file_with_no_web_ui_is_an_error_though_the_flag_names_no_host() {
     let error = resolve(
         &["--ui-address", "", "--ui-hosts", ""],
@@ -1418,7 +1418,7 @@ fn ui_hosts_in_the_file_with_no_web_ui_is_an_error_though_the_flag_names_no_host
     );
 }
 
-#[test]
+#[test_log::test]
 fn ui_hosts_naming_no_host_is_at_its_default_so_allowed_with_no_web_ui() {
     let no_ui = [("LINEWRIGHT_UI_ADDRESS", "")];
     let flag = resolve(&["--ui-hosts", ""], &no_ui, None);
@@ -1430,7 +1430,7 @@ fn ui_hosts_naming_no_host_is_at_its_default_so_allowed_with_no_web_ui() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_malformed_ui_hosts_with_no_web_ui_is_an_error_naming_what_is_wrong() {
     let error = resolve(
         &["--ui-hosts", "a/b"],
@@ -1442,7 +1442,7 @@ fn a_malformed_ui_hosts_with_no_web_ui_is_an_error_naming_what_is_wrong() {
     assert!(error.contains("names \"a/b\""), "{error}");
 }
 
-#[test]
+#[test_log::test]
 fn a_malformed_merge_method_or_webhook_address_for_a_feature_that_is_off_is_an_error_naming_it() {
     let merge_method = resolve(&["--merge-method", "fast-forward"], &[], None).unwrap_err();
     let webhook_address = resolve(&["--webhook-address", "8080"], &[], None).unwrap_err();
@@ -1451,7 +1451,7 @@ fn a_malformed_merge_method_or_webhook_address_for_a_feature_that_is_off_is_an_e
     assert!(webhook_address.contains("\"8080\""), "{webhook_address}");
 }
 
-#[test]
+#[test_log::test]
 fn ui_hosts_with_no_web_ui_is_blamed_on_the_command_line_only_when_a_flag_emptied_ui_address() {
     let hosts = [("LINEWRIGHT_UI_HOSTS", "a.example")];
 
@@ -1463,13 +1463,13 @@ fn ui_hosts_with_no_web_ui_is_blamed_on_the_command_line_only_when_a_flag_emptie
     ));
 }
 
-#[test]
+#[test_log::test]
 fn help_lists_the_ui_address_with_its_default() {
     let (help, line) = help_for("--ui-address");
     assert!(line.contains("127.0.0.1:8081"), "{help}");
 }
 
-#[test]
+#[test_log::test]
 fn setup_is_a_flag_a_variable_or_a_key_and_unset_runs_nothing() {
     let setup = |args: &[&str], env: &[(&str, &str)], file| {
         session(&resolve(args, env, file).unwrap()).setup
@@ -1505,7 +1505,7 @@ fn setup_is_a_flag_a_variable_or_a_key_and_unset_runs_nothing() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stages_setup_replaces_the_whole_pipelines_and_an_empty_one_runs_nothing() {
     let config = resolve(
         &[],
@@ -1531,7 +1531,7 @@ fn a_stages_setup_replaces_the_whole_pipelines_and_an_empty_one_runs_nothing() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_repositorys_file_sets_setup_for_the_whole_pipeline_and_in_its_stage_tables() {
     let config = resolve(&[], &[], Some("setup = \"make deps\"\n")).unwrap();
     let repo = "setup = \"npm ci\"\n\n[stage.update]\nsetup = \"\"\n";
@@ -1546,7 +1546,7 @@ fn the_repositorys_file_sets_setup_for_the_whole_pipeline_and_in_its_stage_table
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_unknown_key_in_a_stages_table_is_refused_with_the_keys_it_holds() {
     let error = resolve(
         &[],
@@ -1564,7 +1564,7 @@ fn an_unknown_key_in_a_stages_table_is_refused_with_the_keys_it_holds() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automations_setup_comes_before_the_stages_and_the_pipelines() {
     let config = resolve(&["--setup", "make deps"], &[], None).unwrap();
     let parse = |front: &str| {

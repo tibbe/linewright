@@ -72,7 +72,7 @@ fn triage(issue: u64) -> Action {
     })
 }
 
-#[test]
+#[test_log::test]
 fn a_needs_triage_issue_is_claimed_then_triaged() {
     let world = snapshot(vec![labeled(issue(1), label::NEEDS_TRIAGE)]);
 
@@ -118,7 +118,7 @@ fn back_to_triage(asked: Issue, minute: i64) -> Issue {
     relabeled
 }
 
-#[test]
+#[test_log::test]
 fn a_reply_sends_the_issue_back_to_triage_then_the_people_linewright_asked_are_unassigned() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
@@ -145,7 +145,7 @@ fn a_reply_sends_the_issue_back_to_triage_then_the_people_linewright_asked_are_u
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_reply_leaves_a_person_someone_else_assigned_and_triage_waits_for_them() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "maintainer", "maintainer", 0);
@@ -162,7 +162,7 @@ fn a_reply_leaves_a_person_someone_else_assigned_and_triage_waits_for_them() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_reply_leaves_a_person_linewright_asked_whom_someone_else_had_assigned() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     // Assigning someone already assigned changes nothing, so GitHub records
@@ -179,7 +179,7 @@ fn a_reply_leaves_a_person_linewright_asked_whom_someone_else_had_assigned() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn needs_triage_applied_by_hand_after_a_question_unassigns_the_people_asked() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
@@ -192,7 +192,7 @@ fn needs_triage_applied_by_hand_after_a_question_unassigns_the_people_asked() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn ready_for_agent_applied_by_hand_after_a_question_unassigns_the_people_asked() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
@@ -209,7 +209,7 @@ fn ready_for_agent_applied_by_hand_after_a_question_unassigns_the_people_asked()
     );
 }
 
-#[test]
+#[test_log::test]
 fn ready_for_human_after_a_question_keeps_the_people_asked_until_ready_for_agent_is_applied() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
@@ -228,7 +228,7 @@ fn ready_for_human_after_a_question_keeps_the_people_asked_until_ready_for_agent
     );
 }
 
-#[test]
+#[test_log::test]
 fn ready_for_agent_after_a_question_leaves_a_person_someone_else_assigned() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "maintainer", "maintainer", 0);
@@ -247,7 +247,7 @@ fn ready_for_agent_after_a_question_leaves_a_person_someone_else_assigned() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn no_one_is_unassigned_before_a_reply() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
@@ -256,7 +256,7 @@ fn no_one_is_unassigned_before_a_reply() {
     assert_eq!(decide(&snapshot(vec![asked])), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn needs_info_waits_while_only_linewright_has_spoken_since_triage() {
     let mut asked = labeled(issue(1), label::NEEDS_INFO);
     asked.comments = vec![
@@ -268,7 +268,7 @@ fn needs_info_waits_while_only_linewright_has_spoken_since_triage() {
     assert_eq!(decide(&snapshot(vec![asked])), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn a_comment_on_a_ready_for_human_issue_starts_nothing() {
     let mut handed_back = labeled(issue(1), label::READY_FOR_HUMAN);
     handed_back.comments = vec![
@@ -280,7 +280,7 @@ fn a_comment_on_a_ready_for_human_issue_starts_nothing() {
     assert_eq!(decide(&snapshot(vec![handed_back])), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_linewright_filed_is_not_triaged_when_a_person_comments() {
     let mut filed = labeled(issue(1), label::READY_FOR_HUMAN);
     filed.author = Login::new(LINEWRIGHT);
@@ -289,7 +289,7 @@ fn an_issue_linewright_filed_is_not_triaged_when_a_person_comments() {
     assert_eq!(decide(&snapshot(vec![filed])), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_comment() {
     let answered_with = |state: StatusLabel| {
         let mut answered = labeled_both(StatusLabel::ReadyForHuman, state);
@@ -314,7 +314,7 @@ fn labeled_both(older: StatusLabel, newer: StatusLabel) -> Issue {
     common::relabeled(issue(1), older.label(), newer.label())
 }
 
-#[test]
+#[test_log::test]
 fn of_two_status_labels_the_newer_is_kept_and_followed() {
     for older in StatusLabel::ALL {
         for newer in StatusLabel::ALL.into_iter().filter(|l| *l != older) {
@@ -341,7 +341,7 @@ fn of_two_status_labels_the_newer_is_kept_and_followed() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn of_several_status_labels_all_but_the_newest_are_removed() {
     // `needs-triage` was applied before the events read, so it is the oldest.
     let issue = labeled(
@@ -361,7 +361,7 @@ fn of_several_status_labels_all_but_the_newest_are_removed() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
     let world = snapshot(vec![labeled_both(
         StatusLabel::NeedsTriage,
@@ -392,7 +392,7 @@ fn let_go(issue: u64) -> Action {
     }
 }
 
-#[test]
+#[test_log::test]
 fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_lets_go_once_it_ends()
  {
     for (older, kind) in [
@@ -427,7 +427,7 @@ fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_l
     }
 }
 
-#[test]
+#[test_log::test]
 fn relabeling_a_claimed_issue_needing_triage_ready_for_agent_cancels_its_triage_run() {
     let world = snapshot(vec![claimed(labeled_both(
         StatusLabel::NeedsTriage,
@@ -451,14 +451,14 @@ fn relabeling_a_claimed_issue_needing_triage_ready_for_agent_cancels_its_triage_
     );
 }
 
-#[test]
+#[test_log::test]
 fn removing_a_claimed_issues_status_label_lets_go_of_it() {
     let world = snapshot(vec![claimed(issue(1))]);
 
     assert_eq!(decide(&world), vec![let_go(1)]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_with_no_status_label_whose_triage_run_is_live_is_held_until_the_run_ends() {
     // As a triage run leaves it between removing `needs-triage` and adding
     // its outcome, with a person asked beside Linewright.
@@ -494,7 +494,7 @@ fn an_issue_with_no_status_label_whose_triage_run_is_live_is_held_until_the_run_
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_whose_label_asks_nothing_assigned_to_linewright_by_hand_is_let_go_saying_what_it_needs()
 {
     let ready_for_human = labeled_at(
@@ -538,7 +538,7 @@ fn an_issue_whose_label_asks_nothing_assigned_to_linewright_by_hand_is_let_go_sa
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_relabeled_from_one_label_that_asks_nothing_to_another_since_its_hand_assignment_is_let_go_saying_what_it_needs()
  {
     let relabeled = unlabeled_at(
@@ -570,7 +570,7 @@ fn an_issue_relabeled_from_one_label_that_asks_nothing_to_another_since_its_hand
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_linewright_commented_on_since_its_hand_assignment_is_let_go_silently() {
     let mut commented = assigned_by(
         labeled(issue(1), label::NEEDS_INFO),
@@ -583,7 +583,7 @@ fn an_issue_linewright_commented_on_since_its_hand_assignment_is_let_go_silently
     assert_eq!(decide(&snapshot(vec![commented])), vec![let_go(1)]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_whose_label_asked_for_work_at_its_hand_assignment_or_claimed_by_linewright_is_let_go_silently()
  {
     let triaged = unlabeled_at(
@@ -635,7 +635,7 @@ fn an_issue_whose_label_asked_for_work_at_its_hand_assignment_or_claimed_by_line
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_assigned_to_linewright_by_hand_beside_someone_else_is_worked_as_its_label_says_marked_or_not()
  {
     let mut ticket = assigned_by(
@@ -661,7 +661,7 @@ fn an_issue_assigned_to_linewright_by_hand_beside_someone_else_is_worked_as_its_
     );
 }
 
-#[test]
+#[test_log::test]
 fn reassigning_linewright_after_an_unassignment_starts_the_work_again_unrelabeled() {
     let reassigned = |issue: Issue| {
         let unassigned = unassigned_by(issue, "maintainer", 2);
@@ -679,7 +679,7 @@ fn reassigning_linewright_after_an_unassignment_starts_the_work_again_unrelabele
     assert_eq!(decide(&world), vec![triage(2), implement(1)]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_assigned_to_linewright_by_hand_that_cannot_start_yet_is_held_assigned() {
     let blocked_ticket = blocked_by(assigned_by(ticket(1), LINEWRIGHT, "maintainer", 1), 5, true);
     let blocked_triage = blocked_by(
@@ -710,7 +710,7 @@ fn an_issue_assigned_to_linewright_by_hand_that_cannot_start_yet_is_held_assigne
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_claimed_issue_whose_label_asks_for_linewrights_work_is_not_let_go() {
     let mut in_review = claimed(closed_by(ticket(4), 43, "alice"));
     in_review.labels.push("bug".into());
@@ -793,7 +793,7 @@ fn cutting(pr: u64) -> [LiveRun; 1] {
     }]
 }
 
-#[test]
+#[test_log::test]
 fn a_merged_pull_request_that_touches_the_spec_is_claimed_and_cut_into_tickets() {
     let mut world = snapshot(vec![]);
     world.merged = vec![merged(5, &["src/main.rs", "docs/billing/invoices.md"])];
@@ -801,7 +801,7 @@ fn a_merged_pull_request_that_touches_the_spec_is_claimed_and_cut_into_tickets()
     assert_eq!(decide(&world), cut(5));
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_linewright_is_assigned_to_is_cut_without_claiming_it_again() {
     let mut world = snapshot(vec![]);
     world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
@@ -812,7 +812,7 @@ fn a_spec_change_linewright_is_assigned_to_is_cut_without_claiming_it_again() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_linewright_was_unassigned_from_is_not_cut_again_on_its_own() {
     let handed_back = unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2);
     let paused = unassigned(assigned(merged(6, &["docs/spec.md"]), 1), "maintainer", 2);
@@ -822,7 +822,7 @@ fn a_spec_change_linewright_was_unassigned_from_is_not_cut_again_on_its_own() {
     assert_eq!(decide(&world), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_linewright_is_assigned_to_again_is_cut_again() {
     let retried = assigned(
         unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2),
@@ -837,7 +837,7 @@ fn a_spec_change_linewright_is_assigned_to_again_is_cut_again() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ready_for_human_label_on_a_spec_change_stops_nothing() {
     let mut labeled = merged(5, &["docs/spec.md"]);
     labeled.labels.push(label::READY_FOR_HUMAN.into());
@@ -860,7 +860,7 @@ fn a_ready_for_human_label_on_a_spec_change_stops_nothing() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_cut_that_ended_since_the_snapshot_is_neither_started_again_nor_cancelled() {
     let mut world = snapshot(vec![]);
     world.merged = vec![merged(5, &["docs/spec.md"])];
@@ -883,7 +883,7 @@ fn a_cut_that_ended_since_the_snapshot_is_neither_started_again_nor_cancelled() 
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_cut_stopped_part_way_is_discarded_also_when_linewright_was_unassigned_from_it() {
     let mut world = snapshot(vec![tracking(9, 5, &[(10, true)])]);
     world.merged = vec![unassigned(
@@ -905,7 +905,7 @@ fn a_cut_stopped_part_way_is_discarded_also_when_linewright_was_unassigned_from_
     );
 }
 
-#[test]
+#[test_log::test]
 fn unassigning_linewright_from_a_spec_change_cancels_its_cut() {
     let mut world = snapshot(vec![]);
     world.merged = vec![unassigned(
@@ -931,7 +931,7 @@ fn unassigning_linewright_from_a_spec_change_cancels_its_cut() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn only_undesigned_spec_changes_by_people_within_the_lookback_are_picked_up() {
     let code_only = merged(1, &["src/main.rs", "README.md"]);
     let mut designed = merged(2, &["docs/spec.md"]);
@@ -948,7 +948,7 @@ fn only_undesigned_spec_changes_by_people_within_the_lookback_are_picked_up() {
     assert_eq!(decide(&world), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_merged_within_the_lookback_is_cut_though_it_merged_before_the_done_window() {
     let policy = Policy {
         spec_lookback: TimeDelta::days(7),
@@ -974,7 +974,7 @@ fn a_spec_change_merged_within_the_lookback_is_cut_though_it_merged_before_the_d
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_labeled_before_the_design_label_is_not_designed_again() {
     let mut designed = merged(5, &["docs/spec.md"]);
     designed.labels.push(label::SPEC_PROCESSED.into());
@@ -984,7 +984,7 @@ fn a_spec_change_labeled_before_the_design_label_is_not_designed_again() {
     assert_eq!(decide(&world), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
     let mut world = snapshot(vec![tracking(9, 5, &[(10, true)])]);
     world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
@@ -1021,7 +1021,7 @@ fn unreadied_ticket(number: u64) -> Issue {
     ticket
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_cut_stopped_before_its_tickets_are_readied_is_discarded_with_them() {
     let mut world = snapshot(vec![
         tracking(9, 5, &[(10, true), (11, true)]),
@@ -1043,7 +1043,7 @@ fn a_spec_change_cut_stopped_before_its_tickets_are_readied_is_discarded_with_th
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_cut_stopped_before_its_tickets_are_readied_is_discarded_with_them() {
     let mut stopped = claimed(readied(9));
     stopped.sub_issues = linewrights(&[(10, true), (11, true)]);
@@ -1103,28 +1103,28 @@ fn implement(issue: u64) -> Action {
     })
 }
 
-#[test]
+#[test_log::test]
 fn an_unblocked_ready_for_agent_issue_is_claimed_and_implemented() {
     let world = snapshot(vec![blocked_by(ticket(2), 1, false)]);
 
     assert_eq!(decide(&world), vec![claim(2), implement(2)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_waits_until_every_issue_blocking_it_is_closed() {
     let world = snapshot(vec![blocked_by(blocked_by(ticket(3), 1, false), 2, true)]);
 
     assert_eq!(decide(&world), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn a_claimed_ticket_with_no_pull_request_and_no_live_run_starts_a_fresh_run() {
     let world = snapshot(vec![claimed(ticket(2))]);
 
     assert_eq!(decide(&world), vec![implement(2)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_with_a_live_run_is_left_to_it() {
     let world = snapshot(vec![claimed(ticket(2))]);
     let live = [LiveRun {
@@ -1152,21 +1152,21 @@ fn design(issue: u64) -> Action {
     })
 }
 
-#[test]
+#[test_log::test]
 fn a_ready_for_agent_issue_not_designed_is_claimed_and_designed() {
     let world = snapshot(vec![readied(2)]);
 
     assert_eq!(decide(&world), vec![claim(2), design(2)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_claimed_issue_not_designed_is_designed_and_a_designed_one_implemented() {
     let world = snapshot(vec![claimed(readied(2)), claimed(ticket(3))]);
 
     assert_eq!(decide(&world), vec![design(2), implement(3)]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_whose_design_label_was_removed_is_designed_again() {
     let mut undesigned = claimed(ticket(2));
     undesigned.labels.retain(|l| l != label::DESIGNED);
@@ -1175,7 +1175,7 @@ fn an_issue_whose_design_label_was_removed_is_designed_again() {
     assert_eq!(decide(&world), vec![design(2)]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_waits_for_its_blockers_before_its_design() {
     let world = snapshot(vec![blocked_by(readied(3), 1, true)]);
 
@@ -1183,7 +1183,7 @@ fn an_issue_waits_for_its_blockers_before_its_design() {
     assert_eq!(waits_on(&world, 3), [Wait::Blocker { issue: Number(1) }]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_being_designed_is_left_to_its_design() {
     let world = snapshot(vec![claimed(readied(2))]);
     let live = [live(2, WorkKind::Design)];
@@ -1202,7 +1202,7 @@ fn an_issue_being_designed_is_left_to_its_design() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issues_design_starts_before_an_implementation() {
     let policy = Policy {
         max_runs: 1,
@@ -1224,7 +1224,7 @@ fn an_issues_design_starts_before_an_implementation() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issues_design_is_cancelled_as_its_implementation_would_be() {
     let mut unlabeled = claimed(readied(1));
     unlabeled.labels.clear();
@@ -1288,7 +1288,7 @@ fn unlabeled_at(mut issue: Issue, label: &str, minute: i64) -> Issue {
     issue
 }
 
-#[test]
+#[test_log::test]
 fn unassigning_linewright_stops_the_work_until_the_label_is_applied_again() {
     let stopped = unassigned_by(
         labeled_at(ticket(2), label::READY_FOR_AGENT, 1),
@@ -1316,7 +1316,7 @@ fn unassigning_linewright_stops_the_work_until_the_label_is_applied_again() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_sent_back_to_triage_is_triaged_not_implemented() {
     let sent_back = labeled_at(
         labeled_at(
@@ -1341,7 +1341,7 @@ fn live(issue: u64, kind: WorkKind) -> LiveRun {
     }
 }
 
-#[test]
+#[test_log::test]
 fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementations() {
     let mut world = snapshot(vec![
         claimed(ticket(1)),
@@ -1375,7 +1375,7 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
     let mut unlabeled = claimed(issue(1));
     unlabeled.labels.clear();
@@ -1418,7 +1418,7 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_linewright_is_unassigned() {
     let mut merged = pull(20, 2);
     merged.state = PullState::Merged { at: t(5) };
@@ -1462,7 +1462,7 @@ fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_linewright_is_un
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_linewright_is_unassigned_from_starts_nothing_and_waits_for_the_maintainer() {
     for by in ["maintainer", LINEWRIGHT] {
         let mut pr = unassigned_at(pull(20, 2), by, 5, None);
@@ -1480,7 +1480,7 @@ fn a_pull_request_linewright_is_unassigned_from_starts_nothing_and_waits_for_the
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_labeled_ready_for_human_is_worked_as_without_the_label() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Failed)];
@@ -1489,7 +1489,7 @@ fn a_pull_request_labeled_ready_for_human_is_worked_as_without_the_label() {
     assert_eq!(at(&world, 10), vec![fix_ci(2, 20)]);
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Failed)];
@@ -1526,7 +1526,7 @@ fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_assigned_to_someone_else_alone_is_claimed_once() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -1548,7 +1548,7 @@ fn a_pull_request_assigned_to_someone_else_alone_is_claimed_once() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_waits_while_its_pull_request_is_open_whatever_its_labels_and_assignees() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Pending)];
@@ -1581,7 +1581,7 @@ fn a_ticket_waits_while_its_pull_request_is_open_whatever_its_labels_and_assigne
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_with_its_run_in_flight_waits_for_it() {
     let world = in_review(pull(20, 2));
     let runs = [live_on_pull(20, WorkKind::Update)];
@@ -1628,7 +1628,7 @@ fn deleted_branches(actions: Vec<Action>) -> Vec<String> {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn the_branch_of_a_closed_ticket_is_deleted_unless_a_pull_request_is_open_for_it() {
     let mut closed_by_pull = closed(ticket(2));
     closed_by_pull.closed_by = vec![ClosingPull {
@@ -1674,7 +1674,7 @@ fn the_branch_of_a_closed_ticket_is_deleted_unless_a_pull_request_is_open_for_it
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
     let mut world = snapshot(vec![closed(claimed(ticket(1)))]);
     world.ticket_branches = vec![ticket_branch(1, BranchIssue::Held)];
@@ -1692,7 +1692,7 @@ fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
     assert_eq!(deleted_branches(actions), Vec::<String>::new());
 }
 
-#[test]
+#[test_log::test]
 fn the_branch_of_a_ticket_read_again_is_kept_or_deleted_as_the_ticket_now_is() {
     // Read closed with its branch, then reopened; read open with its branch,
     // then closed; held with its branch, then left out of the snapshot.
@@ -1706,7 +1706,7 @@ fn the_branch_of_a_ticket_read_again_is_kept_or_deleted_as_the_ticket_now_is() {
     assert_eq!(deleted_branches(decide(&world)), ["2-gadgets"]);
 }
 
-#[test]
+#[test_log::test]
 fn a_design_run_is_cancelled_when_its_spec_change_is_labeled_before_the_design_label() {
     let mut designed = merged(5, &["docs/spec.md"]);
     designed.labels.push(label::SPEC_PROCESSED.into());
@@ -1734,7 +1734,7 @@ fn a_design_run_is_cancelled_when_its_spec_change_is_labeled_before_the_design_l
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_design_run_is_cancelled_when_its_spec_change_is_labeled_designed() {
     let mut designed = merged(5, &["docs/spec.md"]);
     designed.labels.push(label::DESIGNED.into());
@@ -1826,7 +1826,7 @@ fn at(world: &Snapshot, minute: i64) -> Vec<Action> {
     )
 }
 
-#[test]
+#[test_log::test]
 fn a_green_draft_is_marked_ready_for_review_with_no_one_asked_to_review_it() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -1837,7 +1837,7 @@ fn a_green_draft_is_marked_ready_for_review_with_no_one_asked_to_review_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_draft_with_no_checks_by_the_end_of_the_grace_period_has_no_ci() {
     let world = in_review(pull(20, 2));
 
@@ -1848,7 +1848,7 @@ fn a_draft_with_no_checks_by_the_end_of_the_grace_period_has_no_ci() {
     ));
 }
 
-#[test]
+#[test_log::test]
 fn a_draft_waits_while_checks_run() {
     let mut pr = pull(20, 2);
     pr.checks = vec![
@@ -1887,7 +1887,7 @@ fn after_runs(world: &Snapshot, runs: &[DoneRun], minute: i64) -> Vec<Action> {
     deciding_at(world, &memory, &policy(), minute)
 }
 
-#[test]
+#[test_log::test]
 fn a_failing_check_starts_a_fix_and_after_the_last_attempt_the_pull_request_is_handed_back() {
     let mut pr = pull(20, 2);
     pr.checks = vec![
@@ -1912,7 +1912,7 @@ fn a_failing_check_starts_a_fix_and_after_the_last_attempt_the_pull_request_is_h
     ));
 }
 
-#[test]
+#[test_log::test]
 fn fix_attempts_count_only_the_pull_requests_own_fix_runs_since_its_last_rework() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Failed)];
@@ -1929,7 +1929,7 @@ fn fix_attempts_count_only_the_pull_requests_own_fix_runs_since_its_last_rework(
     assert_eq!(after_runs(&world, &runs, 10), vec![fix_ci(2, 20)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once_reassigned() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("e2e", CheckState::Pending)];
@@ -1950,7 +1950,7 @@ fn a_pull_request_handed_back_after_a_ci_timeout_waits_a_full_timeout_again_once
     ));
 }
 
-#[test]
+#[test_log::test]
 fn reassigning_linewright_gives_the_pull_request_fresh_ci_fix_attempts() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Failed)];
@@ -1971,14 +1971,14 @@ fn clear_stall(item: Item) -> Action {
     Action::ClearStall { item }
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_ticket_relabeled_ready_for_agent_is_claimed_and_implemented_with_its_stall_kept() {
     let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
 
     assert_eq!(decide(&world), vec![claim(2), implement(2)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_issue_linewright_is_assigned_to_has_its_stall_cleared_once_no_other_row_holds() {
     let mut world = in_review(pull(20, 2));
     world.issues[0].labels.push(label::STALLED.into());
@@ -1991,7 +1991,7 @@ fn a_stalled_issue_linewright_is_assigned_to_has_its_stall_cleared_once_no_other
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_issue_linewright_neither_holds_nor_claims_keeps_its_stall() {
     let world = snapshot(vec![labeled(
         labeled(issue(2), label::READY_FOR_HUMAN),
@@ -2001,7 +2001,7 @@ fn a_stalled_issue_linewright_neither_holds_nor_claims_keeps_its_stall() {
     assert_eq!(decide(&world), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_issue_left_assigned_with_two_status_labels_is_let_go_of_with_its_stall_kept() {
     // As a hand-back stopped after adding `ready-for-human` leaves it.
     let handed_back = assigned_by(
@@ -2017,7 +2017,7 @@ fn a_stalled_issue_left_assigned_with_two_status_labels_is_let_go_of_with_its_st
     assert_eq!(decide(&world), vec![let_go(1)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_pull_request_linewright_is_still_assigned_to_has_its_stall_cleared() {
     let mut pr = ready(pull(20, 2));
     pr.checks = vec![check("test", CheckState::Pending)];
@@ -2029,7 +2029,7 @@ fn a_stalled_pull_request_linewright_is_still_assigned_to_has_its_stall_cleared(
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_ticket_claimed_but_held_back_by_the_drain_keeps_its_stall() {
     let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
     let memory = Memory {
@@ -2050,7 +2050,7 @@ fn a_stalled_ticket_claimed_but_held_back_by_the_drain_keeps_its_stall() {
     assert_eq!(actions, vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_pull_request_linewright_is_assigned_to_again_has_its_stall_cleared() {
     let mut pr = ready(pull(20, 2));
     pr.checks = vec![check("test", CheckState::Pending)];
@@ -2062,7 +2062,7 @@ fn a_stalled_pull_request_linewright_is_assigned_to_again_has_its_stall_cleared(
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_pull_request_linewright_was_unassigned_from_keeps_its_stall() {
     let pr = labeled_pull(
         unassigned_at(ready(pull(20, 2)), LINEWRIGHT, 5, None),
@@ -2072,7 +2072,7 @@ fn a_stalled_pull_request_linewright_was_unassigned_from_keeps_its_stall() {
     assert_eq!(at(&in_review(pr), 8), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_spec_change_linewright_is_assigned_to_again_has_its_stall_cleared_and_is_cut() {
     let handed_back = unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2);
     let mut world = snapshot(vec![]);
@@ -2087,7 +2087,7 @@ fn a_stalled_spec_change_linewright_is_assigned_to_again_has_its_stall_cleared_a
     );
 }
 
-#[test]
+#[test_log::test]
 fn reassigning_linewright_to_a_pull_request_a_rework_handed_back_addresses_its_feedback_again() {
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![
@@ -2099,7 +2099,7 @@ fn reassigning_linewright_to_a_pull_request_a_rework_handed_back_addresses_its_f
     assert_eq!(at(&world, 10), vec![rework(2, 20)]);
 }
 
-#[test]
+#[test_log::test]
 fn reassigning_linewright_reworks_for_the_feedback_left_while_it_was_unassigned() {
     let mut pr = ready(pull(20, 2));
     pr.reviews = vec![review(
@@ -2115,7 +2115,7 @@ fn reassigning_linewright_reworks_for_the_feedback_left_while_it_was_unassigned(
     assert_eq!(at(&resumed, 10), vec![rework(2, 20)]);
 }
 
-#[test]
+#[test_log::test]
 fn checks_that_never_complete_hand_the_pull_request_back_at_the_ci_timeout() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("e2e", CheckState::Pending)];
@@ -2130,7 +2130,7 @@ fn checks_that_never_complete_hand_the_pull_request_back_at_the_ci_timeout() {
 }
 
 /// `docs/specs/design_system.md`, Time, Durations.
-#[test]
+#[test_log::test]
 fn the_ci_timeout_hand_back_says_the_timeout_to_its_two_largest_units() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("e2e", CheckState::Pending)];
@@ -2172,7 +2172,7 @@ fn ready(mut pr: Pull) -> Pull {
     pr
 }
 
-#[test]
+#[test_log::test]
 fn a_comment_after_linewrights_last_push_starts_a_rework_run() {
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![comment("maintainer", 4, "Please rename `foo`.")];
@@ -2189,7 +2189,7 @@ fn review(author: &str, state: ReviewState, body: &str, minute: i64) -> Review {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_review_with_comments_starts_a_rework_run_but_one_that_only_approves_does_not() {
     let mut pr = ready(pull(20, 2));
     pr.reviews = vec![review("maintainer", ReviewState::Approved, "", 4)];
@@ -2206,7 +2206,7 @@ fn a_review_with_comments_starts_a_rework_run_but_one_that_only_approves_does_no
     assert_eq!(at(&approved_with_a_comment, 10), vec![rework(2, 20)]);
 }
 
-#[test]
+#[test_log::test]
 fn feedback_already_answered_starts_nothing() {
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![
@@ -2228,7 +2228,7 @@ fn feedback_already_answered_starts_nothing() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn feedback_after_a_rework_that_needed_no_change_starts_another() {
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![
@@ -2243,7 +2243,7 @@ fn feedback_after_a_rework_that_needed_no_change_starts_another() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_comments_answer_no_feedback() {
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![
@@ -2265,7 +2265,7 @@ fn update(issue: u64, pr: u64) -> Action {
     })
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_behind_or_in_conflict_with_the_default_branch_is_brought_up_to_date() {
     let mut behind = ready(pull(20, 2));
     behind.mergeability = Mergeability::Behind;
@@ -2299,7 +2299,7 @@ fn rebase_update() -> Vec<Action> {
     vec![Action::RememberRebase(tried("abc123", 10)), update(2, 20)]
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_github_reports_not_rebaseable_is_rebased_where_rebase_merging_is_allowed() {
     let world = in_review(not_rebaseable());
     let rebasing = Policy {
@@ -2314,7 +2314,7 @@ fn a_pull_request_github_reports_not_rebaseable_is_rebased_where_rebase_merging_
     );
 }
 
-#[test]
+#[test_log::test]
 fn rebaseability_starts_no_run_without_rebase_merging_or_with_update_branch_merge() {
     let world = in_review(not_rebaseable());
     let no_rebase_merging = Policy {
@@ -2339,7 +2339,7 @@ fn rebaseability_starts_no_run_without_rebase_merging_or_with_update_branch_merg
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_whose_rebaseability_is_not_known_yet_waits_rather_than_starting_a_run() {
     let mut pr = not_rebaseable();
     pr.rebaseability = Rebaseability::Unknown;
@@ -2354,7 +2354,7 @@ fn remembering(rebase: TriedRebase) -> Memory {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_still_not_rebaseable_after_a_rebase_at_its_head_starts_no_more_runs() {
     let world = in_review(not_rebaseable());
 
@@ -2368,7 +2368,7 @@ fn a_pull_request_still_not_rebaseable_after_a_rebase_at_its_head_starts_no_more
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_behind_is_rebased_again_though_a_rebase_was_tried_at_its_head() {
     let mut pr = not_rebaseable();
     pr.mergeability = Mergeability::Behind;
@@ -2379,7 +2379,7 @@ fn a_pull_request_behind_is_rebased_again_though_a_rebase_was_tried_at_its_head(
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_handed_back_since_a_rebase_was_tried_tries_it_again_once_reassigned() {
     let unassigned = in_review(unassigned_at(not_rebaseable(), LINEWRIGHT, 7, None));
     let reassigned = in_review(unassigned_at(not_rebaseable(), LINEWRIGHT, 7, Some(8)));
@@ -2394,7 +2394,7 @@ fn a_pull_request_handed_back_since_a_rebase_was_tried_tries_it_again_once_reass
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_labeled_again_since_a_rebase_was_tried_does_not_try_it_again() {
     let mut world = in_review(not_rebaseable());
     world.issues[0].events = vec![IssueEvent::Labeled {
@@ -2416,7 +2416,7 @@ fn merging_by(method: MergeMethod) -> Policy {
     }
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_and_not_merged() {
     let world = in_review(not_rebaseable());
     let mut unknown = not_rebaseable();
@@ -2439,7 +2439,7 @@ fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_and_not_me
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_by_rebase_a_pull_request_still_not_rebaseable_after_a_rebase_is_handed_back() {
     let world = in_review(not_rebaseable());
 
@@ -2459,7 +2459,7 @@ fn with_auto_merge_by_rebase_a_pull_request_still_not_rebaseable_after_a_rebase_
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_by_another_method_a_pull_request_still_not_rebaseable_after_a_rebase_is_merged()
 {
     let world = in_review(not_rebaseable());
@@ -2491,7 +2491,7 @@ fn merge_by(pr: u64, draft: bool, method: MergeMethod) -> Action {
     }
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_green_draft_is_merged_instead_of_marked_ready() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -2499,7 +2499,7 @@ fn with_auto_merge_a_green_draft_is_merged_instead_of_marked_ready() {
     assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, true)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_draft_with_no_ci_by_the_end_of_the_grace_period_is_merged() {
     let world = in_review(pull(20, 2));
 
@@ -2510,14 +2510,14 @@ fn with_auto_merge_a_draft_with_no_ci_by_the_end_of_the_grace_period_is_merged()
     ));
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_green_pull_request_already_ready_for_review_is_merged() {
     let pr = ready(pull(20, 2));
 
     assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_pull_request_not_yet_green_keeps_its_handling_and_is_not_merged() {
     let mut pending = ready(pull(20, 2));
     pending.checks = vec![check("test", CheckState::Pending)];
@@ -2547,7 +2547,7 @@ fn with_auto_merge_a_pull_request_not_yet_green_keeps_its_handling_and_is_not_me
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_pull_request_whose_mergeability_is_not_known_yet_waits() {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Unknown;
@@ -2561,7 +2561,7 @@ fn code_owner_review() -> Vec<Requirement> {
     }]
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_green_pull_request_github_blocks_is_held_for_review_and_not_merged() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -2579,7 +2579,7 @@ fn with_auto_merge_a_green_pull_request_github_blocks_is_held_for_review_and_not
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_github_blocks_is_held_for_review_after_it_is_marked_ready() {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Blocked {
@@ -2606,7 +2606,7 @@ fn auto_merging_remembering(world: &Snapshot, memory: &Memory, minute: i64) -> V
     deciding_at(world, memory, &merging_by(MergeMethod::Merge), minute)
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_github_blocks_and_already_held_for_review_waits_also_after_a_push() {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Blocked {
@@ -2629,7 +2629,7 @@ fn a_pull_request_github_blocks_and_already_held_for_review_waits_also_after_a_p
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_held_for_review_is_merged_once_github_no_longer_blocks_it() {
     let world = in_review(ready(pull(20, 2)));
 
@@ -2639,7 +2639,7 @@ fn a_pull_request_held_for_review_is_merged_once_github_no_longer_blocks_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_is_held_again_when_what_github_requires_changes() {
     let mut pr = ready(pull(20, 2));
     let requires = vec![Requirement::Check {
@@ -2659,7 +2659,7 @@ fn a_pull_request_is_held_again_when_what_github_requires_changes() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_is_held_whatever_linewrights_comments_on_it_say() {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Blocked {
@@ -2678,7 +2678,7 @@ fn a_pull_request_is_held_whatever_linewrights_comments_on_it_say() {
     ));
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_green_draft_whose_merge_state_is_unknown_is_marked_ready_first() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -2690,7 +2690,7 @@ fn with_auto_merge_a_green_draft_whose_merge_state_is_unknown_is_marked_ready_fi
     );
 }
 
-#[test]
+#[test_log::test]
 fn without_auto_merge_a_green_pull_request_github_blocks_is_marked_ready_as_any_other() {
     let mut draft = pull(20, 2);
     draft.checks = vec![check("test", CheckState::Passed)];
@@ -2716,7 +2716,7 @@ fn reworked(mut pr: Pull) -> Pull {
     pr
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_green_pull_request_a_person_commented_on_waits_for_their_approval() {
     let mut pr = reworked(pull(20, 2));
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -2731,7 +2731,7 @@ fn with_auto_merge_a_green_pull_request_a_person_commented_on_waits_for_their_ap
     assert_eq!(auto_merging(&ready, 10), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_approve() {
     let mut pr = reworked(ready(pull(20, 2)));
     pr.threads = vec![Thread {
@@ -2745,7 +2745,7 @@ fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_approve
     assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_person_whose_latest_review_does_not_approve_holds_the_merge() {
     let approved_then = |state| {
         let mut pr = reworked(ready(pull(20, 2)));
@@ -2766,7 +2766,7 @@ fn with_auto_merge_a_person_whose_latest_review_does_not_approve_holds_the_merge
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_person_who_comments_after_approving_holds_the_merge_until_they_approve_again()
 {
     let mut pr = reworked(pull(20, 2));
@@ -2786,7 +2786,7 @@ fn with_auto_merge_a_person_who_comments_after_approving_holds_the_merge_until_t
     assert_eq!(auto_merging(&approved_again, 10), vec![merge(20, false)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_person_who_replies_in_a_thread_after_approving_holds_the_merge_until_they_approve_again()
  {
     let mut pr = reworked(ready(pull(20, 2)));
@@ -2811,7 +2811,7 @@ fn with_auto_merge_a_person_who_replies_in_a_thread_after_approving_holds_the_me
     assert_eq!(auto_merging(&approved_again, 10), vec![merge(20, false)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_an_approval_with_inline_comments_does_not_hold_the_merge() {
     let mut pr = reworked(ready(pull(20, 2)));
     pr.threads = vec![Thread {
@@ -2825,7 +2825,7 @@ fn with_auto_merge_an_approval_with_inline_comments_does_not_hold_the_merge() {
     assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_pull_request_merges_once_each_persons_newest_comment_or_review_approves() {
     let mut pr = reworked(ready(pull(20, 2)));
     pr.reviews = vec![
@@ -2848,7 +2848,7 @@ fn with_auto_merge_a_pull_request_merges_once_each_persons_newest_comment_or_rev
     assert_eq!(auto_merging(&both_approved, 10), vec![merge(20, false)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_comments_from_linewright_after_an_approval_do_not_hold_the_merge() {
     let mut pr = reworked(ready(pull(20, 2)));
     pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 2)];
@@ -2857,7 +2857,7 @@ fn with_auto_merge_comments_from_linewright_after_an_approval_do_not_hold_the_me
     assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_pull_request_two_people_commented_on_merges_once_both_approve() {
     let mut pr = reworked(ready(pull(20, 2)));
     pr.comments = vec![
@@ -2874,7 +2874,7 @@ fn with_auto_merge_a_pull_request_two_people_commented_on_merges_once_both_appro
     assert_eq!(auto_merging(&both_approved, 10), vec![merge(20, false)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_comments_and_reviews_from_bots_do_not_hold_the_merge() {
     let mut pr = reworked(ready(pull(20, 2)));
     pr.comments = vec![comment("coverage[bot]", 2, "Coverage dropped 0.1%.")];
@@ -2908,7 +2908,7 @@ fn auto_merging_after(world: &Snapshot, failed: &[FailedMerge], minute: i64) -> 
     auto_merging_remembering(world, &memory, minute)
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_green_pull_request_whose_merge_failed_once_is_merged_again() {
     let world = in_review(ready(pull(20, 2)));
     let failed = [failed_merge(20, "Head branch was modified.")];
@@ -2919,7 +2919,7 @@ fn with_auto_merge_a_green_pull_request_whose_merge_failed_once_is_merged_again(
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_green_pull_request_whose_merge_failed_twice_is_handed_back_with_githubs_reason()
  {
     let world = in_review(ready(pull(20, 2)));
@@ -2939,7 +2939,7 @@ fn with_auto_merge_a_green_pull_request_whose_merge_failed_twice_is_handed_back_
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_failed_merges_of_another_pull_request_do_not_count() {
     let world = in_review(ready(pull(20, 2)));
     let failed = [
@@ -2979,7 +2979,7 @@ fn labeled_pull(mut pr: Pull, label: &str) -> Pull {
     pr
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_reassigning_linewright_to_a_pull_request_handed_back_for_failed_merges_tries_the_merge_again()
  {
     let world = in_review(unassigned_at(ready(pull(20, 2)), LINEWRIGHT, 12, Some(15)));
@@ -2995,7 +2995,7 @@ fn with_auto_merge_reassigning_linewright_to_a_pull_request_handed_back_for_fail
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_closed_without_merging_hands_the_ticket_back_once() {
     let mut pr = pull(20, 2);
     pr.state = PullState::Closed { at: t(5) };
@@ -3014,7 +3014,7 @@ fn a_pull_request_closed_without_merging_hands_the_ticket_back_once() {
     assert_eq!(at(&relabeled, 10), vec![implement(2)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_whose_pull_request_merged_waits_for_github_to_close_it_until_labeled_again() {
     let mut pr = pull(20, 2);
     pr.state = PullState::Merged { at: t(5) };
@@ -3043,7 +3043,7 @@ fn reopened_at(mut issue: Issue, minute: i64) -> Issue {
     issue
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_linewright_is_still_assigned_to_reopened_after_its_pull_request_merged_is_implemented_again()
  {
     let mut pr = pull(20, 2);
@@ -3089,7 +3089,7 @@ fn cut_issue(number: u64, tickets: &[(u64, bool)]) -> Issue {
     cut
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_cut_into_tickets_is_closed_once_they_all_are_and_waits_for_them_until_then() {
     let world = snapshot(vec![
         cut_issue(9, &[(10, false), (11, false)]),
@@ -3108,7 +3108,7 @@ fn an_issue_cut_into_tickets_is_closed_once_they_all_are_and_waits_for_them_unti
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_cut_into_tickets_waits_also_for_the_sub_issues_a_person_added() {
     let mut cut = cut_issue(9, &[(10, false)]);
     cut.sub_issues.push(sub_issue(11, true, "maintainer"));
@@ -3123,7 +3123,7 @@ fn an_issue_cut_into_tickets_waits_also_for_the_sub_issues_a_person_added() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_cut_into_tickets_left_with_a_status_label_or_linewright_loses_both_and_is_not_worked() {
     let world = snapshot(vec![
         claimed(labeled(cut_issue(9, &[(10, true)]), label::READY_FOR_AGENT)),
@@ -3156,7 +3156,7 @@ fn an_issue_cut_into_tickets_left_with_a_status_label_or_linewright_loses_both_a
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_designed_issue_with_only_sub_issues_a_person_added_is_implemented() {
     let mut designed = claimed(labeled(issue(9), label::READY_FOR_AGENT));
     designed.labels.push(label::DESIGNED.into());
@@ -3166,7 +3166,7 @@ fn a_designed_issue_with_only_sub_issues_a_person_added_is_implemented() {
     assert_eq!(decide(&world), vec![implement(9)]);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_being_cut_waits_for_its_design_and_neither_closes_nor_discards() {
     // Labeled designed, and yet to let go of its status label and of
     // Linewright.
@@ -3202,7 +3202,7 @@ fn an_issue_being_cut_waits_for_its_design_and_neither_closes_nor_discards() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_tickets_and_designs_it_once_they_are_removed()
  {
     let mut stopped = claimed(readied(9));
@@ -3236,7 +3236,7 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_tickets_and_designs_i
     assert_eq!(decide(&snapshot(vec![discarded])), vec![design(9)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_added_as_a_sub_issue() {
     let mut undesigned = cut_issue(9, &[(10, true)]);
     undesigned.labels.clear();
@@ -3255,7 +3255,7 @@ fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_added_as_
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_with_only_linewrights_issues_a_person_added_as_sub_issues_is_no_tracking_issue() {
     let mut designed = labeled(claimed(readied(9)), label::DESIGNED);
     designed.sub_issues = vec![SubIssue {
@@ -3266,7 +3266,7 @@ fn an_issue_with_only_linewrights_issues_a_person_added_as_sub_issues_is_no_trac
     assert_eq!(decide(&snapshot(vec![designed])), vec![implement(9)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_discarded() {
     let mut undesigned = cut_issue(9, &[(10, true)]);
     undesigned.labels.clear();
@@ -3281,7 +3281,7 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_discarded() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_discarded_spec_change_closes_linewrights_tickets_and_their_pull_requests_and_nothing_else_is_done_to_them()
  {
     let mut tracking = tracking(9, 5, &[(10, true), (11, false)]);
@@ -3303,7 +3303,7 @@ fn a_discarded_spec_change_closes_linewrights_tickets_and_their_pull_requests_an
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_and_linewrights_pull_requests_discarded_and_nothing_else_done_to_them()
  {
     let mut undesigned = cut_issue(9, &[(10, true), (11, true)]);
@@ -3327,7 +3327,7 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_and_linewrights_pu
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_discard_stopped_after_closing_its_pull_requests_closes_its_tickets_and_neither_hands_them_back()
  {
     let mut stopped = claimed(readied(9));
@@ -3347,7 +3347,7 @@ fn a_discard_stopped_after_closing_its_pull_requests_closes_its_tickets_and_neit
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_discard_stopped_after_closing_its_tickets_removes_them_before_the_issue_is_designed_again() {
     let mut stopped = claimed(readied(9));
     stopped.sub_issues = linewrights(&[(10, false), (11, false)]);
@@ -3365,7 +3365,7 @@ fn a_discard_stopped_after_closing_its_tickets_removes_them_before_the_issue_is_
     assert_eq!(decide(&snapshot(vec![stopped])), vec![design(9)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_tracking_issue_is_closed_when_all_its_tickets_are() {
     let world = snapshot(vec![
         tracking(9, 5, &[(10, false), (11, false)]),
@@ -3413,7 +3413,7 @@ fn scheduled(automations: &Automations, minute: i64) -> Vec<Action> {
     )
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_runs_and_the_run_is_recorded() {
     let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
@@ -3426,14 +3426,14 @@ fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_runs_and_the
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_whose_schedule_has_not_ticked_since_its_last_scheduled_run_waits() {
     let world = automations(&["hourly"], &[("hourly", 30)], &[]);
 
     assert_eq!(scheduled(&world, 59), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_seen_for_the_first_time_does_not_run_and_counts_as_having_had_a_scheduled_run_then()
  {
     let world = automations(&["hourly"], &[], &[]);
@@ -3446,7 +3446,7 @@ fn an_automation_seen_for_the_first_time_does_not_run_and_counts_as_having_had_a
     );
 }
 
-#[test]
+#[test_log::test]
 fn ticks_missed_since_the_last_scheduled_run_collapse_into_one_run() {
     // Five ticks, 13:00 to 17:00, since the last scheduled run at 12:30.
     let world = automations(&["hourly"], &[("hourly", 30)], &[]);
@@ -3460,7 +3460,7 @@ fn ticks_missed_since_the_last_scheduled_run_collapse_into_one_run() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
     // The run in flight started at 12:30; 13:00 and 14:00 tick meanwhile.
     let running = automations(&["hourly"], &[("hourly", 30)], &["hourly"]);
@@ -3476,7 +3476,7 @@ fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves() {
     // A ceiling of 4: two pipeline runs and one automation run in flight, a
     // ticket to implement, and two automations due.
@@ -3522,7 +3522,7 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_automation_seen_for_the_first_time_is_recorded_even_with_no_room() {
     let tickets = snapshot([1, 2, 3, 4].map(|n| claimed(ticket(n))).to_vec());
     let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
@@ -3555,7 +3555,7 @@ fn deciding_with_label(world: &Snapshot) -> Vec<Action> {
     deciding(world, &Memory::default(), &requiring_label())
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_only_a_labeled_needs_triage_issue_is_triaged() {
     let unlabeled = labeled(issue(1), label::NEEDS_TRIAGE);
     let with_label = labeled(labeled(issue(2), label::NEEDS_TRIAGE), REQUIRED);
@@ -3566,7 +3566,7 @@ fn with_a_required_label_only_a_labeled_needs_triage_issue_is_triaged() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_reply_sends_an_issue_back_to_triage_marked_or_not() {
     let mut unlabeled = labeled(issue(1), label::NEEDS_INFO);
     unlabeled.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
@@ -3582,7 +3582,7 @@ fn with_a_required_label_a_reply_sends_an_issue_back_to_triage_marked_or_not() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_an_issue_relabeled_after_a_question_has_the_people_asked_unassigned_marked_or_not()
  {
     let mut unlabeled = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
@@ -3606,7 +3606,7 @@ fn with_a_required_label_an_issue_relabeled_after_a_question_has_the_people_aske
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_only_a_labeled_unclaimed_ticket_is_claimed() {
     let unlabeled = ticket(1);
     let with_label = labeled(ticket(2), REQUIRED);
@@ -3617,14 +3617,14 @@ fn with_a_required_label_only_a_labeled_unclaimed_ticket_is_claimed() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_ticket_assigned_to_linewright_by_hand_is_implemented_unlabeled() {
     let world = snapshot(vec![assigned_by(ticket(1), LINEWRIGHT, "maintainer", 1)]);
 
     assert_eq!(deciding_with_label(&world), vec![implement(1)]);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_ticket_is_claimed_again_after_an_unassignment_only_if_labeled() {
     let restart = |number, required: bool| {
         let mut ticket = labeled_at(
@@ -3648,7 +3648,7 @@ fn with_a_required_label_a_ticket_is_claimed_again_after_an_unassignment_only_if
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_reopened_ticket_is_claimed_again_only_if_labeled_but_carries_on_if_claimed()
  {
     let reopened = |claimed: bool, required: bool| {
@@ -3676,7 +3676,7 @@ fn with_a_required_label_a_reopened_ticket_is_claimed_again_only_if_labeled_but_
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_work_already_started_carries_on_unlabeled() {
     let mut failing = pull(20, 2);
     failing.checks = vec![check("test", CheckState::Failed)];
@@ -3714,7 +3714,7 @@ fn with_a_required_label_work_already_started_carries_on_unlabeled() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn removing_the_required_label_cancels_no_run_in_flight() {
     let world = snapshot(vec![claimed(ticket(1))]);
     let runs = [live(1, WorkKind::Implement)];
@@ -3732,7 +3732,7 @@ fn removing_the_required_label_cancels_no_run_in_flight() {
     assert_eq!(actions, vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_only_a_labeled_spec_change_is_cut_into_tickets() {
     let unlabeled = merged(1, &["docs/spec.md"]);
     let mut with_label = merged(2, &["docs/spec.md"]);
@@ -3743,7 +3743,7 @@ fn with_a_required_label_only_a_labeled_spec_change_is_cut_into_tickets() {
     assert_eq!(deciding_with_label(&world), cut(2));
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_picked_up_on_a_later_poll() {
     let mut pr = merged(1, &["docs/spec.md"]);
     let mut world = snapshot(vec![]);
@@ -3755,7 +3755,7 @@ fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_picked_up_on_a
     assert_eq!(deciding_with_label(&world), cut(1));
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_handed_back_spec_change_is_cut_again_once_the_label_is_applied_again() {
     let handed_back = |number| {
         unassigned(
@@ -3774,7 +3774,7 @@ fn with_a_required_label_a_handed_back_spec_change_is_cut_again_once_the_label_i
     assert_eq!(deciding_with_label(&world), cut(2));
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_spec_change_assigned_to_linewright_by_hand_is_cut_unlabeled() {
     let mut world = snapshot(vec![]);
     world.merged = vec![assigned(merged(1, &["docs/spec.md"]), 1)];
@@ -3785,7 +3785,7 @@ fn with_a_required_label_a_spec_change_assigned_to_linewright_by_hand_is_cut_unl
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_designed_and_linewrights_spec_changes_are_skipped_even_if_labeled() {
     let mut designed = merged(1, &["docs/spec.md"]);
     designed.labels = vec![REQUIRED.into(), label::DESIGNED.into()];
@@ -3798,7 +3798,7 @@ fn with_a_required_label_designed_and_linewrights_spec_changes_are_skipped_even_
     assert_eq!(deciding_with_label(&world), vec![]);
 }
 
-#[test]
+#[test_log::test]
 fn removing_the_required_label_does_not_cancel_a_cut_under_way() {
     let mut world = snapshot(vec![]);
     world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
@@ -3817,7 +3817,7 @@ fn removing_the_required_label_does_not_cancel_a_cut_under_way() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn pending_spec_changes_agree_with_the_required_label() {
     let unlabeled = merged(1, &["docs/spec.md"]);
     let mut with_label = merged(2, &["docs/spec.md"]);
@@ -3919,7 +3919,7 @@ fn pull_hand_backs_apart(actions: Vec<Action>) -> (Vec<Action>, Vec<Action>) {
     })
 }
 
-#[test]
+#[test_log::test]
 fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions_are_taken() {
     let (handed_back, others) = pull_hand_backs_apart(under_usage_limit(80));
 
@@ -3933,7 +3933,7 @@ fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions
     ));
 }
 
-#[test]
+#[test_log::test]
 fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
     let starts: Vec<Action> = under_usage_limit(70)
         .into_iter()
@@ -3966,7 +3966,7 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -3993,7 +3993,7 @@ fn draining() -> Memory {
     }
 }
 
-#[test]
+#[test_log::test]
 fn while_draining_no_run_starts_and_no_item_is_claimed_but_other_actions_are_taken() {
     let (world, live, automations) = work_of_every_kind();
     let policy = Policy {
@@ -4016,7 +4016,7 @@ fn while_draining_no_run_starts_and_no_item_is_claimed_but_other_actions_are_tak
     assert_eq!(handed_back.len(), 1, "{handed_back:?}");
 }
 
-#[test]
+#[test_log::test]
 fn while_draining_a_pull_request_never_assigned_is_not_claimed_and_waits_for_the_drain() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Failed)];
@@ -4038,7 +4038,7 @@ fn while_draining_a_pull_request_never_assigned_is_not_claimed_and_waits_for_the
     assert_eq!(decided.waits.get(&Number(20)), Some(&vec![Wait::Drain]));
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_begun_part_way_through_a_plan_holds_back_the_rest_of_its_claims_and_runs() {
     let rest = vec![
         claim(3),
@@ -4067,7 +4067,7 @@ fn a_drain_begun_part_way_through_a_plan_holds_back_the_rest_of_its_claims_and_r
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_begun_part_way_through_a_plan_clears_the_stalls_of_items_linewright_holds_but_not_of_its_claims()
  {
     let rest = vec![
@@ -4083,7 +4083,7 @@ fn a_drain_begun_part_way_through_a_plan_clears_the_stalls_of_items_linewright_h
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_begun_part_way_through_a_plan_leaves_the_last_scheduled_runs_as_they_were_when_it_held_back_all()
  {
     let rest = vec![
@@ -4097,7 +4097,7 @@ fn a_drain_begun_part_way_through_a_plan_leaves_the_last_scheduled_runs_as_they_
     );
 }
 
-#[test]
+#[test_log::test]
 fn while_draining_a_green_pull_request_is_merged_still() {
     let mut pr = pull(20, 2);
     pr.checks = vec![check("test", CheckState::Passed)];
@@ -4116,7 +4116,7 @@ fn while_draining_a_green_pull_request_is_merged_still() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn while_draining_under_the_usage_limit_too_work_waits_for_the_drain() {
     let world = snapshot(vec![claimed(ticket(1))]);
     let mut memory = draining();
@@ -4128,7 +4128,7 @@ fn while_draining_under_the_usage_limit_too_work_waits_for_the_drain() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_latest_usage_limit_reset_holds_starts_back() {
     let mut memory = Memory::default();
 
@@ -4139,7 +4139,7 @@ fn the_latest_usage_limit_reset_holds_starts_back() {
     assert!(memory.holds_starts(t(85)));
 }
 
-#[test]
+#[test_log::test]
 fn the_usage_limit_is_lifted_once_its_reset_passes() {
     let mut memory = under_usage_limit_until(80);
 
@@ -4175,7 +4175,7 @@ fn waits_on(world: &Snapshot, number: u64) -> Vec<Wait> {
         .unwrap_or_default()
 }
 
-#[test]
+#[test_log::test]
 fn a_blocked_ticket_waits_for_each_open_blocker() {
     let world = snapshot(vec![blocked_by(
         blocked_by(blocked_by(ticket(4), 1, true), 2, false),
@@ -4192,7 +4192,7 @@ fn a_blocked_ticket_waits_for_each_open_blocker() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_someone_elses_open_pull_request_closes_is_not_claimed_and_waits_for_it() {
     let world = snapshot(vec![closed_by(ticket(2), 43, "alice")]);
 
@@ -4205,7 +4205,7 @@ fn a_ticket_someone_elses_open_pull_request_closes_is_not_claimed_and_waits_for_
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_only_pull_requests_closed_before_its_claim_close_is_claimed() {
     let mut ticket = ticket(2);
     for number in [43, 44] {
@@ -4222,7 +4222,7 @@ fn a_ticket_only_pull_requests_closed_before_its_claim_close_is_claimed() {
     assert_eq!(decide(&world), vec![claim(2), implement(2)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_claimed_ticket_someone_elses_open_pull_request_closes_starts_no_run() {
     let world = snapshot(vec![closed_by(claimed(ticket(2)), 43, "renovate[bot]")]);
 
@@ -4235,7 +4235,7 @@ fn a_claimed_ticket_someone_elses_open_pull_request_closes_starts_no_run() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_waits_for_blockers_and_closing_pull_requests_alike() {
     let world = snapshot(vec![closed_by(blocked_by(ticket(4), 1, true), 43, "alice")]);
 
@@ -4324,7 +4324,7 @@ fn handed_back_issues(actions: &[Action]) -> Vec<u64> {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_closing_two_issues_is_worked_while_both_wait_for_it_whatever_their_labels() {
     // An issue in review is not let go of, whatever its label.
     for label in [label::READY_FOR_AGENT, label::READY_FOR_HUMAN] {
@@ -4344,7 +4344,7 @@ fn a_pull_request_closing_two_issues_is_worked_while_both_wait_for_it_whatever_t
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_closed_unmerged_hands_back_each_claimed_issue_it_closes_once() {
     let world = closed_unmerged(pull_closing_42_and_12(label::READY_FOR_AGENT), 43, 5);
     let mut relabeled = world.clone();
@@ -4356,7 +4356,7 @@ fn a_pull_request_closed_unmerged_hands_back_each_claimed_issue_it_closes_once()
     assert_eq!(decided(&relabeled).actions, vec![design(42), implement(12)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_closed_unmerged_hands_back_its_claimed_issue_and_an_unclaimed_ticket_it_closes_is_claimed_to_be_handed_back()
  {
     let mut world = pull_closing_42_and_12(label::READY_FOR_AGENT);
@@ -4377,7 +4377,7 @@ fn a_pull_request_closed_unmerged_hands_back_its_claimed_issue_and_an_unclaimed_
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_in_review_with_linewrights_pull_request_waits_for_it_alone_whatever_blocks_it() {
     let mut world = in_review(pull(43, 42));
     world.issues[0] = blocked_by(world.issues[0].clone(), 1, true);
@@ -4390,7 +4390,7 @@ fn a_ticket_in_review_with_linewrights_pull_request_waits_for_it_alone_whatever_
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_claimed_after_linewrights_pull_request_closing_it_was_closed_is_handed_back() {
     let world = snapshot(vec![assigned_at(closed_by(ticket(2), 20, LINEWRIGHT), 7)]);
     let world = closed_unmerged(world, 20, 5);
@@ -4398,7 +4398,7 @@ fn a_ticket_claimed_after_linewrights_pull_request_closing_it_was_closed_is_hand
     assert_eq!(handed_back_issues(&decide(&world)), [2]);
 }
 
-#[test]
+#[test_log::test]
 fn someone_elses_pull_request_closed_unmerged_hands_nothing_back() {
     let world = snapshot(vec![assigned_at(closed_by(ticket(2), 20, "alice"), 0)]);
     let world = closed_unmerged(world, 20, 5);
@@ -4406,7 +4406,7 @@ fn someone_elses_pull_request_closed_unmerged_hands_nothing_back() {
     assert_eq!(decide(&world), vec![implement(2)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_whose_pull_request_no_longer_closes_it_is_worked_again() {
     let mut world = in_review(pull(43, 42));
     world.pulls[0].closes = vec![];
@@ -4414,7 +4414,7 @@ fn a_ticket_whose_pull_request_no_longer_closes_it_is_worked_again() {
     assert_eq!(decide(&world), vec![implement(42)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_someone_elses_merged_pull_request_closes_waits_to_be_labeled_again() {
     let mut ticket = claimed(ticket(2));
     ticket.closed_by.push(ClosingPull {
@@ -4438,7 +4438,7 @@ fn a_ticket_someone_elses_merged_pull_request_closes_waits_to_be_labeled_again()
     );
 }
 
-#[test]
+#[test_log::test]
 fn work_beyond_the_ceiling_waits_for_a_free_run_with_the_runs_in_flight_counted() {
     let world = snapshot(vec![
         claimed(ticket(1)),
@@ -4463,7 +4463,7 @@ fn work_beyond_the_ceiling_waits_for_a_free_run_with_the_runs_in_flight_counted(
     assert!(!waits.contains_key(&Number(2)), "{waits:?}");
 }
 
-#[test]
+#[test_log::test]
 fn under_the_usage_limit_work_waits_for_its_reset() {
     let world = snapshot(vec![claimed(ticket(1))]);
     let mut memory = Memory::default();
@@ -4475,7 +4475,7 @@ fn under_the_usage_limit_work_waits_for_its_reset() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_beyond_the_ceiling_waits_for_a_free_run_too() {
     let mut world = snapshot(vec![]);
     world.merged = vec![merged(5, &["docs/spec.md"])];
@@ -4490,7 +4490,7 @@ fn a_spec_change_beyond_the_ceiling_waits_for_a_free_run_too() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_with_a_run_in_flight_waits_for_it() {
     let mut world = snapshot(vec![
         claimed(ticket(2)),
@@ -4520,7 +4520,7 @@ fn an_item_with_a_run_in_flight_waits_for_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_waits_for_ci_while_its_checks_run_or_before_any_report() {
     let mut running = pull(20, 2);
     running.checks = vec![check("test", CheckState::Pending)];
@@ -4536,7 +4536,7 @@ fn a_pull_request_waits_for_ci_while_its_checks_run_or_before_any_report() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_labeled_for_the_maintainer_or_the_people_asked_waits_for_them() {
     let world = snapshot(vec![
         labeled(issue(1), label::READY_FOR_HUMAN),
@@ -4547,7 +4547,7 @@ fn an_issue_labeled_for_the_maintainer_or_the_people_asked_waits_for_them() {
     assert_eq!(waits_on(&world, 2), [Wait::PeopleAsked]);
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_ready_for_review_waits_for_the_maintainers_review() {
     let world = in_review(ready(pull(20, 2)));
 
@@ -4559,7 +4559,7 @@ fn a_pull_request_ready_for_review_waits_for_the_maintainers_review() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_pull_request_a_person_holds_waits_for_their_review() {
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![comment("maintainer", 5, "Hmm.")];
@@ -4580,7 +4580,7 @@ fn with_auto_merge_a_pull_request_a_person_holds_waits_for_their_review() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_pull_request_held_for_what_github_requires_waits_for_it() {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Blocked {
@@ -4603,7 +4603,7 @@ fn with_auto_merge_a_pull_request_held_for_what_github_requires_waits_for_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_auto_merge_a_pull_request_whose_merge_state_is_not_known_waits_for_github() {
     let mut pr = ready(pull(20, 2));
     pr.mergeability = Mergeability::Unknown;
@@ -4623,7 +4623,7 @@ fn with_auto_merge_a_pull_request_whose_merge_state_is_not_known_waits_for_githu
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_tracking_issue_waits_for_its_open_tickets() {
     let tracking = tracking(10, 5, &[(11, false), (12, true), (13, true)]);
 
@@ -4635,7 +4635,7 @@ fn a_tracking_issue_waits_for_its_open_tickets() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_without_the_required_label_waits_for_the_maintainer_to_apply_it() {
     let required = Policy {
         require_label: Some("linewright".into()),
@@ -4666,7 +4666,7 @@ fn an_issue_without_the_required_label_waits_for_the_maintainer_to_apply_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_linewright_filed_labeled_needs_triage_is_triaged() {
     let mut filed = labeled(issue(1), label::NEEDS_TRIAGE);
     filed.author = Login::new(LINEWRIGHT);
@@ -4674,7 +4674,7 @@ fn an_issue_linewright_filed_labeled_needs_triage_is_triaged() {
     assert_eq!(decide(&snapshot(vec![filed])), vec![claim(1), triage(1)]);
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_linewright_was_unassigned_from_waits_for_ready_for_agent_again() {
     let stopped = unassigned_by(
         labeled_at(ticket(2), label::READY_FOR_AGENT, 1),
@@ -4693,7 +4693,7 @@ fn a_ticket_linewright_was_unassigned_from_waits_for_ready_for_agent_again() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_linewright_let_go_of_waits_for_ready_for_agent_or_the_required_label_again() {
     let let_go = unassigned_by(
         labeled_at(labeled(ticket(2), REQUIRED), label::READY_FOR_AGENT, 1),
@@ -4725,7 +4725,7 @@ fn a_ticket_linewright_let_go_of_waits_for_ready_for_agent_or_the_required_label
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_whose_pull_request_merged_waits_for_ready_for_agent_again() {
     let mut pr = ready(pull(20, 2));
     pr.state = PullState::Merged { at: t(5) };
@@ -4741,7 +4741,7 @@ fn a_ticket_whose_pull_request_merged_waits_for_ready_for_agent_again() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_tracking_issue_whose_spec_change_is_being_cut_waits_for_the_cut() {
     let mut world = snapshot(vec![tracking(10, 5, &[(11, true)])]);
     world.merged = vec![merged(5, &["docs/spec.md"])];
@@ -4758,7 +4758,7 @@ fn a_tracking_issue_whose_spec_change_is_being_cut_waits_for_the_cut() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_nothing() {
     let mut world = snapshot(vec![tracking(10, 5, &[(11, true)])]);
     world.merged = vec![merged(5, &["docs/spec.md"])];
@@ -4794,7 +4794,7 @@ fn live_on_pull(pr: u64, kind: WorkKind) -> LiveRun {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_requests_work() {
     let fix_ci = Action::Start(Work::FixCi {
         issue: Number(2),
@@ -4831,7 +4831,7 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_needs_triage_issue_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
     let mut assigned = labeled(issue(1), label::NEEDS_TRIAGE);
     assigned.assignees.push(Login::new("alice"));
@@ -4846,7 +4846,7 @@ fn a_needs_triage_issue_someone_else_is_assigned_to_is_not_claimed_and_waits_for
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
     let mut assigned = ticket(1);
     assigned.assignees.push(Login::new("alice"));
@@ -4861,7 +4861,7 @@ fn a_ticket_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_needs_triage_issue_that_cannot_start_is_not_claimed_and_waits() {
     let blocked = blocked_by(labeled(issue(1), label::NEEDS_TRIAGE), 3, true);
     let closed = closed_by(labeled(issue(2), label::NEEDS_TRIAGE), 43, "alice");
@@ -4877,7 +4877,7 @@ fn a_needs_triage_issue_that_cannot_start_is_not_claimed_and_waits() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_needs_triage_issue_linewright_is_assigned_to_is_triaged_without_claiming_it_again() {
     let world = snapshot(vec![claimed(labeled(issue(1), label::NEEDS_TRIAGE))]);
 
@@ -4896,7 +4896,7 @@ fn needs_triage_unassigned_by(number: u64, actor: &str) -> Issue {
     )
 }
 
-#[test]
+#[test_log::test]
 fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_needs_triage_again() {
     let relabel = Wait::Relabel {
         label: StatusLabel::NeedsTriage,
@@ -4916,7 +4916,7 @@ fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_needs_triage_ag
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_needs_triage_issue_labeled_again_after_an_unassignment_is_claimed() {
     let relabeled = labeled_at(
         needs_triage_unassigned_by(1, "maintainer"),
@@ -4930,7 +4930,7 @@ fn a_needs_triage_issue_labeled_again_after_an_unassignment_is_claimed() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn of_a_labeling_and_an_unassignment_at_the_same_time_the_later_event_decides() {
     let labeled_then_unassigned = unassigned_by(
         labeled_at(
@@ -4956,7 +4956,7 @@ fn of_a_labeling_and_an_unassignment_at_the_same_time_the_later_event_decides() 
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_applying_it_after_an_unassignment_lets_triage_claim_the_issue() {
     let stopped = labeled(needs_triage_unassigned_by(1, "maintainer"), REQUIRED);
     let relabeled = labeled_at(
@@ -4992,7 +4992,7 @@ fn with_a_required_label_applying_it_after_an_unassignment_lets_triage_claim_the
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_reply_to_needs_info_after_linewright_let_go_claims_the_issue_to_triage_it_again() {
     let mut asked = unassigned_by(
         labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1),
@@ -5015,7 +5015,7 @@ fn a_reply_to_needs_info_after_linewright_let_go_claims_the_issue_to_triage_it_a
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_triage_run_is_cancelled_when_linewright_is_unassigned_and_not_otherwise() {
     let unassigned = labeled(issue(1), label::NEEDS_TRIAGE);
     let still_claimed = claimed(labeled(issue(2), label::NEEDS_TRIAGE));
@@ -5039,7 +5039,7 @@ fn a_triage_run_is_cancelled_when_linewright_is_unassigned_and_not_otherwise() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_file_of_the_repositorys_that_cannot_be_used_holds_only_the_runs_that_read_it() {
     let world = snapshot(vec![
         labeled(issue(1), label::NEEDS_TRIAGE),
@@ -5073,7 +5073,7 @@ fn a_file_of_the_repositorys_that_cannot_be_used_holds_only_the_runs_that_read_i
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_config_of_the_repositorys_that_cannot_be_used_holds_every_run_and_leaves_automations_due() {
     let world = snapshot(vec![labeled(issue(1), label::NEEDS_TRIAGE)]);
     let mut last_scheduled_runs = LastScheduledRuns::default();
@@ -5117,7 +5117,7 @@ fn a_config_of_the_repositorys_that_cannot_be_used_holds_every_run_and_leaves_au
     );
 }
 
-#[test]
+#[test_log::test]
 fn starting_a_spec_change_design_touches_the_spec_change() {
     let action = Action::Start(Work::DesignSpecChange { pr: Number(20) });
 
@@ -5127,7 +5127,7 @@ fn starting_a_spec_change_design_touches_the_spec_change() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn merging_a_pull_request_touches_it_and_the_issues_it_closes() {
     let world = in_review(pull(20, 2));
 
@@ -5137,7 +5137,7 @@ fn merging_a_pull_request_touches_it_and_the_issues_it_closes() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn discarding_a_cut_touches_its_tickets_its_tracking_issue_and_its_pull_requests() {
     let action = Action::DiscardCut(Discard {
         item: CutItem::SpecChange {
@@ -5160,7 +5160,7 @@ fn discarding_a_cut_touches_its_tickets_its_tracking_issue_and_its_pull_requests
     );
 }
 
-#[test]
+#[test_log::test]
 fn handing_an_item_back_touches_it() {
     let action = Action::HandBack {
         item: Item::Issue(Number(2)),
@@ -5174,7 +5174,7 @@ fn handing_an_item_back_touches_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn deleting_a_ticket_branch_touches_its_ticket() {
     let action = Action::DeleteBranch {
         branch: TicketBranchName::parse("42-add-a-thing").unwrap(),
@@ -5186,7 +5186,7 @@ fn deleting_a_ticket_branch_touches_its_ticket() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_drain_has_drained_once_no_run_is_in_flight() {
     let memory = draining();
 
@@ -5194,7 +5194,7 @@ fn a_drain_has_drained_once_no_run_is_in_flight() {
     assert!(!memory.drained(1));
 }
 
-#[test]
+#[test_log::test]
 fn serve_not_draining_has_not_drained_with_no_run_in_flight() {
     assert!(!Memory::default().drained(0));
 }
@@ -5321,7 +5321,7 @@ fn a_discarded_cut_says_on_each_pull_request_and_ticket_it_closes_what_is_design
 /// `docs/specs/repository.md`, Steering: Linewright assigned to a pull
 /// request it did not open, open or merged, and no spec change, unassigns
 /// itself with a comment.
-#[test]
+#[test_log::test]
 fn linewright_assigned_to_a_pull_request_it_did_not_open_lets_go_of_it_with_a_comment() {
     let linewright = Login::new(LINEWRIGHT);
     let mut theirs = pull(30, 2);

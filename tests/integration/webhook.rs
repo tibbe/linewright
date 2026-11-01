@@ -14,7 +14,7 @@ async fn listen() -> Listener {
     .unwrap()
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_listener_logs_the_address_it_listens_on() {
     let (log, _guard) = Log::capture();
 
@@ -28,7 +28,7 @@ async fn the_listener_logs_the_address_it_listens_on() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_delivery_signed_as_github_documents_is_accepted() {
     // The example in GitHub's documentation
     // (<https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries#testing-the-webhook-payload-validation>).
@@ -46,7 +46,7 @@ async fn a_delivery_signed_as_github_documents_is_accepted() {
     assert!(response.status.is_success(), "{}", response.status);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_delivery_with_a_missing_or_wrong_signature_is_refused_and_logged() {
     let body = r#"{"issue":{"number":7}}"#;
     let other = signature(r#"{"issue":{"number":8}}"#);
@@ -145,7 +145,7 @@ fn assert_each_accepted(log: &Log) {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_form_encoded_delivery_is_verified_against_its_body_as_sent() {
     let payload = r#"{"issue":{"number":7}}"#;
     let deliveries = [
@@ -178,7 +178,7 @@ async fn a_form_encoded_delivery_is_verified_against_its_body_as_sent() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_accepted_delivery_is_logged_with_its_event_and_what_it_names() {
     let (log, _guard) = Log::capture();
     let listener = listen().await;
@@ -191,7 +191,7 @@ async fn an_accepted_delivery_is_logged_with_its_event_and_what_it_names() {
     assert_each_accepted(&log);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_delivery_sent_form_encoded_names_what_its_json_counterpart_does() {
     let (log, _guard) = Log::capture();
     let listener = listen().await;
@@ -205,7 +205,7 @@ async fn a_delivery_sent_form_encoded_names_what_its_json_counterpart_does() {
     assert_each_accepted(&log);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_content_type_with_parameters_is_read_by_its_media_type() {
     let (log, _guard) = Log::capture();
     let listener = listen().await;
@@ -248,7 +248,7 @@ async fn a_content_type_with_parameters_is_read_by_its_media_type() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_same_delivery_sent_twice_is_accepted_both_times() {
     let listener = listen().await;
     let body = r#"{"issue":{"number":7}}"#;
@@ -260,7 +260,7 @@ async fn the_same_delivery_sent_twice_is_accepted_both_times() {
     assert!(second.is_success(), "{second}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_event_outside_the_table_is_accepted_and_ignored() {
     let (log, _guard) = Log::capture();
     let listener = listen().await;
@@ -279,7 +279,7 @@ async fn an_event_outside_the_table_is_accepted_and_ignored() {
     assert_eq!(ignored.len(), 2, "{ignored:?}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_signed_delivery_that_names_no_event_or_that_cannot_be_read_is_refused_saying_why() {
     let form = "payload=%7B%22issue%22%3A%7B%22number%22%3A7%7D%7D";
     let deliveries = [
@@ -371,7 +371,7 @@ async fn a_signed_delivery_that_names_no_event_or_that_cannot_be_read_is_refused
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_signed_delivery_of_an_event_outside_the_table_is_ignored_whatever_its_payload() {
     let (log, _guard) = Log::capture();
     let listener = listen().await;
@@ -407,7 +407,7 @@ async fn a_signed_delivery_of_an_event_outside_the_table_is_ignored_whatever_its
     assert_eq!(ignored.len(), deliveries.len(), "{ignored:?}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_signed_push_to_something_other_than_a_branch_is_accepted_and_ignored() {
     let (log, _guard) = Log::capture();
     let listener = listen().await;
@@ -420,7 +420,7 @@ async fn a_signed_push_to_something_other_than_a_branch_is_accepted_and_ignored(
     assert!(info.iter().any(|line| line.contains("ignored")), "{info:?}");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_stopped_listener_takes_no_more_deliveries() {
     let listener = listen().await;
     let address = listener.local_address();
@@ -447,7 +447,7 @@ fn linewrights_pull(number: u64, head: &str, open: bool) -> Pull {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_delivery_names_its_item_the_open_pull_request_whose_head_its_commit_is_or_on_a_push_to_the_default_branch_every_open_one()
  {
     let snapshot = Snapshot {
@@ -504,7 +504,7 @@ fn a_delivery_names_its_item_the_open_pull_request_whose_head_its_commit_is_or_o
 
 /// `docs/specs/design_system.md`, Holds and problems: a delivery refused
 /// is a hold until a delivery is accepted.
-#[test]
+#[test_log::test]
 fn a_refused_delivery_holds_until_a_later_one_is_accepted() {
     let tally = |last_accepted: Option<&str>, last_refused: Option<&str>| Received {
         last_accepted: last_accepted.map(at),

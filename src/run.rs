@@ -2295,7 +2295,7 @@ async fn record_automation(
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn a_cancel_before_applying_cancels_and_applying_then_fails() {
         let cancellation = Cancellation::default();
 
@@ -2308,7 +2308,7 @@ mod tests {
         assert!(cancellation.0.token.is_cancelled());
     }
 
-    #[test]
+    #[test_log::test]
     fn a_cancel_while_applying_does_not_stop_the_run() {
         let cancellation = Cancellation::default();
 
@@ -2319,7 +2319,7 @@ mod tests {
         assert!(cancellation.begin_applying().is_ok());
     }
 
-    #[test]
+    #[test_log::test]
     fn back_in_session_with_no_cancel_meanwhile_the_run_can_be_cancelled_again() {
         let cancellation = Cancellation::default();
         cancellation.begin_applying().ok();
@@ -2330,7 +2330,7 @@ mod tests {
         assert!(cancellation.0.token.is_cancelled());
     }
 
-    #[test]
+    #[test_log::test]
     fn back_in_session_after_a_cancel_while_applying_the_run_is_cancelled() {
         let cancellation = Cancellation::default();
         cancellation.begin_applying().ok();
@@ -2345,7 +2345,7 @@ mod tests {
         assert!(cancellation.cancel());
     }
 
-    #[test]
+    #[test_log::test]
     fn applying_again_after_being_cancelled_fails() {
         let cancellation = Cancellation::default();
         cancellation.begin_applying().ok();

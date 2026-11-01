@@ -60,7 +60,7 @@ fn numbers(numbers: &[u64]) -> Vec<Number> {
     numbers.iter().copied().map(Number).collect()
 }
 
-#[test]
+#[test_log::test]
 fn explain_shows_where_the_item_is_when_serve_last_read_it_and_each_wait() {
     let blocked = Issue {
         blocked_by: vec![
@@ -88,7 +88,7 @@ fn explain_shows_where_the_item_is_when_serve_last_read_it_and_each_wait() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_names_it_as_a_child_and_waits_for_it()
  {
     let ticket = closed_by(ticket(42, "Add invoices"), 43, "alice");
@@ -105,7 +105,7 @@ fn a_ticket_someone_elses_open_pull_request_closes_is_in_review_names_it_as_a_ch
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_names_the_pull_request_that_closes_it() {
     let ticket = closed_by(ticket(42, "Add invoices"), 43, "alice");
     let answer = explain(&view(vec![ticket], vec![]), &[], Number(42), at(NOW)).unwrap();
@@ -116,7 +116,7 @@ fn the_json_names_the_pull_request_that_closes_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_a_refresh_read_again_was_last_read_then() {
     let mut view = view(vec![ticket(42, "Add invoices")], vec![]);
     view.read_at
@@ -125,7 +125,7 @@ fn an_item_a_refresh_read_again_was_last_read_then() {
     assert_eq!(text(&view, 42)[2], "last read: 2026-10-01 12:00:20 UTC");
 }
 
-#[test]
+#[test_log::test]
 fn work_held_back_waits_for_a_free_run_or_the_usage_limit() {
     let ready = view(vec![ticket(42, "Add invoices")], vec![]);
     let full = View {
@@ -147,7 +147,7 @@ fn work_held_back_waits_for_a_free_run_or_the_usage_limit() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn while_draining_work_held_back_waits_for_the_drain() {
     let draining = View {
         memory: draining_since("2026-10-01T11:59:00Z"),
@@ -170,7 +170,7 @@ fn unusable(path: &str, error: &str) -> Unusable {
     }
 }
 
-#[test]
+#[test_log::test]
 fn work_held_by_a_file_of_the_repositorys_waits_for_the_default_branch_to_fix_it() {
     let held = View {
         unusable: vec![
@@ -197,7 +197,7 @@ fn work_held_by_a_file_of_the_repositorys_waits_for_the_default_branch_to_fix_it
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_in_review_waits_for_its_pull_request() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -219,7 +219,7 @@ fn an_item_in_review_waits_for_its_pull_request() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_in_review_whose_checks_all_passed_says_ci_is_green() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -236,7 +236,7 @@ fn an_item_in_review_whose_checks_all_passed_says_ci_is_green() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_with_the_maintainer_waits_for_their_label() {
     let handed_back = labeled_by_linewright(Issue {
         labels: vec!["ready-for-human".into()],
@@ -253,7 +253,7 @@ fn an_item_with_the_maintainer_waits_for_their_label() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_carrying_two_status_labels_is_explained_by_the_newer() {
     let triaged = relabeled(
         ticket(42, "Add invoices"),
@@ -271,7 +271,7 @@ fn an_item_carrying_two_status_labels_is_explained_by_the_newer() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_linewright_acts_on_next_waits_for_nothing() {
     assert_eq!(
         text(&view(vec![ticket(42, "Add invoices")], vec![]), 42)[3..],
@@ -279,7 +279,7 @@ fn an_item_linewright_acts_on_next_waits_for_nothing() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_is_explained_as_the_issue_in_review_with_it() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -352,7 +352,7 @@ fn run_lines(text: &str) -> Vec<&str> {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn explain_shows_the_run_in_flight_with_how_long_it_has_run_then_the_past_runs_as_runs_lists_them()
 {
     let answer = explain(&implementing_42(vec![]), &runs_of_42(), Number(42), at(NOW)).unwrap();
@@ -368,7 +368,7 @@ fn explain_shows_the_run_in_flight_with_how_long_it_has_run_then_the_past_runs_a
 }
 
 /// `docs/specs/design_system.md`, Time, Durations.
-#[test]
+#[test_log::test]
 fn explain_shows_how_long_the_run_in_flight_has_run_to_its_two_largest_units() {
     let answer = explain(
         &implementing_42(vec![]),
@@ -409,7 +409,7 @@ fn implementing_42_again(pulls: Vec<Pull>) -> View {
     }
 }
 
-#[test]
+#[test_log::test]
 fn explain_shows_the_latest_three_past_runs_and_points_to_runs_for_the_rest() {
     let answer = explain(
         &implementing_42_again(vec![]),
@@ -431,7 +431,7 @@ fn explain_shows_the_latest_three_past_runs_and_points_to_runs_for_the_rest() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn explain_shows_three_past_runs_and_leaves_none_out() {
     let answer = explain(
         &implementing_42_again(vec![]),
@@ -452,7 +452,7 @@ fn explain_shows_three_past_runs_and_leaves_none_out() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_points_to_runs_for_its_own_past_runs() {
     let view = implementing_42_again(vec![draft(43, 42, &[CheckState::Pending])]);
     let mut runs = five_past_runs_of_42();
@@ -476,7 +476,7 @@ fn linewrights_pull_request_points_to_runs_for_its_own_past_runs() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_left_alone_points_to_runs_for_the_past_runs_left_out() {
     let closed = Issue {
         open: false,
@@ -500,7 +500,7 @@ fn an_item_left_alone_points_to_runs_for_the_past_runs_left_out() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_names_the_latest_three_past_runs_and_how_many_it_left_out() {
     let answer = Answer::Managed(
         explain(
@@ -527,7 +527,7 @@ fn the_json_names_the_latest_three_past_runs_and_how_many_it_left_out() {
     assert_eq!(serde_json::from_value::<Answer>(json).unwrap(), answer);
 }
 
-#[test]
+#[test_log::test]
 fn json_that_leaves_past_runs_out_before_showing_three_does_not_read_as_an_answer() {
     let answer = Answer::Managed(
         explain(
@@ -544,7 +544,7 @@ fn json_that_leaves_past_runs_out_before_showing_three_does_not_read_as_an_answe
     assert!(serde_json::from_value::<Answer>(json).is_err());
 }
 
-#[test]
+#[test_log::test]
 fn a_run_that_has_just_ended_shows_once_as_still_in_flight() {
     let mut runs = runs_of_42();
     runs[2].state = ended("2026-10-01T12:00:29Z", Ending::Done);
@@ -560,7 +560,7 @@ fn a_run_that_has_just_ended_shows_once_as_still_in_flight() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_item_with_no_runs_shows_none() {
     let answer = explain(
         &view(vec![ticket(42, "Add invoices")], vec![]),
@@ -609,7 +609,7 @@ fn assert_shows_no_runs(answer: &Answer) {
     assert_eq!(shown(answer), Vec::<String>::new());
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_merged_pull_request_shows_its_own_runs() {
     let merged = MergedPull {
         number: Number(43),
@@ -630,7 +630,7 @@ fn linewrights_merged_pull_request_shows_its_own_runs() {
     assert_shows_the_runs_of_43(&answer);
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_closed_pull_request_shows_its_own_runs() {
     let closed = Pull {
         state: PullState::Closed {
@@ -648,7 +648,7 @@ fn linewrights_closed_pull_request_shows_its_own_runs() {
     assert_shows_the_runs_of_43(&answer);
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_superseded_pull_request_shows_its_own_runs() {
     let older = draft(43, 42, &[]);
     let view = implementing_42(vec![older.clone(), draft(44, 42, &[])]);
@@ -662,7 +662,7 @@ fn linewrights_superseded_pull_request_shows_its_own_runs() {
     assert_shows_the_runs_of_43(&answer);
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_whose_issue_was_handed_back_shows_its_own_runs() {
     let handed_back = Issue {
         labels: vec!["ready-for-human".into()],
@@ -684,7 +684,7 @@ fn linewrights_pull_request_whose_issue_was_handed_back_shows_its_own_runs() {
     assert_shows_the_runs_of_43(&answer);
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_in_review_shows_its_own_runs_as_runs_lists_them() {
     let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
     let answer =
@@ -693,7 +693,7 @@ fn linewrights_pull_request_in_review_shows_its_own_runs_as_runs_lists_them() {
     assert_shows_the_runs_of_43(&answer);
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_shows_none_of_the_runs_of_the_issue_it_closes() {
     let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
     let runs = runs_of_42();
@@ -702,7 +702,7 @@ fn linewrights_pull_request_shows_none_of_the_runs_of_the_issue_it_closes() {
     assert_shows_no_runs(&answer);
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_shows_none_of_the_runs_of_the_pull_request_that_closes_it() {
     let view = implementing_42(vec![draft(43, 42, &[CheckState::Pending])]);
     let answer = explain(&view, &runs_of_42_and_43(), Number(42), at(NOW)).unwrap();
@@ -717,7 +717,7 @@ fn an_issue_shows_none_of_the_runs_of_the_pull_request_that_closes_it() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_someone_else_opened_shows_no_runs() {
     let answer = explain_read(
         &implementing_42(vec![]),
@@ -729,7 +729,7 @@ fn a_pull_request_someone_else_opened_shows_no_runs() {
     assert_shows_no_runs(&answer);
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_closing_no_issue_shows_no_runs() {
     let for_nothing = Pull {
         closes: vec![],
@@ -745,7 +745,7 @@ fn linewrights_pull_request_closing_no_issue_shows_no_runs() {
     assert_shows_no_runs(&answer);
 }
 
-#[test]
+#[test_log::test]
 fn an_item_left_alone_shows_its_past_runs_too() {
     let closed = Issue {
         open: false,
@@ -767,7 +767,7 @@ fn an_item_left_alone_shows_its_past_runs_too() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_names_the_run_in_flight_and_the_past_runs() {
     let answer = Answer::Managed(
         explain(&implementing_42(vec![]), &runs_of_42(), Number(42), at(NOW)).unwrap(),
@@ -809,7 +809,7 @@ fn the_json_names_the_run_in_flight_and_the_past_runs() {
     assert_eq!(serde_json::from_value::<Answer>(json).unwrap(), answer);
 }
 
-#[test]
+#[test_log::test]
 fn an_item_linewright_does_not_manage_has_no_explanation() {
     let unmanaged = Issue {
         labels: vec![],
@@ -826,7 +826,7 @@ fn an_item_linewright_does_not_manage_has_no_explanation() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_names_each_fact() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -862,7 +862,7 @@ fn the_json_names_each_fact() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_of_linewrights_pull_request_in_review_names_the_issue_it_closes_and_itself_as_runs_of()
 {
     let claimed = Issue {
@@ -901,7 +901,7 @@ fn the_json_of_linewrights_pull_request_in_review_names_the_issue_it_closes_and_
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_of_an_issue_in_review_names_the_pull_request_closing_it_as_its_child() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -923,7 +923,7 @@ fn the_json_of_an_issue_in_review_names_the_pull_request_closing_it_as_its_child
     assert_eq!(json["pull_request"], 43);
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
     let assigned = Issue {
         assignees: vec![Login::new("alice")],
@@ -940,7 +940,7 @@ fn a_ticket_someone_else_is_assigned_to_waits_for_them() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_linewright_let_go_of_waits_for_its_label_or_the_required_label_again() {
     let let_go = Issue {
         labels: vec!["ready-for-agent".into(), "linewright".into()],
@@ -961,7 +961,7 @@ fn a_ticket_linewright_let_go_of_waits_for_its_label_or_the_required_label_again
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_linewright_filed_labeled_needs_triage_is_managed_for_triage() {
     let filed = Issue {
         author: Login::new("factory"),
@@ -975,7 +975,7 @@ fn an_issue_linewright_filed_labeled_needs_triage_is_managed_for_triage() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_the_label_again() {
     let stopped = Issue {
         labels: vec!["needs-triage".into()],
@@ -998,7 +998,7 @@ fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_the_label_again
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_tracking_issue_with_no_tickets_and_no_cut_in_flight_is_not_managed() {
     let tracking = Issue {
         author: Login::new("factory"),
@@ -1023,7 +1023,7 @@ fn read_text(view: &View, read: &AnyItem) -> Vec<String> {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_issue_is_left_alone_as_closed() {
     let closed = Issue {
         open: false,
@@ -1044,7 +1044,7 @@ fn a_closed_issue_is_left_alone_as_closed() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_open_issue_linewright_has_not_worked_that_waits_on_a_person_is_left_alone_as_such() {
     for (label, state, left_alone) in [
         (
@@ -1076,7 +1076,7 @@ fn an_open_issue_linewright_has_not_worked_that_waits_on_a_person_is_left_alone_
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_a_person_filed_that_linewright_labeled_is_managed() {
     let handed_back = Issue {
         labels: vec!["needs-info".into()],
@@ -1091,7 +1091,7 @@ fn an_issue_a_person_filed_that_linewright_labeled_is_managed() {
     assert!(explain(&view(vec![handed_back], vec![]), &[], Number(42), at(NOW)).is_some());
 }
 
-#[test]
+#[test_log::test]
 fn an_open_issue_with_no_pipeline_label_names_the_labels() {
     let unlabeled = Issue {
         labels: vec!["bug".into()],
@@ -1111,7 +1111,7 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
 
 /// #793: an open issue Linewright worked, whose status label a person
 /// removed, with no run in flight and no open pull request closing it.
-#[test]
+#[test_log::test]
 fn an_issue_linewright_worked_whose_status_label_a_person_removed_is_left_alone() {
     let taken_back = Issue {
         labels: vec![],
@@ -1141,7 +1141,7 @@ fn an_issue_linewright_worked_whose_status_label_a_person_removed_is_left_alone(
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_with_no_status_label_is_explained_while_its_run_is_in_flight() {
     let unlabeled = Issue {
         labels: vec![],
@@ -1154,7 +1154,7 @@ fn an_issue_with_no_status_label_is_explained_while_its_run_is_in_flight() {
     assert_eq!(text(&view, 42)[1], "state: Being implemented");
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_is_not_marked() {
     let unmarked = Issue {
         labels: vec!["needs-triage".into()],
@@ -1170,7 +1170,7 @@ fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_is_n
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_an_unmarked_issue_that_would_wait_on_a_person_were_it_marked_waits_on_one()
 {
     let asked = Issue {
@@ -1186,7 +1186,7 @@ fn with_a_required_label_an_unmarked_issue_that_would_wait_on_a_person_were_it_m
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_an_issue_without_it_that_linewright_handed_back_is_managed() {
     let handed_back = Issue {
         labels: vec!["ready-for-agent".into(), label::STALLED.into()],
@@ -1205,7 +1205,7 @@ fn with_a_required_label_an_issue_without_it_that_linewright_handed_back_is_mana
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_changes_issue_with_no_tickets_is_no_tracking_issue_and_left_alone_unlabeled() {
     let tracking = Issue {
         author: Login::new("factory"),
@@ -1229,7 +1229,7 @@ fn a_spec_changes_issue_with_no_tickets_is_no_tracking_issue_and_left_alone_unla
     );
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_the_read_places_in_the_pipeline_is_explained_as_read_then() {
     let unlabeled = Issue {
         labels: vec![],
@@ -1263,7 +1263,7 @@ fn someones_pull(number: u64) -> Pull {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_pull_request_linewright_has_not_worked_is_left_alone_as_closed() {
     let closed = Pull {
         state: PullState::Closed {
@@ -1284,7 +1284,7 @@ fn a_closed_pull_request_linewright_has_not_worked_is_left_alone_as_closed() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_linewright_did_not_open_names_who_did() {
     assert_eq!(
         read_text(
@@ -1301,7 +1301,7 @@ fn a_pull_request_linewright_did_not_open_names_who_did() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_persons_pull_request_linewright_is_assigned_to_or_labeled_is_in_review() {
     let assigned = Pull {
         assignees: vec![Login::new("factory")],
@@ -1328,7 +1328,7 @@ fn a_persons_pull_request_linewright_is_assigned_to_or_labeled_is_in_review() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_closing_no_issue_is_in_review() {
     let for_nothing = Pull {
         closes: vec![],
@@ -1341,7 +1341,7 @@ fn linewrights_pull_request_closing_no_issue_is_in_review() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_older_pull_request_for_an_issue_is_in_review_too() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -1385,7 +1385,7 @@ fn merged_text(view: &View, pull: MergedPull) -> String {
     lines[3].clone()
 }
 
-#[test]
+#[test_log::test]
 fn a_merged_pull_request_names_the_rule_that_makes_it_no_spec_change() {
     let view = view(vec![], vec![]);
 
@@ -1433,7 +1433,7 @@ fn a_merged_pull_request_names_the_rule_that_makes_it_no_spec_change() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_merged_pull_request_without_the_required_label_names_it() {
     let mut view = view(vec![], vec![]);
     view.policy.require_label = Some("linewright".into());
@@ -1480,7 +1480,7 @@ fn read_merged_text(view: &View, pull: MergedPull) -> Vec<String> {
     lines_of(&render_answer(&answer, false))
 }
 
-#[test]
+#[test_log::test]
 fn a_merged_pull_request_linewright_was_unassigned_from_waits_for_its_design_and_linewright() {
     assert_eq!(
         read_merged_text(&view(vec![], vec![]), unassigned_at("30"))[1..],
@@ -1492,7 +1492,7 @@ fn a_merged_pull_request_linewright_was_unassigned_from_waits_for_its_design_and
     );
 }
 
-#[test]
+#[test_log::test]
 fn with_a_required_label_a_merged_pull_request_linewright_was_unassigned_from_is_managed() {
     let mut view = view(vec![], vec![]);
     view.policy.require_label = Some("linewright".into());
@@ -1508,7 +1508,7 @@ fn with_a_required_label_a_merged_pull_request_linewright_was_unassigned_from_is
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ready_for_human_label_on_a_merged_pull_request_does_not_keep_it_from_being_cut() {
     let answer = explain_read(
         &view(vec![], vec![]),
@@ -1526,7 +1526,7 @@ fn a_ready_for_human_label_on_a_merged_pull_request_does_not_keep_it_from_being_
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_the_read_finds_is_explained_as_waiting_for_its_design() {
     let answer = explain_read(
         &view(vec![], vec![]),
@@ -1548,7 +1548,7 @@ fn a_spec_change_the_read_finds_is_explained_as_waiting_for_its_design() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_of_an_item_left_alone_names_why() {
     let answer = explain_read(
         &view(vec![], vec![]),
@@ -1592,7 +1592,7 @@ fn the_json_of_an_item_left_alone_names_why() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_managed_answer_reads_back_as_one() {
     let answer = Answer::Managed(
         explain(
@@ -1610,7 +1610,7 @@ fn a_managed_answer_reads_back_as_one() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issue() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -1633,7 +1633,7 @@ fn linewrights_pull_request_the_read_places_in_review_is_explained_as_its_issue(
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_is_worked_whatever_the_labels_of_the_issue_it_is_for() {
     let handed_back = Issue {
         labels: vec!["ready-for-human".into()],
@@ -1662,7 +1662,7 @@ fn linewrights_pull_request_is_worked_whatever_the_labels_of_the_issue_it_is_for
     }
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_it_is_unassigned_from_waits_for_the_maintainer() {
     let open = Pull {
         assignees: vec![],
@@ -1693,7 +1693,7 @@ fn linewrights_pull_request_it_is_unassigned_from_waits_for_the_maintainer() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_of_an_open_issue_left_alone_names_why() {
     let unlabeled = Issue {
         labels: vec![],
@@ -1748,7 +1748,7 @@ fn family_lines(lines: &[String]) -> Vec<&str> {
         .collect()
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_closes() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -1763,7 +1763,7 @@ fn linewrights_pull_request_left_alone_while_open_names_the_issue_it_closes() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_merged_pull_request_names_the_issue_it_closes() {
     let done = MergedPull {
         number: Number(43),
@@ -1794,7 +1794,7 @@ fn linewrights_merged_pull_request_names_the_issue_it_closes() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_persons_merged_pull_request_linewright_labeled_is_merged_and_one_it_only_commented_on_is_not_worked()
  {
     let worked = |event| MergedPull {
@@ -1822,7 +1822,7 @@ fn a_persons_merged_pull_request_linewright_labeled_is_merged_and_one_it_only_co
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_closed_unmerged_is_closed_without_merging() {
     let closed = Pull {
         state: PullState::Closed {
@@ -1841,7 +1841,7 @@ fn linewrights_pull_request_closed_unmerged_is_closed_without_merging() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_someone_else_opened_names_the_issue_it_closes() {
     let someones_merged = MergedPull {
         body: "Closes #42".into(),
@@ -1877,7 +1877,7 @@ fn a_pull_request_someone_else_opened_names_the_issue_it_closes() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_json_of_a_closed_pull_request_names_the_issue_it_closes() {
     let closed = Pull {
         title: "Do #42".into(),
@@ -1929,7 +1929,7 @@ fn ticket_of_40() -> Issue {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_names_its_tracking_issue() {
     let view = view(vec![ticket_of_40()], vec![]);
 
@@ -1954,7 +1954,7 @@ fn tracking_40() -> Issue {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_tracking_issue_names_its_spec_change_and_each_of_its_tickets() {
     let view = view(vec![tracking_40(), ticket_of_40()], vec![]);
 
@@ -1968,7 +1968,7 @@ fn a_tracking_issue_names_its_spec_change_and_each_of_its_tickets() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_in_review_names_its_tracking_issue_and_the_pull_request_closing_it() {
     let claimed = Issue {
         assignees: vec![Login::new("factory")],
@@ -1988,7 +1988,7 @@ fn a_ticket_in_review_names_its_tracking_issue_and_the_pull_request_closing_it()
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_closed_ticket_names_its_tracking_issue() {
     let closed = Issue {
         open: false,
@@ -2006,7 +2006,7 @@ fn a_closed_ticket_names_its_tracking_issue() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_whose_parent_is_no_tracking_issue_names_no_parent() {
     let sub_issue = Issue {
         parent: Some(Parent {
@@ -2045,7 +2045,7 @@ fn ticket_cut_from_40() -> Issue {
     }
 }
 
-#[test]
+#[test_log::test]
 fn an_issue_cut_into_tickets_is_their_tracking_issue_and_names_each_sub_issue() {
     let view = view(vec![cut_40(), ticket_cut_from_40()], vec![]);
 
@@ -2063,7 +2063,7 @@ fn an_issue_cut_into_tickets_is_their_tracking_issue_and_names_each_sub_issue() 
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_cut_from_an_issue_names_it_as_its_tracking_issue() {
     let view = view(vec![cut_40(), ticket_cut_from_40()], vec![]);
 
@@ -2073,7 +2073,7 @@ fn a_ticket_cut_from_an_issue_names_it_as_its_tracking_issue() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_of_a_tracking_issue_names_its_spec_change_and_tickets_by_role() {
     let view = view(vec![tracking_40(), ticket_of_40()], vec![]);
     let answer = explain(&view, &[], Number(40), at(NOW)).unwrap();
@@ -2093,7 +2093,7 @@ fn the_json_of_a_tracking_issue_names_its_spec_change_and_tickets_by_role() {
     assert_eq!(json["state"], "tracking");
 }
 
-#[test]
+#[test_log::test]
 fn the_json_of_a_ticket_names_its_tracking_issue_by_role() {
     let view = view(vec![ticket_of_40()], vec![]);
     let answer = explain(&view, &[], Number(42), at(NOW)).unwrap();
@@ -2106,7 +2106,7 @@ fn the_json_of_a_ticket_names_its_tracking_issue_by_role() {
     assert_eq!(json["children"], serde_json::json!([]));
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_cut_into_tickets_names_its_tracking_issue() {
     let designed = AnyItem::Merged {
         pull: Box::new(merged(&["linewright:designed"])),
@@ -2125,7 +2125,7 @@ fn a_spec_change_cut_into_tickets_names_its_tracking_issue() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn the_json_of_a_spec_change_cut_into_tickets_names_its_tracking_issue_by_role() {
     let designed = AnyItem::Merged {
         pull: Box::new(merged(&["linewright:designed"])),
@@ -2141,7 +2141,7 @@ fn the_json_of_a_spec_change_cut_into_tickets_names_its_tracking_issue_by_role()
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_labeled_before_the_design_label_names_its_tracking_issue() {
     let designed = AnyItem::Merged {
         pull: Box::new(merged(&["linewright:spec-processed"])),
@@ -2154,7 +2154,7 @@ fn a_spec_change_labeled_before_the_design_label_names_its_tracking_issue() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_cut_again_names_its_newest_tracking_issue() {
     let designed = AnyItem::Merged {
         pull: Box::new(merged(&["linewright:designed"])),
@@ -2167,7 +2167,7 @@ fn a_spec_change_cut_again_names_its_newest_tracking_issue() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_not_cut_names_no_tracking_issue_from_a_cut_discarded_part_way() {
     let handed_back = AnyItem::Merged {
         pull: Box::new(unassigned_at("30")),
@@ -2218,7 +2218,7 @@ fn closed_43(closes: &[u64]) -> Pull {
     }
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_names_the_issues_it_closes() {
     let edited_open = Pull {
         body: "Closes #12".into(),
@@ -2277,7 +2277,7 @@ fn open_43_closing_12_and_42() -> Pull {
     }
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_in_review_names_each_issue_it_closes() {
     let in_review = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
     let answer = explain(&in_review, &implemented_42(), Number(43), at(NOW)).unwrap();
@@ -2305,7 +2305,7 @@ fn linewrights_pull_request_in_review_names_each_issue_it_closes() {
     assert_eq!(json["children"], serde_json::json!([]));
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_is_a_child_of_each_issue_it_closes() {
     let view = view(claimed_12_and_42(), vec![open_43_closing_12_and_42()]);
 
@@ -2318,7 +2318,7 @@ fn linewrights_pull_request_is_a_child_of_each_issue_it_closes() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_pull_request_is_explained_for_the_first_issue_it_closes_whatever_its_labels() {
     let handed_back = Issue {
         labels: vec!["ready-for-human".into()],
@@ -2351,7 +2351,7 @@ fn linewrights_pull_request_is_explained_for_the_first_issue_it_closes_whatever_
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_spec_change_cut_into_tickets_names_the_issue_it_closes_and_its_tracking_issue() {
     let designed = MergedPull {
         labels: vec!["linewright:designed".into()],
@@ -2391,7 +2391,7 @@ fn closing_40_and_41(state: PullState) -> Pull {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_pull_request_names_each_issue_it_closes_as_a_parent() {
     let closed = PullState::Closed {
         at: at("2026-10-01T11:00:00Z"),
@@ -2432,7 +2432,7 @@ fn a_pull_request_names_each_issue_it_closes_as_a_parent() {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
     let ended = |number| ClosingPull {
         number: Number(number),
@@ -2470,7 +2470,7 @@ fn a_ticket_names_each_pull_request_that_closes_it_open_closed_or_merged() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_item_says_so_on_its_state_line_and_in_its_json() {
     let stalled = labeled_by_linewright(Issue {
         labels: vec!["ready-for-human".into(), label::STALLED.into()],
@@ -2489,7 +2489,7 @@ fn a_stalled_item_says_so_on_its_state_line_and_in_its_json() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn linewrights_stalled_pull_request_says_so_on_its_state_line() {
     let open = Pull {
         assignees: vec![],
@@ -2507,7 +2507,7 @@ fn linewrights_stalled_pull_request_says_so_on_its_state_line() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_stalled_spec_change_left_alone_says_so_on_its_state_line_and_in_its_json() {
     let stalled = MergedPull {
         labels: vec!["linewright".into(), label::STALLED.into()],

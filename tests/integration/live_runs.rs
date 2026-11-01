@@ -47,7 +47,7 @@ fn removing(issue: Number, label: &str) -> Write {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_triage_run_that_readies_an_issue_keeps_it_through_a_poll_part_way_and_its_design_starts_next()
  {
     let mut world = World::new().await;
@@ -71,7 +71,7 @@ async fn a_triage_run_that_readies_an_issue_keeps_it_through_a_poll_part_way_and
     world.factory.settle().await;
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_implement_runs_pull_request_is_left_to_it_through_a_poll_part_way() {
     let mut world = World::with(|config| config.require_label = Some(REQUIRED.into())).await;
     world.store.create_label(REQUIRED);

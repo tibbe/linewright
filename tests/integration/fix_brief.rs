@@ -86,7 +86,7 @@ fn section(failures: &[CheckFailure], name: &str) -> String {
     format!("{heading}{}", &rest[..=end])
 }
 
-#[test]
+#[test_log::test]
 fn a_failing_actions_check_gives_its_report_its_output_and_the_command_for_its_full_log() {
     let failures = [CheckFailure {
         name: "test".into(),
@@ -115,7 +115,7 @@ fn a_failing_actions_check_gives_its_report_its_output_and_the_command_for_its_f
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_failing_commit_status_gives_its_description_and_link_without_a_log() {
     let failures = [CheckFailure {
         name: "ci/circleci".into(),
@@ -132,7 +132,7 @@ fn a_failing_commit_status_gives_its_description_and_link_without_a_log() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn a_check_whose_full_log_cannot_be_read_gives_its_output_without_a_pointer() {
     let failures = [CheckFailure {
         name: "test".into(),

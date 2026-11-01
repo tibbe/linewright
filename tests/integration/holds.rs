@@ -18,7 +18,7 @@ fn ready(number: u64, mergeability: Mergeability) -> Pull {
     }
 }
 
-#[test]
+#[test_log::test]
 fn a_ready_pull_request_of_linewrights_github_blocks_is_taken_as_held_and_one_it_has_not_worked_out_is_returned()
  {
     let blocked = || Mergeability::Blocked {

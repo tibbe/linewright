@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 /// So the SIGINT a terminal sends `serve`'s process group on Ctrl-C, which
 /// drains, does not also end the `git` commands of the runs in flight.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn git_runs_in_a_process_group_of_its_own() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -152,7 +152,7 @@ fn commit_marked_unfinished(dir: &Path, files: &[(&str, &str)]) {
     commit_in(dir, files, UNFINISHED_MESSAGE);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_unfinished_commit_holds_the_edits_and_new_files_but_no_ignored_file() {
     let repository = Repository::new();
     repository.branch("12-gadgets", &[(&[("src/gadgets.txt", "half\n")], "Start")]);
@@ -176,7 +176,7 @@ async fn an_unfinished_commit_holds_the_edits_and_new_files_but_no_ignored_file(
     assert_eq!(repository.git(&["status", "--porcelain"]), "");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn with_nothing_uncommitted_but_ignored_files_no_unfinished_commit_is_made() {
     let repository = Repository::new();
     repository.branch("12-gadgets", &[(&[("src/gadgets.txt", "half\n")], "Start")]);
@@ -187,7 +187,7 @@ async fn with_nothing_uncommitted_but_ignored_files_no_unfinished_commit_is_made
     assert_eq!(repository.subjects(), ["Start"]);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_unfinished_commit_already_at_head_is_amended_not_followed_by_a_second() {
     let repository = Repository::new();
     repository.branch("12-gadgets", &[(&[("src/gadgets.txt", "half\n")], "Start")]);
@@ -209,7 +209,7 @@ async fn an_unfinished_commit_already_at_head_is_amended_not_followed_by_a_secon
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_rebase_stopped_on_a_conflict_is_ended_keeping_its_resolution_new_files_and_commits_not_yet_replayed()
  {
     let repository = Repository::new();
@@ -237,7 +237,7 @@ async fn a_rebase_stopped_on_a_conflict_is_ended_keeping_its_resolution_new_file
     assert_eq!(repository.git(&["status", "--porcelain"]), "");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_merge_stopped_on_a_conflict_is_ended_keeping_its_resolution_in_an_unfinished_commit_not_a_merge()
  {
     let repository = Repository::new();
@@ -266,7 +266,7 @@ fn commit(name: &str, unfinished: bool) -> Commit {
     }
 }
 
-#[test]
+#[test_log::test]
 fn the_unfinished_of_a_branchs_commits_are_named_oldest_first() {
     let cases: [(Vec<Commit>, Option<UnfinishedCommits>); 4] = [
         (vec![], None),
@@ -298,7 +298,7 @@ fn the_unfinished_of_a_branchs_commits_are_named_oldest_first() {
     }
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_branch_the_remote_has_is_checked_out_as_it_has_it_with_its_unfinished_commits() {
     let mut unfinished = String::new();
     let repository = Repository::with_remote(|remote| {
@@ -328,7 +328,7 @@ async fn a_branch_the_remote_has_is_checked_out_as_it_has_it_with_its_unfinished
     assert_eq!(repository.file("src/partial.txt"), "half\n");
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn a_branch_the_remote_lacks_is_made_new_at_the_commit_checked_out() {
     let repository = Repository::new();
 
@@ -341,7 +341,7 @@ async fn a_branch_the_remote_lacks_is_made_new_at_the_commit_checked_out() {
     assert_eq!(repository.git(&["rev-parse", "HEAD"]), repository.begin);
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_commits_reachable_from_past_add_nothing() {
     let repository = Repository::new();
     repository.branch("12-gadgets", &[(&[("src/held.txt", "held\n")], "Held")]);
@@ -362,7 +362,7 @@ async fn the_commits_reachable_from_past_add_nothing() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn the_default_branch_a_branch_took_in_adds_nothing() {
     let repository = Repository::new();
     repository.branch("12-gadgets", &[(&[("src/ours.txt", "ours\n")], "Ours")]);
@@ -388,7 +388,7 @@ async fn the_default_branch_a_branch_took_in_adds_nothing() {
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn lines_added_one_after_another_are_one_addition() {
     let repository = Repository::new();
     repository.branch("12-gadgets", &[(&[("key.pem", "one\ntwo\n")], "Start")]);
@@ -451,7 +451,7 @@ async fn updated(repository: &Repository, rule: UpdateRule) -> (Option<UpdateMet
     (stopped, subjects.lines().map(str::to_string).collect())
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_update_always_merging_merges_the_default_branch_in_and_stops_in_a_merge_on_a_conflict()
 {
     let rule = UpdateRule::Always(UpdateMethod::Merge);
@@ -472,7 +472,7 @@ async fn an_update_always_merging_merges_the_default_branch_in_and_stops_in_a_me
     );
 }
 
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn an_update_always_rebasing_rebases_onto_the_default_branch_and_stops_in_a_rebase_on_a_conflict()
  {
     let rule = UpdateRule::Always(UpdateMethod::Rebase);
