@@ -1,0 +1,9 @@
+{
+  "name": "linewright-playwright",
+  "private": true,
+  "description": "Playwright MCP and the Playwright it drives, for the deploy image's agent sessions",
+  "dependencies": {
+    "@playwright/mcp": "0.0.84",
+    "playwright": "1.65.0-alpha-2026-10-30"
+  }
+}
