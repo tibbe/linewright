@@ -387,20 +387,31 @@ async fn needs_info_assigns_the_people_asked_and_names_them_all_even_one_github_
 }
 
 #[tokio::test]
-async fn a_reply_unassigns_the_people_asked_and_linewright_claims_the_issue_to_triage_it_again() {
+async fn a_reply_sends_the_issue_back_to_triage_then_unassigns_the_people_asked_then_linewright_claims_it()
+ {
     let mut world = World::new().await;
-    let issue = world.issue_asking_its_reporter().await;
+    let number = world.issue_asking_its_reporter().await;
 
     world
         .store
-        .comment_as("reporter", issue, "Version 3.")
+        .comment_as("reporter", number, "Version 3.")
         .unwrap();
     world.poll().await;
 
-    let issue = world.issue(issue);
-    assert_eq!(labels(&issue), ["bug", "ready-for-agent"]);
-    assert_eq!(last_comment(&issue), "Triaged again.");
-    assert_eq!(assignees(&issue), [LINEWRIGHT]);
+    let relabeled = world.issue(number);
+    assert_eq!(labels(&relabeled), ["bug", "needs-triage"]);
+    assert_eq!(assignees(&relabeled), ["reporter"]);
+
+    world.poll().await;
+
+    assert_eq!(assignees(&world.issue(number)), Vec::<&str>::new());
+
+    world.poll().await;
+
+    let triaged = world.issue(number);
+    assert_eq!(labels(&triaged), ["bug", "ready-for-agent"]);
+    assert_eq!(last_comment(&triaged), "Triaged again.");
+    assert_eq!(assignees(&triaged), [LINEWRIGHT]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1450,6 +1461,112 @@ async fn a_pull_request_closed_without_merging_hands_its_ticket_back() {
     );
 }
 
+/// The writes to `issue` that change what it asks for, in the order they
+/// were made: its status labels, `linewright:designed` and Linewright's
+/// assignment.
+fn asks_written(issue: &Issue) -> Vec<String> {
+    let asks = |label: &str| {
+        label == "linewright:designed"
+            || [
+                "needs-triage",
+                "needs-info",
+                "ready-for-agent",
+                "ready-for-human",
+            ]
+            .contains(&label)
+    };
+    issue
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            IssueEvent::Labeled { label, .. } if asks(label) => Some(format!("label {label}")),
+            IssueEvent::Unlabeled { label, .. } if asks(label) => Some(format!("unlabel {label}")),
+            IssueEvent::Assignment(Assignment::Assigned { assignee, .. })
+                if assignee.as_str() == LINEWRIGHT =>
+            {
+                Some("assign Linewright".into())
+            }
+            IssueEvent::Assignment(Assignment::Unassigned { assignee, .. })
+                if assignee.as_str() == LINEWRIGHT =>
+            {
+                Some("unassign Linewright".into())
+            }
+            IssueEvent::Labeled { .. }
+            | IssueEvent::Unlabeled { .. }
+            | IssueEvent::Reopened { .. }
+            | IssueEvent::Commented { .. }
+            | IssueEvent::Assignment(_) => None,
+        })
+        .collect()
+}
+
+/// `docs/specs/repository.md`, Working an item and Writes: an issue goes
+/// from `needs-triage` to in review a row at a time, and a person closing
+/// Linewright's pull request has it handed back.
+#[tokio::test]
+async fn an_issue_is_worked_from_needs_triage_to_in_review_and_handed_back_when_its_pull_request_is_closed()
+ {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Triage, |_| {
+        Ok(
+            json!({"outcome": "ready-for-agent", "category": "bug", "comment": "Briefed."})
+                .to_string(),
+        )
+    });
+    design_issues(&world);
+    implement(&world);
+    let number = world
+        .store
+        .open_issue("reporter", "Crash", "It crashes.", &["needs-triage"]);
+
+    world.poll().await;
+    world.poll().await;
+    world.poll().await;
+
+    let in_review = world.issue(number);
+    assert_eq!(
+        asks_written(&in_review),
+        [
+            "label needs-triage",
+            // Claimed, then triaged: the new status label before the old
+            // one is removed.
+            "assign Linewright",
+            "label ready-for-agent",
+            "unlabel needs-triage",
+            // Designed, built as it is.
+            "label linewright:designed",
+        ]
+    );
+    let [pr] = world.store.pulls()[..] else {
+        panic!("expected one pull request");
+    };
+    let pull = world.store.snapshot_pull(pr).await;
+    assert!(pull.is_open());
+    assert_eq!(pull.closes, [number]);
+    assert_eq!(assignees(&in_review), [LINEWRIGHT]);
+
+    world.clock.advance(TimeDelta::minutes(1));
+    world.store.close_pull_as(pr).unwrap();
+    world.poll().await;
+
+    let handed_back = world.issue(number);
+    assert_eq!(
+        asks_written(&handed_back)[5..],
+        [
+            // The design is the issue's own, so it goes first, then the
+            // status label, then the assignment.
+            "unlabel linewright:designed",
+            "label ready-for-human",
+            "unlabel ready-for-agent",
+            "unassign Linewright",
+        ]
+    );
+    assert_eq!(
+        last_comment(&handed_back),
+        format!("{pr} was closed without merging.")
+    );
+}
+
 #[tokio::test]
 async fn an_issue_whose_label_asks_nothing_assigned_to_linewright_by_hand_is_let_go_with_a_comment()
 {
@@ -2413,7 +2530,9 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
         linewright_assigned(&world, pr).await,
         "a failure after Linewright is reassigned is retried, not handed back"
     );
-    assert_eq!(world.store.pull_labels(pr), Vec::<String>::new());
+    // Its stall is cleared only once no row before that one holds, and the
+    // merge's does.
+    assert_eq!(world.store.pull_labels(pr), ["linewright:stalled"]);
 
     world.store.accept_merges(pr);
     world.poll().await;
