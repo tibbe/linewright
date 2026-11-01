@@ -4970,24 +4970,17 @@ fn a_discarded_cut_says_on_each_pull_request_and_ticket_it_closes_what_is_design
     );
 }
 
-/// `docs/specs/repository.md`, Steering: Linewright assigned to a pull
-/// request it did not open, open or merged, and no spec change, unassigns
-/// itself with a comment.
+/// `docs/specs/repository.md`, Steering: Linewright assigned to an open
+/// pull request it did not open unassigns itself with a comment.
 #[test_log::test]
-fn linewright_assigned_to_a_pull_request_it_did_not_open_lets_go_of_it_with_a_comment() {
-    let linewright = Login::new(LINEWRIGHT);
+fn linewright_assigned_to_an_open_pull_request_it_did_not_open_lets_go_of_it_with_a_comment() {
     let mut theirs = pull(30, 2);
     theirs.author = Login::new("alice");
-    let mut merged_code = merged(31, &["src/main.rs"]);
-    merged_code.assignees = vec![linewright.clone()];
-    let mut spec_change = merged(32, &["docs/specs/product.md"]);
-    spec_change.assignees = vec![linewright];
     let mut unassigned = pull(33, 3);
     unassigned.author = Login::new("alice");
     unassigned.assignees = vec![];
     let mut world = snapshot(vec![]);
     world.peoples_pulls = vec![theirs, unassigned];
-    world.merged = vec![merged_code, spec_change];
 
     let let_go: Vec<Number> = decide(&world)
         .into_iter()
@@ -5001,5 +4994,19 @@ fn linewright_assigned_to_a_pull_request_it_did_not_open_lets_go_of_it_with_a_co
         })
         .collect();
 
-    assert_eq!(let_go, [Number(31), Number(30)]);
+    assert_eq!(let_go, [Number(30)]);
+}
+
+/// `docs/specs/repository.md`, Steering and Working an item: Linewright
+/// assigned to a merged pull request it does not take up neither comments on
+/// it nor unassigns itself. Which merged pull requests it takes up is
+/// `lifecycle::merged_row`'s, tested on its own.
+#[test_log::test]
+fn linewright_assigned_to_a_merged_pull_request_it_does_not_take_up_leaves_it_as_it_is() {
+    let mut code = merged(31, &["src/main.rs"]);
+    code.assignees = vec![Login::new(LINEWRIGHT)];
+    let mut world = snapshot(vec![]);
+    world.merged = vec![code];
+
+    assert_eq!(decide(&world), []);
 }

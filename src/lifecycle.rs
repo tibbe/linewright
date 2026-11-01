@@ -530,15 +530,12 @@ pub enum PullRow {
     ClearStall,
 }
 
-/// A row of the Working an item table, or of Steering, for a merged pull
-/// request a person opened.
+/// The row of the Working an item table, or of Steering, that takes up a
+/// merged spec change: Linewright opens its issue, then unassigns itself
+/// from the spec change where `let_go`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MergedRow {
-    /// Takes up a spec change by opening its issue, then unassigns
-    /// Linewright from the spec change where `let_go`.
-    TakeUp { let_go: bool },
-    /// Unassigns Linewright, posting `comment` first.
-    LetGo { comment: String },
+pub struct TakeUp {
+    pub let_go: bool,
 }
 
 /// The first row that holds for the open pull request of `facts` in
@@ -571,8 +568,7 @@ pub fn pull_row(facts: &PullFacts, state: State, linewright: &Login) -> Option<P
     }
 }
 
-/// The comment letting go of a pull request Linewright did not open and
-/// that is no spec change.
+/// The comment letting go of an open pull request Linewright did not open.
 fn not_its_own(linewright: &Login) -> String {
     format!(
         "@{linewright} works only on the pull requests it opens and on spec changes, so it has \
@@ -584,31 +580,21 @@ fn not_its_own(linewright: &Login) -> String {
 /// for a merged pull request a person opened, `as_spec_change` the spec
 /// change Linewright may take up or why not, with Linewright `assigned` to
 /// it or not. Assigned to a spec change not yet taken up, Linewright takes
-/// it up whether it may on its own or not.
-pub fn merged_row(
-    as_spec_change: &Result<(), NotSpecChange>,
-    assigned: bool,
-    linewright: &Login,
-) -> Option<MergedRow> {
-    let let_go = |comment| assigned.then_some(MergedRow::LetGo { comment });
+/// it up whether it may on its own or not. Only taking up holds for a
+/// merged pull request: any other is left as it is, whoever is assigned.
+pub fn merged_row(as_spec_change: &Result<(), NotSpecChange>, assigned: bool) -> Option<TakeUp> {
     match as_spec_change {
-        Ok(()) => Some(MergedRow::TakeUp { let_go: assigned }),
-        Err(NotSpecChange::Linewrights) => None,
+        Ok(()) => Some(TakeUp { let_go: assigned }),
         Err(NotSpecChange::BeforeLookback { .. } | NotSpecChange::RequiredLabel { .. }) => {
-            assigned.then_some(MergedRow::TakeUp { let_go: true })
+            assigned.then_some(TakeUp { let_go: true })
         }
-        Err(NotSpecChange::TakenUp { issue }) => let_go(format!(
-            "This spec change is worked through its issue, {issue}, so @{linewright} has let go \
-             of it."
-        )),
-        Err(NotSpecChange::Designed { label }) => let_go(format!(
-            "This spec change carries `{}`, so it was taken up already, and @{linewright} has \
-             let go of it.",
-            label.name()
-        )),
-        Err(NotSpecChange::OtherBranch { .. } | NotSpecChange::NoSpecFile { .. }) => {
-            let_go(not_its_own(linewright))
-        }
+        Err(
+            NotSpecChange::Linewrights
+            | NotSpecChange::TakenUp { .. }
+            | NotSpecChange::Designed { .. }
+            | NotSpecChange::OtherBranch { .. }
+            | NotSpecChange::NoSpecFile { .. },
+        ) => None,
     }
 }
 

@@ -4,8 +4,8 @@ use common::*;
 use linewright::board::Column;
 use linewright::domain::*;
 use linewright::lifecycle::{
-    Cancel, IssueFacts, IssueStage, MergedRow, Opener, PullClaim, PullFacts, PullRow, PullWorking,
-    Row, State, cancels, done_by_merge, issue_state, merged_row, pull_row, pull_state, row,
+    Cancel, IssueFacts, IssueStage, Opener, PullClaim, PullFacts, PullRow, PullWorking, Row, State,
+    TakeUp, cancels, done_by_merge, issue_state, merged_row, pull_row, pull_state, row,
 };
 use linewright::reconcile::{Discard, NotSpecChange, Policy, WorkKind};
 
@@ -902,12 +902,13 @@ type MergedCase = (
     &'static str,
     Result<(), NotSpecChange>,
     bool,
-    Option<MergedRow>,
+    Option<TakeUp>,
 );
 
 /// `docs/specs/repository.md`, Working an item and Steering: the rows of a
 /// merged pull request a person opened, a spec change Linewright may take up
-/// or why not, with Linewright assigned to it or not.
+/// or why not, with Linewright assigned to it or not. Only taking up a spec
+/// change holds for one: any other is left as it is, whoever is assigned.
 #[test_log::test]
 fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
     let before_lookback = NotSpecChange::BeforeLookback {
@@ -917,23 +918,18 @@ fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
     let unmarked = NotSpecChange::RequiredLabel {
         label: "from-linewright".into(),
     };
-    let let_go = |comment: &str| {
-        Some(MergedRow::LetGo {
-            comment: comment.into(),
-        })
-    };
     let cases: Vec<MergedCase> = vec![
         (
             "a spec change Linewright may take up",
             Ok(()),
             false,
-            Some(MergedRow::TakeUp { let_go: false }),
+            Some(TakeUp { let_go: false }),
         ),
         (
             "a spec change Linewright may take up, Linewright assigned",
             Ok(()),
             true,
-            Some(MergedRow::TakeUp { let_go: true }),
+            Some(TakeUp { let_go: true }),
         ),
         (
             "a spec change before the lookback window",
@@ -945,7 +941,7 @@ fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
             "a spec change before the lookback window, Linewright assigned",
             Err(before_lookback),
             true,
-            Some(MergedRow::TakeUp { let_go: true }),
+            Some(TakeUp { let_go: true }),
         ),
         (
             "a spec change not marked for Linewright",
@@ -957,7 +953,7 @@ fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
             "a spec change not marked for Linewright, Linewright assigned",
             Err(unmarked),
             true,
-            Some(MergedRow::TakeUp { let_go: true }),
+            Some(TakeUp { let_go: true }),
         ),
         (
             "a spec change taken up by its issue",
@@ -969,10 +965,7 @@ fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
             "a spec change taken up by its issue, Linewright assigned",
             Err(NotSpecChange::TakenUp { issue: Number(9) }),
             true,
-            let_go(&format!(
-                "This spec change is worked through its issue, #9, so @{LINEWRIGHT} has let go \
-                 of it."
-            )),
+            None,
         ),
         (
             "a spec change carrying the design label, Linewright assigned",
@@ -980,10 +973,7 @@ fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
                 label: DesignedLabel::Designed,
             }),
             true,
-            let_go(&format!(
-                "This spec change carries `linewright:designed`, so it was taken up already, \
-                 and @{LINEWRIGHT} has let go of it."
-            )),
+            None,
         ),
         (
             "no spec change, Linewright assigned",
@@ -991,10 +981,7 @@ fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
                 spec_glob: "docs/**".into(),
             }),
             true,
-            let_go(&format!(
-                "@{LINEWRIGHT} works only on the pull requests it opens and on spec changes, \
-                 so it has let go of this one."
-            )),
+            None,
         ),
         (
             "no spec change",
@@ -1013,10 +1000,6 @@ fn a_merged_pull_request_is_worked_by_the_first_row_that_holds() {
     ];
 
     for (case, as_spec_change, assigned, expected) in cases {
-        assert_eq!(
-            merged_row(&as_spec_change, assigned, &linewright()),
-            expected,
-            "{case}"
-        );
+        assert_eq!(merged_row(&as_spec_change, assigned), expected, "{case}");
     }
 }

@@ -12,8 +12,8 @@ use crate::domain::{
 };
 use crate::harness::UsageLimit;
 use crate::lifecycle::{
-    Cancel, IssueFacts, IssueStage, MergedRow, NotClaimed, Opener, PullClaim, PullFacts, PullRow,
-    PullWorking, Row, State, cancels, done_by_merge, issue_state, may_claim, merged_row, pull_row,
+    Cancel, IssueFacts, IssueStage, NotClaimed, Opener, PullClaim, PullFacts, PullRow, PullWorking,
+    Row, State, TakeUp, cancels, done_by_merge, issue_state, may_claim, merged_row, pull_row,
     pull_state, row,
 };
 use crate::phrase::Phrase;
@@ -759,16 +759,11 @@ pub fn decisions(
     for pr in &snapshot.merged {
         let assigned = pr.is_assigned(&policy.linewright);
         let as_spec_change = spec_change(pr, snapshot, now, policy);
-        match merged_row(&as_spec_change, assigned, &policy.linewright) {
-            Some(MergedRow::TakeUp { let_go }) => plan.act(Action::OpenSpecChangeIssue {
+        if let Some(TakeUp { let_go }) = merged_row(&as_spec_change, assigned) {
+            plan.act(Action::OpenSpecChangeIssue {
                 pr: pr.number,
                 let_go,
-            }),
-            Some(MergedRow::LetGo { comment }) => plan.act(Action::UnassignFromPull {
-                pr: pr.number,
-                comment,
-            }),
-            None => {}
+            });
         }
     }
 
