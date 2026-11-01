@@ -1,0 +1,6 @@
+interface:
+  display_name: "Verify the spec"
+  short_description: "Check the spec against its formal model"
+
+policy:
+  allow_implicit_invocation: true

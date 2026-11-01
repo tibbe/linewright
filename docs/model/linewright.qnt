@@ -6,13 +6,52 @@
  * encodes, quoting it: R = repository.md, D = design.md, P =
  * pull_requests.md, T = triage.md, S = sources_of_work.md, U = runs.md, DS =
  * design_system.md, M = monitoring.md. A reading the spec leaves open is an
- * assumption, A1 to A16, listed in README.md.
+ * assumption, A1 to A16, listed below.
  *
  * Three parties act. Linewright makes one GitHub write a step and may stop
  * (a crash or a kill) between any two. People act a bounded number of times
  * a trace. GitHub closes the issues a merged pull request closes, some time
  * after the merge. The model files (pipeline.qnt, cut.qnt, spec_change.qnt)
  * fix the items and the bounds.
+ *
+ * Assumptions, each cited where the model uses it:
+ *
+ * A1.  The comment that records an outcome is the first write of its series.
+ * A2.  "One writer" is one series of writes at a time across all items; runs
+ *      are in flight on several items at once.
+ * A3.  `ready-for-agent` asks for both the design and the implement run, so a
+ *      person changing `linewright:designed` during either cancels neither.
+ * A4.  A cancel takes effect at a later step of Linewright's, not with the
+ *      person's change, so a run can be in flight on an item that no longer
+ *      asks for it (the State table's "has a run in flight" row). A run
+ *      applying its result is not cancelled, and is in flight until its last
+ *      write.
+ * A5.  A run ends by the Working an item rows for its stage, whatever the
+ *      item's state is by then.
+ * A6.  A series of writes goes on to its end whatever people do to the item
+ *      meanwhile; nothing in the spec says otherwise.
+ * A7.  "It claims a pull request it opened" on an issue's terms: unassigned,
+ *      marked, and not claimed again once Linewright was unassigned until the
+ *      required label is applied again.
+ * A8.  Of the Working an item rows, only the first (a cut left behind) holds
+ *      for a closed issue: every other row's State is an open item's.
+ * A9.  A ticket cut from a spec change's issue, and a spec gap issue its design
+ *      files, reference the spec change.
+ * A10. A person's comment on a `needs-info` issue Linewright has worked is a
+ *      reply.
+ * A11. In "Asking for its work", "open" applies to both clauses.
+ * A12. A person who adds a status label may leave the old one, for Linewright
+ *      to remove.
+ * A13. A cut writes, in this order: the spec gap issue; each ticket, created
+ *      with its labels as a sub-issue in one write; each blocked-by link; the
+ *      comment; `linewright:designed`.
+ * A14. A run whose result a stop interrupted decides the same when run again.
+ * A15. The Ready line "unassigned" holds when Linewright was unassigned since
+ *      the issue's status label or the required label was last applied.
+ * A16. A claim is one write, the assignment; `linewright:stalled` is cleared by
+ *      a write of its own once Linewright is assigned. Cleared first, in the
+ *      same series, a person's relabel between the two writes has Linewright
+ *      claim an item whose state no longer asks for a claim.
  */
 module linewright {
   import facts.* from "./facts"
@@ -673,8 +712,8 @@ module linewright {
   // S4, S6 and S7, judged at each write
   // ---------------------------------------------------------------------------
 
-  /// S4: "Linewright claims an item or starts a run on it only where Starting
-  /// work allows ... nothing starts on an item with a run in flight."
+  /// S4: Linewright claims an item or starts a run on it only where Starting
+  /// work allows, and nothing starts on an item with a run in flight.
   pure def s4WriteOk(w: World, wt: Write): bool =
     wt.op != "assign" or and {
       mayStart(stateOf(w, wt.item), PRS.contains(wt.item) and it(w, wt.item).byLw).contains("claim"),
@@ -684,9 +723,9 @@ module linewright {
     mayStart(stateOf(w, i), PRS.contains(i) and it(w, i).byLw).contains(stage)
       and not(runInFlight(w, i))
 
-  /// S7: "Linewright closes, or removes from sub-issues, an item it didn't
+  /// S7: Linewright closes, or removes from sub-issues, an item it didn't
   /// create only where the spec says: a tracking issue whose sub-issues are
-  /// all closed. It never closes or detaches a sub-issue a person added."
+  /// all closed. It never closes or detaches a sub-issue a person added.
   pure def s7WriteOk(w: World, wt: Write): bool = {
     val x = it(w, wt.item)
     val personsSubIssue = x.parent != 0 and not(x.parentByLw)
@@ -698,8 +737,8 @@ module linewright {
     else true
   }
 
-  /// S6 "never repeats a write it has undone": each write's key, and the op
-  /// that undoes it.
+  /// S6, Linewright never repeats a write it has undone: each write's key,
+  /// and the op that undoes it.
   pure def key(wt: Write): (int, str, str) =
     (wt.item, wt.op, if (wt.op == "add label" or wt.op == "remove label") wt.arg else "")
   pure def undoes(op: str): str =
@@ -787,8 +826,8 @@ module linewright {
       val ws = optionWrites(world, o)
       val runs2 = if (o.act == "end run") runs.set(i, { ...runs.get(i), applying: true }) else runs
       val redo2 = if (o.act == "end run") redo.set(i, NO_REDO) else redo
-      // What a run decided is news, as a person's change is: S6's "never
-      // repeats a write it has undone" counts from the last of either.
+      // What a run decided is news, as a person's change is: S6's no repeat
+      // of an undone write counts from the last of either.
       val did2 = if (o.act == "end run") Set() else lwDid
       all { ws.length() > 0, write(ws[0], ws.tail(), o, runs2, redo2, did2) }
     }
@@ -1217,8 +1256,8 @@ module linewright {
     columnsOf("tracking", false).size() == 0,
   }
 
-  /// S2 Words and columns: "Every managed item with a state has exactly one
-  /// column, or heads a lane (a tracking issue), as the board says."
+  /// S2 Words and columns: every managed item with a state has exactly one
+  /// column, or heads a lane (a tracking issue), as the board says.
   val S2_wordsAndColumns: bool = ITEMS.forall(i => managed(world, i) implies {
     val st = stateOf(world, i)
     val p = placement(world, i)
@@ -1234,9 +1273,9 @@ module linewright {
   def lwActsOn(i: int): bool =
     optionsOn(world, i).size() > 0 or seq.select(wt => wt.item == i).length() > 0
 
-  /// S3 No card waits on nobody: "For every managed item in Triage, Needs a
+  /// S3 No card waits on nobody: for every managed item in Triage, Needs a
   /// person, Ready or Working, its card line either says why it waits, or
-  /// Linewright has an action enabled on it now."
+  /// Linewright has an action enabled on it now.
   val S3_noCardWaitsOnNobody: bool = ITEMS.forall(i => {
     val col = column(stateOf(world, i), PRS.contains(i))
     (hasOwnCard(world, i) and Set("Triage", "Needs a person", "Ready", "Working").contains(col))
@@ -1255,10 +1294,10 @@ module linewright {
     ITEMS.forall(i => not(runInFlight(world, i))),
   }
 
-  /// S6's resting places: "Left alone, every item comes to rest: done;
+  /// S6's resting places: left alone, every item comes to rest: done;
   /// waiting on a person (an answer, a decision, a review or merge, or a label
   /// or assignment after they stopped Linewright); or outside Linewright's
-  /// work."
+  /// work.
   pure def rests(w: World, i: int): bool = {
     val st = stateOf(w, i)
     val x = it(w, i)
@@ -1288,8 +1327,8 @@ module linewright {
   val S6_restsWhereQuiet: bool =
     quiescent implies ITEMS.forall(i => managed(world, i) implies restsWithTickets(world, i))
 
-  /// S6 "nothing flaps: with people idle, Linewright never repeats a write it
-  /// has undone."
+  /// S6, nothing flaps: with people idle, Linewright never repeats a write it
+  /// has undone.
   val S6_noFlap: bool = not(flapped)
 
   val vars = (items, runs, seq, seqOf, redo, clock, peopleLeft, stopsLeft, requireLabel,
@@ -1301,9 +1340,9 @@ module linewright {
   temporal S6_progress: bool =
     (weakFair(lwStep, vars) and weakFair(githubCloses, vars)) implies eventually(always(quiescent))
 
-  /// S5 Crash-safety: "If Linewright stops between two writes and people
+  /// S5 Crash-safety: if Linewright stops between two writes and people
   /// leave the item alone, it finishes as the whole series would have, or the
-  /// item comes to rest as S6 says." The end the series would have reached is
+  /// item comes to rest as S6 says. The end the series would have reached is
   /// the item's state and, while it is open, its linewright:designed and
   /// Linewright's assignment.
   temporal S5_crashSafety: bool =
