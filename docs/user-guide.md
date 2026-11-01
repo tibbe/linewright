@@ -38,16 +38,16 @@ the one applied last and removes the rest.
   choosing, so you can adopt it a little at a time. Where it is, apply that
   label to let Linewright start on an item. Removing it keeps Linewright from
   starting more on the item; work in flight goes on.
-- `linewright:designed`: Linewright's mark on a merged spec change or an
-  issue it has designed, and cut into tickets where it needed cutting. A spec
-  change labeled `linewright:spec-processed` by an earlier release counts as
-  designed.
-- `linewright:stalled`: Linewright handed the issue, pull request or spec
-  change back because the work failed, such as a session that timed out or
-  checks still failing after the fix attempts, rather than over a question.
-  Fix what failed, or have Linewright try again: label the issue
-  `ready-for-agent`, or assign Linewright to the pull request or spec change.
-  Linewright removes the label when it takes the item on again.
+- `linewright:designed`: Linewright's mark on an issue it has designed, and
+  cut into tickets where it needed cutting. A merged spec change carrying it,
+  or `linewright:spec-processed` from an earlier release, counts as taken up
+  already.
+- `linewright:stalled`: Linewright handed the issue or pull request back
+  because the work failed, such as a session that timed out or checks still
+  failing after the fix attempts, rather than over a question. Fix what
+  failed, or have Linewright try again: label the issue `ready-for-agent`, or
+  assign Linewright to the pull request. Linewright removes the label when it
+  takes the item on again.
 
 Don't label an issue `ready-for-agent` before it is clear what to build: an
 issue labeled that way is built as it stands, without triage. A new report
@@ -117,11 +117,11 @@ Linewright designs an issue before it builds it, and posts the design as a
 comment on the issue. To have it designed again, say what you want in the
 thread and remove `linewright:designed` from the issue. An issue Linewright
 hands back is designed again when you label it `ready-for-agent`, but a
-ticket keeps the design of the issue or spec change it was cut from: remove
+ticket keeps the design of the issue it was cut from: remove
 `linewright:designed` too to have it designed again.
 
-Linewright cuts an issue too big for one agent to build well into tickets,
-as it does a spec change. The tickets are the issue's sub-issues, and the
+Linewright cuts an issue too big for one agent to build well into tickets.
+The tickets are the issue's sub-issues, and the
 design comment lists them in the order they are worked. The issue becomes
 their tracking issue: it loses `ready-for-agent`, is not built itself, and
 closes once every sub-issue is closed. To have it designed again, say what you
@@ -153,22 +153,23 @@ changing it is how you build.
 
 1. Open a pull request that changes the spec, and merge it once it says what
    you want.
-2. Linewright assigns itself to your merged pull request while it cuts the
-   change into tickets, issues small enough for one agent to build well, and
-   opens a tracking issue that lists them. Then it labels the pull request
-   `linewright:designed` and unassigns itself. The tickets are worked in
-   order of what blocks what.
-3. Each ticket becomes a pull request. The tracking issue closes when every
-   ticket is closed.
+2. Linewright takes up your merged pull request by opening its issue,
+   "Spec change: " and the pull request's title, linking the pull request
+   and labeled `ready-for-agent`. From then on the work is that issue's, and
+   goes as any issue's does: Linewright designs it from the spec change and
+   its spec diff, and builds it as it is or cuts it into tickets, issues
+   small enough for one agent to build well, worked in order of what blocks
+   what.
+3. Each ticket becomes a pull request. The issue closes when every ticket is
+   closed.
 
-Code that already matches the spec produces no tickets, so building something
-by hand first is fine. Unassign Linewright from the pull request to stop the
-cut. If Linewright cannot cut the change into tickets, it unassigns itself and
-says why in a comment. Either way it leaves the change alone until you assign
-Linewright to the pull request again, which has it try again, or, where
-Linewright needs the required label, apply that label again. Assigning
-Linewright to a merged spec change it has not cut has it cut the change, also
-one without the required label.
+Linewright takes up a spec change once, within the lookback window
+(`spec-lookback`) and, where it needs the required label, one carrying it.
+Code that already matches the spec leaves nothing to build: Linewright says
+why on the issue and closes it. To steer the work, steer the issue. Assigning
+Linewright to a merged spec change it has not taken up has it open the issue,
+also for one outside the lookback window or without the required label, and
+then it unassigns itself.
 
 Agents never change the spec. Where a ticket needs a spec change, Linewright
 files a `ready-for-human` issue saying what is missing.

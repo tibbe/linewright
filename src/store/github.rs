@@ -22,8 +22,8 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Labeling, Linked,
     Login, ManagedFacts, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullHeld,
     PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review, ReviewDecision,
-    ReviewState, Snapshot, SubIssue, SubIssueState, Thread, TicketBranch, TicketBranchName,
-    Timestamp, Windows, WorkFacts, closed_within, label,
+    ReviewState, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread, TicketBranch,
+    TicketBranchName, Timestamp, Windows, WorkFacts, closed_within, label,
 };
 use crate::git;
 
@@ -914,7 +914,7 @@ impl GitHub {
         Ok(data.map(|d| d.repository.pull_request))
     }
 
-    async fn tracking_issues_of(&self, spec_change: Number) -> Result<Vec<Number>> {
+    async fn spec_change_issues_of(&self, spec_change: Number) -> Result<Vec<Number>> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct References {
@@ -939,7 +939,7 @@ impl GitHub {
             )
             .await?;
         let references = data.repository.pull_request.timeline_items;
-        Ok(tracking_issues_among(
+        Ok(spec_change_issues_among(
             references,
             spec_change,
             &self.linewright(),
@@ -1583,7 +1583,7 @@ enum ReferenceSource {
     PullRequest,
 }
 
-fn tracking_issues_among(
+fn spec_change_issues_among(
     references: Nodes<CrossReference>,
     spec_change: Number,
     linewright: &Login,
@@ -2013,6 +2013,8 @@ struct ManagedIndex {
     open: BTreeSet<Number>,
     /// Each with when it closed.
     closed: BTreeMap<Number, Timestamp>,
+    /// The spec changes' issues Linewright opened, managed or not.
+    spec_change_issues: BTreeMap<Number, IndexedSpecChangeIssue>,
     /// It holds the closed issues updated since then.
     read_since: Timestamp,
     /// The next update reads the issues updated since then.
@@ -2027,7 +2029,20 @@ impl ManagedIndex {
         self.closed.remove(&number);
         let open = issue.state == IssueState::Open;
         let closed_at = issue.closed_at;
-        if !issue.into_facts(linewright).candidate(open, linewright) {
+        let facts = issue.into_facts(linewright);
+        match facts.filed.and_then(Filed::spec_change) {
+            Some(spec_change) => {
+                let indexed = IndexedSpecChangeIssue {
+                    spec_change,
+                    closed_at: closed_at.filter(|_| !open),
+                };
+                self.spec_change_issues.insert(number, indexed);
+            }
+            None => {
+                self.spec_change_issues.remove(&number);
+            }
+        }
+        if !facts.candidate(open, linewright) {
             return;
         }
         match (open, closed_at) {
@@ -2043,6 +2058,18 @@ impl ManagedIndex {
         }
     }
 
+    /// The spec changes' issues it holds: open, or closed since its closed
+    /// issues were read back to, which holds every one created since then.
+    fn spec_change_issues(&self) -> Vec<SpecChangeIssue> {
+        self.spec_change_issues
+            .iter()
+            .map(|(&number, indexed)| SpecChangeIssue {
+                number,
+                spec_change: indexed.spec_change,
+            })
+            .collect()
+    }
+
     /// The closed issues it holds that closed since `since`.
     fn closed_since(&self, since: Timestamp) -> BTreeSet<Number> {
         self.closed
@@ -2051,6 +2078,14 @@ impl ManagedIndex {
             .map(|(number, _)| *number)
             .collect()
     }
+}
+
+/// A spec change's issue, as a [`ManagedIndex`] holds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IndexedSpecChangeIssue {
+    spec_change: Number,
+    /// When it closed, if it did.
+    closed_at: Option<Timestamp>,
 }
 
 /// How far before the time it started the next update of a [`ManagedIndex`]
@@ -2104,6 +2139,9 @@ where
         }
     }
     index.closed.retain(|_, at| *at >= read_since);
+    index
+        .spec_change_issues
+        .retain(|_, indexed| indexed.closed_at.is_none_or(|at| at >= read_since));
     index.read_since = read_since;
     index.watermark = now - WATERMARK_OVERLAP;
     if rebuilt {
@@ -3016,6 +3054,7 @@ impl Store for GitHub {
         let mut snapshot = Snapshot {
             ticket_branches: self.ticket_branches(&held).await?,
             merged: self.merged_within(&default_branch, windows).await?,
+            spec_change_issues: index.spec_change_issues(),
             closed: closed_within(closed_issues.into_iter().chain(closed_pulls), windows),
             default_branch,
             issues,
@@ -3077,7 +3116,7 @@ impl Store for GitHub {
             .with_context(|| format!("GitHub gives merged pull request {number} no merge time"))?;
         Ok(Some(AnyItem::Merged {
             pull: Box::new(self.merged_of(merged, merged_at).await?),
-            tracking_issues: self.tracking_issues_of(number).await?,
+            spec_change_issues: self.spec_change_issues_of(number).await?,
         }))
     }
 
@@ -4475,7 +4514,7 @@ mod tests {
     }
 
     #[test_log::test]
-    fn a_spec_changes_tracking_issues_are_the_issues_linewright_filed_for_it_here() {
+    fn a_spec_changes_issues_are_the_issues_linewright_filed_for_it_here() {
         let tracking = |number| {
             referenced_by(
                 number,
@@ -4499,7 +4538,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            tracking_issues_among(references, Number(5), &Login::new("linewright[bot]")),
+            spec_change_issues_among(references, Number(5), &Login::new("linewright[bot]")),
             [Number(8), Number(12)]
         );
     }
@@ -4741,6 +4780,54 @@ mod tests {
 
         assert_eq!(index.open, numbers(&[731]));
         assert_eq!(index.closed, BTreeMap::new());
+    }
+
+    /// `fixtures/managed-facts-spec-change-closed.json` is the
+    /// `ManagedFactsFields` GitHub returned on 2026-11-01 for #485 of
+    /// <https://github.com/tibbe/linewright>, the tracking issue Linewright
+    /// filed for the spec change #484 before a spec change had an issue of
+    /// its own, closed on 2026-10-22 at 07:09. The index holds it among the
+    /// spec changes' issues while it reads closed issues back to before it
+    /// closed, which a spec change's issue, opened after the spec change
+    /// merged, does while the spec change is in the lookback window.
+    #[test_log::test(tokio::test)]
+    async fn the_index_holds_a_closed_spec_changes_issue_while_it_reads_back_to_its_closing() {
+        let linewright = Login::new("tibbe-bot");
+        let recorded = include_str!("fixtures/managed-facts-spec-change-closed.json");
+        let started = refreshed(
+            None,
+            at("2026-10-22T00:00:00Z"),
+            at("2026-11-01T09:00:00Z"),
+            &linewright,
+            |filter: Value| {
+                let issues = if filter["states"] == json!(["CLOSED"]) {
+                    vec![serde_json::from_str(recorded).unwrap()]
+                } else {
+                    vec![]
+                };
+                async move { Ok(issues) }
+            },
+        )
+        .await
+        .unwrap();
+        let later = refreshed(
+            Some(started.clone()),
+            at("2026-10-23T00:00:00Z"),
+            at("2026-11-01T09:01:00Z"),
+            &linewright,
+            |_| async { Ok(vec![]) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            started.spec_change_issues(),
+            [SpecChangeIssue {
+                number: Number(485),
+                spec_change: Number(484),
+            }]
+        );
+        assert_eq!(later.spec_change_issues(), []);
     }
 
     /// `fixtures/managed-facts-updated.json` is the page of

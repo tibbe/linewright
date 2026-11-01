@@ -275,30 +275,14 @@ pub fn implement_blocked_filing_a_spec_gap(world: &World) {
         .on(WorkKind::Implement, |_| Ok(blocked_filing_a_spec_gap()));
 }
 
-/// Each design answers it is blocked, filing a spec gap.
-pub fn design_blocked_filing_a_spec_gap(world: &World) {
-    world
-        .harness
-        .on(WorkKind::Design, |_| Ok(blocked_filing_a_spec_gap()));
-}
-
-/// Each design gives up, for now.
-pub fn design_giving_up(world: &World) {
-    world.harness.on(WorkKind::Design, |_| {
-        Ok(json!({"outcome": "gave-up", "reason": "Not now."}).to_string())
-    });
-}
-
-/// A spec change [`World::spec_change_cut_into_tickets`] cut: the spec
-/// change, its tracking issue and the tickets filed under it, in order.
+/// A spec change [`World::spec_change_cut_into_tickets`] cut: the issue its
+/// tickets are filed under, and those tickets in order.
 pub struct SpecCut {
-    pub spec_change: Number,
     pub tracking: Number,
     pub tickets: [Number; 2],
 }
 
 const BLOCKED: &str = "Blocked on a question the spec cannot decide:\n\nShould gadgets expire?";
-const DESIGN_IT_AGAIN: &str = "\n\nAssign @factory to this pull request again to design it again.";
 
 impl World {
     /// An issue needing triage, which triage handed to the maintainer with a
@@ -353,10 +337,45 @@ impl World {
         self.store.unassign(issue).await.unwrap();
     }
 
-    /// A spec change of the spec and of code, merged, which design cut into
-    /// the tickets [`tickets_script`] scripts, filed under a tracking issue;
-    /// each implement run scripted as [`implement_gadgets`] scripts it.
+    /// A spec change of the spec and of code, merged and taken up, whose
+    /// issue design cut into the tickets [`tickets_script`] scripts; each
+    /// implement run scripted as [`implement_gadgets`] scripts it.
     pub async fn spec_change_cut_into_tickets(&self) -> SpecCut {
+        tickets_script(self);
+        implement_gadgets(self);
+        let spec_change = merge_spec_and_code_change(self).await;
+        let issue = self
+            .store
+            .create_issue(NewIssue {
+                title: tracking::title("Gadgets"),
+                body: tracking::body(spec_change),
+                labels: vec!["ready-for-agent".into()],
+            })
+            .await
+            .unwrap();
+        self.store.assign(issue).await.unwrap();
+        let filed = self.file_cut_under(issue).await;
+        self.publish_cut(issue, &filed).await;
+        self.store
+            .add_label(issue, "linewright:designed")
+            .await
+            .unwrap();
+        self.store
+            .remove_label(issue, "ready-for-agent")
+            .await
+            .unwrap();
+        self.store.unassign(issue).await.unwrap();
+        SpecCut {
+            tracking: issue,
+            tickets: [filed[0].number, filed[1].number],
+        }
+    }
+
+    /// A spec change of the spec and of code, merged, cut into the tickets
+    /// [`tickets_script`] scripts under a tracking issue, as Linewright
+    /// left it before a spec change had an issue of its own and before its
+    /// tracking issue carried `linewright:designed`.
+    pub async fn old_spec_change_cut(&self) -> SpecCut {
         tickets_script(self);
         implement_gadgets(self);
         let spec_change = merge_spec_and_code_change(self).await;
@@ -365,38 +384,19 @@ impl World {
             .store
             .create_issue(NewIssue {
                 title: tracking::title("Gadgets"),
-                body: tracking::body(spec_change, &[]),
+                body: format!("Tickets for the spec change in {spec_change}.\n\n"),
                 labels: vec![],
             })
             .await
             .unwrap();
         let filed = self.file_cut_under(tracking).await;
-        self.store
-            .edit_body(tracking, &tracking::body(spec_change, &filed))
-            .await
-            .unwrap();
         self.publish_cut(tracking, &filed).await;
-        self.store
-            .comment(
-                spec_change,
-                &format!(
-                    "{CUT_COMMENT}\n\nTracked in {tracking}:\n\n{}",
-                    in_order(&filed)
-                ),
-            )
-            .await
-            .unwrap();
-        self.store
-            .add_label(tracking, "linewright:designed")
-            .await
-            .unwrap();
         self.store
             .add_label(spec_change, "linewright:designed")
             .await
             .unwrap();
         self.store.unassign(spec_change).await.unwrap();
         SpecCut {
-            spec_change,
             tracking,
             tickets: [filed[0].number, filed[1].number],
         }
@@ -592,41 +592,6 @@ impl World {
             })
             .await
             .unwrap();
-    }
-
-    /// A spec change of the spec, merged, which design handed back having
-    /// given up, each design scripted as [`design_giving_up`] scripts it.
-    pub async fn spec_change_handed_back(&self) -> Number {
-        design_giving_up(self);
-        let spec_change = merge_spec_change(self).await;
-        self.store.assign(spec_change).await.unwrap();
-        self.spec_change_handed_back_saying(
-            spec_change,
-            "The designer handed the spec change back:\n\nNot now.",
-        )
-        .await;
-        spec_change
-    }
-
-    /// A spec change of the spec, merged, which design handed back blocked on
-    /// a question, having filed [`SPEC_GAP`], each design scripted as
-    /// [`design_blocked_filing_a_spec_gap`] scripts it.
-    pub async fn spec_change_blocked_filing_a_spec_gap(&self) -> Number {
-        design_blocked_filing_a_spec_gap(self);
-        let spec_change = merge_spec_change(self).await;
-        self.store.assign(spec_change).await.unwrap();
-        self.file_spec_gap(spec_change).await;
-        self.spec_change_handed_back_saying(spec_change, BLOCKED)
-            .await;
-        spec_change
-    }
-
-    async fn spec_change_handed_back_saying(&self, spec_change: Number, why: &str) {
-        self.store
-            .comment(spec_change, &format!("{why}{DESIGN_IT_AGAIN}"))
-            .await
-            .unwrap();
-        self.store.unassign(spec_change).await.unwrap();
     }
 
     /// `pr`, Linewright's draft with no CI reported, marked ready for review

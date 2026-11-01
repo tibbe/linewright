@@ -322,27 +322,37 @@ fn a_tracking_issue_is_tracking_and_has_its_tickets_closed_of_total() {
     assert_eq!(facts.tracking_issue, None);
 }
 
+/// `docs/specs/design_system.md`, The item page: the Spec change fact names
+/// the spec change a spec change's issue was opened for, and a merged spec
+/// change, worked through that issue, has no tracking issue of its own.
 #[test_log::test]
-fn a_merged_spec_change_names_the_tracking_issue_cut_from_it() {
-    let view = tracking_five();
-    let read = AnyItem::Merged {
-        pull: Box::new(spec_change(15)),
-        tracking_issues: vec![Number(20)],
+fn a_spec_changes_issue_names_its_spec_change_and_the_spec_change_no_tracking_issue() {
+    let opened = Issue {
+        author: Login::new("factory"),
+        labels: vec![label::READY_FOR_AGENT.into()],
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(15),
+        }),
+        ..ticket(20, "Spec change: Add invoices to the spec")
     };
+    let mut view = view(vec![opened.clone()], vec![]);
+    std::sync::Arc::make_mut(&mut view.snapshot).merged = vec![spec_change(15)];
 
-    let facts = facts_read(&view, &read);
+    let of_issue = facts_read(&view, &AnyItem::HeldIssue(Box::new(opened)));
+    let of_spec_change = facts_read(
+        &view,
+        &AnyItem::Merged {
+            pull: Box::new(spec_change(15)),
+            spec_change_issues: vec![Number(20)],
+        },
+    );
 
     assert_eq!(
-        lane_head(facts.tracking_issue.as_ref()),
-        &LaneHead::Tracking {
-            number: Number(20),
-            title: "Tracking 20".into(),
-            tickets_closed: 3,
-            tickets: 5,
-            done: None,
-        }
+        of_issue.spec_change,
+        Some(related(15, "Add invoices to the spec", true, None))
     );
-    assert!(facts.pull_request);
+    assert_eq!(of_spec_change.tracking_issue, None);
+    assert!(of_spec_change.pull_request);
 }
 
 /// Tracking issue #20 of spec change #15, closed at `closed_at`, whose
@@ -541,14 +551,10 @@ fn a_closed_tracking_issue_with_a_ticket_closed_at_an_unknown_time_is_tracking()
 /// its number and title, with no card status.
 #[test_log::test]
 fn a_tracking_issue_heading_no_lane_is_related_by_its_number_and_title_alone() {
-    let mut view = view(vec![tracking_issue(20, 15, &[])], vec![]);
-    std::sync::Arc::make_mut(&mut view.snapshot).merged = vec![spec_change(15)];
-    let read = AnyItem::Merged {
-        pull: Box::new(spec_change(15)),
-        tracking_issues: vec![Number(20)],
-    };
+    let cut = cut_from(ticket(21, "Ticket 21"), 20, 15);
+    let view = view(vec![tracking_issue(20, 15, &[]), cut.clone()], vec![]);
 
-    let facts = facts_read(&view, &read);
+    let facts = facts_read(&view, &AnyItem::HeldIssue(Box::new(cut)));
 
     assert_eq!(
         facts.tracking_issue,

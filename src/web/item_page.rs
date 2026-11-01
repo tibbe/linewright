@@ -187,7 +187,12 @@ fn left_alone_worded(item: &LeftAloneItem) -> Phrase {
             NotSpecChange::NoSpecFile { spec_glob } => Phrase::from("touches no file matching ")
                 .code(spec_glob.clone())
                 .text(", the spec-glob"),
-            NotSpecChange::Designed { .. } => "designed already".into(),
+            NotSpecChange::TakenUp { issue } => {
+                Phrase::from("a spec change taken up in ").item(*issue)
+            }
+            NotSpecChange::Designed { label } => Phrase::from("a spec change labeled ")
+                .code(label.name())
+                .text(", taken up already"),
             NotSpecChange::BeforeLookback {
                 merged_at,
                 window_opened,
@@ -199,6 +204,9 @@ fn left_alone_worded(item: &LeftAloneItem) -> Phrase {
                 .code(label.clone())
                 .text(", the required label"),
         },
+        LeftAloneItem::PullRequest(LeftAlonePull::TakingUp) => {
+            "a spec change Linewright takes up at its next poll".into()
+        }
     }
 }
 

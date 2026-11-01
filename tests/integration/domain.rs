@@ -324,19 +324,19 @@ fn an_issue_is_a_tracking_issue_while_it_carries_designed_and_has_tickets_linewr
         (
             "designed, with a ticket Linewright opened and added",
             designed(vec![added(2, LINEWRIGHT, Some(LINEWRIGHT))]),
-            Some(Tracks::Cut),
+            true,
             vec![2],
         ),
         (
             "designed, with a ticket Linewright opened, read before who added it was",
             designed(vec![added(2, LINEWRIGHT, None)]),
-            Some(Tracks::Cut),
+            true,
             vec![2],
         ),
         (
             "designed, with an issue Linewright opened that a person added",
             designed(vec![added(2, LINEWRIGHT, Some("alice"))]),
-            None,
+            false,
             vec![],
         ),
         (
@@ -346,19 +346,19 @@ fn an_issue_is_a_tracking_issue_while_it_carries_designed_and_has_tickets_linewr
                 added(3, LINEWRIGHT, Some("alice")),
                 added(4, "alice", Some("alice")),
             ]),
-            Some(Tracks::Cut),
+            true,
             vec![2],
         ),
         (
             "a spec change's, with Linewright's tickets but without designed",
             spec_changes(vec![], vec![added(2, LINEWRIGHT, Some(LINEWRIGHT))]),
-            None,
+            false,
             vec![2],
         ),
         (
             "a spec change's, designed, with no tickets",
             spec_changes(vec![label::DESIGNED.into()], vec![]),
-            None,
+            false,
             vec![],
         ),
         (
@@ -370,13 +370,13 @@ fn an_issue_is_a_tracking_issue_while_it_carries_designed_and_has_tickets_linewr
                     added(3, LINEWRIGHT, Some("alice")),
                 ],
             ),
-            Some(Tracks::SpecChange(Number(70))),
+            true,
             vec![2],
         ),
     ];
 
-    for (case, issue, tracks, tickets) in cases {
-        assert_eq!(issue.tracks(&linewright()), tracks, "{case}");
+    for (case, issue, tracking, tickets) in cases {
+        assert_eq!(issue.is_tracking(&linewright()), tracking, "{case}");
         let cut: Vec<u64> = issue
             .tickets_cut(&linewright())
             .map(|t| t.number.0)

@@ -89,59 +89,24 @@ fn a_designed_issue_asks(#[case] cut: IssueWork, #[case] expected: Asks) {
     assert_eq!(designed_asks(&cut), expected);
 }
 
-#[test_log::test]
-fn a_designed_spec_change_is_labeled_designed_and_let_go_of() {
-    assert_eq!(
-        spec_change_designed(),
-        Asks {
-            designed: Some(Designed::Add),
-            unassign: true,
-            ..Asks::default()
-        }
-    );
-}
-
 #[rstest]
-#[case::a_spec_change_gets_a_tracking_issue_titled_for_it(
-    true,
-    None,
-    Some(TrackingIssue {
-        issue: new_issue(
-            "Spec change: Merged 5",
-            "Tickets for the spec change in #5.\n\n",
-            &[]
-        ),
-        spec_change: Number(5),
-    })
-)]
-#[case::a_spec_changes_tracking_issue_carries_the_required_label(
-    true,
-    Some("from-linewright"),
-    Some(TrackingIssue {
-        issue: new_issue(
-            "Spec change: Merged 5",
-            "Tickets for the spec change in #5.\n\n",
-            &["from-linewright"]
-        ),
-        spec_change: Number(5),
-    })
-)]
-#[case::an_issue_is_its_own_tracking_issue(false, Some("from-linewright"), None)]
-fn a_cut_files_a_tracking_issue_for_a_spec_change(
-    #[case] spec_change: bool,
+#[case::without_a_required_label(None, &["ready-for-agent"])]
+#[case::with_the_required_label(Some("from-linewright"), &["ready-for-agent", "from-linewright"])]
+fn a_spec_changes_issue_is_titled_for_it_links_it_and_is_ready_for_linewright(
     #[case] required: Option<&str>,
-    #[case] expected: Option<TrackingIssue>,
+    #[case] labels: &[&str],
 ) {
-    let pr = merged_pull(5, "maintainer", &[]);
-    let under = if spec_change {
-        CutUnder::SpecChange(&pr)
-    } else {
-        CutUnder::Issue
-    };
+    let mut pr = merged_pull(5, "maintainer", &[]);
+    pr.title = "Bill by the minute".into();
 
-    let cut = cut(&tickets(&[("store", vec![])]), under, required);
-
-    assert_eq!(cut.tracking_issue, expected);
+    assert_eq!(
+        spec_change_issue(&pr, required),
+        new_issue(
+            "Spec change: Bill by the minute",
+            "Opened for the spec change in #5.\n",
+            labels
+        )
+    );
 }
 
 #[rstest]
@@ -177,94 +142,37 @@ fn a_cut_files_each_ticket_with_its_blockers(
     #[case] required: Option<&str>,
     #[case] expected: Vec<NewTicket>,
 ) {
-    let cut = cut(&tickets(&drafts), CutUnder::Issue, required);
+    let cut = cut(&tickets(&drafts), required);
 
     assert_eq!(cut.tickets, expected);
 }
 
-#[test_log::test]
-fn a_spec_changes_cut_files_the_same_tickets_as_an_issues() {
-    let pr = merged_pull(5, "maintainer", &[]);
-    let drafts = tickets(&[("store", vec![]), ("listing", vec![0])]);
-
-    let cut = cut(&drafts, CutUnder::SpecChange(&pr), None);
-
-    assert_eq!(
-        cut.tickets,
-        vec![
-            new_ticket("store", &[], &[]),
-            new_ticket("listing", &[], &[0])
-        ]
-    );
-}
-
 #[rstest]
-#[case::an_issues_cut_has_no_tracking_body_or_spec_change_comment(
+#[case::two_tickets(
     &[(11, "Store"), (12, "Listing")],
-    None,
-    Published {
-        tracking_body: None,
-        design_comment: "A gadget store.\n\n## Tickets\n\n1. #11 Store\n2. #12 Listing\n\nSmall steps."
-            .into(),
-        ticket_asks: Asks {
-            designed: Some(Designed::Add),
-            status: Some(StatusTo::Set(StatusLabel::ReadyForAgent)),
-            ..Asks::default()
-        },
-        spec_change_comment: None,
-    }
-)]
-#[case::a_spec_changes_cut_lists_the_tickets_on_the_tracking_issue_and_the_spec_change(
-    &[(11, "Store"), (12, "Listing")],
-    Some(Number(5)),
-    Published {
-        tracking_body: Some(
-            "Tickets for the spec change in #5.\n\n- #11 Store\n- #12 Listing\n".into()
-        ),
-        design_comment: "A gadget store.\n\n## Tickets\n\n1. #11 Store\n2. #12 Listing\n\nSmall steps."
-            .into(),
-        ticket_asks: Asks {
-            designed: Some(Designed::Add),
-            status: Some(StatusTo::Set(StatusLabel::ReadyForAgent)),
-            ..Asks::default()
-        },
-        spec_change_comment: Some(Comment {
-            on: Number(5),
-            body: "Small steps.\n\nTracked in #10:\n\n1. #11 Store\n2. #12 Listing\n".into(),
-        }),
-    }
+    "A gadget store.\n\n## Tickets\n\n1. #11 Store\n2. #12 Listing\n\nSmall steps."
 )]
 #[case::one_ticket(
     &[(11, "Store")],
-    Some(Number(5)),
-    Published {
-        tracking_body: Some("Tickets for the spec change in #5.\n\n- #11 Store\n".into()),
-        design_comment: "A gadget store.\n\n## Tickets\n\n1. #11 Store\n\nSmall steps.".into(),
-        ticket_asks: Asks {
-            designed: Some(Designed::Add),
-            status: Some(StatusTo::Set(StatusLabel::ReadyForAgent)),
-            ..Asks::default()
-        },
-        spec_change_comment: Some(Comment {
-            on: Number(5),
-            body: "Small steps.\n\nTracked in #10:\n\n1. #11 Store\n".into(),
-        }),
-    }
+    "A gadget store.\n\n## Tickets\n\n1. #11 Store\n\nSmall steps."
 )]
 fn a_cut_is_published_with_its_filed_tickets_in_order(
     #[case] tickets: &[(u64, &str)],
-    #[case] spec_change: Option<Number>,
-    #[case] expected: Published,
+    #[case] design_comment: &str,
 ) {
-    let published = published(
-        "A gadget store.",
-        "Small steps.",
-        Number(10),
-        &filed(tickets),
-        spec_change,
-    );
+    let published = published("A gadget store.", "Small steps.", &filed(tickets));
 
-    assert_eq!(published, expected);
+    assert_eq!(
+        published,
+        Published {
+            design_comment: design_comment.into(),
+            ticket_asks: Asks {
+                designed: Some(Designed::Add),
+                status: Some(StatusTo::Set(StatusLabel::ReadyForAgent)),
+                ..Asks::default()
+            },
+        }
+    );
 }
 
 #[rstest]

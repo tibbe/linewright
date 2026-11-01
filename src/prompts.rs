@@ -425,7 +425,6 @@ pub struct Prompts {
 struct OwnTemplates {
     facts: Template<Facts>,
     spec_change: Template<SpecChange>,
-    cut_spec_change: Template<NoValues>,
     cut_issue: Template<NoValues>,
     new_branch: Template<DefaultBranch>,
     existing_branch: Template<ExistingBranch>,
@@ -455,7 +454,6 @@ struct OwnTemplates {
 static OWN_TEMPLATES: LazyLock<OwnTemplates> = LazyLock::new(|| OwnTemplates {
     facts: own_template!("parts/facts.md"),
     spec_change: own_template!("parts/spec-change.md"),
-    cut_spec_change: own_template!("parts/cut-spec-change.md"),
     cut_issue: own_template!("parts/cut-issue.md"),
     new_branch: own_template!("parts/new-branch.md"),
     existing_branch: own_template!("parts/existing-branch.md"),
@@ -686,33 +684,15 @@ impl DesignOf {
     }
 }
 
-pub fn design_spec_change(
-    prompts: &Prompts,
-    repo: &Repo,
-    pr: &MergedPull,
-    spec_diff: &str,
-    filed_gaps: &[&Issue],
-    attachments: &Path,
-) -> String {
-    prompts.design.fill(&Design {
-        base: shared(repo),
-        kind: DesignOf::SpecChange.noun().into(),
-        item: render_spec_change(repo, pr, spec_diff),
-        filed_gaps: render_filed_gaps(filed_gaps),
-        cutting: OWN_TEMPLATES.cut_spec_change.fill(&NoValues {}),
-        output: design_output(DesignOf::SpecChange, attachments),
-    })
-}
-
 /// A spec change, merged, and its spec diff.
 pub struct SpecChangeAndDiff {
     pub spec_change: MergedPull,
     pub diff: String,
 }
 
-/// The same prompt as a spec change's, with the issue and its comments as
-/// what the item asks, followed for a spec change's issue by its
-/// `spec_change` (docs/specs/design.md, "The session").
+/// The design prompt, with the issue and its comments as what the item
+/// asks, followed for a spec change's issue by its `spec_change`
+/// (docs/specs/design.md, "The session").
 pub fn design_issue(
     prompts: &Prompts,
     repo: &Repo,

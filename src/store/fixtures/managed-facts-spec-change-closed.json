@@ -1,0 +1,63 @@
+{
+  "number": 485,
+  "title": "Spec change: Show lists of runs as tables",
+  "body": "Tickets for the spec change in #484.\n\n- #486 Share the board's scroll box with other pages, and pin the automations table's heads in it\n- #487 Show lists of runs as tables on the runs page and the item page\n",
+  "state": "CLOSED",
+  "closedAt": "2026-10-22T07:09:04Z",
+  "updatedAt": "2026-10-22T07:09:04Z",
+  "author": {
+    "__typename": "User",
+    "login": "tibbe-bot"
+  },
+  "labels": {
+    "nodes": []
+  },
+  "assignees": {
+    "nodes": []
+  },
+  "subIssues": {
+    "nodes": [
+      {
+        "number": 486,
+        "state": "CLOSED",
+        "closedAt": "2026-10-22T06:50:57Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "number": 487,
+        "state": "CLOSED",
+        "closedAt": "2026-10-22T07:08:57Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  },
+  "closedByPullRequestsReferences": {
+    "nodes": []
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "IssueComment",
+        "createdAt": "2026-10-22T06:37:15Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "IssueComment",
+        "createdAt": "2026-10-22T07:09:03Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  }
+}

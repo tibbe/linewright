@@ -1041,22 +1041,10 @@ fn designed_labelings(issue: &linewright::domain::Issue) -> usize {
         .count()
 }
 
-/// A spec change cut into tickets under a tracking issue, as Linewright
-/// left it before a spec change's tracking issue carried
-/// `linewright:designed`.
-async fn old_spec_change_cut(world: &World) -> SpecCut {
-    let cut = world.spec_change_cut_into_tickets().await;
-    world
-        .store
-        .unlabel_as(cut.tracking, label::DESIGNED)
-        .unwrap();
-    cut
-}
-
 #[test_log::test(tokio::test)]
 async fn startup_labels_an_old_open_spec_change_tracking_issue_designed_once_and_its_cut_goes_on() {
     let mut world = World::new().await;
-    let cut = old_spec_change_cut(&world).await;
+    let cut = world.old_spec_change_cut().await;
     let before = designed_labelings(&world.issue(cut.tracking));
 
     for _ in 0..2 {

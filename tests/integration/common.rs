@@ -69,16 +69,16 @@
 //! - `World`:
 //!   - `issue_triaged_for_the_maintainer`, `issue_asking_its_reporter`: an
 //!     issue triage handed to the maintainer, or asked its reporter about.
-//!   - `spec_change_cut_into_tickets`: a spec change cut into two tickets
-//!     under a tracking issue, as a `SpecCut`; `spec_change_ticket_in_review`,
-//!     its first ticket implemented and its pull request opened.
+//!   - `spec_change_cut_into_tickets`: a spec change taken up, its issue cut
+//!     into two tickets, as a `SpecCut`; `spec_change_ticket_in_review`, its
+//!     first ticket implemented and its pull request opened;
+//!     `old_spec_change_cut`: one cut under a tracking issue, as an earlier
+//!     release left it.
 //!   - `issue_cut_into_tickets`: an issue cut into two tickets filed under it.
 //!   - `designed_on_the_issue`: an issue designed on the issue.
 //!   - `ticket_handed_back_with_its_branch`, `ticket_timed_out_with_edits`,
 //!     `ticket_blocked_filing_a_spec_gap`: a ticket the implement stage handed
 //!     back.
-//!   - `spec_change_handed_back`, `spec_change_blocked_filing_a_spec_gap`: a
-//!     spec change design handed back.
 //!   - `ready_for_review`, `ready_for_review_on_green_checks`,
 //!     `held_for_a_code_owners_review`: a pull request marked ready once CI's
 //!     grace has passed or on green checks, or held by auto-merge for a code
@@ -92,9 +92,8 @@
 //! - `implement_gadgets`: scripts each implement run to commit gadgets to its
 //!   ticket's file.
 //! - `implement_giving_up_with_earlier_work`, `implement_timing_out_with_edits`,
-//!   `implement_blocked_filing_a_spec_gap`, `rework_timing_out_with_edits`,
-//!   `design_giving_up`, `design_blocked_filing_a_spec_gap`: script each
-//!   session of a stage to end that way.
+//!   `implement_blocked_filing_a_spec_gap`, `rework_timing_out_with_edits`:
+//!   script each session of a stage to end that way.
 //! - `start_and_leave_edits`, `rename_and_leave_edits`: commit, then leave
 //!   edits uncommitted, in a clone.
 //! - `merge_spec_change`, `merge_spec_and_code_change`: merge a spec change

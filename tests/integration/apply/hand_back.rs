@@ -55,7 +55,6 @@ fn log(of: Logged, text: &str) -> LogTail {
 enum Item {
     Issue(Box<Issue>),
     Pull,
-    SpecChange,
 }
 
 impl Item {
@@ -63,7 +62,6 @@ impl Item {
         match self {
             Item::Issue(issue) => HandedBack::Issue(issue),
             Item::Pull => HandedBack::Pull,
-            Item::SpecChange => HandedBack::SpecChange,
         }
     }
 }
@@ -132,16 +130,6 @@ impl Item {
     HandBackKind::Stall,
     Asks { designed: None, stall: true, status: None, unassign: true }
 )]
-#[case::a_spec_change_loses_its_design(
-    Item::SpecChange,
-    HandBackKind::Decision,
-    Asks { designed: Some(Designed::Remove), stall: false, status: None, unassign: true }
-)]
-#[case::a_stalled_spec_change_loses_its_design_and_is_labeled_stalled(
-    Item::SpecChange,
-    HandBackKind::Stall,
-    Asks { designed: Some(Designed::Remove), stall: true, status: None, unassign: true }
-)]
 fn a_hand_back_asks(#[case] item: Item, #[case] kind: HandBackKind, #[case] expected: Asks) {
     let handed = hand_back_of(kind, "Too hard.", None);
 
@@ -171,11 +159,6 @@ fn a_hand_back_asks(#[case] item: Item, #[case] kind: HandBackKind, #[case] expe
     Item::Pull,
     Some(log(Logged::Session, "Gave up.")),
     "Too hard.\n\n<details><summary>The end of the session's log</summary>\n\n```\nGave up.\n```\n\n</details>\n\nAssign @factory to this pull request again to try again."
-)]
-#[case::a_spec_change_is_told_to_assign_linewright_to_design_it_again(
-    Item::SpecChange,
-    None,
-    "Too hard.\n\nAssign @factory to this pull request again to design it again."
 )]
 fn a_hand_back_comments(
     #[case] item: Item,

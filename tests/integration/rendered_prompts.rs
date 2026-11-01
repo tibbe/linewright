@@ -109,36 +109,6 @@ fn triage_is_filled_as_before() {
 }
 
 #[test_log::test]
-fn design_of_a_spec_change_is_filled_as_before() {
-    let name = repo_name();
-    let pr = MergedPull {
-        number: Number(5),
-        title: "Spec the widget count".into(),
-        body: "Widgets are counted.".into(),
-        author: Login::new("maintainer"),
-        merged_at: created(),
-        updated_at: created(),
-        base_ref: "main".into(),
-        labels: vec![],
-        closes: vec![],
-        files: vec!["docs/specs/widgets.md".into()],
-        assignees: vec![],
-        events: vec![],
-    };
-    let gap = issue(9, "Which widgets count?", "Say which.");
-    let prompt = prompts::design_spec_change(
-        &common::placeholders_only().prompts,
-        &repo(&name),
-        &pr,
-        "+Widgets are counted.\n",
-        &[&gap],
-        std::path::Path::new(ATTACHMENTS),
-    );
-
-    assert_eq!(prompt, expected("design-spec-change.txt"));
-}
-
-#[test_log::test]
 fn design_of_an_issue_is_filled_as_before() {
     let name = repo_name();
     let prompt = prompts::design_issue(

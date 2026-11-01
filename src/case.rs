@@ -7,7 +7,7 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::clock::Clock;
-use crate::domain::{Login, MergeMethods, Number, UpdateMethod, UpdateRule, label};
+use crate::domain::{Filed, Login, MergeMethods, Number, UpdateMethod, UpdateRule, label};
 use crate::factory::{Factory, FactoryConfig};
 use crate::git;
 use crate::harness::Harness;
@@ -100,8 +100,7 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
                 message: text(&c["commit"]["message"]),
             })
             .collect();
-        handled.push(Subject::SpecChange(number));
-        handled.extend(tickets_of(github, &linewright, number, &text(&pr["title"])).await?);
+        handled.extend(issue_of(github, &linewright, number).await?);
         let event = Event::SpecChange {
             number,
             title: text(&pr["title"]),
@@ -191,39 +190,39 @@ pub fn copy_sessions(subjects: &[Subject], sessions: &Path, dir: &Path) -> Resul
     Ok(())
 }
 
-async fn tickets_of(
-    github: &GitHub,
-    linewright: &Login,
-    pr: Number,
-    title: &str,
-) -> Result<Vec<Subject>> {
+/// The issue Linewright opened for spec change #`pr`, the first, and its
+/// sub-issues, which its sessions ran on.
+async fn issue_of(github: &GitHub, linewright: &Login, pr: Number) -> Result<Vec<Subject>> {
     let issues = github
         .repo_get(&format!(
             "/issues?creator={linewright}&state=all&per_page=100"
         ))
         .await?;
-    let tracking_title = tracking::title(title);
-    let reference = format!("{pr}.");
-    let Some(tracking_issue) = issues.as_array().into_iter().flatten().find(|i| {
-        i["title"] == tracking_title.as_str()
-            && i["body"]
-                .as_str()
-                .is_some_and(|b| b.lines().next().is_some_and(|l| l.ends_with(&reference)))
-    }) else {
+    let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    let Some(number) = issues
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|i| {
+            tracking::filed_of(&text(&i["title"]), &text(&i["body"])).and_then(Filed::spec_change)
+                == Some(pr)
+        })
+        .filter_map(|i| i["number"].as_u64())
+        .min()
+    else {
         return Ok(vec![]);
     };
-    let number = tracking_issue["number"]
-        .as_u64()
-        .context("issues have numbers")?;
     let subs = github
         .repo_get(&format!("/issues/{number}/sub_issues?per_page=100"))
         .await?;
-    Ok(subs
+    let tickets = subs
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|s| s["number"].as_u64())
-        .map(|n| Subject::Issue(Number(n)))
+        .map(|n| Subject::Issue(Number(n)));
+    Ok(std::iter::once(Subject::Issue(Number(number)))
+        .chain(tickets)
         .collect())
 }
 

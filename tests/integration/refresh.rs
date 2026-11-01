@@ -89,15 +89,15 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
     assert_eq!(
         polled,
         [
+            Action::OpenSpecChangeIssue {
+                pr: spec,
+                let_go: false
+            },
             Action::Start(Work::Rework { issue: ticket, pr }),
             Action::Claim {
                 item: Item::Issue(issue)
             },
             Action::Start(Work::DesignIssue { issue }),
-            Action::Claim {
-                item: Item::Pull(spec)
-            },
-            Action::Start(Work::DesignSpecChange { pr: spec }),
         ]
     );
     assert_eq!(refreshed, polled);

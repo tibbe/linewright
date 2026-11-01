@@ -4,8 +4,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    self, ClosedItem, ClosedKind, ClosingPull, Issue, Item, Login, ManagedFacts, MergedPull,
-    Number, Snapshot, SubIssue, Timestamp, Tracks,
+    self, ClosedItem, ClosedKind, ClosingPull, Filed, Issue, Item, Login, ManagedFacts, MergedPull,
+    Number, Snapshot, SpecChangeIssue, SubIssue, Timestamp,
 };
 use crate::lifecycle::State;
 use crate::managed::{
@@ -198,25 +198,23 @@ impl Family {
         }
     }
 
-    /// The tracking issue is the newest, since a cut discarded part way
-    /// leaves an older one.
-    fn of_merged(pull: &MergedPull, tracking_issues: &[Number]) -> Family {
+    /// Of a merged pull request, with `issue` its issue if it is a spec
+    /// change taken up by one.
+    fn of_merged(pull: &MergedPull, issue: Option<Number>) -> Family {
         let mut family = Family::of_pull(&pull.closes);
-        if pull.designed_label().is_some() {
-            family
-                .children
-                .extend(tracking_issues.iter().max().map(|&number| Child {
-                    number,
-                    role: ChildRole::TrackingIssue,
-                }));
-        }
+        family.children.extend(issue.map(|number| Child {
+            number,
+            role: ChildRole::SpecChangeIssue,
+        }));
         family
     }
 
     fn of_issue(issue: &Issue, snapshot: &Snapshot, linewright: &Login) -> Family {
         Family::of_work(
-            issue.tracks(linewright),
-            &issue.sub_issues,
+            issue.spec_change(),
+            issue
+                .is_tracking(linewright)
+                .then_some(&issue.sub_issues[..]),
             issue.parent.filter(|_| issue.was_cut(linewright)),
             snapshot.pulls_closing(issue),
         )
@@ -231,54 +229,40 @@ impl Family {
         linewright: &Login,
     ) -> Family {
         Family::of_work(
-            facts.tracks(linewright),
-            &facts.sub_issues,
+            facts.filed.and_then(Filed::spec_change),
+            facts
+                .is_tracking(linewright)
+                .then_some(&facts.sub_issues[..]),
             parent.filter(|&parent| facts.was_cut(Some(parent), linewright)),
             closing,
         )
     }
 
-    /// The family of an issue tracking `tracks`, with `sub_issues`, cut from
-    /// its tracking issue `cut_from`, if it is a ticket, and closed by
-    /// `closing`, in number order.
+    /// The family of an issue opened for `spec_change`, if it was, with
+    /// `sub_issues` if it is a tracking issue, cut from its tracking issue
+    /// `cut_from`, if it is a ticket, and closed by `closing`, in number
+    /// order.
     fn of_work(
-        tracks: Option<Tracks>,
-        sub_issues: &[SubIssue],
+        spec_change: Option<Number>,
+        sub_issues: Option<&[SubIssue]>,
         cut_from: Option<domain::Parent>,
         closing: Vec<ClosingPull>,
     ) -> Family {
-        let tickets = || {
-            sub_issues
-                .iter()
-                .map(|ticket| Child {
-                    number: ticket.number,
-                    role: ChildRole::Ticket,
-                })
-                .collect()
-        };
-        let mut family = match tracks {
-            Some(Tracks::SpecChange(spec_change)) => Family {
-                parents: vec![Parent {
-                    number: spec_change,
-                    role: ParentRole::SpecChange,
-                }],
-                children: tickets(),
-            },
-            Some(Tracks::Cut) => Family {
-                parents: vec![],
-                children: tickets(),
-            },
-            // Only a ticket's parent is its tracking issue.
-            None => Family {
-                parents: cut_from
-                    .map(|parent| Parent {
-                        number: parent.number,
-                        role: ParentRole::TrackingIssue,
-                    })
-                    .into_iter()
-                    .collect(),
-                children: vec![],
-            },
+        let spec_change = spec_change.map(|number| Parent {
+            number,
+            role: ParentRole::SpecChange,
+        });
+        let tracking_issue = cut_from.map(|parent| Parent {
+            number: parent.number,
+            role: ParentRole::TrackingIssue,
+        });
+        let tickets = sub_issues.into_iter().flatten().map(|ticket| Child {
+            number: ticket.number,
+            role: ChildRole::Ticket,
+        });
+        let mut family = Family {
+            parents: spec_change.into_iter().chain(tracking_issue).collect(),
+            children: tickets.collect(),
         };
         let (open, ended): (Vec<ClosingPull>, Vec<ClosingPull>) =
             closing.into_iter().partition(ClosingPull::is_open);
@@ -331,7 +315,7 @@ impl ParentRole {
         match self {
             ParentRole::IssueItCloses => "an issue it closes",
             ParentRole::TrackingIssue => "its tracking issue",
-            ParentRole::SpecChange => "the spec change it tracks",
+            ParentRole::SpecChange => "the spec change it was opened for",
         }
     }
 }
@@ -347,7 +331,8 @@ pub struct Child {
 pub enum ChildRole {
     PullRequestClosingIt,
     Ticket,
-    TrackingIssue,
+    /// A spec change's issue.
+    SpecChangeIssue,
 }
 
 impl ChildRole {
@@ -355,7 +340,7 @@ impl ChildRole {
         match self {
             ChildRole::PullRequestClosingIt => "a pull request that closes it",
             ChildRole::Ticket => "one of its tickets",
-            ChildRole::TrackingIssue => "its tracking issue",
+            ChildRole::SpecChangeIssue => "its issue",
         }
     }
 }
@@ -379,10 +364,7 @@ pub fn explain(
         Held::Pull(pull) => (Item::Pull(number), Family::of_pull(&pull.closes)),
         Held::Merged(pull) => (
             Item::Pull(number),
-            Family::of_merged(
-                pull,
-                &managed::tracking_issues(snapshot, number, linewright).collect::<Vec<_>>(),
-            ),
+            Family::of_merged(pull, snapshot.spec_change_issue(number)),
         ),
         Held::Closed(item) => match &item.kind {
             ClosedKind::Issue { parent, facts, .. } => (
@@ -483,9 +465,17 @@ pub fn fresh_view(view: &View, read: &AnyItem, now: Timestamp) -> View {
             held.put_closed(ClosedItem::of_issue(issue, *closing));
         }
         AnyItem::Pull(pull) => held.put_read_pull(pull.as_ref().clone(), linewright),
-        AnyItem::Merged { pull, .. } => {
+        AnyItem::Merged {
+            pull,
+            spec_change_issues,
+        } => {
             held.remove_peoples_pull(pull.number);
             held.put_merged(pull.as_ref().clone());
+            held.spec_change_issues
+                .extend(spec_change_issues.iter().map(|&number| SpecChangeIssue {
+                    number,
+                    spec_change: pull.number,
+                }));
         }
     }
     fresh.read_at.insert(read.item(), now);
@@ -506,10 +496,9 @@ pub fn explain_fresh(
     let number = read.number();
     let family = match read {
         AnyItem::Pull(pull) => Family::of_pull(&pull.closes),
-        AnyItem::Merged {
-            pull,
-            tracking_issues,
-        } => Family::of_merged(pull, tracking_issues),
+        AnyItem::Merged { pull, .. } => {
+            Family::of_merged(pull, fresh.snapshot.spec_change_issue(pull.number))
+        }
         AnyItem::HeldIssue(issue) | AnyItem::LeftOutIssue(issue) => {
             Family::of_issue(issue, &fresh.snapshot, &fresh.policy.linewright)
         }
@@ -707,7 +696,10 @@ fn left_alone_lines(left_alone: &LeftAlone) -> Vec<ItemLine<'_>> {
             describe_pull_exclusion(left_alone)
         }
         LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }) => {
-            Phrase::from("it is no spec change: ").then(describe_not_spec_change(left_alone))
+            describe_not_spec_change(left_alone)
+        }
+        LeftAloneItem::PullRequest(LeftAlonePull::TakingUp) => {
+            "it is a spec change Linewright takes up at its next poll, by opening its issue".into()
         }
     };
     let state = left_alone.state.map(|state| {
@@ -790,25 +782,35 @@ fn describe_pull_exclusion(exclusion: &PullExclusion) -> Phrase {
 }
 
 fn describe_not_spec_change(because: &NotSpecChange) -> Phrase {
+    let none = Phrase::from("it is no spec change: ");
+    let spec_change = Phrase::from("it is a spec change ");
     match because {
-        NotSpecChange::Linewrights => "Linewright opened it".into(),
-        NotSpecChange::OtherBranch { base } => Phrase::from("it was merged into ")
+        NotSpecChange::Linewrights => none.text("Linewright opened it"),
+        NotSpecChange::OtherBranch { base } => none
+            .text("it was merged into ")
             .code(base.clone())
             .text(", not the default branch"),
-        NotSpecChange::NoSpecFile { spec_glob } => Phrase::from("it touches no file matching ")
+        NotSpecChange::NoSpecFile { spec_glob } => none
+            .text("it touches no file matching ")
             .code(spec_glob.clone())
             .text(", the spec-glob"),
-        NotSpecChange::Designed { label } => Phrase::from("it is labeled ")
+        NotSpecChange::TakenUp { issue } => {
+            spec_change.text("worked through its issue, ").item(*issue)
+        }
+        NotSpecChange::Designed { label } => spec_change
+            .text("labeled ")
             .code(label.name())
-            .text(": designed already"),
+            .text(": taken up already"),
         NotSpecChange::BeforeLookback {
             merged_at,
             window_opened,
-        } => Phrase::from("it was merged ")
+        } => spec_change
+            .text("merged ")
             .time(*merged_at)
             .text(", before the spec-lookback window opened ")
             .time(*window_opened),
-        NotSpecChange::RequiredLabel { label } => Phrase::from("it is not labeled ")
+        NotSpecChange::RequiredLabel { label } => spec_change
+            .text("not labeled ")
             .code(label.clone())
             .text(", the required label"),
     }

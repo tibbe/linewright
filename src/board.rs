@@ -177,8 +177,8 @@ pub enum LaneHead {
         /// When the tracking issue became done, if it is done.
         done: Option<Timestamp>,
     },
-    /// An item worked as one, the lane's one card: an issue, a spec change's
-    /// pull request, or a pull request that closes no issue with a card.
+    /// An item worked as one, the lane's one card: an issue, or a pull
+    /// request that closes no issue with a card.
     Item { number: Number, title: String },
 }
 
@@ -399,20 +399,6 @@ struct Seen<'a> {
     now: Timestamp,
 }
 
-/// Whether `managed` is a spec change cut into tickets, whose card on the
-/// board is its tracking issue's lane.
-fn cut_into_tickets(managed: &Managed, view: &View) -> bool {
-    let snapshot = &view.snapshot;
-    matches!(
-        managed.detail,
-        Some(Detail::Ended {
-            ended: Ended::Merged,
-            ..
-        })
-    ) && snapshot.merged_pull(managed.number).is_some()
-        && managed::is_cut(snapshot, managed.number, &view.policy.linewright)
-}
-
 /// [`card`], with `all` the managed items, which hold the pull requests shown
 /// on its card.
 fn card_among(managed: &Managed, all: &[Managed], seen: &Seen) -> Option<(Column, Card)> {
@@ -476,10 +462,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     // A pull request shows on the card of each issue it closes that has a
     // card, and has a card of its own otherwise.
     let mut pulls: Vec<(&[Number], (Column, Card))> = vec![];
-    for managed in all
-        .iter()
-        .filter(|managed| !cut_into_tickets(managed, view))
-    {
+    for managed in &all {
         let Some(card) = card_among(managed, &all, &seen) else {
             continue;
         };
@@ -554,21 +537,16 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
 }
 
 /// The issues `managed` closes, if it is a pull request, which shows on
-/// their cards; a spec change is its own card.
+/// their cards.
 fn folds_onto(managed: &Managed) -> Option<&[Number]> {
-    let spec_change = managed.detail.as_ref().is_some_and(Detail::is_spec_change);
-    (managed.is_pull_request() && !spec_change).then_some(&managed.closes[..])
+    managed.is_pull_request().then_some(&managed.closes[..])
 }
 
 /// The line in Done: how the item ended.
 fn done_line(detail: Option<&Detail>) -> Option<CardLine> {
     match *detail? {
         Detail::Ended { ended, at } => Some(CardLine::Ended { ended, at }),
-        Detail::InReview(_)
-        | Detail::InReviewElsewhere { .. }
-        | Detail::PullRequest { .. }
-        | Detail::WaitingForDesign
-        | Detail::SpecChangeBeingDesigned => None,
+        Detail::InReview(_) | Detail::InReviewElsewhere { .. } | Detail::PullRequest { .. } => None,
     }
 }
 
@@ -706,9 +684,7 @@ fn review_line(
             *pull_request,
             Some(author.clone()).filter(|author| author != &seen.view.policy.linewright),
         ),
-        Detail::Ended { .. } | Detail::WaitingForDesign | Detail::SpecChangeBeingDesigned => {
-            return None;
-        }
+        Detail::Ended { .. } => return None,
     };
     Some(CardLine::Review {
         pull_request,
@@ -791,7 +767,9 @@ impl Tracker {
         let linewright = &view.policy.linewright;
         let default_branch = &snapshot.default_branch;
         if let Some(issue) = snapshot.issue(number).filter(|issue| issue.open) {
-            issue.tracks(linewright)?;
+            if !issue.is_tracking(linewright) {
+                return None;
+            }
             let merge = done_by_merge(
                 &issue.events,
                 &snapshot.pulls_closing(issue),
@@ -806,7 +784,9 @@ impl Tracker {
             ));
         }
         let item = snapshot.closed.iter().find(|item| item.number == number)?;
-        item.tracks(linewright)?;
+        if !item.is_tracking(linewright) {
+            return None;
+        }
         let ClosedKind::Issue { facts, .. } = &item.kind else {
             return None;
         };

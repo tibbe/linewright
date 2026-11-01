@@ -89,11 +89,11 @@ fn varied_items() -> Vec<AnyItem> {
         AnyItem::Pull(Box::new(open_pull(63, "alice", &[], &[]))),
         AnyItem::Merged {
             pull: Box::new(merged_pull(70, LINEWRIGHT, &[99])),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
         AnyItem::Merged {
             pull: Box::new(merged_pull(71, "alice", &[])),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
         AnyItem::Merged {
             pull: Box::new(MergedPull {
@@ -101,11 +101,11 @@ fn varied_items() -> Vec<AnyItem> {
                 assignees: vec![Login::new(LINEWRIGHT)],
                 ..merged_pull(72, "alice", &[])
             }),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
         AnyItem::Merged {
             pull: Box::new(commented),
-            tracking_issues: vec![],
+            spec_change_issues: vec![],
         },
     ]
 }
@@ -167,7 +167,7 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
         (63, Shown::LeftAlone),
         (70, Shown::Card(Column::Done)),
         (71, Shown::LeftAlone),
-        (72, Shown::Card(Column::Ready)),
+        (72, Shown::LeftAlone),
         (73, Shown::LeftAlone),
     ];
     assert_eq!(

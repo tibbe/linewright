@@ -287,7 +287,8 @@ pub enum AnyItem {
     Pull(Box<Pull>),
     Merged {
         pull: Box<MergedPull>,
-        tracking_issues: Vec<Number>,
+        /// The issues Linewright opened for it, if it is a spec change.
+        spec_change_issues: Vec<Number>,
     },
 }
 

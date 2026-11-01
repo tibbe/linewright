@@ -19,8 +19,8 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueClosing, IssueEvent, Labeling,
     Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull,
     PullHeld, PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review, ReviewDecision,
-    ReviewState, Snapshot, SubIssue, SubIssueState, Thread, TicketBranch, TicketBranchName,
-    Timestamp, Windows, closed_within, closing_references, label, pull_events,
+    ReviewState, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread, TicketBranch,
+    TicketBranchName, Timestamp, Windows, closed_within, closing_references, label, pull_events,
 };
 use crate::git::{self, Merged};
 
@@ -1375,7 +1375,7 @@ impl State {
         ))
     }
 
-    fn tracking_issues_of(&self, spec_change: Number) -> Vec<Number> {
+    fn spec_change_issues_of(&self, spec_change: Number) -> Vec<Number> {
         self.issues
             .values()
             .map(|record| &record.issue)
@@ -1774,7 +1774,7 @@ impl Store for LocalStore {
 
     async fn snapshot(&self, windows: Windows) -> Result<Snapshot> {
         self.readable()?;
-        let (default_branch, issues, closed, linewright, pulls) = {
+        let (default_branch, issues, closed, spec_change_issues, linewright, pulls) = {
             let mut state = self.state();
             state.snapshots_taken += 1;
             let issues: Vec<Issue> = state
@@ -1789,6 +1789,18 @@ impl Store for LocalStore {
                 .values()
                 .filter_map(|p| p.closed_unmerged(&state.linewright));
             let closed = closed_within(closed_issues.chain(closed_pulls), windows);
+            let spec_change_issues: Vec<SpecChangeIssue> = state
+                .issues
+                .values()
+                .map(|record| &record.issue)
+                .filter(|issue| issue.created_at >= windows.lookback_opened())
+                .filter_map(|issue| {
+                    Some(SpecChangeIssue {
+                        number: issue.number,
+                        spec_change: state.filed(issue)?.spec_change()?,
+                    })
+                })
+                .collect();
             // Each pull request, with among which a snapshot holds it.
             let pulls: Vec<(Number, Option<PullHeld>)> = state
                 .pulls
@@ -1799,6 +1811,7 @@ impl Store for LocalStore {
                 state.default_branch.clone(),
                 issues,
                 closed,
+                spec_change_issues,
                 state.linewright.clone(),
                 pulls,
             )
@@ -1811,6 +1824,7 @@ impl Store for LocalStore {
             merged: vec![],
             closed,
             ticket_branches: self.ticket_branches().await?,
+            spec_change_issues,
         };
         for (number, held) in pulls {
             if let Some(merged) = self.merged_pull(number, windows).await? {
@@ -1904,7 +1918,7 @@ impl Store for LocalStore {
             if let Some(merged) = record.merged(&state.default_branch) {
                 return Ok(Some(AnyItem::Merged {
                     pull: Box::new(merged),
-                    tracking_issues: state.tracking_issues_of(number),
+                    spec_change_issues: state.spec_change_issues_of(number),
                 }));
             }
         }

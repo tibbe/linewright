@@ -240,41 +240,6 @@ async fn a_pull_request_handed_back_is_commented_on_before_it_is_stalled_and_lin
 }
 
 #[test_log::test(tokio::test)]
-async fn a_spec_change_handed_back_is_commented_on_before_it_is_stalled_and_linewright_unassigns() {
-    let mut world = World::new().await;
-    world.harness.on(WorkKind::Design, |_| timed_out());
-    let spec_pr = world
-        .store
-        .merge_change(
-            "maintainer",
-            "Gadgets",
-            "Adds gadgets.",
-            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
-        )
-        .await
-        .unwrap();
-    let mut paused = world.store.pause_after(Write::Comment { number: spec_pr });
-    world.factory.cycle().await.unwrap();
-    paused.reached().await;
-
-    assert_eq!(world.store.pull_labels(spec_pr), Vec::<String>::new());
-    assert_eq!(
-        spec_change_assignees(&world, spec_pr).await,
-        [Login::new(LINEWRIGHT)]
-    );
-    assert!(
-        last_pull_comment(&world, spec_pr)
-            .await
-            .starts_with(TIMED_OUT_OPENING)
-    );
-    paused.release();
-    world.factory.settle().await;
-
-    assert_eq!(world.store.pull_labels(spec_pr), ["linewright:stalled"]);
-    assert_eq!(spec_change_assignees(&world, spec_pr).await, []);
-}
-
-#[test_log::test(tokio::test)]
 async fn an_implement_run_files_its_spec_gaps_before_opening_its_pull_request() {
     let mut world = World::new().await;
     world.harness.on(WorkKind::Implement, |call| {

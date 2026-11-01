@@ -51,6 +51,7 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
         merged: vec![],
         ticket_branches: vec![],
         closed: vec![],
+        spec_change_issues: vec![],
     }
 }
 
@@ -744,198 +745,87 @@ fn merged(number: u64, files: &[&str]) -> MergedPull {
     }
 }
 
-fn cut(pr: u64) -> Vec<Action> {
-    vec![
-        Action::Claim {
-            item: Item::Pull(Number(pr)),
-        },
-        Action::Start(Work::DesignSpecChange { pr: Number(pr) }),
-    ]
-}
-
-fn assigned(mut pr: MergedPull, minute: i64) -> MergedPull {
-    pr.assignees.push(Login::new(LINEWRIGHT));
-    pr.events.push(IssueEvent::Assignment(Assignment::Assigned {
-        assignee: Login::new(LINEWRIGHT),
-        actor: Login::new("maintainer"),
-        at: t(minute),
-    }));
-    pr
-}
-
-fn unassigned(mut pr: MergedPull, actor: &str, minute: i64) -> MergedPull {
-    pr.assignees.retain(|a| a.as_str() != LINEWRIGHT);
-    pr.events
-        .push(IssueEvent::Assignment(Assignment::Unassigned {
-            assignee: Login::new(LINEWRIGHT),
-            actor: Login::new(actor),
-            at: t(minute),
-        }));
-    pr
-}
-
-fn labeled_merged(mut pr: MergedPull, label: &str, minute: i64) -> MergedPull {
-    if !pr.has_label(label) {
-        pr.labels.push(label.into());
+fn take_up(pr: u64) -> Action {
+    Action::OpenSpecChangeIssue {
+        pr: Number(pr),
+        let_go: false,
     }
-    pr.events.push(IssueEvent::Labeled {
-        label: label.into(),
-        by: None,
-        at: t(minute),
-    });
-    pr
 }
 
-fn cutting(pr: u64) -> [LiveRun; 1] {
-    [LiveRun {
-        subject: Subject::SpecChange(Number(pr)),
-        kind: WorkKind::Design,
-    }]
+/// Spec change #`pr`'s issue #`number`, as a snapshot reads it among the
+/// spec changes' issues.
+fn issue_for(number: u64, pr: u64) -> SpecChangeIssue {
+    SpecChangeIssue {
+        number: Number(number),
+        spec_change: Number(pr),
+    }
+}
+
+/// Spec change #`pr`'s issue #`number`, open, as Linewright opens it.
+fn spec_change_issue(number: u64, pr: u64) -> Issue {
+    let mut opened = readied(number);
+    opened.author = Login::new(LINEWRIGHT);
+    opened.title = format!("Spec change: Spec PR {pr}");
+    opened.filed = Some(Filed::SpecChange {
+        spec_change: Number(pr),
+    });
+    opened
+}
+
+/// The spec changes `actions` open an issue for.
+fn taken_up(actions: &[Action]) -> Vec<Number> {
+    actions
+        .iter()
+        .filter_map(|action| {
+            if let Action::OpenSpecChangeIssue { pr, .. } = action {
+                Some(*pr)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[test_log::test]
-fn a_merged_pull_request_that_touches_the_spec_is_claimed_and_cut_into_tickets() {
+fn a_merged_pull_request_that_touches_the_spec_is_taken_up_by_opening_its_issue() {
     let mut world = snapshot(vec![]);
     world.merged = vec![merged(5, &["src/main.rs", "docs/billing/invoices.md"])];
 
-    assert_eq!(decide(&world), cut(5));
+    assert_eq!(decide(&world), vec![take_up(5)]);
+}
+
+/// `docs/specs/sources_of_work.md`, Spec changes, "Taken up": #5's issue is
+/// open, #6's closed before the Done window opened, so the snapshot holds
+/// it only among the spec changes' issues, and #7's was read since the
+/// snapshot was taken.
+#[test_log::test]
+fn a_spec_change_whose_issue_linewright_opened_open_or_closed_is_not_taken_up_again() {
+    let mut world = snapshot(vec![spec_change_issue(9, 5), spec_change_issue(12, 7)]);
+    world.merged = vec![
+        merged(5, &["docs/spec.md"]),
+        merged(6, &["docs/spec.md"]),
+        merged(7, &["docs/spec.md"]),
+    ];
+    world.spec_change_issues = vec![issue_for(9, 5), issue_for(11, 6)];
+
+    assert_eq!(taken_up(&decide(&world)), vec![]);
 }
 
 #[test_log::test]
-fn a_spec_change_linewright_is_assigned_to_is_cut_without_claiming_it_again() {
+fn a_spec_change_carrying_the_design_label_is_not_taken_up() {
+    let mut designed = merged(5, &["docs/spec.md"]);
+    designed.labels.push(label::DESIGNED.into());
+    let mut processed = merged(6, &["docs/spec.md"]);
+    processed.labels.push(label::SPEC_PROCESSED.into());
     let mut world = snapshot(vec![]);
-    world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
-
-    assert_eq!(
-        decide(&world),
-        vec![Action::Start(Work::DesignSpecChange { pr: Number(5) })]
-    );
-}
-
-#[test_log::test]
-fn a_spec_change_linewright_was_unassigned_from_is_not_cut_again_on_its_own() {
-    let handed_back = unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2);
-    let paused = unassigned(assigned(merged(6, &["docs/spec.md"]), 1), "maintainer", 2);
-    let mut world = snapshot(vec![]);
-    world.merged = vec![handed_back, paused];
+    world.merged = vec![designed, processed];
 
     assert_eq!(decide(&world), vec![]);
 }
 
 #[test_log::test]
-fn a_spec_change_linewright_is_assigned_to_again_is_cut_again() {
-    let retried = assigned(
-        unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2),
-        3,
-    );
-    let mut world = snapshot(vec![]);
-    world.merged = vec![retried];
-
-    assert_eq!(
-        decide(&world),
-        vec![Action::Start(Work::DesignSpecChange { pr: Number(5) })]
-    );
-}
-
-#[test_log::test]
-fn a_ready_for_human_label_on_a_spec_change_stops_nothing() {
-    let mut labeled = merged(5, &["docs/spec.md"]);
-    labeled.labels.push(label::READY_FOR_HUMAN.into());
-    let mut world = snapshot(vec![]);
-    world.merged = vec![labeled.clone()];
-    assert_eq!(decide(&world), cut(5));
-
-    world.merged = vec![assigned(labeled, 1)];
-    assert_eq!(
-        reconcile(
-            &world,
-            &cutting(5),
-            &Memory::default(),
-            &Automations::default(),
-            t(10),
-            &policy(),
-            &[]
-        ),
-        vec![]
-    );
-}
-
-#[test_log::test]
-fn a_cut_that_ended_since_the_snapshot_is_neither_started_again_nor_cancelled() {
-    let mut world = snapshot(vec![]);
-    world.merged = vec![merged(5, &["docs/spec.md"])];
-    let memory = Memory {
-        ended_cuts: vec![Number(5)],
-        ..Memory::default()
-    };
-
-    assert_eq!(
-        reconcile(
-            &world,
-            &[],
-            &memory,
-            &Automations::default(),
-            t(10),
-            &policy(),
-            &[]
-        ),
-        vec![]
-    );
-}
-
-#[test_log::test]
-fn a_cut_stopped_part_way_is_discarded_also_when_linewright_was_unassigned_from_it() {
-    let mut world = snapshot(vec![tracking(9, 5, &[(10, true)])]);
-    world.merged = vec![unassigned(
-        assigned(merged(5, &["docs/spec.md"]), 1),
-        "maintainer",
-        2,
-    )];
-
-    assert_eq!(
-        decide(&world),
-        vec![Action::DiscardCut(Discard {
-            item: CutItem::SpecChange {
-                pr: Number(5),
-                tracking: Number(9),
-            },
-            pulls: vec![],
-            tickets: linked(&[(10, true)]),
-        })]
-    );
-}
-
-#[test_log::test]
-fn unassigning_linewright_from_a_spec_change_cancels_its_cut() {
-    let mut world = snapshot(vec![]);
-    world.merged = vec![unassigned(
-        assigned(merged(5, &["docs/spec.md"]), 1),
-        "maintainer",
-        2,
-    )];
-
-    assert_eq!(
-        reconcile(
-            &world,
-            &cutting(5),
-            &Memory::default(),
-            &Automations::default(),
-            t(10),
-            &policy(),
-            &[]
-        ),
-        vec![Action::Cancel {
-            subject: Subject::SpecChange(Number(5)),
-            reason: "factory was unassigned from #5".into(),
-        }]
-    );
-}
-
-#[test_log::test]
-fn only_undesigned_spec_changes_by_people_within_the_lookback_are_picked_up() {
+fn only_spec_changes_by_people_into_the_default_branch_within_the_lookback_are_taken_up() {
     let code_only = merged(1, &["src/main.rs", "README.md"]);
-    let mut designed = merged(2, &["docs/spec.md"]);
-    designed.labels.push(label::DESIGNED.into());
     let mut by_linewright = merged(3, &["docs/spec.md"]);
     by_linewright.author = Login::new(LINEWRIGHT);
     let mut too_old = merged(4, &["docs/spec.md"]);
@@ -943,19 +833,19 @@ fn only_undesigned_spec_changes_by_people_within_the_lookback_are_picked_up() {
     let mut other_base = merged(6, &["docs/spec.md"]);
     other_base.base_ref = "release".into();
     let mut world = snapshot(vec![]);
-    world.merged = vec![code_only, designed, by_linewright, too_old, other_base];
+    world.merged = vec![code_only, by_linewright, too_old, other_base];
 
     assert_eq!(decide(&world), vec![]);
 }
 
 #[test_log::test]
-fn a_spec_change_merged_within_the_lookback_is_cut_though_it_merged_before_the_done_window() {
+fn a_spec_change_merged_within_the_lookback_is_taken_up_though_it_merged_before_the_done_window() {
     let policy = Policy {
         spec_lookback: TimeDelta::days(7),
         done_window: TimeDelta::days(1),
         ..policy()
     };
-    let mut spec_change = assigned(merged(5, &["docs/spec.md"]), 1);
+    let mut spec_change = merged(5, &["docs/spec.md"]);
     spec_change.merged_at = t(10) - TimeDelta::days(3);
     let mut world = snapshot(vec![]);
     world.merged = vec![spec_change];
@@ -970,47 +860,7 @@ fn a_spec_change_merged_within_the_lookback_is_cut_though_it_merged_before_the_d
             &policy,
             &[]
         ),
-        vec![Action::Start(Work::DesignSpecChange { pr: Number(5) })]
-    );
-}
-
-#[test_log::test]
-fn a_spec_change_labeled_before_the_design_label_is_not_designed_again() {
-    let mut designed = merged(5, &["docs/spec.md"]);
-    designed.labels.push(label::SPEC_PROCESSED.into());
-    let mut world = snapshot(vec![tracking(9, 5, &[(10, true)])]);
-    world.merged = vec![designed];
-
-    assert_eq!(decide(&world), vec![]);
-}
-
-#[test_log::test]
-fn an_interrupted_decomposition_is_discarded_so_the_spec_change_is_cut_again() {
-    let mut world = snapshot(vec![tracking(9, 5, &[(10, true)])]);
-    world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
-
-    assert_eq!(
-        decide(&world),
-        vec![Action::DiscardCut(Discard {
-            item: CutItem::SpecChange {
-                pr: Number(5),
-                tracking: Number(9),
-            },
-            pulls: vec![],
-            tickets: linked(&[(10, true)]),
-        })]
-    );
-    assert_eq!(
-        reconcile(
-            &world,
-            &cutting(5),
-            &Memory::default(),
-            &Automations::default(),
-            t(10),
-            &policy(),
-            &[]
-        ),
-        vec![]
+        vec![take_up(5)]
     );
 }
 
@@ -1019,28 +869,6 @@ fn unreadied_ticket(number: u64) -> Issue {
     let mut ticket = issue(number);
     ticket.author = Login::new(LINEWRIGHT);
     ticket
-}
-
-#[test_log::test]
-fn a_spec_change_cut_stopped_before_its_tickets_are_readied_is_discarded_with_them() {
-    let mut world = snapshot(vec![
-        tracking(9, 5, &[(10, true), (11, true)]),
-        unreadied_ticket(10),
-        blocked_by(unreadied_ticket(11), 10, true),
-    ]);
-    world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
-
-    assert_eq!(
-        decide(&world),
-        vec![Action::DiscardCut(Discard {
-            item: CutItem::SpecChange {
-                pr: Number(5),
-                tracking: Number(9),
-            },
-            pulls: vec![],
-            tickets: linked(&[(10, true), (11, true)]),
-        })]
-    );
 }
 
 #[test_log::test]
@@ -1056,7 +884,7 @@ fn an_issue_cut_stopped_before_its_tickets_are_readied_is_discarded_with_them() 
     assert_eq!(
         decide(&world),
         vec![Action::DiscardCut(Discard {
-            item: CutItem::Issue(Number(9)),
+            issue: Number(9),
             pulls: vec![],
             tickets: linked(&[(10, true), (11, true)]),
         })]
@@ -1343,14 +1171,14 @@ fn live(issue: u64, kind: WorkKind) -> LiveRun {
 
 #[test_log::test]
 fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementations() {
-    let mut world = snapshot(vec![
+    let world = snapshot(vec![
         claimed(ticket(1)),
         ticket(2),
         labeled(issue(3), label::NEEDS_TRIAGE),
         claimed(ticket(4)),
+        readied(5),
         claimed(ticket(9)),
     ]);
-    world.merged = vec![merged(5, &["docs/spec.md"])];
     let busy = [live(9, WorkKind::Implement)];
 
     assert_eq!(
@@ -1366,10 +1194,8 @@ fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementatio
         vec![
             claim(3),
             triage(3),
-            Action::Claim {
-                item: Item::Pull(Number(5))
-            },
-            Action::Start(Work::DesignSpecChange { pr: Number(5) }),
+            claim(5),
+            Action::Start(Work::DesignIssue { issue: Number(5) }),
             implement(1),
         ]
     );
@@ -1706,63 +1532,6 @@ fn the_branch_of_a_ticket_read_again_is_kept_or_deleted_as_the_ticket_now_is() {
     assert_eq!(deleted_branches(decide(&world)), ["2-gadgets"]);
 }
 
-#[test_log::test]
-fn a_design_run_is_cancelled_when_its_spec_change_is_labeled_before_the_design_label() {
-    let mut designed = merged(5, &["docs/spec.md"]);
-    designed.labels.push(label::SPEC_PROCESSED.into());
-    let mut world = snapshot(vec![]);
-    world.merged = vec![designed];
-    let runs = [LiveRun {
-        subject: Subject::SpecChange(Number(5)),
-        kind: WorkKind::Design,
-    }];
-
-    assert_eq!(
-        reconcile(
-            &world,
-            &runs,
-            &Memory::default(),
-            &Automations::default(),
-            t(10),
-            &policy(),
-            &[]
-        ),
-        vec![Action::Cancel {
-            subject: Subject::SpecChange(Number(5)),
-            reason: "#5 was labeled `linewright:spec-processed`".into(),
-        }]
-    );
-}
-
-#[test_log::test]
-fn a_design_run_is_cancelled_when_its_spec_change_is_labeled_designed() {
-    let mut designed = merged(5, &["docs/spec.md"]);
-    designed.labels.push(label::DESIGNED.into());
-    let mut world = snapshot(vec![]);
-    world.merged = vec![designed];
-    let runs = [LiveRun {
-        subject: Subject::SpecChange(Number(5)),
-        kind: WorkKind::Design,
-    }];
-
-    assert!(matches!(
-        reconcile(
-            &world,
-            &runs,
-            &Memory::default(),
-            &Automations::default(),
-            t(10),
-            &policy(),
-            &[]
-        )
-        .as_slice(),
-        [Action::Cancel {
-            subject: Subject::SpecChange(Number(5)),
-            ..
-        }]
-    ));
-}
-
 fn pull(number: u64, closes: u64) -> Pull {
     Pull {
         number: Number(number),
@@ -2070,21 +1839,6 @@ fn a_stalled_pull_request_linewright_was_unassigned_from_keeps_its_stall() {
     );
 
     assert_eq!(at(&in_review(pr), 8), vec![]);
-}
-
-#[test_log::test]
-fn a_stalled_spec_change_linewright_is_assigned_to_again_has_its_stall_cleared_and_is_cut() {
-    let handed_back = unassigned(assigned(merged(5, &["docs/spec.md"]), 1), LINEWRIGHT, 2);
-    let mut world = snapshot(vec![]);
-    world.merged = vec![labeled_merged(assigned(handed_back, 3), label::STALLED, 2)];
-
-    assert_eq!(
-        decide(&world),
-        vec![
-            clear_stall(Item::Pull(Number(5))),
-            Action::Start(Work::DesignSpecChange { pr: Number(5) })
-        ]
-    );
 }
 
 #[test_log::test]
@@ -3227,7 +2981,7 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_tickets_and_designs_i
     assert_eq!(
         decided.actions,
         [Action::DiscardCut(Discard {
-            item: CutItem::Issue(Number(9)),
+            issue: Number(9),
             pulls: vec![],
             tickets: linked(&[(10, true), (11, false)]),
         })]
@@ -3248,7 +3002,7 @@ fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_added_as_
     assert_eq!(
         decide(&snapshot(vec![undesigned])),
         vec![Action::DiscardCut(Discard {
-            item: CutItem::Issue(Number(9)),
+            issue: Number(9),
             pulls: vec![],
             tickets: linked(&[(10, true)]),
         })]
@@ -3274,31 +3028,9 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_discarded() {
     assert_eq!(
         decide(&snapshot(vec![undesigned])),
         vec![Action::DiscardCut(Discard {
-            item: CutItem::Issue(Number(9)),
+            issue: Number(9),
             pulls: vec![],
             tickets: linked(&[(10, true)]),
-        })]
-    );
-}
-
-#[test_log::test]
-fn a_discarded_spec_change_closes_linewrights_tickets_and_their_pull_requests_and_nothing_else_is_done_to_them()
- {
-    let mut tracking = tracking(9, 5, &[(10, true), (11, false)]);
-    tracking.sub_issues.push(sub_issue(12, true, "maintainer"));
-    let mut world = snapshot(vec![tracking, claimed(ticket(10))]);
-    world.merged = vec![merged(5, &["docs/spec.md"])];
-    world.pulls = vec![ready(pull(20, 10)), ready(pull(21, 11))];
-
-    assert_eq!(
-        auto_merging(&world, 10),
-        vec![Action::DiscardCut(Discard {
-            item: CutItem::SpecChange {
-                pr: Number(5),
-                tracking: Number(9),
-            },
-            pulls: vec![Number(20), Number(21)],
-            tickets: linked(&[(10, true), (11, false)]),
         })]
     );
 }
@@ -3320,7 +3052,7 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_and_linewrights_pu
     assert_eq!(
         at(&world, 10),
         vec![Action::DiscardCut(Discard {
-            item: CutItem::Issue(Number(9)),
+            issue: Number(9),
             pulls: vec![Number(21)],
             tickets: linked(&[(10, true), (11, true)]),
         })]
@@ -3340,7 +3072,7 @@ fn a_discard_stopped_after_closing_its_pull_requests_closes_its_tickets_and_neit
     assert_eq!(
         decide(&world),
         vec![Action::DiscardCut(Discard {
-            item: CutItem::Issue(Number(9)),
+            issue: Number(9),
             pulls: vec![],
             tickets: linked(&[(10, true)]),
         })]
@@ -3355,7 +3087,7 @@ fn a_discard_stopped_after_closing_its_tickets_removes_them_before_the_issue_is_
     assert_eq!(
         decide(&snapshot(vec![stopped.clone()])),
         vec![Action::DiscardCut(Discard {
-            item: CutItem::Issue(Number(9)),
+            issue: Number(9),
             pulls: vec![],
             tickets: linked(&[(10, false), (11, false)]),
         })]
@@ -3733,18 +3465,18 @@ fn removing_the_required_label_cancels_no_run_in_flight() {
 }
 
 #[test_log::test]
-fn with_a_required_label_only_a_labeled_spec_change_is_cut_into_tickets() {
+fn with_a_required_label_only_a_labeled_spec_change_is_taken_up() {
     let unlabeled = merged(1, &["docs/spec.md"]);
     let mut with_label = merged(2, &["docs/spec.md"]);
     with_label.labels.push(REQUIRED.into());
     let mut world = snapshot(vec![]);
     world.merged = vec![unlabeled, with_label];
 
-    assert_eq!(deciding_with_label(&world), cut(2));
+    assert_eq!(deciding_with_label(&world), vec![take_up(2)]);
 }
 
 #[test_log::test]
-fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_picked_up_on_a_later_poll() {
+fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_taken_up_on_a_later_poll() {
     let mut pr = merged(1, &["docs/spec.md"]);
     let mut world = snapshot(vec![]);
     world.merged = vec![pr.clone()];
@@ -3752,37 +3484,7 @@ fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_picked_up_on_a
 
     pr.labels.push(REQUIRED.into());
     world.merged = vec![pr];
-    assert_eq!(deciding_with_label(&world), cut(1));
-}
-
-#[test_log::test]
-fn with_a_required_label_a_handed_back_spec_change_is_cut_again_once_the_label_is_applied_again() {
-    let handed_back = |number| {
-        unassigned(
-            assigned(
-                labeled_merged(merged(number, &["docs/spec.md"]), REQUIRED, 0),
-                1,
-            ),
-            LINEWRIGHT,
-            2,
-        )
-    };
-    let relabeled = labeled_merged(handed_back(2), REQUIRED, 3);
-    let mut world = snapshot(vec![]);
-    world.merged = vec![handed_back(1), relabeled];
-
-    assert_eq!(deciding_with_label(&world), cut(2));
-}
-
-#[test_log::test]
-fn with_a_required_label_a_spec_change_assigned_to_linewright_by_hand_is_cut_unlabeled() {
-    let mut world = snapshot(vec![]);
-    world.merged = vec![assigned(merged(1, &["docs/spec.md"]), 1)];
-
-    assert_eq!(
-        deciding_with_label(&world),
-        vec![Action::Start(Work::DesignSpecChange { pr: Number(1) })]
-    );
+    assert_eq!(deciding_with_label(&world), vec![take_up(1)]);
 }
 
 #[test_log::test]
@@ -3796,43 +3498,6 @@ fn with_a_required_label_designed_and_linewrights_spec_changes_are_skipped_even_
     world.merged = vec![designed, by_linewright];
 
     assert_eq!(deciding_with_label(&world), vec![]);
-}
-
-#[test_log::test]
-fn removing_the_required_label_does_not_cancel_a_cut_under_way() {
-    let mut world = snapshot(vec![]);
-    world.merged = vec![assigned(merged(5, &["docs/spec.md"]), 1)];
-
-    assert_eq!(
-        reconcile(
-            &world,
-            &cutting(5),
-            &Memory::default(),
-            &Automations::default(),
-            t(10),
-            &requiring_label(),
-            &[]
-        ),
-        vec![]
-    );
-}
-
-#[test_log::test]
-fn pending_spec_changes_agree_with_the_required_label() {
-    let unlabeled = merged(1, &["docs/spec.md"]);
-    let mut with_label = merged(2, &["docs/spec.md"]);
-    with_label.labels.push(REQUIRED.into());
-    let mut world = snapshot(vec![]);
-    world.merged = vec![unlabeled, with_label];
-
-    let numbers = |policy: &Policy| {
-        linewright::reconcile::pending_spec_changes(&world, t(10), policy)
-            .iter()
-            .map(|pr| pr.number)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(numbers(&requiring_label()), vec![Number(2)]);
-    assert_eq!(numbers(&policy()), vec![Number(1), Number(2)]);
 }
 
 fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Automations) {
@@ -3896,6 +3561,7 @@ fn sessionless_actions() -> Vec<Action> {
             subject: Subject::Issue(Number(12)),
             reason: "`ready-for-agent` was removed from #12".into(),
         },
+        take_up(5),
         Action::MarkReady { pr: Number(21) },
         Action::Relabel {
             issue: Number(1),
@@ -3953,10 +3619,6 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
         starts,
         vec![
             rework(2, 20),
-            Action::Claim {
-                item: Item::Pull(Number(5))
-            },
-            Action::Start(Work::DesignSpecChange { pr: Number(5) }),
             claim(3),
             implement(3),
             implement(4),
@@ -4475,35 +4137,45 @@ fn under_the_usage_limit_work_waits_for_its_reset() {
     );
 }
 
+/// Taking up a spec change is an action with no run, so neither the
+/// ceiling, the usage limit nor a drain holds it back.
 #[test_log::test]
-fn a_spec_change_beyond_the_ceiling_waits_for_a_free_run_too() {
+fn a_spec_change_is_taken_up_whatever_holds_the_runs_back() {
     let mut world = snapshot(vec![]);
     world.merged = vec![merged(5, &["docs/spec.md"])];
     let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
+    let usage_limit = Memory {
+        usage_limit: Some(UsageLimit { resets_at: t(70) }),
+        ..Memory::default()
+    };
+    let deciding = |live: &[LiveRun], memory: &Memory| {
+        reconcile(
+            &world,
+            live,
+            memory,
+            &Automations::default(),
+            t(10),
+            &policy(),
+            &[],
+        )
+    };
 
-    assert_eq!(
-        waits(&world, &busy, &Memory::default(), 10, &policy()).remove(&Number(5)),
-        Some(vec![Wait::FreeRun {
-            in_flight: 4,
-            max_runs: 4
-        }])
-    );
+    assert_eq!(taken_up(&deciding(&busy, &Memory::default())), [Number(5)]);
+    assert_eq!(taken_up(&deciding(&[], &usage_limit)), [Number(5)]);
+    assert_eq!(taken_up(&deciding(&[], &draining())), [Number(5)]);
 }
 
 #[test_log::test]
 fn an_item_with_a_run_in_flight_waits_for_it() {
-    let mut world = snapshot(vec![
+    let world = snapshot(vec![
         claimed(ticket(2)),
         labeled(issue(3), label::NEEDS_TRIAGE),
+        claimed(readied(5)),
     ]);
-    world.merged = vec![merged(5, &["docs/spec.md"])];
     let runs = [
         live(2, WorkKind::Implement),
         live(3, WorkKind::Triage),
-        LiveRun {
-            subject: Subject::SpecChange(Number(5)),
-            kind: WorkKind::Design,
-        },
+        live(5, WorkKind::Design),
     ];
 
     let waits = waits(&world, &runs, &Memory::default(), 10, &policy());
@@ -4739,52 +4411,6 @@ fn a_ticket_whose_pull_request_merged_waits_for_ready_for_agent_again() {
             }
         }]
     );
-}
-
-#[test_log::test]
-fn a_tracking_issue_whose_spec_change_is_being_cut_waits_for_the_cut() {
-    let mut world = snapshot(vec![tracking(10, 5, &[(11, true)])]);
-    world.merged = vec![merged(5, &["docs/spec.md"])];
-    let cut = [LiveRun {
-        subject: Subject::SpecChange(Number(5)),
-        kind: WorkKind::Design,
-    }];
-
-    assert_eq!(
-        waits(&world, &cut, &Memory::default(), 10, &policy()).remove(&Number(10)),
-        Some(vec![Wait::Run {
-            stage: WorkKind::Design
-        }])
-    );
-}
-
-#[test_log::test]
-fn a_tracking_issue_of_a_cut_that_stopped_part_way_is_discarded_and_waits_for_nothing() {
-    let mut world = snapshot(vec![tracking(10, 5, &[(11, true)])]);
-    world.merged = vec![merged(5, &["docs/spec.md"])];
-
-    let decided = decisions(
-        &world,
-        &[],
-        &Memory::default(),
-        &Automations::default(),
-        t(10),
-        &policy(),
-        &[],
-    );
-
-    assert_eq!(
-        decided.actions,
-        [Action::DiscardCut(Discard {
-            item: CutItem::SpecChange {
-                pr: Number(5),
-                tracking: Number(10),
-            },
-            pulls: vec![],
-            tickets: linked(&[(11, true)]),
-        })]
-    );
-    assert_eq!(decided.waits.get(&Number(10)), None);
 }
 
 fn live_on_pull(pr: u64, kind: WorkKind) -> LiveRun {
@@ -5118,8 +4744,11 @@ fn a_config_of_the_repositorys_that_cannot_be_used_holds_every_run_and_leaves_au
 }
 
 #[test_log::test]
-fn starting_a_spec_change_design_touches_the_spec_change() {
-    let action = Action::Start(Work::DesignSpecChange { pr: Number(20) });
+fn taking_up_a_spec_change_touches_the_spec_change() {
+    let action = Action::OpenSpecChangeIssue {
+        pr: Number(20),
+        let_go: true,
+    };
 
     assert_eq!(
         action.items(&snapshot(vec![])),
@@ -5140,10 +4769,7 @@ fn merging_a_pull_request_touches_it_and_the_issues_it_closes() {
 #[test_log::test]
 fn discarding_a_cut_touches_its_tickets_its_tracking_issue_and_its_pull_requests() {
     let action = Action::DiscardCut(Discard {
-        item: CutItem::SpecChange {
-            pr: Number(10),
-            tracking: Number(11),
-        },
+        issue: Number(11),
         pulls: vec![Number(31)],
         tickets: linked(&[(12, true), (13, true), (14, false)]),
     });
@@ -5221,92 +4847,63 @@ fn note(issue: u64, note: &str) -> ParentNote {
 }
 
 #[rstest::rstest]
-#[case::of_a_spec_change_it_closes_the_tracking_issue_saying_its_tickets_are_discarded(
-    CutItem::SpecChange { pr: Number(5), tracking: Number(9) },
-    &[(10, true), (11, true)],
-    &[20],
-    None,
-    Some(note(9, "#5 is being designed again, so this tracking issue and its tickets are discarded."))
-)]
 #[case::of_an_issue_with_one_ticket_open_it_names_it(
-    CutItem::Issue(Number(4)),
+    Number(4),
     &[(10, true), (11, false)],
     &[],
     Some(note(
         4,
         "This issue is being designed again, so the ticket #10 of its earlier cut is discarded."
-    )),
-    None
+    ))
 )]
 #[case::of_an_issue_with_only_a_pull_request_open_it_names_it(
-    CutItem::Issue(Number(4)),
+    Number(4),
     &[(10, false)],
     &[20],
     Some(note(
         4,
         "This issue is being designed again, so the pull request #20 of its earlier cut is \
          discarded."
-    )),
-    None
+    ))
 )]
 #[case::of_an_issue_it_lists_the_tickets_then_every_pull_request_in_order(
-    CutItem::Issue(Number(4)),
+    Number(4),
     &[(10, true), (11, true), (12, true)],
     &[22, 20],
     Some(note(
         4,
         "This issue is being designed again, so the tickets #10, #11 and #12 and pull \
          requests #20 and #22 of its earlier cut are discarded."
-    )),
-    None
+    ))
 )]
 #[case::of_an_issue_with_nothing_left_to_close_it_says_nothing(
-    CutItem::Issue(Number(4)),
+    Number(4),
     &[(10, false)],
     &[],
-    None,
     None
 )]
 fn a_discarded_cut_says_on_its_parent_what_it_closes(
-    #[case] item: CutItem,
+    #[case] issue: Number,
     #[case] tickets: &[(u64, bool)],
     #[case] pulls: &[u64],
     #[case] on_issue: Option<ParentNote>,
-    #[case] closing_tracking: Option<ParentNote>,
 ) {
     let discard = Discard {
-        item,
+        issue,
         pulls: numbers(pulls),
         tickets: linked(tickets),
     };
 
-    let notes = discard.notes();
-    assert_eq!(
-        (notes.on_issue, notes.closing_tracking),
-        (on_issue, closing_tracking)
-    );
+    assert_eq!(discard.notes().on_issue, on_issue);
 }
 
-#[rstest::rstest]
-#[case::of_a_spec_change(
-    CutItem::SpecChange { pr: Number(5), tracking: Number(9) },
-    "#5 is being designed again, so this pull request for a ticket of its earlier cut is \
-     discarded.",
-    "#5 is being designed again, so this ticket from its earlier cut is discarded."
-)]
-#[case::of_an_issue(
-    CutItem::Issue(Number(4)),
-    "#4 is being designed again, so this pull request for a ticket of its earlier cut is \
-     discarded.",
-    "#4 is being designed again, so this ticket from its earlier cut is discarded."
-)]
-fn a_discarded_cut_says_on_each_pull_request_and_ticket_it_closes_what_is_designed_again(
-    #[case] item: CutItem,
-    #[case] on_pull: &str,
-    #[case] on_ticket: &str,
-) {
+#[test_log::test]
+fn a_discarded_cut_says_on_each_pull_request_and_ticket_it_closes_what_is_designed_again() {
+    let on_pull = "#4 is being designed again, so this pull request for a ticket of its earlier cut is \
+         discarded.";
+    let on_ticket = "#4 is being designed again, so this ticket from its earlier cut is discarded.";
     let discard = Discard {
-        item,
+        issue: Number(4),
         pulls: vec![Number(20)],
         tickets: linked(&[(10, true)]),
     };
@@ -5349,5 +4946,5 @@ fn linewright_assigned_to_a_pull_request_it_did_not_open_lets_go_of_it_with_a_co
         })
         .collect();
 
-    assert_eq!(let_go, [Number(30), Number(31)]);
+    assert_eq!(let_go, [Number(31), Number(30)]);
 }

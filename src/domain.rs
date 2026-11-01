@@ -178,9 +178,9 @@ pub mod label {
     pub const DESIGNED: &str = "linewright:designed";
     /// See [`super::HandBackKind::Stall`].
     pub const STALLED: &str = "linewright:stalled";
-    /// What [`DESIGNED`] was called before this release: read as it, for
-    /// this release, so that no spec change processed before the upgrade is
-    /// designed again; never set.
+    /// What [`DESIGNED`] was called before an earlier release: read as it,
+    /// so that no spec change processed before the upgrade is taken up
+    /// again; never set.
     pub const SPEC_PROCESSED: &str = "linewright:spec-processed";
 
     pub const ANSWERS: [(&str, &str); 2] = [
@@ -665,34 +665,11 @@ pub enum Marking {
     Unmarked,
 }
 
-/// What a tracking issue tracks: the tickets cut from one item.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tracks {
-    /// Those cut from this spec change, under an issue Linewright opened for
-    /// them.
-    SpecChange(Number),
-    /// Those cut from the issue itself.
-    Cut,
-}
-
-/// What an issue filed as `filed`, labeled `labels`, with `sub_issues`,
-/// tracks, as [`Issue::tracks`] tells.
-fn tracks(
-    filed: Option<Filed>,
-    labels: &[String],
-    sub_issues: &[SubIssue],
-    linewright: &Login,
-) -> Option<Tracks> {
-    if !labels.iter().any(|l| l == label::DESIGNED)
-        || tickets_cut(sub_issues, linewright).next().is_none()
-    {
-        return None;
-    }
-    Some(
-        filed
-            .and_then(Filed::spec_change)
-            .map_or(Tracks::Cut, Tracks::SpecChange),
-    )
+/// Whether an issue labeled `labels`, with `sub_issues`, is a tracking
+/// issue, as [`Issue::is_tracking`] tells.
+fn is_tracking(labels: &[String], sub_issues: &[SubIssue], linewright: &Login) -> bool {
+    labels.iter().any(|l| l == label::DESIGNED)
+        && tickets_cut(sub_issues, linewright).next().is_some()
 }
 
 /// When `tickets` finished: once every one is closed, when the last of them
@@ -823,8 +800,9 @@ impl Issue {
         last_labeling(&self.events, status.label())
     }
 
-    /// The spec change Linewright filed it as the tracking issue of, if it
-    /// did.
+    /// The spec change Linewright opened it for, as its issue or, before a
+    /// spec change had an issue of its own, its tickets' tracking issue, if
+    /// it did.
     pub fn spec_change(&self) -> Option<Number> {
         self.filed.and_then(Filed::spec_change)
     }
@@ -847,13 +825,12 @@ impl Issue {
         tickets_cut(&self.sub_issues, linewright)
     }
 
-    /// What it tracks, if it is a tracking issue (docs/specs/design.md,
-    /// "Cutting"): it carries `linewright:designed` and has tickets cut from
-    /// it. An issue cut into tickets is labeled designed last, so one with
-    /// tickets but no label is a cut that stopped part way, and tracks
-    /// nothing yet.
-    pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
-        tracks(self.filed, &self.labels, &self.sub_issues, linewright)
+    /// Whether it is a tracking issue (docs/specs/design.md, "Cutting"): it
+    /// carries `linewright:designed` and has tickets cut from it. An issue
+    /// cut into tickets is labeled designed last, so one with tickets but no
+    /// label is a cut that stopped part way, and no tracking issue yet.
+    pub fn is_tracking(&self, linewright: &Login) -> bool {
+        is_tracking(&self.labels, &self.sub_issues, linewright)
     }
 
     pub fn branch(&self) -> String {
@@ -916,9 +893,7 @@ impl Issue {
     /// Whether it asks for `linewright`'s work (`docs/specs/repository.md`,
     /// Managed items): it is open, and assigned to Linewright, such as by
     /// hand, or, with `marking` [`Marking::Marked`], labeled with a status
-    /// label that asks for Linewright's work. A spec change waiting for
-    /// design is a merged pull request, which `reconcile::spec_change`
-    /// tells.
+    /// label that asks for Linewright's work.
     pub fn asks_for_work(&self, linewright: &Login, marking: Marking) -> bool {
         self.signs(&self.closed_by)
             .asks_for_work(linewright, marking)
@@ -1445,9 +1420,9 @@ pub struct ManagedFacts {
 }
 
 impl ManagedFacts {
-    /// What it tracks, if it is a tracking issue, as [`Issue::tracks`] tells.
-    pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
-        tracks(self.filed, &self.labels, &self.sub_issues, linewright)
+    /// Whether it is a tracking issue, as [`Issue::is_tracking`] tells.
+    pub fn is_tracking(&self, linewright: &Login) -> bool {
+        is_tracking(&self.labels, &self.sub_issues, linewright)
     }
 
     /// Whether the issue, under `parent`, is a ticket cut from its parent's
@@ -1690,6 +1665,20 @@ pub struct Snapshot {
     /// them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
+    /// The spec changes' issues Linewright opened, open or closed: at least
+    /// those created since the lookback window opened, the ones that can
+    /// link a spec change it may take up (`docs/specs/sources_of_work.md`,
+    /// Spec changes).
+    #[serde(default)]
+    pub spec_change_issues: Vec<SpecChangeIssue>,
+}
+
+/// An issue Linewright opened for a spec change, open or closed: titled
+/// "Spec change: …" and linking it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpecChangeIssue {
+    pub number: Number,
+    pub spec_change: Number,
 }
 
 /// An issue's closing: when, the pull request whose merge closed it where it
@@ -1768,11 +1757,11 @@ impl ClosedItem {
         closing
     }
 
-    /// What it tracks, if it is a tracking issue, as [`Issue::tracks`] tells.
-    pub fn tracks(&self, linewright: &Login) -> Option<Tracks> {
+    /// Whether it is a tracking issue, as [`Issue::is_tracking`] tells.
+    pub fn is_tracking(&self, linewright: &Login) -> bool {
         match &self.kind {
-            ClosedKind::Issue { facts, .. } => facts.tracks(linewright),
-            ClosedKind::Pull { .. } => None,
+            ClosedKind::Issue { facts, .. } => facts.is_tracking(linewright),
+            ClosedKind::Pull { .. } => false,
         }
     }
 
@@ -1833,10 +1822,9 @@ impl Windows {
 
     /// Whether a snapshot holds a pull request merged at `merged_at` and
     /// last updated at `updated_at` among the merged ones: merged within the
-    /// lookback window, or updated within the Done window. A merge or a
-    /// designed label updates a pull request, so this holds Linewright's own
-    /// merged within the Done window and every spec change designed within
-    /// it.
+    /// lookback window, or updated within the Done window. A merge updates a
+    /// pull request, so this holds Linewright's own merged within the Done
+    /// window.
     pub fn holds_merged(&self, merged_at: Timestamp, updated_at: Timestamp) -> bool {
         merged_at >= self.lookback_opened || updated_at >= self.done_opened
     }
@@ -2015,6 +2003,31 @@ impl Snapshot {
 
     pub fn merged_pull(&self, number: Number) -> Option<&MergedPull> {
         self.merged.iter().find(|p| p.number == number)
+    }
+
+    /// The issue of spec change #`spec_change`, the first Linewright opened
+    /// for it, if it is taken up by one: of the spec changes' issues, and of
+    /// the issues it holds, open or closed, which a refresh may have read
+    /// since.
+    pub fn spec_change_issue(&self, spec_change: Number) -> Option<Number> {
+        let held = self
+            .issues
+            .iter()
+            .filter_map(|issue| Some((issue.number, issue.filed?)));
+        let closed = self.closed.iter().filter_map(|item| match &item.kind {
+            ClosedKind::Issue { facts, .. } => Some((item.number, facts.filed?)),
+            ClosedKind::Pull { .. } => None,
+        });
+        let read = held
+            .chain(closed)
+            .filter(|(_, filed)| filed.spec_change() == Some(spec_change))
+            .map(|(number, _)| number);
+        self.spec_change_issues
+            .iter()
+            .filter(|issue| issue.spec_change == spec_change)
+            .map(|issue| issue.number)
+            .chain(read)
+            .min()
     }
 
     /// As [`Issue::is_stalled`], of #`number`, an issue, a pull request or a
@@ -2374,10 +2387,13 @@ impl Snapshot {
             .issues
             .iter()
             .filter(|issue| issue.open)
-            .filter_map(|issue| issue.tracks(linewright).map(|_| &issue.sub_issues));
+            .filter(|issue| issue.is_tracking(linewright))
+            .map(|issue| &issue.sub_issues);
         let closed = self.closed.iter().filter_map(|item| match &item.kind {
-            ClosedKind::Issue { facts, .. } => item.tracks(linewright).map(|_| &facts.sub_issues),
-            ClosedKind::Pull { .. } => None,
+            ClosedKind::Issue { facts, .. } if facts.is_tracking(linewright) => {
+                Some(&facts.sub_issues)
+            }
+            ClosedKind::Issue { .. } | ClosedKind::Pull { .. } => None,
         });
         open.chain(closed)
             .flat_map(|sub_issues| tickets_cut(sub_issues, linewright))

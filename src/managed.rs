@@ -9,13 +9,11 @@ use crate::board::Column;
 use crate::domain::{
     Asks, CheckState, ClosedItem, ClosedKind, Issue, IssueCloseReason, IssueClosing, Login,
     Marking, Merge, MergedPull, Number, Pull, PullState, Snapshot, StatusLabel, SubIssue,
-    Timestamp, Tracks, last_labeling, tickets_cut,
+    Timestamp, tickets_cut,
 };
 use crate::lifecycle::{State, done_at, done_by_merge, issue_state, pull_state};
 use crate::phrase::Phrase;
-use crate::reconcile::{
-    NotSpecChange, Policy, SpecChange, Wait, open_pull_for, spec_change, ticket_of,
-};
+use crate::reconcile::{NotSpecChange, Wait, open_pull_for, spec_change, ticket_of};
 use crate::status::View;
 
 /// An item the view holds, as the classifier judges it.
@@ -66,21 +64,17 @@ impl Managed {
     }
 
     /// Whether it has ended, so that Linewright acts on it no more: done,
-    /// merged or closed, but for a spec change not yet designed.
+    /// merged or closed.
     pub fn has_ended(&self) -> bool {
         matches!(self.detail, Some(Detail::Ended { .. }))
     }
 
     /// The column of its card (`docs/specs/design_system.md`, The board):
-    /// none for a tracking issue. A spec change not yet designed is in Ready,
-    /// or in Working while its design run is in flight, as it is shown until
-    /// an issue takes its place.
+    /// none for a tracking issue.
     pub fn column(&self) -> Option<Column> {
-        match (&self.tickets, &self.detail) {
-            (Some(_), _) => None,
-            (None, Some(Detail::WaitingForDesign)) => Some(Column::Ready),
-            (None, Some(Detail::SpecChangeBeingDesigned)) => Some(Column::Working),
-            (None, _) => self.state.column(),
+        match self.tickets {
+            Some(_) => None,
+            None => self.state.column(),
         }
     }
 }
@@ -101,32 +95,8 @@ pub enum Detail {
         #[serde(flatten)]
         review: InReview,
     },
-    /// How it ended, entering Done `at`. A spec change designed and cut into
-    /// tickets has ended as [`Ended::Merged`].
+    /// How it ended, entering Done `at`.
     Ended { ended: Ended, at: Timestamp },
-    /// A spec change waiting for its design.
-    WaitingForDesign,
-    /// A spec change its design run is in flight on.
-    SpecChangeBeingDesigned,
-}
-
-impl Detail {
-    /// Whether it is a spec change's, which is shown as its pull request
-    /// until an issue takes its place.
-    pub(crate) fn is_spec_change(&self) -> bool {
-        match self {
-            Detail::WaitingForDesign
-            | Detail::SpecChangeBeingDesigned
-            | Detail::Ended {
-                ended: Ended::NothingToBuild,
-                ..
-            } => true,
-            Detail::InReview(_)
-            | Detail::InReviewElsewhere { .. }
-            | Detail::PullRequest { .. }
-            | Detail::Ended { .. } => false,
-        }
-    }
 }
 
 /// A tracking issue's tickets, closed of total.
@@ -215,8 +185,6 @@ pub enum Ended {
     Merged,
     /// A pull request closed without merging.
     ClosedUnmerged,
-    /// A spec change designed with nothing to build.
-    NothingToBuild,
 }
 
 impl Ended {
@@ -231,7 +199,6 @@ impl Ended {
             Ended::Closed(Some(IssueCloseReason::Duplicate)) => "closed as a duplicate".into(),
             Ended::Merged => "merged".into(),
             Ended::ClosedUnmerged => "closed without merging".into(),
-            Ended::NothingToBuild => "merged · nothing to build".into(),
         }
     }
 }
@@ -259,8 +226,17 @@ pub enum LeftAloneIssue {
 #[serde(tag = "held", rename_all = "kebab-case")]
 pub enum LeftAlonePull {
     Closed,
-    Open { left_alone: PullExclusion },
-    Merged { left_alone: NotSpecChange },
+    Open {
+        left_alone: PullExclusion,
+    },
+    /// Merged, Linewright has not worked it, and it is no spec change
+    /// Linewright may take up, for `left_alone`.
+    Merged {
+        left_alone: NotSpecChange,
+    },
+    /// Merged, Linewright has not worked it, and it is a spec change
+    /// Linewright takes up at its next poll, by opening its issue.
+    TakingUp,
 }
 
 /// Why Linewright leaves an open issue alone.
@@ -393,8 +369,8 @@ fn judge(
             match managed_state(issue, state, view) {
                 Ok(state) => Ok(Managed {
                     tickets: issue
-                        .tracks(linewright)
-                        .map(|_| Tickets::of(&issue.sub_issues, linewright)),
+                        .is_tracking(linewright)
+                        .then(|| Tickets::of(&issue.sub_issues, linewright)),
                     ..managed(&issue.title, &[], state, detail, waiting_for)
                 }),
                 Err(left_alone) => Err(unmanaged(
@@ -447,31 +423,28 @@ fn judge(
                 waiting_for,
             ))
         }
-        Held::Merged(pr) => match merged_detail(pr, snapshot, now, policy) {
-            Ok((Detail::WaitingForDesign, waits)) if view.run_stage(pr.number).is_some() => {
-                Ok(managed(
-                    &pr.title,
-                    &pr.closes,
-                    State::Merged,
-                    Some(Detail::SpecChangeBeingDesigned),
-                    waits.into_iter().chain(waiting_for).collect(),
-                ))
-            }
-            Ok((detail, mut waits)) => {
-                waits.extend(waiting_for);
-                Ok(managed(
-                    &pr.title,
-                    &pr.closes,
-                    State::Merged,
-                    Some(detail),
-                    waits,
-                ))
-            }
-            Err(left_alone) => Err(unmanaged(
+        // Merged, it asks for no work, so it is managed when Linewright has
+        // worked it.
+        Held::Merged(pr) if pr.worked_by(linewright) => Ok(managed(
+            &pr.title,
+            &pr.closes,
+            State::Merged,
+            Some(Detail::Ended {
+                ended: Ended::Merged,
+                at: pr.merged_at,
+            }),
+            waiting_for,
+        )),
+        Held::Merged(pr) => {
+            let left_alone = match spec_change(pr, snapshot, now, policy) {
+                Ok(()) => LeftAlonePull::TakingUp,
+                Err(left_alone) => LeftAlonePull::Merged { left_alone },
+            };
+            Err(unmanaged(
                 Some(State::Merged),
-                LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }),
-            )),
-        },
+                LeftAloneItem::PullRequest(left_alone),
+            ))
+        }
         Held::Closed(item) => match &item.kind {
             ClosedKind::Pull { closes, .. } => Ok(managed(
                 &item.title,
@@ -499,8 +472,8 @@ fn judge(
                 let (ended, at) = issue_ended(merge, closing);
                 Ok(Managed {
                     tickets: item
-                        .tracks(linewright)
-                        .map(|_| Tickets::of(&facts.sub_issues, linewright)),
+                        .is_tracking(linewright)
+                        .then(|| Tickets::of(&facts.sub_issues, linewright)),
                     ..managed(
                         &item.title,
                         &[],
@@ -573,69 +546,6 @@ fn open_issue_state(issue: &Issue, view: &View) -> (Option<State>, Option<Detail
             Some(_) | None => None,
         };
     (state, detail)
-}
-
-/// What merged `pr` shows beyond its state, with the waits that alone
-/// implies, which the decisions' waits for it follow; or why it is no spec
-/// change. A spec change Linewright was unassigned from has been worked
-/// (`GLOSSARY.md`, **Managed**), so it stays managed, though Linewright does
-/// not cut it. Any other that Linewright worked has ended: a spec change
-/// designed with nothing to build as such, the rest as merged
-/// (`docs/specs/design_system.md`, Cards).
-fn merged_detail(
-    pr: &MergedPull,
-    snapshot: &Snapshot,
-    now: Timestamp,
-    policy: &Policy,
-) -> Result<(Detail, Vec<Wait>), NotSpecChange> {
-    let linewright = &policy.linewright;
-    let ended = |ended, at| Ok((Detail::Ended { ended, at }, vec![]));
-    match spec_change(pr, &snapshot.default_branch, now, policy) {
-        Ok(SpecChange::Pending) => Ok((Detail::WaitingForDesign, vec![])),
-        Ok(SpecChange::Unassigned { required_label }) => Ok((
-            Detail::WaitingForDesign,
-            vec![Wait::Unassigned { required_label }],
-        )),
-        Err(because) if !pr.worked_by(linewright) => Err(because),
-        Err(NotSpecChange::Designed { .. }) if is_cut(snapshot, pr.number, linewright) => {
-            ended(Ended::Merged, pr.merged_at)
-        }
-        Err(NotSpecChange::Designed { label }) => {
-            let designed = last_labeling(&pr.events, label.name())
-                .map_or(pr.merged_at, |labeling| labeling.at);
-            ended(Ended::NothingToBuild, designed)
-        }
-        Err(_) => ended(Ended::Merged, pr.merged_at),
-    }
-}
-
-/// Whether spec change #`spec_change` was cut into tickets: a tracking issue
-/// the snapshot holds, open or closed, tracks it.
-pub(crate) fn is_cut(snapshot: &Snapshot, spec_change: Number, linewright: &Login) -> bool {
-    tracking_issues(snapshot, spec_change, linewright)
-        .next()
-        .is_some()
-}
-
-/// The tracking issues the snapshot holds, open or closed, that track spec
-/// change #`spec_change`.
-pub(crate) fn tracking_issues<'a>(
-    snapshot: &'a Snapshot,
-    spec_change: Number,
-    linewright: &'a Login,
-) -> impl Iterator<Item = Number> + 'a {
-    let tracks = Some(Tracks::SpecChange(spec_change));
-    let open = snapshot
-        .issues
-        .iter()
-        .filter(move |issue| issue.open && issue.tracks(linewright) == tracks)
-        .map(|issue| issue.number);
-    let closed = snapshot
-        .closed
-        .iter()
-        .filter(move |item| item.tracks(linewright) == tracks)
-        .map(|item| item.number);
-    open.chain(closed)
 }
 
 /// How a closed issue Linewright worked ended (`docs/specs/design_system.md`,

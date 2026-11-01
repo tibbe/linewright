@@ -676,13 +676,7 @@ pub(crate) fn describe(state: State, detail: Option<&Detail>, tickets: Option<&T
             ended: Ended::Merged | Ended::ClosedUnmerged,
             ..
         }) => None,
-        Some(Detail::Ended {
-            ended: Ended::NothingToBuild,
-            ..
-        }) => Some("nothing to build".into()),
         Some(Detail::Ended { ended, .. }) => Some(ended.worded()),
-        Some(Detail::WaitingForDesign) => Some("spec change waiting for its design".into()),
-        Some(Detail::SpecChangeBeingDesigned) => Some("spec change being designed".into()),
         None => None,
     };
     let tickets = tickets.map(|tickets| {

@@ -22,13 +22,9 @@ pub struct FiledTicket {
     pub title: String,
 }
 
-/// The body of the tracking issue of `tickets`, cut from spec change `pr`.
-pub fn body(pr: Number, tickets: &[FiledTicket]) -> String {
-    let list: String = tickets
-        .iter()
-        .map(|t| format!("- {} {}\n", t.number, t.title))
-        .collect();
-    format!("{TRACKING_LINK}{pr}.\n\n{list}")
+/// The body of spec change `pr`'s issue.
+pub fn body(pr: Number) -> String {
+    format!("{ISSUE_LINK}{pr}.\n")
 }
 
 /// What an issue so titled was filed as, by the link to a spec change its

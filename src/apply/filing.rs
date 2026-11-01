@@ -29,40 +29,11 @@ pub fn designed_asks(cut: &IssueWork) -> Asks {
     }
 }
 
-/// What a designed spec change asks for. Its label goes on last, so that a
-/// design stopped before it is discarded and made again
-/// (docs/specs/design.md, "Discarding a cut").
-pub fn spec_change_designed() -> Asks {
-    Asks {
-        designed: Some(Designed::Add),
-        unassign: true,
-        ..Asks::default()
-    }
-}
-
-/// What a cut's tickets are filed under.
-#[derive(Clone, Copy)]
-pub enum CutUnder<'a> {
-    /// A merged spec change, whose tickets get a new tracking issue.
-    SpecChange(&'a MergedPull),
-    /// An issue, the tracking issue of its own tickets.
-    Issue,
-}
-
-/// The issues a cut files, which the run files in order: the tracking
-/// issue, then each ticket after those blocking it.
+/// The issues a cut files, which the run files in order: each ticket after
+/// those blocking it.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Cut {
-    /// The tracking issue to file, if the tickets get a new one.
-    pub tracking_issue: Option<TrackingIssue>,
     pub tickets: Vec<NewTicket>,
-}
-
-/// A new tracking issue, for the tickets cut from `spec_change`.
-#[derive(Debug, PartialEq, Eq)]
-pub struct TrackingIssue {
-    pub issue: NewIssue,
-    pub spec_change: Number,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -73,21 +44,10 @@ pub struct NewTicket {
     pub blocked_by: Vec<usize>,
 }
 
-/// The issues filing `tickets` under `under` makes, labeled `required`.
-pub fn cut(tickets: &Tickets, under: CutUnder<'_>, required: Option<&str>) -> Cut {
+/// The issues filing `tickets` makes, labeled `required`.
+pub fn cut(tickets: &Tickets, required: Option<&str>) -> Cut {
     let labels: Vec<String> = required.into_iter().map(String::from).collect();
     Cut {
-        tracking_issue: match under {
-            CutUnder::SpecChange(pr) => Some(TrackingIssue {
-                issue: NewIssue {
-                    title: tracking::title(&pr.title),
-                    body: tracking::body(pr.number, &[]),
-                    labels: labels.clone(),
-                },
-                spec_change: pr.number,
-            }),
-            CutUnder::Issue => None,
-        },
         tickets: tickets
             .in_order()
             .iter()
@@ -107,8 +67,6 @@ pub fn cut(tickets: &Tickets, under: CutUnder<'_>, required: Option<&str>) -> Cu
 /// makes in field order.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Published {
-    /// The new tracking issue's body, listing the tickets.
-    pub tracking_body: Option<String>,
     /// The design, posted on the tracking issue.
     pub design_comment: String,
     /// What each ticket asks for. They get `ready-for-agent` only after the
@@ -117,44 +75,33 @@ pub struct Published {
     /// only once they are designed, so that none is taken for an issue to
     /// design.
     pub ticket_asks: Asks,
-    /// The comment on the spec change the tickets were cut from.
-    pub spec_change_comment: Option<Comment>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Comment {
-    /// The item to post it on.
-    pub on: Number,
-    pub body: String,
-}
-
-/// What publishing `design`, cut into the `filed` tickets under
-/// `tracking_issue` for why `comment` gives, writes; `spec_change` is the
-/// spec change they were cut from, if any.
-pub fn published(
-    design: &str,
-    comment: &str,
-    tracking_issue: Number,
-    filed: &[FiledTicket],
-    spec_change: Option<Number>,
-) -> Published {
+/// What publishing `design`, cut into the `filed` tickets for why `comment`
+/// gives, writes.
+pub fn published(design: &str, comment: &str, filed: &[FiledTicket]) -> Published {
     let in_order: String = filed
         .iter()
         .enumerate()
         .map(|(i, t)| format!("{}. {} {}\n", i + 1, t.number, t.title))
         .collect();
     Published {
-        tracking_body: spec_change.map(|pr| tracking::body(pr, filed)),
         design_comment: format!("{design}\n\n## Tickets\n\n{in_order}\n{comment}"),
         ticket_asks: Asks {
             designed: Some(Designed::Add),
             status: Some(StatusTo::Set(StatusLabel::ReadyForAgent)),
             ..Asks::default()
         },
-        spec_change_comment: spec_change.map(|pr| Comment {
-            on: pr,
-            body: format!("{comment}\n\nTracked in {tracking_issue}:\n\n{in_order}"),
-        }),
+    }
+}
+
+/// The issue taking up `spec_change` opens, labeled `required` as well
+/// (`docs/specs/sources_of_work.md`, Spec changes).
+pub fn spec_change_issue(spec_change: &MergedPull, required: Option<&str>) -> NewIssue {
+    NewIssue {
+        title: tracking::title(&spec_change.title),
+        body: tracking::body(spec_change.number),
+        labels: labels(label::READY_FOR_AGENT, required),
     }
 }
 

@@ -150,7 +150,7 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
         "{pull}"
     );
     assert!(read("pulls/4.diff").contains("+gadget"));
-    let sessions: Vec<_> = std::fs::read_dir(out.join("sessions/pr-1"))
+    let sessions: Vec<_> = std::fs::read_dir(out.join("sessions/issue-2"))
         .unwrap()
         .collect();
     let session = sessions[0].as_ref().unwrap().path();
@@ -274,19 +274,19 @@ fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted()
         ["output.jsonl", "transcript.jsonl", "stderr.log"].map(redacted) == [true; 3],
         "{out:#?}"
     );
-    let pull = std::fs::read_to_string(dir.path().join("out/pulls/1.md")).unwrap();
+    let issue = std::fs::read_to_string(dir.path().join("out/issues/2.md")).unwrap();
     assert!(
-        pull.contains(
+        issue.contains(
             "Saw GH_TOKEN=[redacted] GITHUB_TOKEN=[redacted] \
              LINEWRIGHT_SESSION_GITHUB_TOKEN=[redacted] \
              LINEWRIGHT_WEBHOOK_SECRET=[redacted] ANTHROPIC_API_KEY=[redacted]"
         ),
-        "{pull}"
+        "{issue}"
     );
 }
 
-/// Replays a session that says `saw`, with `env`, returning the pull
-/// request it leaves and what it logged.
+/// Replays a session that says `saw`, with `env`, returning the spec
+/// change's issue it leaves and what it logged.
 fn replay_saying(dir: &Path, env: &[(&str, &str)], saw: &str) -> (String, String) {
     spec_change_case(dir, &[]);
     let bin = dir.join("bin");
@@ -307,8 +307,8 @@ fn replay_saying(dir: &Path, env: &[(&str, &str)], saw: &str) -> (String, String
             path.display()
         );
     }
-    let pull = std::fs::read_to_string(dir.join("out/pulls/1.md")).unwrap();
-    (pull, log)
+    let issue = std::fs::read_to_string(dir.join("out/issues/2.md")).unwrap();
+    (issue, log)
 }
 
 #[test_log::test]
@@ -330,16 +330,16 @@ fn a_replayed_session_leaves_redacted_the_variables_secrets_names_and_none_that_
                DATABASE_PASSWORD=database-password SIGNING_KEY=signing-key \
                WEBHOOK_SECRET=webhook-secret CI_TOKEN=ci-token";
 
-    let (pull, _) = replay_saying(dir.path(), &env, saw);
+    let (issue, _) = replay_saying(dir.path(), &env, saw);
 
     assert!(
-        pull.contains(
+        issue.contains(
             "Saw AWS_SECRET_ACCESS_KEY=[redacted] NPM_TOKEN=[redacted] \
              NPM_REGISTRY=[redacted] NPM_EMPTY= \
              DATABASE_PASSWORD=database-password SIGNING_KEY=signing-key \
              WEBHOOK_SECRET=webhook-secret CI_TOKEN=ci-token"
         ),
-        "{pull}"
+        "{issue}"
     );
 }
 
@@ -355,11 +355,11 @@ fn a_replayed_session_leaves_a_secret_of_1_to_5_characters_in_what_it_said_and_w
     ];
     let saw = "PIN=ééééé LONG_PIN=s3cr3t ANTHROPIC_API_KEY=12345";
 
-    let (pull, log) = replay_saying(dir.path(), &env, saw);
+    let (issue, log) = replay_saying(dir.path(), &env, saw);
 
     assert!(
-        pull.contains("Saw PIN=ééééé LONG_PIN=[redacted] ANTHROPIC_API_KEY=12345"),
-        "{pull}"
+        issue.contains("Saw PIN=ééééé LONG_PIN=[redacted] ANTHROPIC_API_KEY=12345"),
+        "{issue}"
     );
     let warned: Vec<String> = log
         .lines()
@@ -388,14 +388,14 @@ fn a_replayed_session_leaves_redacted_the_credentials_the_table_passes_unnamed()
     let saw = "oauth-s3cr3t auth-s3cr3t http://bot:p%40s3cr3t@proxy:3128 p@s3cr3t \
                sk-abc123 dev bedrock-token";
 
-    let (pull, log) = replay_saying(dir.path(), &env, saw);
+    let (issue, log) = replay_saying(dir.path(), &env, saw);
 
     assert!(
-        pull.contains(
+        issue.contains(
             "Saw [redacted] [redacted] http://bot:[redacted]@proxy:3128 [redacted] \
              [redacted] dev bedrock-token"
         ),
-        "{pull}"
+        "{issue}"
     );
     let warned: Vec<String> = log
         .lines()
@@ -479,8 +479,8 @@ fn a_replayed_session_with_linewrights_credentials_empty_keeps_all_it_said() {
 
     replay_with_fake_claude(dir.path(), &empty);
 
-    let pull = std::fs::read_to_string(dir.path().join("out/pulls/1.md")).unwrap();
-    assert!(pull.contains("Nothing to build."), "{pull}");
+    let issue = std::fs::read_to_string(dir.path().join("out/issues/2.md")).unwrap();
+    assert!(issue.contains("Nothing to build."), "{issue}");
 }
 
 #[test_log::test]
@@ -645,7 +645,7 @@ fn a_replayed_sessions_record_keeps_its_transcript() {
 
     replay_with_fake_claude(dir.path(), &[]);
 
-    let sessions: Vec<_> = std::fs::read_dir(dir.path().join("out/sessions/pr-1"))
+    let sessions: Vec<_> = std::fs::read_dir(dir.path().join("out/sessions/issue-2"))
         .unwrap()
         .collect();
     let session = sessions[0].as_ref().unwrap().path();
