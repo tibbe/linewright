@@ -1,3 +1,4 @@
+use crate::common;
 use chrono::{DateTime, Utc};
 use linewright::domain::*;
 use linewright::prompts::{self, PullTask, Repo, Ticket};
@@ -59,7 +60,7 @@ fn created() -> Timestamp {
 
 fn section(failures: &[CheckFailure], name: &str) -> String {
     let issue = issue();
-    let ticket = Ticket::new(&issue, None, vec![], None);
+    let ticket = common::ready(Ticket::read(&issue, None, vec![]));
     let repo_name = "owner/widgets".parse().unwrap();
     let repo = Repo {
         name: &repo_name,

@@ -1379,7 +1379,7 @@ impl State {
         self.issues
             .values()
             .map(|record| &record.issue)
-            .filter(|issue| self.filed(issue) == Some(Filed::Tracking { spec_change }))
+            .filter(|issue| self.filed(issue).and_then(Filed::spec_change) == Some(spec_change))
             .map(|issue| issue.number)
             .collect()
     }

@@ -29,36 +29,62 @@ pub struct Ticket<'a> {
     /// (docs/specs/implementation.md, "What the implementer reads").
     parent: Option<Cow<'a, Issue>>,
     filed_gaps: Vec<&'a Issue>,
-    /// Only for a ticket cut from a spec change.
+    /// Only for a spec change's issue or a ticket cut from one.
     spec_diff: Option<String>,
 }
 
+/// A ticket as read, which a spec change's issue, or a ticket cut from one,
+/// is only once it has the spec change's spec diff.
+pub enum TicketRead<'a> {
+    Ready(Ticket<'a>),
+    WantsSpecDiff(WantsSpecDiff<'a>),
+}
+
+/// A ticket that is a spec change's issue or was cut from one, without the
+/// spec change's spec diff.
+pub struct WantsSpecDiff<'a> {
+    ticket: Ticket<'a>,
+    spec_change: Number,
+}
+
+impl<'a> WantsSpecDiff<'a> {
+    /// The spec change whose spec diff it wants.
+    pub fn spec_change(&self) -> Number {
+        self.spec_change
+    }
+
+    pub fn with(self, spec_diff: String) -> Ticket<'a> {
+        Ticket {
+            spec_diff: Some(spec_diff),
+            ..self.ticket
+        }
+    }
+}
+
 impl<'a> Ticket<'a> {
-    /// # Panics
-    ///
-    /// When it has a spec diff but its parent is no spec change's tracking
-    /// issue, or the other way round.
-    pub fn new(
+    /// The ticket `issue` is, under `parent`, with `filed_gaps`, wanting its
+    /// spec change's spec diff where it has one.
+    pub fn read(
         issue: &'a Issue,
         parent: Option<Cow<'a, Issue>>,
         filed_gaps: Vec<&'a Issue>,
-        spec_diff: Option<String>,
-    ) -> Ticket<'a> {
+    ) -> TicketRead<'a> {
         let ticket = Ticket {
             issue,
             parent,
             filed_gaps,
-            spec_diff,
+            spec_diff: None,
         };
-        assert_eq!(
-            ticket.spec_diff.is_some(),
-            ticket.cut_from().is_some(),
-            "a ticket has a spec diff exactly when it was cut from a spec change"
-        );
-        ticket
+        match ticket.issue.spec_change().or(ticket.cut_from()) {
+            None => TicketRead::Ready(ticket),
+            Some(spec_change) => TicketRead::WantsSpecDiff(WantsSpecDiff {
+                ticket,
+                spec_change,
+            }),
+        }
     }
 
-    /// The spec change whose tracking issue is its parent, if it is one.
+    /// The spec change whose issue is its parent, if it is one.
     fn cut_from(&self) -> Option<Number> {
         let parent = self.parent.as_deref()?;
         Parent::new(parent.number, parent.filed).spec_change
@@ -671,38 +697,61 @@ pub fn design_spec_change(
     prompts.design.fill(&Design {
         base: shared(repo),
         kind: DesignOf::SpecChange.noun().into(),
-        item: OWN_TEMPLATES.spec_change.fill(&SpecChange {
-            default_branch: repo.default_branch.into(),
-            number: pr.number.to_string(),
-            title: pr.title.clone(),
-            author: pr.author.to_string(),
-            body: or_none(&pr.body).into(),
-            spec_diff: spec_diff.trim_end().into(),
-        }),
+        item: render_spec_change(repo, pr, spec_diff),
         filed_gaps: render_filed_gaps(filed_gaps),
         cutting: OWN_TEMPLATES.cut_spec_change.fill(&NoValues {}),
         output: design_output(DesignOf::SpecChange, attachments),
     })
 }
 
+/// A spec change, merged, and its spec diff.
+pub struct SpecChangeAndDiff {
+    pub spec_change: MergedPull,
+    pub diff: String,
+}
+
 /// The same prompt as a spec change's, with the issue and its comments as
-/// what the item asks (docs/specs/design.md, "Designing").
+/// what the item asks, followed for a spec change's issue by its
+/// `spec_change` (docs/specs/design.md, "The session").
 pub fn design_issue(
     prompts: &Prompts,
     repo: &Repo,
     issue: &Issue,
+    spec_change: Option<&SpecChangeAndDiff>,
     filed_gaps: &[&Issue],
     attachments: &Path,
 ) -> String {
     let mut item = String::new();
     write_issue(&mut item, "The issue", issue);
+    let of = match spec_change {
+        None => DesignOf::Issue,
+        Some(spec_change) => {
+            item.push_str(&render_spec_change(
+                repo,
+                &spec_change.spec_change,
+                &spec_change.diff,
+            ));
+            DesignOf::SpecChange
+        }
+    };
     prompts.design.fill(&Design {
         base: shared(repo),
-        kind: DesignOf::Issue.noun().into(),
+        kind: of.noun().into(),
         item: item.trim_end().into(),
         filed_gaps: render_filed_gaps(filed_gaps),
         cutting: OWN_TEMPLATES.cut_issue.fill(&NoValues {}),
-        output: design_output(DesignOf::Issue, attachments),
+        output: design_output(of, attachments),
+    })
+}
+
+fn render_spec_change(repo: &Repo, spec_change: &MergedPull, diff: &str) -> String {
+    OWN_TEMPLATES.spec_change.fill(&SpecChange {
+        default_branch: repo.default_branch.into(),
+        number: spec_change.number.to_string(),
+        title: spec_change.title.clone(),
+        author: spec_change.author.to_string(),
+        body: or_none(&spec_change.body).into(),
+        spec_diff: diff.trim_end().into(),
     })
 }
 
@@ -1010,6 +1059,12 @@ fn render_ticket(ticket: &Ticket) -> String {
             None => writeln!(task, "### Parent issue\n\n{}.\n", parent.number),
         };
         write_comments(&mut task, "The parent issue's comments", &parent.comments);
+    }
+    if let Some(spec_change) = ticket.issue.spec_change() {
+        let _ = writeln!(
+            task,
+            "### The spec change\n\nThis issue was opened for the spec change {spec_change}.\n"
+        );
     }
     if let Some(spec_diff) = &ticket.spec_diff {
         let _ = writeln!(

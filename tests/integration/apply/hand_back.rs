@@ -532,16 +532,30 @@ fn an_implementer_that_gave_up_is_a_decision_with_the_sessions_log(
     );
 }
 
-#[rstest]
-#[case::with_why(
-    "Gadgets exist already.",
-    "There is nothing to build: the code already does what this issue asks.\n\n\
-     Gadgets exist already."
-)]
-fn an_issue_with_nothing_to_build_is_a_decision(#[case] why: &str, #[case] reason: &str) {
+#[test]
+fn an_issue_a_person_opened_with_nothing_to_build_is_handed_back_as_a_decision() {
     assert_eq!(
-        nothing_to_build(why),
-        hand_back_of(HandBackKind::Decision, reason, None)
+        nothing_to_build(
+            &Login::new("maintainer"),
+            &linewright(),
+            "Gadgets exist already."
+        ),
+        NothingToBuild::HandBack(hand_back_of(
+            HandBackKind::Decision,
+            "There is nothing to build: the code already does what this issue asks.\n\n\
+             Gadgets exist already.",
+            None
+        ))
+    );
+}
+
+#[test]
+fn an_issue_linewright_opened_with_nothing_to_build_is_closed_saying_why() {
+    assert_eq!(
+        nothing_to_build(&linewright(), &linewright(), "Gadgets exist already."),
+        NothingToBuild::Close {
+            comment: "Gadgets exist already.".into()
+        }
     );
 }
 

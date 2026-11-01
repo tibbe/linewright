@@ -52,7 +52,7 @@ pub fn triage_asking(world: &World, ask: Value, comment: &'static str) {
 
 /// The design, the tickets in order, with their bodies, and the comment of
 /// each cut [`tickets_script`] scripts.
-const CUT_DESIGN: &str = "A gadget store, and a listing that reads it.";
+pub const CUT_DESIGN: &str = "A gadget store, and a listing that reads it.";
 const CUT_TICKETS: [(&str, &str); 2] = [
     ("Store gadgets", "## What to build\n\nGadgets persist."),
     ("List gadgets", "## What to build\n\nList them."),

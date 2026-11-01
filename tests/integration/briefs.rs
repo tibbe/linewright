@@ -200,7 +200,7 @@ fn implement_prompt(briefs: &Briefs) -> String {
             default_branch: "main",
             spec_glob: "docs/**",
         },
-        &prompts::Ticket::new(&issue, None, vec![], None),
+        &common::ready(prompts::Ticket::read(&issue, None, vec![])),
         "7-count-the-widgets",
         &BranchStart::New,
         std::path::Path::new("/attachments"),

@@ -12,8 +12,8 @@ use crate::apply::filing::{
     self, AlreadyFiled, Comment, CutUnder, NewTicket, TrackingIssue, spec_gap_issues,
 };
 use crate::apply::hand_back::{
-    self, FollowUps, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail, SendBack,
-    Stopped, TryAgain,
+    self, FollowUps, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail,
+    NothingToBuild, SendBack, Stopped, TryAgain,
 };
 use crate::apply::pull_work::{self, PullJob, PullWorkWrites, feedback_people, late};
 use crate::apply::triage::{self, CategoryChange};
@@ -23,13 +23,14 @@ use crate::automation::Automation;
 use crate::briefs::{Briefs, OperatorPrompts};
 use crate::clock::Clock;
 use crate::domain::{
-    Issue, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel, Timestamp, Windows, label,
+    Issue, IssueCloseReason, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
+    Timestamp, Windows, label,
 };
 use crate::git::{self, Updated, WorkState};
 use crate::harness::{
     Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
 };
-use crate::prompts::{self, DesignOf, PullTask, Repo, Ticket};
+use crate::prompts::{self, DesignOf, PullTask, Repo, SpecChangeAndDiff, Ticket, TicketRead};
 use crate::reconcile::{
     Policy, PullStop, Subject, Work, WorkKind, new_feedback, pull_stop, rebases_to_repair,
 };
@@ -536,27 +537,37 @@ async fn ticket_of<'a>(
     snapshot: &'a Snapshot,
     issue: &'a Issue,
 ) -> Result<Ticket<'a>, Failure> {
-    let spec_diff = match issue.cut_from() {
-        None => None,
-        Some(spec_change) => {
-            let pr = shell
-                .store
-                .merged_pull(spec_change, Windows::EVER)
-                .await
-                .map_err(infra)?
-                .with_context(|| {
-                    format!("the spec change {spec_change} is not a merged pull request")
-                })
-                .map_err(infra)?;
-            Some(spec_diff(shell, &pr).await?)
-        }
-    };
     let parent = match issue.parent {
         None => None,
         Some(parent) => Some(snapshot_or_store_issue(shell, snapshot, parent.number).await?),
     };
     let filed_gaps = spec_gap::filed_for(snapshot, issue.number);
-    Ok(Ticket::new(issue, parent, filed_gaps, spec_diff))
+    Ok(match Ticket::read(issue, parent, filed_gaps) {
+        TicketRead::Ready(ticket) => ticket,
+        TicketRead::WantsSpecDiff(wants) => {
+            let read = spec_change_and_diff(shell, wants.spec_change()).await?;
+            wants.with(read.diff)
+        }
+    })
+}
+
+/// Spec change #`spec_change`, merged, and its spec diff.
+async fn spec_change_and_diff(
+    shell: &Shell,
+    spec_change: Number,
+) -> Result<SpecChangeAndDiff, Failure> {
+    let pr = shell
+        .store
+        .merged_pull(spec_change, Windows::EVER)
+        .await
+        .map_err(infra)?
+        .with_context(|| format!("the spec change {spec_change} is not a merged pull request"))
+        .map_err(infra)?;
+    let diff = spec_diff(shell, &pr).await?;
+    Ok(SpecChangeAndDiff {
+        spec_change: pr,
+        diff,
+    })
 }
 
 /// Whether the pull request is open and Linewright still works it.
@@ -1412,12 +1423,18 @@ async fn design_spec_change(
 /// An issue that fits one session has its design posted on it, where its
 /// implementer reads it; one cut into tickets becomes their tracking issue,
 /// and its design goes there with them (docs/specs/design.md, "Designing").
+/// A spec change's issue is designed from its spec change and spec diff as
+/// well.
 async fn design_issue(
     shell: &Shell,
     ctx: &Ctx,
     snapshot: &Snapshot,
     issue: &Issue,
 ) -> Result<(), Failure> {
+    let spec_change = match issue.spec_change() {
+        None => None,
+        Some(spec_change) => Some(spec_change_and_diff(shell, spec_change).await?),
+    };
     let filed_issues = spec_gap::filed_for(snapshot, issue.number);
     let filed_gaps = FiledGaps {
         item: issue.number,
@@ -1428,6 +1445,7 @@ async fn design_issue(
             &ctx.with.briefs.prompts,
             &shell.repo(),
             issue,
+            spec_change.as_ref(),
             &filed_issues,
             attachments,
         )
@@ -1459,7 +1477,20 @@ async fn design_issue(
             .map_err(apply)
         }
         DesignResult::NothingToBuild { reason } => {
-            Err(Failure::HandBack(hand_back::nothing_to_build(&reason)))
+            match hand_back::nothing_to_build(&issue.author, &shell.policy.linewright, &reason) {
+                NothingToBuild::Close { comment } => {
+                    let store = &shell.store;
+                    async {
+                        store.comment(issue.number, &comment).await?;
+                        store
+                            .close_issue(issue.number, IssueCloseReason::Completed)
+                            .await
+                    }
+                    .await
+                    .map_err(apply)
+                }
+                NothingToBuild::HandBack(hand_back) => Err(Failure::HandBack(hand_back)),
+            }
         }
         DesignResult::Blocked {
             question,
