@@ -391,6 +391,36 @@ fn grows_in_place(element: ElementRef<'_>) -> Vec<&str> {
         .collect()
 }
 
+/// Asserts that `holder` holds a name cut to fit to `lines` lines, as the
+/// stylesheet's cut-name rule cuts it: by its class, with the page's tooltip,
+/// and with only its title cut, its number and its link to GitHub outside
+/// the title, and nothing in it but elements, each of which the rule sizes
+/// (`docs/specs/design_system.md`, Layout).
+#[track_caller]
+fn assert_cuts_only_the_title(holder: ElementRef, lines: u8) {
+    let html = holder.html();
+    assert!(
+        has_classes(holder, &[&format!("name-cut-{lines}")]),
+        "{html}"
+    );
+    assert!(holder.attr("data-tip-cut").is_some(), "{html}");
+    assert_eq!(select_in(holder, ".title").len(), 1, "{html}");
+    assert_eq!(select_in(holder, ".number").len(), 1, "{html}");
+    assert_eq!(select_in(holder, ":scope > a.github").len(), 1, "{html}");
+    assert_eq!(
+        select_in(holder, ".title .number, .title a.github").len(),
+        0,
+        "{html}"
+    );
+    let loose: Vec<&str> = holder
+        .children()
+        .filter_map(|child| child.value().as_text())
+        .map(|text| &**text)
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    assert_eq!(loose, Vec::<&str>::new(), "{html}");
+}
+
 /// Whether `element` has none of `classes`.
 fn lacks_classes(element: ElementRef, classes: &[&str]) -> bool {
     !classes.iter().any(|class| has_classes(element, &[class]))

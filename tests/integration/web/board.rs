@@ -420,7 +420,8 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
 }
 
 #[test_log::test(tokio::test)]
-async fn a_lane_head_and_a_card_title_cut_to_fit_are_whole_in_the_pages_tooltip_not_in_place() {
+async fn a_lane_head_and_a_card_title_cut_to_fit_cut_only_the_title_and_are_whole_in_the_pages_tooltip_not_in_place()
+ {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
 
     let html = pages.page("/").await;
@@ -430,15 +431,13 @@ async fn a_lane_head_and_a_card_title_cut_to_fit_are_whole_in_the_pages_tooltip_
     for head in heads {
         assert!(lacks_classes(head, &["group"]), "{}", head.html());
         let cut = select_in(head, ":scope > span")[0];
-        assert!(has_classes(cut, &["truncate"]), "{}", head.html());
-        assert!(cut.attr("data-tip-cut").is_some(), "{}", head.html());
+        assert_cuts_only_the_title(cut, 1);
         assert_eq!(grows_in_place(cut), Vec::<&str>::new(), "{}", head.html());
     }
     let titles = select(&html, "#board .card h3");
     assert_eq!(titles.len(), 4);
     for title in titles {
-        assert!(has_classes(title, &["line-clamp-2"]), "{}", title.html());
-        assert!(title.attr("data-tip-cut").is_some(), "{}", title.html());
+        assert_cuts_only_the_title(title, 2);
         assert_eq!(
             grows_in_place(title),
             Vec::<&str>::new(),

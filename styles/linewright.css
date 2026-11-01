@@ -104,6 +104,67 @@
     font-size: 0.8em;
   }
 
+  /* A name cut to fit (docs/specs/design_system.md, Layout;
+     docs/specs/web/design_system.md, Layout), as `html::titled` marks it,
+     on one line (`name-cut-1`) or two (`name-cut-2`), applied to the
+     element that holds it. Each is a flex row in which only the page link
+     holding the title may shrink, so that the cut falls on the title. A
+     holder is no daisyUI component, such as `card-title`, whose layout its
+     own utilities layer would put over this. */
+  .name-cut-1,
+  .name-cut-2 {
+    @apply gap-0;
+  }
+
+  .name-cut-1 > *,
+  .name-cut-2 > * {
+    @apply shrink-0;
+  }
+
+  .name-cut-1 {
+    @apply inline-flex items-baseline;
+  }
+
+  /* As an item of its own, a lane head's tail would lose the space it
+     starts with. */
+  .name-cut-1 > * {
+    @apply whitespace-pre;
+  }
+
+  .name-cut-1 > :has(> .title) {
+    @apply flex min-w-0 shrink items-baseline gap-x-[0.25em] whitespace-nowrap;
+  }
+
+  /* Clamped, not kept on one line by `nowrap`, so that its smallest width
+     is its longest word, as wrapping text's is, and a table cell holding it
+     can narrow. */
+  .name-cut-1 .title {
+    @apply min-w-0 line-clamp-1 whitespace-normal;
+  }
+
+  /* The link to GitHub is the row's next item after the clamped page
+     link, at the end of its last line, and a leading icon is beside the
+     first line. */
+  .name-cut-2 {
+    @apply flex items-start;
+  }
+
+  .name-cut-2 > :has(> .title) {
+    @apply min-w-0 shrink line-clamp-2;
+  }
+
+  .name-cut-2 .number {
+    @apply whitespace-nowrap;
+  }
+
+  .name-cut-2 > a.github {
+    @apply self-end;
+  }
+
+  .name-cut-2 > svg {
+    @apply mt-[calc((1lh-1em)/2)] mr-[0.25em];
+  }
+
   /* A lane's head, unfinished or finished, sticky under the board's column
      heads while the reader is in its lane, in its lane's colour so that it
      reads as part of it while stuck (templates/board.html). It fills its

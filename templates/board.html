@@ -12,7 +12,7 @@
 {%- for card in cell.cards %}
 <li class="{% call ui::card_look() %}{% endcall %}{% call toned(card.tone) %}{% endcall %}{% if card.quiet %} opacity-75{% endif %}">
 <div class="card-body gap-1">
-<h3 class="card-title line-clamp-2 text-sm" data-tip-cut>{% if card.pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ card.heading|safe }}</h3>
+<h3 class="name-cut-2 text-sm font-semibold" data-tip-cut>{% if card.pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ card.heading|safe }}</h3>
 {%- if let Some(line) = card.line %}
 <p class="line text-muted">{% if let Some(tone) = card.tone %}{% call ui::icon(tone) %}{% endcall %}{% endif %}{{ line|safe }}</p>
 {%- endif %}
@@ -29,7 +29,7 @@
     each side so that it can stay there inside its lane, and whole in the
     page's tooltip while it is cut (`docs/specs/design_system.md`, Layout). -#}
 {%- macro lane_head(lane) -%}
-<span class="sticky left-(--lane-inset) inline-block max-w-[calc(100cqw-2*var(--lane-inset))] truncate align-top" data-tip-cut>{{ lane.head|safe }}</span>
+<span class="name-cut-1 sticky left-(--lane-inset) max-w-[calc(100cqw-2*var(--lane-inset))] align-top" data-tip-cut>{{ lane.head|safe }}</span>
 {%- endmacro -%}
 {%- block main -%}
 <section id="board" class="scroll-box @container">

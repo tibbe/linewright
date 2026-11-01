@@ -63,27 +63,42 @@ pub(crate) fn phrase(phrase: &Phrase, names: &Names) -> Html {
 pub(crate) fn item(number: Number, repo: &str) -> Html {
     Html(format!(
         "{}{}",
-        page_link(number, &number.to_string()),
+        page_link(number, &escape(&number.to_string())),
         github(number, repo),
     ))
 }
 
 /// #`number` and its title, linking to its page, and a link to it on
-/// GitHub.
+/// GitHub. The number and the title are each marked, for the stylesheet's
+/// `.name-cut-1` and `.name-cut-2` (`docs/specs/design_system.md`, Layout).
 pub(crate) fn titled(number: Number, title: &str, repo: &str) -> Html {
     Html(format!(
         "{}{}",
-        page_link(number, &format!("{number}: {title}")),
+        page_link(
+            number,
+            &Html(format!(
+                r#"<span class="number">{}</span> <span class="title">{}</span>"#,
+                escape(&format!("{number}:")),
+                escape(title),
+            )),
+        ),
         github(number, repo),
     ))
 }
 
-/// `text` linking to the page of item `number`.
-fn page_link(number: Number, text: &str) -> String {
+/// `content` in a `span` of `class`.
+pub(crate) fn span(class: &str, content: &Html) -> Html {
+    Html(format!(
+        r#"<span class="{}">{content}</span>"#,
+        escape(class)
+    ))
+}
+
+/// `content` linking to the page of item `number`.
+fn page_link(number: Number, content: &Html) -> String {
     format!(
         r#"<a class="link link-hover" href="/items/{}">{}</a>"#,
-        number.0,
-        escape(text),
+        number.0, content,
     )
 }
 
