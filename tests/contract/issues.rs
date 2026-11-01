@@ -27,6 +27,7 @@ contracts![
     an_issue_closed_as_a_duplicate_reads_back_closed_as_a_duplicate,
     a_snapshot_holds_an_issue_closed_within_its_windows,
     a_sub_issue_and_its_parent_name_each_other_with_who_added_it,
+    a_removed_sub_issue_and_its_parent_no_longer_name_each_other,
     a_blocker_is_listed_open_until_it_closes,
     no_issue_is_read_for_a_number_the_store_lacks,
 ];
@@ -436,6 +437,28 @@ async fn a_sub_issue_and_its_parent_name_each_other_with_who_added_it(
     )?;
     let read = held(&sandbox, child).await?.parent;
     equal("the parent", &read.map(|p| p.number), &Some(parent))
+}
+
+async fn a_removed_sub_issue_and_its_parent_no_longer_name_each_other(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let parent = open(&sandbox, "parent").await?;
+    let removed = open(&sandbox, "removed child").await?;
+    let kept = open(&sandbox, "kept child").await?;
+    sandbox.store().add_sub_issue(parent, removed).await?;
+    sandbox.store().add_sub_issue(parent, kept).await?;
+
+    sandbox.store().remove_sub_issue(parent, removed).await?;
+
+    let left: Vec<Number> = held(&sandbox, parent)
+        .await?
+        .sub_issues
+        .iter()
+        .map(|s| s.number)
+        .collect();
+    equal("the sub-issues", &left, &vec![kept])?;
+    let read = held(&sandbox, removed).await?.parent;
+    equal("the parent", &read.map(|p| p.number), &None)
 }
 
 async fn a_blocker_is_listed_open_until_it_closes(sandbox: Sandbox) -> Result<()> {

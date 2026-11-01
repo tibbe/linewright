@@ -484,6 +484,8 @@ pub trait Store: Send + Sync {
     async fn close_issue(&self, issue: Number, reason: IssueCloseReason) -> Result<()>;
     async fn set_issue_type(&self, issue: Number, issue_type: &str) -> Result<()>;
     async fn add_sub_issue(&self, parent: Number, child: Number) -> Result<()>;
+    /// Removes issue #`child` from #`parent`'s sub-issues.
+    async fn remove_sub_issue(&self, parent: Number, child: Number) -> Result<()>;
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()>;
 
     /// Opens a draft pull request into the default branch.

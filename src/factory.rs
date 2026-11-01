@@ -964,40 +964,36 @@ impl Factory {
             }
             Action::DiscardCut(discarding) => {
                 let Discard {
-                    peoples_pulls,
-                    tickets,
+                    item,
                     pulls,
-                    ..
+                    tickets,
                 } = discarding;
                 warn!(
-                    item = discarding.item.designed().0,
+                    item = item.designed().0,
                     "discarding a cut to design it again"
                 );
                 let notes = discarding.notes();
-                // A pull request of a person is seen only through its open
-                // ticket, so it closes first; the discard leaves the ticket
-                // alone until it is closed, so nothing hands it back.
-                for pr in peoples_pulls {
-                    store.comment(*pr, &notes.on_pull).await?;
-                    store.close_pull(*pr).await?;
-                }
-                // Each ticket closes before Linewright's pull request, so
-                // that Linewright never sees its pull request closed unmerged
-                // while the ticket is open, which would hand the ticket back.
-                for ticket in tickets {
-                    discard(store.as_ref(), *ticket, &notes.on_ticket).await?;
-                }
+                // A ticket whose pull request is closed is left alone while
+                // its cut is discarded, so a discard stopped in between does
+                // not hand it back.
                 for pr in pulls {
                     store.comment(*pr, &notes.on_pull).await?;
                     store.close_pull(*pr).await?;
                 }
-                // The parent last, so that a discard that stops part way is
-                // found again on the next poll.
-                match &notes.on_parent {
-                    ParentNote::Tracking { tracking, note } => {
-                        discard(store.as_ref(), *tracking, note).await?;
-                    }
-                    ParentNote::Issue { issue, note } => store.comment(*issue, note).await?,
+                for ticket in discarding.open_tickets() {
+                    discard(store.as_ref(), ticket, &notes.on_ticket).await?;
+                }
+                if let Some(ParentNote { issue, note }) = &notes.on_issue {
+                    store.comment(*issue, note).await?;
+                }
+                // The tickets leave the sub-issues last, so that a discard
+                // that stops part way is found again on the next poll.
+                let parent = item.parent();
+                for ticket in tickets {
+                    store.remove_sub_issue(parent, ticket.number).await?;
+                }
+                if let Some(ParentNote { issue, note }) = &notes.closing_tracking {
+                    discard(store.as_ref(), *issue, note).await?;
                 }
             }
             Action::DeleteBranch { branch } => {

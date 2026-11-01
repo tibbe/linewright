@@ -381,18 +381,17 @@ fn row_with(issue: &Issue, closing: &[ClosingPull], run_in_flight: bool) -> Opti
     row(&facts, state, &policy)
 }
 
-/// The discard of `issue`'s cut, while a ticket cut from it is open.
+/// The discard of `issue`'s cut, while a ticket cut from it is among its
+/// sub-issues.
 fn discard_of(issue: &Issue) -> Option<Discard> {
-    let tickets: Vec<Number> = issue
+    let tickets: Vec<Linked> = issue
         .tickets_cut(&linewright())
-        .filter(|ticket| ticket.is_open())
-        .map(|ticket| ticket.number)
+        .map(SubIssue::linked)
         .collect();
     (!tickets.is_empty()).then(|| Discard {
         item: CutItem::Issue(issue.number),
-        peoples_pulls: vec![],
-        tickets,
         pulls: vec![],
+        tickets,
     })
 }
 

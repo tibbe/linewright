@@ -2,10 +2,13 @@ use crate::common;
 
 use chrono::TimeDelta;
 use common::*;
-use linewright::domain::{Assignment, AutoMerge, Issue, IssueEvent, PullState};
+use linewright::domain::{
+    Assignment, AutoMerge, ClosedKind, Issue, IssueCloseReason, IssueEvent, Linked, Number,
+    PullState,
+};
 use linewright::reconcile::{CutItem, Discard, ParentNote, WorkKind};
-use linewright::store::Store;
 use linewright::store::local::{LocalStore, Paused, Write};
+use linewright::store::{IssueRead, Store};
 use linewright::work_settings::{Effort, Partial, StageTable};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -527,9 +530,11 @@ async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_reque
             pr: spec_pr,
             tracking: cut.tracking,
         },
-        peoples_pulls: vec![],
-        tickets: cut.tickets.to_vec(),
         pulls: vec![pr],
+        tickets: cut
+            .tickets
+            .map(|number| Linked { number, open: true })
+            .to_vec(),
     }
     .notes();
     for ticket in cut.tickets {
@@ -542,12 +547,13 @@ async fn a_spec_change_whose_design_label_was_removed_has_its_cut_and_pull_reque
     assert_eq!(last_pull_comment(&world, pr).await, notes.on_pull);
     let tracking = world.issue(cut.tracking);
     assert!(!tracking.open);
+    assert_eq!(tracking.sub_issues, []);
     assert_eq!(
-        ParentNote::Tracking {
-            tracking: cut.tracking,
+        Some(ParentNote {
+            issue: cut.tracking,
             note: last_comment(&tracking).into()
-        },
-        notes.on_parent
+        }),
+        notes.closing_tracking
     );
 }
 
@@ -584,7 +590,7 @@ async fn sessions_on_the_pull_request_of_a_ticket_cut_from_a_spec_change_are_bri
     assert_briefed_with_the_spec_diff(&prompts[0]);
 }
 
-use linewright::domain::{CheckState, Login, Number, ReviewState};
+use linewright::domain::{CheckState, Login, ReviewState};
 #[tokio::test]
 async fn review_comments_are_addressed_answered_in_their_threads_and_review_is_requested_again() {
     let mut world = World::new().await;
@@ -1318,55 +1324,81 @@ async fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_add
     assert!(world.issue(gap).open);
 }
 
+/// GitHub's reason for closing issue #`number`, closed.
+async fn close_reason(world: &World, number: Number) -> Option<IssueCloseReason> {
+    match Store::issue(&*world.store, number).await.unwrap() {
+        IssueRead::Closed(closed) => match closed.kind {
+            ClosedKind::Issue { reason, .. } => reason,
+            ClosedKind::Pull { .. } => panic!("#{number} is a pull request"),
+        },
+        other @ (IssueRead::Held { .. } | IssueRead::LeftOut { .. } | IssueRead::Gone) => {
+            panic!("#{number} is not closed: {other:?}")
+        }
+    }
+}
+
 #[tokio::test]
-async fn a_cut_of_an_issue_stopped_part_way_closes_linewrights_tickets_and_their_pull_requests() {
-    let mut world = World::new().await;
-    let issue = open_undesigned_gadgets(&world);
+async fn a_tracking_issue_whose_design_label_was_removed_has_its_cut_discarded_and_is_designed_again()
+ {
+    let (mut world, issue, tickets) = issue_cut_into_tickets().await;
+    world.poll().await;
+    let [linewrights] = world.store.pulls()[..] else {
+        panic!(
+            "expected the first ticket's pull request: {:?}",
+            world.store.pulls()
+        );
+    };
     world
         .store
-        .assign_as(LINEWRIGHT, issue, LINEWRIGHT)
+        .unlabel_as(issue, "linewright:designed")
         .unwrap();
-    let left = world
+    world
         .store
-        .open_issue(LINEWRIGHT, "Store gadgets", "Gadgets persist.", &[]);
-    world.store.add_sub_issue(issue, left).await.unwrap();
-    let linewrights = world
-        .store
-        .open_pull_as(
-            LINEWRIGHT,
-            &format!("{}-store-gadgets", left.0),
-            "Store gadgets",
-            &format!("Closes {left}"),
-            &[("src/gadgets.txt", "gadgets\n")],
-        )
-        .await
+        .label_as("maintainer", issue, "ready-for-agent")
         .unwrap();
-    let theirs = world.persons_pull_closing(left).await;
 
     world.poll().await;
 
     let notes = Discard {
         item: CutItem::Issue(issue),
-        peoples_pulls: vec![theirs],
-        tickets: vec![left],
         pulls: vec![linewrights],
+        tickets: tickets.map(|number| Linked { number, open: true }).to_vec(),
     }
     .notes();
-    let discarded = world.issue(left);
-    assert!(!discarded.open);
-    assert_eq!(last_comment(&discarded), notes.on_ticket);
-    for pr in [linewrights, theirs] {
-        let pull = world.store.snapshot_pull(pr).await;
-        assert!(matches!(pull.state, PullState::Closed { .. }), "{pull:#?}");
-        assert_eq!(last_pull_comment(&world, pr).await, notes.on_pull);
+    let pull = world.store.snapshot_pull(linewrights).await;
+    assert!(matches!(pull.state, PullState::Closed { .. }), "{pull:#?}");
+    assert_eq!(last_pull_comment(&world, linewrights).await, notes.on_pull);
+    for ticket in tickets {
+        let closed = world.issue(ticket);
+        assert!(!closed.open, "{closed:#?}");
+        assert_eq!(last_comment(&closed), notes.on_ticket);
+        assert_eq!(
+            close_reason(&world, ticket).await,
+            Some(IssueCloseReason::NotPlanned)
+        );
+        assert_eq!(closed.parent, None);
     }
+    let parent = world.issue(issue);
+    assert_eq!(parent.sub_issues, []);
     assert_eq!(
-        ParentNote::Issue {
+        Some(ParentNote {
             issue,
-            note: last_comment(&world.issue(issue)).into()
-        },
-        notes.on_parent
+            note: last_comment(&parent).into()
+        }),
+        notes.on_issue
     );
+
+    world.poll().await;
+
+    assert_eq!(world.harness.prompts(WorkKind::Design).len(), 1);
+    let recut: Vec<Number> = world
+        .issue(issue)
+        .sub_issues
+        .iter()
+        .map(|s| s.number)
+        .collect();
+    assert_eq!(recut.len(), 2, "{recut:?}");
+    assert!(recut.iter().all(|t| !tickets.contains(t)), "{recut:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

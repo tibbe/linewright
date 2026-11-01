@@ -217,10 +217,8 @@ pub struct IssueFacts<'a> {
     /// The pull requests that close it.
     pub closing: &'a [ClosingPull],
     pub run_in_flight: bool,
-    /// The discard of its cut, while a ticket cut from it, or a pull request
-    /// of Linewright's for one, is still open. The discard leaves its closed
-    /// tickets among the issue's sub-issues, so a cut with nothing open is
-    /// one already discarded.
+    /// The discard of its cut, while a ticket cut from it is among its
+    /// sub-issues.
     pub discard: Option<&'a Discard>,
 }
 
@@ -388,8 +386,8 @@ fn unassigned_since(issue: &Issue, policy: &Policy, status: StatusLabel) -> bool
 /// Of `closing`, the pull request Linewright opened that was closed without
 /// merging since `issue` was last opened or given a status label, the first
 /// by number. GitHub does not say who closed it; Linewright closes its own
-/// only with their ticket, when it discards a cut, so it is taken as a
-/// person's no.
+/// only when it discards a cut, which leaves their tickets alone until it
+/// closes them too, so it is taken as a person's no.
 fn refused(issue: &Issue, closing: &[ClosingPull], linewright: &Login) -> Option<Number> {
     let since = opened_or_labeled(&issue.events);
     closing
