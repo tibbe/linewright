@@ -8,6 +8,7 @@ use linewright::harness::UsageLimit;
 use linewright::prompts::{self, Readers};
 use linewright::reconcile::*;
 use linewright::repo_files::{FileError, Unusable};
+use linewright::runs::Ending;
 
 fn t(minute: i64) -> Timestamp {
     DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
@@ -1628,11 +1629,17 @@ fn a_draft_waits_while_checks_run() {
     assert_eq!(at(&in_review(pr), 30), vec![]);
 }
 
-fn done(pr: u64, kind: WorkKind, minute: i64) -> DoneRun {
-    DoneRun {
+fn done(pr: u64, kind: WorkKind, minute: i64) -> EndedRun {
+    ended(pr, kind, Ending::Done, minute)
+}
+
+fn ended(pr: u64, kind: WorkKind, ending: Ending, minute: i64) -> EndedRun {
+    EndedRun {
         pr: Number(pr),
         kind,
-        done_at: t(minute),
+        ending,
+        at: t(minute),
+        answered_until: None,
     }
 }
 
@@ -1648,12 +1655,15 @@ fn deciding_at(world: &Snapshot, memory: &Memory, policy: &Policy, minute: i64) 
     )
 }
 
-fn after_runs(world: &Snapshot, runs: &[DoneRun], minute: i64) -> Vec<Action> {
-    let memory = Memory {
-        done_runs: runs.to_vec(),
+fn remembering(runs: &[EndedRun]) -> Memory {
+    Memory {
+        ended_runs: runs.to_vec(),
         ..Memory::default()
-    };
-    deciding_at(world, &memory, &policy(), minute)
+    }
+}
+
+fn after_runs(world: &Snapshot, runs: &[EndedRun], minute: i64) -> Vec<Action> {
+    deciding_at(world, &remembering(runs), &policy(), minute)
 }
 
 #[test_log::test]
@@ -1696,6 +1706,53 @@ fn fix_attempts_count_only_the_pull_requests_own_fix_runs_since_its_last_rework(
     ];
 
     assert_eq!(after_runs(&world, &runs, 10), vec![fix_ci(2, 20)]);
+}
+
+#[test_log::test]
+fn a_fix_ci_run_counts_as_an_attempt_however_it_ended() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Failed)];
+    let world = in_review(pr);
+
+    for ending in [Ending::HandedBack, Ending::Failed, Ending::Cancelled] {
+        let runs = [
+            done(20, WorkKind::FixCi, 3),
+            ended(20, WorkKind::FixCi, ending, 6),
+        ];
+        assert!(
+            matches!(
+                after_runs(&world, &runs, 10).as_slice(),
+                [Action::HandBack { reason, .. }]
+                    if reason == "`test` still failing after 2 fix attempts."
+            ),
+            "{ending:?}"
+        );
+    }
+}
+
+#[test_log::test]
+fn a_rework_run_ending_starts_a_new_round_however_it_ended() {
+    let mut pr = pull(20, 2);
+    pr.checks = vec![check("test", CheckState::Failed)];
+    let world = in_review(pr);
+
+    for ending in [
+        Ending::Done,
+        Ending::HandedBack,
+        Ending::Failed,
+        Ending::Cancelled,
+    ] {
+        let runs = [
+            done(20, WorkKind::FixCi, 2),
+            done(20, WorkKind::FixCi, 3),
+            ended(20, WorkKind::Rework, ending, 4),
+        ];
+        assert_eq!(
+            after_runs(&world, &runs, 10),
+            vec![fix_ci(2, 20)],
+            "{ending:?}"
+        );
+    }
 }
 
 #[test_log::test]
@@ -1961,17 +2018,11 @@ fn a_review_with_comments_starts_a_rework_run_but_one_that_only_approves_does_no
 }
 
 #[test_log::test]
-fn feedback_already_answered_starts_nothing() {
+fn feedback_a_rework_run_that_ended_done_was_given_starts_nothing() {
     let mut pr = ready(pull(20, 2));
-    pr.comments = vec![
-        comment("reviewer", 0, "Looks odd."),
-        comment(LINEWRIGHT, 3, "Thanks!"),
-    ];
-    let before_the_push = in_review(pr.clone());
     pr.comments = vec![comment("coverage[bot]", 4, "Coverage dropped 0.1%.")];
     let answered_without_a_push = in_review(pr);
 
-    assert_eq!(at(&before_the_push, 10), vec![]);
     assert_eq!(
         after_runs(
             &answered_without_a_push,
@@ -1980,6 +2031,64 @@ fn feedback_already_answered_starts_nothing() {
         ),
         vec![]
     );
+}
+
+#[test_log::test]
+fn feedback_stays_until_a_rework_run_that_was_given_it_ends_done() {
+    let mut pr = ready(pull(20, 2));
+    pr.comments = vec![comment("maintainer", 4, "Please rename `foo`.")];
+    let world = in_review(pr);
+
+    for ending in [Ending::HandedBack, Ending::Failed, Ending::Cancelled] {
+        assert_eq!(
+            after_runs(&world, &[ended(20, WorkKind::Rework, ending, 6)], 10),
+            vec![rework(2, 20)],
+            "{ending:?}"
+        );
+    }
+}
+
+#[test_log::test]
+fn a_comment_posted_after_a_rework_run_read_its_feedback_starts_another_though_the_run_pushed_after_it()
+ {
+    let reworked_at = |comment_at| {
+        let mut pr = ready(pull(20, 2));
+        pr.comments = vec![
+            comment("maintainer", 3, "Please rename `foo`."),
+            comment("reviewer", comment_at, "And `bar`."),
+        ];
+        pr.pushes.push(Push {
+            by: Login::new(LINEWRIGHT),
+            at: t(6),
+        });
+        let run = EndedRun {
+            answered_until: Some(t(4)),
+            ..done(20, WorkKind::Rework, 8)
+        };
+        after_runs(&in_review(pr), &[run], 10)
+    };
+
+    assert_eq!(reworked_at(5), vec![rework(2, 20)], "before its push");
+    assert_eq!(reworked_at(7), vec![rework(2, 20)], "after its push");
+}
+
+#[test_log::test]
+fn a_fix_ci_or_update_push_leaves_feedback_standing() {
+    let mut pr = ready(pull(20, 2));
+    pr.comments = vec![comment("maintainer", 4, "Please rename `foo`.")];
+    pr.pushes.push(Push {
+        by: Login::new(LINEWRIGHT),
+        at: t(6),
+    });
+    let world = in_review(pr);
+
+    for kind in [WorkKind::FixCi, WorkKind::Update] {
+        assert_eq!(
+            after_runs(&world, &[done(20, kind, 7)], 10),
+            vec![rework(2, 20)],
+            "{kind:?}"
+        );
+    }
 }
 
 #[test_log::test]
@@ -2041,46 +2150,42 @@ fn deciding(world: &Snapshot, memory: &Memory, policy: &Policy) -> Vec<Action> {
     deciding_at(world, memory, policy, 10)
 }
 
-fn tried(head: &str, minute: i64) -> TriedRebase {
-    TriedRebase {
-        pr: Number(20),
-        head: head.into(),
-        at: t(minute),
+#[test_log::test]
+fn a_pull_request_github_reports_not_rebaseable_gets_an_update_run_until_a_run_ends_on_it_after_its_last_push()
+ {
+    let world = in_review(not_rebaseable());
+    let mut pushed_since = not_rebaseable();
+    pushed_since.pushes.push(Push {
+        by: Login::new("maintainer"),
+        at: t(6),
+    });
+
+    assert_eq!(at(&world, 10), vec![update(2, 20)]);
+    for run in [
+        done(20, WorkKind::Update, 5),
+        ended(20, WorkKind::FixCi, Ending::Failed, 5),
+        ended(20, WorkKind::Rework, Ending::HandedBack, 5),
+    ] {
+        assert_eq!(
+            after_runs(&world, std::slice::from_ref(&run), 10),
+            vec![],
+            "{run:?}"
+        );
+        assert_eq!(
+            after_runs(&in_review(pushed_since.clone()), &[run], 10),
+            vec![update(2, 20)]
+        );
     }
 }
 
-fn rebase_update() -> Vec<Action> {
-    vec![Action::RememberRebase(tried("abc123", 10)), update(2, 20)]
-}
-
 #[test_log::test]
-fn a_pull_request_github_reports_not_rebaseable_is_rebased_where_rebase_merging_is_allowed() {
-    let world = in_review(not_rebaseable());
-    let rebasing = Policy {
-        update_rule: UpdateRule::Always(UpdateMethod::Rebase),
-        ..policy()
-    };
-
-    assert_eq!(at(&world, 10), rebase_update());
-    assert_eq!(
-        deciding(&world, &Memory::default(), &rebasing),
-        rebase_update()
-    );
-}
-
-#[test_log::test]
-fn rebaseability_starts_no_run_without_rebase_merging_or_with_update_branch_merge() {
+fn a_pull_request_github_reports_not_rebaseable_gets_an_update_run_only_where_rebase_merging_is_allowed()
+ {
     let world = in_review(not_rebaseable());
     let no_rebase_merging = Policy {
         allowed_merge_methods: [MergeMethod::Merge, MergeMethod::Squash]
             .into_iter()
             .collect(),
-        update_rule: UpdateRule::Always(UpdateMethod::Merge),
-        ..policy()
-    };
-    let linear_squash_only = Policy {
-        allowed_merge_methods: [MergeMethod::Squash].into_iter().collect(),
-        update_rule: UpdateRule::Always(UpdateMethod::Rebase),
         ..policy()
     };
     let update_branch_merge = Policy {
@@ -2088,9 +2193,14 @@ fn rebaseability_starts_no_run_without_rebase_merging_or_with_update_branch_merg
         ..policy()
     };
 
-    for policy in [no_rebase_merging, linear_squash_only, update_branch_merge] {
-        assert_eq!(deciding(&world, &Memory::default(), &policy), vec![]);
-    }
+    assert_eq!(
+        deciding(&world, &Memory::default(), &no_rebase_merging),
+        vec![]
+    );
+    assert_eq!(
+        deciding(&world, &Memory::default(), &update_branch_merge),
+        vec![update(2, 20)]
+    );
 }
 
 #[test_log::test]
@@ -2101,66 +2211,19 @@ fn a_pull_request_whose_rebaseability_is_not_known_yet_waits_rather_than_startin
     assert_eq!(at(&in_review(pr), 10), vec![]);
 }
 
-fn remembering(rebase: TriedRebase) -> Memory {
-    Memory {
-        tried_rebases: vec![rebase],
-        ..Memory::default()
-    }
-}
-
 #[test_log::test]
-fn a_pull_request_still_not_rebaseable_after_a_rebase_at_its_head_starts_no_more_runs() {
-    let world = in_review(not_rebaseable());
-
-    assert_eq!(
-        deciding(&world, &remembering(tried("abc123", 5)), &policy()),
-        vec![]
-    );
-    assert_eq!(
-        deciding(&world, &remembering(tried("an-earlier-head", 5)), &policy()),
-        rebase_update()
-    );
-}
-
-#[test_log::test]
-fn a_pull_request_behind_is_rebased_again_though_a_rebase_was_tried_at_its_head() {
+fn a_pull_request_behind_is_brought_up_to_date_though_a_run_has_ended_since_its_last_push() {
     let mut pr = not_rebaseable();
     pr.mergeability = Mergeability::Behind;
 
     assert_eq!(
-        deciding(&in_review(pr), &remembering(tried("abc123", 5)), &policy()),
-        rebase_update()
+        after_runs(&in_review(pr), &[done(20, WorkKind::Update, 5)], 10),
+        vec![update(2, 20)]
     );
 }
 
-#[test_log::test]
-fn a_pull_request_handed_back_since_a_rebase_was_tried_tries_it_again_once_reassigned() {
-    let unassigned = in_review(unassigned_at(not_rebaseable(), LINEWRIGHT, 7, None));
-    let reassigned = in_review(unassigned_at(not_rebaseable(), LINEWRIGHT, 7, Some(8)));
-
-    assert_eq!(
-        deciding(&unassigned, &remembering(tried("abc123", 5)), &policy()),
-        vec![]
-    );
-    assert_eq!(
-        deciding(&reassigned, &remembering(tried("abc123", 5)), &policy()),
-        rebase_update()
-    );
-}
-
-#[test_log::test]
-fn a_ticket_labeled_again_since_a_rebase_was_tried_does_not_try_it_again() {
-    let mut world = in_review(not_rebaseable());
-    world.issues[0].events = vec![IssueEvent::Labeled {
-        label: label::READY_FOR_AGENT.into(),
-        by: None,
-        at: t(7),
-    }];
-
-    assert_eq!(
-        deciding(&world, &remembering(tried("abc123", 5)), &policy()),
-        vec![]
-    );
+fn updated_at(minute: i64) -> Memory {
+    remembering(&[done(20, WorkKind::Update, minute)])
 }
 
 fn merging_by(method: MergeMethod) -> Policy {
@@ -2181,7 +2244,7 @@ fn with_auto_merge_by_rebase_a_pull_request_not_rebaseable_is_rebased_and_not_me
 
     assert_eq!(
         deciding(&world, &Memory::default(), &by_rebase),
-        rebase_update()
+        vec![update(2, 20)]
     );
     assert_eq!(
         deciding(&in_review(unknown), &Memory::default(), &by_rebase),
@@ -2198,11 +2261,7 @@ fn with_auto_merge_by_rebase_a_pull_request_still_not_rebaseable_after_a_rebase_
     let world = in_review(not_rebaseable());
 
     assert_eq!(
-        deciding(
-            &world,
-            &remembering(tried("abc123", 5)),
-            &merging_by(MergeMethod::Rebase)
-        ),
+        deciding(&world, &updated_at(5), &merging_by(MergeMethod::Rebase)),
         vec![Action::HandBack {
             item: Item::Pull(Number(20)),
             kind: HandBackKind::Stall,
@@ -2219,11 +2278,7 @@ fn with_auto_merge_by_another_method_a_pull_request_still_not_rebaseable_after_a
     let world = in_review(not_rebaseable());
 
     assert_eq!(
-        deciding(
-            &world,
-            &remembering(tried("abc123", 5)),
-            &merging_by(MergeMethod::Squash)
-        ),
+        deciding(&world, &updated_at(5), &merging_by(MergeMethod::Squash)),
         vec![merge_by(20, false, MergeMethod::Squash)]
     );
 }
@@ -2460,14 +2515,23 @@ fn without_auto_merge_a_green_pull_request_github_blocks_is_marked_ready_as_any_
     assert_eq!(at(&in_review(ready_for_review), 10), vec![]);
 }
 
-/// The pull request with a push by Linewright at minute 5, which answers the
-/// feedback before it.
+/// The pull request with a push by Linewright at minute 5, a rework run's.
 fn reworked(mut pr: Pull) -> Pull {
     pr.pushes.push(Push {
         by: Login::new(LINEWRIGHT),
         at: t(5),
     });
     pr
+}
+
+/// [`auto_merging`], after a rework run on #20 that ended done at minute 5,
+/// which answers the feedback before it.
+fn auto_merging_reworked(world: &Snapshot, minute: i64) -> Vec<Action> {
+    auto_merging_remembering(
+        world,
+        &remembering(&[done(20, WorkKind::Rework, 5)]),
+        minute,
+    )
 }
 
 #[test_log::test]
@@ -2479,10 +2543,10 @@ fn with_auto_merge_a_green_pull_request_a_person_commented_on_waits_for_their_ap
     let ready = in_review(ready(pr));
 
     assert_eq!(
-        auto_merging(&draft, 10),
+        auto_merging_reworked(&draft, 10),
         vec![Action::MarkReady { pr: Number(20) }]
     );
-    assert_eq!(auto_merging(&ready, 10), vec![]);
+    assert_eq!(auto_merging_reworked(&ready, 10), vec![]);
 }
 
 #[test_log::test]
@@ -2496,7 +2560,10 @@ fn with_auto_merge_a_pull_request_a_person_commented_on_merges_once_they_approve
     }];
     pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 6)];
 
-    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+    assert_eq!(
+        auto_merging_reworked(&in_review(pr), 10),
+        vec![merge(20, false)]
+    );
 }
 
 #[test_log::test]
@@ -2511,11 +2578,11 @@ fn with_auto_merge_a_person_whose_latest_review_does_not_approve_holds_the_merge
     };
 
     assert_eq!(
-        auto_merging(&approved_then(ReviewState::ChangesRequested), 10),
+        auto_merging_reworked(&approved_then(ReviewState::ChangesRequested), 10),
         vec![]
     );
     assert_eq!(
-        auto_merging(&approved_then(ReviewState::Dismissed), 10),
+        auto_merging_reworked(&approved_then(ReviewState::Dismissed), 10),
         vec![]
     );
 }
@@ -2534,10 +2601,13 @@ fn with_auto_merge_a_person_who_comments_after_approving_holds_the_merge_until_t
     let approved_again = in_review(pr);
 
     assert_eq!(
-        auto_merging(&commented, 10),
+        auto_merging_reworked(&commented, 10),
         vec![Action::MarkReady { pr: Number(20) }]
     );
-    assert_eq!(auto_merging(&approved_again, 10), vec![merge(20, false)]);
+    assert_eq!(
+        auto_merging_reworked(&approved_again, 10),
+        vec![merge(20, false)]
+    );
 }
 
 #[test_log::test]
@@ -2561,8 +2631,11 @@ fn with_auto_merge_a_person_who_replies_in_a_thread_after_approving_holds_the_me
         .push(review("reviewer", ReviewState::Approved, "", 6));
     let approved_again = in_review(pr);
 
-    assert_eq!(auto_merging(&replied, 10), vec![]);
-    assert_eq!(auto_merging(&approved_again, 10), vec![merge(20, false)]);
+    assert_eq!(auto_merging_reworked(&replied, 10), vec![]);
+    assert_eq!(
+        auto_merging_reworked(&approved_again, 10),
+        vec![merge(20, false)]
+    );
 }
 
 #[test_log::test]
@@ -2576,7 +2649,10 @@ fn with_auto_merge_an_approval_with_inline_comments_does_not_hold_the_merge() {
     }];
     pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 3)];
 
-    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+    assert_eq!(
+        auto_merging_reworked(&in_review(pr), 10),
+        vec![merge(20, false)]
+    );
 }
 
 #[test_log::test]
@@ -2597,9 +2673,12 @@ fn with_auto_merge_a_pull_request_merges_once_each_persons_newest_comment_or_rev
         .push(review("reviewer", ReviewState::Approved, "", 7));
     let both_approved = in_review(pr);
 
-    assert_eq!(auto_merging(&one_commented, 10), vec![]);
-    assert_eq!(auto_merging(&other_commented, 10), vec![]);
-    assert_eq!(auto_merging(&both_approved, 10), vec![merge(20, false)]);
+    assert_eq!(auto_merging_reworked(&one_commented, 10), vec![]);
+    assert_eq!(auto_merging_reworked(&other_commented, 10), vec![]);
+    assert_eq!(
+        auto_merging_reworked(&both_approved, 10),
+        vec![merge(20, false)]
+    );
 }
 
 #[test_log::test]
@@ -2608,7 +2687,10 @@ fn with_auto_merge_comments_from_linewright_after_an_approval_do_not_hold_the_me
     pr.reviews = vec![review("reviewer", ReviewState::Approved, "", 2)];
     pr.comments = vec![comment(LINEWRIGHT, 3, "Renamed `foo`.")];
 
-    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+    assert_eq!(
+        auto_merging_reworked(&in_review(pr), 10),
+        vec![merge(20, false)]
+    );
 }
 
 #[test_log::test]
@@ -2624,8 +2706,11 @@ fn with_auto_merge_a_pull_request_two_people_commented_on_merges_once_both_appro
         .push(review("maintainer", ReviewState::Approved, "", 7));
     let both_approved = in_review(pr);
 
-    assert_eq!(auto_merging(&one_approved, 10), vec![]);
-    assert_eq!(auto_merging(&both_approved, 10), vec![merge(20, false)]);
+    assert_eq!(auto_merging_reworked(&one_approved, 10), vec![]);
+    assert_eq!(
+        auto_merging_reworked(&both_approved, 10),
+        vec![merge(20, false)]
+    );
 }
 
 #[test_log::test]
@@ -2639,7 +2724,10 @@ fn with_auto_merge_comments_and_reviews_from_bots_do_not_hold_the_merge() {
         3,
     )];
 
-    assert_eq!(auto_merging(&in_review(pr), 10), vec![merge(20, false)]);
+    assert_eq!(
+        auto_merging_reworked(&in_review(pr), 10),
+        vec![merge(20, false)]
+    );
 }
 
 fn failed_merge(pr: u64, reason: &str) -> FailedMerge {
@@ -3529,7 +3617,7 @@ fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Automations) {
     )
 }
 
-fn fixed_twice() -> Vec<DoneRun> {
+fn fixed_twice() -> Vec<EndedRun> {
     vec![done(22, WorkKind::FixCi, 3), done(22, WorkKind::FixCi, 6)]
 }
 
@@ -3538,7 +3626,7 @@ fn under_usage_limit_until(resets_at: i64) -> Memory {
         usage_limit: Some(UsageLimit {
             resets_at: t(resets_at),
         }),
-        done_runs: fixed_twice(),
+        ended_runs: fixed_twice(),
         ..Memory::default()
     }
 }
@@ -3650,7 +3738,7 @@ fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
 fn draining() -> Memory {
     Memory {
         drain: Some(Drain { since: t(60) }),
-        done_runs: fixed_twice(),
+        ended_runs: fixed_twice(),
         ..Memory::default()
     }
 }
@@ -4241,7 +4329,7 @@ fn with_auto_merge_a_pull_request_a_person_holds_waits_for_their_review() {
         waits(
             &in_review(pr),
             &[],
-            &Memory::default(),
+            &remembering(&[done(20, WorkKind::Rework, 6)]),
             10,
             &merging_by(MergeMethod::Merge)
         )

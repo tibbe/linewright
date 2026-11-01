@@ -16,7 +16,7 @@ use crate::domain::{Number, Repo, Timestamp};
 use crate::harness::Reported;
 use crate::layer::{Layer, Source};
 use crate::phrase::{Phrase, Tone};
-use crate::reconcile::{DoneRun, OLD_DESIGN, WorkKind};
+use crate::reconcile::{EndedRun, OLD_DESIGN, WorkKind};
 use crate::records;
 use crate::status::Paint;
 use crate::work_settings::{Effort, SessionSettings, Setting};
@@ -794,19 +794,18 @@ impl Recorded {
         ))
     }
 
-    pub fn done_on_pull(&self) -> Option<DoneRun> {
+    /// This run, where it ran on a pull request and its record has an end.
+    pub fn ended_on_pull(&self) -> Option<EndedRun> {
         match (&self.id.of, self.state) {
-            (
-                RunOf::Work { item, stage },
-                State::Ended {
+            (RunOf::Work { item, stage }, State::Ended { at, ending }) if stage.is_on_pull() => {
+                Some(EndedRun {
+                    pr: *item,
+                    kind: *stage,
+                    ending,
                     at,
-                    ending: Ending::Done,
-                },
-            ) if stage.is_on_pull() => Some(DoneRun {
-                pr: *item,
-                kind: *stage,
-                done_at: self.answered_until.unwrap_or(at),
-            }),
+                    answered_until: self.answered_until,
+                })
+            }
             _ => None,
         }
     }

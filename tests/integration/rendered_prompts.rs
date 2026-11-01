@@ -11,7 +11,7 @@ use crate::common;
 use linewright::domain::*;
 use linewright::git::{BranchStart, Conflict, UnfinishedCommits};
 use linewright::prompts::{self, PullTask, Repo, SpecChangeAndDiff, Ticket};
-use linewright::reconcile::Feedback;
+use linewright::working_pull::Feedback;
 
 fn created() -> Timestamp {
     DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")

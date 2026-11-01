@@ -11,11 +11,12 @@ use crate::automation::Automation;
 use crate::domain;
 use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Parent, Pull, UpdateMethod};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
-use crate::reconcile::{Feedback, WorkKind};
+use crate::reconcile::WorkKind;
 use crate::secrets::Held;
 use crate::spec_gap::FiledGaps;
 use crate::store::FoundSecrets;
 use crate::work_settings::RunKind;
+use crate::working_pull::Feedback;
 
 pub struct Repo<'a> {
     pub name: &'a domain::Repo,

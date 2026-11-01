@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
-    BranchIssue, ClosingPull, Comment, DesignedLabel, HandBackKind, Issue, Item, Linked, Login,
-    Marking, Merge, MergeMethod, MergeMethods, MergedPull, Number, Pull, PullState, Rebaseability,
-    Requirement, Review, ReviewState, Snapshot, StatusLabel, SubIssue, Thread, TicketBranchName,
-    Timestamp, UpdateMethod, UpdateRule, Windows, label,
+    BranchIssue, ClosingPull, DesignedLabel, HandBackKind, Issue, Item, Linked, Login, Marking,
+    Merge, MergeMethod, MergeMethods, MergedPull, Number, Pull, PullState, Rebaseability,
+    Requirement, Snapshot, StatusLabel, SubIssue, TicketBranchName, Timestamp, UpdateMethod,
+    UpdateRule, Windows, label,
 };
 use crate::harness::UsageLimit;
 use crate::holds::Holds;
@@ -19,6 +19,7 @@ use crate::lifecycle::{
 };
 use crate::phrase::Phrase;
 use crate::repo_files::{FileError, Unusable, holding};
+use crate::runs::Ending;
 use crate::spec_glob::SpecGlob;
 use crate::work_settings::RunKind;
 use crate::working_pull::{self, Row as WorkingRow};
@@ -240,8 +241,7 @@ pub struct LiveRun {
 pub struct Memory {
     /// Oldest first.
     pub failed_merges: Vec<FailedMerge>,
-    pub tried_rebases: Vec<TriedRebase>,
-    pub done_runs: Vec<DoneRun>,
+    pub ended_runs: Vec<EndedRun>,
     pub held: Holds,
     pub usage_limit: Option<UsageLimit>,
     /// Set from when a drain of `serve` begins until it exits.
@@ -252,23 +252,22 @@ impl Memory {
     pub fn retain_open(&mut self, snapshot: &Snapshot) {
         let open = |pr| snapshot.pull(pr).is_some_and(Pull::is_open);
         self.failed_merges.retain(|f| open(f.pr));
-        self.tried_rebases.retain(|r| open(r.pr));
-        self.done_runs.retain(|r| open(r.pr));
+        self.ended_runs.retain(|r| open(r.pr));
         self.held.retain(open);
     }
 
-    pub fn last_done(&self, pr: Number, kind: WorkKind) -> Option<Timestamp> {
-        self.done_runs_of(pr, kind).map(|r| r.done_at).max()
+    /// When the last rework run on `pr` that ended done last read the
+    /// feedback it was given: what it answered.
+    pub fn rework_answered_until(&self, pr: Number) -> Option<Timestamp> {
+        self.ended_on(pr)
+            .filter(|r| r.kind == WorkKind::Rework && r.ending == Ending::Done)
+            .map(|r| r.answered_until.unwrap_or(r.at))
+            .max()
     }
 
-    pub(crate) fn done_runs_of(
-        &self,
-        pr: Number,
-        kind: WorkKind,
-    ) -> impl Iterator<Item = &DoneRun> {
-        self.done_runs
-            .iter()
-            .filter(move |r| r.pr == pr && r.kind == kind)
+    /// The runs that ended on `pr`.
+    pub(crate) fn ended_on(&self, pr: Number) -> impl Iterator<Item = &EndedRun> {
+        self.ended_runs.iter().filter(move |r| r.pr == pr)
     }
 
     pub fn holds_starts(&self, now: Timestamp) -> bool {
@@ -371,22 +370,16 @@ pub struct FailedMerge {
     pub at: Timestamp,
 }
 
-/// Remembered so that a rebase that leaves the branch as it was is not
-/// tried again at every poll.
+/// A run that ended on a pull request, as its record keeps it. An
+/// interrupted run has no end, so it is none.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TriedRebase {
-    pub pr: Number,
-    pub head: String,
-    pub at: Timestamp,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DoneRun {
+pub struct EndedRun {
     pub pr: Number,
     pub kind: WorkKind,
-    /// For a rework, when it last read the feedback it answered; otherwise
-    /// when it ended.
-    pub done_at: Timestamp,
+    pub ending: Ending,
+    pub at: Timestamp,
+    /// For a rework, when it last read the feedback it was given.
+    pub answered_until: Option<Timestamp>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -454,7 +447,6 @@ pub enum Action {
     MarkReady {
         pr: Number,
     },
-    RememberRebase(TriedRebase),
     /// Only while its head is still `head`.
     Merge {
         pr: Number,
@@ -516,7 +508,6 @@ impl Action {
             Action::HandBack { item, .. } | Action::ClearStall { item } => vec![*item],
             Action::DeleteBranch { branch } => vec![Item::Issue(branch.issue())],
             Action::Cancel { .. }
-            | Action::RememberRebase(_)
             | Action::RecordLastScheduledRuns(_)
             | Action::RunAutomation(_) => vec![],
         }
@@ -819,9 +810,7 @@ pub fn decisions(
         let working = match (run, &work) {
             (Some(_), _) => PullWorking::RunInFlight,
             (None, PullWork::Wait(_)) => PullWorking::Waiting,
-            (None, PullWork::Start(_) | PullWork::StartRebase(..) | PullWork::Act(_)) => {
-                PullWorking::Asked
-            }
+            (None, PullWork::Start(_) | PullWork::Act(_)) => PullWorking::Asked,
         };
         let facts = PullFacts {
             opener: Opener::Linewright,
@@ -919,9 +908,8 @@ fn work_pull(number: Number, holding: Option<PullRow>, work: Option<PullWork>, p
     match work {
         Some(PullWork::Wait(wait)) => plan.wait(number, wait),
         Some(PullWork::Start(work)) if works => plan.start(work),
-        Some(PullWork::StartRebase(work, rebase)) if works => plan.start_rebase(work, rebase),
         Some(PullWork::Act(action)) if works => plan.act(action),
-        Some(PullWork::Start(_) | PullWork::StartRebase(..) | PullWork::Act(_)) | None => {}
+        Some(PullWork::Start(_) | PullWork::Act(_)) | None => {}
     }
 }
 
@@ -956,10 +944,7 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             Action::ClearStall { item } => {
                 (!claimed.contains(&item)).then_some(Action::ClearStall { item })
             }
-            Action::Start(_)
-            | Action::Claim { .. }
-            | Action::RememberRebase(_)
-            | Action::RunAutomation(_) => None,
+            Action::Start(_) | Action::Claim { .. } | Action::RunAutomation(_) => None,
             Action::RecordLastScheduledRuns(mut last_scheduled_runs) => {
                 for name in &held_back {
                     last_scheduled_runs.restore(name, recorded);
@@ -1145,7 +1130,6 @@ enum Held {
 
 struct Start {
     claim: Option<Item>,
-    rebase: Option<TriedRebase>,
     work: Work,
 }
 
@@ -1198,25 +1182,12 @@ impl Plan<'_> {
     }
 
     fn start(&mut self, work: Work) {
-        self.push_start(Start {
-            claim: None,
-            rebase: None,
-            work,
-        });
+        self.push_start(Start { claim: None, work });
     }
 
     fn claim_and_start(&mut self, item: Item, work: Work) {
         self.push_start(Start {
             claim: Some(item),
-            rebase: None,
-            work,
-        });
-    }
-
-    fn start_rebase(&mut self, work: Work, rebase: TriedRebase) {
-        self.push_start(Start {
-            claim: None,
-            rebase: Some(rebase),
             work,
         });
     }
@@ -1264,9 +1235,6 @@ impl Plan<'_> {
         for start in starts.into_iter().take(room) {
             if let Some(item) = start.claim {
                 actions.push(Action::Claim { item });
-            }
-            if let Some(rebase) = start.rebase {
-                actions.push(Action::RememberRebase(rebase));
             }
             actions.push(Action::Start(start.work));
         }
@@ -1577,9 +1545,6 @@ fn wait_for_blockers(issue: &Issue, plan: &mut Plan) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PullWork {
     Start(Work),
-    /// Start the update, remembering that it rebases the head it was
-    /// decided at.
-    StartRebase(Work, TriedRebase),
     Act(Action),
     /// Nothing yet: it waits for this.
     Wait(Wait),
@@ -1595,10 +1560,6 @@ fn pull_work(
     now: Timestamp,
 ) -> PullWork {
     let pr_number = pr.number;
-    let update = Work::Update {
-        issue: ticket,
-        pr: pr_number,
-    };
     let hand_back = |reason: String| {
         PullWork::Act(Action::HandBack {
             item: Item::Pull(pr_number),
@@ -1617,15 +1578,10 @@ fn pull_work(
             issue: ticket,
             pr: pr_number,
         }),
-        WorkingRow::Update { rebase: true } => PullWork::StartRebase(
-            update,
-            TriedRebase {
-                pr: pr_number,
-                head: pr.head_sha.clone(),
-                at: now,
-            },
-        ),
-        WorkingRow::Update { rebase: false } => PullWork::Start(update),
+        WorkingRow::Update => PullWork::Start(Work::Update {
+            issue: ticket,
+            pr: pr_number,
+        }),
         WorkingRow::WaitForChecks => PullWork::Wait(ci),
         WorkingRow::HandBackTimedOut { running } => hand_back(format!(
             "CI did not complete within {}: {} still running.",
@@ -1711,61 +1667,6 @@ pub fn hold_note(requires: &[Requirement]) -> String {
         format!("GitHub requires {names} before merging")
     };
     format!("Ready for review: {required}. Linewright merges it once GitHub allows it.")
-}
-
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Feedback<'a> {
-    pub comments: Vec<&'a Comment>,
-    pub reviews: Vec<&'a Review>,
-    pub threads: Vec<(&'a Thread, Vec<&'a Comment>)>,
-}
-
-impl Feedback<'_> {
-    pub fn is_empty(&self) -> bool {
-        self.comments.is_empty() && self.reviews.is_empty() && self.threads.is_empty()
-    }
-}
-
-pub fn new_feedback<'a>(
-    pr: &'a Pull,
-    linewright: &Login,
-    reworked: Option<Timestamp>,
-) -> Feedback<'a> {
-    let pushed = pr
-        .pushes
-        .iter()
-        .filter(|p| &p.by == linewright)
-        .map(|p| p.at);
-    let created = (&pr.author == linewright).then_some(pr.created_at);
-    let answered = pushed.chain(created).chain(reworked).max();
-    let new = |author: &Login, at: Timestamp| {
-        author != linewright && answered.is_none_or(|answered| at > answered)
-    };
-    Feedback {
-        comments: pr
-            .comments
-            .iter()
-            .filter(|c| new(&c.author, c.created_at))
-            .collect(),
-        reviews: pr
-            .reviews
-            .iter()
-            .filter(|r| new(&r.author, r.submitted_at))
-            .filter(|r| !(r.state == ReviewState::Approved && r.body.trim().is_empty()))
-            .collect(),
-        threads: pr
-            .threads
-            .iter()
-            .filter_map(|t| {
-                let comments: Vec<_> = t
-                    .comments
-                    .iter()
-                    .filter(|c| new(&c.author, c.created_at))
-                    .collect();
-                (!comments.is_empty()).then_some((t, comments))
-            })
-            .collect(),
-    }
 }
 
 fn code_list(names: &[String]) -> String {

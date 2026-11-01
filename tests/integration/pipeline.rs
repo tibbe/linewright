@@ -2379,7 +2379,8 @@ async fn a_branch_with_a_merge_commit_github_cannot_rebase_is_rebased_by_an_upda
 }
 
 #[test_log::test(tokio::test)]
-async fn a_rebase_that_leaves_the_branch_as_it_was_pushes_nothing_and_is_not_tried_again() {
+async fn a_rebase_that_leaves_the_branch_as_it_was_pushes_nothing_and_is_not_tried_again_also_after_a_restart()
+ {
     let (mut world, pr, _) = merged_in_conflict(|_| {}).await;
     let before = world.store.snapshot_pull(pr).await;
     world.harness.on(WorkKind::Update, |call| {
@@ -2393,6 +2394,9 @@ async fn a_rebase_that_leaves_the_branch_as_it_was_pushes_nothing_and_is_not_tri
     });
 
     world.poll().await;
+    world.poll().await;
+    world.poll().await;
+    world.restart(|_| {}).await;
     world.poll().await;
     world.poll().await;
 

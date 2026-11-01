@@ -6,8 +6,9 @@ use super::closing;
 use crate::domain::{CheckFailure, Login, Pull, Timestamp};
 use crate::git::Conflict;
 use crate::prompts::PullTask;
-use crate::reconcile::{Feedback, WorkKind};
+use crate::reconcile::WorkKind;
 use crate::results::ThreadReply;
+use crate::working_pull::Feedback;
 
 /// The writes of a finished pull request run, which the run makes in field
 /// order.
