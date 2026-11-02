@@ -25,7 +25,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 # A headless Chromium that sessions drive through Playwright MCP, to see the
 # pages they serve on localhost. The browser is the revision the pinned
-# Playwright expects, read-only to the agents.
+# Playwright expects, read-only to the agents. Both of its builds are
+# installed: Playwright MCP runs the full Chromium, and a script's
+# chromium.launch() with no channel runs the headless shell.
 COPY --link --from=playwright /opt/playwright /opt/playwright
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     NODE_PATH=/opt/playwright/node_modules
@@ -33,7 +35,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
 # system-ui families to WenQuanYi Zen Hei, one of the CJK fonts --with-deps
 # installs, so Latin text set in them renders in a CJK font.
 RUN ln -s "$NODE_PATH/playwright/cli.js" /usr/local/bin/playwright \
-    && playwright install --with-deps --no-shell chromium \
+    && playwright install --with-deps chromium \
     && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 COPY --chmod=755 deploy/playwright-mcp /usr/local/bin/playwright-mcp
