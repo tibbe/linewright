@@ -13,10 +13,28 @@
 Decisions live in pure functions; I/O, time, randomness and UI live in a thin
 layer that calls them.
 
-## Documentation
+## Comments
 
-- Link to the primary source, such as a spec, RFC or API doc, instead of
-  copying its content into comments.
+These rules cover comments in every file, code and config alike.
+
+A comment is one of these:
+
+- **Contract**: a doc comment stating what an item promises its callers,
+  including its errors and panics.
+- **Outside constraint**: behavior forced by a dependency, platform, vendor or
+  protocol we cannot change, with a link to its primary source instead of a
+  copy of its content.
+- **Directive**: a comment a tool reads, such as a shebang or
+  `# shellcheck disable=`, with the reason for a suppression.
+- **License notice**.
+
+When unsure whether a comment is one of these, delete it.
+
+A surprise in our own code is fixed in the code, with a name, a type or a test.
+
+A comment never says what the code does, refers to the task, fix, change or
+callers ("added for the Y flow", "now uses X"), marks a section or holds
+commented-out code.
 
 ## Testing
 
