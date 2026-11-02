@@ -1,7 +1,6 @@
-//! Running a session's setup command in its clone, as the session starts
-//! (`docs/specs/runs.md`, Setup): in a process group of its own, its output
-//! on one pipe, redacted line by line into the session's record, and its
-//! start and end in the session's transcript.
+//! Running a command with `bash`: in a process group of its own, until a
+//! deadline or a cancel, its output on one pipe, redacted line by line into
+//! a log.
 
 use std::ffi::OsString;
 use std::io::Write as _;
@@ -13,36 +12,42 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rustix::process::{Pid, Signal};
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt as _;
 use tokio::net::unix::pipe;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::child;
-use crate::domain::Timestamp;
 use crate::redaction::Redaction;
-use crate::transcript;
-use crate::work_settings::SetupCommand;
 
-pub use crate::transcript::SetupStatus as Status;
+/// How a command ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Status {
+    /// It exited with this status.
+    Exited(i32),
+    /// A signal ended it, this one.
+    Signalled(i32),
+    /// Its deadline passed while it ran.
+    TimedOut,
+    Cancelled,
+}
 
 /// How long what the command left running has to end on SIGTERM before it
 /// is sent SIGKILL.
 const GRACE: Duration = Duration::from_secs(2);
 
 pub struct Request<'a> {
-    pub command: &'a SetupCommand,
-    /// The clone's root.
+    pub command: &'a str,
+    /// The directory it runs in.
     pub dir: &'a Path,
     /// The whole environment the command runs in.
     pub environment: Vec<(OsString, OsString)>,
-    /// The session's deadline: the command still running then is ended, as
-    /// the session timing out.
+    /// The command still running then is ended, as [`Status::TimedOut`].
     pub deadline: Instant,
-    /// When it starts.
-    pub started_at: Timestamp,
-    /// The session's record directory.
-    pub record: &'a Path,
+    /// The file its output is appended to, created if missing.
+    pub log: &'a Path,
 }
 
 /// How the command ran.
@@ -51,14 +56,15 @@ pub struct Ran {
     pub status: Status,
     /// What the command wrote until it ended, redacted.
     pub output: String,
+    /// How long it ran, until its status was known.
+    pub duration: Duration,
 }
 
 /// Runs `bash -c command` with stdin from `/dev/null` and stdout and stderr
 /// on one pipe, in a process group of its own. `cancelled` ending first ends
-/// the group at once, as the session's deadline passing does. Its start and
-/// end are appended to [`transcript::OUTPUT`] in the record, and its output
-/// to [`transcript::SETUP_OUTPUT`] as it arrives, all of it before its end.
-/// `Err` is a failure to start the command or to keep its record.
+/// the group at once, as the deadline passing does. Its output is appended
+/// to the request's log as it arrives, all of it before this returns. `Err`
+/// is a failure to start the command or to keep its log.
 pub async fn run(
     bash: &Path,
     request: Request<'_>,
@@ -66,27 +72,15 @@ pub async fn run(
     cancelled: impl Future<Output = ()>,
 ) -> Result<(Ran, Leftovers)> {
     let started = Instant::now();
-    let redacted = redaction.apply(request.command.as_str());
-    let mut transcript = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(request.record.join(transcript::OUTPUT))
-        .context("creating the session's transcript")?;
-    writeln!(
-        transcript,
-        "{}",
-        transcript::setup_started(request.started_at, &redacted)
-    )
-    .context("writing the setup command's start")?;
     let mut log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(request.record.join(transcript::SETUP_OUTPUT))
-        .context("creating the setup command's log")?;
-    let (sender, mut receiver) = pipe::pipe().context("making the setup command's pipe")?;
+        .open(request.log)
+        .context("creating the command's log")?;
+    let (sender, mut receiver) = pipe::pipe().context("making the command's pipe")?;
     let writer: OwnedFd = sender
         .into_blocking_fd()
-        .context("making the setup command's pipe")?;
+        .context("making the command's pipe")?;
     let leftovers = Leftovers {
         group: Some(Group::start(bash)?),
         drained: CancellationToken::new(),
@@ -95,15 +89,13 @@ pub async fn run(
     let mut command = child::command(bash);
     command
         .arg("-c")
-        .arg(request.command.as_str())
+        .arg(request.command)
         .current_dir(request.dir)
         .env_clear()
         .envs(request.environment)
         .stdin(Stdio::null())
         .stdout(Stdio::from(
-            writer
-                .try_clone()
-                .context("making the setup command's pipe")?,
+            writer.try_clone().context("making the command's pipe")?,
         ))
         .stderr(Stdio::from(writer))
         .process_group(group.as_raw_nonzero().get());
@@ -133,12 +125,12 @@ pub async fn run(
                 break Status::TimedOut;
             }
             exited = child.wait() => {
-                break exit_status(exited.context("waiting for the setup command")?);
+                break exit_status(exited.context("waiting for the command")?);
             }
             read = receiver.read(&mut buffer), if open => match read {
                 Ok(0) => open = false,
                 Ok(n) => output.take(&buffer[..n])?,
-                Err(e) => return Err(e).context("reading the setup command's output"),
+                Err(e) => return Err(e).context("reading the command's output"),
             },
         }
     };
@@ -154,19 +146,11 @@ pub async fn run(
             () = async { while let Ok(1..) = receiver.read(&mut buffer).await {} } => {}
         }
     });
-    let ran_for = started.elapsed();
-    let ended_at =
-        request.started_at + chrono::TimeDelta::from_std(ran_for).unwrap_or(chrono::TimeDelta::MAX);
-    writeln!(
-        transcript,
-        "{}",
-        transcript::setup_ended(ended_at, status, ran_for.as_secs_f64())
-    )
-    .context("writing the setup command's end")?;
     Ok((
         Ran {
             status,
             output: text,
+            duration: started.elapsed(),
         },
         leftovers,
     ))
@@ -207,7 +191,7 @@ impl Output<'_> {
 
     /// Takes what `receiver` holds now, but nothing written after.
     fn take_buffered(&mut self, receiver: &pipe::Receiver, buffer: &mut [u8]) -> Result<()> {
-        let reading = "reading the setup command's output";
+        let reading = "reading the command's output";
         let held = rustix::io::ioctl_fionread(receiver).context(reading)?;
         let mut left = usize::try_from(held).unwrap_or(usize::MAX);
         while left > 0 {
@@ -238,7 +222,7 @@ impl Output<'_> {
         let line = self.redaction.apply(&String::from_utf8_lossy(line));
         self.log
             .write_all(line.as_bytes())
-            .context("writing the setup command's log")?;
+            .context("writing the command's log")?;
         self.text.push_str(&line);
         Ok(())
     }
@@ -330,7 +314,6 @@ mod tests {
     use super::*;
     use crate::secrets::Secrets;
     use crate::variable_names::VariableNames;
-    use crate::work_settings::Setup;
 
     /// The `bash` on the `PATH`.
     fn bash() -> std::path::PathBuf {
@@ -343,25 +326,22 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn a_secret_in_the_command_or_its_output_is_redacted_where_it_is_kept() {
-        let secret = "sk-setup-0123456789";
+    async fn a_secret_in_the_output_is_redacted_where_it_is_kept() {
+        let secret = "sk-output-0123456789";
         let secrets = Secrets::of(
             &VariableNames::new("secrets", ["API_KEY".to_string()]).unwrap(),
             [("API_KEY".into(), secret.into())],
         )
         .unwrap();
-        let Setup::Command(command) = Setup::from(format!("echo 'token {secret}'; exit 1")) else {
-            panic!("a command");
-        };
-        let clone = tempfile::tempdir().unwrap();
-        let record = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let logs = tempfile::tempdir().unwrap();
+        let log = logs.path().join("output.log");
         let request = Request {
-            command: &command,
-            dir: clone.path(),
+            command: &format!("echo 'token {secret}'; exit 1"),
+            dir: dir.path(),
             environment: vec![],
             deadline: Instant::now() + Duration::from_secs(30),
-            started_at: "2026-10-01T12:00:00Z".parse().unwrap(),
-            record: record.path(),
+            log: &log,
         };
 
         let (ran, _leftovers) = run(
@@ -373,14 +353,8 @@ mod tests {
         .await
         .unwrap();
 
+        assert_eq!(ran.status, Status::Exited(1));
         assert_eq!(ran.output, "token [redacted]\n");
-        let log = std::fs::read_to_string(record.path().join(transcript::SETUP_OUTPUT));
-        assert_eq!(log.unwrap(), "token [redacted]\n");
-        let transcript = std::fs::read_to_string(record.path().join(transcript::OUTPUT)).unwrap();
-        assert!(
-            transcript.contains("echo 'token [redacted]'; exit 1"),
-            "{transcript}"
-        );
-        assert!(!transcript.contains(secret), "{transcript}");
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "token [redacted]\n");
     }
 }

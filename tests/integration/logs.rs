@@ -8,6 +8,7 @@ use linewright::domain::Number;
 use linewright::logs::{self, LogsError, NoSuchRun, Which};
 use linewright::reconcile::WorkKind;
 use linewright::runs::{Ending, Recorded, RunId, Started, State};
+use linewright::secrets::Secrets;
 use linewright::transcript::{self, Verbosity};
 use serde_json::json;
 
@@ -238,11 +239,13 @@ async fn following_a_run_that_has_ended_shows_its_transcript_and_exits() {
     }
 }
 
-/// `world_in_work_dir`'s, with `setup` the setup command of every stage.
-async fn world_setting_up_with(setup: &str) -> (World, tempfile::TempDir) {
+/// `world_in_work_dir`'s, with `setup` the setup command of every stage
+/// and `secrets` Linewright's secrets.
+async fn world_setting_up_with(setup: &str, secrets: Secrets) -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
     let world = World::with(|config| {
         config.work_dir = work_dir.path().join(REPO);
+        config.secrets = secrets;
         setting_up_with(config, setup);
     })
     .await;
@@ -252,7 +255,8 @@ async fn world_setting_up_with(setup: &str) -> (World, tempfile::TempDir) {
 /// `docs/specs/monitoring.md`, logs, Setup.
 #[test_log::test(tokio::test)]
 async fn logs_shows_the_setup_command_a_session_ran() {
-    let (mut world, work_dir) = world_setting_up_with("echo 'added 3 packages'").await;
+    let (mut world, work_dir) =
+        world_setting_up_with("echo 'added 3 packages'", Secrets::default()).await;
     implement_as_recorded(&world);
     world.store.open_issue(
         "maintainer",
@@ -268,6 +272,36 @@ async fn logs_shows_the_setup_command_a_session_ran() {
     assert_eq!(
         output.stdout.lines().nth(2),
         Some(" 0:00  setup: echo 'added 3 packages' → exit 0, 0s"),
+        "{}",
+        output.stdout
+    );
+}
+
+/// `docs/specs/operation.md`, Secrets.
+#[test_log::test(tokio::test)]
+async fn logs_shows_a_secret_in_the_setup_command_redacted() {
+    let (mut world, work_dir) = world_setting_up_with(
+        "echo 'token npm_s3cr3t' > /dev/null",
+        secrets_of(&[("NPM_TOKEN", "npm_s3cr3t")]),
+    )
+    .await;
+    implement_as_recorded(&world);
+    world.store.open_issue(
+        "maintainer",
+        "Ship gh",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+    world.poll().await;
+
+    let output = lw_in(work_dir.path(), &["logs", "1"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert!(
+        output
+            .stdout
+            .contains("setup: echo 'token [redacted]' > /dev/null")
+            && !output.stdout.contains("npm_s3cr3t"),
         "{}",
         output.stdout
     );

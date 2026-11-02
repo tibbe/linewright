@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -18,6 +19,7 @@ use crate::apply::triage::{self, CategoryChange};
 use crate::apply::{Asks, Designed, StatusTo};
 use crate::attachments::{self, Dir, Refusal};
 use crate::automation::Automation;
+use crate::bash_command;
 use crate::briefs::{Briefs, OperatorPrompts};
 use crate::clock::Clock;
 use crate::domain::{
@@ -37,7 +39,6 @@ use crate::results::{
 };
 use crate::runs::{Ending, Running, Runs, SessionRecorder};
 use crate::secrets::{Held, Secrets};
-use crate::setup;
 use crate::spec_gap::{self, FiledGaps};
 use crate::store::{
     AnyItem, AttachError, FoundSecrets, Identity, PushError, PushMode, RepoSettings, Store,
@@ -645,7 +646,7 @@ async fn write_hand_back(
 struct Workspace {
     /// What the setup command left running, ended before the clone is
     /// removed.
-    leftovers: Option<setup::Leftovers>,
+    leftovers: Option<bash_command::Leftovers>,
     /// `None` once dropped.
     temp: Option<TempDir>,
     dir: PathBuf,
@@ -1039,7 +1040,9 @@ async fn open_session<'a>(
 }
 
 /// Runs the setup `command` in `ws`, which keeps what it leaves running,
-/// until the session's `deadline`. It fails as the session would end.
+/// until the session's `deadline`, with its start and end in the session's
+/// transcript in `record` and its output beside it. It fails as the session
+/// would end.
 async fn set_up(
     shell: &Shell,
     ctx: &Ctx,
@@ -1049,8 +1052,23 @@ async fn set_up(
     ws: &mut Workspace,
 ) -> Result<(), Failure> {
     let settings = &ctx.with.settings;
-    let request = setup::Request {
-        command,
+    let redaction = shell.secrets.redaction();
+    let started_at = shell.clock.now();
+    let mut transcript = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(record.join(transcript::OUTPUT))
+        .context("creating the session's transcript")
+        .map_err(infra)?;
+    writeln!(
+        transcript,
+        "{}",
+        transcript::setup_started(started_at, &redaction.apply(command.as_str()))
+    )
+    .context("writing the setup command's start")
+    .map_err(infra)?;
+    let request = bash_command::Request {
+        command: command.as_str(),
         dir: &ws.dir,
         environment: shell.harness.environment(
             &settings.environment,
@@ -1058,38 +1076,46 @@ async fn set_up(
             settings.effort_set(),
         ),
         deadline,
-        started_at: shell.clock.now(),
-        record,
+        log: &record.join(transcript::SETUP_OUTPUT),
     };
-    let (ran, leftovers) = setup::run(
-        &shell.bash,
-        request,
-        shell.secrets.redaction(),
-        ctx.cancel.cancelled(),
-    )
-    .await
-    .context("running the setup command")
-    .map_err(infra)?;
+    let (ran, leftovers) =
+        bash_command::run(&shell.bash, request, redaction, ctx.cancel.cancelled())
+            .await
+            .context("running the setup command")
+            .map_err(infra)?;
     ws.leftovers = Some(leftovers);
+    let ended_at =
+        started_at + chrono::TimeDelta::from_std(ran.duration).unwrap_or(chrono::TimeDelta::MAX);
+    writeln!(
+        transcript,
+        "{}",
+        transcript::setup_ended(ended_at, ran.status, ran.duration.as_secs_f64())
+    )
+    .context("writing the setup command's end")
+    .map_err(infra)?;
     set_up_failure(&ran, &ws.dir, settings).map_or(Ok(()), Err)
 }
 
 /// Why the session ends after the setup command ran in `dir` as `ran`, if
 /// it does (docs/specs/runs.md, "Setup", Failing): a command still running
 /// at the session's deadline is the session timing out.
-fn set_up_failure(ran: &setup::Ran, dir: &Path, settings: &SessionSettings) -> Option<Failure> {
+fn set_up_failure(
+    ran: &bash_command::Ran,
+    dir: &Path,
+    settings: &SessionSettings,
+) -> Option<Failure> {
     let log_tail = || LogTail::setup(&scrub(&ran.output, dir));
     let failed = match ran.status {
-        setup::Status::Exited(0) => return None,
-        setup::Status::Exited(code) => format!("exited with status {code}"),
-        setup::Status::Signalled(signal) => format!("was ended by signal {signal}"),
-        setup::Status::TimedOut => {
+        bash_command::Status::Exited(0) => return None,
+        bash_command::Status::Exited(code) => format!("exited with status {code}"),
+        bash_command::Status::Signalled(signal) => format!("was ended by signal {signal}"),
+        bash_command::Status::TimedOut => {
             return Some(Failure::HandBack(hand_back::timed_out(
                 &settings.timeout_setting,
                 log_tail(),
             )));
         }
-        setup::Status::Cancelled => return Some(Failure::Cancelled),
+        bash_command::Status::Cancelled => return Some(Failure::Cancelled),
     };
     Some(Failure::Infrastructure {
         error: anyhow::anyhow!("the setup command {failed}"),
