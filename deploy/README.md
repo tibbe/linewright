@@ -112,8 +112,10 @@ Agent sessions have a headless Chromium, which they drive through
 web UI on `localhost`, open its pages, take screenshots, at a narrow viewport
 too, and inspect the page. `playwright` is installed too, with `NODE_PATH` and
 `PLAYWRIGHT_BROWSERS_PATH` set, so an agent can run a Playwright script
-against the same browser. `deploy/playwright/` pins both packages, and the
-image installs the Chromium revision they expect.
+against the same Chromium revision: `chromium.launch()` runs its headless
+shell, and `channel: 'chromium'` the full browser that Playwright MCP drives.
+`deploy/playwright/` pins both packages, and the image installs the Chromium
+revision they expect.
 
 Chromium runs with `--no-sandbox`. `linewright` drops every capability, sets
 `no-new-privileges` and keeps Docker's default seccomp profile, which leaves
