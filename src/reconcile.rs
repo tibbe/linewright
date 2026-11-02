@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::BTreeMap;
 
 use chrono::TimeDelta;
@@ -64,8 +63,9 @@ impl Policy {
         Windows::at(now, self.spec_lookback, self.done_window)
     }
 
-    /// A merge commit that resolved a conflict is the usual cause of GitHub
-    /// reporting a pull request not rebaseable, and a rebase drops it.
+    /// Whether Linewright rebases a pull request GitHub reports not
+    /// rebaseable: when the repository allows rebase merges and updates do
+    /// not always merge.
     pub fn rebases_unrebaseable(&self) -> bool {
         self.allowed_merge_methods.contains(MergeMethod::Rebase)
             && self.update_rule != UpdateRule::Always(UpdateMethod::Merge)
@@ -715,7 +715,6 @@ pub fn decisions(
     let in_flight = live.len() + automations.in_flight.len();
     let usage_limit = memory.usage_limit.filter(|_| memory.holds_starts(now));
     let (room, held) = match (memory.drain, usage_limit) {
-        // The drain outlasts any usage limit.
         (Some(_), _) => (0, Held::Drain),
         (None, Some(UsageLimit { resets_at })) => (0, Held::UsageLimit { resets_at }),
         (None, None) => (
@@ -751,8 +750,6 @@ pub fn decisions(
         }
     }
 
-    // Each cut is discarded by its issue's row of the Working an item
-    // table, below.
     let discards = discards(snapshot, &running, policy);
     let discarded_tickets: Vec<Number> = discards.iter().flat_map(Discard::open_tickets).collect();
     let discarded_pulls: Vec<Number> = discards.iter().flat_map(|d| d.pulls.clone()).collect();
@@ -803,8 +800,7 @@ pub fn decisions(
         }
     }
 
-    // A person's open pull request Linewright is assigned to.
-    let facts = PullFacts {
+    let peoples_assigned_pull = PullFacts {
         opener: Opener::Person,
         claim: PullClaim::Claimed,
         working: PullWorking::Waiting,
@@ -816,7 +812,7 @@ pub fn decisions(
         .filter(|p| p.is_open() && p.author != policy.linewright)
         .filter(|p| p.is_assigned(&policy.linewright))
     {
-        let holding = pull_row(&facts, State::Open, &policy.linewright);
+        let holding = pull_row(&peoples_assigned_pull, State::Open, &policy.linewright);
         work_pull(pr.number, holding, None, &mut plan);
     }
 
@@ -831,8 +827,6 @@ pub fn decisions(
 
     for branch in &snapshot.ticket_branches {
         let number = branch.name.issue();
-        // An issue read since the branch was, by a refresh, is as the
-        // snapshot holds it; one that left the snapshot is not known closed.
         let read = match &branch.issue {
             BranchIssue::Held => None,
             BranchIssue::Read(issue) => Some(&**issue),
@@ -841,8 +835,6 @@ pub fn decisions(
             .issue(number)
             .or(read)
             .is_some_and(Issue::closed_with_no_open_pull);
-        // Closing the ticket cancels its run, which pushes its work as it
-        // stops: the branch waits for the run to end.
         if closed_with_no_pull
             && !branch.open_pull_from_branch
             && running(Subject::Issue(number)).is_none()
@@ -964,8 +956,9 @@ pub fn next_run(automation: &Automation, last_scheduled_run: Timestamp, now: Tim
     }
 }
 
-/// An automation held by a file in `unusable` stays due, to run once the
-/// file is fixed.
+/// The runs of the automations due, at most `room`, followed by the record
+/// of the last scheduled runs if it changed. An automation held by a file in
+/// `unusable` stays due, to run once the file is fixed.
 fn schedule(
     automations: &Automations,
     now: Timestamp,
@@ -994,9 +987,6 @@ fn schedule(
             Action::RunAutomation(Box::new(automation.clone()))
         })
         .collect();
-    // The record follows the runs: a stop between the two leaves the
-    // automation due, to run again after the restart, rather than recorded as
-    // having had a scheduled run with no run started.
     let mut actions = runs;
     if last_scheduled_runs != automations.last_scheduled_runs {
         actions.push(Action::RecordLastScheduledRuns(last_scheduled_runs));
@@ -1006,10 +996,8 @@ fn schedule(
 
 /// The items the live runs hold, each with its run's stage: those a run
 /// writes as it records its result, which no other write may touch until it
-/// ends.
-///
-/// The tickets a cut files are not held: each is readied last, so a poll
-/// sees it either unpublished or published to be worked.
+/// ends. A run on an issue also holds Linewright's open pull requests that
+/// close it, but not the tickets it files.
 fn held_by_runs(
     snapshot: &Snapshot,
     live: &[LiveRun],
@@ -1021,8 +1009,6 @@ fn held_by_runs(
             Subject::Pull(pr) => {
                 held.insert(Item::Pull(pr), stage);
             }
-            // An implement run opens its pull request, then assigns and
-            // labels it.
             Subject::Issue(issue) => {
                 held.insert(Item::Issue(issue), stage);
                 for pull in snapshot
@@ -1112,11 +1098,9 @@ struct Start {
 }
 
 impl Plan<'_> {
-    /// An action on an item a live run holds is not taken, and the item
-    /// waits for the run instead, so that the run is the item's only writer
-    /// until it ends. The checks of `running` in [`decisions`] give the
-    /// waits and keep work from being planned; this is what guarantees that
-    /// nothing is written.
+    /// Takes `action` unless a live run holds one of its items, which then
+    /// waits for the run instead: a run is its items' only writer until it
+    /// ends.
     fn act(&mut self, action: Action) {
         if !self.held_back(&[&action]) {
             self.actions.push(action);
@@ -1274,11 +1258,9 @@ fn work_issue(
         }),
         Row::LetGo { comment } => let_go(number, comment, plan),
         Row::UnassignAsked { people } => {
-            // What it waits for once they are unassigned, such as someone
-            // else assigned.
-            let mut without = issue.clone();
-            without.assignees.retain(|a| !people.contains(a));
-            idle_waits(&without, state, policy, plan);
+            let mut once_unassigned = issue.clone();
+            once_unassigned.assignees.retain(|a| !people.contains(a));
+            idle_waits(&once_unassigned, state, policy, plan);
             plan.act(Action::UnassignAsked {
                 issue: number,
                 assignees: people,
@@ -1299,9 +1281,6 @@ fn work_issue(
             to: StatusLabel::NeedsTriage,
         }),
         Row::Claim => {
-            // The claim leaves the issue in a state whose row starts its run,
-            // and both are made in this poll, so that a hold keeps an issue
-            // it cannot start unclaimed.
             let mut claimed = issue.clone();
             claimed.assignees.push(linewright.clone());
             let claimed_state = issue_state(&claimed, &closing, merge, None, linewright);
@@ -1344,7 +1323,8 @@ fn let_go(issue: Number, comment: Option<String>, plan: &mut Plan) {
 
 /// What `issue`, in `state`, waits for whatever Linewright does: the pull
 /// requests that close it, its tickets, a person, or, done by `merge`, its
-/// label applied again.
+/// label applied again. In review with no open pull request of Linewright's,
+/// an issue holding `ready-for-agent` waits for its blockers.
 fn standing_waits(
     issue: &Issue,
     state: Option<State>,
@@ -1367,9 +1347,6 @@ fn standing_waits(
                 };
                 plan.wait(number, wait);
             }
-            // Someone else's pull request may be closed with the ticket left
-            // to Linewright, which then waits for its blockers; once
-            // Linewright's ends, they hold nothing back.
             if !linewrights && issue.holds(StatusLabel::ReadyForAgent) {
                 wait_for_blockers(issue, plan);
             }
@@ -1385,8 +1362,9 @@ fn standing_waits(
                 plan.wait(number, wait);
             }
         }
-        // GitHub closes the issue shortly after the merge; until then, only
-        // applying a status label again asks for more work.
+        // GitHub closes the issue shortly after the merge
+        // (https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue);
+        // until then, only applying a status label again asks for more work.
         Some(State::Done) => {
             if let Some(merge) = merge {
                 plan.wait(
@@ -1452,10 +1430,8 @@ fn labeled_waits(issue: &Issue, policy: &Policy) -> Vec<Wait> {
 }
 
 /// Every cut of the snapshot to discard (docs/specs/design.md, "Discarding a
-/// cut"), decided before the rest of the plan. An issue is labeled designed
-/// last, so one cut into tickets without the label is a cut that stopped part
-/// way (interrupted, cancelled or handed back) or one whose label was removed
-/// to have it designed again.
+/// cut"): that of each open issue with no run in flight that has tickets cut
+/// from it but lacks `linewright:designed`.
 fn discards(
     snapshot: &Snapshot,
     running: &impl Fn(Subject) -> Option<WorkKind>,

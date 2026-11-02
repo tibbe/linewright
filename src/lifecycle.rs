@@ -1,10 +1,7 @@
-// comments: pending
 //! An item's state (`docs/specs/repository.md`, State): the first row of
 //! its table that holds, derived from what GitHub shows and the run in
-//! flight on the item. Every view of an item's state asks here, and the
-//! reconcile works an item by the row of the Working an item table that
-//! holds for it ([`row`]) and cancels its runs as Steering says
-//! ([`cancels`]).
+//! flight on the item; the row of the Working an item table that holds for
+//! it ([`row`]); and whether Steering cancels its run ([`cancels`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -224,8 +221,8 @@ pub struct IssueFacts<'a> {
 }
 
 /// A row of the Working an item table (`docs/specs/repository.md`) for an
-/// issue, with what it writes. The rows for how a run ends are the run's to
-/// apply, and a pull request's are [`PullRow`]s.
+/// issue, other than the rows for how a run ends, with what it writes. A
+/// pull request's rows are [`PullRow`]s.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
     /// Discards the cut (`docs/specs/design.md`, "Discarding a cut").
@@ -259,7 +256,7 @@ pub enum Row {
 
 /// The first row of the Working an item table that holds for the issue of
 /// `facts` in `state`, other than those for how a run ends: none while a run
-/// is in flight on it.
+/// is in flight on it, and none but discarding its cut once it is closed.
 pub fn row(facts: &IssueFacts, state: Option<State>, policy: &Policy) -> Option<Row> {
     let IssueFacts {
         issue,
@@ -279,7 +276,6 @@ pub fn row(facts: &IssueFacts, state: Option<State>, policy: &Policy) -> Option<
     {
         return Some(Row::DiscardCut(discard.clone()));
     }
-    // Linewright leaves a closed item's labels and assignees as they are.
     if !issue.open {
         return None;
     }
@@ -385,9 +381,7 @@ fn unassigned_since(issue: &Issue, policy: &Policy, status: StatusLabel) -> bool
 
 /// Of `closing`, the pull request Linewright opened that was closed without
 /// merging since `issue` was last opened or given a status label, the first
-/// by number. GitHub does not say who closed it; Linewright closes its own
-/// only when it discards a cut, which leaves their tickets alone until it
-/// closes them too, so it is taken as a person's no.
+/// by number, taken as a person's no.
 fn refused(issue: &Issue, closing: &[ClosingPull], linewright: &Login) -> Option<Number> {
     let since = opened_or_labeled(&issue.events);
     closing
@@ -436,13 +430,11 @@ fn answers_hand_assignment(issue: &Issue, linewright: &Login) -> bool {
         issue.status_label_as_of(assigned).map(StatusLabel::asks),
         Some(Asks::Linewright(_))
     );
-    // A comment since means this one was posted, and a stop came before
-    // the unassignment.
-    let commented = issue
+    let commented_since = issue
         .comments
         .iter()
         .any(|c| &c.author == linewright && c.created_at >= assigned.at);
-    actor != linewright && unasked_then && !commented
+    actor != linewright && unasked_then && !commented_since
 }
 
 /// The comment letting go of an issue assigned to Linewright by hand whose
@@ -519,7 +511,8 @@ pub struct PullFacts {
 /// A row of the Working an item table, or of Steering, for a pull request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PullRow {
-    /// Assigns Linewright to a pull request it opened.
+    /// Assigns Linewright to a pull request it opened, then does what Pull
+    /// requests asks, as [`PullRow::Work`].
     Claim,
     /// Does what Pull requests asks.
     Work,
@@ -541,8 +534,7 @@ pub struct TakeUp {
 
 /// The first row that holds for the open pull request of `facts` in
 /// `state`, other than those for how a run ends: none while a run is in
-/// flight on it. A claim leaves the pull request to its work in
-/// the same poll.
+/// flight on it.
 pub fn pull_row(facts: &PullFacts, state: State, linewright: &Login) -> Option<PullRow> {
     let PullFacts {
         opener,

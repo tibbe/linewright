@@ -1,8 +1,6 @@
-// comments: pending
 //! Which items Linewright manages (`GLOSSARY.md`, **Managed**), and for
 //! each its state and what its card says beyond it, or why Linewright
-//! leaves it alone: every view of the items asks here, and decides it
-//! nowhere else.
+//! leaves it alone.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,12 +15,11 @@ use crate::phrase::Phrase;
 use crate::reconcile::{NotSpecChange, Wait, open_pull_for, spec_change, ticket_of};
 use crate::status::View;
 
-/// An item the view holds, as the classifier judges it.
+/// An item the view holds.
 #[derive(Clone, Copy, Debug)]
 pub enum Held<'a> {
     /// An issue as the view holds an open one. One read closed without its
-    /// closing, which a store reads only where GitHub gives no time it
-    /// closed, is left alone as closed.
+    /// closing is left alone as closed.
     Issue(&'a Issue),
     /// An issue or a pull request closed, with its closing.
     Closed(&'a ClosedItem),
@@ -42,8 +39,7 @@ impl Held<'_> {
     }
 }
 
-/// A managed item: its state and, beside it, what its card and `explain`
-/// say beyond the state.
+/// A managed item: its state and, beside it, what it shows beyond the state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Managed {
     pub number: Number,
@@ -80,7 +76,7 @@ impl Managed {
     }
 }
 
-/// What an item's card and `explain` say beyond its state.
+/// What an item shows beyond its state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "detail", rename_all = "kebab-case")]
 pub enum Detail {
@@ -360,7 +356,6 @@ fn judge(
     };
     let unmanaged = |state, why| Unmanaged { state, why };
     match held {
-        // Read closed without its closing.
         Held::Issue(issue) if !issue.open => Err(unmanaged(
             Some(State::Done),
             LeftAloneItem::Issue(LeftAloneIssue::Closed),
@@ -424,8 +419,6 @@ fn judge(
                 waiting_for,
             ))
         }
-        // Merged, it asks for no work, so it is managed when Linewright has
-        // worked it.
         Held::Merged(pr) if pr.worked_by(linewright) => Ok(managed(
             &pr.title,
             &pr.closes,

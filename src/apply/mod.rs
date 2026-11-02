@@ -1,7 +1,6 @@
 //! The decisions of applying a session's result: given the result, what
 //! Linewright read and the results of earlier writes, the content of the
-//! next writes. The run (`crate::run`) makes the writes. Nothing here makes
-//! I/O, reads a clock or logs.
+//! next writes. Nothing here makes I/O, reads a clock or logs.
 
 pub mod filing;
 pub mod hand_back;
@@ -10,8 +9,8 @@ pub mod triage;
 
 use crate::domain::{Number, StatusLabel, closing_references};
 
-/// The writes that change what an item asks for, which a run makes last
-/// (docs/specs/repository.md, Writes, "Order").
+/// The writes that change what an item asks for, made after the item's
+/// other writes (docs/specs/repository.md, Writes, "Order").
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Asks {
     pub designed: Option<Designed>,

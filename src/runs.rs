@@ -1,4 +1,3 @@
-// comments: pending
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
@@ -30,8 +29,8 @@ pub enum RunOf {
         stage: WorkKind,
     },
     Automation {
-        // The name in records written before the rename, as with
-        // `OLD_AUTOMATIONS`.
+        /// Read also from `workflow`, its key in records written before
+        /// automations were renamed.
         #[serde(alias = "workflow")]
         automation: AutomationName,
     },
@@ -381,6 +380,9 @@ impl Runs {
         }
     }
 
+    /// Begins a run of `begin`, numbered after every run of the same item
+    /// and stage, or of the same automation, with no two runs given the
+    /// same number, even by two processes at once.
     pub(crate) fn begin(&self, begin: Begin, now: Timestamp) -> Result<Running> {
         let (of, started_by) = begin.into_parts();
         let dir = self.dir_of(&of);
@@ -392,8 +394,6 @@ impl Runs {
             .max()
             .unwrap_or(0)
             + 1;
-        // Creating the lock reserves the number, against another process
-        // numbering a run at the same time.
         let (lock, lock_path) = loop {
             let path = dir.join(format!("{prefix}{n}.lock"));
             match File::options().write(true).create_new(true).open(&path) {
@@ -461,9 +461,8 @@ impl Runs {
             .ok()
     }
 
-    /// A record that does not read is logged and skipped.
-    /// As [`Runs::read`], with a failure to read logged and taken as no
-    /// runs, for an answer that does without them.
+    /// As [`Runs::read`], with a record that does not read logged and
+    /// skipped, and a failure to read logged and taken as no runs.
     pub fn read_or_none(&self) -> Vec<Recorded> {
         self.read().unwrap_or_else(|e| {
             warn!(error = format!("{e:#}"), "reading the runs' records failed");
@@ -956,7 +955,7 @@ pub fn of_item(recorded: &[Recorded], number: Number) -> Vec<Recorded> {
 }
 
 /// An automation's last run: its newest, by its schedule or by hand, and how
-/// it started. The one place that says which run that is.
+/// it started.
 pub fn last_of_automation<'a>(
     recorded: &'a [Recorded],
     name: &AutomationName,
@@ -1211,9 +1210,10 @@ pub struct RepoWorkDir {
 }
 
 impl RepoWorkDir {
-    /// Falls back to a directory spelled otherwise, as GitHub names
-    /// repositories case-insensitively. Found afresh each time, as `serve`
-    /// may create it after it starts.
+    /// The work directory `base/owner/name` when it exists; else one whose
+    /// owner and name match those ignoring ASCII case, as GitHub names
+    /// repositories case-insensitively; else `base/owner/name`. It is looked
+    /// up afresh on every call.
     pub fn resolve(&self) -> PathBuf {
         work_dir(&self.base, &self.repo)
     }

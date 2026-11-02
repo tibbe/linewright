@@ -1,4 +1,3 @@
-// comments: pending
 //! What a design, an implement run or an automation files and labels.
 
 use super::{Asks, Designed, StatusTo, closing};
@@ -12,15 +11,14 @@ use crate::store::{NewIssue, NewPull};
 use crate::tracking::{self, FiledTicket};
 
 /// What a designed issue asks for once its design and any tickets are
-/// filed.
+/// filed: `linewright:designed`, and, once it is cut into tickets and so
+/// becomes a tracking issue, no status label and no assignee.
 pub fn designed_asks(cut: &IssueWork) -> Asks {
     match cut {
         IssueWork::AsItIs => Asks {
             designed: Some(Designed::Add),
             ..Asks::default()
         },
-        // A tracking issue carries no status label, and is worked through
-        // its tickets.
         IssueWork::Cut(_) => Asks {
             designed: Some(Designed::Add),
             status: Some(StatusTo::Clear),
@@ -30,7 +28,7 @@ pub fn designed_asks(cut: &IssueWork) -> Asks {
     }
 }
 
-/// The issues a cut files, which the run files in order: each ticket after
+/// The issues a cut files, in the order they are filed: each ticket after
 /// those blocking it.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Cut {
@@ -64,17 +62,15 @@ pub fn cut(tickets: &Tickets, required: Option<&str>) -> Cut {
     }
 }
 
-/// The writes that publish a cut once its tickets are filed, which the run
-/// makes in field order.
+/// The writes that publish a cut once its tickets are filed, in the order
+/// they are made.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Published {
     /// The design, posted on the tracking issue.
     pub design_comment: String,
-    /// What each ticket asks for. They get `ready-for-agent` only after the
-    /// design is on the tracking issue, so that their implementers read it
-    /// (docs/specs/implementation.md, "What the implementer reads"), and
-    /// only once they are designed, so that none is taken for an issue to
-    /// design.
+    /// What each ticket asks for: `ready-for-agent` and
+    /// `linewright:designed`, after the design is on the tracking issue
+    /// (docs/specs/implementation.md, "What the implementer reads").
     pub ticket_asks: Asks,
 }
 

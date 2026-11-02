@@ -1,4 +1,3 @@
-// comments: pending
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -22,7 +21,9 @@ use crate::store::AnyItem;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Answer {
-    // First, so that only an answer naming why reads as one.
+    // Serde tries an untagged enum's variants in order
+    // (https://serde.rs/enum-representations.html#untagged): first, so that
+    // only an answer naming why reads as one.
     LeftAlone(LeftAlone),
     Managed(Explanation),
 }
@@ -50,8 +51,9 @@ pub struct Explanation {
     pub runs: ItemRuns,
 }
 
-/// Its fields are private so that only `ItemRuns::of`, which cuts the past
-/// runs to the limit, and a read of its JSON that checks the cut make one.
+/// An item's runs: its run in flight, and its latest [`PAST_RUNS_SHOWN`]
+/// past runs with how many were left out. Reading its JSON fails on past
+/// runs not cut so.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "ItemRunsAnswer", try_from = "ItemRunsAnswer")]
 pub struct ItemRuns {
@@ -111,11 +113,10 @@ impl ItemRuns {
             .iter()
             .find(|run| of_item.iter().any(|of| of.id == run.id))
             .map(|run| run.at(now));
-        // A run that has just ended may still be in flight in the view.
-        let in_flight = run_in_flight.as_ref().map(|run| &run.id);
+        let shown_in_flight = run_in_flight.as_ref().map(|run| &run.id);
         let mut past: Vec<Recorded> = of_item
             .into_iter()
-            .filter(|run| run.state != runs::State::InFlight && Some(&run.id) != in_flight)
+            .filter(|run| run.state != runs::State::InFlight && Some(&run.id) != shown_in_flight)
             .collect();
         runs::sort_newest_first(&mut past);
         let past_runs_left_out = past.len().saturating_sub(PAST_RUNS_SHOWN);
@@ -406,7 +407,8 @@ fn explanation(
 }
 
 /// What `explain` answers of #`number` from `view` alone, without reading
-/// GitHub: `None` when the view does not hold it.
+/// GitHub, as last read when the view read it: `None` when the view does
+/// not hold it.
 pub(crate) fn explain_in_view(
     view: &View,
     recorded: &[Recorded],
@@ -425,7 +427,6 @@ pub(crate) fn explain_in_view(
         let pull = view.snapshot.any_pull(number)?;
         (AnyItem::Pull(Box::new(pull.clone())), Item::Pull(number))
     };
-    // Read when the view was, not now.
     let last_read = view.read_at.get(&item).copied().unwrap_or(view.polls.last);
     let mut answer = explain_read(view, recorded, &held, now);
     *answer.last_read_mut() = last_read;
@@ -452,8 +453,7 @@ pub struct LeftAlone {
 
 /// `view` with `read`, read from GitHub `now`, put in as a poll taking a
 /// snapshot now would hold it, and an issue left out of the view put in
-/// too, so that what relates to it can be read from the view. A closed
-/// issue is put in among the closed items, with its closing.
+/// too. A closed issue is put in among the closed items, with its closing.
 pub fn fresh_view(view: &View, read: &AnyItem, now: Timestamp) -> View {
     let mut fresh = view.clone();
     let linewright = &view.policy.linewright;
@@ -738,7 +738,6 @@ fn explanation_lines(explanation: &Explanation) -> Vec<ItemLine<'_>> {
         explanation.detail.as_ref(),
         explanation.tickets.as_ref(),
     );
-    // Linewright acts no more on an item that has ended.
     let ended = matches!(explanation.detail, Some(Detail::Ended { .. }));
     let nothing = (explanation.waiting_for.is_empty() && !ended)
         .then(|| ItemLine::fact("waiting for", NOTHING_WAITED_FOR.into()));

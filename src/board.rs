@@ -1,7 +1,6 @@
-// comments: pending
 //! The board (`docs/specs/design_system.md`, The board, Cards): every managed
-//! item as a card in a column, in a lane per piece of work, from `serve`'s
-//! view and the time alone.
+//! item as a card in a column, in a lane per piece of work, from a view and
+//! the time alone.
 
 use std::cmp::Reverse;
 
@@ -114,7 +113,6 @@ impl Lane {
             return None;
         }
         let done = match self.head {
-            // Unfinished until its tracking issue is done.
             LaneHead::Tracking { done: None, .. } => return None,
             LaneHead::Tracking { done, .. } => done,
             LaneHead::Item { .. } => None,
@@ -214,7 +212,7 @@ pub struct Card {
     /// Cards, When), which its line ends with: set in Triage, Needs a person
     /// and Ready alone.
     pub entered: Option<Timestamp>,
-    /// When it last changed, for its lane's order.
+    /// When it last changed.
     changed: Timestamp,
 }
 
@@ -230,14 +228,12 @@ impl Card {
 /// acts on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CardLine {
-    // Needs a person.
     /// Handed back in a stall (`GLOSSARY.md`, **Stall**).
     Stalled,
     /// The people asked (`docs/specs/design_system.md`, Cards).
     Asked(Vec<Login>),
     HandedBack,
     DecisionNeeded,
-    // Ready, as Triage, and Working with no run in flight.
     BlockedBy(Number),
     AssignedTo(Login),
     /// Linewright was unassigned from it.
@@ -247,9 +243,7 @@ pub enum CardLine {
     NotMarked,
     Paused(Hold),
     Queued,
-    // Working.
     Running(Running),
-    // In review.
     /// Of an item other than its pull request.
     Review {
         pull_request: Number,
@@ -260,7 +254,6 @@ pub enum CardLine {
     },
     /// Of the pull request itself, what stops it merging.
     MergeStop(Stop),
-    // Done.
     Ended {
         ended: Ended,
         /// When it entered Done.
@@ -392,21 +385,21 @@ pub fn card(
     card_among(managed, &managed::managed(view, now), &seen)
 }
 
-/// What the board is built from: `serve`'s view, every run's record, which
-/// tells whether a run handed an item back, and the time.
+/// What the board is built from: the view, every run's record, which tells
+/// whether a run handed an item back, and the time.
 struct Seen<'a> {
     view: &'a View,
     recorded: &'a [Recorded],
     now: Timestamp,
 }
 
-/// [`card`], with `all` the managed items, which hold the pull requests shown
-/// on its card.
+/// [`card`], with `all` the managed items: the card shows those of them that
+/// are pull requests closing `managed`, unless `managed` is itself a pull
+/// request or in Done.
 fn card_among(managed: &Managed, all: &[Managed], seen: &Seen) -> Option<(Column, Card)> {
     let view = seen.view;
     let snapshot = &view.snapshot;
     let column = managed.column()?;
-    // A pull request, or an item in Done, shows no other.
     let folded: Vec<&Managed> = if managed.is_pull_request() || column == Column::Done {
         vec![]
     } else {
@@ -450,8 +443,12 @@ fn card_among(managed: &Managed, all: &[Managed], seen: &Seen) -> Option<(Column
     Some((column, card))
 }
 
-/// `recorded` is every run's record, which tells whether a run handed an
-/// issue back.
+/// The board at `now` (`docs/specs/design_system.md`, The board). A pull
+/// request shows on the card of each issue it closes that has a card, and
+/// has a card of its own otherwise. Each open tracking issue, and each
+/// managed one, heads the lane of its tickets. A lane with no cards, or that finished
+/// before the Done window opened, is left off. `recorded` is every run's
+/// record, which tells whether a run handed an issue back.
 pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     let all = managed::managed(view, now);
     let seen = Seen {
@@ -460,8 +457,6 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         now,
     };
     let mut cards: Vec<(Column, Card)> = vec![];
-    // A pull request shows on the card of each issue it closes that has a
-    // card, and has a card of its own otherwise.
     let mut pulls: Vec<(&[Number], (Column, Card))> = vec![];
     for managed in &all {
         let Some(card) = card_among(managed, &all, &seen) else {
@@ -480,7 +475,6 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             .map(|(_, card)| card),
     );
 
-    // A tracking issue heads its lane whether or not it is managed.
     let open_trackers = view
         .snapshot
         .issues
@@ -518,9 +512,6 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
             }
         }
     }
-    // A tracking issue with none of its tickets on the board has no lane,
-    // and a finished lane leaves the board whole once it finished before the
-    // Done window opened.
     let windows = view.policy.windows(now);
     lanes.retain(|lane| {
         !lane.is_empty() && lane.finished().is_none_or(|at| windows.in_done_window(at))
